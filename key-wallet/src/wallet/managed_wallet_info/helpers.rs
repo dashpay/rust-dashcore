@@ -11,7 +11,7 @@ use crate::managed_account::ManagedCoreKeysAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use dashcore::{OutPoint, Transaction, Txid};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// What [`ManagedWalletInfo::abandon_transaction`] removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,17 +61,24 @@ fn collect_spenders_of_records(
     }
 }
 
-/// Every outpoint a live record anywhere in the wallet spends.
-fn live_record_inputs(
+/// Every outpoint a live record anywhere in the wallet spends, with one of
+/// its spenders: the lowest txid, so the choice does not depend on which
+/// account is visited first.
+fn live_record_spenders(
     accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
-) -> HashSet<OutPoint> {
-    accounts
-        .all_accounts()
-        .into_iter()
-        .flat_map(|account| account.transactions().values())
-        .flat_map(|record| record.transaction.input.iter())
-        .map(|input| input.previous_output)
-        .collect()
+) -> HashMap<OutPoint, Txid> {
+    let mut spenders: HashMap<OutPoint, Txid> = HashMap::new();
+    for account in accounts.all_accounts() {
+        for (txid, record) in account.transactions() {
+            for input in &record.transaction.input {
+                spenders
+                    .entry(input.previous_output)
+                    .and_modify(|spender| *spender = (*spender).min(*txid))
+                    .or_insert(*txid);
+            }
+        }
+    }
+    spenders
 }
 
 /// What [`ManagedWalletInfo::sweep_conflicts`] removed from the wallet: the
@@ -141,8 +148,8 @@ impl WalletConflictSweep {
         if self.released_outpoints.is_empty() {
             return;
         }
-        let claimed = live_record_inputs(accounts);
-        self.released_outpoints.retain(|outpoint| !claimed.contains(outpoint));
+        let claimed = live_record_spenders(accounts);
+        self.released_outpoints.retain(|outpoint| !claimed.contains_key(outpoint));
     }
 }
 
@@ -215,13 +222,14 @@ impl ManagedWalletInfo {
     ///
     /// A claimed outpoint in `winner_inputs` (the inputs of the final
     /// transaction that won the conflict) becomes a permanent guard. One
-    /// that a live record anywhere in the wallet still spends loses its
-    /// claim but stays marked. Any other loses its claim, and is returned —
+    /// that a live record anywhere in the wallet still spends keeps its
+    /// claim, now naming that record, so removing the record in turn is
+    /// settled here again. Any other loses its claim, and is returned —
     /// except an output of a removed transaction, which is not a coin
     /// coming free but one that never existed.
     ///
     /// Claims with no claimant, or with a claimant outside `removed`, are
-    /// untouched, and no record-derived mark is removed: an account holding
+    /// untouched, and so is every record-derived mark: an account holding
     /// its own mark on a returned outpoint goes on guarding it.
     fn release_restored_claims(
         &mut self,
@@ -238,9 +246,13 @@ impl ManagedWalletInfo {
         {
             return released;
         }
-        let live_spent = live_record_inputs(&self.accounts);
+        let live_spenders = live_record_spenders(&self.accounts);
         for account in self.accounts.all_funding_accounts_mut() {
-            released.extend(account.release_restored_claims(removed, winner_inputs, &live_spent));
+            released.extend(account.release_restored_claims(
+                removed,
+                winner_inputs,
+                &live_spenders,
+            ));
         }
         released.retain(|outpoint| !removed.contains(&outpoint.txid));
         released

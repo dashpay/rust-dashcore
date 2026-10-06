@@ -315,6 +315,49 @@ async fn claim_on_winner_input_stays_guarded_after_claimant_is_swept() {
     assert!(!ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent));
 }
 
+/// Two live records spend the claimed outpoint. Removing the claimant hands
+/// the claim to the survivor, so the outpoint stays guarded in every funding
+/// account until the survivor is removed too.
+#[test_case::test_case(false; "conflict")]
+#[test_case::test_case(true; "abandonment")]
+#[tokio::test]
+async fn claim_passes_to_a_surviving_spender_until_it_is_removed_too(abandon: bool) {
+    let (mut ctx, address) = restore_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000]);
+    let spent = OutPoint::new(funding.txid(), 0);
+    let claimant_input = OutPoint::new(Txid::from([0x55; 32]), 0);
+    let survivor_input = OutPoint::new(Txid::from([0x56; 32]), 0);
+    let claimant = spend_paying(&[claimant_input, spent], &ctx.receive_address);
+    let survivor = spend_paying(&[survivor_input, spent], &ctx.receive_address);
+    ctx.managed_wallet.restore_spent_outpoints(&[(spent, Some(claimant.txid()))]);
+    ctx.check_transaction(&claimant, TransactionContext::Mempool).await;
+    ctx.check_transaction(&survivor, TransactionContext::Mempool).await;
+
+    if abandon {
+        assert_eq!(ctx.managed_wallet.abandon_transaction(claimant.txid()).records_removed, 1);
+    } else {
+        let result = ctx.check_transaction(&spending_tx(&[claimant_input]), in_block(100)).await;
+        assert_eq!(result.swept_transactions, vec![claimant.txid()]);
+        assert!(result.released_outpoints.is_empty());
+    }
+    assert!(ctx
+        .managed_wallet
+        .accounts
+        .all_funding_accounts()
+        .iter()
+        .all(|account| account.is_outpoint_spent(&spent)));
+
+    if abandon {
+        assert_eq!(ctx.managed_wallet.abandon_transaction(survivor.txid()).records_removed, 1);
+    } else {
+        let result = ctx.check_transaction(&spending_tx(&[survivor_input]), in_block(101)).await;
+        assert_eq!(result.swept_transactions, vec![survivor.txid()]);
+        assert_eq!(result.released_outpoints, vec![spent]);
+    }
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+    assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent));
+}
+
 /// The claimant's removal frees the outpoint in every account holding the
 /// claim, and the sweep reports it exactly once.
 #[tokio::test]

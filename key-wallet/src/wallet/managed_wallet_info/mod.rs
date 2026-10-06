@@ -350,9 +350,10 @@ impl ManagedWalletInfo {
     ///
     /// **Claimants:** when [`sweep_conflicts`](Self::sweep_conflicts) or
     /// [`abandon_transaction`](Self::abandon_transaction) removes the
-    /// claimant, the outpoint is released, unless the final transaction
-    /// that won the conflict or another live record spends it too. `None`
-    /// is never released.
+    /// claimant, the outpoint is released — unless the final transaction
+    /// that won the conflict spends it too, which leaves `None`, or another
+    /// live record does, which becomes the claimant. `None` is never
+    /// released.
     /// Restoring an outpoint again merges the claimants: the same one
     /// changes nothing, and any disagreement — `None` against a txid, or two
     /// different txids — leaves `None`.

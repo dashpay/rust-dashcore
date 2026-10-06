@@ -56,8 +56,7 @@ pub struct ManagedCoreFundsAccount {
     pub balance: WalletCoreBalance,
     /// UTXO set for this account
     pub utxos: BTreeMap<OutPoint, Utxo>,
-    /// Outpoints spent by recorded transactions, plus those a released
-    /// restored claim left marked for a live spender recorded elsewhere.
+    /// Outpoints spent by recorded transactions.
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
@@ -228,35 +227,33 @@ impl ManagedCoreFundsAccount {
     ///
     /// * outpoint in `winner_inputs` — a final transaction spent it, so the
     ///   claim becomes permanent (`None`);
-    /// * outpoint in `live_spent` — a live record somewhere in the wallet
-    ///   still spends it, so the claim is dropped and the outpoint marked;
+    /// * outpoint in `live_spenders` — a live record somewhere in the wallet
+    ///   still spends it, so that record becomes the claimant;
     /// * otherwise the claim is dropped, and the outpoint returned.
     ///
-    /// Never removes from `spent_outpoints`, so a mark this account derived
-    /// from its own records — above all one whose ChainLocked record is
-    /// pruned to its txid — keeps guarding a returned outpoint.
+    /// Never touches `spent_outpoints`, so a mark this account derived from
+    /// its own records — above all one whose ChainLocked record is pruned
+    /// to its txid — keeps guarding a returned outpoint.
     pub(crate) fn release_restored_claims(
         &mut self,
         removed: &BTreeSet<Txid>,
         winner_inputs: &BTreeSet<OutPoint>,
-        live_spent: &HashSet<OutPoint>,
+        live_spenders: &HashMap<OutPoint, Txid>,
     ) -> Vec<OutPoint> {
         let mut released = Vec::new();
-        let spent_outpoints = &mut self.spent_outpoints;
         self.restored_spent_claims.retain(|outpoint, claimant| {
             if !claimant.is_some_and(|txid| removed.contains(&txid)) {
                 return true;
             }
-            if winner_inputs.contains(outpoint) {
-                *claimant = None;
-                return true;
-            }
-            if live_spent.contains(outpoint) {
-                spent_outpoints.insert(*outpoint);
+            *claimant = if winner_inputs.contains(outpoint) {
+                None
+            } else if let Some(survivor) = live_spenders.get(outpoint) {
+                Some(*survivor)
             } else {
                 released.push(*outpoint);
-            }
-            false
+                return false;
+            };
+            true
         });
         released
     }
