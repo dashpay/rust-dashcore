@@ -4,7 +4,7 @@ version = { workspace = true }
 edition = "2024"
 authors = ["Dash Core Team"]
 description = "Hardcoded masternode IP seed lists for Dash mainnet and testnet, differentiated by regular/evo type. Refreshed weekly via CI from the live Dash P2P network."
-license = "MIT"
+license = "CC0-1.0"
 repository = "https://github.com/dashpay/rust-dashcore"
 
 [dependencies]

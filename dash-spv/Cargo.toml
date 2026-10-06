@@ -4,7 +4,7 @@ version = { workspace = true }
 edition = "2021"
 authors = ["Dash Core Team"]
 description = "Dash SPV (Simplified Payment Verification) client library"
-license = "MIT"
+license = "CC0-1.0"
 repository = "https://github.com/dashpay/rust-dashcore"
 rust-version = "1.89"
 
