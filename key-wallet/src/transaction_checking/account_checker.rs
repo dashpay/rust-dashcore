@@ -11,6 +11,7 @@ use crate::managed_account::address_pool::{AddressInfo, AddressPoolType, PublicK
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::transaction_record::TransactionRecord;
+use crate::wallet::managed_wallet_info::SpentOutpointChanges;
 use crate::Address;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
@@ -101,6 +102,10 @@ pub struct TransactionCheckResult {
     /// [`ManagedCoreFundsAccount::drop_conflicted_transactions`]:
     ///     crate::managed_account::ManagedCoreFundsAccount
     pub released_outpoints: Vec<OutPoint>,
+    /// Every spent-outpoint claim this check changed: the sweep's releases
+    /// and transfers, then the claims recording the transaction made — on
+    /// its inputs, and on any output a block had already spent.
+    pub spent_outpoint_changes: SpentOutpointChanges,
 }
 
 /// Enum representing the type of Core account that matched with embedded data
@@ -432,6 +437,7 @@ impl ManagedAccountCollection {
             updated_records: Vec::new(),
             swept_transactions: Vec::new(),
             released_outpoints: Vec::new(),
+            spent_outpoint_changes: SpentOutpointChanges::default(),
         };
 
         for account_type in account_types {

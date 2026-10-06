@@ -7,7 +7,7 @@ pub mod asset_lock_builder;
 pub mod coin_selection;
 pub mod fee;
 pub mod helpers;
-pub use helpers::AbandonOutcome;
+pub use helpers::{AbandonOutcome, SpentOutpointChanges};
 pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;
@@ -330,20 +330,47 @@ impl ManagedWalletInfo {
         &self.observed_spent_outpoints
     }
 
-    /// Restore externally persisted spent-output claims after replay.
+    /// Restore externally persisted spent-outpoint claims.
     ///
-    /// Call after restoring all funding accounts and replaying history/finality,
-    /// using the persistence layer's final spent set, including unknown-owner
-    /// outpoints. Existing UTXOs must already exclude these spent outputs.
-    /// This additive, idempotent operation creates no history or observation
-    /// heights and changes no UTXOs or balances. Guards survive ChainLock pruning.
-    /// Reapply after each load or addition of funding accounts: these claims
-    /// are not included in wallet snapshots. A known spender permits release
-    /// only when that transaction is removed; `None` remains guarded.
+    /// Takes the rows a persistence mirror keeps by applying every
+    /// [`SpentOutpointChanges`] this wallet reported, and upserts each claim
+    /// into every funds-bearing account: idempotent, last call wins. It
+    /// creates no history or observation heights and changes no UTXOs or
+    /// balances.
+    ///
+    /// Preconditions, however the host loads a wallet:
+    /// - The funds-bearing accounts exist: one added later holds no claims
+    ///   until this is called again. Claims are not part of a wallet snapshot
+    ///   either, so call it after every load.
+    /// - No claimed outpoint is among the UTXOs handed to the wallet, and no
+    ///   transaction creating one has been delivered yet: a claim stops a
+    ///   later credit, it does not remove a coin already held.
+    ///
+    /// A claim naming a transaction is released when that transaction is
+    /// abandoned or loses a conflict, whether or not the wallet holds a
+    /// record of it. A claim with `None` is never released.
     pub fn restore_spent_outpoints(&mut self, outpoints: &[(OutPoint, Option<Txid>)]) {
-        for account in self.accounts.all_funding_accounts_mut() {
-            account.restore_spent_outpoints(outpoints);
+        for mut account in self.accounts.all_accounts_mut() {
+            if let Some(funds) = account.as_funds_mut() {
+                funds.restore_spent_outpoints(outpoints);
+            }
         }
+    }
+
+    /// Every spent-outpoint claim the wallet holds, in the shape
+    /// [`Self::restore_spent_outpoints`] takes.
+    ///
+    /// Equal to the rows a mirror keeps by applying every
+    /// [`SpentOutpointChanges`]. Where accounts name different spenders for
+    /// one outpoint, the first account's stands.
+    pub fn spent_outpoint_claims(&self) -> BTreeMap<OutPoint, Option<Txid>> {
+        let mut claims = BTreeMap::new();
+        for account in self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()) {
+            for (outpoint, claimant) in account.spent_claims() {
+                claims.entry(outpoint).or_insert(claimant);
+            }
+        }
+        claims
     }
 
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]

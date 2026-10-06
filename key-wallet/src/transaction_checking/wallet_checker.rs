@@ -13,7 +13,7 @@ use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{Address, Amount, OutPoint, SignedAmount};
+use dashcore::{Address, Amount, OutPoint, SignedAmount, Txid};
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -48,7 +48,29 @@ pub trait WalletTransactionChecker {
     ) -> TransactionCheckResult;
 }
 
+/// The outpoints recording `tx` can put a spent claim on: every input, and
+/// every output, since one a block already spent is claimed at birth.
+fn recording_claim_candidates(tx: &Transaction) -> impl Iterator<Item = OutPoint> + '_ {
+    let txid = tx.txid();
+    let outputs = (0..tx.output.len() as u32).map(move |vout| OutPoint::new(txid, vout));
+    tx.input.iter().map(|input| input.previous_output).chain(outputs)
+}
+
 impl ManagedWalletInfo {
+    /// Report the spent claims that changed since `before` was read.
+    fn report_recorded_claims(
+        &self,
+        before: Vec<(OutPoint, Option<Option<Txid>>)>,
+        result: &mut TransactionCheckResult,
+    ) {
+        let after = self.spent_claims_on(before.iter().map(|(outpoint, _)| *outpoint));
+        for ((outpoint, before), (_, after)) in before.into_iter().zip(after) {
+            if let Some(claimant) = after.filter(|_| after != before) {
+                result.spent_outpoint_changes.claimed.push((outpoint, claimant));
+            }
+        }
+    }
+
     /// Correct late inputs in existing records; missing account slices use block replay.
     fn attribute_late_inputs(&mut self, tx: &Transaction, result: &mut TransactionCheckResult) {
         let txid = tx.txid();
@@ -222,6 +244,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
             result.swept_transactions = sweep.txids;
             result.released_outpoints = sweep.released_outpoints;
+            result.spent_outpoint_changes = sweep.spent_outpoint_changes;
         }
 
         if !update_state {
@@ -251,6 +274,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         let txid = tx.txid();
         let is_new = !self.accounts.all_accounts().into_iter().any(|a| a.has_transaction(&txid));
         result.is_new_transaction = is_new;
+        let claims_before = self.spent_claims_on(recording_claim_candidates(tx));
 
         if !is_new {
             // IS lock on a transaction that is already confirmed is stale — ignore
@@ -311,6 +335,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if update_balance {
                     self.update_balance();
                 }
+                self.report_recorded_claims(claims_before, &mut result);
                 result.state_modified = true;
                 return result;
             }
@@ -394,6 +419,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         }
 
         self.attribute_late_inputs(tx, &mut result);
+        self.report_recorded_claims(claims_before, &mut result);
 
         if is_new {
             // Populate dedup sets when a tx arrives with an initial IS status
@@ -3260,6 +3286,12 @@ mod tests {
             !result.released_outpoints.contains(&coin_b),
             "B is still claimed by the rival, whichever account noticed"
         );
+        assert_eq!(
+            result.spent_outpoint_changes.claimed,
+            vec![(coin_a, Some(winner.txid())), (coin_b, Some(rival.txid()))],
+            "the loser's claims pass to the winner and to the surviving rival"
+        );
+        assert!(result.spent_outpoint_changes.released.is_empty());
     }
 
     /// An InstantSend lock is final, so it settles the winner's inputs just as

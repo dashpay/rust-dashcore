@@ -11,7 +11,39 @@ use crate::managed_account::ManagedCoreKeysAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use dashcore::{OutPoint, Transaction, Txid};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+/// A change to the wallet's spent-outpoint claims — the outpoints it will
+/// never credit again — in the shape
+/// [`ManagedWalletInfo::restore_spent_outpoints`] takes back.
+///
+/// A persistence mirror applies every change the wallet reports, in order:
+/// upsert each `claimed` entry by outpoint and delete each `released` one
+/// (one value never names an outpoint in both). The rows that leaves are
+/// exactly [`ManagedWalletInfo::spent_outpoint_claims`], with no need to
+/// read a transaction's inputs.
+///
+/// One removal is not reported: an InstantSend lock arriving for a
+/// transaction the wallet already tracks sweeps its conflicts
+/// (`mark_instant_send_utxos`) without surfacing the result, so a mirror
+/// misses those releases and transfers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpentOutpointChanges {
+    /// Claims made, or handed to another transaction, each with the
+    /// transaction now held to spend the outpoint; `None` is an unknown
+    /// spender. An entry may restate a claim that did not change.
+    pub claimed: Vec<(OutPoint, Option<Txid>)>,
+    /// Claims dropped. This includes outputs of the removed transactions
+    /// themselves, which are not coins coming free.
+    pub released: Vec<OutPoint>,
+}
+
+impl SpentOutpointChanges {
+    /// Whether no claim changed.
+    pub fn is_empty(&self) -> bool {
+        self.claimed.is_empty() && self.released.is_empty()
+    }
+}
 
 /// What [`ManagedWalletInfo::abandon_transaction`] removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +55,9 @@ pub struct AbandonOutcome {
     /// How many transaction records were actually dropped. Distinct from
     /// `abandoned.len()`, which counts what was *asked* for.
     pub records_removed: usize,
+    /// Spent-outpoint claims the abandoned transactions held: released, or
+    /// handed to a surviving transaction that spends the same outpoint.
+    pub spent_outpoint_changes: SpentOutpointChanges,
 }
 
 impl AbandonOutcome {
@@ -30,9 +65,12 @@ impl AbandonOutcome {
     ///
     /// `abandoned` always contains the root, whether or not the wallet held
     /// anything for it, so it cannot answer this on its own — a root the
-    /// wallet never recorded removes nothing.
+    /// wallet never recorded removes nothing. A claim restored for a
+    /// transaction the wallet holds no record of still counts.
     pub fn is_empty(&self) -> bool {
-        self.records_removed == 0 && self.utxos_removed == 0
+        self.records_removed == 0
+            && self.utxos_removed == 0
+            && self.spent_outpoint_changes.is_empty()
     }
 }
 
@@ -74,6 +112,9 @@ pub struct WalletConflictSweep {
     /// deletes, so it only needs to know which of them came free, not which
     /// loser freed which.
     pub released_outpoints: Vec<OutPoint>,
+    /// Every spent-outpoint claim the sweep changed. `released_outpoints` is
+    /// the part of its `released` that names coins outliving the sweep.
+    pub spent_outpoint_changes: SpentOutpointChanges,
 }
 
 impl WalletConflictSweep {
@@ -87,53 +128,6 @@ impl WalletConflictSweep {
     /// still marked spent after a restart.
     pub fn is_empty(&self) -> bool {
         self.txids.is_empty() && self.released_outpoints.is_empty()
-    }
-
-    /// Drop outpoints some surviving record elsewhere in the wallet still
-    /// spends.
-    ///
-    /// Each account decides what it released from its own records alone
-    /// (`release_spent_marks` rebuilds the retained set from that account's
-    /// transactions), and a loser is removed from every account it was
-    /// recorded in. Pooled funding puts those accounts and the spender of a
-    /// given coin in different places: an account that removed a loser but
-    /// never recorded the transaction still claiming one of its inputs sees
-    /// nothing retaining that coin and reports it free. Unioning the
-    /// per-account answers then carries that mistake out of the wallet.
-    ///
-    /// Re-checking against every account's surviving records is the only
-    /// view that can settle it. Note this does not need to cover the winner
-    /// that triggered the sweep: `drop_conflicted_transactions` already
-    /// withholds the inputs it spends, which it must, since on the checker
-    /// path the sweep runs before the winner is recorded anywhere.
-    ///
-    /// The surviving inputs are collected once and probed by hash, rather
-    /// than rescanning the records per candidate. The released set is not
-    /// inherently small: a peer can hand the wallet a transaction whose
-    /// input vector is as large as it likes and whose output pays an address
-    /// the wallet owns, and a later final transaction need conflict with
-    /// only one of those inputs for the rest to become candidates. Scanning
-    /// per candidate is `O(released × retained history)` against a wallet
-    /// whose history the peer does not control either — tens of millions of
-    /// comparisons, run while the manager holds the winner mutably and
-    /// before the event can even reach persistence. Building the set is one
-    /// pass over that same history and is never the worse trade: a single
-    /// candidate already costs a full pass under the alternative.
-    fn retain_unclaimed(
-        &mut self,
-        accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
-    ) {
-        if self.released_outpoints.is_empty() {
-            return;
-        }
-        let claimed: HashSet<OutPoint> = accounts
-            .all_accounts()
-            .into_iter()
-            .flat_map(|account| account.transactions().values())
-            .flat_map(|record| record.transaction.input.iter())
-            .map(|input| input.previous_output)
-            .collect();
-        self.released_outpoints.retain(|outpoint| !claimed.contains(outpoint));
     }
 }
 
@@ -167,9 +161,7 @@ impl ManagedWalletInfo {
         let mut result = WalletConflictSweep::default();
         for account in self.accounts.all_accounts_mut() {
             if let ManagedAccountRefMut::Funds(funds) = account {
-                let swept = funds.drop_conflicted_transactions(tx, context);
-                result.txids.extend(swept.txids);
-                result.released_outpoints.extend(swept.released_outpoints);
+                result.txids.extend(funds.drop_conflicted_transactions(tx, context).txids);
             }
         }
         if !result.txids.is_empty() {
@@ -178,19 +170,84 @@ impl ManagedWalletInfo {
             // per-account results overlap.
             result.txids.sort_unstable();
             result.txids.dedup();
-            result.released_outpoints.sort_unstable();
-            result.released_outpoints.dedup();
-            result.retain_unclaimed(&self.accounts);
-            // Restored claims also live in accounts that never recorded the loser.
-            let mut released = result.released_outpoints.iter().copied().collect();
-            let removed = result.txids.iter().copied().collect();
-            for account in self.accounts.all_funding_accounts_mut() {
-                let account_released = account.release_spent_marks(&released, &removed);
-                released.retain(|outpoint| account_released.contains(outpoint));
-            }
-            result.released_outpoints.retain(|outpoint| released.contains(outpoint));
+            let losers: BTreeSet<Txid> = result.txids.iter().copied().collect();
+            let changes = self.release_spent_claims(&losers, Some(tx));
+            // Report only coins that outlive this sweep. The descendant
+            // closure removes transactions that spent a loser's *own* change,
+            // and those outpoints are outputs of deleted transactions:
+            // telling a mirror to mark one spendable re-credits money that
+            // does not exist.
+            result.released_outpoints = changes
+                .released
+                .iter()
+                .filter(|outpoint| !losers.contains(&outpoint.txid))
+                .copied()
+                .collect();
+            result.spent_outpoint_changes = changes;
         }
         result
+    }
+
+    /// Release, wallet-wide, every spent claim held by a transaction in
+    /// `removed` — call once their records are gone.
+    ///
+    /// A claim is handed on rather than dropped while something still
+    /// spends the outpoint: `winner`, the final transaction that beat the
+    /// removed ones, or a surviving record in any account. `winner` comes
+    /// first and must be named here, since on the checker path it is not
+    /// recorded yet and may never be: releasing its input would let a rescan
+    /// re-insert a coin that is spent on chain.
+    ///
+    /// One pass over the surviving records and one over each account's
+    /// claims, however many claims come free: a peer controls both the input
+    /// count of a transaction paying this wallet and how much of the other
+    /// it retains, so probing per candidate would be quadratic.
+    fn release_spent_claims(
+        &mut self,
+        removed: &BTreeSet<Txid>,
+        winner: Option<&Transaction>,
+    ) -> SpentOutpointChanges {
+        let mut survivors: HashMap<OutPoint, Txid> = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .flat_map(|account| account.transactions().values())
+            .flat_map(|record| {
+                record.transaction.input.iter().map(|input| (input.previous_output, record.txid))
+            })
+            .collect();
+        if let Some(tx) = winner {
+            let txid = tx.txid();
+            survivors.extend(tx.input.iter().map(|input| (input.previous_output, txid)));
+        }
+        let mut touched = BTreeSet::new();
+        for mut account in self.accounts.all_accounts_mut() {
+            if let Some(funds) = account.as_funds_mut() {
+                touched.extend(funds.release_spent_claims(removed, &survivors));
+            }
+        }
+        let mut changes = SpentOutpointChanges::default();
+        for (outpoint, claim) in self.spent_claims_on(touched) {
+            match claim {
+                Some(claimant) => changes.claimed.push((outpoint, claimant)),
+                None => changes.released.push(outpoint),
+            }
+        }
+        changes
+    }
+
+    /// The wallet-level spent claim on each of `outpoints`: `None` when no
+    /// account holds one, otherwise the first holding account's claimant.
+    pub(crate) fn spent_claims_on(
+        &self,
+        outpoints: impl IntoIterator<Item = OutPoint>,
+    ) -> Vec<(OutPoint, Option<Option<Txid>>)> {
+        let accounts: Vec<&ManagedCoreFundsAccount> =
+            self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()).collect();
+        outpoints
+            .into_iter()
+            .map(|outpoint| (outpoint, accounts.iter().find_map(|a| a.spent_claim(&outpoint))))
+            .collect()
     }
 
     /// Whether any account holds `txid` as settled by the network.
@@ -287,6 +344,7 @@ impl ManagedWalletInfo {
                 abandoned: BTreeSet::new(),
                 utxos_removed: 0,
                 records_removed: 0,
+                spent_outpoint_changes: SpentOutpointChanges::default(),
             };
         }
         let mut abandoned = BTreeSet::from([root]);
@@ -313,15 +371,6 @@ impl ManagedWalletInfo {
             }
         }
 
-        let mut freed: HashSet<OutPoint> = self
-            .accounts
-            .all_accounts()
-            .into_iter()
-            .flat_map(|account| account.transactions().iter())
-            .filter(|(txid, _)| abandoned.contains(*txid))
-            .flat_map(|(_, record)| record.transaction.input.iter())
-            .map(|input| input.previous_output)
-            .collect();
         let mut utxos_removed = 0;
         let mut records_removed = 0;
         for account in self.accounts.all_accounts_mut() {
@@ -347,22 +396,13 @@ impl ManagedWalletInfo {
             }
         }
 
-        // Keep inputs claimed by any surviving record before releasing mirrored guards.
-        for account in self.accounts.all_accounts() {
-            for record in account.transactions().values() {
-                for input in &record.transaction.input {
-                    freed.remove(&input.previous_output);
-                }
-            }
-        }
-        for account in self.accounts.all_funding_accounts_mut() {
-            account.release_spent_marks(&freed, &abandoned);
-        }
+        let spent_outpoint_changes = self.release_spent_claims(&abandoned, None);
 
         AbandonOutcome {
             abandoned,
             utxos_removed,
             records_removed,
+            spent_outpoint_changes,
         }
     }
     // BIP44 Account Helpers
@@ -674,7 +714,7 @@ impl ManagedWalletInfo {
 }
 
 #[cfg(test)]
-mod retain_unclaimed_tests {
+mod release_spent_claims_tests {
     use super::*;
     use crate::account::{AccountType, StandardAccountType};
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
@@ -752,23 +792,22 @@ mod retain_unclaimed_tests {
             let record = record_spending(seed, outpoint(seed));
             account.transactions_mut().insert(record.txid, record);
         }
-        let mut accounts =
-            crate::managed_account::managed_account_collection::ManagedAccountCollection::new();
-        accounts.standard_bip44_accounts.insert(0, account);
+        let mut info = ManagedWalletInfo::dummy(1);
+        info.accounts.standard_bip44_accounts.insert(0, account);
 
         // Candidates: the claimed half, plus an equal number nothing spends.
-        let mut sweep = WalletConflictSweep {
-            txids: vec![Txid::all_zeros()],
-            released_outpoints: (0..RELEASED * 2).map(outpoint).collect(),
-        };
-        sweep.retain_unclaimed(&accounts);
+        let removed = Txid::all_zeros();
+        let candidates: Vec<_> =
+            (0..RELEASED * 2).map(|seed| (outpoint(seed), Some(removed))).collect();
+        info.restore_spent_outpoints(&candidates);
+        let changes = info.release_spent_claims(&BTreeSet::from([removed]), None);
 
         assert_eq!(
-            sweep.released_outpoints.len(),
-            RELEASED as usize,
+            (changes.claimed.len(), changes.released.len()),
+            (HISTORY as usize, RELEASED as usize),
             "every claimed candidate is withheld and every unclaimed one survives"
         );
-        assert!(sweep.released_outpoints.iter().all(|o| {
+        assert!(changes.released.iter().all(|o| {
             u32::from_le_bytes(o.txid.as_byte_array()[..4].try_into().expect("4 bytes")) >= HISTORY
         }));
     }

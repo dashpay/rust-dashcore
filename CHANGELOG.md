@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Restore externally persisted spent-output claims with `ManagedWalletInfo::restore_spent_outpoints` in `key-wallet`.
+- Report every change to the spent-outpoint claims `restore_spent_outpoints` takes back as `SpentOutpointChanges`
+  (`claimed` to upsert, `released` to delete) on `TransactionCheckResult`, `WalletConflictSweep` and `AbandonOutcome`
+  in `key-wallet`, and read the whole set with `ManagedWalletInfo::spent_outpoint_claims`. A persistence adapter stores
+  those rows as reported, without reading transaction inputs. A sweep triggered by an InstantSend lock arriving for an
+  already tracked transaction is not reported, so an adapter can miss the claims it releases.
 
 ### Changed
 
@@ -17,6 +22,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   serialization traits as Platform. Existing bincode encodings and C interfaces
   are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
   The dependency switch does not automatically opt types into `DecodeUntrusted`.
+
+### Fixed
+
+- Abandoning a transaction in `key-wallet` releases the spent-outpoint claims restored for it even when the wallet holds
+  no record of that transaction, and a claim another transaction still makes passes to that transaction instead of
+  staying with the removed one.
 
 ## 0.44.0 - 2026-07-01
 

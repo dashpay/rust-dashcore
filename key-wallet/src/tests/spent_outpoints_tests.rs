@@ -2,8 +2,9 @@
 
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, TxIn, Txid};
+use dashcore::{BlockHash, TxIn, TxOut, Txid};
 
 use crate::account::{AccountType, StandardAccountType, TransactionRecord};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
@@ -14,64 +15,17 @@ use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext, TransactionType};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use crate::wallet::{ManagedWalletInfo, Wallet};
-use crate::Network;
+use crate::wallet::managed_wallet_info::SpentOutpointChanges;
+use std::collections::BTreeMap;
 
 fn restore_context() -> (TestWalletContext, dashcore::Address) {
-    let wallet = Wallet::from_seed_bytes(
-        [42; 64],
-        Network::Testnet,
+    let mut ctx = TestWalletContext::new_random_with_options(
         WalletAccountCreationOptions::BIP44AccountsOnly([0, 1].into_iter().collect()),
-    )
-    .unwrap();
-    let mut managed_wallet = ManagedWalletInfo::from_wallet(&wallet, 0);
-    let mut address = |index| {
-        let xpub = wallet.accounts.standard_bip44_accounts[&index].account_xpub;
-        managed_wallet
-            .accounts
-            .standard_bip44_accounts
-            .get_mut(&index)
-            .unwrap()
-            .next_receive_address(Some(&xpub), true)
-            .unwrap()
-    };
-    let receive_address = address(0);
-    let second_address = address(1);
-    let xpub = wallet.accounts.standard_bip44_accounts[&0].account_xpub;
-    (
-        TestWalletContext {
-            wallet,
-            managed_wallet,
-            receive_address,
-            xpub,
-        },
-        second_address,
-    )
-}
-
-#[tokio::test]
-async fn restored_spends_survive_finality_without_records() {
-    let (mut ctx, address) = restore_context();
-    let funding = Transaction::dummy(&address, 10..11, &[150_000, 90_000]);
-    let claims = [
-        (OutPoint::new(funding.txid(), 0), None),
-        (OutPoint::new(funding.txid(), 1), Some(Txid::from([0x99; 32]))),
-    ];
-    ctx.managed_wallet.restore_spent_outpoints(&claims);
-    ctx.managed_wallet.restore_spent_outpoints(&claims);
-    ctx.managed_wallet.restore_spent_outpoints(&[]);
-    assert!(ctx.managed_wallet.accounts.all_accounts().iter().all(|a| a.transactions().is_empty()));
-    assert!(ctx.managed_wallet.accounts.all_funding_accounts().iter().all(|a| a.utxos.is_empty()));
-    assert_eq!(ctx.managed_wallet.balance.total(), 0);
-    assert!(ctx.managed_wallet.observed_spent_outpoints().is_empty());
-    ctx.managed_wallet.update_synced_height(200);
-    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
-    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
-    assert!(
-        ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.is_empty(),
-        "restored claims must prevent credit without any spending transaction body"
     );
-    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+    let xpub = ctx.wallet.accounts.standard_bip44_accounts[&1].account_xpub;
+    let account = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&1).unwrap();
+    let address = account.next_receive_address(Some(&xpub), true).unwrap();
+    (ctx, address)
 }
 
 #[test_case::test_case(false; "conflict")]
@@ -91,34 +45,48 @@ async fn restored_spends_release_only_removed_claimants(abandon: bool) {
             1 => None,
             _ => Some(Txid::from([0x99; 32])),
         };
-        ctx.managed_wallet.restore_spent_outpoints(&[(spent, claimant), (unrelated, None)]);
+        let claims = [(spent, claimant), (unrelated, None)];
+        for claims in [&claims[..], &claims, &[]] {
+            ctx.managed_wallet.restore_spent_outpoints(claims);
+        }
+        assert!(ctx.bip44_account().transactions().is_empty());
+        assert_eq!(ctx.managed_wallet.balance.total(), 0);
+        assert!(ctx.managed_wallet.observed_spent_outpoints().is_empty());
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
         assert!(ctx.bip44_account().has_transaction(&loser.txid()));
         assert!(
             !ctx.managed_wallet.accounts.standard_bip44_accounts[&1].has_transaction(&loser.txid())
         );
+        let mut survivor = spending_tx(&[spent]);
+        survivor.output = loser.output.clone();
         if kind == 3 {
-            let mut survivor = spending_tx(&[spent]);
-            survivor.output = loser.output.clone();
             ctx.check_transaction(&survivor, TransactionContext::Mempool).await;
             assert!(ctx.bip44_account().has_transaction(&survivor.txid()));
         }
-        if abandon {
-            assert_eq!(ctx.managed_wallet.abandon_transaction(loser.txid()).records_removed, 1);
+        let changes = if abandon {
+            let outcome = ctx.managed_wallet.abandon_transaction(loser.txid());
+            assert_eq!(outcome.records_removed, 1);
+            assert!(outcome.spent_outpoint_changes.released.contains(&contested));
+            outcome.spent_outpoint_changes
         } else {
-            let result = ctx
-                .check_transaction(
-                    &spending_tx(&[contested]),
-                    TransactionContext::InBlock(BlockInfo::new(
-                        100,
-                        BlockHash::from([0x66; 32]),
-                        1_700_000_000,
-                    )),
-                )
-                .await;
+            let winner = spending_tx(&[contested]);
+            let result = ctx.check_transaction(&winner, in_block(100)).await;
             assert_eq!(result.swept_transactions, vec![loser.txid()]);
             assert_eq!(result.released_outpoints.contains(&spent), kind == 0);
-        }
+            assert!(
+                result.spent_outpoint_changes.claimed.contains(&(contested, Some(winner.txid()))),
+                "the winner takes over the claim on the input it beat the loser to"
+            );
+            result.spent_outpoint_changes
+        };
+        assert_eq!(changes.released.contains(&spent), kind == 0);
+        assert_eq!(
+            changes.claimed.contains(&(spent, Some(survivor.txid()))),
+            kind == 3,
+            "a surviving spender takes over the removed claimant's claim"
+        );
+        ctx.managed_wallet.update_synced_height(200);
+        ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
         ctx.check_transaction(&funding, TransactionContext::Mempool).await;
         let account = &ctx.managed_wallet.accounts.standard_bip44_accounts[&1];
         assert_eq!(
@@ -130,16 +98,179 @@ async fn restored_spends_release_only_removed_claimants(abandon: bool) {
     }
 }
 
-#[test]
-fn restored_spends_leave_snapshot_encoding_unchanged() {
-    let mut info = ManagedWalletInfo::dummy(1);
-    info.accounts.standard_bip44_accounts.insert(0, ManagedCoreFundsAccount::dummy_bip44());
-    let before = serde_json::to_string(&info).unwrap();
-    info.restore_spent_outpoints(&[(OutPoint::new(Txid::from([0x88; 32]), 0), None)]);
-    let after = serde_json::to_string(&info).unwrap();
-    assert_eq!(before, after);
-    let restored: ManagedWalletInfo = serde_json::from_str(&after).unwrap();
-    assert_eq!(serde_json::to_string(&restored).unwrap(), before);
+/// A claim restored for a transaction the wallet holds no record of — every
+/// claim after a load that restores no history — is released when that
+/// transaction is abandoned.
+#[tokio::test]
+async fn abandoning_a_recordless_restored_claimant_releases_its_claim() {
+    let (mut ctx, address) = restore_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000, 90_000]);
+    let spent = OutPoint::new(funding.txid(), 0);
+    let held = OutPoint::new(funding.txid(), 1);
+    let claimant = Txid::from([0x99; 32]);
+    ctx.managed_wallet.restore_spent_outpoints(&[(spent, Some(claimant)), (held, None)]);
+    let outcome = ctx.managed_wallet.abandon_transaction(claimant);
+    assert_eq!(outcome.spent_outpoint_changes.released, vec![spent]);
+    assert!(!outcome.is_empty());
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+    let account = &ctx.managed_wallet.accounts.standard_bip44_accounts[&1];
+    assert!(!account.utxos.contains_key(&held), "an unknown claimant stays guarded");
+    assert!(account.utxos.contains_key(&spent), "the abandoned claimant's coin must come free");
+}
+
+/// Apply `changes` the way a persistence mirror stores rows, and hold the
+/// result to the wallet's own claims.
+fn fold_claims(
+    rows: &mut BTreeMap<OutPoint, Option<Txid>>,
+    changes: &SpentOutpointChanges,
+    ctx: &TestWalletContext,
+) {
+    rows.extend(changes.claimed.iter().copied());
+    for outpoint in &changes.released {
+        rows.remove(outpoint);
+    }
+    assert_eq!(*rows, ctx.managed_wallet.spent_outpoint_claims());
+}
+
+fn in_block(height: u32) -> TransactionContext {
+    TransactionContext::InBlock(BlockInfo::new(height, BlockHash::from([0x66; 32]), 1_700_000_000))
+}
+
+/// An InstantSend lock that backfills a missing record reports the claims
+/// that recording makes.
+#[tokio::test]
+async fn instant_send_backfill_reports_its_claims() {
+    let (mut ctx, address) = restore_context();
+    let mut tx = Transaction::dummy(&ctx.receive_address, 20..21, &[100_000]);
+    tx.output.push(TxOut {
+        value: 50_000,
+        script_pubkey: address.script_pubkey(),
+    });
+    let held = OutPoint::new(tx.txid(), 1);
+    let mut rows = BTreeMap::new();
+    let result = ctx.check_transaction(&tx, TransactionContext::Mempool).await;
+    fold_claims(&mut rows, &result.spent_outpoint_changes, &ctx);
+    // Account 1 misses that delivery, and a block spends its output.
+    let account = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&1).unwrap();
+    account.transactions_mut().remove(&tx.txid());
+    account.utxos.clear();
+    for (tx, context) in [
+        (&spending_tx(&[held]), in_block(100)),
+        (&tx, TransactionContext::InstantSend(InstantLock::default())),
+    ] {
+        let result = ctx.check_transaction(tx, context).await;
+        fold_claims(&mut rows, &result.spent_outpoint_changes, &ctx);
+    }
+    assert_eq!(rows.get(&held), Some(&None));
+}
+
+/// A coin a chainlocked transaction spent stays claimed when a later spend
+/// of it is swept: the settled claimant is not the one being removed, even
+/// where its record was pruned to a txid.
+#[tokio::test]
+async fn sweeping_a_later_spend_keeps_the_settled_claim() {
+    let (mut ctx, address) = restore_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000, 90_000]);
+    let [settled_coin, contested] = [0, 1].map(|vout| OutPoint::new(funding.txid(), vout));
+    let paying_account_0 = |inputs: &[OutPoint], amount| {
+        let mut tx = spending_tx(inputs);
+        tx.output = Transaction::dummy(&ctx.receive_address, 30..31, &[amount]).output;
+        tx
+    };
+    let settled = paying_account_0(&[settled_coin], 140_000);
+    let late = paying_account_0(&[settled_coin, contested], 200_000);
+    let locked = TransactionContext::InChainLockedBlock(BlockInfo::new(
+        20,
+        BlockHash::from([0x66; 32]),
+        1_700_000_000,
+    ));
+    ctx.check_transaction(&funding, in_block(10)).await;
+    ctx.check_transaction(&settled, locked).await;
+    // Past finality the observed spend is forgotten, so the late spend is recorded in full.
+    ctx.managed_wallet.update_synced_height(200);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    ctx.check_transaction(&late, TransactionContext::Mempool).await;
+    let result = ctx.check_transaction(&spending_tx(&[contested]), in_block(300)).await;
+    assert_eq!(result.swept_transactions, vec![late.txid()]);
+    assert!(result.released_outpoints.is_empty());
+    let claims = ctx.managed_wallet.spent_outpoint_claims();
+    assert_eq!(claims.get(&settled_coin), Some(&Some(settled.txid())));
+}
+
+/// Folding every reported change gives exactly the wallet's claims, and a
+/// fresh wallet restored from those rows credits what the original does.
+#[tokio::test]
+async fn reported_claim_changes_round_trip_through_restore() {
+    let (mut ctx, address) = restore_context();
+    let pristine = ctx.managed_wallet.clone();
+    let paying_account_0 = |inputs: &[OutPoint], amount| {
+        let mut tx = spending_tx(inputs);
+        tx.output = Transaction::dummy(&ctx.receive_address, 30..31, &[amount]).output;
+        tx
+    };
+    let funding = Transaction::dummy(&address, 20..21, &[150_000, 90_000, 60_000]);
+    let [abandoned_coin, shared_coin] = [0, 1].map(|vout| OutPoint::new(funding.txid(), vout));
+    let contested = OutPoint::new(Txid::from([0x55; 32]), 0);
+    let abandoned = paying_account_0(&[abandoned_coin], 140_000);
+    let loser = paying_account_0(&[contested, shared_coin], 80_000);
+    let survivor = paying_account_0(&[shared_coin], 70_000);
+    let winner = spending_tx(&[contested]);
+    // Its only output is spent by a block seen before it arrives.
+    let late_funding = Transaction::dummy(&address, 40..41, &[50_000]);
+    let born_spent = OutPoint::new(late_funding.txid(), 0);
+    let early_spend = spending_tx(&[born_spent]);
+
+    let mut rows = BTreeMap::new();
+    for (tx, context) in [
+        (&funding, in_block(10)),
+        (&abandoned, TransactionContext::Mempool),
+        (&loser, TransactionContext::Mempool),
+        (&survivor, TransactionContext::Mempool),
+        (&winner, in_block(100)),
+        (&early_spend, in_block(50)),
+        (&late_funding, in_block(40)),
+        (&early_spend, in_block(50)),
+    ] {
+        let result = ctx.check_transaction(tx, context).await;
+        fold_claims(&mut rows, &result.spent_outpoint_changes, &ctx);
+    }
+    let outcome = ctx.managed_wallet.abandon_transaction(abandoned.txid());
+    fold_claims(&mut rows, &outcome.spent_outpoint_changes, &ctx);
+    assert_eq!(rows.get(&shared_coin), Some(&Some(survivor.txid())));
+    assert_eq!(rows.get(&contested), Some(&Some(winner.txid())));
+    assert_eq!(rows.get(&born_spent), Some(&None), "a block spent it; the spender stays unknown");
+    assert!(!rows.contains_key(&abandoned_coin));
+
+    let redelivered =
+        [(&funding, in_block(10)), (&late_funding, in_block(40)), (&survivor, in_block(110))];
+    let mut wallets = Vec::new();
+    for restored in [false, true] {
+        if restored {
+            ctx.managed_wallet = pristine.clone();
+            let claims: Vec<_> = rows.clone().into_iter().collect();
+            ctx.managed_wallet.restore_spent_outpoints(&claims);
+            assert_eq!(rows, ctx.managed_wallet.spent_outpoint_claims());
+        }
+        for (tx, context) in redelivered.clone() {
+            ctx.check_transaction(tx, context).await;
+        }
+        let utxos: Vec<Vec<OutPoint>> = [0, 1]
+            .map(|index| {
+                ctx.managed_wallet.accounts.standard_bip44_accounts[&index]
+                    .utxos
+                    .keys()
+                    .copied()
+                    .collect()
+            })
+            .into();
+        wallets.push((
+            utxos,
+            ctx.managed_wallet.balance,
+            ctx.managed_wallet.spent_outpoint_claims(),
+        ));
+    }
+    assert!(wallets[0].0[1].contains(&abandoned_coin), "the released coin is credited again");
+    assert_eq!(wallets[0], wallets[1], "the restored wallet must match the uninterrupted one");
 }
 
 /// Create a transaction that spends the given outpoints.
@@ -188,7 +319,7 @@ fn record_from_tx(tx: &Transaction) -> TransactionRecord {
 
 #[test]
 fn fresh_account_has_empty_spent_outpoints() {
-    let account = ManagedCoreFundsAccount::dummy_bip44();
+    let mut account = ManagedCoreFundsAccount::dummy_bip44();
     assert!(account.transactions().is_empty());
 
     let probe = OutPoint::new(Txid::from([0xAA; 32]), 0);
@@ -200,7 +331,9 @@ fn fresh_account_has_empty_spent_outpoints() {
     assert!(deserialized.transactions().is_empty());
     // Confirm the serialized form does not contain spent_outpoints.
     assert!(!json.contains("spent_outpoints"));
-    let _ = probe; // used only for clarity of intent
+    // Restored claims are reapplied on load, never serialized.
+    account.restore_spent_outpoints(&[(probe, None)]);
+    assert_eq!(serde_json::to_string(&account).unwrap(), json);
 }
 
 #[test]
