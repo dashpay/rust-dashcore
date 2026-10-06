@@ -78,6 +78,12 @@ impl ManagedWalletInfo {
             record.update_context(context.clone());
             let updated = record.clone();
 
+            if context.is_chain_locked() {
+                if let crate::managed_account::ManagedAccountRefMut::Funds(funds) = &mut account {
+                    funds.settle_spend(txid);
+                }
+            }
+
             // Match the existing finalized-record retention policy after the
             // event payload has captured the promoted context.
             #[cfg(not(feature = "keep-finalized-transactions"))]

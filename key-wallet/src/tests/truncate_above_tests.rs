@@ -108,3 +108,23 @@ async fn truncate_above_never_drops_a_chain_locked_block(height: u32, truncates:
         assert_eq!(ctx.managed_wallet.synced_height(), 101);
     }
 }
+
+/// A spend that reaches a chainlocked block after the mempool is final, so
+/// nothing is kept to give its coins back.
+#[tokio::test]
+async fn a_mempool_spend_mined_in_a_chain_locked_block_is_settled() {
+    let mut ctx = TestWalletContext::new_random();
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[FUNDING_VALUE]);
+    let spend = spend_to_external(&funding);
+    assert!(
+        ctx.check_transaction(&funding, TransactionContext::InBlock(in_block(100)))
+            .await
+            .is_relevant
+    );
+    assert!(ctx.check_transaction(&spend, TransactionContext::Mempool).await.is_relevant);
+    assert!(ctx.bip44_account().unsettled_spends().contains_key(&spend.txid()));
+
+    ctx.check_transaction(&spend, TransactionContext::InChainLockedBlock(in_block(101))).await;
+
+    assert!(ctx.bip44_account().unsettled_spends().is_empty());
+}

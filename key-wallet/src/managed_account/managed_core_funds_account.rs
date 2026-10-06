@@ -1020,6 +1020,17 @@ impl ManagedCoreFundsAccount {
         self.utxos.values().filter(|utxo| utxo.is_spendable(last_processed_height)).collect()
     }
 
+    /// Forget the UTXOs `txid` spent: a chainlocked spend is final, so no fork
+    /// gives them back.
+    pub(crate) fn settle_spend(&mut self, txid: &Txid) {
+        self.unsettled_spends.remove(txid);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unsettled_spends(&self) -> &BTreeMap<Txid, Vec<Utxo>> {
+        &self.unsettled_spends
+    }
+
     /// Promote any `InBlock` records at height `<= cl_height` to
     /// [`TransactionContext::InChainLockedBlock`] and return the
     /// promoted txids.
