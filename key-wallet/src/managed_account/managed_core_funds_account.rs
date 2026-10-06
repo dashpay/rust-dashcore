@@ -200,6 +200,19 @@ impl ManagedCoreFundsAccount {
         self.spent_outpoints.contains(outpoint)
     }
 
+    /// The recorded transaction spending `outpoint`, unless a ChainLock made it
+    /// final and no fork can drop it.
+    fn unsettled_spender_of(&self, outpoint: &OutPoint) -> Option<Txid> {
+        self.keys
+            .transactions()
+            .values()
+            .find(|record| {
+                record.transaction.input.iter().any(|input| input.previous_output == *outpoint)
+            })
+            .filter(|record| !record.context.is_chain_locked())
+            .map(|record| record.txid)
+    }
+
     /// Collect the outpoints among `tx`'s inputs that this account holds as a
     /// final UTXO — confirmed, InstantSend-locked, or trusted.
     ///
@@ -335,6 +348,19 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
                                 );
+                                // Held under its spend, so a fork dropping the spend
+                                // gives it back.
+                                if let Some(spender) = self.unsettled_spender_of(&outpoint) {
+                                    self.unsettled_spends.entry(spender).or_default().push(
+                                        Utxo::new(
+                                            outpoint,
+                                            output.clone(),
+                                            addr.clone(),
+                                            context.block_info().map_or(0, |i| i.height),
+                                            tx.is_coin_base(),
+                                        ),
+                                    );
+                                }
                                 continue;
                             }
 
@@ -406,7 +432,11 @@ impl ManagedCoreFundsAccount {
                 self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
                 for input in &tx.input {
                     self.spent_outpoints.insert(input.previous_output);
-                    self.spent_before_funded.remove(&input.previous_output);
+                    // An output held as spent before it was funded is spent here
+                    // too, so a fork dropping this spend gives it back as well.
+                    if let Some(held) = self.spent_before_funded.remove(&input.previous_output) {
+                        self.unsettled_spends.entry(txid).or_default().push(held);
+                    }
 
                     if let Some(spent) = self.utxos.remove(&input.previous_output) {
                         tracing::debug!(
