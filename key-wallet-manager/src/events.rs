@@ -300,11 +300,12 @@ pub enum WalletEvent {
     },
     /// A fork replaced the chain above `height`, and the wallet dropped what it
     /// recorded from the blocks above it, as if they were never processed. The
-    /// new branch is then processed from `height`.
+    /// new branch is then processed from `height`. Only a wallet that processed
+    /// a block above `height` gets it.
     ///
     /// A consumer mirroring wallet state to disk must delete the removed
     /// transactions with any UTXO they created, mark the restored coins unspent,
-    /// and lower its synced height to `height`.
+    /// and lower its synced height to `height` when it is above it.
     ChainTruncated {
         /// ID of the affected wallet.
         wallet_id: WalletId,

@@ -397,6 +397,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         let mut events = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
+            // A wallet that processed no block above `height` has nothing to drop.
+            if info.last_processed_height() <= height {
+                continue;
+            }
             let prior = info.account_balances();
             let truncation = info.truncate_above(height)?;
             events.push(WalletEvent::ChainTruncated {

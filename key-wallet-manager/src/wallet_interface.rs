@@ -168,7 +168,8 @@ pub trait WalletInterface: Send + Sync + 'static {
 
     /// Drop what every wallet recorded from blocks above `height`, including
     /// their sync heights, so blocks above it are processed again, and emit a
-    /// [`WalletEvent::ChainTruncated`] per wallet. Called when a fork replaces
+    /// [`WalletEvent::ChainTruncated`] per wallet that processed a block above
+    /// it. A wallet that did not is left as it is. Called when a fork replaces
     /// the chain above `height`.
     ///
     /// Fails with [`WalletError::TruncateBelowChainLock`] and changes no wallet

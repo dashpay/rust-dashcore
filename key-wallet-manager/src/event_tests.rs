@@ -1283,8 +1283,27 @@ async fn test_truncate_above_emits_chain_truncated_per_wallet() {
 }
 
 #[tokio::test]
+async fn test_truncate_above_leaves_a_wallet_behind_the_fork_as_it_is() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let wallets = BTreeSet::from([wallet_id]);
+    let funding = create_tx_paying_to(&addr, 0xcc);
+    let block = make_block(vec![funding], 0xcc, 1000);
+    manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
+    manager.update_wallet_synced_height(&wallet_id, 100);
+    let mut rx = manager.subscribe_events();
+
+    manager.truncate_above(150).expect("truncates");
+
+    assert!(drain_events(&mut rx).is_empty(), "no ChainTruncated for a wallet behind the fork");
+    let info = manager.get_wallet_info(&wallet_id).unwrap();
+    assert_eq!(info.synced_height(), 100);
+    assert_eq!(info.balance().total(), TX_AMOUNT);
+}
+
+#[tokio::test]
 async fn test_truncate_above_below_a_chain_lock_changes_no_wallet() {
     let (mut manager, locked_id, _addr) = setup_manager_with_wallet();
+    manager.update_wallet_last_processed_height(&locked_id, 200);
     manager.update_wallet_synced_height(&locked_id, 200);
     manager.apply_chain_lock(ChainLock::dummy(100));
     // Created after the ChainLock, so only `locked_id` refuses.
@@ -1295,6 +1314,7 @@ async fn test_truncate_above_below_a_chain_lock_changes_no_wallet() {
             key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
+    manager.update_wallet_last_processed_height(&other_id, 200);
     manager.update_wallet_synced_height(&other_id, 200);
     let mut rx = manager.subscribe_events();
 

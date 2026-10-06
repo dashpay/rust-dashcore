@@ -829,12 +829,12 @@ pub type OnTransactionsSweptCallback = Option<
 
 /// Callback for `WalletEvent::ChainTruncated`.
 ///
-/// Fires once per wallet when a fork replaced the chain above `height` and the
-/// wallet dropped what it recorded from the blocks above it. A consumer
-/// mirroring wallet state to disk must delete the `txids_count` transactions
-/// at `txids` with any UTXO they created, mark the `restored_outpoints_count`
-/// coins at `restored_outpoints` unspent, and lower its synced height to
-/// `height`. `txids` and `restored_outpoints` are null when their count is 0.
+/// Fires once per wallet that processed a block above `height` when a fork
+/// replaced the chain above it, and the wallet dropped what it recorded from
+/// those blocks. A consumer mirroring wallet state to disk must delete the
+/// `txids_count` transactions at `txids` with any UTXO they created, mark the
+/// `restored_outpoints_count` coins at `restored_outpoints` unspent, and lower
+/// its synced height to `height` when it is above it. `txids` and `restored_outpoints` are null when their count is 0.
 ///
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the truncation;
