@@ -15,10 +15,7 @@ use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
-use crate::sync::{ChainLockProgress, SyncEvent};
-
-/// Metadata key for persisting the best validated ChainLock.
-const BEST_CHAINLOCK_KEY: &str = "best_chainlock";
+use crate::sync::{ChainLockProgress, SyncEvent, BEST_CHAINLOCK_METADATA_STORAGE_KEY};
 
 /// ChainLock manager for the parallel sync coordinator.
 ///
@@ -226,7 +223,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         match serde_json::to_vec(chainlock) {
             Ok(bytes) => {
                 let mut storage = self.metadata_storage.write().await;
-                if let Err(e) = storage.store_metadata(BEST_CHAINLOCK_KEY, &bytes).await {
+                if let Err(e) =
+                    storage.store_metadata(BEST_CHAINLOCK_METADATA_STORAGE_KEY, &bytes).await
+                {
                     tracing::warn!("Failed to persist best chainlock: {}", e);
                 }
             }
@@ -239,18 +238,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     /// Load the best chainlock from metadata storage and restore progress.
     pub(super) async fn load_best_chainlock(&mut self) {
         let storage = self.metadata_storage.read().await;
-        match storage.load_metadata(BEST_CHAINLOCK_KEY).await {
-            Ok(Some(bytes)) => match serde_json::from_slice::<ChainLock>(&bytes) {
-                Ok(chainlock) => {
-                    let height = chainlock.block_height;
-                    tracing::info!("Restored persisted ChainLock at height {}", height);
-                    self.progress.update_best_validated_height(height);
-                    self.best_chainlock = Some(chainlock);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to deserialize persisted chainlock: {}", e);
-                }
-            },
+        match storage.load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY).await {
+            Ok(Some(chainlock)) => {
+                let height = chainlock.block_height;
+                tracing::info!("Restored persisted ChainLock at height {}", height);
+                self.progress.update_best_validated_height(height);
+                self.best_chainlock = Some(chainlock);
+            }
             Ok(None) => {
                 tracing::debug!("No persisted chainlock found (fresh start)");
             }
@@ -679,7 +673,7 @@ mod tests {
             let bytes = serde_json::to_vec(&chainlock).unwrap();
             let meta_storage = storage.metadata();
             let mut meta = meta_storage.write().await;
-            meta.store_metadata(BEST_CHAINLOCK_KEY, &bytes).await.unwrap();
+            meta.store_metadata(BEST_CHAINLOCK_METADATA_STORAGE_KEY, &bytes).await.unwrap();
         }
 
         // Create a new manager and call initialize (the SyncManager trait method)
@@ -706,7 +700,8 @@ mod tests {
         {
             let meta_storage = storage.metadata();
             let meta = meta_storage.read().await;
-            let loaded = meta.load_metadata(BEST_CHAINLOCK_KEY).await.unwrap();
+            let loaded =
+                meta.load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY).await.unwrap();
             assert!(loaded.is_none());
         }
     }

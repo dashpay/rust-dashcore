@@ -25,6 +25,7 @@ use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Network;
+use serde::de::DeserializeOwned;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -450,7 +451,10 @@ impl metadata::MetadataStorage for DiskStorageManager {
         self.metadata.write().await.store_metadata(key, value).await
     }
 
-    async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
+    async fn load_metadata<T: DeserializeOwned + Send>(
+        &self,
+        key: &str,
+    ) -> StorageResult<Option<T>> {
         self.metadata.read().await.load_metadata(key).await
     }
 
