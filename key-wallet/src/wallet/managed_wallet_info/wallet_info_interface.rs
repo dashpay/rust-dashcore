@@ -50,7 +50,11 @@ pub struct ApplyChainLockOutcome {
 pub struct Truncation {
     /// Transactions removed: they were recorded in blocks above the height.
     pub txids: Vec<Txid>,
-    /// Coins those transactions spent, unspent again.
+    /// InstantSend-locked transactions recorded in blocks above the height,
+    /// kept as unconfirmed: the network mines them again, so the coins they
+    /// spent stay spent.
+    pub unconfirmed_txids: Vec<Txid>,
+    /// Coins the removed transactions spent, unspent again.
     pub restored_outpoints: Vec<OutPoint>,
 }
 
@@ -583,21 +587,29 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.observed_spent_outpoints.retain(|outpoint, _| !dropped_spends.contains(outpoint));
 
         let mut txids = BTreeSet::new();
+        let mut unconfirmed_txids = BTreeSet::new();
         let mut restored_outpoints = Vec::new();
         for account in self.accounts.all_accounts_mut() {
             match account {
                 ManagedAccountRefMut::Funds(funds) => {
-                    let truncation = funds.truncate_above(height, &dropped_spends);
+                    let truncation =
+                        funds.truncate_above(height, &dropped_spends, &self.instant_send_locks);
                     txids.extend(truncation.txids);
+                    unconfirmed_txids.extend(truncation.unconfirmed_txids);
                     restored_outpoints.extend(truncation.restored_outpoints);
                 }
                 ManagedAccountRefMut::Keys(keys) => {
                     keys.transactions_mut().retain(|txid, record| {
-                        let dropped = record.height().is_some_and(|block| block > height);
-                        if dropped {
-                            txids.insert(*txid);
+                        if record.height().is_none_or(|block| block <= height) {
+                            return true;
                         }
-                        !dropped
+                        if self.instant_send_locks.contains(txid) {
+                            record.update_context(TransactionContext::Mempool);
+                            unconfirmed_txids.insert(*txid);
+                            return true;
+                        }
+                        txids.insert(*txid);
+                        false
                     });
                 }
             }
@@ -610,6 +622,7 @@ impl WalletInfoInterface for ManagedWalletInfo {
         restored_outpoints.sort_unstable();
         Ok(Truncation {
             txids: txids.into_iter().collect(),
+            unconfirmed_txids: unconfirmed_txids.into_iter().collect(),
             restored_outpoints,
         })
     }

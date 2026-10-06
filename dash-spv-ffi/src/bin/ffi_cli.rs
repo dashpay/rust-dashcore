@@ -271,6 +271,8 @@ extern "C" fn on_chain_truncated(
     height: u32,
     _txids: *const [u8; 32],
     txids_count: usize,
+    _unconfirmed_txids: *const [u8; 32],
+    unconfirmed_txids_count: usize,
     _restored_outpoints: *const dash_spv_ffi::FFIOutPoint,
     restored_outpoints_count: usize,
     balance: *const FFIBalance,
@@ -280,10 +282,11 @@ extern "C" fn on_chain_truncated(
 ) {
     let b = read_balance(balance);
     println!(
-        "[Wallet] Chain truncated: wallet={}..., height={}, removed={}, restored={}, balance[confirmed={}, unconfirmed={}]",
+        "[Wallet] Chain truncated: wallet={}..., height={}, removed={}, unconfirmed={}, restored={}, balance[confirmed={}, unconfirmed={}]",
         short_wallet(wallet_id),
         height,
         txids_count,
+        unconfirmed_txids_count,
         restored_outpoints_count,
         b.confirmed,
         b.unconfirmed,

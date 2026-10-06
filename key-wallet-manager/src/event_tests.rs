@@ -1267,6 +1267,7 @@ async fn test_truncate_above_emits_chain_truncated_per_wallet() {
             wallet_id: wid,
             height,
             txids,
+            unconfirmed_txids,
             restored_outpoints,
             balance,
             account_balances,
@@ -1274,6 +1275,7 @@ async fn test_truncate_above_emits_chain_truncated_per_wallet() {
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 100);
             assert_eq!(txids, &vec![spend.txid()]);
+            assert!(unconfirmed_txids.is_empty());
             assert_eq!(restored_outpoints, &vec![OutPoint::new(funding.txid(), 0)]);
             assert_eq!(balance.total(), TX_AMOUNT);
             assert_eq!(account_balances.values().map(|b| b.total()).sum::<u64>(), TX_AMOUNT);

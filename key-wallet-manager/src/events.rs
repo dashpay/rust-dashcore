@@ -304,8 +304,9 @@ pub enum WalletEvent {
     /// a block above `height` gets it.
     ///
     /// A consumer mirroring wallet state to disk must delete the removed
-    /// transactions with any UTXO they created, mark the restored coins unspent,
-    /// and lower its synced height to `height` when it is above it.
+    /// transactions with any UTXO they created, move the unconfirmed ones back
+    /// to the mempool with their UTXOs, mark the restored coins unspent, and
+    /// lower its synced height to `height` when it is above it.
     ChainTruncated {
         /// ID of the affected wallet.
         wallet_id: WalletId,
@@ -313,6 +314,10 @@ pub enum WalletEvent {
         height: CoreBlockHeight,
         /// Transactions removed: they were recorded in blocks above `height`.
         txids: Vec<Txid>,
+        /// InstantSend-locked transactions recorded in blocks above `height`,
+        /// kept as unconfirmed: the network mines them again, so the coins they
+        /// spent stay spent and their outputs stay InstantSend-locked.
+        unconfirmed_txids: Vec<Txid>,
         /// Coins the removed transactions spent, unspent again.
         restored_outpoints: Vec<OutPoint>,
         /// Wallet balance after the truncation.
@@ -511,15 +516,17 @@ impl fmt::Display for WalletEvent {
             WalletEvent::ChainTruncated {
                 height,
                 txids,
+                unconfirmed_txids,
                 restored_outpoints,
                 balance,
                 account_balances,
                 ..
             } => write!(
                 f,
-                "ChainTruncated(height={}, removed={}, restored={}, balance={}, account_balances={})",
+                "ChainTruncated(height={}, removed={}, unconfirmed={}, restored={}, balance={}, account_balances={})",
                 height,
                 txids.len(),
+                unconfirmed_txids.len(),
                 restored_outpoints.len(),
                 balance,
                 format_account_balances(account_balances),

@@ -525,18 +525,32 @@ impl ManagedCoreFundsAccount {
     /// transactions the fork keeps, along with the ones held in
     /// `spent_before_funded` for a spend in `dropped_spends`, the spends observed
     /// above `height`.
+    ///
+    /// A transaction in `instant_locked` is final for its txid and is mined
+    /// again, so it is kept as unconfirmed instead: its outputs stay, and the
+    /// coins it spent stay spent.
     pub(crate) fn truncate_above(
         &mut self,
         height: CoreBlockHeight,
         dropped_spends: &BTreeSet<OutPoint>,
+        instant_locked: &HashSet<Txid>,
     ) -> Truncation {
-        let dropped: BTreeSet<Txid> = self
+        let (unconfirmed, dropped): (BTreeSet<Txid>, BTreeSet<Txid>) = self
             .keys
             .transactions()
             .values()
             .filter(|record| record.height().is_some_and(|block| block > height))
             .map(|record| record.txid)
-            .collect();
+            .partition(|txid| instant_locked.contains(txid));
+        for txid in &unconfirmed {
+            if let Some(record) = self.keys.transactions_mut().get_mut(txid) {
+                record.update_context(TransactionContext::Mempool);
+            }
+        }
+        for utxo in self.utxos.values_mut().filter(|utxo| unconfirmed.contains(&utxo.outpoint.txid))
+        {
+            utxo.mark_unconfirmed_instant_locked();
+        }
         let mut spent: Vec<Utxo> = dropped
             .iter()
             .filter_map(|txid| self.unsettled_spends.remove(txid))
@@ -553,12 +567,16 @@ impl ManagedCoreFundsAccount {
             if dropped.contains(&outpoint.txid) || self.spent_outpoints.contains(&outpoint) {
                 continue;
             }
-            // Spent in a block, so funded in one the fork keeps.
-            utxo.is_confirmed = true;
-            if let Some(height) =
-                self.keys.transactions().get(&outpoint.txid).and_then(|parent| parent.height())
-            {
-                utxo.height = height;
+            if unconfirmed.contains(&outpoint.txid) {
+                utxo.mark_unconfirmed_instant_locked();
+            } else {
+                // Spent in a block, so funded in one the fork keeps.
+                utxo.is_confirmed = true;
+                if let Some(height) =
+                    self.keys.transactions().get(&outpoint.txid).and_then(|parent| parent.height())
+                {
+                    utxo.height = height;
+                }
             }
             self.utxos.insert(outpoint, utxo);
             restored.push(outpoint);
@@ -568,6 +586,7 @@ impl ManagedCoreFundsAccount {
         }
         Truncation {
             txids: dropped.into_iter().collect(),
+            unconfirmed_txids: unconfirmed.into_iter().collect(),
             restored_outpoints: restored,
         }
     }

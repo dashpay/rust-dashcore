@@ -832,9 +832,12 @@ pub type OnTransactionsSweptCallback = Option<
 /// Fires once per wallet that processed a block above `height` when a fork
 /// replaced the chain above it, and the wallet dropped what it recorded from
 /// those blocks. A consumer mirroring wallet state to disk must delete the
-/// `txids_count` transactions at `txids` with any UTXO they created, mark the
+/// `txids_count` transactions at `txids` with any UTXO they created, move the
+/// `unconfirmed_txids_count` InstantSend-locked transactions at
+/// `unconfirmed_txids` back to the mempool with their UTXOs, mark the
 /// `restored_outpoints_count` coins at `restored_outpoints` unspent, and lower
-/// its synced height to `height` when it is above it. `txids` and `restored_outpoints` are null when their count is 0.
+/// its synced height to `height` when it is above it. `txids`,
+/// `unconfirmed_txids` and `restored_outpoints` are null when their count is 0.
 ///
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the truncation;
@@ -846,6 +849,8 @@ pub type OnChainTruncatedCallback = Option<
         height: u32,
         txids: *const [u8; 32],
         txids_count: usize,
+        unconfirmed_txids: *const [u8; 32],
+        unconfirmed_txids_count: usize,
         restored_outpoints: *const FFIOutPoint,
         restored_outpoints_count: usize,
         balance: *const FFIBalance,
@@ -1198,6 +1203,7 @@ impl FFIWalletEventCallbacks {
                 wallet_id,
                 height,
                 txids,
+                unconfirmed_txids,
                 restored_outpoints,
                 balance,
                 account_balances,
@@ -1210,6 +1216,13 @@ impl FFIWalletEventCallbacks {
                         ptr::null()
                     } else {
                         raw_txids.as_ptr()
+                    };
+                    let raw_unconfirmed_txids: Vec<[u8; 32]> =
+                        unconfirmed_txids.iter().map(|t| t.to_byte_array()).collect();
+                    let unconfirmed_txids_ptr = if raw_unconfirmed_txids.is_empty() {
+                        ptr::null()
+                    } else {
+                        raw_unconfirmed_txids.as_ptr()
                     };
                     let ffi_restored_outpoints = FFIOutPoint::from_slice(restored_outpoints);
                     let restored_outpoints_ptr = if ffi_restored_outpoints.is_empty() {
@@ -1230,6 +1243,8 @@ impl FFIWalletEventCallbacks {
                         *height,
                         txids_ptr,
                         raw_txids.len(),
+                        unconfirmed_txids_ptr,
+                        raw_unconfirmed_txids.len(),
                         restored_outpoints_ptr,
                         ffi_restored_outpoints.len(),
                         &ffi_balance as *const FFIBalance,

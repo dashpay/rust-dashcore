@@ -407,6 +407,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 wallet_id: *wallet_id,
                 height,
                 txids: truncation.txids,
+                unconfirmed_txids: truncation.unconfirmed_txids,
                 restored_outpoints: truncation.restored_outpoints,
                 balance: info.balance(),
                 account_balances: diff_account_balances(&prior, &info.account_balances()),

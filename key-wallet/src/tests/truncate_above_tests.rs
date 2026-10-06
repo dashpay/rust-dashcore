@@ -3,6 +3,7 @@
 
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
+use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
 use dashcore::{BlockHash, OutPoint, Transaction, TxIn, TxOut};
 use test_case::test_case;
@@ -127,4 +128,62 @@ async fn a_mempool_spend_mined_in_a_chain_locked_block_is_settled() {
     ctx.check_transaction(&spend, TransactionContext::InChainLockedBlock(in_block(101))).await;
 
     assert!(ctx.bip44_account().unsettled_spends().is_empty());
+}
+
+/// An InstantSend-locked spend is final for its txid and the network mines it
+/// again, so a fork dropping its block keeps it as unconfirmed: the coin it
+/// spent is not handed back for coin selection, and its change stays.
+#[test_case(true; "InstantSend-locked")]
+#[test_case(false; "not locked")]
+#[tokio::test]
+async fn truncate_above_keeps_an_instant_locked_spend_unconfirmed(instant_locked: bool) {
+    const CHANGE_VALUE: u64 = 400_000;
+    let mut ctx = TestWalletContext::new_random();
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[FUNDING_VALUE]);
+    let mut spend = spend_to_external(&funding);
+    spend.output[0].value -= CHANGE_VALUE;
+    spend.output.push(TxOut {
+        value: CHANGE_VALUE,
+        script_pubkey: ctx.receive_address.script_pubkey(),
+    });
+    let funding_outpoint = OutPoint::new(funding.txid(), 0);
+    let change_outpoint = OutPoint::new(spend.txid(), 1);
+    assert!(
+        ctx.check_transaction(&funding, TransactionContext::InBlock(in_block(100)))
+            .await
+            .is_relevant
+    );
+    if instant_locked {
+        let lock = InstantLock {
+            txid: spend.txid(),
+            ..InstantLock::dummy(0..1)
+        };
+        ctx.check_transaction(&spend, TransactionContext::InstantSend(lock)).await;
+    }
+    ctx.check_transaction(&spend, TransactionContext::InBlock(in_block(101))).await;
+
+    let truncation = ctx.managed_wallet.truncate_above(100).expect("truncates");
+
+    let account = ctx.bip44_account();
+    if instant_locked {
+        assert!(truncation.txids.is_empty());
+        assert_eq!(truncation.unconfirmed_txids, vec![spend.txid()]);
+        assert!(truncation.restored_outpoints.is_empty());
+        assert!(!account.utxos.contains_key(&funding_outpoint), "the spent coin stays spent");
+        let record = &account.transactions()[&spend.txid()];
+        assert!(matches!(record.context, TransactionContext::Mempool));
+        let change = &account.utxos[&change_outpoint];
+        assert!(change.is_instantlocked && !change.is_confirmed);
+
+        // Mined again on the new branch, it confirms as any mempool transaction.
+        ctx.check_transaction(&spend, TransactionContext::InBlock(in_block(102))).await;
+        let account = ctx.bip44_account();
+        assert_eq!(account.transactions()[&spend.txid()].height(), Some(102));
+        assert!(account.utxos[&change_outpoint].is_confirmed);
+    } else {
+        assert_eq!(truncation.txids, vec![spend.txid()]);
+        assert!(truncation.unconfirmed_txids.is_empty());
+        assert_eq!(truncation.restored_outpoints, vec![funding_outpoint]);
+        assert!(!account.utxos.contains_key(&change_outpoint));
+    }
 }
