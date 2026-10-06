@@ -54,6 +54,18 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         engine.read().await.latest_masternode_list().cloned()
     }
 
+    /// Blocking twin of [`Self::latest_masternode_list`] for threads outside the
+    /// async runtime, such as FFI callers.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called from an async execution context, like
+    /// [`RwLock::blocking_read`].
+    pub fn latest_masternode_list_blocking(&self) -> Option<MasternodeList> {
+        let engine = self.masternode_engine.as_ref()?;
+        engine.blocking_read().latest_masternode_list().cloned()
+    }
+
     /// Get a quorum entry by type and hash at a specific block height. A height
     /// whose lists the engine no longer holds is rebuilt from storage.
     /// Returns `SpvError::QuorumLookupError` if the quorum is not found.

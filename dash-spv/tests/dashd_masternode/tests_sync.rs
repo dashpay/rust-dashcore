@@ -74,6 +74,20 @@ async fn test_masternode_list_sync() {
         );
     }
 
+    // The client accessors return the engine's newest list, from both async
+    // and blocking callers.
+    {
+        let engine_list = client_handle.engine.read().await.latest_masternode_list().cloned();
+        assert!(engine_list.is_some());
+        assert_eq!(client_handle.client.latest_masternode_list().await, engine_list);
+        let client = client_handle.client.clone();
+        let blocking_list =
+            tokio::task::spawn_blocking(move || client.latest_masternode_list_blocking())
+                .await
+                .expect("blocking accessor should not panic");
+        assert_eq!(blocking_list, engine_list);
+    }
+
     client_handle.stop().await;
 
     let final_progress = client_handle.client.progress().await;
