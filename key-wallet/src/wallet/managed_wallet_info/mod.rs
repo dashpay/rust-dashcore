@@ -28,7 +28,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Information about a managed wallet
 ///
@@ -330,20 +330,54 @@ impl ManagedWalletInfo {
         &self.observed_spent_outpoints
     }
 
-    /// Restore externally persisted spent-output claims after replay.
+    /// Guard externally persisted spent outpoints against being credited.
     ///
-    /// Call after restoring all funding accounts and replaying history/finality,
-    /// using the persistence layer's final spent set, including unknown-owner
-    /// outpoints. Existing UTXOs must already exclude these spent outputs.
-    /// This additive, idempotent operation creates no history or observation
-    /// heights and changes no UTXOs or balances. Guards survive ChainLock pruning.
-    /// Reapply after each load or addition of funding accounts: these claims
-    /// are not included in wallet snapshots. A known spender permits release
-    /// only when that transaction is removed; `None` remains guarded.
-    pub fn restore_spent_outpoints(&mut self, outpoints: &[(OutPoint, Option<Txid>)]) {
+    /// For a wallet loaded without the transactions that spent its coins.
+    /// Each entry is a spent outpoint and, when known, the transaction that
+    /// spent it (its claimant). A restored outpoint is never added to
+    /// `utxos`, and the guard survives ChainLock pruning. Outpoints this
+    /// wallet does not own are accepted.
+    ///
+    /// **When to call:** once the funding accounts exist — snapshot loaded
+    /// or accounts created — and before any transaction funding a restored
+    /// outpoint is delivered, by replay or by sync. The guard only stops a
+    /// later credit: this creates no records, and changes no UTXOs or
+    /// balances, so an outpoint already in `utxos` stays credited and
+    /// spendable. Those outpoints are returned, sorted, and logged at
+    /// `warn`; an empty result means every guard is effective. Call again
+    /// after each load and after adding a funding account: claims are kept
+    /// per account and are not part of wallet snapshots.
+    ///
+    /// **Claimants:** when [`sweep_conflicts`](Self::sweep_conflicts) or
+    /// [`abandon_transaction`](Self::abandon_transaction) removes the
+    /// claimant, the outpoint is released, unless the final transaction
+    /// that won the conflict or another live record spends it too. `None`
+    /// is never released.
+    /// Restoring an outpoint again merges the claimants: the same one
+    /// changes nothing, and any disagreement — `None` against a txid, or two
+    /// different txids — leaves `None`.
+    pub fn restore_spent_outpoints(
+        &mut self,
+        outpoints: &[(OutPoint, Option<Txid>)],
+    ) -> Vec<OutPoint> {
+        let mut still_held = BTreeSet::new();
         for account in self.accounts.all_funding_accounts_mut() {
             account.restore_spent_outpoints(outpoints);
+            still_held.extend(
+                outpoints
+                    .iter()
+                    .map(|(outpoint, _)| *outpoint)
+                    .filter(|outpoint| account.utxos.contains_key(outpoint)),
+            );
         }
+        if !still_held.is_empty() {
+            tracing::warn!(
+                count = still_held.len(),
+                "Restored spent outpoints are already held as UTXOs and stay credited; \
+                 restore them before their funding transactions are delivered"
+            );
+        }
+        still_held.into_iter().collect()
     }
 
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]

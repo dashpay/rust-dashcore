@@ -61,6 +61,19 @@ fn collect_spenders_of_records(
     }
 }
 
+/// Every outpoint a live record anywhere in the wallet spends.
+fn live_record_inputs(
+    accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
+) -> HashSet<OutPoint> {
+    accounts
+        .all_accounts()
+        .into_iter()
+        .flat_map(|account| account.transactions().values())
+        .flat_map(|record| record.transaction.input.iter())
+        .map(|input| input.previous_output)
+        .collect()
+}
+
 /// What [`ManagedWalletInfo::sweep_conflicts`] removed from the wallet: the
 /// union, across every account swept, of the per-account `ConflictSweep`s.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -68,8 +81,10 @@ pub struct WalletConflictSweep {
     /// Loser txids removed, deduplicated — one transaction can be recorded
     /// in several accounts, so the per-account results overlap.
     pub txids: Vec<Txid>,
-    /// Outpoints released from `spent_outpoints` across every account swept,
-    /// deduplicated. Wallet-scoped rather than attributed per loser: a
+    /// Outpoints the sweep left unguarded in every funding account,
+    /// deduplicated: inputs of the removed losers that no surviving record
+    /// spends, and outpoints whose restored claim named a removed loser.
+    /// Wallet-scoped rather than attributed per loser: a
     /// caller mirroring wallet state holds every input of every loser it
     /// deletes, so it only needs to know which of them came free, not which
     /// loser freed which.
@@ -126,13 +141,7 @@ impl WalletConflictSweep {
         if self.released_outpoints.is_empty() {
             return;
         }
-        let claimed: HashSet<OutPoint> = accounts
-            .all_accounts()
-            .into_iter()
-            .flat_map(|account| account.transactions().values())
-            .flat_map(|record| record.transaction.input.iter())
-            .map(|input| input.previous_output)
-            .collect();
+        let claimed = live_record_inputs(accounts);
         self.released_outpoints.retain(|outpoint| !claimed.contains(outpoint));
     }
 }
@@ -159,6 +168,10 @@ impl ManagedWalletInfo {
     /// Also returns the outpoints released as a side effect, for the same
     /// reason: the winner is not guaranteed to appear anywhere the caller can
     /// see, so the set cannot be re-derived from the txids.
+    ///
+    /// Restored claims naming a removed loser are settled too, in every
+    /// funding account (see `release_restored_claims`). An outpoint is
+    /// reported released only once no funding account guards it.
     pub fn sweep_conflicts(
         &mut self,
         tx: &Transaction,
@@ -178,19 +191,59 @@ impl ManagedWalletInfo {
             // per-account results overlap.
             result.txids.sort_unstable();
             result.txids.dedup();
+            let removed = result.txids.iter().copied().collect();
+            let winner_inputs = tx.input.iter().map(|input| input.previous_output).collect();
+            result
+                .released_outpoints
+                .extend(self.release_restored_claims(&removed, &winner_inputs));
             result.released_outpoints.sort_unstable();
             result.released_outpoints.dedup();
             result.retain_unclaimed(&self.accounts);
-            // Restored claims also live in accounts that never recorded the loser.
-            let mut released = result.released_outpoints.iter().copied().collect();
-            let removed = result.txids.iter().copied().collect();
-            for account in self.accounts.all_funding_accounts_mut() {
-                let account_released = account.release_spent_marks(&released, &removed);
-                released.retain(|outpoint| account_released.contains(outpoint));
-            }
-            result.released_outpoints.retain(|outpoint| released.contains(outpoint));
+            // Each account answers for its own marks and claims only, so an
+            // outpoint one account let go can still be guarded by another.
+            let funding = self.accounts.all_funding_accounts();
+            result.released_outpoints.retain(|outpoint| {
+                !funding.iter().any(|account| account.is_outpoint_spent(outpoint))
+            });
         }
         result
+    }
+
+    /// Settle the restored claims whose claimant is in `removed`, in every
+    /// funding account — also those that never recorded the claimant, and
+    /// when no account holds a record of it at all.
+    ///
+    /// A claimed outpoint in `winner_inputs` (the inputs of the final
+    /// transaction that won the conflict) becomes a permanent guard. One
+    /// that a live record anywhere in the wallet still spends loses its
+    /// claim but stays marked. Any other loses its claim, and is returned —
+    /// except an output of a removed transaction, which is not a coin
+    /// coming free but one that never existed.
+    ///
+    /// Claims with no claimant, or with a claimant outside `removed`, are
+    /// untouched, and no record-derived mark is removed: an account holding
+    /// its own mark on a returned outpoint goes on guarding it.
+    fn release_restored_claims(
+        &mut self,
+        removed: &BTreeSet<Txid>,
+        winner_inputs: &BTreeSet<OutPoint>,
+    ) -> BTreeSet<OutPoint> {
+        let mut released = BTreeSet::new();
+        // Keeps the pass over every record off the common path where no claim is concerned.
+        if !self
+            .accounts
+            .all_funding_accounts()
+            .iter()
+            .any(|account| account.has_restored_claim_of(removed))
+        {
+            return released;
+        }
+        let live_spent = live_record_inputs(&self.accounts);
+        for account in self.accounts.all_funding_accounts_mut() {
+            released.extend(account.release_restored_claims(removed, winner_inputs, &live_spent));
+        }
+        released.retain(|outpoint| !removed.contains(&outpoint.txid));
+        released
     }
 
     /// Whether any account holds `txid` as settled by the network.
@@ -273,6 +326,10 @@ impl ManagedWalletInfo {
     /// have its record and UTXOs deleted. The same guard rejects a confirmed
     /// root outright — a transaction in a block spent something real, and
     /// nothing built on it is fiction.
+    ///
+    /// Restored claims naming an abandoned transaction are released as
+    /// well, whether or not the wallet holds a record of it (see
+    /// `release_restored_claims`).
     pub fn abandon_transaction_with_spends(
         &mut self,
         root: Txid,
@@ -313,15 +370,6 @@ impl ManagedWalletInfo {
             }
         }
 
-        let mut freed: HashSet<OutPoint> = self
-            .accounts
-            .all_accounts()
-            .into_iter()
-            .flat_map(|account| account.transactions().iter())
-            .filter(|(txid, _)| abandoned.contains(*txid))
-            .flat_map(|(_, record)| record.transaction.input.iter())
-            .map(|input| input.previous_output)
-            .collect();
         let mut utxos_removed = 0;
         let mut records_removed = 0;
         for account in self.accounts.all_accounts_mut() {
@@ -347,17 +395,7 @@ impl ManagedWalletInfo {
             }
         }
 
-        // Keep inputs claimed by any surviving record before releasing mirrored guards.
-        for account in self.accounts.all_accounts() {
-            for record in account.transactions().values() {
-                for input in &record.transaction.input {
-                    freed.remove(&input.previous_output);
-                }
-            }
-        }
-        for account in self.accounts.all_funding_accounts_mut() {
-            account.release_spent_marks(&freed, &abandoned);
-        }
+        self.release_restored_claims(&abandoned, &BTreeSet::new());
 
         AbandonOutcome {
             abandoned,

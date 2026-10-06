@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Restore externally persisted spent-output claims with `ManagedWalletInfo::restore_spent_outpoints` in `key-wallet`.
+  It returns the restored outpoints the wallet still holds as UTXOs, which stay credited.
 
 ### Changed
 
@@ -17,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   serialization traits as Platform. Existing bincode encodings and C interfaces
   are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
   The dependency switch does not automatically opt types into `DecodeUntrusted`.
+- `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` also release
+  restored spent-output claims whose claimant they remove. A swept claimant's outpoint that the winning
+  transaction spends stays guarded permanently, and `released_outpoints` lists an outpoint only once no
+  funding account guards it.
 
 ## 0.44.0 - 2026-07-01
 
