@@ -12,8 +12,7 @@
 use core::str::FromStr;
 use core::{fmt, iter};
 
-use hashes::hex::{self, FromHex};
-use internals::hex::display::DisplayHex;
+use hex_conservative::DisplayHex;
 use internals::write_err;
 use secp256k1;
 #[cfg(feature = "serde")]
@@ -85,8 +84,8 @@ impl Signature {
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.sig.serialize_der().as_hex(), f)?;
-        fmt::LowerHex::fmt(&[self.hash_ty.to_consensus_u8()].as_hex(), f)
+        write!(f, "{:x}", self.sig.serialize_der().as_hex())?;
+        write!(f, "{:x}", [self.hash_ty.to_consensus_u8()].as_hex())
     }
 }
 
@@ -94,7 +93,7 @@ impl FromStr for Signature {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = Vec::from_hex(s)?;
+        let bytes = hex_conservative::decode_to_vec(s)?;
         let (sighash_byte, signature) = bytes.split_last().ok_or(Error::EmptySignature)?;
         Ok(Signature {
             sig: secp256k1::ecdsa::Signature::from_der(signature)?,
@@ -186,14 +185,14 @@ impl fmt::Display for SerializedSignature {
 impl fmt::LowerHex for SerializedSignature {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::LowerHex::fmt(&(**self).as_hex(), f)
+        write!(f, "{:x}", (**self).as_hex())
     }
 }
 
 impl fmt::UpperHex for SerializedSignature {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::UpperHex::fmt(&(**self).as_hex(), f)
+        write!(f, "{:X}", (**self).as_hex())
     }
 }
 
@@ -227,7 +226,7 @@ impl<'a> IntoIterator for &'a SerializedSignature {
 #[non_exhaustive]
 pub enum Error {
     /// Hex encoding error
-    HexEncoding(hex::HexToBytesError),
+    HexEncoding(hex_conservative::DecodeVariableLengthBytesError),
     /// Non-standard sighash type
     NonStandardSighashType(u32),
     /// Empty Signature
@@ -267,8 +266,36 @@ impl From<secp256k1::Error> for Error {
     }
 }
 
-impl From<hex::HexToBytesError> for Error {
-    fn from(err: hex::HexToBytesError) -> Self {
+impl From<hex_conservative::DecodeVariableLengthBytesError> for Error {
+    fn from(err: hex_conservative::DecodeVariableLengthBytesError) -> Self {
         Error::HexEncoding(err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A DER signature with `SIGHASH_ALL` appended.
+    const SIG_HEX: &str = "3045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c01";
+
+    /// Formatting flags are ignored, as `hex-conservative` 1.x would otherwise
+    /// pad and prefix each part of the signature separately.
+    #[test]
+    fn display_ignores_format_flags() {
+        let sig = Signature::from_str(SIG_HEX).unwrap();
+        for out in [
+            format!("{}", sig),
+            format!("{:#}", sig),
+            format!("{:>200}", sig),
+            format!("{:.4}", sig),
+        ] {
+            assert_eq!(out, SIG_HEX);
+        }
+
+        let serialized = sig.serialize();
+        assert_eq!(format!("{:x}", serialized), SIG_HEX);
+        assert_eq!(format!("{:#x}", serialized), SIG_HEX);
+        assert_eq!(format!("{:X}", serialized), SIG_HEX.to_uppercase());
     }
 }
