@@ -151,9 +151,10 @@ macro_rules! do_impl {
                             E: de::Error,
                         {
                             if let Ok(hex) = core::str::from_utf8(v) {
-                                let b = hex_conservative::decode_to_array::<32>(hex).map_err(|_| {
-                                    de::Error::invalid_value(de::Unexpected::Str(hex), &self)
-                                })?;
+                                let b =
+                                    hex_conservative::decode_to_array::<32>(hex).map_err(|_| {
+                                        de::Error::invalid_value(de::Unexpected::Str(hex), &self)
+                                    })?;
 
                                 Ok(<$ty>::from_be_bytes(b))
                             } else {
@@ -496,6 +497,8 @@ impl std::error::Error for TryFromError {}
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     impl<T: Into<u128>> From<T> for Target {
@@ -548,23 +551,16 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn target_from_compact() {
-        // (nBits, target)
-        let tests = vec![
-            (0x0100_3456_u32, 0x00_u64), // High bit set.
-            (0x0112_3456_u32, 0x12_u64),
-            (0x0200_8000_u32, 0x80_u64),
-            (0x0500_9234_u32, 0x9234_0000_u64),
-            (0x0492_3456_u32, 0x00_u64), // High bit set (0x80 in 0x92).
-            (0x0412_3456_u32, 0x1234_5600_u64), // Inverse of above; no high bit.
-        ];
-
-        for (n_bits, target) in tests {
-            let want = Target::from(target);
-            let got = Target::from_compact(CompactTarget::from_consensus(n_bits));
-            assert_eq!(got, want);
-        }
+    #[test_case(0x0100_3456, 0x00; "high bit set")]
+    #[test_case(0x0112_3456, 0x12)]
+    #[test_case(0x0200_8000, 0x80)]
+    #[test_case(0x0500_9234, 0x9234_0000)]
+    #[test_case(0x0492_3456, 0x00; "high bit set in 0x92")]
+    #[test_case(0x0412_3456, 0x1234_5600; "inverse of above, no high bit")]
+    fn target_from_compact(n_bits: u32, target: u64) {
+        let want = Target::from(target);
+        let got = Target::from_compact(CompactTarget::from_consensus(n_bits));
+        assert_eq!(got, want);
     }
 
     #[test]
@@ -589,21 +585,13 @@ mod tests {
         assert_eq!(got, want)
     }
 
-    #[test]
-    fn target_difficulty_float() {
-        assert_eq!(Target::MAX.difficulty_float(), 1.0_f64);
-        assert_eq!(
-            Target::from_compact(CompactTarget::from_consensus(0x1c00ffff_u32)).difficulty_float(),
-            256.0_f64
-        );
-        assert_eq!(
-            Target::from_compact(CompactTarget::from_consensus(0x1b00ffff_u32)).difficulty_float(),
-            65536.0_f64
-        );
-        assert_eq!(
-            Target::from_compact(CompactTarget::from_consensus(0x1a00f3a2_u32)).difficulty_float(),
-            17628585.065897066_f64
-        );
+    #[test_case(0x1d00_ffff, 1.0; "max target")]
+    #[test_case(0x1c00_ffff, 256.0)]
+    #[test_case(0x1b00_ffff, 65536.0)]
+    #[test_case(0x1a00_f3a2, 17628585.065897066)]
+    fn target_difficulty_float(n_bits: u32, difficulty: f64) {
+        let target = Target::from_compact(CompactTarget::from_consensus(n_bits));
+        assert_eq!(target.difficulty_float(), difficulty);
     }
 
     #[test]
@@ -632,24 +620,20 @@ mod tests {
         assert_eq!(back, target)
     }
 
+    // Compare work log2 to historical Bitcoin Core values found in Core logs.
+    #[test_case(0x200020002, 33.000022; "height 1")]
+    #[test_case(0xa97d67041c5e51596ee7, 79.405055; "height 308004")]
+    #[test_case(0x1dc45d79394baa8ab18b20, 84.895644; "height 418141")]
+    #[test_case(0x8c85acb73287e335d525b98, 91.134654; "height 596624")]
+    #[test_case(0x2ef447e01d1642c40a184ada, 93.553183; "height 738965")]
+    fn work_log2(chainwork: u128, core_log2: f64) {
+        // Core log2 in the logs is rounded to 6 decimal places.
+        let log2 = (Work::from(chainwork).log2() * 1e6).round() / 1e6;
+        assert_eq!(log2, core_log2)
+    }
+
     #[test]
-    fn work_log2() {
-        // Compare work log2 to historical Bitcoin Core values found in Core logs.
-        let tests: Vec<(u128, f64)> = vec![
-            // (chainwork, core log2)                // height
-            (0x200020002, 33.000022),                // 1
-            (0xa97d67041c5e51596ee7, 79.405055),     // 308004
-            (0x1dc45d79394baa8ab18b20, 84.895644),   // 418141
-            (0x8c85acb73287e335d525b98, 91.134654),  // 596624
-            (0x2ef447e01d1642c40a184ada, 93.553183), // 738965
-        ];
-
-        for (chainwork, core_log2) in tests {
-            // Core log2 in the logs is rounded to 6 decimal places.
-            let log2 = (Work::from(chainwork).log2() * 1e6).round() / 1e6;
-            assert_eq!(log2, core_log2)
-        }
-
+    fn work_log2_bounds() {
         assert_eq!(Work(Arith256::ONE).log2(), 0.0);
         assert_eq!(Work(Arith256::MAX).log2(), 256.0);
     }
@@ -676,89 +660,82 @@ mod tests {
     }
 
     #[cfg(feature = "serde")]
-    #[test]
-    fn u256_serde() {
-        let check = |hex: &str| {
-            let be = hex_conservative::decode_to_array::<32>(hex).unwrap();
-            let json = format!("\"{}\"", hex);
-            let config = bincode::config::standard();
+    #[test_case("0000000000000000000000000000000000000000000000000000000000000000"; "zero")]
+    #[test_case("00000000000000000000000000000000000000000000000000000000deadbeef"; "low word")]
+    #[test_case("000000000000dd44000000000000cc33000000000000bb22000000000000aa11"; "every word")]
+    #[test_case("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"; "max")]
+    #[test_case("deadbeeaa69b455cd41bb662a69b4550a69b455cd41bb662a69b4555deadbeef"; "mixed")]
+    fn u256_serde(hex: &str) {
+        let be = hex_conservative::decode_to_array::<32>(hex).unwrap();
+        let json = format!("\"{}\"", hex);
+        let config = bincode::config::standard();
 
-            let work = Work::from_be_bytes(be);
-            assert_eq!(serde_json::to_string(&work).unwrap(), json);
-            assert_eq!(serde_json::from_str::<Work>(&json).unwrap(), work);
+        let work = Work::from_be_bytes(be);
+        assert_eq!(serde_json::to_string(&work).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Work>(&json).unwrap(), work);
 
-            let bin_encoded = bincode::encode_to_vec(work, config).unwrap();
-            let bin_decoded: Work = bincode::decode_from_slice(&bin_encoded, config).unwrap().0;
-            assert_eq!(bin_decoded, work);
+        let bin_encoded = bincode::encode_to_vec(work, config).unwrap();
+        let bin_decoded: Work = bincode::decode_from_slice(&bin_encoded, config).unwrap().0;
+        assert_eq!(bin_decoded, work);
 
-            let target = Target::from_be_bytes(be);
-            assert_eq!(serde_json::to_string(&target).unwrap(), json);
-            assert_eq!(serde_json::from_str::<Target>(&json).unwrap(), target);
+        let target = Target::from_be_bytes(be);
+        assert_eq!(serde_json::to_string(&target).unwrap(), json);
+        assert_eq!(serde_json::from_str::<Target>(&json).unwrap(), target);
 
-            let bin_encoded = bincode::encode_to_vec(target, config).unwrap();
-            let bin_decoded: Target = bincode::decode_from_slice(&bin_encoded, config).unwrap().0;
-            assert_eq!(bin_decoded, target);
-        };
+        let bin_encoded = bincode::encode_to_vec(target, config).unwrap();
+        let bin_decoded: Target = bincode::decode_from_slice(&bin_encoded, config).unwrap().0;
+        assert_eq!(bin_decoded, target);
+    }
 
-        check("0000000000000000000000000000000000000000000000000000000000000000");
-        check("00000000000000000000000000000000000000000000000000000000deadbeef");
-        check("000000000000dd44000000000000cc33000000000000bb22000000000000aa11");
-        check("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-        check("deadbeeaa69b455cd41bb662a69b4550a69b455cd41bb662a69b4555deadbeef");
-
-        assert!(
-            serde_json::from_str::<Work>(
-                "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\""
-            )
-            .is_err()
-        ); // invalid char
-        assert!(
-            serde_json::from_str::<Work>(
-                "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
-            )
-            .is_err()
-        ); // invalid length
-        assert!(
-            serde_json::from_str::<Work>(
-                "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\""
-            )
-            .is_err()
-        ); // invalid length
+    #[cfg(feature = "serde")]
+    #[test_case(
+        "\"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffg\"";
+        "invalid char"
+    )]
+    #[test_case(
+        "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"";
+        "too short"
+    )]
+    #[test_case(
+        "\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"";
+        "too long"
+    )]
+    fn u256_serde_rejects(json: &str) {
+        assert!(serde_json::from_str::<Work>(json).is_err());
     }
 
     #[cfg(feature = "bincode")]
-    #[test]
-    fn u256_bincode() {
-        use hex_conservative::FromHex;
-
-        let tests = [
-            ("0000000000000000000000000000000000000000000000000000000000000000", "0000"),
-            ("00000000000000000000000000000000000000000000000000000000deadbeef", "00fcefbeadde"),
-            (
-                "1badcafedeadbeefdeafbabe2bedfeedbaadf00ddefaceda11fed2bad1c0ffe0",
-                "feedfeed2bbebaafdeefbeaddefecaad1bfee0ffc0d1bad2fe11dacefade0df0adba",
-            ),
-            (
-                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-                "fefffffffffffffffffffffffffffffffffeffffffffffffffffffffffffffffffff",
-            ),
-        ];
-
+    #[test_case(
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000";
+        "zero"
+    )]
+    #[test_case(
+        "00000000000000000000000000000000000000000000000000000000deadbeef",
+        "00fcefbeadde";
+        "low word"
+    )]
+    #[test_case(
+        "1badcafedeadbeefdeafbabe2bedfeedbaadf00ddefaceda11fed2bad1c0ffe0",
+        "feedfeed2bbebaafdeefbeaddefecaad1bfee0ffc0d1bad2fe11dacefade0df0adba";
+        "mixed"
+    )]
+    #[test_case(
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "fefffffffffffffffffffffffffffffffffeffffffffffffffffffffffffffffffff";
+        "max"
+    )]
+    fn u256_bincode(value: &str, encoded: &str) {
         let config = bincode::config::standard();
-        for (value, encoded) in tests {
-            let be = hex_conservative::decode_to_array::<32>(value).unwrap();
-            let encoded = Vec::from_hex(encoded).unwrap();
+        let be = hex_conservative::decode_to_array::<32>(value).unwrap();
+        let encoded = hex_conservative::decode_to_vec(encoded).unwrap();
 
-            let work = Work::from_be_bytes(be);
-            assert_eq!(bincode::encode_to_vec(work, config).unwrap(), encoded);
-            assert_eq!(bincode::decode_from_slice::<Work, _>(&encoded, config).unwrap().0, work);
+        let work = Work::from_be_bytes(be);
+        assert_eq!(bincode::encode_to_vec(work, config).unwrap(), encoded);
+        assert_eq!(bincode::decode_from_slice::<Work, _>(&encoded, config).unwrap().0, work);
 
-            let target = Target::from_be_bytes(be);
-            assert_eq!(bincode::encode_to_vec(target, config).unwrap(), encoded);
-            assert_eq!(
-                bincode::decode_from_slice::<Target, _>(&encoded, config).unwrap().0,
-                target
-            );
-        }
+        let target = Target::from_be_bytes(be);
+        assert_eq!(bincode::encode_to_vec(target, config).unwrap(), encoded);
+        assert_eq!(bincode::decode_from_slice::<Target, _>(&encoded, config).unwrap().0, target);
     }
 }
