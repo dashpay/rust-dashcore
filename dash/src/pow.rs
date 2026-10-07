@@ -291,27 +291,15 @@ impl Target {
 
     /// Computes the [`Target`] value from a compact representation.
     ///
+    /// A negative or overflowing compact value yields [`Target::ZERO`].
+    ///
     /// ref: <https://developer.bitcoin.org/reference/block_chain.html#target-nbits>
     pub fn from_compact(c: CompactTarget) -> Target {
-        let bits = c.0;
-        // This is a floating-point "compact" encoding originally used by
-        // OpenSSL, which satoshi put into consensus code, so we're stuck
-        // with it. The exponent needs to have 3 subtracted from it, hence
-        // this goofy decoding code. 3 is due to 3 bytes in the mantissa.
-        let (mant, expt) = {
-            let unshifted_expt = bits >> 24;
-            if unshifted_expt <= 3 {
-                ((bits & 0xFFFFFF) >> (8 * (3 - unshifted_expt as usize)), 0)
-            } else {
-                (bits & 0xFFFFFF, 8 * ((bits >> 24) - 3))
-            }
-        };
-
-        // The mantissa is signed but may not be negative.
-        if mant > 0x7F_FFFF {
+        let decoded = dash_num::CompactTarget::new(c.0).expand();
+        if decoded.negative || decoded.overflow {
             Target::ZERO
         } else {
-            Target(Arith256::from_u64(mant.into()).wrapping_shl(expt & 0xff))
+            Target(decoded.value)
         }
     }
 
@@ -557,6 +545,8 @@ mod tests {
     #[test_case(0x0500_9234, 0x9234_0000)]
     #[test_case(0x0492_3456, 0x00; "high bit set in 0x92")]
     #[test_case(0x0412_3456, 0x1234_5600; "inverse of above, no high bit")]
+    #[test_case(0x0180_0000, 0x00; "sign bit shifted out of a short mantissa")]
+    #[test_case(0x2300_0001, 0x00; "overflow")]
     fn target_from_compact(n_bits: u32, target: u64) {
         let want = Target::from(target);
         let got = Target::from_compact(CompactTarget::from_consensus(n_bits));
