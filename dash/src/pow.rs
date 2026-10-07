@@ -308,20 +308,7 @@ impl Target {
     /// The compact form is by definition lossy, this means that
     /// `t == Target::from_compact(t.to_compact_lossy())` does not always hold.
     pub fn to_compact_lossy(self) -> CompactTarget {
-        let mut size = self.0.bits().div_ceil(8);
-        let mut compact = if size <= 3 {
-            (self.0.low_u64() << (8 * (3 - size))) as u32
-        } else {
-            let bn = self.0.wrapping_shr(8 * (size - 3));
-            bn.low_u32()
-        };
-
-        if (compact & 0x0080_0000) != 0 {
-            compact >>= 8;
-            size += 1;
-        }
-
-        CompactTarget(compact | (size << 24))
+        CompactTarget(self.0.compact(false).to_base())
     }
 
     /// Returns true if block hash is less than or equal to this [`Target`].
