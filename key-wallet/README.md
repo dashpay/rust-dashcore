@@ -31,7 +31,6 @@ The library is organized into several key modules:
 
 - **BIP32**: Hierarchical deterministic key derivation
 - **BIP39**: Mnemonic phrase generation and validation (multiple languages)
-- **BIP38**: Encrypted private key support (optional feature)
 - **SLIP-10**: Ed25519 key derivation for Platform identities
 
 ### Transactions
@@ -206,7 +205,6 @@ if result.is_relevant {
 - `std`: Standard library support (enabled by default)
 - `serde`: Serialization/deserialization support
 - `bincode`: Binary serialization support
-- `bip38`: BIP38 encrypted private key support
 - `eddsa`: Ed25519 support for Platform identities
 - `bls`: BLS signature support for masternodes
 - `test-utils`: Testing helpers and fixtures (for use in dev-dependencies)
@@ -258,7 +256,6 @@ if result.is_relevant {
 - Supports watch-only wallets for cold storage scenarios
 - Compatible with hardware wallet integration
 - Memory-safe Rust implementation
-- Optional encryption via BIP38
 
 ## Dependencies
 

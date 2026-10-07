@@ -14,7 +14,6 @@ version.workspace = true
 default = ["getrandom"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
-bip38 = ["scrypt", "aes", "bs58", "rand"]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
 test-utils = ["dashcore/test-utils"]
@@ -42,12 +41,6 @@ unicode-normalization = "0.1"
 serde = { workspace = true, features = ["derive"], optional = true }
 bitflags = { version = "2.6", default-features = false }
 getrandom = { version = "0.4", optional = true }
-# BIP38 dependencies (optional)
-scrypt = { version = "0.11", default-features = false, optional = true }
-aes = { version = "0.8", default-features = false, optional = true }
-sha2 = { version = "0.10", default-features = false }
-bs58 = { version = "0.5", default-features = false, features = ["check", "alloc"], optional = true }
-rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "thread_rng"], optional = true }
 # Serialization
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
@@ -61,7 +54,7 @@ async-trait = "0.1"
 criterion = "0.8.1"
 dashcore = { path="../dash", features = ["test-utils"] }
 hex = { workspace = true }
-key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
+key-wallet = { path = ".", features = ["test-utils", "serde", "bincode", "eddsa", "bls"] }
 rand = { version = "0.9", features = ["std", "std_rng", "thread_rng"] }
 test-case = "3.3"
 tokio = { version = "1", features = ["macros", "rt"] }

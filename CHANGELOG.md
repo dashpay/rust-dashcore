@@ -52,6 +52,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
   and rejects flags above `0xff`
 
+### Removed
+
+- **Breaking:** remove BIP38 from `key-wallet` (the `bip38` feature, `Bip38EncryptedKey`,
+  `Bip38Mode`, `encrypt_private_key`, `generate_intermediate_code` and the `Wallet` BIP38
+  export/import methods) and the unimplemented `bip38_*` functions from `key-wallet-ffi`
+
 ## 0.44.0 - 2026-07-01
 
 ### Added
