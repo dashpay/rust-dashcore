@@ -18,11 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   serialization traits as Platform. Existing bincode encodings and C interfaces
   are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
   The dependency switch does not automatically opt types into `DecodeUntrusted`.
-- `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` also release
-  restored spent-output claims whose claimant they remove. A restored outpoint that a confirmed or
-  InstantSend-locked transaction spends stays guarded permanently, one another live record spends is
-  claimed by that record, and `released_outpoints` lists an outpoint only once no funding account
-  guards it.
 - **Breaking:** `dashcore_hashes` re-exports the hash primitives (`sha1`,
   `sha256`, `sha256d`, `sha512`, `sha512_256`, `ripemd160`, `hash160`, `hmac`,
   `siphash24`, `cmp`, `hex`) from `bitcoin_hashes` 0.14. The raw types no longer
@@ -54,6 +49,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
   `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
 - All workspace crates declare a MSRV of 1.89
+- `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` settle
+  restored spent-output claims along with the transactions they remove. A claim naming a removed
+  transaction is released, unless another live record spends the outpoint too: that record then
+  becomes the claimant. A claim on an outpoint that a confirmed or InstantSend-locked transaction
+  spends becomes permanent. An input of a removed transaction stays guarded while a live transaction
+  recorded only in another account spends it. `WalletConflictSweep::released_outpoints`, which
+  reaches consumers as `WalletEvent::TransactionsSwept::released_outpoints` and through the
+  `dash-spv-ffi` swept callback, lists an outpoint only once no funding account guards it.
+  Abandoning reports no released outpoints.
 
 ### Fixed
 
@@ -61,10 +65,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   single when checking for the legacy `SIGHASH_SINGLE` bug
 - `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
   and rejects flags above `0xff`
-- `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` keep an
-  outpoint guarded when the removed transaction spent it and a live transaction recorded only in
-  another account still spends it. Before, the funding account dropped its guard and credited the
-  coin when its funding transaction arrived.
 
 ### Removed
 
