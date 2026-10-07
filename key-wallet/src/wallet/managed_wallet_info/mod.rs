@@ -357,6 +357,23 @@ impl ManagedWalletInfo {
     /// Restoring an outpoint again merges the claimants: the same one
     /// changes nothing, and any disagreement — `None` against a txid, or two
     /// different txids — leaves `None`.
+    ///
+    /// **Spenders:** the guarded output is kept aside, so a transaction
+    /// spending it that arrives after its funding is recorded as a spend of
+    /// the wallet's coin. A claim restored once the funding is held as a
+    /// txid only — ChainLocked, without `keep-finalized-transactions` — has
+    /// no output to keep, and such a spender is recorded as if the coin
+    /// were not the wallet's.
+    ///
+    /// **Limits:** later changes to a claim stay in memory. Making it
+    /// permanent or passing it to another spender is not reported, and a
+    /// release is reported only by a sweep, in `released_outpoints`, so the
+    /// rows the host holds go stale. Calling this again with such rows
+    /// turns a claim the wallet passed to another spender into `None`, by
+    /// the merge rule above. A claimant the wallet holds no record of is
+    /// released by [`abandon_transaction`](Self::abandon_transaction) only:
+    /// a final transaction that beats it on another input does not release
+    /// its other claims.
     pub fn restore_spent_outpoints(
         &mut self,
         outpoints: &[(OutPoint, Option<Txid>)],

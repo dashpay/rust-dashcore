@@ -26,11 +26,16 @@ pub struct AbandonOutcome {
 }
 
 impl AbandonOutcome {
-    /// Whether anything was actually removed.
+    /// Whether no record and no UTXO was removed.
     ///
     /// `abandoned` always contains the root, whether or not the wallet held
     /// anything for it, so it cannot answer this on its own — a root the
     /// wallet never recorded removes nothing.
+    ///
+    /// Spent-output claims are outside this answer: one naming an abandoned
+    /// transaction is released, or passed to a surviving spender, even when
+    /// nothing was removed. That changes no balance and nothing a snapshot
+    /// holds.
     pub fn is_empty(&self) -> bool {
         self.records_removed == 0 && self.utxos_removed == 0
     }
@@ -133,7 +138,12 @@ pub struct WalletConflictSweep {
 }
 
 impl WalletConflictSweep {
-    /// Whether the sweep changed nothing.
+    /// Whether the sweep removed no transaction and released no outpoint.
+    ///
+    /// Spent-output claims are outside this answer: a final transaction
+    /// makes the claims on its inputs permanent even when it beats no
+    /// recorded transaction, and the result is empty then. That changes no
+    /// balance and nothing a snapshot holds.
     ///
     /// Both fields are checked even though only a removal can free an
     /// outpoint today, so the second can never be non-empty on its own.
