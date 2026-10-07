@@ -26,7 +26,6 @@ use dashcore_rpc::{
         SignedAmount, Transaction, TxIn, TxOut, Txid, Witness,
         consensus::encode::{deserialize, serialize},
         hashes::Hash,
-        hashes::hex::FromHex,
         secp256k1,
     },
 };
@@ -454,7 +453,7 @@ fn test_get_block(cl: &Client) {
     let tip = cl.get_best_block_hash().unwrap();
     let block = cl.get_block(&tip).unwrap();
     let hex = cl.get_block_hex(&tip).unwrap();
-    assert_eq!(block, deserialize(&Vec::<u8>::from_hex(&hex).unwrap()).unwrap());
+    assert_eq!(block, deserialize(&hex_conservative::decode_to_vec(&hex).unwrap()).unwrap());
     assert_eq!(hex, serialize(&block).to_lower_hex_string());
 
     let tip = cl.get_best_block_hash().unwrap();
