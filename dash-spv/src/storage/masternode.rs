@@ -5,14 +5,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
+use crate::sml_engine::{qr_info_diffs, MasternodeListEngine, WORK_DIFF_DEPTH};
 use dashcore::consensus::{deserialize, serialize, Decodable, Encodable};
-use dashcore::network::constants::NetworkExt;
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::llmq_type::LLMQType;
-use dashcore::sml::masternode_list_engine::{qr_info_diffs, MasternodeListEngine, WORK_DIFF_DEPTH};
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{BlockHash, Network, QuorumHash};
 
@@ -43,8 +42,6 @@ pub trait MasternodeStorage: Send + Sync + 'static {
         height: CoreBlockHeight,
         qr_info: &QRInfo,
     ) -> StorageResult<()>;
-
-    async fn load_engine(&self) -> StorageResult<MasternodeListEngine>;
 }
 
 pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
@@ -159,6 +156,10 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             qr_infos: self.qr_infos.clone(),
         }
     }
+
+    pub(crate) async fn load_engine(&self) -> MasternodeListEngine<H> {
+        self.message_log().replay(CoreBlockHeight::MAX, |_| {}).await
+    }
 }
 
 impl<H: BlockHeaderStorage> MessageLog<H> {
@@ -170,12 +171,9 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
     async fn replay(
         &self,
         until: CoreBlockHeight,
-        mut visit: impl FnMut(&MasternodeListEngine),
-    ) -> MasternodeListEngine {
-        let mut engine = MasternodeListEngine::default_for_network(self.network);
-        if let Some(genesis) = self.network.known_genesis_block_hash() {
-            engine.feed_block_height(0, genesis);
-        }
+        mut visit: impl FnMut(&MasternodeListEngine<H>),
+    ) -> MasternodeListEngine<H> {
+        let mut engine = MasternodeListEngine::new(self.network, Arc::clone(&self.headers));
 
         let entries =
             self.diffs.range(..=until).map(|(height, path)| (*height, Kind::Diff, path)).chain(
@@ -184,54 +182,25 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
 
         let mut plan = Vec::new();
         for (height, kind, path) in entries {
-            let message = match PersistentMasternodeStorage::<H>::read_entry(path, kind).await {
-                Ok(message) => message,
-                Err(e) => {
-                    tracing::warn!("Skipping unreadable masternode message at {height}: {e}");
-                    continue;
-                }
-            };
-            let headers = self.headers.read().await;
-            let block_hash = message.block_hash();
-            if headers.get_header_height_by_hash(&block_hash).await.ok().flatten() != Some(height) {
-                tracing::warn!(
-                    "Skipping masternode message at {height}: {block_hash} is no longer in the \
-                     header chain"
-                );
+            let Some(message) = self.read_entry(height, kind, path).await else {
                 continue;
+            };
+            let mut newest_base = None;
+            for base in message.base_hashes() {
+                newest_base = newest_base.max(engine.height_of(&base).await);
             }
-            match &message {
-                Message::QrInfo(qr_info) => {
-                    feed_qrinfo_heights_to_engine(&mut engine, qr_info, &*headers).await;
-                }
-                Message::Diff(diff) => {
-                    engine.feed_block_height(height, diff.block_hash);
-                    if let Ok(Some(base_height)) =
-                        headers.get_header_height_by_hash(&diff.base_block_hash).await
-                    {
-                        engine.feed_block_height(base_height, diff.base_block_hash);
-                    }
-                }
-            }
-            plan.push((height, kind, path, message.base_hashes()));
+            plan.push((newest_base.unwrap_or(height), height, kind, path));
         }
-
-        let newest_base = |bases: &[BlockHash]| {
-            bases.iter().filter_map(|base| engine.block_container.get_height(base)).max()
-        };
-        plan.sort_by_cached_key(|(height, kind, _, bases)| {
-            (newest_base(bases).unwrap_or(*height), *height, *kind)
-        });
+        plan.sort_by_key(|(newest_base, height, kind, _)| (*newest_base, *height, *kind));
 
         let total = plan.len();
         let mut applied = 0;
-        for (height, kind, path, _) in plan {
-            match PersistentMasternodeStorage::<H>::read_entry(path, kind).await {
-                Ok(message) => match apply(&mut engine, height, message) {
+        for (_, height, kind, path) in plan {
+            if let Some(message) = self.read_entry(height, kind, path).await {
+                match message.apply(&mut engine).await {
                     true => applied += 1,
                     false => tracing::warn!("Masternode message at {height} does not apply"),
-                },
-                Err(e) => tracing::warn!("Masternode message at {height} became unreadable: {e}"),
+                }
             }
             visit(&engine);
         }
@@ -242,6 +211,34 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
         );
 
         engine
+    }
+
+    /// Reads the message stored at `height` while its block is still in the
+    /// header chain there, or logs why it is skipped.
+    async fn read_entry(
+        &self,
+        height: CoreBlockHeight,
+        kind: Kind,
+        path: &Path,
+    ) -> Option<Message> {
+        let message = match PersistentMasternodeStorage::<H>::read_entry(path, kind).await {
+            Ok(message) => message,
+            Err(e) => {
+                tracing::warn!("Skipping unreadable masternode message at {height}: {e}");
+                return None;
+            }
+        };
+        let block_hash = message.block_hash();
+        let stored_height =
+            self.headers.read().await.get_header_height_by_hash(&block_hash).await.ok().flatten();
+        if stored_height != Some(height) {
+            tracing::warn!(
+                "Skipping masternode message at {height}: {block_hash} is no longer in the \
+                 header chain"
+            );
+            return None;
+        }
+        Some(message)
     }
 
     /// The quorum as the engine would have resolved it at `height` before its
@@ -271,14 +268,14 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
     }
 }
 
-fn apply(engine: &mut MasternodeListEngine, height: CoreBlockHeight, message: Message) -> bool {
-    match message {
-        Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info).is_ok(),
-        Message::Diff(diff) => engine.apply_diff(*diff, Some(height), None).is_ok(),
-    }
-}
-
 impl Message {
+    async fn apply<H: BlockHeaderStorage>(self, engine: &mut MasternodeListEngine<H>) -> bool {
+        match self {
+            Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info).await.is_ok(),
+            Message::Diff(diff) => engine.apply_diff(*diff).await.is_ok(),
+        }
+    }
+
     fn block_hash(&self) -> BlockHash {
         match self {
             Message::Diff(diff) => diff.block_hash,
@@ -292,22 +289,28 @@ impl Message {
     fn base_hashes(&self) -> Vec<BlockHash> {
         match self {
             Message::Diff(diff) => vec![diff.base_block_hash],
-            Message::QrInfo(qr_info) => {
-                let diffs = qr_info_diffs(qr_info);
-                let produced: HashSet<BlockHash> = diffs
-                    .iter()
-                    .filter(|d| d.block_hash != d.base_block_hash)
-                    .map(|d| d.block_hash)
-                    .collect();
-                let bases: HashSet<BlockHash> = diffs
-                    .iter()
-                    .map(|d| d.base_block_hash)
-                    .filter(|base| !produced.contains(base))
-                    .collect();
-                bases.into_iter().collect()
-            }
+            Message::QrInfo(qr_info) => qr_info_bases(qr_info).into_iter().collect(),
         }
     }
+}
+
+/// Block hashes of the lists a QRInfo's diffs build.
+fn qr_info_built(qr_info: &QRInfo) -> HashSet<BlockHash> {
+    qr_info_diffs(qr_info)
+        .iter()
+        .filter(|d| d.block_hash != d.base_block_hash)
+        .map(|d| d.block_hash)
+        .collect()
+}
+
+/// Block hashes of the lists a QRInfo is applied on top of.
+fn qr_info_bases(qr_info: &QRInfo) -> HashSet<BlockHash> {
+    let built = qr_info_built(qr_info);
+    qr_info_diffs(qr_info)
+        .iter()
+        .map(|d| d.base_block_hash)
+        .filter(|base| !built.contains(base))
+        .collect()
 }
 
 #[async_trait]
@@ -326,56 +329,20 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
         height: CoreBlockHeight,
         qr_info: &QRInfo,
     ) -> StorageResult<()> {
+        // A QRInfo for the tip already stored, requested from a list the stored
+        // one built, would replace the message it is applied on top of.
+        if let Some(path) = self.qr_infos.get(&height) {
+            if let Ok(stored) = Self::read_message::<QRInfo>(path).await {
+                if stored.mn_list_diff_tip.block_hash == qr_info.mn_list_diff_tip.block_hash
+                    && !qr_info_bases(qr_info).is_disjoint(&qr_info_built(&stored))
+                {
+                    return Ok(());
+                }
+            }
+        }
         let folder = self.folder();
         Self::store_message(&folder, &mut self.qr_infos, Self::QRINFO_PREFIX, height, qr_info).await
     }
-
-    async fn load_engine(&self) -> StorageResult<MasternodeListEngine> {
-        Ok(self.message_log().replay(CoreBlockHeight::MAX, |_| {}).await)
-    }
-}
-
-/// Feed QRInfo block heights to the engine from storage.
-///
-/// Resolves heights for every hash enumerated by
-/// [`MasternodeListEngine::qr_info_referenced_block_hashes`], plus the cycle boundary
-/// block of each [work block](MasternodeListEngine::qr_info_work_block_hashes), which
-/// is needed for rotated quorum storage key calculation.
-pub(crate) async fn feed_qrinfo_heights_to_engine<S: BlockHeaderStorage>(
-    engine: &mut MasternodeListEngine,
-    qr_info: &QRInfo,
-    storage: &S,
-) -> usize {
-    let mut fed_count = 0;
-    for block_hash in MasternodeListEngine::qr_info_referenced_block_hashes(qr_info) {
-        if let Ok(Some(height)) = storage.get_header_height_by_hash(&block_hash).await {
-            engine.feed_block_height(height, block_hash);
-            fed_count += 1;
-            tracing::trace!("Fed height {} for block {}", height, block_hash);
-        }
-    }
-
-    for work_block_hash in MasternodeListEngine::qr_info_work_block_hashes(qr_info) {
-        if let Ok(Some(work_block_height)) =
-            storage.get_header_height_by_hash(&work_block_hash).await
-        {
-            let cycle_boundary_height =
-                MasternodeListEngine::cycle_boundary_height(work_block_height);
-            if let Ok(Some(cycle_boundary_header)) = storage.get_header(cycle_boundary_height).await
-            {
-                let cycle_boundary_hash = *cycle_boundary_header.hash();
-                engine.feed_block_height(cycle_boundary_height, cycle_boundary_hash);
-                fed_count += 1;
-                tracing::debug!(
-                    "Fed cycle boundary height {} for block {}",
-                    cycle_boundary_height,
-                    cycle_boundary_hash
-                );
-            }
-        }
-    }
-
-    fed_count
 }
 
 #[cfg(test)]
@@ -385,6 +352,7 @@ mod tests {
     use dashcore_hashes::Hash;
 
     use tempfile::TempDir;
+    use test_case::test_case;
 
     fn hash(byte: u8) -> BlockHash {
         BlockHash::from_slice(&[byte; 32]).unwrap()
@@ -414,7 +382,7 @@ mod tests {
             storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
         }
 
-        let engine = open_storage(&dir, &heights).await.load_engine().await.unwrap();
+        let engine = open_storage(&dir, &heights).await.load_engine().await;
 
         assert_eq!(engine.masternode_lists.keys().copied().collect::<Vec<_>>(), vec![100, 200]);
         assert_eq!(engine.masternode_lists[&200].block_hash, hash(0xBB));
@@ -457,7 +425,7 @@ mod tests {
         let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
         storage.store_diff(100, &diff).await.unwrap();
 
-        let engine = storage.load_engine().await.unwrap();
+        let engine = storage.load_engine().await;
 
         let status =
             &engine.masternode_lists[&100].quorums[&LLMQType::LlmqtypeTest][&quorum_hash].verified;
@@ -479,7 +447,7 @@ mod tests {
         storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
         storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
 
-        let engine = storage.load_engine().await.unwrap();
+        let engine = storage.load_engine().await;
 
         assert_eq!(engine.masternode_lists.keys().copied().collect::<Vec<_>>(), vec![100]);
     }
@@ -494,7 +462,7 @@ mod tests {
         storage.store_diff(120, &MnListDiff::dummy(0xEE, 0xDD)).await.unwrap();
         storage.store_diff(150, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
 
-        let engine = storage.load_engine().await.expect("replay must not fail on an orphan");
+        let engine = storage.load_engine().await;
 
         assert!(
             !engine.masternode_lists.contains_key(&120),
@@ -519,6 +487,58 @@ mod tests {
         assert_eq!(stored.block_hash, hash(0xBB), "the second write wins");
     }
 
+    /// A QRInfo chaining `start`, `start + 1`, `start + 2`, `start + 3` and
+    /// `tip`, applied on top of the list at `start`.
+    fn chained_qr_info(start: u8, tip: u8) -> QRInfo {
+        QRInfo {
+            mn_list_diff_at_h_minus_3c: MnListDiff::dummy_empty(start, start),
+            mn_list_diff_at_h_minus_2c: MnListDiff::dummy_empty(start, start + 1),
+            mn_list_diff_at_h_minus_c: MnListDiff::dummy_empty(start + 1, start + 2),
+            mn_list_diff_h: MnListDiff::dummy_empty(start + 2, start + 3),
+            mn_list_diff_tip: MnListDiff::dummy_empty(start + 3, tip),
+            ..QRInfo::dummy(tip)
+        }
+    }
+
+    /// The QRInfo stored at `height`, `None` when the file does not decode.
+    async fn stored_qr_info(
+        storage: &PersistentMasternodeStorage<MockHeaderStorage>,
+        height: CoreBlockHeight,
+    ) -> Option<QRInfo> {
+        PersistentMasternodeStorage::<MockHeaderStorage>::read_message(&storage.qr_infos[&height])
+            .await
+            .ok()
+    }
+
+    #[test_case(chained_qr_info(0xA2, 0xE0), false, false; "keeps the stored one it builds on")]
+    #[test_case(chained_qr_info(0x10, 0xE0), false, true; "replaces it when unrelated")]
+    #[test_case(chained_qr_info(0xA2, 0xEF), false, true; "replaces it for another tip after a reorg")]
+    #[test_case(chained_qr_info(0xA2, 0xE0), true, true; "replaces a stored file that does not decode")]
+    #[tokio::test]
+    async fn a_same_tip_qr_info_replaces_the_stored_one_unless_built_on_it(
+        incoming: QRInfo,
+        corrupt_stored: bool,
+        replaces: bool,
+    ) {
+        let height = 100;
+        let stored = chained_qr_info(0xA0, 0xE0);
+        let dir = TempDir::new().unwrap();
+        let mut storage = open_storage(&dir, &[]).await;
+        storage.store_qr_info(height, &stored).await.unwrap();
+        if corrupt_stored {
+            tokio::fs::write(&storage.qr_infos[&height], b"not a qrinfo").await.unwrap();
+        }
+
+        storage.store_qr_info(height, &incoming).await.unwrap();
+
+        let expected = if replaces {
+            incoming
+        } else {
+            stored
+        };
+        assert_eq!(stored_qr_info(&storage, height).await, Some(expected));
+    }
+
     #[tokio::test]
     async fn replay_survives_unreadable_files_and_ignores_foreign_names() {
         let dir = TempDir::new().unwrap();
@@ -541,7 +561,7 @@ mod tests {
         );
         assert!(storage.qr_infos.is_empty());
 
-        let engine = storage.load_engine().await.expect("a corrupt file must not fail the load");
+        let engine = storage.load_engine().await;
         assert!(
             engine.masternode_lists.contains_key(&100),
             "the readable message still rebuilds its list"
@@ -610,7 +630,7 @@ mod tests {
         .await
         .unwrap();
 
-        let engine = storage.load_engine().await.unwrap();
+        let engine = storage.load_engine().await;
         assert!(engine
             .quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, 100)
             .is_none());
@@ -643,20 +663,19 @@ mod tests {
     /// that QRInfo built still has to replay after it.
     #[tokio::test]
     async fn replay_applies_a_diff_on_a_list_of_a_qr_info_built_from_genesis() {
-        use dashcore::sml::masternode_list_engine::MasternodeListEngineBlockContainer;
+        use crate::sml_engine::test_support::fixture_heights;
+        use dashcore::network::constants::NetworkExt;
 
-        fn decode<T: bincode::Decode<()>>(bytes: &[u8]) -> T {
-            bincode::decode_from_slice(bytes, bincode::config::standard()).unwrap().0
-        }
+        let qr_info: QRInfo = bincode::decode_from_slice(
+            include_bytes!("../../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"),
+            bincode::config::standard(),
+        )
+        .unwrap()
+        .0;
 
-        let MasternodeListEngineBlockContainer::BTreeMapContainer(container) = decode(
-            include_bytes!("../../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"),
-        );
-        let qr_info: QRInfo =
-            decode(include_bytes!("../../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"));
-
-        let mut heights: std::collections::HashMap<_, _> =
-            container.block_heights.into_iter().collect();
+        let mut heights = fixture_heights(include_bytes!(
+            "../../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
+        ));
         heights.remove(&Network::Mainnet.known_genesis_block_hash().unwrap());
         let tip_height = heights[&qr_info.mn_list_diff_tip.block_hash];
         let base = qr_info.mn_list_diff_at_h_minus_c.block_hash;
@@ -678,7 +697,7 @@ mod tests {
         };
         storage.store_diff(work_block_height, &diff).await.unwrap();
 
-        let engine = storage.load_engine().await.unwrap();
+        let engine = storage.load_engine().await;
 
         assert!(engine.masternode_lists.contains_key(&tip_height), "the QRInfo replays");
         assert!(

@@ -2,8 +2,10 @@ use crate::bls_sig_utils::BLSSignature;
 use std::sync::Arc;
 
 use crate::Network;
+use crate::QuorumHash;
 use crate::network::constants::NetworkExt;
 use crate::network::message_sml::MnListDiff;
+use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
@@ -13,63 +15,16 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
-use crate::{BlockHash, QuorumHash};
 use hashes::Hash;
 use std::collections::BTreeMap;
 
-pub trait TryFromWithBlockHashLookup<T>: Sized {
-    type Error;
-    fn try_from_with_block_hash_lookup<F>(
-        value: T,
-        block_hash_lookup: F,
-        network: Network,
-    ) -> Result<Self, Self::Error>
-    where
-        F: Fn(&BlockHash) -> Option<u32>;
-}
-
-pub trait TryIntoWithBlockHashLookup<T>: Sized {
-    type Error;
-
-    /// Converts `self` into `T`, using a block hash lookup function.
-    fn try_into_with_block_hash_lookup<F>(
-        self,
-        block_hash_lookup: F,
-        network: Network,
-    ) -> Result<T, Self::Error>
-    where
-        F: Fn(&BlockHash) -> Option<u32>;
-}
-
-impl<T, U> TryIntoWithBlockHashLookup<U> for T
-where
-    U: TryFromWithBlockHashLookup<T>,
-{
-    type Error = U::Error;
-
-    fn try_into_with_block_hash_lookup<F>(
-        self,
-        block_hash_lookup: F,
-        network: Network,
-    ) -> Result<U, Self::Error>
-    where
-        F: Fn(&BlockHash) -> Option<u32>,
-    {
-        U::try_from_with_block_hash_lookup(self, block_hash_lookup, network)
-    }
-}
-
-impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
-    type Error = SmlError;
-
-    fn try_from_with_block_hash_lookup<F>(
+impl MasternodeList {
+    /// The list a diff from the genesis block builds, known at `known_height`.
+    pub fn from_diff(
         diff: MnListDiff,
-        block_hash_lookup: F,
+        known_height: CoreBlockHeight,
         network: Network,
-    ) -> Result<Self, Self::Error>
-    where
-        F: Fn(&BlockHash) -> Option<u32>,
-    {
+    ) -> Result<Self, SmlError> {
         if let Some(genesis_block_hash) = network.known_genesis_block_hash() {
             // Check if the base block is the genesis block
             if diff.base_block_hash != genesis_block_hash
@@ -78,10 +33,6 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                 return Err(SmlError::BaseBlockNotGenesis(diff.base_block_hash));
             }
         }
-
-        // Lookup block height
-        let known_height = block_hash_lookup(&diff.block_hash)
-            .ok_or(SmlError::BlockHashLookupFailed(diff.block_hash))?;
 
         // Ensure the `MnListDiff` is valid
         if diff.merkle_hashes.is_empty() || diff.new_masternodes.is_empty() {
@@ -175,11 +126,7 @@ mod tests {
         let post_v20_height = 2_227_096;
         assert!(post_v20_height >= Network::Mainnet.v20_activation_height());
 
-        let result = MasternodeList::try_from_with_block_hash_lookup(
-            diff,
-            |_| Some(post_v20_height),
-            Network::Mainnet,
-        );
+        let result = MasternodeList::from_diff(diff, post_v20_height, Network::Mainnet);
 
         assert!(
             matches!(result, Err(SmlError::IncompleteSignatureSet)),
@@ -201,11 +148,7 @@ mod tests {
         let pre_v20_height = 1_900_000;
         assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
 
-        let result = MasternodeList::try_from_with_block_hash_lookup(
-            diff,
-            |_| Some(pre_v20_height),
-            Network::Mainnet,
-        );
+        let result = MasternodeList::from_diff(diff, pre_v20_height, Network::Mainnet);
 
         assert!(
             result.is_ok(),
