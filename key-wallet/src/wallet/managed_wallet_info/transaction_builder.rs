@@ -1588,6 +1588,7 @@ mod tests {
             best_cl_height: Some(1500),
             best_cl_signature: Some(dashcore::bls_sig_utils::BLSSignature::from([0; 96])),
             asset_locked_amount: Some(1000000),
+            merkle_root_asset_unlocks: None,
         };
 
         let builder2 = TransactionBuilder::new()
