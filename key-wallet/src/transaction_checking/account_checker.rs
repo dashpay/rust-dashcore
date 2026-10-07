@@ -700,6 +700,7 @@ impl ManagedCoreFundsAccount {
                     .utxos
                     .get(&input.previous_output)
                     .or_else(|| self.spent_before_funded.get(&input.previous_output))
+                    .or_else(|| self.claim_guarded_outputs.get(&input.previous_output))
                 {
                     sent = sent.saturating_add(utxo.txout.value);
 

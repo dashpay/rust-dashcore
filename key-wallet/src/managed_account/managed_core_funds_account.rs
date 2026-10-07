@@ -71,6 +71,12 @@ pub struct ManagedCoreFundsAccount {
     /// Ours, but spent before the funding arrived, so never in `utxos` (#649).
     /// Input matching falls back to these.
     pub(crate) spent_before_funded: BTreeMap<OutPoint, Utxo>,
+    /// Ours, but kept out of `utxos` by a claim alone. Input matching falls
+    /// back to these, so that the spender the claim stands for resolves its
+    /// input when it arrives. Not a guard: an entry goes with its claim, and
+    /// is not serialized.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) claim_guarded_outputs: BTreeMap<OutPoint, Utxo>,
     /// Outpoints reserved by in-flight transaction builds so concurrent builds
     /// do not select the same UTXO before the first build's transaction is
     /// processed. Empty after a restart, where chain and mempool sync
@@ -117,6 +123,7 @@ impl ManagedCoreFundsAccount {
             spent_outpoints: HashSet::new(),
             restored_spent_claims: BTreeMap::new(),
             spent_before_funded: BTreeMap::new(),
+            claim_guarded_outputs: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
     }
@@ -146,6 +153,7 @@ impl ManagedCoreFundsAccount {
             spent_outpoints: HashSet::new(),
             restored_spent_claims: BTreeMap::new(),
             spent_before_funded: BTreeMap::new(),
+            claim_guarded_outputs: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
     }
@@ -218,7 +226,38 @@ impl ManagedCoreFundsAccount {
                     }
                 })
                 .or_insert(*claimant);
+            self.keep_recorded_output_for_claim(outpoint);
         }
+    }
+
+    /// Fill `claim_guarded_outputs` for a claim restored after its funding:
+    /// the account holds the funding transaction's full record, the output
+    /// pays one of its addresses, and the outpoint is neither in `utxos` nor
+    /// marked by a record of this account.
+    fn keep_recorded_output_for_claim(&mut self, outpoint: &OutPoint) {
+        if self.utxos.contains_key(outpoint) || self.spent_outpoints.contains(outpoint) {
+            return;
+        }
+        let Some(record) = self.keys.transactions().get(&outpoint.txid) else {
+            return;
+        };
+        let Some(output) = record.transaction.output.get(outpoint.vout as usize) else {
+            return;
+        };
+        let Ok(address) = Address::from_script(&output.script_pubkey, self.keys.network()) else {
+            return;
+        };
+        if !self.keys.contains_address(&address) {
+            return;
+        }
+        let utxo = Utxo::new(
+            *outpoint,
+            output.clone(),
+            address,
+            record.context.block_info().map_or(0, |info| info.height),
+            record.transaction.is_coin_base(),
+        );
+        self.claim_guarded_outputs.insert(*outpoint, utxo);
     }
 
     /// Whether a restored claim names one of `removed` as its claimant.
@@ -253,7 +292,8 @@ impl ManagedCoreFundsAccount {
     ///
     /// * outpoint in `live_spenders` — a live record somewhere in the wallet
     ///   still spends it, so that record becomes the claimant;
-    /// * otherwise the claim is dropped, and the outpoint returned.
+    /// * otherwise the claim is dropped, together with the output kept for
+    ///   it, and the outpoint returned.
     ///
     /// Never touches `spent_outpoints`, so a mark this account derived from
     /// its own records — above all one whose ChainLocked record is pruned
@@ -275,6 +315,9 @@ impl ManagedCoreFundsAccount {
             *claimant = Some(*survivor);
             true
         });
+        for outpoint in &released {
+            self.claim_guarded_outputs.remove(outpoint);
+        }
         released
     }
 
@@ -413,6 +456,22 @@ impl ManagedCoreFundsAccount {
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
                                 );
+                                // Held back by a claim alone, its spender is still
+                                // to be recorded: keep the output to resolve that input.
+                                if !self.spent_outpoints.contains(&outpoint)
+                                    && !self.utxos.contains_key(&outpoint)
+                                {
+                                    self.claim_guarded_outputs.insert(
+                                        outpoint,
+                                        Utxo::new(
+                                            outpoint,
+                                            output.clone(),
+                                            addr.clone(),
+                                            context.block_info().map_or(0, |i| i.height),
+                                            tx.is_coin_base(),
+                                        ),
+                                    );
+                                }
                                 continue;
                             }
 
@@ -485,6 +544,7 @@ impl ManagedCoreFundsAccount {
                 for input in &tx.input {
                     self.spent_outpoints.insert(input.previous_output);
                     self.spent_before_funded.remove(&input.previous_output);
+                    self.claim_guarded_outputs.remove(&input.previous_output);
 
                     if self.utxos.remove(&input.previous_output).is_some() {
                         tracing::debug!(
@@ -576,6 +636,7 @@ impl ManagedCoreFundsAccount {
             self.utxos.remove(&outpoint);
         }
         self.spent_before_funded.retain(|outpoint, _| !abandoned.contains(&outpoint.txid));
+        self.claim_guarded_outputs.retain(|outpoint, _| !abandoned.contains(&outpoint.txid));
 
         let mut records = 0;
         let mut freed: HashSet<OutPoint> = HashSet::new();
@@ -743,6 +804,7 @@ impl ManagedCoreFundsAccount {
                 changed = true;
             }
             self.spent_before_funded.retain(|outpoint, _| outpoint.txid != *loser);
+            self.claim_guarded_outputs.retain(|outpoint, _| outpoint.txid != *loser);
             if let Some(record) = self.keys.transactions_mut().remove(loser) {
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
@@ -917,7 +979,8 @@ impl ManagedCoreFundsAccount {
             .collect();
 
         // Input details must be built before `update_utxos` removes spent UTXOs
-        // and drops the `spent_before_funded` entry for the same outpoint.
+        // and drops the `spent_before_funded` or `claim_guarded_outputs` entry
+        // for the same outpoint.
         let mut input_details = Vec::new();
         if !tx.is_coin_base() {
             for (idx, input) in tx.input.iter().enumerate() {
@@ -925,6 +988,7 @@ impl ManagedCoreFundsAccount {
                     .utxos
                     .get(&input.previous_output)
                     .or_else(|| self.spent_before_funded.get(&input.previous_output))
+                    .or_else(|| self.claim_guarded_outputs.get(&input.previous_output))
                 {
                     input_details.push(InputDetail {
                         index: idx as u32,
@@ -937,9 +1001,10 @@ impl ManagedCoreFundsAccount {
 
         // Marks a transaction that spends our coins. `input_details` (built
         // above) and `account_match.sent` (built in `check_transaction_with_index`)
-        // both resolve each input against `self.utxos` and then
-        // `self.spent_before_funded` on this account, with no mutation of either
-        // between the two lookups, so they populate together; keeping both keeps
+        // both resolve each input against `self.utxos`, then
+        // `self.spent_before_funded`, then `self.claim_guarded_outputs` on this
+        // account, with no mutation of any between the two lookups, so they
+        // populate together; keeping both keeps
         // this robust should the two call sites ever compute over different
         // snapshots.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
@@ -1413,6 +1478,7 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             spent_outpoints,
             restored_spent_claims: BTreeMap::new(),
             spent_before_funded: helper.spent_before_funded,
+            claim_guarded_outputs: BTreeMap::new(),
             reservations: ReservationSet::default(),
         })
     }
