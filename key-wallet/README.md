@@ -76,7 +76,7 @@ The library is organized into several key modules:
 ```rust
 use key_wallet::{Wallet, Mnemonic, Network};
 use key_wallet::mnemonic::Language;
-use dashcore::hashes::hex::DisplayHex;
+use hex_conservative::DisplayHex;
 
 // Generate a new mnemonic
 let mnemonic = Mnemonic::generate(24, Language::English)?;
@@ -163,7 +163,7 @@ let pool_1_address = coinjoin_account.derive_address_at_pool(1, 0)?;
 ```rust
 #[cfg(feature = "eddsa")]
 {
-    use dashcore::hashes::hex::DisplayHex;
+    use hex_conservative::DisplayHex;
     use key_wallet::account::EdDSAAccount;
     
     // Create identity registration funding account

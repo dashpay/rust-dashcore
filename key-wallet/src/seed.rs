@@ -7,7 +7,6 @@ use crate::error::{Error, Result};
 use bincode_derive::{Decode, Encode};
 use core::fmt;
 use core::str::FromStr;
-use dashcore_hashes::hex::FromHex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zeroize::Zeroize;
@@ -53,7 +52,7 @@ impl Seed {
 
     /// Create a seed from hex string
     pub fn from_hex(hex_str: &str) -> Result<Self> {
-        let bytes = Vec::<u8>::from_hex(hex_str)
+        let bytes = hex_conservative::decode_to_vec(hex_str)
             .map_err(|e| Error::InvalidParameter(format!("Invalid hex: {}", e)))?;
         Self::from_slice(&bytes)
     }

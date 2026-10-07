@@ -1296,7 +1296,7 @@ pub enum Error {
     /// Base58 encoding error
     Base58(base58::DecodeCheckError),
     /// Hexadecimal decoding error
-    Hex(dashcore_hashes::hex::HexToArrayError),
+    Hex(hex_conservative::DecodeFixedLengthBytesError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
     /// Something is not supported based on active features
@@ -1947,8 +1947,6 @@ impl FromStr for ExtendedPubKey {
 mod tests {
     use core::str::FromStr;
 
-    use dashcore_hashes::hex::FromHex;
-
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
     use dashcore::Network::{self, Mainnet};
@@ -2133,7 +2131,7 @@ mod tests {
 
     #[test]
     fn test_vector_1() {
-        let seed = Vec::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
+        let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // m
         test_path(
@@ -2192,7 +2190,7 @@ mod tests {
 
     #[test]
     fn test_vector_2() {
-        let seed = Vec::from_hex("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542").unwrap();
+        let seed = hex_conservative::decode_to_vec("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542").unwrap();
 
         // m
         test_path(
@@ -2251,7 +2249,7 @@ mod tests {
 
     #[test]
     fn test_vector_3() {
-        let seed = Vec::from_hex("4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be").unwrap();
+        let seed = hex_conservative::decode_to_vec("4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be").unwrap();
 
         // m
         test_path(
@@ -2356,7 +2354,7 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_1() {
-        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+        let seed = hex_conservative::decode_to_vec("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 1: Non-hardened / Hardened path example
         test_path(
@@ -2374,7 +2372,7 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_2() {
-        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+        let seed = hex_conservative::decode_to_vec("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 2: Multiple hardened derivations with final non-hardened index
         test_path(
@@ -2392,7 +2390,7 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_3() {
-        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+        let seed = hex_conservative::decode_to_vec("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 3: Non-hardened derivation
         test_path(
@@ -2406,7 +2404,7 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_4() {
-        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+        let seed = hex_conservative::decode_to_vec("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 4: Hardened path with complex indices
         test_path(
