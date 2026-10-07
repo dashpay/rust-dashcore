@@ -152,7 +152,7 @@ impl TryInto<Vec<u8>> for OutPoint {
 #[non_exhaustive]
 pub enum ParseOutPointError {
     /// Error in TXID part.
-    Txid(hashes::hex::HexToArrayError),
+    Txid(hex_conservative::DecodeFixedLengthBytesError),
     /// Error in vout part.
     Vout(crate::error::ParseIntError),
     /// Error in general format.

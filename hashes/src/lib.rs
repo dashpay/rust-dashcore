@@ -98,6 +98,9 @@ pub extern crate bitcoin_hashes;
 
 #[doc(hidden)]
 pub mod _export {
+    pub use hex_conservative;
+
+    pub use crate::util::pad_hex;
     /// A re-export of core::*
     pub mod _core {
         pub use core::*;
@@ -108,8 +111,8 @@ pub mod _export {
 // The tag helpers are upstream's verbatim. Only `sha256t_hash_newtype!` stays
 // ours, so that tagged hashes route through our `hash_newtype!`.
 pub use bitcoin_hashes::{
-    cmp, hash160, hex, hmac, ripemd160, sha1, sha256, sha256d, sha512, sha512_256, FromSliceError,
-    Hash, HashEngine, Hmac, HmacEngine,
+    cmp, hash160, hmac, ripemd160, sha1, sha256, sha256d, sha512, sha512_256, FromSliceError, Hash,
+    HashEngine, Hmac, HmacEngine,
 };
 pub use bitcoin_hashes::{sha256t_hash_newtype_tag, sha256t_hash_newtype_tag_constructor};
 
