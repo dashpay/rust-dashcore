@@ -47,6 +47,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `dashcore::base58` is `base58ck` 0.5.0, so `Base58CkString`
   replaces the `encode_*` functions and the `Base58` error variants carry
   `base58::DecodeCheckError`
+- **Breaking:** `Work` and `Target` display as 64-digit hex instead of decimal,
+  and their hex formatting ignores width and fill
+- **Breaking:** `Target::difficulty` returns 0 for a zero target instead of
+  panicking, and `Work` addition and subtraction wrap instead of panicking on
+  overflow in debug builds
 - Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
   `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
 - All workspace crates declare a MSRV of 1.89
@@ -58,6 +63,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
   and rejects flags above `0xff`
 - Reject 256-bit child numbers in `key-wallet` with an odd number of hex digits
+- **Breaking:** a header whose nBits is negative or overflows now has zero
+  work. Previously it decoded to `Target::ZERO`, whose `to_work()` returned the
+  maximum work, so it outweighed any valid chain in chainwork comparisons
+- **Breaking:** `Target::from_compact` returns `Target::ZERO` for overflowing
+  nBits instead of a wrapped value
 
 ### Removed
 
