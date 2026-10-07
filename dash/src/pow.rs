@@ -230,7 +230,7 @@ impl Work {
 
     /// Converts this [`Work`] to [`Target`].
     pub fn to_target(self) -> Target {
-        Target(inverse(self.0))
+        Target(self.0.block_proof())
     }
 
     /// Returns log2 of this work.
@@ -327,7 +327,7 @@ impl Target {
     /// block header in compact form as nBits). This is not the same as the difficulty to mine a
     /// block with this target (see `Self::difficulty`).
     pub fn to_work(self) -> Work {
-        Work(inverse(self.0))
+        Work(self.0.block_proof())
     }
 
     /// Computes the popular "difficulty" measure for mining.
@@ -432,30 +432,6 @@ const fn from_high_u128(high: u128) -> Arith256 {
         i += 1;
     }
     Arith256::from_bendian(be)
-}
-
-/// Calculates 2^256 / (x + 1) where x is a 256 bit unsigned integer.
-///
-/// 2**256 / (x + 1) == ~x / (x + 1) + 1
-///
-/// (Equation shamelessly stolen from bitcoind)
-fn inverse(x: Arith256) -> Arith256 {
-    // We should never have a target/work of zero so this doesn't matter
-    // that much, but we define the inverse of 0 as max.
-    if x == Arith256::ZERO {
-        return Arith256::MAX;
-    }
-    // We define the inverse of 1 as max.
-    if x == Arith256::ONE {
-        return Arith256::MAX;
-    }
-    // We define the inverse of max as 1.
-    if x == Arith256::MAX {
-        return Arith256::ONE;
-    }
-
-    let ret = !x / x.wrapping_add(Arith256::ONE);
-    ret.wrapping_add(Arith256::ONE)
 }
 
 /// Error from `TryFrom<signed type>` implementations, occurs when input is negative.
@@ -615,25 +591,18 @@ mod tests {
         assert_eq!(Work(Arith256::MAX).log2(), 256.0);
     }
 
-    #[test]
-    fn u256_zero_min_max_inverse() {
-        assert_eq!(inverse(Arith256::MAX), Arith256::ONE);
-        assert_eq!(inverse(Arith256::ONE), Arith256::MAX);
-        assert_eq!(inverse(Arith256::ZERO), Arith256::MAX);
+    #[test_case(Arith256::ZERO, Arith256::ZERO; "zero")]
+    #[test_case(Arith256::ONE, Arith256::ONE << 255; "one")]
+    #[test_case(Arith256::MAX, Arith256::ONE; "max")]
+    fn target_to_work_edges(target: Arith256, work: Arith256) {
+        assert_eq!(Target(target).to_work(), Work(work));
     }
 
-    #[test]
-    fn u256_max_min_inverse_roundtrip() {
-        let max = Arith256::MAX;
-
-        for min in [Arith256::ZERO, Arith256::ONE].iter() {
-            // lower target means more work required.
-            assert_eq!(Target(max).to_work(), Work(Arith256::ONE));
-            assert_eq!(Target(*min).to_work(), Work(max));
-
-            assert_eq!(Work(max).to_target(), Target(Arith256::ONE));
-            assert_eq!(Work(*min).to_target(), Target(max));
-        }
+    #[test_case(0x0492_3456; "negative")]
+    #[test_case(0x2300_0001; "overflow")]
+    fn invalid_compact_has_no_work(n_bits: u32) {
+        let target = Target::from_compact(CompactTarget::from_consensus(n_bits));
+        assert_eq!(target.to_work(), Work(Arith256::ZERO));
     }
 
     #[cfg(feature = "serde")]
