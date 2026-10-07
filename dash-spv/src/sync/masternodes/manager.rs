@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::masternode_list_engine::{MasternodeListEngine, QRInfoFeedResult};
 use tokio::sync::RwLock;
@@ -266,6 +267,25 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
 }
 
+/// Cycle base heights whose whole active rotation set the engine holds
+/// `Verified`, the cycles a completed QRInfo marked validated. An engine
+/// replayed from storage carries them, so a restart does not ask for a QRInfo
+/// of a cycle it has already validated.
+fn fully_verified_cycle_heights(engine: &MasternodeListEngine) -> BTreeSet<u32> {
+    let expected = engine.network.isd_llmq_type().active_quorum_count() as usize;
+    engine
+        .rotated_quorums_per_cycle
+        .iter()
+        .filter(|(_, quorums)| {
+            quorums.len() == expected
+                && quorums
+                    .values()
+                    .all(|quorum| quorum.verified == LLMQEntryVerificationStatus::Verified)
+        })
+        .filter_map(|(cycle_hash, _)| engine.block_container.get_height(cycle_hash))
+        .collect()
+}
+
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// Create a new masternode manager with the given header storage.
     pub async fn new(
@@ -276,8 +296,11 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     ) -> Self {
         // Recover sync state from the engine's stored masternode lists so that a
         // restart can resume from where the previous run left off.
-        let current_height =
-            engine.read().await.masternode_lists.keys().next_back().copied().unwrap_or(0);
+        let (current_height, validated_cycle_heights) = {
+            let engine_guard = engine.read().await;
+            let height = engine_guard.masternode_lists.keys().next_back().copied().unwrap_or(0);
+            (height, fully_verified_cycle_heights(&engine_guard))
+        };
 
         // Load block header tip for progress display
         let header_tip =
@@ -289,7 +312,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         initial_progress.update_block_header_tip_height(header_tip);
         initial_progress.set_state(SyncState::WaitingForConnections);
 
-        let sync_state = MasternodeSyncState::new();
+        let mut sync_state = MasternodeSyncState::new();
+        sync_state.validated_cycle_heights = validated_cycle_heights;
 
         Self {
             progress: initial_progress,
@@ -345,6 +369,17 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     ///
     /// This applies only to the incremental-update path while state is `Synced`.
     /// Initial sync and explicit retry paths (timeout) bypass it.
+    /// Whether the rotation cycle `tip_height` is in is one the engine holds
+    /// verified, so the rotated quorums active at the tip are already known.
+    pub(super) fn holds_the_tip_cycle(&self, tip_height: u32) -> bool {
+        let interval = self.network.isd_llmq_type().params().dkg_params.interval;
+        interval > 0
+            && self
+                .sync_state
+                .validated_cycle_heights
+                .contains(&(tip_height - tip_height % interval))
+    }
+
     pub(super) fn next_pipeline_mode(&mut self, tip_height: u32) -> PipelineMode {
         let params = self.network.isd_llmq_type().params();
         let dkg_interval = params.dkg_params.interval;
@@ -528,6 +563,10 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 
         self.progress.update_current_height(height);
         tracing::debug!("Incremental MnListDiff complete at height {}", height);
+        if self.state() == SyncState::Syncing {
+            self.set_state(SyncState::Synced);
+            tracing::info!("Masternode sync complete at height {}", height);
+        }
         Ok(vec![SyncEvent::MasternodeStateUpdated {
             height,
             qr_info_result: None,
