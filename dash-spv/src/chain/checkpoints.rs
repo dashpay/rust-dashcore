@@ -7,7 +7,7 @@
 //! - Bootstrap masternode lists at specific heights
 
 use dashcore::{BlockHash, CompactTarget, Network, Target};
-use dashcore_hashes::{hex, Hash};
+use dashcore_hashes::Hash;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -1164,8 +1164,7 @@ pub fn testnet_checkpoints() -> Vec<Checkpoint> {
 
 /// Helper to parse hex block hash strings
 fn parse_block_hash(s: &str) -> Result<BlockHash, String> {
-    use hex::FromHex;
-    let bytes = Vec::<u8>::from_hex(s).map_err(|e| format!("Invalid hex: {}", e))?;
+    let bytes = hex_conservative::decode_to_vec(s).map_err(|e| format!("Invalid hex: {}", e))?;
     if bytes.len() != 32 {
         return Err("Invalid hash length: expected 32 bytes".to_string());
     }

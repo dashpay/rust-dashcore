@@ -94,6 +94,8 @@ impl<'a> ChainLockValidator<'a> {
 mod tests {
     use crate::sml_engine::test_support::TestEngine;
     use dashcore::ChainLock;
+    use dashcore_hashes::Hash;
+    use hex_conservative::DisplayHex;
 
     #[test]
     fn chain_locks_verify_against_the_newest_list() {
@@ -103,14 +105,22 @@ mod tests {
 
         let [chain_lock, next_chain_lock] = ChainLock::mainnet_fixture_pair();
         assert_eq!(
-            hex::encode(chain_lock.request_id().expect("expected to make request id")),
+            chain_lock
+                .request_id()
+                .expect("expected to make request id")
+                .as_byte_array()
+                .to_lower_hex_string(),
             "969ab4a945632f5fba1331f3d2556d317682142cf8aaa6544e407e683c61a177"
         );
         engine.verify_chain_lock(&chain_lock).expect("expected to verify chain lock");
 
         // Another one, so the first was not a 1/4 fluke.
         assert_eq!(
-            hex::encode(next_chain_lock.request_id().expect("expected to make request id")),
+            next_chain_lock
+                .request_id()
+                .expect("expected to make request id")
+                .as_byte_array()
+                .to_lower_hex_string(),
             "675aed91d6098cdf575cc09bfd1ff4f750acde1e793f385c3c72bbb400068d28"
         );
         engine.verify_chain_lock(&next_chain_lock).expect("expected to verify chain lock");

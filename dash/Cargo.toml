@@ -50,9 +50,8 @@ serde = { workspace = true, features = ["derive", "alloc", "rc"], optional = tru
 
 base64 = { version = "0.22", optional = true }
 bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
-hex_lit = { workspace = true }
 anyhow = { version= "1.0" }
-hex = { workspace = true }
+hex-conservative = { workspace = true }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 blake3 = "1.8.1"

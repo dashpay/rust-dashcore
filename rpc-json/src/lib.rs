@@ -36,7 +36,7 @@ use dashcore::{
     Address, Amount, BlockHash, PrivateKey, ProTxHash, PublicKey, QuorumHash, Script, ScriptBuf,
     SignedAmount, Transaction, TxMerkleNode, Txid, bip158,
 };
-use hex::FromHexError;
+use hex_conservative::DecodeVariableLengthBytesError;
 use key_wallet::bip32;
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -182,9 +182,9 @@ impl Eq for ScanningDetails {}
 pub struct CoinbaseTxDetails {
     pub version: usize,
     pub height: i32,
-    #[serde(rename = "merkleRootMNList", with = "hex")]
+    #[serde(rename = "merkleRootMNList", with = "serde_hex")]
     merkle_root_mn_list: Vec<u8>,
-    #[serde(rename = "merkleRootQuorums", with = "hex")]
+    #[serde(rename = "merkleRootQuorums", with = "serde_hex")]
     merkle_root_quorums: Vec<u8>,
 }
 
@@ -192,7 +192,7 @@ pub struct CoinbaseTxDetails {
 pub struct GetBestChainLockResult {
     pub blockhash: BlockHash,
     pub height: u32,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub signature: Vec<u8>,
     pub known_block: bool,
 }
@@ -230,7 +230,7 @@ pub struct GetBlockHeaderResult {
     pub confirmations: i32,
     pub height: usize,
     pub version: Version,
-    #[serde(default, with = "hex")]
+    #[serde(default, with = "serde_hex")]
     pub version_hex: Vec<u8>,
     #[serde(rename = "merkleroot")]
     pub merkle_root: TxMerkleNode,
@@ -240,7 +240,7 @@ pub struct GetBlockHeaderResult {
     pub nonce: u32,
     pub bits: String,
     pub difficulty: f64,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub chainwork: Vec<u8>,
     pub n_tx: usize,
     #[serde(rename = "previousblockhash")]
@@ -514,7 +514,7 @@ pub struct GetMiningInfoResult {
 #[serde(rename_all = "camelCase")]
 pub struct GetRawTransactionResultVinScriptSig {
     pub asm: String,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
 }
 
@@ -553,7 +553,7 @@ impl GetRawTransactionResultVin {
 #[serde(rename_all = "camelCase")]
 pub struct GetRawTransactionResultVoutScriptPubKey {
     pub asm: String,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
     #[serde(rename = "reqSigs")]
     pub req_sigs: Option<usize>,
@@ -596,7 +596,7 @@ pub struct GetRawTransactionResult {
     pub extra_payload_size: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
     pub extra_payload: Option<Vec<u8>>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
     pub blockhash: Option<BlockHash>,
     pub height: Option<i32>,
@@ -612,7 +612,7 @@ pub struct GetRawTransactionResult {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct GetBlockFilterResult {
     pub header: dashcore::FilterHash,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub filter: Vec<u8>,
 }
 
@@ -807,7 +807,7 @@ pub struct ListReceivedByAddressResult {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct SignRawTransactionResult {
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
     pub complete: bool,
 }
@@ -967,7 +967,7 @@ pub struct GetBlockchainInfoResult {
     #[serde(rename = "initialblockdownload")]
     pub initial_block_download: bool,
     /// Total amount of work in active chain, in hexadecimal
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub chainwork: Vec<u8>,
     /// The estimated size of the block and undo files on disk
     pub size_on_disk: u64,
@@ -1481,7 +1481,7 @@ pub struct GetBlockTemplateResult {
     // TODO figure out what is the data is represented to coinbasetxn
     // pub coinbasetxn:
     /// The number which valid hashes must be less than, in big-endian
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub target: Vec<u8>,
     /// The minimum timestamp appropriate for the next block time. Expressed as
     /// UNIX timestamp.
@@ -1493,7 +1493,7 @@ pub struct GetBlockTemplateResult {
     // TODO figure out what is the data is represented to value
     // pub value:
     /// A range of valid nonces
-    #[serde(with = "hex", rename = "noncerange")]
+    #[serde(with = "serde_hex", rename = "noncerange")]
     pub nonce_range: Vec<u8>,
     /// Block sigops limit
     #[serde(rename = "sigoplimit")]
@@ -1507,9 +1507,9 @@ pub struct GetBlockTemplateResult {
     #[serde(rename = "curtime")]
     pub current_time: u64,
     /// The compressed difficulty in hexadecimal
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub bits: Vec<u8>,
-    #[serde(with = "hex", rename = "previousbits")]
+    #[serde(with = "serde_hex", rename = "previousbits")]
     pub previous_bits: Vec<u8>,
     /// The height of the block we will be mining: `current height + 1`
     pub height: u64,
@@ -1528,7 +1528,7 @@ pub struct GetBlockTemplateResult {
 /// Models a single transaction entry in the result of "getblocktemplate"
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct GetBlockTemplateResultTransaction {
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub data: Vec<u8>,
     pub hash: BlockHash,
     /// Transactions that must be in present in the final block if this one is.
@@ -1752,7 +1752,7 @@ pub struct FundRawTransactionOptions {
 #[derive(Deserialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FundRawTransactionResult {
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
     #[serde(with = "dashcore::amount::serde::as_btc")]
     pub fee: Amount,
@@ -2210,7 +2210,7 @@ pub struct DMNState {
     /// extended-address ProTx version on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payouts: Option<Vec<DMNPayout>>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub pub_key_operator: Vec<u8>,
     #[serde(default, deserialize_with = "deserialize_address_optional")]
     pub operator_payout_address: Option<[u8; 20]>,
@@ -2367,7 +2367,7 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
 
         let platform_node_id = platform_node_id
             .map(|address| {
-                let address = hex::decode(address)
+                let address = hex_conservative::decode_to_vec(&address)
                     .map_err(|_| encode::Error::ParseFailed("invalid hex in platform node id"))?;
                 let len = address.len();
                 address.try_into().map_err(|_| encode::Error::InvalidVectorSize {
@@ -2680,7 +2680,7 @@ pub struct MasternodeStatus {
     pub pro_tx_hash: ProTxHash,
     #[serde(rename = "type")]
     pub node_type: String,
-    #[serde(rename = "collateralHash", with = "hex")]
+    #[serde(rename = "collateralHash", with = "serde_hex")]
     pub collateral_hash: Vec<u8>,
     #[serde(rename = "collateralIndex")]
     pub collateral_index: u32,
@@ -2937,7 +2937,7 @@ pub struct QuorumListResultInternal<T> {
 #[serde(rename_all = "camelCase")]
 pub struct QuorumMember {
     pub pro_tx_hash: ProTxHash,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub pub_key_operator: Vec<u8>,
     pub valid: bool,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
@@ -2952,10 +2952,10 @@ pub struct QuorumInfoResult {
     pub quorum_type: QuorumType,
     pub quorum_hash: QuorumHash,
     pub quorum_index: u32,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub mined_block: Vec<u8>,
     pub members: Vec<QuorumMember>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub quorum_public_key: Vec<u8>,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
     pub secret_key_share: Option<Vec<u8>>,
@@ -3082,13 +3082,13 @@ pub struct QuorumSignature {
     pub llmq_type: QuorumType,
     pub quorum_hash: QuorumHash,
     pub quorum_member: Option<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub id: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub msg_hash: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub sign_hash: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub signature: Vec<u8>,
 }
 
@@ -3106,9 +3106,9 @@ pub struct QuorumMemberOf {
     #[serde(rename = "type", deserialize_with = "deserialize_quorum_type")]
     pub quorum_type: QuorumType,
     pub quorum_hash: QuorumHash,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub mined_block: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub quorum_public_key: Vec<u8>,
     pub is_valid_member: bool,
     pub member_index: u32,
@@ -3129,13 +3129,13 @@ pub struct QuorumSnapshot {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuorumMasternodeListItem {
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub pro_reg_tx_hash: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub confirmed_hash: Vec<u8>,
     #[serde_as(serialize_as = "DisplayFromStr", deserialize_as = "ServiceOrUnspecified")]
     pub service: SocketAddr,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub pub_key_operator: Vec<u8>,
     #[serde_as(as = "Bytes")]
     pub voting_address: Vec<u8>,
@@ -3157,9 +3157,9 @@ pub struct MasternodeDiff {
     pub mn_list: Vec<QuorumMasternodeListItem>,
     pub deleted_quorums: Vec<QuorumItemDeleted>,
     pub new_quorums: Vec<QuorumMinableCommitments>,
-    #[serde(rename = "merkleRootMNList", with = "hex")]
+    #[serde(rename = "merkleRootMNList", with = "serde_hex")]
     pub merkle_root_mn_list: Vec<u8>,
-    #[serde(rename = "merkleRootQuorums", with = "hex")]
+    #[serde(rename = "merkleRootQuorums", with = "serde_hex")]
     pub merkle_root_quorums: Vec<u8>,
 }
 
@@ -3322,7 +3322,7 @@ pub struct ProTxInfo {
     pub mn_type: Option<String>,
     #[serde(rename = "proTxHash")]
     pub pro_tx_hash: ProTxHash,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub collateral_hash: Vec<u8>,
     pub collateral_index: u32,
     /// `None` when Core prints no `collateralAddress`: the collateral output has no address (a
@@ -3366,8 +3366,27 @@ pub enum ProTxRevokeReason {
 
 // Custom deserializer functions.
 
+/// Serializes byte vectors as lowercase hex strings, for
+/// `#[serde(with = "serde_hex")]`.
+mod serde_hex {
+    use hex_conservative::DisplayHex;
+    use serde::de::Error as _;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::HexError;
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&bytes.as_hex())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        hex_conservative::decode_to_vec(&s).map_err(|e| D::Error::custom(HexError::from(e)))
+    }
+}
+
 #[derive(Debug)]
-pub struct HexError(FromHexError);
+pub struct HexError(DecodeVariableLengthBytesError);
 
 impl Display for HexError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -3377,8 +3396,8 @@ impl Display for HexError {
 
 impl Error for HexError {}
 
-impl From<FromHexError> for HexError {
-    fn from(err: FromHexError) -> HexError {
+impl From<DecodeVariableLengthBytesError> for HexError {
+    fn from(err: DecodeVariableLengthBytesError) -> HexError {
         HexError(err)
     }
 }
@@ -3388,7 +3407,7 @@ where
     D: Deserializer<'de>,
 {
     match String::deserialize(deserializer) {
-        Ok(s) => match hex::decode(s) {
+        Ok(s) => match hex_conservative::decode_to_vec(&s) {
             Ok(v) => Ok(Some(v)),
             Err(err) => Err(D::Error::custom(HexError::from(err))),
         },
@@ -3403,7 +3422,7 @@ where
     D: Deserializer<'de>,
 {
     match String::deserialize(deserializer) {
-        Ok(s) => match hex::decode(s) {
+        Ok(s) => match hex_conservative::decode_to_vec(&s) {
             Ok(v) => match v.clone().try_into() {
                 Ok(array) => Ok(Some(array)),
                 Err(_) => Err(D::Error::custom(ArrayConversionError(v))),
@@ -3634,6 +3653,23 @@ mod tests {
         MasternodeAddresses, MasternodeListDiff, MasternodeStatus, MnSyncStatus, ProTxInfo,
         QuorumMasternodeListItem, QuorumType, deserialize_u32_opt, parse_host_port,
     };
+    use hex_conservative::DisplayHex;
+
+    #[test]
+    fn serde_hex_round_trips() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct Wrapper {
+            #[serde(with = "crate::serde_hex")]
+            bytes: Vec<u8>,
+        }
+
+        let wrapper = Wrapper {
+            bytes: vec![0x00, 0xab, 0xcd, 0xef],
+        };
+        let json = serde_json::to_value(&wrapper).unwrap();
+        assert_eq!(json, json!({ "bytes": "00abcdef" }));
+        assert_eq!(serde_json::from_value::<Wrapper>(json).unwrap(), wrapper);
+    }
 
     #[test]
     fn test_deserialize_u32_opt() {
@@ -3804,7 +3840,7 @@ mod tests {
 
         assert_eq!(
             "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563".to_string(),
-            hex::encode(result.added_mns[0].state.pub_key_operator.clone()),
+            result.added_mns[0].state.pub_key_operator.to_lower_hex_string(),
             "invalid pub_key_operator"
         );
     }
@@ -4741,7 +4777,7 @@ mod tests {
     }
 
     fn hash160(hex: &str) -> [u8; 20] {
-        hex::decode(hex).expect("valid hex").try_into().expect("20 bytes")
+        hex_conservative::decode_to_vec(hex).expect("valid hex").try_into().expect("20 bytes")
     }
 
     #[test]
@@ -4954,7 +4990,7 @@ mod tests {
         let older = core_v24_listdiff().added_mns[0].state.clone();
         let mut newer = older.clone();
         newer.voting_address = [0xee; 20];
-        newer.pub_key_operator = hex::decode("a792ce1af5f7bb9281053b3934cb8b08d00d075a56498e1a525388ce467f188e8a80911fd96a20982baa9b9678452534").expect("valid hex");
+        newer.pub_key_operator = hex_conservative::decode_to_vec("a792ce1af5f7bb9281053b3934cb8b08d00d075a56498e1a525388ce467f188e8a80911fd96a20982baa9b9678452534").expect("valid hex");
 
         let diff = older.compare_to_newer_dmn_state(&newer).expect("the states differ");
         assert_eq!(diff.owner_address, None);

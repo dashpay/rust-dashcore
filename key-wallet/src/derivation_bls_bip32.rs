@@ -51,6 +51,7 @@ use dashcore::Network;
 use serde::Deserialize;
 
 use crate::bip32::{ChainCode, ChildNumber, DerivationPath, Fingerprint};
+use hex_conservative::DisplayHex;
 
 /// The HMAC key used for generating the master key.
 const MASTER_HMAC_KEY: &[u8] = b"BLS HD seed";
@@ -167,8 +168,8 @@ impl ExtendedBLSPrivKey {
         // #[cfg(test)]
         // {
         //     eprintln!("Seed length: {}", seed.len());
-        //     eprintln!("Seed||0 (hex): {}", hex::encode(&seed_with_suffix));
-        //     eprintln!("HMAC output (hex): {}", hex::encode(private_key_bytes));
+        //     eprintln!("Seed||0 (hex): {}", seed_with_suffix.to_lower_hex_string());
+        //     eprintln!("HMAC output (hex): {}", private_key_bytes.to_lower_hex_string());
         // }
 
         // The C++ implementation reduces modulo the curve order
@@ -179,7 +180,7 @@ impl ExtendedBLSPrivKey {
 
         // #[cfg(test)]
         // {
-        //     eprintln!("After from_be_bytes (hex): {}", hex::encode(*private_key.to_bytes()));
+        //     eprintln!("After from_be_bytes (hex): {}", (*private_key.to_bytes()).to_lower_hex_string());
         // }
 
         // Second HMAC with seed||1 for the chain code
@@ -553,7 +554,7 @@ impl fmt::Debug for ExtendedBLSPubKey {
             .field("parent_fingerprint", &self.parent_fingerprint)
             .field("child_number", &self.child_number)
             .field("chain_code", &self.chain_code)
-            .field("public_key", &hex::encode(self.public_key.to_bytes()))
+            .field("public_key", &self.public_key.to_bytes().to_lower_hex_string())
             .finish()
     }
 }
@@ -805,7 +806,7 @@ mod tests {
     const SEED64: &str = "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4";
 
     fn master_from_seed64() -> ExtendedBLSPrivKey {
-        let seed = hex::decode(SEED64).unwrap();
+        let seed = hex_conservative::decode_to_vec(SEED64).unwrap();
         ExtendedBLSPrivKey::new_master(Network::Mainnet, &seed).unwrap()
     }
 
@@ -1422,19 +1423,19 @@ mod tests {
         fn master_from_seed() {
             let master = master_from_seed64();
             assert_eq!(
-                hex::encode(master.private_key.to_bytes()),
+                master.private_key.to_bytes().to_lower_hex_string(),
                 "27d1e600fe5ce42e9a18fe064aa0c1b8ee6754289013a86eb1e8af985ddc55c5"
             );
             assert_eq!(
-                hex::encode(&master.chain_code[..]),
+                master.chain_code[..].to_lower_hex_string(),
                 "2a680de50ab918089c65f47e6f32363eb8fbb915a61e9a10e0f882aa1c12aef9"
             );
             assert_eq!(
-                hex::encode(master.public_key_bytes_legacy().unwrap()),
+                master.public_key_bytes_legacy().unwrap().to_lower_hex_string(),
                 "883389cd6c289b97bfa18cc7b7c873397b4d753269d47d2fa29dda1682c1565687ccb19dd016398da7c9724f8a58bdef"
             );
             assert_eq!(
-                hex::encode(master.public_key_bytes().unwrap()),
+                master.public_key_bytes().unwrap().to_lower_hex_string(),
                 "a83389cd6c289b97bfa18cc7b7c873397b4d753269d47d2fa29dda1682c1565687ccb19dd016398da7c9724f8a58bdef"
             );
         }
@@ -1454,11 +1455,11 @@ mod tests {
                 .unwrap();
 
             assert_eq!(
-                hex::encode(account.private_key.to_bytes()),
+                account.private_key.to_bytes().to_lower_hex_string(),
                 "5f36c0e346c6e6275d6550a09857325e3f54f2a962eb09a48f61756f7b4bbfb0"
             );
             assert_eq!(
-                hex::encode(&account.chain_code[..]),
+                account.chain_code[..].to_lower_hex_string(),
                 "d9659c1bde2fd0e0f799f2f66bbbcfc7378fdea624d73d5d4749dc7222daea5e"
             );
 
@@ -1485,15 +1486,15 @@ mod tests {
                 let child = account
                     .derive_priv_legacy(ChildNumber::from_normal_idx(i as u32).unwrap())
                     .unwrap();
-                assert_eq!(hex::encode(child.private_key.to_bytes()), *sk, "sk {}", i);
+                assert_eq!(child.private_key.to_bytes().to_lower_hex_string(), *sk, "sk {}", i);
                 assert_eq!(
-                    hex::encode(child.public_key_bytes_legacy().unwrap()),
+                    child.public_key_bytes_legacy().unwrap().to_lower_hex_string(),
                     *pk_legacy,
                     "pk_legacy {}",
                     i
                 );
                 assert_eq!(
-                    hex::encode(child.public_key_bytes().unwrap()),
+                    child.public_key_bytes().unwrap().to_lower_hex_string(),
                     *pk_modern,
                     "pk_modern {}",
                     i
@@ -1504,7 +1505,7 @@ mod tests {
             let account_pub = account.to_extended_pub_key().unwrap();
             let child0_pub =
                 account_pub.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
-            assert_eq!(hex::encode(child0_pub.to_bytes_legacy().unwrap()), expected[0].1);
+            assert_eq!(child0_pub.to_bytes_legacy().unwrap().to_lower_hex_string(), expected[0].1);
         }
 
         #[test]
@@ -1521,17 +1522,17 @@ mod tests {
                 .derive_priv(hardened(3))
                 .unwrap();
             assert_eq!(
-                hex::encode(account.private_key.to_bytes()),
+                account.private_key.to_bytes().to_lower_hex_string(),
                 "05e18aebbe5c73f4dde3dd6a4a204da46c6efa38a38ff4fa5548b1c171154bda"
             );
             let child0 =
                 account.derive_priv_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
             assert_eq!(
-                hex::encode(child0.private_key.to_bytes()),
+                child0.private_key.to_bytes().to_lower_hex_string(),
                 "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
             );
             assert_eq!(
-                hex::encode(child0.public_key_bytes_legacy().unwrap()),
+                child0.public_key_bytes_legacy().unwrap().to_lower_hex_string(),
                 "09d8beabae708de1638487f1aff44b38e8c07d9b09f22d76329d6c8ec01e2ad4d030b660bca40ddbd222373a72c5bcef"
             );
         }
@@ -1542,33 +1543,33 @@ mod tests {
             let seed = [1u8, 50, 6, 244, 24, 199, 1, 25];
             let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
             assert_eq!(
-                hex::encode(master.private_key.to_bytes()),
+                master.private_key.to_bytes().to_lower_hex_string(),
                 "3e9f7b3846c1803703f94c764b51f5ace513b2f02c4d6b2c452d8ce66e5975bd"
             );
             assert_eq!(
-                hex::encode(&master.chain_code[..]),
+                master.chain_code[..].to_lower_hex_string(),
                 "d8b12555b4cc5578951e4a7c80031e22019cc0dce168b3ed88115311b8feb1e3"
             );
 
             // Hardened child 77'
             let c77h = master.derive_priv(hardened(77)).unwrap();
             assert_eq!(
-                hex::encode(c77h.private_key.to_bytes()),
+                c77h.private_key.to_bytes().to_lower_hex_string(),
                 "51b31efbd83aeead1e324c5c8248f5a13bb17ba7afe29aeb5ceef7eaff49ed6f"
             );
             assert_eq!(
-                hex::encode(&c77h.chain_code[..]),
+                c77h.chain_code[..].to_lower_hex_string(),
                 "f2c8e4269bb3e54f8179a5c6976d92ca14c3260dd729981e9d15f53049fd698b"
             );
 
             // Non-hardened child 77 (legacy serialization in HMAC input)
             let c77 = master.derive_priv_legacy(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
             assert_eq!(
-                hex::encode(c77.private_key.to_bytes()),
+                c77.private_key.to_bytes().to_lower_hex_string(),
                 "3ef4f8b4d262fb8981665532b531c7889798044f7cbe4d5fae5e30435f746044"
             );
             assert_eq!(
-                hex::encode(&c77.chain_code[..]),
+                c77.chain_code[..].to_lower_hex_string(),
                 "f428f5f011f52569c0b2004aaeda0744259f4247fd5e77649d3d25e6b491cc53"
             );
         }
@@ -1581,15 +1582,15 @@ mod tests {
             let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
             let c77 = master.derive_priv(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
             assert_eq!(
-                hex::encode(c77.private_key.to_bytes()),
+                c77.private_key.to_bytes().to_lower_hex_string(),
                 "0f9b101b475e449c9995032e138b432a330738b6401f675f0632385fe8d349bf"
             );
             assert_eq!(
-                hex::encode(&c77.chain_code[..]),
+                c77.chain_code[..].to_lower_hex_string(),
                 "c7b09e00d6b9b1676e8714e1060e0324787734809ae557a4bc8c07e9b1304ed0"
             );
             assert_eq!(
-                hex::encode(c77.public_key_bytes().unwrap()),
+                c77.public_key_bytes().unwrap().to_lower_hex_string(),
                 "a63fa533db03b400030a5eb163433ac7c8700d2301c4242e03db58d516dea0d52768d1b0d29e9f28f7707ce96d2d6108"
             );
 
@@ -1608,11 +1609,11 @@ mod tests {
             let child0_modern =
                 account.derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
             assert_eq!(
-                hex::encode(child0_modern.private_key.to_bytes()),
+                child0_modern.private_key.to_bytes().to_lower_hex_string(),
                 "1669d6cc8ac08fa377d63dafcf83f1fa6aee09e2df58c490b1b1a0b0999417ec"
             );
             assert_eq!(
-                hex::encode(child0_modern.public_key_bytes().unwrap()),
+                child0_modern.public_key_bytes().unwrap().to_lower_hex_string(),
                 "8f5d504fee1026394728781f004fee70480335c1f53156124b23e45386c7c1e2973efee3eab4ae60650fdaa8ae4460d0"
             );
 
@@ -1643,7 +1644,7 @@ mod tests {
             "9bbf8d5427fa6176cd52d60e544299be4224f82b9012046db1e8af975ddc55c6";
 
         fn parse_bytes_32(hex_str: &str) -> [u8; 32] {
-            hex::decode(hex_str).unwrap().try_into().unwrap()
+            hex_conservative::decode_to_vec(hex_str).unwrap().try_into().unwrap()
         }
 
         /// Constructs a secret key from the supplied scalar and extracts it to find the settled value.

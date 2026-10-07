@@ -643,6 +643,7 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedEd25519PubKey {
 #[cfg(test)]
 mod test {
     use super::*;
+    use hex_conservative::DisplayHex;
 
     const CASE_1_SEED: &str = "000102030405060708090a0b0c0d0e0f";
 
@@ -780,18 +781,18 @@ mod test {
     }
 
     fn derive_ed25519_private_key_hex(seed_hex: &str, indexes: &[u32]) -> String {
-        let seed = hex::decode(seed_hex).unwrap();
+        let seed = hex_conservative::decode_to_vec(seed_hex).unwrap();
 
         let private_key = derive_ed25519_private_key(&seed, indexes);
 
-        hex::encode(private_key)
+        private_key.to_lower_hex_string()
     }
 
     #[test]
     fn test_zeroize_clears_key_material() {
         use zeroize::Zeroize;
 
-        let seed = hex::decode(CASE_1_SEED).unwrap();
+        let seed = hex_conservative::decode_to_vec(CASE_1_SEED).unwrap();
         let mut key = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
         assert_ne!(*key.private_key.to_bytes(), [0u8; 32]);
         assert_ne!(key.chain_code.as_ref(), &[0u8; 32]);
@@ -806,7 +807,7 @@ mod test {
 
     #[test]
     fn test_partial_eq_matches_field_equality() {
-        let seed = hex::decode(CASE_1_SEED).unwrap();
+        let seed = hex_conservative::decode_to_vec(CASE_1_SEED).unwrap();
         let master = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
         assert_eq!(master, master.clone());
@@ -826,7 +827,7 @@ mod test {
     fn test_256_bit_children_are_refused() {
         let master = ExtendedEd25519PrivKey::new_master(
             Network::Mainnet,
-            &hex::decode(CASE_1_SEED).unwrap(),
+            &hex_conservative::decode_to_vec(CASE_1_SEED).unwrap(),
         )
         .unwrap();
         let child = ChildNumber::from_hardened_idx_256([0x35; 32]);

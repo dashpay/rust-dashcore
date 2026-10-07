@@ -45,7 +45,7 @@ serde = { workspace = true, features = ["derive"], optional = true }
 key-wallet = { path = "../key-wallet", features = ["test-utils", "bincode"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-hex = { workspace = true }
+hex-conservative = { workspace = true }
 criterion = "0.8.1"
 
 [[bench]]

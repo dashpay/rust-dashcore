@@ -10,6 +10,7 @@ use dashcore::address::Payload;
 use dashcore::hashes::hash160::Hash as Hash160;
 use dashcore::hashes::Hash as HashTrait;
 use dashcore::Address;
+use hex_conservative::DisplayHex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -95,14 +96,14 @@ impl PlatformP2PKHAddress {
 
 impl fmt::Debug for PlatformP2PKHAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PlatformP2PKHAddress({})", hex::encode(self.0))
+        write!(f, "PlatformP2PKHAddress({})", self.0.to_lower_hex_string())
     }
 }
 
 impl fmt::Display for PlatformP2PKHAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Display as hex by default
-        write!(f, "{}", hex::encode(self.0))
+        write!(f, "{}", self.0.to_lower_hex_string())
     }
 }
 

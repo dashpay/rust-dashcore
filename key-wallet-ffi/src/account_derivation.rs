@@ -8,6 +8,7 @@ use crate::account::FFIEdDSAAccount;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::keys::{FFIExtendedPrivKey, FFIPrivateKey};
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
+use hex_conservative::DisplayHex;
 use key_wallet::account::derivation::AccountDerivation;
 use key_wallet::account::AccountTrait;
 use std::ffi::CString;
@@ -88,7 +89,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_seed(
         account.inner().derive_from_seed_private_key_at(seed_slice, index),
         error
     );
-    unwrap_or_return!(CString::new(hex::encode(*sk.to_bytes())), error).into_raw()
+    unwrap_or_return!(CString::new(sk.to_bytes().to_lower_hex_string()), error).into_raw()
 }
 
 /// Derive a BLS private key from a mnemonic + optional passphrase at the given index.
@@ -127,7 +128,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_mnemonic(
         account.inner().derive_from_mnemonic_private_key_at(mnemonic_str, passphrase_str, index,),
         error
     );
-    unwrap_or_return!(CString::new(hex::encode(*sk.to_bytes())), error).into_raw()
+    unwrap_or_return!(CString::new(sk.to_bytes().to_lower_hex_string()), error).into_raw()
 }
 
 // ========================= EdDSA (feature = "eddsa") =========================
@@ -161,7 +162,7 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_seed(
         account.inner().derive_from_seed_private_key_at(seed_slice, index),
         error
     );
-    unwrap_or_return!(CString::new(hex::encode(sk.to_bytes())), error).into_raw()
+    unwrap_or_return!(CString::new(sk.to_bytes().to_lower_hex_string()), error).into_raw()
 }
 
 /// Derive an EdDSA (ed25519) private key from a mnemonic + optional passphrase at the given index.
@@ -199,7 +200,7 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_mnemonic(
         account.inner().derive_from_mnemonic_private_key_at(mnemonic_str, passphrase_str, index,),
         error
     );
-    unwrap_or_return!(CString::new(hex::encode(sk.to_bytes())), error).into_raw()
+    unwrap_or_return!(CString::new(sk.to_bytes().to_lower_hex_string()), error).into_raw()
 }
 
 /// Derive a private key (secp256k1) from an account at a given chain/index, using the provided master xpriv.

@@ -11,7 +11,7 @@ version.workspace = true
 [dependencies]
 dashcore-rpc = { path = "../rpc-client" }
 lazy_static = "1.4.0"
-hex = { workspace = true }
+hex-conservative = { workspace = true }
 dotenvy = "0.15.7"
 tracing = "0.1"
 tracing-log = "0.2"

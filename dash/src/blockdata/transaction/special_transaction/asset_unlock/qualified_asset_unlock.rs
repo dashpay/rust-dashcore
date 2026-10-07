@@ -141,7 +141,6 @@ mod tests {
     use core::str::FromStr;
 
     use hashes::Hash;
-    use hex::FromHex;
     use internals::hex::Case;
     use internals::hex::display::DisplayHex;
 
@@ -178,7 +177,7 @@ mod tests {
 
     #[test]
     fn deserialize() {
-        let payload_bytes = Vec::from_hex("012d0100000000000070110100250500004acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7")
+        let payload_bytes = hex_conservative::decode_to_vec("012d0100000000000070110100250500004acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7")
             .unwrap();
 
         let payload: AssetUnlockPayload = consensus::encode::deserialize(&payload_bytes).unwrap();
@@ -212,7 +211,7 @@ mod tests {
             quorum_sig: BLSSignature::from_str("aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7").unwrap()
         };
 
-        let serialized_bytes = hex::encode(consensus::serialize(&payload));
+        let serialized_bytes = consensus::serialize(&payload).to_lower_hex_string();
 
         let expected_payload_bytes = "012d0100000000000070110100250500004acfa5c6d92071d206da5b767039d42f24e7ab1a694a5b8014cddc088311e448aee468c03feec7caada0599457136ef0dfe9365657a42ef81bb4aa53af383d05d90552b2cd23480cae24036b953ba8480d2f98291271a338e4235265dea94feacb54d1fd96083151001eff4156e7475e998154a8e6082575e2ee461b394d24f7";
         assert_eq!(serialized_bytes, expected_payload_bytes);
@@ -220,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_asset_unlock_construction_3() {
-        let tx_bytes = Vec::from_hex("010009000001c8000000000000001976a914c35b782432294088e354bc28aa56d95736cb630288ac0000000001000000000000000070f915129f05000053c006055af6d0ae9aa9627df8615a71c312421a28c4712c8add83c8e1bfdadd").unwrap();
+        let tx_bytes = hex_conservative::decode_to_vec("010009000001c8000000000000001976a914c35b782432294088e354bc28aa56d95736cb630288ac0000000001000000000000000070f915129f05000053c006055af6d0ae9aa9627df8615a71c312421a28c4712c8add83c8e1bfdadd").unwrap();
         let tx_asset_unlock = build_asset_unlock_tx(&tx_bytes).unwrap();
         let bytes_tx_asset_unlock = consensus::serialize(&tx_asset_unlock);
         println!("tx_asset_unlock: {:?}", bytes_tx_asset_unlock);

@@ -6,6 +6,10 @@
 //! Ed25519), so the keys match dashwallet-ios / DashSync for the same
 //! mnemonic. See <https://github.com/dashpay/rust-dashcore/issues/878>.
 
+#[cfg(feature = "eddsa")]
+use dashcore::eddsa::{EddsaPkBytes, EddsaPkHash, EddsaSecretKey, EddsaSkBytes};
+use hex_conservative::DisplayHex;
+
 use crate::account::derivation::AccountDerivation;
 #[cfg(feature = "eddsa")]
 use crate::account::eddsa_account::EdDSAAccount;
@@ -14,8 +18,6 @@ use crate::mnemonic::Mnemonic;
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::Wallet;
 use crate::{ChildNumber, Network};
-#[cfg(feature = "eddsa")]
-use dashcore::eddsa::{EddsaPkBytes, EddsaPkHash, EddsaSecretKey, EddsaSkBytes};
 
 const TEST_MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -43,7 +45,7 @@ fn bls_operator_keys_match_dashbls_reference() {
 
     // The stored account xpub must be the account-level key at m/9'/5'/3'/3'.
     assert_eq!(
-        hex::encode(account.bls_public_key.to_bytes_legacy().unwrap()),
+        account.bls_public_key.to_bytes_legacy().unwrap().to_lower_hex_string(),
         "8d794d053504db3727c1f51aea2112e440fadbade687a9c0243b61523c8ab8eb64061f0a5ec5d8df4b7ec8bdfe722c19"
     );
 
@@ -51,26 +53,26 @@ fn bls_operator_keys_match_dashbls_reference() {
     let key0_pub =
         account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     assert_eq!(
-        hex::encode(key0_pub.to_bytes_legacy().unwrap()),
+        key0_pub.to_bytes_legacy().unwrap().to_lower_hex_string(),
         "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
     );
     // Same point in modern/IETF (basic-scheme) serialization, as it appears in
     // v19+ ProRegTx payloads.
     assert_eq!(
-        hex::encode(key0_pub.to_bytes()),
+        key0_pub.to_bytes().to_lower_hex_string(),
         "878cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
     );
 
     // Operator secret key 0 via the seed-based signing path.
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let sk0 = account.derive_from_seed_private_key_at(&seed, 0).unwrap();
     assert_eq!(
-        hex::encode(*sk0.to_bytes()),
+        (*sk0.to_bytes()).to_lower_hex_string(),
         "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a"
     );
     let sk1 = account.derive_from_seed_private_key_at(&seed, 1).unwrap();
     assert_eq!(
-        hex::encode(*sk1.to_bytes()),
+        (*sk1.to_bytes()).to_lower_hex_string(),
         "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31"
     );
 }
@@ -88,14 +90,14 @@ fn bls_operator_keys_testnet_match_dashbls_reference() {
     let key0_pub =
         account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     assert_eq!(
-        hex::encode(key0_pub.to_bytes_legacy().unwrap()),
+        key0_pub.to_bytes_legacy().unwrap().to_lower_hex_string(),
         "09d8beabae708de1638487f1aff44b38e8c07d9b09f22d76329d6c8ec01e2ad4d030b660bca40ddbd222373a72c5bcef"
     );
 
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let sk0 = account.derive_from_seed_private_key_at(&seed, 0).unwrap();
     assert_eq!(
-        hex::encode(*sk0.to_bytes()),
+        (*sk0.to_bytes()).to_lower_hex_string(),
         "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
     );
 }
@@ -112,8 +114,10 @@ fn ed25519_platform_node_keys_match_slip10_reference() {
         .expect("platform node account should be auto-created for mnemonic wallets");
 
     // The stored account key must be the account-level key at m/9'/5'/3'/4'.
-    let expected_account_sk =
-        hex::decode("80035d9c2f89971a9c9fad826bba8be9328f1686ae555e912949c2c32800c379").unwrap();
+    let expected_account_sk = hex_conservative::decode_to_vec(
+        "80035d9c2f89971a9c9fad826bba8be9328f1686ae555e912949c2c32800c379",
+    )
+    .unwrap();
     let expected_account_pk: EddsaPkBytes = EddsaSecretKey::from(EddsaSkBytes::from_bytes(
         expected_account_sk.as_slice().try_into().unwrap(),
     ))
@@ -122,10 +126,10 @@ fn ed25519_platform_node_keys_match_slip10_reference() {
     assert_eq!(account.ed25519_public_key.public_key, expected_account_pk);
 
     // Platform node key 0 (hardened child 0') via the seed-based signing path.
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let sk0 = account.derive_from_seed_private_key_at(&seed, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0.to_bytes()),
+        sk0.to_bytes().to_lower_hex_string(),
         "5fa238b12be77347abf9b5957bd902d16c6aaca28d25c4267ffacbd7458dceb1"
     );
 }
@@ -140,15 +144,15 @@ fn ed25519_platform_node_id_matches_tenderdash_convention() {
     // Platform node key 0 (m/9'/5'/3'/4'/0') for TEST_SEED — the same key the
     // SLIP-0010 vector above pins. Public key and node id cross-checked with
     // an independent Ed25519 implementation (pyca/cryptography).
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let sk0 = EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, 0).unwrap();
     let pubkey: EddsaPkBytes = EddsaSecretKey::from(sk0).public_key().into();
     assert_eq!(
-        hex::encode(pubkey.to_bytes()),
+        pubkey.to_bytes().to_lower_hex_string(),
         "3130c14339391cf26a68d86879e180ee9a16b660f5aa91f560f67c0abe8cf789"
     );
     assert_eq!(
-        hex::encode(EddsaPkHash::from(pubkey).to_canonical_bytes()),
+        EddsaPkHash::from(pubkey).to_canonical_bytes().to_lower_hex_string(),
         "302f2615e6955cce8ed3cff81e8011bfd3a2991f"
     );
 }
@@ -167,7 +171,7 @@ fn platform_pool_entries_are_keyed_by_tenderdash_node_id() {
     let wallet = test_wallet(Network::Mainnet);
     let mut info = ManagedWalletInfo::from_wallet_with_name(&wallet, "node-id".to_string(), 0);
 
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let master = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
     let account_xpriv = master
         .derive_priv(&AccountType::ProviderPlatformKeys.derivation_path(Network::Mainnet).unwrap())
@@ -180,7 +184,7 @@ fn platform_pool_entries_are_keyed_by_tenderdash_node_id() {
         .expect("derive platform key 0");
 
     assert_eq!(
-        hex::encode(verifying_key.to_bytes()),
+        verifying_key.to_bytes().to_lower_hex_string(),
         "3130c14339391cf26a68d86879e180ee9a16b660f5aa91f560f67c0abe8cf789"
     );
     // The pool entry's payload is the Tenderdash node id — the value a real
@@ -188,7 +192,10 @@ fn platform_pool_entries_are_keyed_by_tenderdash_node_id() {
     let dashcore::address::Payload::PubkeyHash(hash) = entry.address.payload() else {
         panic!("platform pool entries use P2PKH-style payloads");
     };
-    assert_eq!(hex::encode(hash.to_byte_array()), "302f2615e6955cce8ed3cff81e8011bfd3a2991f");
+    assert_eq!(
+        hash.to_byte_array().to_lower_hex_string(),
+        "302f2615e6955cce8ed3cff81e8011bfd3a2991f"
+    );
 }
 
 /// The gate-free provider-key entry points must work identically on resident
@@ -219,32 +226,32 @@ fn operator_key_at_is_wallet_state_agnostic() {
     for account in [resident, &watch_only] {
         let key0 = account.operator_public_key_at(0).expect("gate-free derivation must succeed");
         assert_eq!(
-            hex::encode(key0.to_bytes_legacy().unwrap()),
+            key0.to_bytes_legacy().unwrap().to_lower_hex_string(),
             "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
         );
         assert_eq!(
-            hex::encode(key0.to_bytes()),
+            key0.to_bytes().to_lower_hex_string(),
             "878cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
         );
     }
 
     // Seed-based private derivation needs no account state at all.
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let sk0 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 0).unwrap();
     assert_eq!(
-        hex::encode(*sk0.to_bytes()),
+        (*sk0.to_bytes()).to_lower_hex_string(),
         "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a"
     );
     let sk1 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 1).unwrap();
     assert_eq!(
-        hex::encode(*sk1.to_bytes()),
+        (*sk1.to_bytes()).to_lower_hex_string(),
         "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31"
     );
 
     // Testnet vectors (coin type 1: m/9'/1'/3'/3').
     let sk0_testnet = BLSAccount::operator_private_key_at(&seed, Network::Testnet, 0).unwrap();
     assert_eq!(
-        hex::encode(*sk0_testnet.to_bytes()),
+        (*sk0_testnet.to_bytes()).to_lower_hex_string(),
         "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
     );
 }
@@ -256,7 +263,7 @@ fn operator_key_at_is_wallet_state_agnostic() {
 fn operator_public_key_at_rejects_non_operator_accounts() {
     use crate::account::bls_account::BLSAccount;
 
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let account =
         BLSAccount::from_seed(None, AccountType::IdentityRegistration, &seed, Network::Mainnet)
             .unwrap();
@@ -270,10 +277,10 @@ fn platform_node_key_at_is_wallet_state_agnostic() {
 
     // Seed-based hardened derivation, pinned to the SLIP-0010 reference
     // vector for m/9'/5'/3'/4'/0'. No account state is involved.
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let sk0 = EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, 0).unwrap();
     assert_eq!(
-        hex::encode(sk0.to_bytes()),
+        sk0.to_bytes().to_lower_hex_string(),
         "5fa238b12be77347abf9b5957bd902d16c6aaca28d25c4267ffacbd7458dceb1"
     );
 
@@ -299,7 +306,7 @@ fn seedless_wallet_skips_provider_operator_and_platform_accounts() {
     use crate::bip32::ExtendedPrivKey;
     use crate::Error;
 
-    let seed = hex::decode(TEST_SEED_HEX).unwrap();
+    let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
     let mut wallet =
         Wallet::from_extended_key(master, WalletAccountCreationOptions::Default).unwrap();
