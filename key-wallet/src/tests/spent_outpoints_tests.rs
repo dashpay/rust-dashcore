@@ -1,9 +1,11 @@
 //! Tests for spent_outpoints deserialization and tracking.
 
+use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, TxIn, Txid};
+use dashcore::{BlockHash, TxIn, TxOut, Txid};
 
 use crate::account::{AccountType, StandardAccountType, TransactionRecord};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
@@ -835,6 +837,89 @@ async fn output_kept_for_a_claim_goes_with_its_funding_transaction(abandon: bool
     }
 
     assert!(second_account(&ctx).claim_guarded_outputs.is_empty());
+}
+
+/// A wallet with BIP44 account 0 and the identity registration keys account,
+/// and an address of the latter.
+fn asset_lock_context() -> (TestWalletContext, dashcore::Address) {
+    let wallet =
+        Wallet::from_seed_bytes([42; 64], Network::Testnet, WalletAccountCreationOptions::Default)
+            .unwrap();
+    let mut managed_wallet = ManagedWalletInfo::from_wallet(&wallet, 0);
+    let xpub = wallet.accounts.standard_bip44_accounts[&0].account_xpub;
+    let receive_address = managed_wallet
+        .first_bip44_managed_account_mut()
+        .unwrap()
+        .next_receive_address(Some(&xpub), true)
+        .unwrap();
+    let identity_xpub = wallet.accounts.identity_registration.as_ref().unwrap().account_xpub;
+    let identity_address = managed_wallet
+        .identity_registration_managed_account_mut()
+        .unwrap()
+        .next_address(Some(&identity_xpub), true)
+        .unwrap();
+    (
+        TestWalletContext {
+            wallet,
+            managed_wallet,
+            receive_address,
+            xpub,
+        },
+        identity_address,
+    )
+}
+
+/// An asset lock spending `inputs` and crediting `identity_address`.
+fn asset_lock(inputs: &[OutPoint], identity_address: &dashcore::Address) -> Transaction {
+    let mut tx = spending_tx(inputs);
+    tx.version = 3;
+    tx.special_transaction_payload =
+        Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload {
+            version: 1,
+            credit_outputs: vec![TxOut {
+                value: 100_000,
+                script_pubkey: identity_address.script_pubkey(),
+            }],
+        }));
+    tx
+}
+
+/// An asset lock is recorded in its funding account and in the identity keys
+/// account it pays, and a sweep removes it from the funding account only.
+/// The record left in the keys account must not make the removed lock the
+/// surviving spender of its other input: that coin comes free.
+#[test_case::test_case(false, false; "swept, its mark released")]
+#[test_case::test_case(false, true; "swept, a restored claim naming it")]
+#[test_case::test_case(true, false; "abandoned, its mark released")]
+#[test_case::test_case(true, true; "abandoned, a restored claim naming it")]
+#[tokio::test]
+async fn removed_asset_lock_is_not_the_surviving_spender_of_its_input(
+    abandon: bool,
+    restored: bool,
+) {
+    let (mut ctx, identity_address) = asset_lock_context();
+    let funding = Transaction::dummy(&ctx.receive_address, 20..21, &[150_000]);
+    let coin = OutPoint::new(funding.txid(), 0);
+    let contested = OutPoint::new(Txid::from([0x55; 32]), 0);
+    let lock = asset_lock(&[coin, contested], &identity_address);
+    if restored {
+        ctx.managed_wallet.restore_spent_outpoints(&[(coin, Some(lock.txid()))]);
+    }
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+    ctx.check_transaction(&lock, TransactionContext::Mempool).await;
+    assert!(ctx.bip44_account().has_transaction(&lock.txid()));
+    let identity_account = ctx.managed_wallet.accounts.identity_registration.as_ref().unwrap();
+    assert!(identity_account.has_transaction(&lock.txid()));
+
+    if abandon {
+        assert_eq!(ctx.managed_wallet.abandon_transaction(lock.txid()).records_removed, 2);
+    } else {
+        let result = ctx.check_transaction(&spending_tx(&[contested]), in_block(100)).await;
+        assert_eq!(result.swept_transactions, vec![lock.txid()]);
+        assert_eq!(result.released_outpoints, vec![coin]);
+    }
+
+    assert!(!ctx.bip44_account().is_outpoint_spent(&coin));
 }
 
 /// Create a transaction that spends the given outpoints.

@@ -64,12 +64,20 @@ fn collect_spenders_of_records(
 /// Every outpoint a live record anywhere in the wallet spends, with one of
 /// its spenders: the lowest txid, so the choice does not depend on which
 /// account is visited first.
+///
+/// A record of a transaction in `removed` is not live, wherever it is still
+/// held: a sweep drops a loser from funds accounts only, so a keys-only
+/// account keeps the record of a swept asset lock.
 fn live_record_spenders(
     accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
+    removed: &BTreeSet<Txid>,
 ) -> HashMap<OutPoint, Txid> {
     let mut spenders: HashMap<OutPoint, Txid> = HashMap::new();
     for account in accounts.all_accounts() {
         for (txid, record) in account.transactions() {
+            if removed.contains(txid) {
+                continue;
+            }
             for input in &record.transaction.input {
                 spenders
                     .entry(input.previous_output)
@@ -82,15 +90,17 @@ fn live_record_spenders(
 }
 
 /// Remove from `released` every outpoint a live record anywhere in the wallet
-/// still spends, and return those with their spender.
+/// still spends, and return those with their spender. Records of the
+/// transactions in `removed` do not count.
 fn split_off_still_spent(
     released: &mut Vec<OutPoint>,
     accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
+    removed: &BTreeSet<Txid>,
 ) -> Vec<(OutPoint, Txid)> {
     if released.is_empty() {
         return Vec::new();
     }
-    let live_spenders = live_record_spenders(accounts);
+    let live_spenders = live_record_spenders(accounts, removed);
     let mut still_spent = Vec::new();
     released.retain(|outpoint| {
         let Some(spender) = live_spenders.get(outpoint) else {
@@ -166,12 +176,14 @@ impl WalletConflictSweep {
     /// pass over that same history and is never the worse trade: a single
     /// candidate already costs a full pass under the alternative.
     ///
-    /// Returns the withheld outpoints, each with a surviving spender.
+    /// Returns the withheld outpoints, each with a surviving spender. The
+    /// transactions in `removed`, which this sweep dropped, are no survivors.
     fn retain_unclaimed(
         &mut self,
         accounts: &crate::managed_account::managed_account_collection::ManagedAccountCollection,
+        removed: &BTreeSet<Txid>,
     ) -> Vec<(OutPoint, Txid)> {
-        split_off_still_spent(&mut self.released_outpoints, accounts)
+        split_off_still_spent(&mut self.released_outpoints, accounts, removed)
     }
 }
 
@@ -237,7 +249,7 @@ impl ManagedWalletInfo {
             result.released_outpoints.extend(self.release_restored_claims(&removed));
             result.released_outpoints.sort_unstable();
             result.released_outpoints.dedup();
-            let still_spent = result.retain_unclaimed(&self.accounts);
+            let still_spent = result.retain_unclaimed(&self.accounts, &removed);
             self.inherit_spent_claims(&still_spent);
             // Each account answers for its own marks and claims only, so an
             // outpoint one account let go can still be guarded by another.
@@ -273,7 +285,7 @@ impl ManagedWalletInfo {
         {
             return released;
         }
-        let live_spenders = live_record_spenders(&self.accounts);
+        let live_spenders = live_record_spenders(&self.accounts, removed);
         for account in self.accounts.all_funding_accounts_mut() {
             released.extend(account.release_restored_claims(removed, &live_spenders));
         }
@@ -453,7 +465,7 @@ impl ManagedWalletInfo {
 
         self.release_restored_claims(&abandoned);
         let mut released: Vec<OutPoint> = released.into_iter().collect();
-        let still_spent = split_off_still_spent(&mut released, &self.accounts);
+        let still_spent = split_off_still_spent(&mut released, &self.accounts, &abandoned);
         self.inherit_spent_claims(&still_spent);
 
         AbandonOutcome {
@@ -858,7 +870,7 @@ mod retain_unclaimed_tests {
             txids: vec![Txid::all_zeros()],
             released_outpoints: (0..RELEASED * 2).map(outpoint).collect(),
         };
-        sweep.retain_unclaimed(&accounts);
+        sweep.retain_unclaimed(&accounts, &BTreeSet::new());
 
         assert_eq!(
             sweep.released_outpoints.len(),
