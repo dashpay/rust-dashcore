@@ -9,15 +9,16 @@
 //! - Different serialization format (no xpub/xprv, custom encoding)
 
 use core::fmt;
-use dashcore::eddsa::{EddsaPkBytes, EddsaSkBytes};
+use std::error;
+
+use dashcore::eddsa::{EddsaPkBytes, EddsaPublicKey, EddsaSecretKey, EddsaSkBytes};
 use dashcore::Network;
 use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde;
-use std::error;
+
 // Re-export ChainCode, Fingerprint and ChildNumber from bip32
 use crate::bip32::{ChainCode, ChildNumber, Fingerprint};
-
 // Use DerivationPath from bip32
 pub use crate::bip32::DerivationPath;
 
@@ -165,7 +166,7 @@ impl ExtendedEd25519PrivKey {
 
     /// Get the public key for this private key
     pub fn public_key(&self) -> Result<EddsaPkBytes, Error> {
-        Ok(self.private_key.public_key())
+        Ok(EddsaSecretKey::from(self.private_key.clone()).public_key().into())
     }
 
     /// Get the fingerprint of this key
@@ -409,7 +410,7 @@ impl ExtendedEd25519PubKey {
         let public_key_bytes: [u8; 32] =
             data[46..78].try_into().map_err(|_| Error::WrongExtendedKeyLength(data.len()))?;
         let public_key = EddsaPkBytes::from_bytes(public_key_bytes);
-        public_key.validate().map_err(|e| Error::Ed25519Error(e.to_string()))?;
+        EddsaPublicKey::try_from(public_key).map_err(|e| Error::Ed25519Error(e.to_string()))?;
 
         Ok(ExtendedEd25519PubKey {
             network,
@@ -604,8 +605,7 @@ impl<C> bincode::Decode<C> for ExtendedEd25519PubKey {
         let child_number = ChildNumber::decode(decoder)?;
         let public_key_bytes = <[u8; 32]>::decode(decoder)?;
         let public_key = EddsaPkBytes::from_bytes(public_key_bytes);
-        public_key
-            .validate()
+        EddsaPublicKey::try_from(public_key)
             .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))?;
         let chain_code = ChainCode::decode(decoder)?;
 

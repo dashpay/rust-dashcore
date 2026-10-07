@@ -19,7 +19,8 @@ use hashes::{Hash, sha256, sha256d};
 pub use dashcore_crypto::sighash::SplitAnyoneCanPay;
 pub use dashcore_crypto::sighash::{
     EcdsaSighashType, InvalidSighashTypeError, LegacySighash, NonStandardSighashType,
-    SegwitV0Sighash, SighashTypeParseError, TapSighash, TapSighashTag, TapSighashType,
+    NonStandardSighashTypeError, SegwitV0Sighash, SighashTypeParseError, TapSighash, TapSighashTag,
+    TapSighashType,
 };
 
 use crate::blockdata::transaction::txin::TxIn;
@@ -113,7 +114,7 @@ pub struct ScriptPath<'s> {
 }
 
 /// Possible errors in computing the signature message.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// Could happen only by using `*_encode_signing_*` methods with custom writers, engines writers
@@ -153,7 +154,7 @@ pub enum Error {
     WrongAnnex,
 
     /// Invalid Sighash type.
-    InvalidSighashType(u32),
+    InvalidSighashType(InvalidSighashTypeError),
 }
 
 impl fmt::Display for Error {
@@ -193,8 +194,8 @@ impl fmt::Display for Error {
             WrongAnnex => {
                 write!(f, "Annex must be at least one byte long and the first bytes must be `0x50`")
             }
-            InvalidSighashType(hash_ty) => {
-                write!(f, "Invalid taproot signature hash type : {} ", hash_ty)
+            InvalidSighashType(e) => {
+                write!(f, "Invalid taproot signature hash type : {} ", e)
             }
         }
     }
@@ -291,7 +292,7 @@ impl<'s> From<ScriptPath<'s>> for TapLeafHash {
 
 impl From<InvalidSighashTypeError> for Error {
     fn from(e: InvalidSighashTypeError) -> Self {
-        Error::InvalidSighashType(e.0)
+        Error::InvalidSighashType(e)
     }
 }
 
@@ -881,8 +882,9 @@ impl<'a> Encodable for Annex<'a> {
 }
 
 fn is_invalid_use_of_sighash_single(sighash: u32, input_index: usize, output_len: usize) -> bool {
-    let ty = EcdsaSighashType::from_consensus(sighash);
-    ty == EcdsaSighashType::Single && input_index >= output_len
+    // Core checks `(nHashType & 0x1f) == SIGHASH_SINGLE`, so ANYONECANPAY
+    // counts as well.
+    EcdsaSighashType::from_consensus(sighash).is_single() && input_index >= output_len
 }
 
 #[cfg(test)]
@@ -902,8 +904,6 @@ mod tests {
 
     #[test]
     fn sighash_single_bug() {
-        const SIGHASH_SINGLE: u32 = 3;
-
         // We need a tx with more inputs than outputs.
         let tx = Transaction {
             version: 1,
@@ -915,10 +915,15 @@ mod tests {
         let script = ScriptBuf::new();
         let cache = SighashCache::new(&tx);
 
-        let got = cache.legacy_signature_hash(1, &script, SIGHASH_SINGLE).expect("sighash");
-        let want = LegacySighash::from_slice(&UINT256_ONE).unwrap();
+        let one = LegacySighash::from_slice(&UINT256_ONE).unwrap();
 
-        assert_eq!(got, want)
+        // Low five bits say SINGLE, with or without ANYONECANPAY.
+        for flag in [0x03, 0x23, 0x83, 0xa3] {
+            let got = cache.legacy_signature_hash(1, &script, flag).expect("sighash");
+            assert_eq!(got, one, "{flag:#x}");
+        }
+        let got = cache.legacy_signature_hash(1, &script, 0x01).expect("sighash");
+        assert_ne!(got, one);
     }
 
     #[ignore]
@@ -1461,7 +1466,7 @@ mod tests {
         for s in sht_mistakes {
             assert_eq!(
                 TapSighashType::from_str(s).unwrap_err().to_string(),
-                format!("Unrecognized SIGHASH string '{}'", s)
+                format!("failed to parse '{}' as SIGHASH string", s)
             );
         }
     }

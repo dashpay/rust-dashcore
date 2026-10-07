@@ -74,6 +74,20 @@ async fn test_masternode_list_sync() {
         );
     }
 
+    // The client accessors return the engine's newest list, from both async
+    // and blocking callers.
+    {
+        let engine_list = client_handle.engine.read().await.latest_masternode_list().cloned();
+        assert!(engine_list.is_some());
+        assert_eq!(client_handle.client.latest_masternode_list().await, engine_list);
+        let client = client_handle.client.clone();
+        let blocking_list =
+            tokio::task::spawn_blocking(move || client.latest_masternode_list_blocking())
+                .await
+                .expect("blocking accessor should not panic");
+        assert_eq!(blocking_list, engine_list);
+    }
+
     client_handle.stop().await;
 
     let final_progress = client_handle.client.progress().await;
@@ -88,7 +102,8 @@ async fn test_masternode_list_sync() {
     );
 }
 
-/// Sync masternode list, stop, restart with same storage, verify incremental sync.
+/// Sync masternode list, stop, restart with same storage twice without new blocks,
+/// and verify each start rebuilds the first session's list from storage.
 #[tokio::test]
 async fn test_masternode_list_sync_with_restart() {
     let Some(ctx) = TestContext::new(true).await else {
@@ -168,13 +183,21 @@ async fn test_masternode_list_sync_with_restart() {
     let after_second = storage_snapshot(ctx.storage_path());
     assert_storage_did_not_shrink(&after_first, &after_second, "masternode restart");
 
-    tracing::info!(
-        "Restart verified: first_height={}, second_height={}",
-        first_height,
-        second_height
-    );
-
     client_handle.stop().await;
+    drop(client_handle);
+
+    // The second session requested a QRInfo for the same tip. Storing it in place
+    // of the first one, which built the list it is based on, broke the next replay.
+    let client_handle = create_client(&config, Arc::clone(&wallet)).await;
+    let replayed_tip = {
+        let engine = client_handle.engine.read().await;
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
+    };
+    assert_eq!(replayed_tip, first_tip, "a second restart must still replay the stored list");
 }
 
 /// Sync to pre-generated height, generate new blocks, verify incremental update.
@@ -269,7 +292,7 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
     let num_cycles = 3;
     let mut prev_stored_cycles: usize = {
         let engine = client_handle.engine.read().await;
-        engine.rotated_quorums_per_cycle.len()
+        engine.rotated_quorums_per_cycle().len()
     };
     for cycle in 1..=num_cycles {
         tracing::info!("Starting DKG cycle {}/{}...", cycle, num_cycles);
@@ -281,12 +304,11 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
         // Incremental event that fires before the QRInfo window opens.
         let pre_dkg_max_cycle: u32 = {
             let engine = client_handle.engine.read().await;
-            engine
-                .rotated_quorums_per_cycle
-                .keys()
-                .filter_map(|h| engine.block_container.get_height(h))
-                .max()
-                .unwrap_or(0)
+            let mut max_cycle = 0;
+            for cycle_hash in engine.rotated_quorums_per_cycle().keys() {
+                max_cycle = max_cycle.max(engine.height_of(cycle_hash).await.unwrap_or(0));
+            }
+            max_cycle
         };
 
         let quorum_hash =
@@ -316,7 +338,7 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
         // Then verify every stored rotated quorum is `Verified`.
         let stored_cycles = {
             let engine = client_handle.engine.read().await;
-            let stored = engine.rotated_quorums_per_cycle.len();
+            let stored = engine.rotated_quorums_per_cycle().len();
             assert!(
                 stored >= prev_stored_cycles,
                 "Cycle {}: rotated_quorums_per_cycle shrank from {} to {}",
@@ -403,7 +425,7 @@ async fn test_rotated_quorums_stored_when_sync_starts_post_dkg() {
 
     {
         let engine = client_handle.engine.read().await;
-        let stored = engine.rotated_quorums_per_cycle.len();
+        let stored = engine.rotated_quorums_per_cycle().len();
         assert!(
             stored >= 2,
             "Initial QRInfo should store both the freshly-mined tip cycle and \
@@ -413,11 +435,10 @@ async fn test_rotated_quorums_stored_when_sync_starts_post_dkg() {
             stored
         );
         assert_all_rotated_quorums_verified(&engine);
-        let mut heights: Vec<u32> = engine
-            .rotated_quorums_per_cycle
-            .keys()
-            .filter_map(|h| engine.block_container.get_height(h))
-            .collect();
+        let mut heights: Vec<u32> = Vec::new();
+        for cycle_hash in engine.rotated_quorums_per_cycle().keys() {
+            heights.extend(engine.height_of(cycle_hash).await);
+        }
         heights.sort_unstable();
         heights.dedup();
         assert!(
@@ -487,7 +508,7 @@ async fn test_masternode_list_sync_end_to_end() {
             latest_list.quorums.get(&LLMQType::LlmqtypeTest).map(|q| q.len()).unwrap_or(0);
         assert!(non_rotating_quorums > 0, "Should have llmq_test (type 100) quorums");
 
-        let rotated_quorum_cycles = engine.rotated_quorums_per_cycle.len();
+        let rotated_quorum_cycles = engine.rotated_quorums_per_cycle().len();
         assert!(rotated_quorum_cycles > 0, "Should have rotated quorum cycles from initial QRInfo");
 
         // Every quorum in `rotated_quorums_per_cycle` must be Verified.
@@ -496,7 +517,7 @@ async fn test_masternode_list_sync_end_to_end() {
         assert_all_rotated_quorums_verified(&engine);
         tracing::info!(
             "All rotated quorums across {} cycles verified",
-            engine.rotated_quorums_per_cycle.len()
+            engine.rotated_quorums_per_cycle().len()
         );
 
         // Non-rotating quorums in the latest MN list must be Verified.
@@ -526,7 +547,7 @@ async fn test_masternode_list_sync_end_to_end() {
     // assert the count grew once the SPV has fully validated the new cycle.
     let prev_stored_cycles = {
         let engine = client_handle.engine.read().await;
-        engine.rotated_quorums_per_cycle.len()
+        engine.rotated_quorums_per_cycle().len()
     };
 
     // Mine a DKG cycle and verify the SPV client picks up the update
@@ -563,7 +584,7 @@ async fn test_masternode_list_sync_end_to_end() {
             "MN count should remain {} after DKG",
             expected_masternodes
         );
-        let stored = engine.rotated_quorums_per_cycle.len();
+        let stored = engine.rotated_quorums_per_cycle().len();
         assert!(
             stored > prev_stored_cycles,
             "Expected rotated_quorums_per_cycle to grow by at least 1 after DKG: \

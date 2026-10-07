@@ -272,26 +272,33 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             per_wallet_released
         );
 
-        if let Some(lock) = instant_lock {
-            for (wallet_id, records) in per_wallet_updated_records {
-                if records.is_empty() {
-                    continue;
-                }
-                let Some(info) = self.wallet_infos.get(&wallet_id) else {
-                    continue;
-                };
-                let balance = info.balance();
-                let account_balances =
-                    per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
-                for record in records {
-                    let event = WalletEvent::TransactionInstantLocked {
+        for (wallet_id, records) in per_wallet_updated_records {
+            let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                continue;
+            };
+            let balance = info.balance();
+            let account_balances =
+                per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
+            for record in records {
+                let txid = record.txid;
+                // The arriving tx only changes lock status; other txids carry late-input corrections.
+                if txid != tx.txid() {
+                    self.emit_event(WalletEvent::TransactionDetected {
                         wallet_id,
-                        txid: record.txid,
+                        record: Box::new(record),
+                        balance,
+                        account_balances: account_balances.clone(),
+                        addresses_derived: Vec::new(),
+                    });
+                }
+                if let Some(lock) = instant_lock.as_ref().filter(|lock| lock.txid == txid) {
+                    self.emit_event(WalletEvent::TransactionInstantLocked {
+                        wallet_id,
+                        txid,
                         instant_lock: lock.clone(),
                         balance,
                         account_balances: account_balances.clone(),
-                    };
-                    self.emit_event(event);
+                    });
                 }
             }
         }
@@ -733,30 +740,114 @@ mod tests {
 
     #[tokio::test]
     async fn test_funding_after_its_spend_asks_to_reapply_the_spend_block() {
-        let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
-        let funding = create_tx_paying_to(&addr, 0xaa);
-        let spend = spend_first_output_of(&funding);
-        let wallets = BTreeSet::from([wallet_id]);
+        use key_wallet::managed_account::transaction_record::TransactionDirection;
 
-        let mut spend_block = make_block(vec![spend]);
-        spend_block.header.nonce = 1;
-        let funding_block = make_block(vec![funding]);
+        for (sibling, finalized) in [(false, false), (true, false), (true, true)] {
+            let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+            let funding = create_tx_paying_to(&addr, 0xaa);
+            let mut spend = spend_first_output_of(&funding);
+            spend.output[0].value = TX_AMOUNT - 2000;
+            if sibling {
+                spend.output[0].script_pubkey = coinjoin_account(&manager, &wallet_id)
+                    .managed_account_type()
+                    .address_pools()[0]
+                    .address_at_index(0)
+                    .unwrap()
+                    .script_pubkey();
+            }
+            let spent_outpoint = OutPoint::new(funding.txid(), 0);
+            let spender_txid = spend.txid();
+            let wallets = BTreeSet::from([wallet_id]);
+            let mut spend_block = make_block(vec![spend]);
+            spend_block.header.nonce = 1;
+            let funding_block = make_block(vec![funding]);
 
-        manager
-            .process_block_for_wallets(&spend_block, spend_block.block_hash(), 200, &wallets)
-            .await;
-        let result = manager
-            .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
-            .await;
-        assert_eq!(result.reapply_heights, BTreeMap::from([(wallet_id, BTreeSet::from([200]))]));
+            manager
+                .process_block_for_wallets(&spend_block, spend_block.block_hash(), 200, &wallets)
+                .await;
+            assert_eq!(
+                coinjoin_account(&manager, &wallet_id).has_transaction(&spender_txid),
+                sibling
+            );
+            if finalized {
+                manager.apply_chain_lock(ChainLock::dummy(200));
+            }
+            let result = manager
+                .process_block_for_wallets(
+                    &funding_block,
+                    funding_block.block_hash(),
+                    100,
+                    &wallets,
+                )
+                .await;
+            assert_eq!(
+                result.reapply_heights,
+                BTreeMap::from([(wallet_id, BTreeSet::from([200]))])
+            );
+            let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+            assert!(!account.transactions().contains_key(&spender_txid));
+            assert!(!account.utxos.contains_key(&spent_outpoint));
 
-        manager
-            .process_block_for_wallets(&spend_block, spend_block.block_hash(), 200, &wallets)
-            .await;
-        let again = manager
-            .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
-            .await;
-        assert!(again.reapply_heights.is_empty());
+            let mut rx = manager.subscribe_events();
+            for (wallet, heights) in result.reapply_heights {
+                for height in heights {
+                    let replay = manager
+                        .process_block_for_wallets(
+                            &spend_block,
+                            spend_block.block_hash(),
+                            height,
+                            &BTreeSet::from([wallet]),
+                        )
+                        .await;
+                    assert!(replay.reapply_heights.is_empty());
+                }
+            }
+            let events = drain_events(&mut rx);
+            let recorded = events
+                .iter()
+                .find_map(|event| match event {
+                    WalletEvent::BlockProcessed {
+                        inserted,
+                        ..
+                    } => inserted.iter().find(|r| {
+                        r.txid == spender_txid
+                            && matches!(r.account_type, AccountType::Standard { .. })
+                    }),
+                    _ => None,
+                })
+                .expect("replay publishes the missing funding-account record");
+            assert_eq!(recorded.net_amount, -(TX_AMOUNT as i64));
+            assert_eq!(recorded.direction, TransactionDirection::Outgoing);
+            assert_eq!(recorded.input_details.len(), 1);
+            assert_eq!(recorded.input_details[0].value, TX_AMOUNT);
+            assert_eq!(recorded.context.block_info().unwrap().height(), 200);
+            assert_eq!(recorded.context.is_chain_locked(), finalized);
+            let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+            assert!(!account.utxos.contains_key(&spent_outpoint));
+            assert_eq!(
+                account.transactions().contains_key(&spender_txid),
+                !finalized || cfg!(feature = "keep-finalized-transactions")
+            );
+            if sibling {
+                assert_eq!(manager.wallet_infos[&wallet_id].balance().total(), TX_AMOUNT - 2000);
+                if let Some(record) =
+                    coinjoin_account(&manager, &wallet_id).transactions().get(&spender_txid)
+                {
+                    assert_eq!(record.net_amount, (TX_AMOUNT - 2000) as i64);
+                    assert!(record.input_details.is_empty());
+                }
+            }
+            let again = manager
+                .process_block_for_wallets(
+                    &funding_block,
+                    funding_block.block_hash(),
+                    100,
+                    &wallets,
+                )
+                .await;
+            assert!(again.reapply_heights.is_empty());
+            assert_no_events(&mut rx);
+        }
     }
 
     #[tokio::test]

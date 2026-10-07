@@ -1,21 +1,21 @@
 [package]
 name = "dashcore_hashes"
-version = { workspace = true}
-authors = ["Samuel Westrich <sam@dash.org>"]
-license = "CC0-1.0"
-repository = "https://github.com/rust-dashcore/dash_hashes/"
-documentation = "https://docs.rs/dash_hashes/"
 description = "Hash functions used by the rust-dash eccosystem"
+authors = ["Samuel Westrich <sam@dash.org>"]
+edition = "2021"
 categories = ["algorithms"]
 keywords = [ "crypto", "dash", "hash", "digest" ]
 readme = "README.md"
-edition = "2021"
 exclude = ["tests", "contrib"]
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 default = []
-schemars = ["actual-schemars"]
-serde-std = ["serde/std"]
+serde = ["dep:serde", "bitcoin_hashes/serde"]
+serde-std = ["serde", "serde/std"]
 x11 = ["rs-x11-hash"]
 
 [package.metadata.docs.rs]
@@ -23,15 +23,10 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-internals = { path = "../internals", package = "dashcore-private" }
-
-# Only enable this if you explicitly do not want to use "std", otherwise enable "serde-std".
-serde = { version = "1.0.219", default-features = false, optional = true }
-# Do NOT use this as a feature! Use the `schemars` feature instead. Can only be used with "std" enabled.
-actual-schemars = { package = "schemars", version = "1.0", optional = true }
-
-rs-x11-hash = { version = "0.1.8", optional = true }
 bincode = { workspace = true, optional = true }
+bitcoin_hashes = { workspace = true, features = ["std"] }
+rs-x11-hash = { version = "0.1.8", optional = true }
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_test = "1.0"

@@ -7,15 +7,17 @@
 
 use std::sync::Arc;
 
+use crate::sml_engine::MasternodeListEngine;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::hash_types::ChainLockHash;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use std::collections::HashSet;
 use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::{ChainLockProgress, SyncEvent, BEST_CHAINLOCK_METADATA_STORAGE_KEY};
+use crate::validation::{ChainLockValidator, Validator};
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 
 /// ChainLock manager for the parallel sync coordinator.
 ///
@@ -32,7 +34,7 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Metadata storage for persisting the best chainlock.
     metadata_storage: Arc<RwLock<M>>,
     /// Masternode engine for BLS signature validation.
-    masternode_engine: Arc<RwLock<MasternodeListEngine>>,
+    masternode_engine: Arc<RwLock<MasternodeListEngine<H>>>,
     /// The best (highest height) validated ChainLock.
     best_chainlock: Option<ChainLock>,
     /// ChainLock hashes that have been requested (to avoid duplicate requests).
@@ -48,10 +50,10 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     /// Create a new ChainLock manager.
-    pub async fn new(
+    pub(crate) async fn new(
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
-        masternode_engine: Arc<RwLock<MasternodeListEngine>>,
+        masternode_engine: Arc<RwLock<MasternodeListEngine<H>>>,
     ) -> Self {
         let mut manager = Self {
             progress: ChainLockProgress::default(),
@@ -112,7 +114,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             return None;
         }
 
-        if self.validate_signature(&pending).await {
+        let engine = self.masternode_engine.read().await;
+        let (before, after) = engine.masternode_lists_around_height(pending.signing_height());
+        let validated = ChainLockValidator::new(engine.network().chain_locks_type(), before, after)
+            .validate(&pending)
+            .is_ok();
+        drop(engine);
+        if validated {
             self.progress.add_valid(1);
             self.progress.update_best_validated_height(pending.block_height);
             self.best_chainlock = Some(pending.clone());
@@ -190,7 +198,21 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         }
 
         // Validate with masternode engine
-        let validated = self.validate_signature(chainlock).await;
+        let engine = self.masternode_engine.read().await;
+        let (before, after) = engine.masternode_lists_around_height(chainlock.signing_height());
+        let result = ChainLockValidator::new(engine.network().chain_locks_type(), before, after)
+            .validate(chainlock);
+        drop(engine);
+        let validated = match result {
+            Ok(()) => {
+                tracing::info!("ChainLock signature verified for height {}", height);
+                true
+            }
+            Err(e) => {
+                tracing::warn!("{}", e);
+                false
+            }
+        };
 
         if validated {
             self.progress.add_valid(1);
@@ -277,29 +299,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         }
     }
 
-    /// Validate the ChainLock BLS signature using the masternode engine.
-    async fn validate_signature(&self, chainlock: &ChainLock) -> bool {
-        let engine = self.masternode_engine.read().await;
-
-        match engine.verify_chain_lock(chainlock) {
-            Ok(()) => {
-                tracing::info!(
-                    "ChainLock signature verified for height {}",
-                    chainlock.block_height
-                );
-                true
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "ChainLock signature verification failed for height {}: {}",
-                    chainlock.block_height,
-                    e
-                );
-                false
-            }
-        }
-    }
-
     /// Get the best validated ChainLock.
     pub fn best_chainlock(&self) -> Option<&ChainLock> {
         self.best_chainlock.as_ref()
@@ -341,16 +340,20 @@ mod tests {
 
     async fn create_test_manager() -> TestChainLockManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        let engine =
-            Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
+        let engine = Arc::new(RwLock::new(MasternodeListEngine::new(
+            Network::Testnet,
+            storage.block_headers(),
+        )));
         ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
     }
 
     async fn create_test_manager_with_storage(
         storage: &DiskStorageManager,
     ) -> TestChainLockManager {
-        let engine =
-            Arc::new(RwLock::new(MasternodeListEngine::default_for_network(Network::Testnet)));
+        let engine = Arc::new(RwLock::new(MasternodeListEngine::new(
+            Network::Testnet,
+            storage.block_headers(),
+        )));
         ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
     }
 

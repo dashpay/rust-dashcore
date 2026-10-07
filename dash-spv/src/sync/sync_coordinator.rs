@@ -77,7 +77,7 @@ where
     pub blocks: Option<BlocksManager<H, B, W>>,
     pub masternode: Option<MasternodesManager<H>>,
     pub chainlock: Option<ChainLockManager<H, M>>,
-    pub instantsend: Option<InstantSendManager>,
+    pub instantsend: Option<InstantSendManager<H>>,
     pub(crate) mempool: Option<MempoolManager<W>>,
 }
 

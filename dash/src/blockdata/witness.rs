@@ -285,7 +285,7 @@ impl Witness {
         // Note that a maximal length ECDSA signature is 72 bytes, plus the sighash type makes 73
         let mut sig = [0; 73];
         sig[..signature.len()].copy_from_slice(signature);
-        sig[signature.len()] = hash_type as u8;
+        sig[signature.len()] = hash_type.to_consensus_u8();
         self.push(&sig[..signature.len() + 1]);
     }
 
@@ -428,8 +428,8 @@ impl<'de> serde::Deserialize<'de> for Witness {
                 self,
                 mut a: A,
             ) -> Result<Self::Value, A::Error> {
-                use hashes::hex::Error::*;
                 use hashes::hex::FromHex;
+                use hashes::hex::HexToBytesError::*;
                 use serde::de::{self, Unexpected};
 
                 let mut ret = match a.size_hint() {
@@ -439,22 +439,21 @@ impl<'de> serde::Deserialize<'de> for Witness {
 
                 while let Some(elem) = a.next_element::<String>()? {
                     let vec = Vec::<u8>::from_hex(&elem).map_err(|e| match e {
-                        InvalidChar(b) => match core::char::from_u32(b.into()) {
-                            Some(c) => de::Error::invalid_value(
-                                Unexpected::Char(c),
-                                &"a valid hex character",
-                            ),
-                            None => de::Error::invalid_value(
-                                Unexpected::Unsigned(b.into()),
-                                &"a valid hex character",
-                            ),
-                        },
-                        OddLengthString(len) => {
-                            de::Error::invalid_length(len, &"an even length string")
+                        InvalidChar(e) => {
+                            let b = e.invalid_char();
+                            match core::char::from_u32(b.into()) {
+                                Some(c) => de::Error::invalid_value(
+                                    Unexpected::Char(c),
+                                    &"a valid hex character",
+                                ),
+                                None => de::Error::invalid_value(
+                                    Unexpected::Unsigned(b.into()),
+                                    &"a valid hex character",
+                                ),
+                            }
                         }
-                        InvalidLength(expected, got) => {
-                            let exp = format!("expected length: {}", expected);
-                            de::Error::invalid_length(got, &exp.as_str())
+                        OddLengthString(e) => {
+                            de::Error::invalid_length(e.length(), &"an even length string")
                         }
                     })?;
                     ret.push(vec);

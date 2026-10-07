@@ -1,18 +1,19 @@
 [package]
 name = "key-wallet"
-version = { workspace = true }
-authors = ["The Dash Core Developers"]
-edition = "2021"
 description = "Key derivation and wallet functionality for Dash"
+edition = "2021"
 keywords = ["dash", "wallet", "bip32", "bip39", "hdwallet"]
 readme = "README.md"
-license = "CC0-1.0"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 default = ["getrandom"]
 serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
-bip38 = ["scrypt", "aes", "bs58", "rand"]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
 test-utils = ["dashcore/test-utils"]
@@ -34,33 +35,26 @@ keep-finalized-transactions = []
 internals = { path = "../internals", package = "dashcore-private" }
 dashcore_hashes = { path = "../hashes" }
 dashcore = { path="../dash" }
-secp256k1 = { version = "0.33.1", default-features = false, features = ["recovery", "std"] }
+secp256k1 = { workspace = true, features = ["recovery"] }
 bip39 = { version = "2.2.0", default-features = false, features = ["std", "chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
 unicode-normalization = "0.1"
-serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
-base58 = { package = "base58ck", version = "0.1.0", default-features = false }
+serde = { workspace = true, features = ["derive"], optional = true }
 bitflags = { version = "2.6", default-features = false }
 getrandom = { version = "0.4", optional = true }
-# BIP38 dependencies (optional)
-scrypt = { version = "0.11", default-features = false, optional = true }
-aes = { version = "0.8", default-features = false, optional = true }
-sha2 = { version = "0.10", default-features = false }
-bs58 = { version = "0.5", default-features = false, features = ["check", "alloc"], optional = true }
-rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "thread_rng"], optional = true }
 # Serialization
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 serde_json = { version = "1.0", optional = true }
-hex = { version = "0.4"}
-zeroize = { version = "1.8", features = ["derive"] }
+hex = { workspace = true }
+zeroize = { workspace = true }
 tracing = "0.1"
 async-trait = "0.1"
 
 [dev-dependencies]
 criterion = "0.8.1"
 dashcore = { path="../dash", features = ["test-utils"] }
-hex = "0.4"
-key-wallet = { path = ".", features = ["test-utils", "bip38", "serde", "bincode", "eddsa", "bls"] }
+hex = { workspace = true }
+key-wallet = { path = ".", features = ["test-utils", "serde", "bincode", "eddsa", "bls"] }
 rand = { version = "0.9", features = ["std", "std_rng", "thread_rng"] }
 test-case = "3.3"
 tokio = { version = "1", features = ["macros", "rt"] }

@@ -8,10 +8,11 @@
 
 use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
-use crate::storage::{BlockHeaderStorage, StorageManager};
+use crate::sml_engine::MasternodeListEngine;
+use crate::storage::{BlockHeaderStorage, PersistentBlockHeaderStorage, StorageManager};
 use dashcore::hashes::Hash;
 use dashcore::sml::llmq_type::LLMQType;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{BlockHash, QuorumHash};
 use key_wallet_manager::WalletInterface;
@@ -37,11 +38,32 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     /// Get a reference to the masternode list engine.
     /// Returns an error if the masternode engine is not initialized.
-    pub fn masternode_list_engine(&self) -> Result<Arc<RwLock<MasternodeListEngine>>> {
+    pub(crate) fn masternode_list_engine(
+        &self,
+    ) -> Result<Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>> {
         match self.masternode_engine {
             Some(ref masternode_engine) => Ok(masternode_engine.clone()),
             None => Err(SpvError::Config("Masternode list engine not initialized".to_string())),
         }
+    }
+
+    /// The newest masternode list, `None` while masternode sync is off or has
+    /// not built a list yet.
+    pub async fn latest_masternode_list(&self) -> Option<MasternodeList> {
+        let engine = self.masternode_engine.as_ref()?;
+        engine.read().await.latest_masternode_list().cloned()
+    }
+
+    /// Blocking twin of [`Self::latest_masternode_list`] for threads outside the
+    /// async runtime, such as FFI callers.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called from an async execution context, like
+    /// [`RwLock::blocking_read`].
+    pub fn latest_masternode_list_blocking(&self) -> Option<MasternodeList> {
+        let engine = self.masternode_engine.as_ref()?;
+        engine.blocking_read().latest_masternode_list().cloned()
     }
 
     /// Get a quorum entry by type and hash at a specific block height. A height

@@ -2,6 +2,8 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use dash_spv::network::NetworkEvent;
+use dash_spv::storage::PersistentBlockHeaderStorage;
+use dash_spv::test_utils::MasternodeListEngine;
 use dash_spv::test_utils::{
     create_test_wallet, init_test_logging, next_unused_receive_address, retain_test_dir,
     MasternodeTestContext, TestEventHandler,
@@ -13,7 +15,6 @@ use dash_spv::{
     sync::{SyncEvent, SyncProgress},
     LoggingGuard, Network,
 };
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{WalletEvent, WalletId, WalletManager};
 use std::path::{Path, PathBuf};
@@ -34,7 +35,7 @@ pub(super) struct ClientHandle {
     pub(super) sync_event_receiver: broadcast::Receiver<SyncEvent>,
     pub(super) wallet_event_receiver: broadcast::Receiver<WalletEvent>,
     pub(super) _network_event_receiver: broadcast::Receiver<NetworkEvent>,
-    pub(super) engine: Arc<RwLock<MasternodeListEngine>>,
+    pub(super) engine: Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>,
 }
 
 impl ClientHandle {
@@ -180,8 +181,8 @@ pub(super) async fn create_client(
             .await
             .expect("Failed to create client");
 
-    let engine =
-        client.masternode_list_engine().expect("Engine should be initialized after creation");
+    let engine = dash_spv::test_utils::masternode_list_engine(&client)
+        .expect("Engine should be initialized after creation");
 
     ClientHandle {
         client,
