@@ -238,21 +238,23 @@ impl PlatformLiveness {
 ///
 /// Hostname verification is deliberately **not** performed: seed entries are
 /// keyed by IP address, so the presented cert's Subject/SAN almost always
-/// doesn't match. The probe instead checks the certificate's self-described
-/// validity (expiration, self-signedness, chain trust).
+/// doesn't match. The probe instead checks the leaf certificate's self-described
+/// validity (format, expiration, self-signedness). The certificate chain is
+/// **not** verified against any root store, so no status implies the
+/// certificate is trusted.
 #[derive(Copy, Clone, Debug, Default, Hash, PartialEq, Eq)]
 pub enum SslStatus {
     /// Not probed.
     #[default]
     Unknown,
-    /// Chain verified, not expired.
+    /// Leaf cert is X.509 v3, not expired and not self-signed. The chain is not
+    /// verified.
     Valid,
     /// Cert is past its `notAfter` timestamp.
     Expired,
     /// Leaf cert is its own issuer.
     SelfSigned,
-    /// Chain did not verify against the system root store (and is not
-    /// self-signed).
+    /// Leaf cert could not be parsed or is not X.509 v3.
     Untrusted,
     /// TLS handshake failed before we could see a certificate.
     NoHandshake,
