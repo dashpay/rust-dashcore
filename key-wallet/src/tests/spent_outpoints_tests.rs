@@ -580,10 +580,10 @@ async fn two_accounts_spend_a_coin_of_a_third(
 ) -> (Transaction, [(Transaction, OutPoint); 2]) {
     let funding = Transaction::dummy(&addresses[2], 20..21, &[150_000]);
     let coin = OutPoint::new(funding.txid(), 0);
-    let spends = [0x55, 0x56].map(|seed| OutPoint::new(Txid::from([seed; 32]), 0));
+    let inputs = [0x55, 0x56].map(|seed| OutPoint::new(Txid::from([seed; 32]), 0));
     let spends = [
-        (spend_paying(&[spends[0], coin], &addresses[0]), spends[0]),
-        (spend_paying(&[spends[1], coin], &addresses[1]), spends[1]),
+        (spend_paying(&[inputs[0], coin], &addresses[0]), inputs[0]),
+        (spend_paying(&[inputs[1], coin], &addresses[1]), inputs[1]),
     ];
     if let Some(claim) = claim {
         let claimant = match claim {
@@ -694,8 +694,11 @@ enum Restore {
     AfterFundingWasRecorded,
 }
 
-/// Direction, net amount and resolved inputs of each record a delivery created.
-fn recorded(result: &TransactionCheckResult) -> Vec<(TransactionDirection, i64, Vec<(u32, u64)>)> {
+/// Direction, net amount, and index and value of each resolved input.
+type RecordSummary = (TransactionDirection, i64, Vec<(u32, u64)>);
+
+/// A summary of each record a delivery created.
+fn recorded(result: &TransactionCheckResult) -> Vec<RecordSummary> {
     result
         .new_records
         .iter()
