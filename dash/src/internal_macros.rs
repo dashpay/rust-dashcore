@@ -104,26 +104,15 @@ macro_rules! impl_bytes_newtype {
         }
 
         impl $crate::hashes::hex::FromHex for $t {
-            fn from_byte_iter<I>(iter: I) -> Result<Self, $crate::hashes::hex::Error>
-            where
-                I: core::iter::Iterator<Item = Result<u8, $crate::hashes::hex::Error>>
-                    + core::iter::ExactSizeIterator
-                    + core::iter::DoubleEndedIterator,
-            {
-                if iter.len() == $len {
-                    let mut ret = [0; $len];
-                    for (n, byte) in iter.enumerate() {
-                        ret[n] = byte?;
-                    }
-                    Ok($t(ret))
-                } else {
-                    Err($crate::hashes::hex::Error::InvalidLength(2 * $len, 2 * iter.len()))
-                }
+            type Error = $crate::hashes::hex::HexToArrayError;
+
+            fn from_hex(s: &str) -> Result<Self, Self::Error> {
+                Ok($t(<[u8; $len] as $crate::hashes::hex::FromHex>::from_hex(s)?))
             }
         }
 
         impl core::str::FromStr for $t {
-            type Err = $crate::hashes::hex::Error;
+            type Err = $crate::hashes::hex::HexToArrayError;
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 $crate::hashes::hex::FromHex::from_hex(s)
             }

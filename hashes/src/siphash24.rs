@@ -1,54 +1,31 @@
-// Bitcoin Hashes Library
-// Written in 2019 by
-//   The rust-dash developers
 //
-// To the extent possible under law, the author(s) have dedicated all
-// copyright and related and neighboring rights to this software to
-// the public domain worldwide. This software is distributed without
-// any warranty.
-//
-// You should have received a copy of the CC0 Public Domain Dedication
-// along with this software.
-// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+// This file is a part of rust-dashcore.
+// Portions written by Steven Roose <steven@stevenroose.org> for rust-siphash.
+// SPDX-License-Identifier: CC0-1.0
+// See the accompanying file LICENSE or https://creativecommons.org/publicdomain/zero/1.0
 //
 
-// This module is largely copied from the rust-siphash sip.rs file;
-// while rust-siphash is licensed under Apache, that file specifically
-// was written entirely by Steven Roose, who is re-licensing its
-// contents here as CC0.
+// `sip_round_scalar`, `load_int_le!` and `u8to64_le` are copied from the
+// rust-siphash sip.rs file; while rust-siphash is licensed under Apache, that
+// file specifically was written entirely by Steven Roose, who is re-licensing
+// its contents here as CC0. The batch interface and its AVX2 and NEON kernels
+// are original to rust-dashcore.
 
-//! SipHash 2-4 implementation.
+//! SipHash 2-4, batched.
 //!
+//! The hash type itself comes from `bitcoin_hashes`; what lives here is the
+//! fixed-length batch interface, which upstream has no equivalent of. SipRound
+//! is serial within a message, so the kernels put one message per lane and keep
+//! several register-sets in flight to cover the per-message dependency chain.
 
-use core::ops::Index;
-use core::slice::SliceIndex;
-use core::{cmp, mem, ptr, str};
+use core::{mem, ptr};
 
-use crate::{Error, Hash as _, HashEngine as _};
-
-// Lane-vector types for the per-arch SIMD batchers, so helper signatures stay readable.
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::uint64x2_t;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::__m256i;
 
-crate::internal_macros::hash_type! {
-    64,
-    false,
-    "Output of the SipHash24 hash function.",
-    "crate::util::json_hex_string::len_8"
-}
-
-#[cfg(not(fuzzing))]
-fn from_engine(e: HashEngine) -> Hash {
-    Hash::from_u64(Hash::from_engine_to_u64(e))
-}
-
-#[cfg(fuzzing)]
-fn from_engine(e: HashEngine) -> Hash {
-    let state = e.midstate();
-    Hash::from_u64(state.v0 ^ state.v1 ^ state.v2 ^ state.v3)
-}
+pub use bitcoin_hashes::siphash24::{Hash, HashEngine, State};
 
 /// One scalar SipRound over the four state words. The reference the SIMD kernels
 /// ([`sip_round_avx2`], [`sip_round_neon`]) reproduce lane-for-lane.
@@ -89,181 +66,6 @@ macro_rules! load_int_le {
         }
         data.to_le()
     }};
-}
-
-/// Internal state of the [`HashEngine`].
-#[derive(Debug, Clone)]
-pub struct State {
-    // v0, v2 and v1, v3 show up in pairs in the algorithm,
-    // and simd implementations of SipHash will use vectors
-    // of v02 and v13. By placing them in this order in the struct,
-    // the compiler can pick up on just a few simd optimizations by itself.
-    v0: u64,
-    v2: u64,
-    v1: u64,
-    v3: u64,
-}
-
-/// Engine to compute the SipHash24 hash function.
-#[derive(Debug, Clone)]
-pub struct HashEngine {
-    k0: u64,
-    k1: u64,
-    length: usize, // how many bytes we've processed
-    state: State,  // hash State
-    tail: u64,     // unprocessed bytes le
-    ntail: usize,  // how many bytes in tail are valid
-}
-
-impl HashEngine {
-    /// Creates a new SipHash24 engine with keys.
-    pub fn with_keys(k0: u64, k1: u64) -> HashEngine {
-        HashEngine {
-            k0,
-            k1,
-            length: 0,
-            state: State {
-                v0: k0 ^ 0x736f6d6570736575,
-                v1: k1 ^ 0x646f72616e646f6d,
-                v2: k0 ^ 0x6c7967656e657261,
-                v3: k1 ^ 0x7465646279746573,
-            },
-            tail: 0,
-            ntail: 0,
-        }
-    }
-
-    /// Creates a new SipHash24 engine.
-    pub fn new() -> HashEngine {
-        HashEngine::with_keys(0, 0)
-    }
-
-    /// Retrieves the keys of this engine.
-    pub fn keys(&self) -> (u64, u64) {
-        (self.k0, self.k1)
-    }
-
-    #[inline]
-    fn rounds(state: &mut State, n: usize) {
-        let (mut v0, mut v1, mut v2, mut v3) = (state.v0, state.v1, state.v2, state.v3);
-        for _ in 0..n {
-            (v0, v1, v2, v3) = sip_round_scalar(v0, v1, v2, v3);
-        }
-        (state.v0, state.v1, state.v2, state.v3) = (v0, v1, v2, v3);
-    }
-
-    #[inline]
-    fn c_rounds(state: &mut State) {
-        HashEngine::rounds(state, 2);
-    }
-
-    #[inline]
-    fn d_rounds(state: &mut State) {
-        HashEngine::rounds(state, 4);
-    }
-}
-
-impl Default for HashEngine {
-    fn default() -> Self {
-        HashEngine::new()
-    }
-}
-
-impl crate::HashEngine for HashEngine {
-    type MidState = State;
-
-    fn midstate(&self) -> State {
-        self.state.clone()
-    }
-
-    const BLOCK_SIZE: usize = 8;
-
-    #[inline]
-    fn input(&mut self, msg: &[u8]) {
-        let length = msg.len();
-        self.length += length;
-
-        let mut needed = 0;
-
-        if self.ntail != 0 {
-            needed = 8 - self.ntail;
-            self.tail |= unsafe { u8to64_le(msg, 0, cmp::min(length, needed)) } << (8 * self.ntail);
-            if length < needed {
-                self.ntail += length;
-                return;
-            } else {
-                self.state.v3 ^= self.tail;
-                HashEngine::c_rounds(&mut self.state);
-                self.state.v0 ^= self.tail;
-                self.ntail = 0;
-            }
-        }
-
-        // Buffered tail is now flushed, process new input.
-        let len = length - needed;
-        let left = len & 0x7;
-
-        let mut i = needed;
-        while i < len - left {
-            let mi = load_int_le!(msg, i, u64);
-
-            self.state.v3 ^= mi;
-            HashEngine::c_rounds(&mut self.state);
-            self.state.v0 ^= mi;
-
-            i += 8;
-        }
-
-        self.tail = unsafe { u8to64_le(msg, i, left) };
-        self.ntail = left;
-    }
-
-    fn n_bytes_hashed(&self) -> usize {
-        self.length
-    }
-}
-
-impl Hash {
-    /// Hashes the given data with an engine with the provided keys.
-    pub fn hash_with_keys(k0: u64, k1: u64, data: &[u8]) -> Hash {
-        let mut engine = HashEngine::with_keys(k0, k1);
-        engine.input(data);
-        Hash::from_engine(engine)
-    }
-
-    /// Hashes the given data directly to u64 with an engine with the provided keys.
-    pub fn hash_to_u64_with_keys(k0: u64, k1: u64, data: &[u8]) -> u64 {
-        let mut engine = HashEngine::with_keys(k0, k1);
-        engine.input(data);
-        Hash::from_engine_to_u64(engine)
-    }
-
-    /// Produces a hash as `u64` from the current state of a given engine.
-    #[inline]
-    pub fn from_engine_to_u64(e: HashEngine) -> u64 {
-        let mut state = e.state;
-
-        let b: u64 = ((e.length as u64 & 0xff) << 56) | e.tail;
-
-        state.v3 ^= b;
-        HashEngine::c_rounds(&mut state);
-        state.v0 ^= b;
-
-        state.v2 ^= 0xff;
-        HashEngine::d_rounds(&mut state);
-
-        state.v0 ^ state.v1 ^ state.v2 ^ state.v3
-    }
-
-    /// Returns the (little endian) 64-bit integer representation of the hash value.
-    pub fn as_u64(&self) -> u64 {
-        u64::from_le_bytes(self.0)
-    }
-
-    /// Creates a hash from its (little endian) 64-bit integer representation.
-    pub fn from_u64(hash: u64) -> Hash {
-        Hash(hash.to_le_bytes())
-    }
 }
 
 /// Load an u64 using up to 7 bytes of a byte slice.
@@ -700,6 +502,7 @@ unsafe fn hash_many_wide_avx2<const LEN: usize, const R: usize>(
 
 #[cfg(test)]
 mod tests {
+    use crate::{Hash as _, HashEngine as _};
     use test_case::test_case;
 
     use super::*;
@@ -874,5 +677,23 @@ mod tests {
         check::<25>(count);
         check::<32>(count);
         check::<40>(count);
+    }
+
+    /// The scalar one-shot the SIMD batcher is checked against must itself
+    /// agree with the upstream engine.
+    #[test]
+    fn siphash_matches_upstream_engine() {
+        const K0: u64 = 0x0706050403020100;
+        const K1: u64 = 0x0f0e0d0c0b0a0908;
+
+        for len in 0..80usize {
+            let data: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(37)).collect();
+            assert_eq!(
+                siphash(K0, K1, &data),
+                Hash::hash_to_u64_with_keys(K0, K1, &data),
+                "mismatch at len {}",
+                len
+            );
+        }
     }
 }

@@ -1,6 +1,6 @@
+use crate::hash_types::Sha256dHash;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::sha256d;
 use thiserror::Error;
 
 use crate::QuorumHash;
@@ -34,7 +34,7 @@ pub enum MessageVerificationError {
     )]
     ThresholdSignatureNotValid(
         Box<BLSSignature>,
-        Box<sha256d::Hash>,
+        Box<Sha256dHash>,
         Box<BLSPublicKey>,
         QuorumHash,
         LLMQType,

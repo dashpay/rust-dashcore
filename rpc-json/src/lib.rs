@@ -31,7 +31,6 @@ use dashcore::address;
 use dashcore::address::NetworkUnchecked;
 use dashcore::block::Version;
 use dashcore::consensus::encode;
-use dashcore::hashes::hex::Error::InvalidChar;
 use dashcore::hashes::sha256;
 use dashcore::{
     Address, Amount, BlockHash, PrivateKey, ProTxHash, PublicKey, QuorumHash, Script, ScriptBuf,
@@ -1699,14 +1698,22 @@ impl serde::Serialize for SigHashType {
     where
         S: Serializer,
     {
-        serializer.serialize_str(match self.0 {
+        // Dash Core's RPC only names the standard flags; a non-standard one cannot be spelled.
+        let name = match self.0 {
             dashcore::EcdsaSighashType::All => "ALL",
             dashcore::EcdsaSighashType::None => "NONE",
             dashcore::EcdsaSighashType::Single => "SINGLE",
             dashcore::EcdsaSighashType::AllPlusAnyoneCanPay => "ALL|ANYONECANPAY",
             dashcore::EcdsaSighashType::NonePlusAnyoneCanPay => "NONE|ANYONECANPAY",
             dashcore::EcdsaSighashType::SinglePlusAnyoneCanPay => "SINGLE|ANYONECANPAY",
-        })
+            dashcore::EcdsaSighashType::NonStandard(n) => {
+                return Err(serde::ser::Error::custom(format!(
+                    "non-standard sighash type {} has no RPC spelling",
+                    n.to_u32()
+                )));
+            }
+        };
+        serializer.serialize_str(name)
     }
 }
 
@@ -2360,8 +2367,8 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
 
         let platform_node_id = platform_node_id
             .map(|address| {
-                let address =
-                    hex::decode(address).map_err(|_| encode::Error::Hex(InvalidChar(0)))?;
+                let address = hex::decode(address)
+                    .map_err(|_| encode::Error::ParseFailed("invalid hex in platform node id"))?;
                 let len = address.len();
                 address.try_into().map_err(|_| encode::Error::InvalidVectorSize {
                     expected: 20,

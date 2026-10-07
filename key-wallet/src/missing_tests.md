@@ -79,12 +79,6 @@
 
 ## 5. Key Management Tests (`derivation.rs`)
 
-### BIP38 Support
-- `test_bip38_encryption` - Encrypt private keys
-- `test_bip38_decryption` - Decrypt with password
-- `test_bip38_wrong_password` - Handle wrong password
-- `test_bip38_scrypt_parameters` - Different scrypt params
-
 ### Key Operations
 - ✓ `test_key_signing_deterministic` - Deterministic signatures
 - `test_key_signing_compact` - Compact signatures
@@ -122,5 +116,5 @@
 ## Priority Order
 
 1. **High Priority**: Mnemonic handling, key derivation, address generation
-2. **Medium Priority**: Multi-language mnemonics, BIP38, gap limit edge cases
+2. **Medium Priority**: Multi-language mnemonics, gap limit edge cases
 3. **Low Priority**: Performance tests, CoinJoin, migration tests

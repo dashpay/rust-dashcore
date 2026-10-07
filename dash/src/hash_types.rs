@@ -75,7 +75,7 @@ mod newtypes {
 
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
-    use hashes::hex::Error;
+    use hashes::hex::HexToArrayError as Error;
     use hashes::{Hash, hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
 
     use crate::alloc::string::ToString;
@@ -400,6 +400,7 @@ mod tests {
 
     use super::*;
     use crate::consensus::{deserialize, serialize};
+    use dashcore_crypto::eddsa::EddsaPkBytes;
 
     use serde_derive::{Deserialize, Serialize};
 
@@ -431,11 +432,10 @@ mod tests {
 
     /// A node id decoded from the wire must compare equal to one derived from
     /// the matching Ed25519 public key — the mismatch reported in issue #887.
-    #[cfg(feature = "eddsa")]
     #[test]
     fn decoded_wire_id_matches_derived_id() {
         let public_key = [7u8; 32];
-        let derived = dashcore_crypto::eddsa::EddsaPkBytes::from_bytes(public_key).hash();
+        let derived = EddsaPkHash::from(EddsaPkBytes::from_bytes(public_key));
 
         let decoded: EddsaPkHash = deserialize(&derived.to_bytes()).expect("decode node id");
         assert_eq!(decoded, derived);

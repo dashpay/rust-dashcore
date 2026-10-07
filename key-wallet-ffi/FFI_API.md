@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 261
+**Total Functions**: 259
 
 ## Table of Contents
 
@@ -296,12 +296,10 @@ Functions: 16
 
 ### Key Management
 
-Functions: 14
+Functions: 12
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `bip38_decrypt_private_key` | Decrypt a BIP38 encrypted private key  # Safety  This function is unsafe... | bip38 |
-| `bip38_encrypt_private_key` | Encrypt a private key with BIP38  # Safety  This function is unsafe because... | bip38 |
 | `derivation_derive_private_key_from_seed` | Derive private key for a specific path from seed  # Safety  - `seed` must be... | derivation |
 | `derivation_new_master_key` | Create a new master extended private key from seed  # Safety  - `seed` must... | derivation |
 | `extended_private_key_free` | Free an extended private key  # Safety  - `key` must be a valid pointer... | keys |
@@ -3788,7 +3786,7 @@ transaction_sighash(tx: *const FFITransaction, input_index: u32, script_pubkey: 
 ```
 
 **Description:**
-Calculate signature hash for an input  # Safety - `tx` must be a valid pointer to an FFITransaction - `script_pubkey` must be a valid pointer to the script pubkey - `hash_out` must be a valid pointer to a buffer of at least 32 bytes  # Returns - 0 on success - -1 on error
+Calculate signature hash for an input  # Safety - `tx` must be a valid pointer to an FFITransaction - `script_pubkey` must be a valid pointer to the script pubkey - `hash_out` must be a valid pointer to a buffer of at least 32 bytes  # Returns - 0 on success - -1 on error, including a `sighash_type` above 0xff
 
 **Safety:**
 - `tx` must be a valid pointer to an FFITransaction - `script_pubkey` must be a valid pointer to the script pubkey - `hash_out` must be a valid pointer to a buffer of at least 32 bytes
@@ -3830,38 +3828,6 @@ Free UTXO array  # Safety  - `utxos` must be a valid pointer to an array of FFIU
 ---
 
 ### Key Management - Detailed
-
-#### `bip38_decrypt_private_key`
-
-```c
-bip38_decrypt_private_key(_encrypted_key: *const c_char, _passphrase: *const c_char, error: *mut FFIError,) -> *mut c_char
-```
-
-**Description:**
-Decrypt a BIP38 encrypted private key  # Safety  This function is unsafe because it dereferences raw pointers: - `encrypted_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError
-
-**Safety:**
-This function is unsafe because it dereferences raw pointers: - `encrypted_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError
-
-**Module:** `bip38`
-
----
-
-#### `bip38_encrypt_private_key`
-
-```c
-bip38_encrypt_private_key(_private_key: *const c_char, _passphrase: *const c_char, error: *mut FFIError,) -> *mut c_char
-```
-
-**Description:**
-Encrypt a private key with BIP38  # Safety  This function is unsafe because it dereferences raw pointers: - `private_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError
-
-**Safety:**
-This function is unsafe because it dereferences raw pointers: - `private_key` must be a valid, null-terminated C string - `passphrase` must be a valid, null-terminated C string - `error` must be a valid pointer to an FFIError
-
-**Module:** `bip38`
-
----
 
 #### `derivation_derive_private_key_from_seed`
 

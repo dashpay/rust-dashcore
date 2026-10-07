@@ -21,7 +21,7 @@ pub type FixedSizeLen = usize;
 #[derive(Debug)]
 pub enum Error {
     JsonRpc(jsonrpc::error::Error),
-    Hex(hex::Error),
+    Hex(hex::HexToBytesError),
     Json(serde_json::error::Error),
     BitcoinSerialization(dashcore::consensus::encode::Error),
     Secp256k1(secp256k1::Error),
@@ -38,8 +38,8 @@ impl From<jsonrpc::error::Error> for Error {
     }
 }
 
-impl From<hex::Error> for Error {
-    fn from(e: hex::Error) -> Error {
+impl From<hex::HexToBytesError> for Error {
+    fn from(e: hex::HexToBytesError) -> Error {
         Error::Hex(e)
     }
 }

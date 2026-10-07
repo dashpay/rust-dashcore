@@ -58,7 +58,6 @@ Functions are automatically categorized into:
 - Address Management
 - Transaction Management
 - Key Management
-- BIP38 Encryption
 - UTXO Management
 - Mnemonic Operations
 - Utility Functions

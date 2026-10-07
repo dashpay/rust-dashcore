@@ -15,7 +15,7 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
-//! An implementation of a hash engine to support the X1 hash,
+//! An implementation of a hash engine to support the X11 hash,
 //! which is a wrapper around the rs-x11-hash library.
 
 use core::ops::Index;
@@ -24,54 +24,36 @@ use core::str;
 use std::io;
 use std::vec::Vec;
 
-use crate::{hex, Error, HashEngine as _};
+use crate::hex::FromHex as _;
+use crate::{hex, FromSliceError, HashEngine as _};
 
-crate::internal_macros::hash_type! {
-    256,
-    true,
-    "Output of the X11 hash function.",
-    "crate::util::json_hex_string::len_32"
-}
+/// Output of the X11 hash function.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct Hash([u8; 32]);
 
-/// Output of the X11 hash function
-fn from_engine(e: HashEngine) -> Hash {
-    Hash(e.midstate().to_byte_array())
-}
+crate::hex_fmt_impl!(<Hash as crate::Hash>::DISPLAY_BACKWARD, 32, Hash);
+crate::serde_impl!(Hash, 32);
+crate::bincode_impl!(Hash, 32);
+crate::borrow_slice_impl!(Hash);
 
-/// A hashing engine of X11 algorithm, which bytes can be serialized into
-#[derive(Clone, Default)]
-pub struct HashEngine {
-    buf: Vec<u8>,
-    length: usize,
-}
+impl str::FromStr for Hash {
+    type Err = hex::HexToArrayError;
 
-impl crate::HashEngine for HashEngine {
-    type MidState = Midstate;
-
-    const BLOCK_SIZE: usize = 32;
-
-    fn midstate(&self) -> Self::MidState {
-        Midstate(rs_x11_hash::get_x11_hash(self.buf.as_slice()))
-    }
-
-    fn input(&mut self, data: &[u8]) {
-        self.buf.extend_from_slice(data);
-    }
-
-    fn n_bytes_hashed(&self) -> usize {
-        self.length
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut bytes = <[u8; 32]>::from_hex(s)?;
+        bytes.reverse();
+        Ok(Hash(bytes))
     }
 }
 
-/// Output of the X11 hash function
-#[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Hash)]
-pub struct Midstate(pub [u8; 32]);
+impl AsRef<[u8; 32]> for Hash {
+    fn as_ref(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
 
-crate::internal_macros::arr_newtype_fmt_impl!(Midstate, 32);
-serde_impl!(Midstate, 32);
-borrow_slice_impl!(Midstate);
-
-impl<I: SliceIndex<[u8]>> Index<I> for Midstate {
+impl<I: SliceIndex<[u8]>> Index<I> for Hash {
     type Output = I::Output;
 
     #[inline]
@@ -80,56 +62,67 @@ impl<I: SliceIndex<[u8]>> Index<I> for Midstate {
     }
 }
 
-impl str::FromStr for Midstate {
-    type Err = hex::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        hex::FromHex::from_hex(s)
+impl From<Hash> for [u8; 32] {
+    fn from(hash: Hash) -> [u8; 32] {
+        hash.0
     }
 }
 
-impl Midstate {
-    /// Length of the midstate, in bytes.
-    const LEN: usize = 32;
+impl crate::Hash for Hash {
+    type Engine = HashEngine;
+    type Bytes = [u8; 32];
 
-    /// Flag indicating whether user-visible serializations of this hash
-    /// should be backward. For some reason Satoshi decided this should be
-    /// true for `Sha256dHash`, so here we are.
+    const LEN: usize = 32;
     const DISPLAY_BACKWARD: bool = true;
 
-    /// Construct a new [`Midstate`] from the inner value.
-    pub const fn from_byte_array(inner: [u8; 32]) -> Self {
-        Midstate(inner)
+    fn from_engine(e: HashEngine) -> Self {
+        Hash(e.midstate())
     }
 
-    /// Copies a byte slice into the [`Midstate`] object.
-    pub fn from_slice(sl: &[u8]) -> Result<Midstate, Error> {
-        if sl.len() != Self::LEN {
-            Err(Error::InvalidLength(Self::LEN, sl.len()))
-        } else {
-            let mut ret = [0; 32];
-            ret.copy_from_slice(sl);
-            Ok(Midstate(ret))
-        }
+    fn from_slice(sl: &[u8]) -> Result<Self, FromSliceError> {
+        // `FromSliceError` is only constructible upstream, so a hash of the
+        // same size checks the length.
+        crate::sha256d::Hash::from_slice(sl).map(|h| Hash(h.to_byte_array()))
     }
 
-    /// Unwraps the [`Midstate`] and returns the underlying byte array.
-    pub fn to_byte_array(self) -> [u8; 32] {
+    fn to_byte_array(self) -> [u8; 32] {
         self.0
     }
 
-    /// Unwraps the [`Midstate`] and returns the underlying byte array.
-    pub fn into_inner(self) -> [u8; 32] {
-        self.0
+    fn as_byte_array(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    fn from_byte_array(bytes: [u8; 32]) -> Self {
+        Hash(bytes)
+    }
+
+    fn all_zeros() -> Self {
+        Hash([0; 32])
     }
 }
 
-impl hex::FromHex for Midstate {
-    fn from_byte_iter<I>(iter: I) -> Result<Self, hex::Error>
-    where
-        I: Iterator<Item = Result<u8, hex::Error>> + ExactSizeIterator + DoubleEndedIterator,
-    {
-        // DISPLAY_BACKWARD is true
-        Ok(Midstate::from_byte_array(hex::FromHex::from_byte_iter(iter.rev())?))
+/// An X11 hashing engine. X11 is not incremental, so the input is buffered.
+#[derive(Clone, Default)]
+pub struct HashEngine {
+    buf: Vec<u8>,
+}
+
+impl crate::HashEngine for HashEngine {
+    type MidState = [u8; 32];
+
+    const BLOCK_SIZE: usize = 32;
+
+    fn midstate(&self) -> [u8; 32] {
+        rs_x11_hash::get_x11_hash(self.buf.as_slice())
+    }
+
+    fn input(&mut self, data: &[u8]) {
+        self.buf.extend_from_slice(data);
+    }
+
+    fn n_bytes_hashed(&self) -> usize {
+        self.buf.len()
     }
 }
 
@@ -138,6 +131,7 @@ impl io::Write for HashEngine {
         self.input(buf);
         Ok(buf.len())
     }
+
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }

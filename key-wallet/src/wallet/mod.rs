@@ -6,8 +6,6 @@
 pub mod accounts;
 pub mod backup;
 pub mod balance;
-#[cfg(feature = "bip38")]
-pub mod bip38;
 pub mod helper;
 pub mod initialization;
 pub mod managed_wallet_info;

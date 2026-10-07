@@ -58,7 +58,7 @@ impl From<OutPoint> for [u8; 36] {
     fn from(value: OutPoint) -> Self {
         let mut bytes = [0u8; 36];
         // Serialize the txid
-        let txid_bytes: [u8; 32] = value.txid.to_raw_hash().into(); // Assuming to_raw_hash() returns the hash as sha256d::Hash, which can be converted into [u8; 32]
+        let txid_bytes: [u8; 32] = hashes::Hash::to_byte_array(value.txid.to_raw_hash()); // Assuming to_raw_hash() returns the hash as sha256d::Hash, which can be converted into [u8; 32]
         bytes[..32].copy_from_slice(&txid_bytes);
         // Serialize the vout
         let vout_bytes = value.vout.to_le_bytes();
@@ -152,7 +152,7 @@ impl TryInto<Vec<u8>> for OutPoint {
 #[non_exhaustive]
 pub enum ParseOutPointError {
     /// Error in TXID part.
-    Txid(hashes::hex::Error),
+    Txid(hashes::hex::HexToArrayError),
     /// Error in vout part.
     Vout(crate::error::ParseIntError),
     /// Error in general format.

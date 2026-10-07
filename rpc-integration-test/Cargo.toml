@@ -1,14 +1,17 @@
 [package]
 name = "integration_test"
 authors = ["Steven Roose <steven@stevenroose.org>"]
-license = "CC0-1.0"
-edition = "2024"
 publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 dashcore-rpc = { path = "../rpc-client" }
 lazy_static = "1.4.0"
-hex = "0.4.3"
+hex = { workspace = true }
 dotenvy = "0.15.7"
 tracing = "0.1"
 tracing-log = "0.2"

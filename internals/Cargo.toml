@@ -1,16 +1,16 @@
 [package]
 name = "dashcore-private"
-version = { workspace = true }
 authors = ["Samuel Westrich <sam@dash.org>", "The Rust Dash developers"]
-license = "CC0-1.0"
-repository = "https://github.com/rust-dashcore/rust-dashcore/"
-documentation = "https://docs.rs/dash-private"
 description = "Internal types and macros used by rust-dash ecosystem"
 categories = ["cryptography::cryptocurrencies"]
 keywords = ["internal"]
 readme = "README.md"
-edition = "2024"
 exclude = ["tests", "contrib"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 default = []

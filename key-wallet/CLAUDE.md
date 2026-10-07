@@ -174,7 +174,6 @@ Tests are organized by functionality:
 - `src/tests/edge_case_tests.rs`: Edge case coverage
 - `src/tests/performance_tests.rs`: Performance benchmarks
 - `src/mnemonic_tests.rs`: Mnemonic generation and validation
-- `src/bip38_tests.rs`: BIP38 encryption/decryption
 
 ### Test Patterns
 

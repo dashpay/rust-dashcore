@@ -1,20 +1,21 @@
 [package]
 name = "key-wallet-ffi"
-version = { workspace = true }
-authors = ["The Dash Core Developers"]
-edition = "2021"
 description = "FFI bindings for key-wallet library"
+edition = "2021"
 keywords = ["dash", "wallet", "ffi", "bindings"]
 readme = "README.md"
-license = "CC0-1.0"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [lib]
 name = "key_wallet_ffi"
 crate-type = ["cdylib", "staticlib", "lib"]
 
 [features]
-default = ["bincode", "eddsa", "bls", "bip38"]
-bip38 = ["key-wallet/bip38"]
+default = ["bincode", "eddsa", "bls"]
 bincode = ["key-wallet/bincode", "key-wallet-manager/bincode"]
 eddsa = ["dashcore/eddsa", "key-wallet/eddsa"]
 bls = ["dashcore/bls", "key-wallet/bls"]
@@ -34,10 +35,10 @@ key-wallet = { path = "../key-wallet" }
 key-wallet-manager = { path = "../key-wallet-manager" }
 dashcore = { path = "../dash" }
 dash-network = { path = "../dash-network", features = ["ffi"] }
-secp256k1 = { version = "0.33.1" }
+secp256k1 = { workspace = true }
 tokio = { version = "1.32", features = ["rt-multi-thread", "sync"] }
 libc = "0.2"
-hex = "0.4"
+hex = { workspace = true }
 
 [build-dependencies]
 cbindgen = "0.29"
@@ -46,4 +47,4 @@ cbindgen = "0.29"
 dashcore = { path = "../dash", features = ["test-utils"] }
 key-wallet = { path = "../key-wallet", features = ["test-utils"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
-hex = "0.4"
+hex = { workspace = true }
