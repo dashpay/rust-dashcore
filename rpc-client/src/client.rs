@@ -1666,8 +1666,19 @@ impl fmt::Debug for Client {
 impl Client {
     /// Creates a client to a dashd JSON-RPC server.
     ///
-    /// Can only return [Err] when using cookie authentication.
+    /// Returns [Err] for an invalid or `https://` URL, or when the cookie file can't be read.
+    /// The transport speaks plaintext HTTP only (dashd has no TLS RPC), so an `https://` URL is
+    /// rejected rather than sending the credentials unencrypted to port 443.
     pub fn new(url: &str, auth: Auth) -> Result<Self> {
+        if url.split_once("://").is_some_and(|(scheme, _)| scheme == "https") {
+            return Err(super::error::Error::JsonRpc(
+                jsonrpc::simple_http::Error::InvalidUrl {
+                    url: url.to_owned(),
+                    reason: "https is not supported, the transport is plaintext HTTP",
+                }
+                .into(),
+            ));
+        }
         let (user, pass) = auth.get_user_pass()?;
         jsonrpc::client::Client::simple_http(url, user, pass)
             .map(|client| Client {
@@ -1737,6 +1748,8 @@ fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     #[test]
@@ -1749,6 +1762,14 @@ mod tests {
         assert!(client.send_raw_transaction(&encode::serialize(&tx)).is_err());
         assert!(client.send_raw_transaction("deadbeef").is_err());
         assert!(client.send_raw_transaction("deadbeef".to_owned()).is_err());
+    }
+
+    #[test_case("https://127.0.0.1:9998/", false; "https is rejected")]
+    #[test_case("http://127.0.0.1:9998/", true; "http is accepted")]
+    #[test_case("127.0.0.1:9998", true; "no scheme is accepted")]
+    fn new_accepts_only_plaintext_urls(url: &str, accepted: bool) {
+        let auth = Auth::UserPass("user".into(), "pass".into());
+        assert_eq!(Client::new(url, auth).is_ok(), accepted);
     }
 
     fn test_handle_defaults_inner() -> Result<()> {
