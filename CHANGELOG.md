@@ -19,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   implement bincode or accept byte and sequence forms in serde, `Error` is
   `FromSliceError`, and `forward_hex`, `backward_hex` and the `schemars` feature
   are removed
+- **Breaking:** `BlsPkBytes::from_hex` and `BlsSigBytes::from_hex` report
+  `DecodeFixedLengthBytesError` instead of `hex::FromHexError`, and
+  `dashcore_rpc_json::HexError` wraps `DecodeVariableLengthBytesError`
 - **Breaking:** hashes honour the format precision, so `{:.8}` prints 8 digits
 - **Breaking:** `hash_x11::Hash` loses `forward_hex`, `backward_hex`,
   `from_bytes_ref` and `from_bytes_mut`, `hash_x11::Midstate` is replaced by
