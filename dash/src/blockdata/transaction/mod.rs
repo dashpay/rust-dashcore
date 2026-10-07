@@ -568,6 +568,9 @@ impl Encodable for Transaction {
         if self.tx_type() == TransactionType::Coinbase {
             have_witness = false;
         }
+        if matches!(self.tx_type(), TransactionType::Unknown(_)) {
+            have_witness = false;
+        }
         if !have_witness {
             len += self.input.consensus_encode(w)?;
             len += self.output.consensus_encode(w)?;
@@ -606,9 +609,10 @@ impl Decodable for Transaction {
         let version = u16::consensus_decode_from_finite_reader(r)?;
         let special_transaction_type_u16 = u16::consensus_decode(r)?;
         let special_transaction_type = if version != 0 {
-            TransactionType::try_from(special_transaction_type_u16).map_err(|_| {
-                encode::Error::UnknownSpecialTransactionType(special_transaction_type_u16)
-            })?
+            // Keep types we don't know as raw payloads, so a block carrying a newer special
+            // transaction type still decodes.
+            TransactionType::try_from(special_transaction_type_u16)
+                .unwrap_or(TransactionType::Unknown(special_transaction_type_u16))
         } else if special_transaction_type_u16 == 0 {
             TransactionType::Classic
         } else {
@@ -632,6 +636,9 @@ impl Decodable for Transaction {
             segwit = false;
         }
         if special_transaction_type == TransactionType::Coinbase {
+            segwit = false;
+        }
+        if matches!(special_transaction_type, TransactionType::Unknown(_)) {
             segwit = false;
         }
         if segwit {
@@ -1076,6 +1083,68 @@ mod tests {
             zero_type_tx.txid(),
             "txids of pre-DIP-0002 txs must depend on the raw type bytes"
         );
+    }
+
+    // TODO: these tests build the unknown-type transaction by hand. Add a real regtest
+    // ProDisTx (type 10) as a regression vector once #1131 parses types 10-12.
+    fn unknown_special_tx(input: Vec<TxIn>) -> Transaction {
+        Transaction {
+            version: 3,
+            lock_time: 0,
+            input,
+            output: vec![TxOut {
+                value: 1_000,
+                script_pubkey: ScriptBuf::new_op_return(&[0xab; 4]),
+            }],
+            special_transaction_payload: Some(TransactionPayload::UnknownPayloadType(
+                10,
+                vec![0x01, 0x00, 0xde, 0xad, 0xbe, 0xef],
+            )),
+        }
+    }
+
+    #[test]
+    fn unknown_special_transaction_type_round_trips() {
+        let tx = unknown_special_tx(vec![TxIn::default()]);
+        let bytes = serialize(&tx);
+
+        // nTxType 10 on the wire, and the payload is its length prefix plus the raw bytes.
+        assert_eq!(&bytes[2..4], &[0x0a, 0x00]);
+        assert_eq!(&bytes[bytes.len() - 7..], &[0x06, 0x01, 0x00, 0xde, 0xad, 0xbe, 0xef]);
+
+        let decoded: Transaction = deserialize(&bytes).expect("unknown types must decode");
+        assert_eq!(decoded.tx_type(), TransactionType::Unknown(10));
+        assert_eq!(decoded, tx);
+        assert_eq!(serialize(&decoded), bytes);
+        assert_eq!(decoded.txid(), Txid::hash(&bytes));
+        assert_eq!(decoded.size(), bytes.len());
+    }
+
+    #[test]
+    fn unknown_special_transaction_type_keeps_the_stream_aligned() {
+        // Back to back, as inside a block: the transaction after the unknown one must
+        // decode from the right offset.
+        let unknown = unknown_special_tx(vec![TxIn::default()]);
+        let classic = Transaction {
+            special_transaction_payload: None,
+            ..unknown_special_tx(vec![TxIn::default()])
+        };
+        let mut bytes = serialize(&unknown);
+        bytes.extend(serialize(&classic));
+
+        let mut cursor = io::Cursor::new(&bytes);
+        assert_eq!(Transaction::consensus_decode(&mut cursor).unwrap(), unknown);
+        assert_eq!(Transaction::consensus_decode(&mut cursor).unwrap(), classic);
+        assert_eq!(cursor.position() as usize, bytes.len());
+    }
+
+    #[test]
+    fn unknown_special_transaction_type_without_inputs_is_not_segwit() {
+        let tx = unknown_special_tx(vec![]);
+        let bytes = serialize(&tx);
+        let decoded: Transaction = deserialize(&bytes).expect("input-less unknown type decodes");
+        assert_eq!(decoded, tx);
+        assert_eq!(serialize(&decoded), bytes);
     }
 
     #[test]

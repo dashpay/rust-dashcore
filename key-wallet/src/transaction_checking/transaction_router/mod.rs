@@ -6,7 +6,7 @@
 mod tests;
 
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::special_transaction::TransactionType as TxType;
 use dashcore::blockdata::transaction::Transaction;
 
 /// Classification of transaction types for routing
@@ -41,41 +41,29 @@ pub struct TransactionRouter;
 impl TransactionRouter {
     /// Classify a transaction based on its type and payload
     pub fn classify_transaction(tx: &Transaction) -> TransactionType {
-        // Check if it's a special transaction
-        let special_classification = tx.special_transaction_payload.as_ref().and_then(|payload| {
-            match payload {
-                TransactionPayload::ProviderRegistrationPayloadType(_) => {
-                    Some(TransactionType::ProviderRegistration)
+        match tx.tx_type() {
+            TxType::ProviderRegistration => TransactionType::ProviderRegistration,
+            TxType::ProviderUpdateRegistrar => TransactionType::ProviderUpdateRegistrar,
+            TxType::ProviderUpdateService => TransactionType::ProviderUpdateService,
+            TxType::ProviderUpdateRevocation => TransactionType::ProviderUpdateRevocation,
+            TxType::AssetLock => TransactionType::AssetLock,
+            TxType::AssetUnlock => TransactionType::AssetUnlock,
+            TxType::Coinbase => TransactionType::Coinbase,
+            TxType::QuorumCommitment | TxType::MnhfSignal => TransactionType::Ignored,
+            // Classic and pre-DIP-0002 transactions are classified by shape. So are special
+            // types we can't parse yet: they may still spend or pay wallet coins, so they are
+            // checked across every fund-bearing account.
+            TxType::Classic
+            | TxType::ClassicalWithNonStandardVersionTypeBytes(_)
+            | TxType::Unknown(_) => {
+                if tx.is_coin_base() {
+                    TransactionType::Coinbase
+                } else if Self::is_coinjoin_transaction(tx) {
+                    TransactionType::CoinJoin
+                } else {
+                    TransactionType::Standard
                 }
-                TransactionPayload::ProviderUpdateRegistrarPayloadType(_) => {
-                    Some(TransactionType::ProviderUpdateRegistrar)
-                }
-                TransactionPayload::ProviderUpdateServicePayloadType(_) => {
-                    Some(TransactionType::ProviderUpdateService)
-                }
-                TransactionPayload::ProviderUpdateRevocationPayloadType(_) => {
-                    Some(TransactionType::ProviderUpdateRevocation)
-                }
-                TransactionPayload::AssetLockPayloadType(_) => Some(TransactionType::AssetLock),
-                TransactionPayload::AssetUnlockPayloadType(_) => Some(TransactionType::AssetUnlock),
-                TransactionPayload::CoinbasePayloadType(_) => Some(TransactionType::Coinbase),
-                TransactionPayload::QuorumCommitmentPayloadType(_) => {
-                    Some(TransactionType::Ignored)
-                }
-                TransactionPayload::MnhfSignalPayloadType(_) => Some(TransactionType::Ignored),
-                // Pre-DIP-0002 transactions are logically Classic — fall through to the
-                // standard / coinbase / coinjoin classification below.
-                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => None,
             }
-        });
-        if let Some(classification) = special_classification {
-            classification
-        } else if tx.is_coin_base() {
-            TransactionType::Coinbase
-        } else if Self::is_coinjoin_transaction(tx) {
-            TransactionType::CoinJoin
-        } else {
-            TransactionType::Standard
         }
     }
 

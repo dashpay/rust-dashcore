@@ -171,6 +171,16 @@ fn test_classify_asset_unlock_transaction() {
 }
 
 #[test]
+fn test_classify_unknown_special_transaction_as_standard() {
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
+    tx.special_transaction_payload =
+        Some(TransactionPayload::UnknownPayloadType(10, vec![0x01, 0x00]));
+
+    assert_eq!(TransactionRouter::classify_transaction(&tx), TransactionType::Standard);
+}
+
+#[test]
 fn test_classify_coinbase_transaction() {
     let addr = test_addr();
     let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
