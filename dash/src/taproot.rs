@@ -1778,6 +1778,7 @@ mod test {
     #[cfg(feature = "serde")]
     use {
         crate::internal_macros::hex,
+        serde::{Deserialize, Serialize},
         serde_test::Configure,
         serde_test::{Token, assert_tokens},
     };
@@ -2135,6 +2136,44 @@ mod test {
         let json = serde_json::to_string(&leaf_version).unwrap();
         let leaf_version2 = serde_json::from_str(&json).unwrap();
         assert_eq!(leaf_version, leaf_version2);
+    }
+
+    /// A tagged hash must accept every shape `ContentDeserializer` can replay,
+    /// which is why `sha256t_hash_newtype!` routes through our `hash_newtype!`
+    /// rather than upstream's.
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_round_trip_through_internally_tagged_enum() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct WithNodeHash {
+            node: TapNodeHash,
+        }
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(tag = "type")]
+        enum Tagged {
+            A(WithNodeHash),
+        }
+
+        let bytes = hex!("03ba2a4dcd914fed29a1c630c7e811271b081a0e2f2f52cf1c197583dfd46c1b");
+        let original = Tagged::A(WithNodeHash {
+            node: TapNodeHash::from_slice(&bytes).unwrap(),
+        });
+
+        let value = serde_json::to_value(&original).unwrap();
+        let restored: Tagged = serde_json::from_value(value).unwrap();
+        assert_eq!(original, restored);
+
+        let mut object = serde_json::Map::new();
+        object.insert("type".into(), serde_json::Value::String("A".into()));
+        object.insert(
+            "node".into(),
+            serde_json::Value::Array(
+                bytes.iter().map(|b| serde_json::Value::Number((*b).into())).collect(),
+            ),
+        );
+        let from_seq: Tagged = serde_json::from_value(serde_json::Value::Object(object)).unwrap();
+        assert_eq!(from_seq, original);
     }
 
     #[test]

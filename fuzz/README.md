@@ -85,8 +85,8 @@ The final line is a hex-encoded version of the input that caused the crash. You
 can test this directly by editing the `duplicate_crash` test to copy/paste the
 hex output into the call to `extend_vec_from_hex`. Then run the test with
 
-    RUSTFLAGS=--cfg=fuzzing cargo test
+    RUSTFLAGS="--cfg=fuzzing --cfg=hashes_fuzz" cargo test
 
-It is important to add the `cfg=fuzzing` flag, which tells rustc to compile the
-library as though it were running a fuzztest. In particular, this will disable
-or weaken all the cryptography.
+It is important to add the `cfg=fuzzing` and `cfg=hashes_fuzz` flags, which
+tell rustc to compile the library as though it were running a fuzztest. In
+particular, `hashes_fuzz` makes `bitcoin_hashes` weaken its hash functions.

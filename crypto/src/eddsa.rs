@@ -7,32 +7,12 @@
 //! Ed25519 keys for Platform node identity.
 
 #[cfg(feature = "eddsa")]
-use dash_pkc::eddsa::{
-    EddsaPkBytes as PkcPkBytes, EddsaPublicKey as PkcPublicKey, EddsaSecretKey as PkcSecretKey,
-};
-#[cfg(feature = "eddsa")]
-use dash_types::Hashable;
-use dash_types::{make_bytes, make_sbytes};
-#[cfg(feature = "eddsa")]
-use thiserror::Error as ThisError;
-
-/// Raw Ed25519 public key length.
-pub const EDDSA_PK_LEN: usize = 32;
+pub use dash_pkc::eddsa::{EddsaError, EddsaPublicKey, EddsaSecretKey};
+pub use dash_pkc::eddsa::{EddsaPkBytes, EddsaSkBytes, EDDSA_PK_LEN, EDDSA_SK_LEN};
+use dash_types::{make_bytes, Hashable};
 
 /// Ed25519 public key hash length.
 pub const EDDSA_PK_HASH_LEN: usize = 20;
-
-/// Raw Ed25519 secret key (seed) length.
-pub const EDDSA_SK_LEN: usize = 32;
-
-/// Errors produced by Ed25519 operations.
-#[cfg(feature = "eddsa")]
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, ThisError)]
-pub enum EddsaError {
-    /// Public key bytes are not a usable curve point.
-    #[error("Invalid Ed25519 public key: {0}")]
-    InvalidPublicKey(String),
-}
 
 make_bytes! {
     /// Ed25519 public key hash (20 bytes).
@@ -82,42 +62,10 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for EddsaPkHash {
     }
 }
 
-make_bytes! {
-    /// Ed25519 public key (32 bytes, unvalidated).
-    EddsaPkBytes, EDDSA_PK_LEN
-}
-
-#[cfg(feature = "eddsa")]
-impl EddsaPkBytes {
-    /// Checks these bytes are a usable curve point.
-    ///
-    /// # Errors
-    ///
-    /// Returns `InvalidPublicKey` when the bytes are not on the curve.
-    pub fn validate(&self) -> Result<(), EddsaError> {
-        PkcPublicKey::from_bytes(self.as_bytes())
-            .map(|_| ())
-            .map_err(|e| EddsaError::InvalidPublicKey(e.to_string()))
-    }
-
-    /// The CometBFT hash of the public key.
-    pub fn hash(&self) -> EddsaPkHash {
-        EddsaPkHash::from_bytes(
-            *Hashable::hash(&PkcPkBytes::from_bytes(*self.as_bytes())).as_bytes(),
-        )
-    }
-}
-
-make_sbytes! {
-    /// Ed25519 secret key seed (32 bytes).
-    EddsaSkBytes, EDDSA_SK_LEN
-}
-
-#[cfg(feature = "eddsa")]
-impl EddsaSkBytes {
-    /// Derives the corresponding public key.
-    pub fn public_key(&self) -> EddsaPkBytes {
-        EddsaPkBytes::from_bytes(PkcSecretKey::from_bytes(self.as_bytes()).public_key().to_bytes())
+/// The CometBFT hash of the public key.
+impl From<EddsaPkBytes> for EddsaPkHash {
+    fn from(public_key: EddsaPkBytes) -> Self {
+        Self::from_bytes(*Hashable::hash(&public_key).as_bytes())
     }
 }
 
@@ -171,7 +119,6 @@ mod tests {
         assert_eq!(back, hash);
     }
 
-    #[cfg(feature = "eddsa")]
     #[test]
     fn hash_is_truncated_sha256() {
         use dashcore_hashes::{sha256, Hash};
@@ -180,7 +127,7 @@ mod tests {
         let digest = sha256::Hash::hash(&public_key);
         // `EddsaPkHash` holds the wire order, which is the byte-reversal of
         // the canonical form the digest is read in.
-        let mut canonical = *EddsaPkBytes::from_bytes(public_key).hash().as_bytes();
+        let mut canonical = *EddsaPkHash::from(EddsaPkBytes::from_bytes(public_key)).as_bytes();
         canonical.reverse();
 
         assert_eq!(canonical[..], digest.to_byte_array()[..20]);

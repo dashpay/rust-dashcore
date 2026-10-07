@@ -13,6 +13,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   serialization traits as Platform. Existing bincode encodings and C interfaces
   are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
   The dependency switch does not automatically opt types into `DecodeUntrusted`.
+- **Breaking:** `dashcore_hashes` re-exports the hash primitives (`sha1`,
+  `sha256`, `sha256d`, `sha512`, `sha512_256`, `ripemd160`, `hash160`, `hmac`,
+  `siphash24`, `cmp`, `hex`) from `bitcoin_hashes` 0.14. The raw types no longer
+  implement bincode or accept byte and sequence forms in serde, `Error` is
+  `FromSliceError`, and `forward_hex`, `backward_hex` and the `schemars` feature
+  are removed
+- **Breaking:** hashes honour the format precision, so `{:.8}` prints 8 digits
+- **Breaking:** `hash_x11::Hash` loses `forward_hex`, `backward_hex`,
+  `from_bytes_ref` and `from_bytes_mut`, `hash_x11::Midstate` is replaced by
+  `[u8; 32]`, and `n_bytes_hashed()` returns the bytes written
+- **Breaking:** `EcdsaSighashType` comes from `bitcoin-crypto` and gains a
+  `NonStandard` variant, which `from_consensus` returns for non-standard flags
+  and which displays, parses and serializes as `0xNN`. The `from_standard` error
+  is `NonStandardSighashTypeError`, `TapSighashType` converts through `TryFrom`,
+  and `sighash::Error` no longer derives `Copy`, `PartialOrd`, `Ord` or `Hash`
+- **Breaking:** the taproot types come from `bitcoin-crypto`. `Signature`
+  fields are renamed to `signature` and `sighash_type`, and `taproot::Error` is
+  `SigFromSliceError`, without a `Secp256k1` variant
+- **Breaking:** `dashcore::eddsa` uses the `dash-pkc` types, so `EddsaPkBytes`
+  and `EddsaSkBytes` no longer implement `BaseCodec` and `EddsaError` changes
+  shape. Use `EddsaPublicKey::try_from`, `EddsaPkHash::from` and
+  `EddsaSecretKey::public_key` instead of `EddsaPkBytes::validate`,
+  `EddsaPkBytes::hash` and `EddsaSkBytes::public_key`
+- **Breaking:** `QualifiedMasternodeListEntry::entry_hash` and
+  `MessageVerificationError::ThresholdSignatureNotValid` hold `Sha256dHash`
+- **Breaking:** `dashcore::base58` is `base58ck` 0.5.0, so `Base58CkString`
+  replaces the `encode_*` functions and the `Base58` error variants carry
+  `base58::DecodeCheckError`
+- Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
+  `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
+- All workspace crates declare a MSRV of 1.89
+
+### Fixed
+
+- Treat `SIGHASH_SINGLE` flags with `ANYONECANPAY` set, such as `0x83`, as
+  single when checking for the legacy `SIGHASH_SINGLE` bug
+- `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
+  and rejects flags above `0xff`
 
 ## 0.44.0 - 2026-07-01
 
