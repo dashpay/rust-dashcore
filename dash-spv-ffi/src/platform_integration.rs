@@ -87,16 +87,6 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
     let llmq_type: LLMQType = (quorum_type as u8).into();
     let quorum_hash = QuorumHash::from_byte_array(hash_array);
 
-    if let Err(e) = spv_client.masternode_list_engine() {
-        return FFIResult::error(
-            FFIErrorCode::RuntimeError,
-            &format!(
-                "Masternode list engine not initialized: {}. Core SDK may still be syncing.",
-                e
-            ),
-        );
-    }
-
     let lookup = client.runtime.block_on(spv_client.get_quorum_at_height(
         core_chain_locked_height,
         llmq_type,

@@ -1,5 +1,6 @@
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
+use crate::storage::BlockHeaderStorage;
 use crate::sync::{
     InstantSendManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
@@ -9,7 +10,7 @@ use dashcore::network::message_blockdata::Inventory;
 use std::time::Instant;
 
 #[async_trait]
-impl SyncManager for InstantSendManager {
+impl<H: BlockHeaderStorage> SyncManager for InstantSendManager<H> {
     fn identifier(&self) -> ManagerIdentifier {
         ManagerIdentifier::InstantSend
     }
@@ -112,7 +113,7 @@ impl SyncManager for InstantSendManager {
     }
 }
 
-impl InstantSendManager {
+impl<H: BlockHeaderStorage> InstantSendManager<H> {
     /// `tick` with the current time injected, so tests can drive TTL expiry with
     /// a future instant instead of back-dating `first_seen` (an `Instant` cannot
     /// portably be back-dated by subtraction — `PendingInstantLock::is_expired`

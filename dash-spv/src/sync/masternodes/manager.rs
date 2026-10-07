@@ -7,8 +7,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
-use dashcore::sml::masternode_list_engine::{MasternodeListEngine, QRInfoFeedResult};
 use tokio::sync::RwLock;
 
 use super::pipeline::MnListDiffPipeline;
@@ -80,8 +80,6 @@ pub(super) struct QRInfoInFlight {
 /// Sync state for masternode list synchronization.
 #[derive(Debug, Default)]
 pub(super) struct MasternodeSyncState {
-    /// Heights where the engine has masternode lists (for chaining diffs).
-    pub(super) known_mn_list_heights: BTreeSet<u32>,
     /// Pipeline for MnListDiff requests.
     pub(super) mnlistdiff_pipeline: MnListDiffPipeline,
     /// What the pipeline is currently being used for. See [`PipelineMode`].
@@ -257,7 +255,7 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     /// Block header storage (for height lookups).
     pub(super) header_storage: Arc<RwLock<H>>,
     /// Shared Masternode list engine.
-    pub(super) engine: Arc<RwLock<MasternodeListEngine>>,
+    pub(super) engine: Arc<RwLock<MasternodeListEngine<H>>>,
     /// Network type for genesis hash.
     network: dashcore::Network,
     /// Sync state tracking.
@@ -268,9 +266,9 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// Create a new masternode manager with the given header storage.
-    pub async fn new(
+    pub(crate) async fn new(
         header_storage: Arc<RwLock<H>>,
-        engine: Arc<RwLock<MasternodeListEngine>>,
+        engine: Arc<RwLock<MasternodeListEngine<H>>>,
         network: dashcore::Network,
         message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     ) -> Self {
@@ -635,6 +633,7 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for MasternodesManager<H> {
 mod tests {
     use super::*;
     use crate::network::{MessageType, NetworkRequest};
+    use crate::sml_engine::test_support::TestEngine;
     use crate::storage::{DiskStorageManager, PersistentBlockHeaderStorage, StorageManager};
     use crate::sync::sync_manager::SyncManager;
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
@@ -649,8 +648,14 @@ mod tests {
 
     async fn create_test_manager_for(network: dashcore::Network) -> TestMasternodesManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        let engine = Arc::new(RwLock::new(MasternodeListEngine::default_for_network(network)));
-        MasternodesManager::new(storage.block_headers(), engine, network, None).await
+        let engine = MasternodeListEngine::new(network, storage.block_headers());
+        MasternodesManager::new(
+            storage.block_headers(),
+            Arc::new(RwLock::new(engine)),
+            network,
+            None,
+        )
+        .await
     }
 
     async fn create_test_manager() -> TestMasternodesManager {
@@ -682,7 +687,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let engine = engine_with_lists(&[(tip, 1)]);
+        let mut engine =
+            MasternodeListEngine::new(dashcore::Network::Regtest, Arc::clone(&block_headers));
+        add_lists(&mut engine, &[(tip, 1)]);
         let mut manager = MasternodesManager::new(
             block_headers,
             Arc::new(RwLock::new(engine)),
@@ -736,14 +743,12 @@ mod tests {
         BlockHash::from_byte_array([n; 32])
     }
 
-    fn engine_with_lists(lists: &[(u32, u8)]) -> MasternodeListEngine {
-        let mut engine = MasternodeListEngine::default_for_network(dashcore::Network::Regtest);
+    fn add_lists<H: BlockHeaderStorage>(engine: &mut MasternodeListEngine<H>, lists: &[(u32, u8)]) {
         for (height, tag) in lists {
             engine
                 .masternode_lists
                 .insert(*height, MasternodeList::empty(anchor_hash(*tag), *height));
         }
-        engine
     }
 
     // Regtest `isd_llmq_type` is `LlmqtypeTestDIP0024` which uses `DKG_TEST` with
@@ -795,7 +800,8 @@ mod tests {
             },
         ];
         for case in &cases {
-            let engine = engine_with_lists(case.lists);
+            let mut engine = TestEngine::empty(dashcore::Network::Regtest);
+            add_lists(&mut engine, case.lists);
             let got = engine.qr_info_base_list(case.tip).map(|list| list.block_hash);
             assert_eq!(got, case.expect.map(anchor_hash), "case: {}", case.name);
         }
@@ -905,7 +911,8 @@ mod tests {
     #[tokio::test]
     async fn test_masternode_manager_recovers_its_height_from_engine() {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        let mut engine = MasternodeListEngine::default_for_network(dashcore::Network::Testnet);
+        let mut engine =
+            MasternodeListEngine::new(dashcore::Network::Testnet, storage.block_headers());
         let tip_hash = BlockHash::from_byte_array([0xAB; 32]);
         let mid_hash = BlockHash::from_byte_array([0xCD; 32]);
         engine.masternode_lists.insert(100, MasternodeList::empty(mid_hash, 100));
