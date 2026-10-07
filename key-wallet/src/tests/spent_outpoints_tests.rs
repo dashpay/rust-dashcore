@@ -727,6 +727,34 @@ async fn spender_of_a_coin_claimed_after_its_chainlocked_funding_is_recorded_as_
     .await;
 }
 
+/// The spender is seen in a block before the funding, as an out-of-order
+/// rescan delivers them. The funding must report the spend's height for
+/// replay, and the replayed spender must be recorded, claim or no claim.
+#[test_case::test_case(false; "without a claim")]
+#[test_case::test_case(true; "with a claim")]
+#[tokio::test]
+async fn spender_seen_in_a_block_before_a_claimed_funding_is_replayed_and_recorded(restore: bool) {
+    let (mut ctx, address) = restore_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000]);
+    let coin = OutPoint::new(funding.txid(), 0);
+    let spender = spend_paying(&[coin], &dashcore::Address::dummy(Network::Testnet, 0));
+    if restore {
+        ctx.managed_wallet.restore_spent_outpoints(&[(coin, Some(spender.txid()))]);
+    }
+    assert!(!ctx.check_transaction(&spender, in_block(100)).await.is_relevant);
+
+    ctx.check_transaction(&funding, in_block(90)).await;
+
+    assert_eq!(ctx.managed_wallet.unrecorded_spend_heights(&funding), [100].into());
+    let replayed = ctx.check_transaction(&spender, in_block(100)).await;
+    assert_eq!(
+        recorded(&replayed),
+        vec![(TransactionDirection::Outgoing, -150_000, vec![(0, 150_000)])]
+    );
+    assert!(!second_account(&ctx).utxos.contains_key(&coin));
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+}
+
 /// The output kept for a claim goes with the claim: the coin is credited
 /// again as if it had never been claimed.
 #[tokio::test]

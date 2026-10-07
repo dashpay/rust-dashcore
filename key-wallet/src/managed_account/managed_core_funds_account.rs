@@ -451,27 +451,11 @@ impl ManagedCoreFundsAccount {
                             // TODO: This is mostly needed for wallet rescan from storage with the
                             //       there is a timing issue with event processing which might lead to
                             //       invalid UTXO set / balances. There might be a way around it.
-                            if self.is_outpoint_spent(&outpoint) {
+                            if self.spent_outpoints.contains(&outpoint) {
                                 tracing::debug!(
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
                                 );
-                                // Held back by a claim alone, its spender is still
-                                // to be recorded: keep the output to resolve that input.
-                                if !self.spent_outpoints.contains(&outpoint)
-                                    && !self.utxos.contains_key(&outpoint)
-                                {
-                                    self.claim_guarded_outputs.insert(
-                                        outpoint,
-                                        Utxo::new(
-                                            outpoint,
-                                            output.clone(),
-                                            addr.clone(),
-                                            context.block_info().map_or(0, |i| i.height),
-                                            tx.is_coin_base(),
-                                        ),
-                                    );
-                                }
                                 continue;
                             }
 
@@ -496,6 +480,30 @@ impl ManagedCoreFundsAccount {
                                         tx.is_coin_base(),
                                     ),
                                 );
+                                continue;
+                            }
+
+                            // Held back by a claim alone, so its spender is still to be
+                            // recorded: keep the output to resolve that input. Checked
+                            // after the observed spends, whose replay of the spending
+                            // block depends on `spent_before_funded`.
+                            if self.restored_spent_claims.contains_key(&outpoint) {
+                                tracing::debug!(
+                                    outpoint = %outpoint,
+                                    "Skipping UTXO guarded by a spent-output claim"
+                                );
+                                if !self.utxos.contains_key(&outpoint) {
+                                    self.claim_guarded_outputs.insert(
+                                        outpoint,
+                                        Utxo::new(
+                                            outpoint,
+                                            output.clone(),
+                                            addr.clone(),
+                                            context.block_info().map_or(0, |i| i.height),
+                                            tx.is_coin_base(),
+                                        ),
+                                    );
+                                }
                                 continue;
                             }
 
@@ -1004,9 +1012,8 @@ impl ManagedCoreFundsAccount {
         // both resolve each input against `self.utxos`, then
         // `self.spent_before_funded`, then `self.claim_guarded_outputs` on this
         // account, with no mutation of any between the two lookups, so they
-        // populate together; keeping both keeps
-        // this robust should the two call sites ever compute over different
-        // snapshots.
+        // populate together; keeping both keeps this robust should the two
+        // call sites ever compute over different snapshots.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let network = self.keys.network();
