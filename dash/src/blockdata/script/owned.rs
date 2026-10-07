@@ -6,7 +6,6 @@ use core::ops::Deref;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::hex;
 
 use crate::address::{WitnessProgram, WitnessVersion};
 use crate::blockdata::opcodes::all::*;
@@ -168,10 +167,8 @@ impl ScriptBuf {
     }
 
     /// Creates a [`ScriptBuf`] from a hex string.
-    pub fn from_hex(s: &str) -> Result<Self, hex::HexToBytesError> {
-        use hashes::hex::FromHex;
-
-        let v = Vec::from_hex(s)?;
+    pub fn from_hex(s: &str) -> Result<Self, hex_conservative::DecodeVariableLengthBytesError> {
+        let v = hex_conservative::decode_to_vec(s)?;
         Ok(ScriptBuf::from_bytes(v))
     }
 

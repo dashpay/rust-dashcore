@@ -10,7 +10,7 @@ impl<'a> serde::Serialize for SerializeBytesAsHex<'a> {
     where
         S: serde::Serializer,
     {
-        use internals::hex::display::DisplayHex;
+        use hex_conservative::DisplayHex;
 
         serializer.collect_str(&format_args!("{:x}", self.0.as_hex()))
     }
@@ -22,7 +22,6 @@ pub mod btreemap_byte_values {
 
     // NOTE: This module can be exactly copied to use with HashMap.
 
-    use hashes::hex::FromHex;
     use serde;
 
     use crate::prelude::*;
@@ -70,7 +69,10 @@ pub mod btreemap_byte_values {
             ) -> Result<Self::Value, A::Error> {
                 let mut ret = BTreeMap::new();
                 while let Some((key, value)) = a.next_entry()? {
-                    ret.insert(key, FromHex::from_hex(value).map_err(serde::de::Error::custom)?);
+                    ret.insert(
+                        key,
+                        hex_conservative::decode_to_vec(value).map_err(serde::de::Error::custom)?,
+                    );
                 }
                 Ok(ret)
             }
@@ -246,7 +248,6 @@ pub mod hex_bytes {
     //! Module for serialization of byte arrays as hex strings.
     #![allow(missing_docs)]
 
-    use hashes::hex::FromHex;
     use serde;
 
     pub fn serialize<T, S>(bytes: &T, s: S) -> Result<S::Ok, S::Error>
@@ -262,14 +263,23 @@ pub mod hex_bytes {
         }
     }
 
+    /// Decodes a hex string into `B`, for instance a `Vec<u8>` or a `[u8; N]`.
     pub fn deserialize<'de, D, B>(d: D) -> Result<B, D::Error>
     where
         D: serde::Deserializer<'de>,
-        B: serde::Deserialize<'de> + FromHex,
+        B: serde::Deserialize<'de> + TryFrom<Vec<u8>>,
     {
         struct Visitor<B>(core::marker::PhantomData<B>);
 
-        impl<'de, B: FromHex> serde::de::Visitor<'de> for Visitor<B> {
+        impl<B: TryFrom<Vec<u8>>> Visitor<B> {
+            fn decode<E: serde::de::Error>(&self, v: &str) -> Result<B, E> {
+                let bytes = hex_conservative::decode_to_vec(v).map_err(E::custom)?;
+                let len = bytes.len();
+                B::try_from(bytes).map_err(|_| E::invalid_length(len, self))
+            }
+        }
+
+        impl<'de, B: TryFrom<Vec<u8>>> serde::de::Visitor<'de> for Visitor<B> {
             type Value = B;
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
@@ -281,7 +291,7 @@ pub mod hex_bytes {
                 E: serde::de::Error,
             {
                 if let Ok(hex) = core::str::from_utf8(v) {
-                    FromHex::from_hex(hex).map_err(E::custom)
+                    self.decode(hex)
                 } else {
                     Err(E::invalid_value(serde::de::Unexpected::Bytes(v), &self))
                 }
@@ -291,7 +301,7 @@ pub mod hex_bytes {
             where
                 E: serde::de::Error,
             {
-                FromHex::from_hex(v).map_err(E::custom)
+                self.decode(v)
             }
         }
 

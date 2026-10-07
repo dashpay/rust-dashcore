@@ -585,8 +585,6 @@ impl<'de> serde::Deserialize<'de> for ScriptBuf {
     {
         use core::fmt::Formatter;
 
-        use hashes::hex::FromHex;
-
         if deserializer.is_human_readable() {
             struct Visitor;
             impl<'de> serde::de::Visitor<'de> for Visitor {
@@ -600,7 +598,7 @@ impl<'de> serde::Deserialize<'de> for ScriptBuf {
                 where
                     E: serde::de::Error,
                 {
-                    let v = Vec::from_hex(v).map_err(E::custom)?;
+                    let v = hex_conservative::decode_to_vec(v).map_err(E::custom)?;
                     Ok(ScriptBuf::from(v))
                 }
             }

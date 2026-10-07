@@ -107,7 +107,7 @@ pub enum Error {
     /// The script type was non standard
     NonStandardScriptPayout(ScriptBuf),
     /// Hex error
-    Hex(hashes::hex::HexToArrayError),
+    Hex(hex_conservative::DecodeFixedLengthBytesError),
     /// Address error
     Address(address::Error),
     /// Invalid enum value
