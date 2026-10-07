@@ -235,6 +235,7 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(443),
                 payload_sig: BLSSignature::from([11u8; 96]),
+                net_info: None,
             };
             tx.special_transaction_payload =
                 Some(TransactionPayload::ProviderUpdateServicePayloadType(payload));

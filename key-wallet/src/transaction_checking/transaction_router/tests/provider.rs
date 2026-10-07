@@ -36,6 +36,7 @@ fn test_provider_update_registrar_classification() {
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         payload_sig: vec![4u8; 65],
+        payouts: None,
     };
 
     tx.special_transaction_payload =
@@ -68,6 +69,7 @@ fn test_provider_update_service_classification() {
         platform_p2p_port: None,
         platform_http_port: None,
         payload_sig: BLSSignature::from([0u8; 96]),
+        net_info: None,
     };
 
     tx.special_transaction_payload =
@@ -763,6 +765,7 @@ fn test_provider_update_service_with_operator_key() {
         platform_p2p_port: None,
         platform_http_port: None,
         payload_sig: BLSSignature::from([0u8; 96]),
+        net_info: None,
     };
 
     tx.special_transaction_payload =
@@ -828,6 +831,7 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         payload_sig: vec![4u8; 65],
+        payouts: None,
     };
 
     tx.special_transaction_payload =

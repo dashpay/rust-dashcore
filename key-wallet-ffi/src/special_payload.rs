@@ -493,6 +493,7 @@ mod tests {
                 platform_p2p_port: None,
                 platform_http_port: None,
                 payload_sig: BLSSignature::from([0x66; 96]),
+                net_info: None,
             });
         let ffi = FFISpecialTransactionPayload::from(&payload);
 

@@ -17,7 +17,7 @@ const NET_TYPE_INVALID: u8 = 0xff;
 /// BIP155 network identifiers as used inside an ADDRV2-form `CService`.
 ///
 /// Tor v2 (id 3) and unknown ids are never emitted by Core and are rejected on decode.
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Bip155Network {
@@ -66,7 +66,7 @@ impl Bip155Network {
 }
 
 /// A single network info entry within an `ExtNetInfo` purpose list.
-#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum NetInfoEntry {
@@ -156,7 +156,7 @@ impl NetInfoEntry {
 }
 
 /// Purpose codes keyed in an `ExtNetInfo` map.
-#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum NetInfoPurpose {
@@ -192,7 +192,7 @@ impl NetInfoPurpose {
 ///
 /// `purposes` preserves the exact on-wire pair order so that a decode followed by an encode
 /// reproduces the original bytes.
-#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ExtNetInfo {
@@ -201,7 +201,7 @@ pub struct ExtNetInfo {
 }
 
 impl ExtNetInfo {
-    pub(super) fn consensus_encode_ext<W: Write + ?Sized>(
+    pub(crate) fn consensus_encode_ext<W: Write + ?Sized>(
         &self,
         writer: &mut W,
     ) -> Result<usize, io::Error> {
@@ -221,7 +221,7 @@ impl ExtNetInfo {
         Ok(len)
     }
 
-    pub(super) fn consensus_decode_ext<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
+    pub(crate) fn consensus_decode_ext<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
         let version: u8 = Decodable::consensus_decode(reader)?;
         if version == 0 || version > EXTNETINFO_CURRENT_VERSION {
             return Ok(ExtNetInfo {
