@@ -1,6 +1,7 @@
 //! Error types for the wallet manager.
 
 use crate::WalletId;
+use hex_conservative::DisplayHex;
 use key_wallet::wallet::managed_wallet_info::transaction_builder::BuilderError;
 
 /// Wallet manager errors
@@ -34,20 +35,8 @@ impl core::fmt::Display for WalletError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             WalletError::WalletCreation(msg) => write!(f, "Wallet creation failed: {}", msg),
-            WalletError::WalletNotFound(id) => {
-                write!(f, "Wallet not found: ")?;
-                for byte in id.iter() {
-                    write!(f, "{:02x}", byte)?;
-                }
-                Ok(())
-            }
-            WalletError::WalletExists(id) => {
-                write!(f, "Wallet already exists: ")?;
-                for byte in id.iter() {
-                    write!(f, "{:02x}", byte)?;
-                }
-                Ok(())
-            }
+            WalletError::WalletNotFound(id) => write!(f, "Wallet not found: {:x}", id.as_hex()),
+            WalletError::WalletExists(id) => write!(f, "Wallet already exists: {:x}", id.as_hex()),
             WalletError::InvalidMnemonic(msg) => write!(f, "Invalid mnemonic: {}", msg),
             WalletError::AccountCreation(msg) => write!(f, "Account creation failed: {}", msg),
             WalletError::AccountNotFound(idx) => write!(f, "Account not found: {}", idx),

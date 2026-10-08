@@ -426,7 +426,6 @@ mod tests {
     use super::*;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::InputsHash;
-    use dashcore::hashes::hex::FromHex;
     use dashcore::Txid;
     use std::ffi::CStr;
 
@@ -452,7 +451,8 @@ mod tests {
         assert_eq!(reg.service_ip, expected_ip);
 
         let expected_hash =
-            <[u8; 20]>::from_hex("70993555a01f7e8d6179d6135b5c56809d2d1d36").expect("hash160");
+            hex_conservative::decode_to_array::<20>("70993555a01f7e8d6179d6135b5c56809d2d1d36")
+                .expect("hash160");
         assert_eq!(reg.owner_key_hash, expected_hash);
         assert_eq!(reg.voting_key_hash, expected_hash);
         assert_eq!(reg.operator_public_key, [0x11; 48]);
@@ -466,7 +466,7 @@ mod tests {
             unsafe { std::slice::from_raw_parts(reg.script_payout, reg.script_payout_len) };
         assert_eq!(
             script,
-            Vec::<u8>::from_hex("76a914fef33f56f709ba6b08d073932f925afedb606d0288ac")
+            hex_conservative::decode_to_vec("76a914fef33f56f709ba6b08d073932f925afedb606d0288ac")
                 .expect("script hex")
                 .as_slice()
         );

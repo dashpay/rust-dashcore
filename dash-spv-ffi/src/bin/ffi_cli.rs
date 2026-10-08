@@ -140,11 +140,9 @@ extern "C" fn on_transaction_broadcast_result(
     relayed_by: u32,
     _user_data: *mut c_void,
 ) {
-    let txid_hex = unsafe { &*txid }.iter().rev().fold(String::new(), |mut acc, b| {
-        use std::fmt::Write;
-        let _ = write!(acc, "{:02x}", b);
-        acc
-    });
+    let mut txid_bytes = unsafe { *txid };
+    txid_bytes.reverse();
+    let txid_hex = txid_bytes.to_lower_hex_string();
     match status {
         FFIBroadcastStatus::Accepted => {
             println!("[Broadcast] {} accepted ({} peer(s) relayed it back)", txid_hex, relayed_by)

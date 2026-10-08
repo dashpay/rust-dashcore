@@ -11,7 +11,6 @@
 use std::{error, fmt, io};
 
 use crate::dashcore;
-use dashcore::hashes::hex;
 use dashcore::secp256k1;
 
 pub type OldVecLen = usize;
@@ -21,7 +20,7 @@ pub type FixedSizeLen = usize;
 #[derive(Debug)]
 pub enum Error {
     JsonRpc(jsonrpc::error::Error),
-    Hex(hex::HexToBytesError),
+    Hex(hex_conservative::DecodeVariableLengthBytesError),
     Json(serde_json::error::Error),
     BitcoinSerialization(dashcore::consensus::encode::Error),
     Secp256k1(secp256k1::Error),
@@ -38,8 +37,8 @@ impl From<jsonrpc::error::Error> for Error {
     }
 }
 
-impl From<hex::HexToBytesError> for Error {
-    fn from(e: hex::HexToBytesError) -> Error {
+impl From<hex_conservative::DecodeVariableLengthBytesError> for Error {
+    fn from(e: hex_conservative::DecodeVariableLengthBytesError) -> Error {
         Error::Hex(e)
     }
 }

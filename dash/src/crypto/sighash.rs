@@ -1231,7 +1231,8 @@ mod tests {
         // All our tests use the default `0xFFFFFFFF` codeseparator value
         let leaf_hash = leaf_hash.map(|lh| (lh, 0xFFFFFFFF));
 
-        let prevouts = if sighash_type.split_anyonecanpay_flag().1 && tx_bytes[0] % 2 == 0 {
+        let prevouts = if sighash_type.split_anyonecanpay_flag().1 && tx_bytes[0].is_multiple_of(2)
+        {
             // for anyonecanpay the `Prevouts::All` variant is good anyway, but sometimes we want to
             // test other codepaths
             Prevouts::One(input_index, prevouts[input_index].clone())
