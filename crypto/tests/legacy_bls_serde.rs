@@ -94,3 +94,34 @@ fn should_decode_legacy_key_between_other_fields() {
     assert_eq!(decoded, (7, key, 1234));
     assert_eq!(consumed, bytes.len());
 }
+
+#[test]
+fn should_accept_binary_deserializers_that_deliver_strings() {
+    struct BinaryString<'a>(&'a str);
+
+    impl<'de> serde::Deserializer<'de> for BinaryString<'de> {
+        type Error = serde::de::value::Error;
+
+        fn is_human_readable(&self) -> bool {
+            false
+        }
+
+        fn deserialize_any<V: serde::de::Visitor<'de>>(
+            self,
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            visitor.visit_borrowed_str(self.0)
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map struct enum identifier ignored_any
+        }
+    }
+
+    let hex = "ab".repeat(48);
+    let key = <BlsPkBytes as serde::Deserialize>::deserialize(BinaryString(&hex)).unwrap();
+    assert_eq!(key.as_bytes(), &[0xab; 48]);
+    assert!(<BlsPkBytes as serde::Deserialize>::deserialize(BinaryString("invalid")).is_err());
+}

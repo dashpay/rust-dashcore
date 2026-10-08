@@ -112,6 +112,10 @@ impl<'de> serde::Deserialize<'de> for BlsPkBytes {
                 f.write_str("48 raw bytes or 96 ASCII hex digits for a BLS public key")
             }
 
+            fn visit_str<E: serde::de::Error>(self, hex: &str) -> Result<Self::Value, E> {
+                hex.parse().map_err(E::custom)
+            }
+
             fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
                 match bytes.len() {
                     BLS_PK_LEN => BlsPkBytes::try_from(bytes).map_err(E::custom),
@@ -125,6 +129,6 @@ impl<'de> serde::Deserialize<'de> for BlsPkBytes {
             }
         }
 
-        deserializer.deserialize_bytes(Visitor)
+        deserializer.deserialize_byte_buf(Visitor)
     }
 }
