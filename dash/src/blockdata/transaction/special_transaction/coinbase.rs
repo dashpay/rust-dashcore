@@ -152,8 +152,16 @@ impl<'de> serde::Deserialize<'de> for CoinbasePayload {
                         }
                     }
                 }
+                // `merkle_root_asset_unlocks` only exists from version 4, as in `visit_seq`;
+                // reject it rather than drop it silently on the next encode.
+                let version: u16 = version.ok_or_else(|| de::Error::missing_field("version"))?;
+                if version < 4 && merkle_root_asset_unlocks.is_some() {
+                    return Err(de::Error::custom(
+                        "merkle_root_asset_unlocks only exists from version 4",
+                    ));
+                }
                 Ok(CoinbasePayload {
-                    version: version.ok_or_else(|| de::Error::missing_field("version"))?,
+                    version,
                     height: height.ok_or_else(|| de::Error::missing_field("height"))?,
                     merkle_root_masternode_list: merkle_root_masternode_list
                         .ok_or_else(|| de::Error::missing_field("merkle_root_masternode_list"))?,
@@ -605,6 +613,19 @@ mod tests {
         let json = serde_json::to_value(&payload).unwrap();
         assert!(json.get("merkle_root_asset_unlocks").is_some());
         assert_eq!(serde_json::from_value::<CoinbasePayload>(json).unwrap(), payload);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn json_rejects_the_asset_unlocks_root_before_version_4() {
+        let payload = CoinbasePayload {
+            version: 4,
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::from_byte_array([0xab; 32])),
+            ..v3_payloads().0
+        };
+        let mut json = serde_json::to_value(&payload).unwrap();
+        json["version"] = 3.into();
+        assert!(serde_json::from_value::<CoinbasePayload>(json).is_err());
     }
 
     fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
