@@ -166,12 +166,23 @@ async fn a_block_winner_sweeps_an_asset_lock_from_every_account() {
         Vec::new(),
         "a swept transaction must not stay recorded anywhere in the wallet"
     );
+    assert_eq!(fixture.ctx.managed_wallet.balance.confirmed(), 499_000, "the winner's change");
+}
+
+/// A record left in the identity account would count as a surviving spender
+/// of `coin_b` and withhold it from the released set.
+#[tokio::test]
+async fn a_swept_asset_locks_extra_input_is_reported_released() {
+    let mut fixture = PendingAssetLock::new().await;
+    let winner = fixture.winner();
+
+    let result = fixture.ctx.check_transaction(&winner, in_block(101)).await;
+
     assert_eq!(
         result.released_outpoints,
         vec![fixture.coin_b],
         "the coin only the swept asset lock spent came free and must be named"
     );
-    assert_eq!(fixture.ctx.managed_wallet.balance.confirmed(), 499_000, "the winner's change");
 }
 
 #[tokio::test]
