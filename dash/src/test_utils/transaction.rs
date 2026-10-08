@@ -2,6 +2,9 @@ use std::ops::Range;
 
 use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
 
+/// A special transaction type no Dash Core version assigns
+pub const UNASSIGNED_SPECIAL_TX_TYPE: u16 = 0xffff;
+
 impl Transaction {
     /// Creates a transaction with no inputs or outputs.
     pub fn dummy_empty() -> Transaction {

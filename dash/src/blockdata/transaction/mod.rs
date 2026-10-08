@@ -916,6 +916,7 @@ mod tests {
     use crate::consensus::encode::{deserialize, serialize};
     use crate::internal_macros::hex;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
+    use crate::test_utils::UNASSIGNED_SPECIAL_TX_TYPE;
 
     #[test]
     fn test_is_coinbase() {
@@ -1085,8 +1086,6 @@ mod tests {
         );
     }
 
-    // TODO: these tests build the unknown-type transaction by hand. Add a real regtest
-    // ProDisTx (type 10) as a regression vector once #1131 parses types 10-12.
     fn unknown_special_tx(input: Vec<TxIn>) -> Transaction {
         Transaction {
             version: 3,
@@ -1097,7 +1096,7 @@ mod tests {
                 script_pubkey: ScriptBuf::new_op_return(&[0xab; 4]),
             }],
             special_transaction_payload: Some(TransactionPayload::UnknownPayloadType(
-                10,
+                UNASSIGNED_SPECIAL_TX_TYPE,
                 vec![0x01, 0x00, 0xde, 0xad, 0xbe, 0xef],
             )),
         }
@@ -1108,12 +1107,12 @@ mod tests {
         let tx = unknown_special_tx(vec![TxIn::default()]);
         let bytes = serialize(&tx);
 
-        // nTxType 10 on the wire, and the payload is its length prefix plus the raw bytes.
-        assert_eq!(&bytes[2..4], &[0x0a, 0x00]);
+        // nTxType on the wire, and the payload is its length prefix plus the raw bytes.
+        assert_eq!(&bytes[2..4], &UNASSIGNED_SPECIAL_TX_TYPE.to_le_bytes());
         assert_eq!(&bytes[bytes.len() - 7..], &[0x06, 0x01, 0x00, 0xde, 0xad, 0xbe, 0xef]);
 
         let decoded: Transaction = deserialize(&bytes).expect("unknown types must decode");
-        assert_eq!(decoded.tx_type(), TransactionType::Unknown(10));
+        assert_eq!(decoded.tx_type(), TransactionType::Unknown(UNASSIGNED_SPECIAL_TX_TYPE));
         assert_eq!(decoded, tx);
         assert_eq!(serialize(&decoded), bytes);
         assert_eq!(decoded.txid(), Txid::hash(&bytes));
