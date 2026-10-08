@@ -22,6 +22,9 @@ use thiserror::Error as ThisError;
 #[cfg(feature = "bls")]
 use tracing::error;
 
+mod public_key_bytes;
+pub use public_key_bytes::BlsPkBytes;
+
 /// Raw BLS public key length (G1 compressed).
 pub const BLS_PK_LEN: usize = 48;
 
@@ -77,11 +80,6 @@ fn reduce(bytes: &[u8; BLS_SK_LEN]) -> Result<[u8; BLS_SK_LEN], BlsError> {
     out.reverse();
 
     Ok(out)
-}
-
-make_bytes! {
-    /// BLS public key (48 bytes, unvalidated).
-    BlsPkBytes, BLS_PK_LEN
 }
 
 impl BlsPkBytes {

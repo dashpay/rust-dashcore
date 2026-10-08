@@ -38,4 +38,5 @@ tracing = { version = "0.1", optional = true }
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', 'cfg(kani)'] }
 
 [dev-dependencies]
+bincode = { workspace = true, features = ["serde"] }
 serde_json = { version = "1.0" }

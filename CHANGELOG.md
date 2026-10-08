@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- BLS public keys accept legacy hex-string encodings when deserialized through
+  binary Serde formats with compatible string and byte-buffer layouts, such as
+  bincode. Serialization continues to use the current raw-byte encoding.
+
 ### Changed
 
 - **Breaking:** the `bincode` feature and binary serialization dependencies now use
