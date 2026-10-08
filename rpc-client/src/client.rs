@@ -1707,7 +1707,7 @@ impl RpcApi for Client {
         let raw_args = Some(serde_json::value::RawValue::from_string(raw_args_json)?);
         let req = self.client.build_request(cmd, raw_args.as_deref());
         if tracing::enabled!(target: "dashcore_rpc", Level::DEBUG) {
-            tracing::debug!(target: "dashcore_rpc", "JSON-RPC request: {} {}", cmd, serde_json::Value::from(args));
+            tracing::debug!(target: "dashcore_rpc", "JSON-RPC request: {}", cmd);
         }
 
         let resp = self.client.send_request(req).map_err(Error::from);
@@ -1733,13 +1733,7 @@ fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
                         tracing::debug!(target: "dashcore_rpc", "JSON-RPC error for {}: {:?}", cmd, e);
                     }
                 } else if tracing::enabled!(target: "dashcore_rpc", Level::TRACE) {
-                    // we can't use to_raw_value here due to compat with Rust 1.29
-                    let def = serde_json::value::RawValue::from_string(
-                        serde_json::Value::Null.to_string(),
-                    )
-                    .unwrap();
-                    let result = resp.result.as_ref().unwrap_or(&def);
-                    tracing::trace!(target: "dashcore_rpc", "JSON-RPC response for {}: {}", cmd, result);
+                    tracing::trace!(target: "dashcore_rpc", "JSON-RPC response for {}", cmd);
                 }
             }
         }
