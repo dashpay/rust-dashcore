@@ -351,57 +351,40 @@ impl ManagedWalletInfo {
     /// own are accepted.
     ///
     /// **When to call:** once after each load, since claims are not part of
-    /// wallet snapshots. Either order works:
+    /// wallet snapshots — before any transaction funding a restored outpoint
+    /// is delivered, or after the host has replayed the records it holds.
+    /// The guard only stops a later credit: a restored outpoint already in
+    /// `utxos` stays credited and spendable until it leaves `utxos`. Those
+    /// outpoints are returned, sorted, and their count is logged at `warn`.
     ///
-    /// * before any transaction funding a restored outpoint is delivered, by
-    ///   replay or by sync;
-    /// * after the host has replayed the records it holds, as long as no
-    ///   restored outpoint is left in `utxos` by then.
-    ///
-    /// The guard only stops a later credit: this creates no records, and
-    /// changes no UTXOs or balances, so an outpoint already in `utxos` stays
-    /// credited and spendable, and its claim guards it only once it has left
-    /// `utxos`. Those outpoints are returned, sorted, and logged at `warn`;
-    /// an empty result means every guard is effective.
-    ///
-    /// **Claimants:** when [`sweep_conflicts`](Self::sweep_conflicts) or
-    /// [`abandon_transaction`](Self::abandon_transaction) removes the
-    /// claimant, the outpoint is released. A confirmed or InstantSend-locked
+    /// **Claimants:** [`sweep_conflicts`](Self::sweep_conflicts) or
+    /// [`abandon_transaction`](Self::abandon_transaction) removing the
+    /// claimant releases the outpoint. A confirmed or InstantSend-locked
     /// transaction spending the outpoint turns its claim into `None`,
-    /// whoever the claimant was. `None` is never released. Restoring an
-    /// outpoint again merges the claimants: the same one changes nothing,
-    /// and any disagreement — `None` against a txid, or two different txids
-    /// — leaves `None`.
-    ///
-    /// **Spenders:** the guarded output is kept aside — from its funding
-    /// transaction as that arrives, or from the funding's record when the
-    /// wallet already holds it — so a transaction spending it that arrives
-    /// later is recorded as a spend of the wallet's coin. A claim restored
-    /// once the funding is held as a txid only — ChainLocked, without
-    /// `keep-finalized-transactions` — has no output to keep, and such a
-    /// spender is recorded as if the coin were not the wallet's.
+    /// whoever the claimant was, and `None` is never released. Restoring an
+    /// outpoint again with a different claimant — `None` against a txid, or
+    /// two txids — leaves `None`.
     ///
     /// **Limits:**
     ///
-    /// * Only transactions processed by the wallet are guarded.
+    /// * Only transactions processed by the wallet are guarded:
     ///   `ManagedAccountRefMut::record_transaction` and `confirm_transaction`
     ///   drive one account and credit a restored outpoint.
-    /// * Later changes to a claim stay in memory. Making it permanent is not
-    ///   reported, and a release is reported only by a sweep, in
-    ///   `released_outpoints`, so the rows the host holds go stale. Calling
-    ///   this again with such rows brings a released claim back, and turns
-    ///   one whose claimant no longer matches into `None`, by the merge rule
-    ///   above.
+    /// * A claim restored once the funding is held as a txid only —
+    ///   ChainLocked, without `keep-finalized-transactions` — leaves a later
+    ///   spender recorded as if the coin were not the wallet's.
+    /// * Later changes to a claim stay in memory: making it permanent is not
+    ///   reported, and only a sweep reports a release, in
+    ///   `released_outpoints`. Restoring the host's stale rows brings a
+    ///   released claim back, or leaves `None` where the claimant differs.
     /// * A claimant the wallet holds no record of is released by
-    ///   [`abandon_transaction`](Self::abandon_transaction) only: a final
-    ///   transaction that beats it on another input does not release its
-    ///   other claims.
-    /// * A claim does not pass to another transaction. Once its claimant is
-    ///   removed the outpoint is released, even while a second live
-    ///   transaction still spends it; and an input of a removed transaction
-    ///   gets no claim on behalf of a live transaction that only another
-    ///   account recorded. Either way an account that never recorded that
-    ///   other spend credits the funding (dashpay/rust-dashcore#1114).
+    ///   [`abandon_transaction`](Self::abandon_transaction) only, not by a
+    ///   final transaction that beats it on another input.
+    /// * A claim does not pass to another transaction: once its claimant is
+    ///   removed the outpoint is released even while another live
+    ///   transaction spends it, and no claim is made for a live spend that
+    ///   only another account recorded. An account that never recorded that
+    ///   spend then credits the funding (dashpay/rust-dashcore#1114).
     pub fn restore_spent_outpoints(
         &mut self,
         outpoints: &[(OutPoint, Option<Txid>)],
@@ -427,8 +410,8 @@ impl ManagedWalletInfo {
         if !still_held.is_empty() {
             tracing::warn!(
                 count = still_held.len(),
-                "Restored spent outpoints are already held as UTXOs and stay credited; \
-                 restore them before their funding transactions are delivered"
+                "Restored spent outpoints are still held as UTXOs and stay credited and spendable; \
+                 a claim guards an outpoint only once it has left the UTXO set"
             );
         }
         still_held.into_iter().collect()
