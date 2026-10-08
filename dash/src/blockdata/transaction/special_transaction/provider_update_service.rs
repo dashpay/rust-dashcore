@@ -133,9 +133,7 @@ impl ProviderUpdateServicePayload {
         size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();
 
         if self.is_ext_addr() {
-            size += self.net_info.as_ref().map_or(0, |info| {
-                info.consensus_encode_ext(&mut io::sink()).expect("sinks don't error")
-            });
+            size += self.net_info.as_ref().map_or(0, ExtNetInfo::size);
         } else {
             size += 16 + 2; // ip_address + port
         }

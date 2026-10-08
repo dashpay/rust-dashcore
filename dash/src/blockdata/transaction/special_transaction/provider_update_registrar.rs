@@ -433,4 +433,42 @@ mod tests {
         assert_eq!(decoded, original);
         assert_eq!(read, bytes.len());
     }
+
+    #[test]
+    fn max_signed_size_reserves_the_largest_ecdsa_signature() {
+        use crate::blockdata::transaction::special_transaction::MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE;
+
+        let unsigned = ProviderUpdateRegistrarPayloadType(ProviderUpdateRegistrarPayload {
+            payload_sig: vec![],
+            ..v3_payload()
+        });
+        let signed = ProviderUpdateRegistrarPayloadType(v3_payload());
+
+        // Unsigned and signed placeholders reserve the same bound, so a fee set from one
+        // covers the other.
+        assert_eq!(unsigned.max_signed_size(), unsigned.size() + MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE);
+        assert_eq!(signed.max_signed_size(), unsigned.max_signed_size());
+        assert!(signed.max_signed_size() >= signed.size());
+    }
+
+    #[test]
+    fn transaction_size_counts_a_multi_byte_payload_length_prefix() {
+        // A payload above 252 bytes takes a 3-byte length prefix.
+        let payload = ProviderUpdateRegistrarPayload {
+            payouts: Some(vec![MasternodePayoutShare {
+                script_payout: ScriptBuf::from(vec![0xaa; 200]),
+                reward: 10000,
+            }]),
+            ..v3_payload()
+        };
+        assert!(payload.size() > 252);
+        let tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![crate::TxIn::default()],
+            output: vec![],
+            special_transaction_payload: Some(ProviderUpdateRegistrarPayloadType(payload)),
+        };
+        assert_eq!(tx.size(), crate::consensus::encode::serialize(&tx).len());
+    }
 }

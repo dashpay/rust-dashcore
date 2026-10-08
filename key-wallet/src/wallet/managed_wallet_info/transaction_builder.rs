@@ -428,97 +428,16 @@ impl TransactionBuilder {
             size += self.estimated_change_output_size();
         }
 
-        // Add special payload size if present
-        // Based on dashsync payload size calculations
+        // Add special payload size if present. The fee is fixed here from the placeholder's
+        // signed-size bound, which a `set_payload_finalizer` payload may not exceed.
         if let Some(ref payload) = self.special_payload {
-            let payload_size = Self::estimated_payload_size(payload);
+            let payload_size = payload.max_signed_size();
 
             // Add varint for payload length
             size += varint_size(payload_size) + payload_size;
         }
 
         size
-    }
-
-    /// Estimated serialized size of a special payload, as priced into the fee by
-    /// [`Self::calculate_base_size`]. Also the yardstick a
-    /// [`Self::set_payload_finalizer`] payload is held against: the fee is fixed
-    /// at selection time from the placeholder's estimate, so a finalized payload
-    /// may not estimate larger.
-    fn estimated_payload_size(payload: &TransactionPayload) -> usize {
-        match payload {
-            TransactionPayload::CoinbasePayloadType(p) => {
-                // version (2) + height (4) + merkleRootMasternodeList (32) + merkleRootQuorums (32)
-                let mut size = 2 + 4 + 32 + 32;
-                // Optional fields for newer versions
-                if p.best_cl_height.is_some() {
-                    size += 4; // best_cl_height
-                    size += 96; // best_cl_signature (BLS)
-                }
-                if p.asset_locked_amount.is_some() {
-                    size += 8; // asset_locked_amount
-                }
-                size
-            }
-            TransactionPayload::ProviderRegistrationPayloadType(p) => {
-                // Base payload + signature
-                // version (2) + type (2) + mode (2) + collateralHash (32) + collateralIndex (4)
-                // + ipAddress (16) + port (2) + KeyIDOwner (20) + KeyIDOperator (20) + KeyIDVoting (20)
-                // + operatorReward (2) + scriptPayoutSize + scriptPayout + inputsHash (32)
-                // + payloadSigSize (1-9) + payloadSig (up to 75)
-                let script_size = p.script_payout.len();
-                let base = 2
-                    + 2
-                    + 2
-                    + 32
-                    + 4
-                    + 16
-                    + 2
-                    + 20
-                    + 20
-                    + 20
-                    + 2
-                    + varint_size(script_size)
-                    + script_size
-                    + 32;
-                base + varint_size(75) + 75 // MAX_ECDSA_SIGNATURE_SIZE = 75
-            }
-            TransactionPayload::ProviderUpdateServicePayloadType(p) => {
-                // version (2) + optionally mn_type (2) + proTxHash (32) + ipAddress (16) + port (2)
-                // + scriptPayoutSize + scriptPayout + inputsHash (32) + payloadSig (96 for BLS)
-                let script_size = p.script_payout.len();
-                let mut size = 2 + 32 + 16 + 2 + varint_size(script_size) + script_size + 32 + 96;
-                if p.mn_type.is_some() {
-                    size += 2; // mn_type for BasicBLS version
-                }
-                // Platform fields for Evo masternodes
-                if p.platform_node_id.is_some() {
-                    size += 20; // platform_node_id
-                    size += 2; // platform_p2p_port
-                    size += 2; // platform_http_port
-                }
-                size
-            }
-            TransactionPayload::ProviderUpdateRegistrarPayloadType(p) => {
-                // version (2) + proTxHash (32) + mode (2) + PubKeyOperator (48) + KeyIDVoting (20)
-                // + scriptPayoutSize + scriptPayout + inputsHash (32) + payloadSig (up to 75)
-                let script_size = p.script_payout.len();
-                2 + 32 + 2 + 48 + 20 + varint_size(script_size) + script_size + 32 + 75
-            }
-            TransactionPayload::ProviderUpdateRevocationPayloadType(_) => {
-                // version (2) + proTxHash (32) + reason (2) + inputsHash (32) + payloadSig (96 for BLS)
-                2 + 32 + 2 + 32 + 96
-            }
-            TransactionPayload::AssetLockPayloadType(p) => {
-                // version (1) + creditOutputsCount + creditOutputs
-                1 + varint_size(p.credit_outputs.len()) + p.credit_outputs.len() * TX_OUTPUT_SIZE
-            }
-            TransactionPayload::AssetUnlockPayloadType(_p) => {
-                // version (1) + index (8) + fee (4) + requestHeight (4) + quorumHash (32) + quorumSig (96)
-                1 + 8 + 4 + 4 + 32 + 96
-            }
-            _ => 100, // Default estimate for unknown types
-        }
     }
 
     /// Select inputs, build the unsigned transaction, and reserve the chosen
@@ -953,8 +872,8 @@ impl TransactionBuilder {
                     .into(),
             ));
         }
-        let placeholder_size = Self::estimated_payload_size(placeholder);
-        let finalized_size = Self::estimated_payload_size(&finalized);
+        let placeholder_size = placeholder.max_signed_size();
+        let finalized_size = finalized.max_signed_size();
         if finalized_size > placeholder_size {
             return Err(BuilderError::InvalidData(format!(
                 "finalized payload estimates {finalized_size} bytes, larger than the \
@@ -1535,72 +1454,6 @@ mod tests {
             "fee must be the miner fee only, not include the 100k locked credits, got {}",
             fee
         );
-    }
-
-    #[test]
-    fn test_special_payload_size_calculations() {
-        // Test that special payload sizes are calculated correctly
-        let utxo = Utxo::dummy(0, 100000, 100, false, true);
-        let destination = Address::dummy(Network::Testnet, 0);
-        let change = Address::dummy(Network::Testnet, 0);
-
-        // Test with AssetLock payload
-        let credit_outputs = vec![
-            TxOut {
-                value: 100000000,
-                script_pubkey: ScriptBuf::new(),
-            },
-            TxOut {
-                value: 895000941,
-                script_pubkey: ScriptBuf::new(),
-            },
-        ];
-
-        let asset_lock_payload = AssetLockPayload {
-            version: 1,
-            credit_outputs: credit_outputs.clone(),
-        };
-
-        let builder = TransactionBuilder::new()
-            .set_current_height(200)
-            .add_inputs([utxo.clone()])
-            .add_output(&destination, 50000)
-            .set_change_address(change.clone())
-            .set_special_payload(TransactionPayload::AssetLockPayloadType(asset_lock_payload));
-
-        let base_size = builder.calculate_base_size();
-        // Should include special payload size
-        assert!(base_size > 100, "Base size with AssetLock payload should be larger");
-
-        // Test with CoinbasePayload
-        use dashcore::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
-        use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
-
-        let coinbase_payload = CoinbasePayload {
-            version: 3,
-            height: 1526,
-            merkle_root_masternode_list: MerkleRootMasternodeList::from_raw_hash(
-                sha256d::Hash::from_slice(&[0xaa; 32]).unwrap(),
-            ),
-            merkle_root_quorums: MerkleRootQuorums::from_raw_hash(
-                sha256d::Hash::from_slice(&[0xbb; 32]).unwrap(),
-            ),
-            best_cl_height: Some(1500),
-            best_cl_signature: Some(dashcore::bls_sig_utils::BLSSignature::from([0; 96])),
-            asset_locked_amount: Some(1000000),
-            merkle_root_asset_unlocks: None,
-        };
-
-        let builder2 = TransactionBuilder::new()
-            .set_current_height(200)
-            .add_inputs([utxo])
-            .add_output(&destination, 50000)
-            .set_change_address(change)
-            .set_special_payload(TransactionPayload::CoinbasePayloadType(coinbase_payload));
-
-        let base_size2 = builder2.calculate_base_size();
-        // Coinbase payload: 2 + 4 + 32 + 32 + 4 + 96 + 8 = 178 bytes + varint
-        assert!(base_size2 > 180, "Base size with Coinbase payload should be larger");
     }
 
     #[test]
@@ -2762,24 +2615,6 @@ mod tests {
         assert!(
             tx.input.iter().all(|input| input.script_sig.is_empty()),
             "the unsigned build leaves input signing to the caller"
-        );
-    }
-
-    /// The fee a finalizer-seam build pays must equal what the ordinary path
-    /// charges for the same placeholder: the finalized payload swaps in at
-    /// identical estimated size, so nothing about selection or change moves.
-    #[test]
-    fn payload_finalizer_size_guard_uses_the_fee_sizing_estimate() {
-        let placeholder = pro_up_serv_placeholder(ScriptBuf::new());
-        let finalized = pro_up_serv_placeholder(ScriptBuf::new());
-        assert_eq!(
-            TransactionBuilder::estimated_payload_size(&placeholder),
-            TransactionBuilder::estimated_payload_size(&finalized),
-        );
-        let grown = pro_up_serv_placeholder(Address::dummy(Network::Testnet, 2).script_pubkey());
-        assert!(
-            TransactionBuilder::estimated_payload_size(&grown)
-                > TransactionBuilder::estimated_payload_size(&placeholder)
         );
     }
 }

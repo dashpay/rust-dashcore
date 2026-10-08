@@ -83,6 +83,21 @@ pub enum NetInfoEntry {
 }
 
 impl NetInfoEntry {
+    /// The serialized size of the entry in bytes.
+    fn size(&self) -> usize {
+        match self {
+            NetInfoEntry::Service {
+                addr,
+                ..
+            } => 1 + 1 + VarInt(addr.len() as u64).len() + addr.len() + 2,
+            NetInfoEntry::Domain {
+                host,
+                ..
+            } => 1 + VarInt(host.len() as u64).len() + host.len() + 2,
+            NetInfoEntry::Invalid => 1,
+        }
+    }
+
     fn consensus_encode_ext<W: Write + ?Sized>(&self, writer: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         match self {
@@ -201,6 +216,23 @@ pub struct ExtNetInfo {
 }
 
 impl ExtNetInfo {
+    /// The serialized size of the network info in bytes.
+    pub fn size(&self) -> usize {
+        // Unknown versions carry no further payload, mirroring Core's short-circuit.
+        if self.version == 0 || self.version > EXTNETINFO_CURRENT_VERSION {
+            return 1;
+        }
+        1 + VarInt(self.purposes.len() as u64).len()
+            + self
+                .purposes
+                .iter()
+                .map(|(_, entries)| {
+                    1 + VarInt(entries.len() as u64).len()
+                        + entries.iter().map(NetInfoEntry::size).sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+
     pub(crate) fn consensus_encode_ext<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -281,6 +313,7 @@ mod tests {
         entry.consensus_encode_ext(&mut buf).unwrap();
         let decoded = NetInfoEntry::consensus_decode_ext(&mut buf.as_slice()).unwrap();
         assert_eq!(*entry, decoded);
+        assert_eq!(entry.size(), buf.len());
         buf
     }
 
@@ -289,6 +322,7 @@ mod tests {
         info.consensus_encode_ext(&mut buf).unwrap();
         let decoded = ExtNetInfo::consensus_decode_ext(&mut buf.as_slice()).unwrap();
         assert_eq!(*info, decoded);
+        assert_eq!(info.size(), buf.len());
         buf
     }
 
