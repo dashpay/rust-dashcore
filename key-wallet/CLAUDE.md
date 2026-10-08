@@ -65,8 +65,7 @@ ManagedCoreFundsAccount (Mutable)
 ├── transactions: BTreeMap<Txid, TransactionRecord>
 ├── utxos: BTreeMap<OutPoint, Utxo>
 ├── spent_outpoints: HashSet<OutPoint>  // private, rebuilt on deserialization
-├── restored_spent_claims: BTreeMap<OutPoint, Option<Txid>>  // private, not serialized; see restore_spent_outpoints
-└── claim_guarded_outputs: BTreeMap<OutPoint, Utxo>  // not serialized; outputs a claim keeps out of utxos, for input matching
+└── claim_guarded_outputs: BTreeMap<OutPoint, Utxo>  // not serialized; outputs a wallet-level claim (ManagedWalletInfo::spent_claims, see restore_spent_outpoints) keeps out of utxos, for input matching
 ```
 
 ### Address Pool Architecture

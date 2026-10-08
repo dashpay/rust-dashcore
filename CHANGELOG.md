@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Restore externally persisted spent-output claims with `ManagedWalletInfo::restore_spent_outpoints` in `key-wallet`.
+  Claims are held once per wallet and guard every account that holds funds, including one added later.
   It returns the restored outpoints the wallet still holds as UTXOs, which stay credited.
 
 ### Changed
@@ -54,13 +55,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - All workspace crates declare a MSRV of 1.89
 - `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` settle
   restored spent-output claims along with the transactions they remove. A claim naming a removed
-  transaction is released, unless another live record spends the outpoint too: that record then
-  becomes the claimant. A claim on an outpoint that a confirmed or InstantSend-locked transaction
-  spends becomes permanent. An input of a removed transaction stays guarded while a live transaction
-  recorded only in another account spends it. `WalletConflictSweep::released_outpoints`, which
-  reaches consumers as `WalletEvent::TransactionsSwept::released_outpoints` and through the
-  `dash-spv-ffi` swept callback, lists an outpoint only once no funding account guards it.
-  Abandoning reports no released outpoints.
+  transaction is released. A claim on an outpoint that a confirmed or InstantSend-locked transaction
+  spends becomes permanent. `WalletConflictSweep::released_outpoints`, which reaches consumers as
+  `WalletEvent::TransactionsSwept::released_outpoints` and through the `dash-spv-ffi` swept
+  callback, lists an outpoint only once nothing in the wallet guards it: no claim, and no mark an
+  account that holds funds keeps from its own records. Abandoning reports no released outpoints.
 
 ### Fixed
 

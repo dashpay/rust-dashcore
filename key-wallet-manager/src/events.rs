@@ -263,10 +263,10 @@ pub enum WalletEvent {
         /// in key-wallet. Candidates are the inputs of the removed
         /// transactions that no surviving record spends too (a loser
         /// spending A+B against a winner spending only A leaves A marked and
-        /// frees B), and the outpoints whose restored spent-output claim
-        /// named a removed transaction. A candidate is listed only once no
-        /// funding account guards it any more, by a mark from its own
-        /// records or by a claim.
+        /// frees B), and the outpoints whose spent-output claim named a
+        /// removed transaction. A candidate is listed only once nothing in
+        /// the wallet guards it any more: no claim, and no mark an account
+        /// that holds funds keeps from its own records.
         ///
         /// The wallet computes this — see `ManagedWalletInfo::sweep_conflicts`
         /// in key-wallet — and then has nowhere else to put it:
