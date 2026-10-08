@@ -911,8 +911,7 @@ impl ManagedCoreFundsAccount {
             .collect();
 
         // Input details must be built before `update_utxos` removes spent UTXOs
-        // and drops the `spent_before_funded` or `claim_guarded_outputs` entry
-        // for the same outpoint.
+        // and drops the `spent_before_funded` or `claim_guarded_outputs` entry for that outpoint.
         let mut input_details = Vec::new();
         if !tx.is_coin_base() {
             for (idx, input) in tx.input.iter().enumerate() {
@@ -933,11 +932,11 @@ impl ManagedCoreFundsAccount {
 
         // Marks a transaction that spends our coins. `input_details` (built
         // above) and `account_match.sent` (built in `check_transaction_with_index`)
-        // both resolve each input against `self.utxos`, then
-        // `self.spent_before_funded`, then `self.claim_guarded_outputs` on this
-        // account, with no mutation of any between the two lookups, so they
-        // populate together; keeping both keeps this robust should the two
-        // call sites ever compute over different snapshots.
+        // both resolve each input against `self.utxos`, `self.spent_before_funded`
+        // and then `self.claim_guarded_outputs` on this account, with no mutation
+        // between the two lookups, so they populate together; keeping both keeps
+        // this robust should the two call sites ever compute over different
+        // snapshots.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let network = self.keys.network();

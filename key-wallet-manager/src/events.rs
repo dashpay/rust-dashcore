@@ -257,43 +257,43 @@ pub enum WalletEvent {
         /// by wall clock would delete a genuine hold while the conflict is
         /// still unmined.
         winner_mined_height: Option<CoreBlockHeight>,
-        /// Outpoints the sweep released. Mark these coins spendable again.
-        ///
-        /// The rule is the one on `WalletConflictSweep::released_outpoints`
-        /// in key-wallet. Candidates are the inputs of the removed
-        /// transactions that no surviving record spends too (a loser
+        /// Outpoints the sweep released: inputs the removed transactions
+        /// claimed to spend that no surviving record spends too (a loser
         /// spending A+B against a winner spending only A leaves A marked and
-        /// frees B), and the outpoints whose spent-output claim named a
-        /// removed transaction. A candidate is listed only once nothing in
-        /// the wallet guards it any more: no claim, and no mark an account
-        /// that holds funds keeps from its own records.
+        /// frees B). Mark these coins spendable again.
         ///
-        /// The wallet computes this — see `ManagedWalletInfo::sweep_conflicts`
-        /// in key-wallet — and then has nowhere else to put it:
-        /// `superseded_by` need not be wallet-relevant at all, so it can
-        /// spend our coin while paying only external addresses and never
-        /// appear anywhere else in this wallet's event stream. A consumer
-        /// mirroring wallet state to disk cannot recompute this set from the
-        /// deleted `txids` alone — it would have to know which of their
-        /// inputs a *different*, possibly-invisible transaction also claims,
-        /// and which outpoints another account still guards — so guessing
-        /// either re-credits a coin the chain has already spent or leaves a
+        /// Upstream computes this distinction — see
+        /// `ManagedCoreFundsAccount::release_spent_marks` in key-wallet — and
+        /// then has nowhere else to put it: `superseded_by` need not be
+        /// wallet-relevant at all, so it can spend our coin while paying only
+        /// external addresses and never appear anywhere else in this
+        /// wallet's event stream. A consumer mirroring wallet state to disk
+        /// cannot recompute this set from the deleted `txids` alone — it
+        /// would have to know which of their inputs a *different*,
+        /// possibly-invisible transaction also claims — so guessing either
+        /// re-credits a coin the chain has already spent or leaves a
         /// genuinely free one stranded as spent forever. Wallet-scoped
         /// rather than attributed per removed transaction: a consumer only
         /// needs to know which coins came free, not which removal freed
         /// which.
         ///
-        /// One limitation remains. An account decides what its own marks
-        /// still cover from its *live* records, and under the default
+        /// An outpoint whose spent-output claim named a removed transaction
+        /// is released too, and either kind is listed only once nothing in
+        /// the wallet guards it any more — see
+        /// `WalletConflictSweep::released_outpoints` in key-wallet.
+        ///
+        /// One pre-existing limitation, inherited from `release_spent_marks`
+        /// rather than introduced with this field: it decides what stays
+        /// spent from the wallet's *live* records, and under the default
         /// `keep-finalized-transactions = off` a chainlocked record is pruned
-        /// to just its txid. So if an account recorded a second spend of a
-        /// coin that an already-pruned chainlocked transaction of the same
-        /// account took — which needs that second spend to arrive after the
-        /// pruning, since otherwise the chainlocked arrival would have swept
-        /// it — and that second spend is later swept on a different input,
-        /// the coin is reported released though it is spent on chain. A
-        /// second spend recorded only in another account does not do this:
-        /// the first account keeps its mark and the coin is withheld.
+        /// to just its txid. So if an account ever recorded a second spend
+        /// of a coin its own already-pruned chainlocked transaction took — which
+        /// needs that second spend to arrive after the pruning, since
+        /// otherwise the chainlocked arrival would have swept it — and that
+        /// second spend is later swept on a different input, the coin is
+        /// reported released though it is spent on chain. The inputs of a
+        /// pruned record survive nowhere else, so this cannot be resolved at
+        /// this layer.
         released_outpoints: Vec<OutPoint>,
         /// Wallet balance after the removal.
         balance: WalletCoreBalance,

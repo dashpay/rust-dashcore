@@ -32,9 +32,8 @@ impl AbandonOutcome {
     /// anything for it, so it cannot answer this on its own — a root the
     /// wallet never recorded removes nothing.
     ///
-    /// Spent-output claims are outside this answer: one naming an abandoned
-    /// transaction is released even when nothing was removed. That changes
-    /// no balance and nothing a snapshot holds.
+    /// A spent-output claim naming an abandoned transaction is released even
+    /// when this is `true`, changing no balance and nothing in a snapshot.
     pub fn is_empty(&self) -> bool {
         self.records_removed == 0 && self.utxos_removed == 0
     }
@@ -79,8 +78,7 @@ pub struct WalletConflictSweep {
     /// its own records, ChainLocked ones included, or by a claim — is
     /// withheld.
     /// Wallet-scoped rather than attributed per loser: a
-    /// caller mirroring wallet state holds every input of every loser it
-    /// deletes, so it only needs to know which of them came free, not which
+    /// caller mirroring wallet state only needs to know which coins came free, not which
     /// loser freed which.
     pub released_outpoints: Vec<OutPoint>,
 }
@@ -88,10 +86,8 @@ pub struct WalletConflictSweep {
 impl WalletConflictSweep {
     /// Whether the sweep removed no transaction and released no outpoint.
     ///
-    /// Spent-output claims are outside this answer: a final transaction
-    /// makes the claims on its inputs permanent even when it beats no
-    /// recorded transaction, and the result is empty then. That changes no
-    /// balance and nothing a snapshot holds.
+    /// Spent-output claims on the inputs of a final transaction turn permanent
+    /// even when this is `true`, changing no balance and nothing in a snapshot.
     ///
     /// Both fields are checked even though only a removal can free an
     /// outpoint today, so the second can never be non-empty on its own.
@@ -177,12 +173,8 @@ impl ManagedWalletInfo {
     /// Spent-output claims (see [`Self::restore_spent_outpoints`]) are
     /// settled as well. One on an input of `tx` becomes a permanent guard
     /// whoever its claimant is, record or not, since `tx` is final. One
-    /// naming a removed loser is released.
-    ///
-    /// An outpoint is reported released only once nothing in the wallet
-    /// guards it: no claim, and no mark any account that holds funds keeps
-    /// from its own records — including the mark a ChainLocked spend leaves
-    /// in an account that never recorded the loser.
+    /// naming a removed loser is released; what is then reported released is
+    /// on [`WalletConflictSweep::released_outpoints`].
     pub fn sweep_conflicts(
         &mut self,
         tx: &Transaction,
@@ -226,14 +218,10 @@ impl ManagedWalletInfo {
         result
     }
 
-    /// Release every spent-output claim whose claimant is in `removed`,
-    /// together with the output an account kept for it — also when no
-    /// account holds a record of the claimant.
-    ///
-    /// Returns the outpoints released, except an output of a removed
-    /// transaction, which is not a coin coming free but one that never
-    /// existed. Claims with no claimant, or with a claimant outside
-    /// `removed`, are untouched, and so is every record-derived mark.
+    /// Release every spent-output claim whose claimant is in `removed`, with
+    /// the output an account kept for it, whether or not the claimant has a
+    /// record. Returns the outpoints released, except outputs of a removed
+    /// transaction: those are not coins coming free, they never existed.
     fn release_spent_claims(&mut self, removed: &BTreeSet<Txid>) -> Vec<OutPoint> {
         let mut released = Vec::new();
         self.spent_claims.retain(|outpoint, claimant| {
