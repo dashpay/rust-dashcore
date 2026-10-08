@@ -62,6 +62,9 @@ pub mod provider_update_revocation;
 pub mod provider_update_service;
 pub mod quorum_commitment;
 
+/// Largest ECDSA signature a ProRegTx or ProUpRegTx payload is sized with before it is signed.
+pub const MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE: usize = 75;
+
 /// An enum wrapper around various special transaction payloads.
 /// Special transactions are defined in DIP 2.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
@@ -130,23 +133,33 @@ impl TransactionPayload {
         }
     }
 
-    /// Gets the size of the special transaction payload
-    #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> usize {
+    /// Serialized size of the payload in bytes, without its length prefix.
+    pub fn size(&self) -> usize {
         match self {
-            // 1 byte is the size of the special transaction type
-            ProviderRegistrationPayloadType(p) => 1 + p.size(),
-            ProviderUpdateServicePayloadType(p) => 1 + p.size(),
-            ProviderUpdateRegistrarPayloadType(p) => 1 + p.size(),
-            ProviderUpdateRevocationPayloadType(p) => 1 + p.size(),
-            CoinbasePayloadType(p) => 1 + p.size(),
-            QuorumCommitmentPayloadType(p) => 1 + p.size(),
-            MnhfSignalPayloadType(p) => 1 + p.size(),
-            AssetLockPayloadType(p) => 1 + p.size(),
-            AssetUnlockPayloadType(p) => 1 + p.size(),
+            ProviderRegistrationPayloadType(p) => p.size(),
+            ProviderUpdateServicePayloadType(p) => p.size(),
+            ProviderUpdateRegistrarPayloadType(p) => p.size(),
+            ProviderUpdateRevocationPayloadType(p) => p.size(),
+            CoinbasePayloadType(p) => p.size(),
+            QuorumCommitmentPayloadType(p) => p.size(),
+            MnhfSignalPayloadType(p) => p.size(),
+            AssetLockPayloadType(p) => p.size(),
+            AssetUnlockPayloadType(p) => p.size(),
             // Pre-DIP-0002 transactions have no payload section on the wire.
             ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => 0,
         }
+    }
+
+    /// Upper bound of [`Self::size`] once signed. The ECDSA signature of a ProRegTx or
+    /// ProUpRegTx is counted at [`MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE`], since a fee is set before
+    /// the signature exists. Other payloads have fixed-size or no signatures.
+    pub fn max_signed_size(&self) -> usize {
+        let signature_len = match self {
+            ProviderRegistrationPayloadType(p) => p.signature.len(),
+            ProviderUpdateRegistrarPayloadType(p) => p.payload_sig.len(),
+            _ => return self.size(),
+        };
+        self.size() + MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE.saturating_sub(signature_len)
     }
 
     /// Convenience method that assumes the payload to be a provider registration payload to get it
