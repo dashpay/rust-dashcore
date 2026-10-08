@@ -489,16 +489,32 @@ impl<'de> serde::Deserialize<'de> for ProviderUpdateServicePayload {
                         }
                     }
                 }
-                let service_address = match (service_address, ip_address, port) {
-                    (Some(info), _, _) => MasternodeNetInfo::Extended(info),
-                    (None, Some(ip_bits), Some(port)) => {
-                        MasternodeNetInfo::Legacy(legacy_socket_addr(ip_bits, port))
+                // The version picks the address form, as in `visit_seq`; the other form's
+                // fields are rejected rather than read into a payload that can't be encoded.
+                let version: u16 = version.ok_or_else(|| de::Error::missing_field("version"))?;
+                let service_address = if version >= ProTxVersion::ExtAddr as u16 {
+                    if ip_address.is_some() || port.is_some() {
+                        return Err(de::Error::custom(
+                            "ip_address and port only exist before version 3",
+                        ));
                     }
-                    (None, None, _) => return Err(de::Error::missing_field("ip_address")),
-                    (None, Some(_), None) => return Err(de::Error::missing_field("port")),
+                    MasternodeNetInfo::Extended(
+                        service_address
+                            .ok_or_else(|| de::Error::missing_field("service_address"))?,
+                    )
+                } else {
+                    if service_address.is_some() {
+                        return Err(de::Error::custom(
+                            "service_address only exists from version 3",
+                        ));
+                    }
+                    let ip_bits =
+                        ip_address.ok_or_else(|| de::Error::missing_field("ip_address"))?;
+                    let port = port.ok_or_else(|| de::Error::missing_field("port"))?;
+                    MasternodeNetInfo::Legacy(legacy_socket_addr(ip_bits, port))
                 };
                 Ok(ProviderUpdateServicePayload {
-                    version: version.ok_or_else(|| de::Error::missing_field("version"))?,
+                    version,
                     mn_type,
                     pro_tx_hash: pro_tx_hash
                         .ok_or_else(|| de::Error::missing_field("pro_tx_hash"))?,
@@ -1176,5 +1192,21 @@ mod tests {
 
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(serde_json::from_value::<ProviderUpdateServicePayload>(json).unwrap(), payload);
+    }
+
+    /// The JSON of a valid payload relabelled with the other address form's version.
+    #[cfg(feature = "serde")]
+    #[test_case::test_case(v3_payload(0, None), 2; "service_address before version 3")]
+    #[test_case::test_case(v2_payloads().0, 3; "ip_address and port at version 3")]
+    fn json_rejects_the_address_form_of_another_version(
+        payload: ProviderUpdateServicePayload,
+        version: u16,
+    ) {
+        let json = serde_json::to_string(&payload).unwrap().replacen(
+            &format!("\"version\":{}", payload.version),
+            &format!("\"version\":{version}"),
+            1,
+        );
+        assert!(serde_json::from_str::<ProviderUpdateServicePayload>(&json).is_err());
     }
 }

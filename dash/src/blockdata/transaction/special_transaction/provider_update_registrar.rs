@@ -337,8 +337,14 @@ impl<'de> serde::Deserialize<'de> for ProviderUpdateRegistrarPayload {
                         }
                     }
                 }
+                // `payouts` only exists from version 3, as in `visit_seq`; reject it rather than
+                // drop it silently on the next encode.
+                let version: u16 = version.ok_or_else(|| de::Error::missing_field("version"))?;
+                if version < ProTxVersion::ExtAddr as u16 && payouts.is_some() {
+                    return Err(de::Error::custom("payouts only exist from version 3"));
+                }
                 Ok(ProviderUpdateRegistrarPayload {
-                    version: version.ok_or_else(|| de::Error::missing_field("version"))?,
+                    version,
                     pro_tx_hash: pro_tx_hash
                         .ok_or_else(|| de::Error::missing_field("pro_tx_hash"))?,
                     provider_mode: provider_mode
@@ -694,5 +700,13 @@ mod tests {
             serde_json::from_value::<ProviderUpdateRegistrarPayload>(json).unwrap(),
             payload
         );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn json_rejects_payouts_before_version_3() {
+        let mut json = serde_json::to_value(v3_payload()).unwrap();
+        json["version"] = 2.into();
+        assert!(serde_json::from_value::<ProviderUpdateRegistrarPayload>(json).is_err());
     }
 }
