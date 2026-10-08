@@ -19,13 +19,11 @@
 //! from 80 bytes to as low as 37 bytes through stateful compression techniques.
 
 use crate::blockdata::block::{Header, Version};
-use crate::consensus::encode::MAX_VEC_SIZE;
 use crate::consensus::{Decodable, Encodable};
 use crate::hash_types::{BlockHash, TxMerkleNode};
 use crate::pow::CompactTarget;
 use crate::{VarInt, io};
 use core::fmt;
-use core::mem;
 use thiserror::Error;
 
 /// Bitfield flags for compressed header
@@ -592,13 +590,23 @@ impl Encodable for Headers2Message {
     }
 }
 
+/// Maximum number of headers Core sends in one `headers2` message
+/// (`MAX_HEADERS_COMPRESSED_RESULT`).
+const MAX_HEADERS2_RESULTS: usize = 8000;
+
 impl Decodable for Headers2Message {
     fn consensus_decode<R: io::Read + ?Sized>(
         r: &mut R,
     ) -> Result<Self, crate::consensus::encode::Error> {
         let count = VarInt::consensus_decode(r)?.0;
-        let max_capacity = MAX_VEC_SIZE / 4 / mem::size_of::<CompressedHeader>();
-        let mut headers = Vec::with_capacity(core::cmp::min(count as usize, max_capacity));
+        // Core never sends more and treats more as misbehaviour. Checking before reserving
+        // also keeps a short frame with a huge count from triggering a large allocation.
+        if count > MAX_HEADERS2_RESULTS as u64 {
+            return Err(crate::consensus::encode::Error::ParseFailed(
+                "headers2 message has too many headers",
+            ));
+        }
+        let mut headers = Vec::with_capacity(count as usize);
         for _ in 0..count {
             headers.push(CompressedHeader::consensus_decode(r)?);
         }
@@ -610,6 +618,8 @@ impl Decodable for Headers2Message {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
     use crate::hashes::Hash;
 
@@ -961,5 +971,25 @@ mod tests {
         let mut recv_state = CompressionState::new();
         let result = recv_state.process_headers(&[compressed]);
         assert!(matches!(result, Err(ProcessError::DecompressionError(0, _))));
+    }
+
+    #[test]
+    fn headers2_short_frame_with_huge_count_fails() {
+        let payload = crate::consensus::encode::serialize(&VarInt(u64::MAX));
+        assert!(Headers2Message::consensus_decode(&mut &payload[..]).is_err());
+    }
+
+    #[test_case(MAX_HEADERS2_RESULTS, true; "full Core batch decodes")]
+    #[test_case(MAX_HEADERS2_RESULTS + 1, false; "above Core batch is rejected")]
+    fn headers2_count_limit(count: usize, decodes: bool) {
+        let mut state = CompressionState::new();
+        let msg = Headers2Message {
+            headers: (0..count as u32)
+                .map(|i| state.compress(&create_test_header(i, i.wrapping_sub(1))))
+                .collect(),
+        };
+        let bytes = crate::consensus::encode::serialize(&msg);
+        let decoded = Headers2Message::consensus_decode(&mut &bytes[..]);
+        assert_eq!(decoded.ok(), decodes.then_some(msg));
     }
 }
