@@ -18,6 +18,7 @@ use crate::transaction_checking::{
     BlockInfo, TransactionCheckResult, TransactionContext, TransactionType,
 };
 use crate::wallet::initialization::WalletAccountCreationOptions;
+use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
@@ -534,6 +535,58 @@ async fn restore_reports_outpoints_still_held_as_utxos() {
     assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&held));
     assert_eq!(ctx.managed_wallet.balance.total(), balance);
     assert!(ctx.managed_wallet.restore_spent_outpoints(&[(absent, None)]).is_empty());
+}
+
+/// Claims belong to the wallet, so an account created after the restore is
+/// guarded without restoring again.
+#[tokio::test]
+async fn account_added_after_the_restore_is_guarded() {
+    // The seed is fixed, so a twin wallet yields the address account 1 will have.
+    let (_, address) = restore_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000]);
+    let coin = OutPoint::new(funding.txid(), 0);
+    let (mut ctx, _) = context_with_accounts(1);
+    ctx.managed_wallet.restore_spent_outpoints(&[(coin, None)]);
+
+    let account_type = AccountType::Standard {
+        index: 1,
+        standard_account_type: StandardAccountType::BIP44Account,
+    };
+    ctx.wallet.add_account(account_type, None).unwrap();
+    ctx.managed_wallet.add_managed_account(&ctx.wallet, account_type).unwrap();
+    let xpub = ctx.wallet.accounts.standard_bip44_accounts[&1].account_xpub;
+    let added = ctx
+        .managed_wallet
+        .accounts
+        .standard_bip44_accounts
+        .get_mut(&1)
+        .unwrap()
+        .next_receive_address(Some(&xpub), true)
+        .unwrap();
+    assert_eq!(added, address);
+
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+
+    assert!(!second_account(&ctx).utxos.contains_key(&coin));
+    assert_eq!(ctx.managed_wallet.balance.total(), 0);
+}
+
+/// A claim restored onto a coin the wallet holds leaves the coin credited,
+/// and its confirmation state keeps following its funding transaction.
+#[tokio::test]
+async fn held_utxo_follows_its_funding_after_a_claim_is_restored_onto_it() {
+    let (mut ctx, address) = restore_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000]);
+    let coin = OutPoint::new(funding.txid(), 0);
+    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+    assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 150_000);
+    assert_eq!(ctx.managed_wallet.restore_spent_outpoints(&[(coin, None)]), vec![coin]);
+
+    ctx.check_transaction(&funding, in_block(100)).await;
+
+    assert!(second_account(&ctx).utxos[&coin].is_confirmed);
+    assert_eq!(ctx.managed_wallet.balance.confirmed(), 150_000);
+    assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
 }
 
 /// Account 1 removes the loser and frees its extra input, but account 0 holds
