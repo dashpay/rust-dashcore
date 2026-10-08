@@ -121,6 +121,13 @@ pub struct ManagedWalletInfo {
     /// migration to load pre-field snapshots.
     #[cfg_attr(feature = "serde", serde(default, with = "observed_spent_outpoints_serde"))]
     pub(crate) observed_spent_outpoints: BTreeMap<OutPoint, CoreBlockHeight>,
+    /// Spent outpoints claimed apart from any account's own records, each
+    /// with the transaction named as its spender; `None` guards permanently.
+    /// Set by [`Self::restore_spent_outpoints`] and consulted for every
+    /// account that holds funds. Not serialized: the host restores it after
+    /// each load.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) spent_claims: BTreeMap<OutPoint, Option<Txid>>,
     /// Generation counter for the wallet's account set, bumped every time an
     /// account is added to a live wallet (see
     /// [`Self::rewind_sync_checkpoint_for_new_account`]).
@@ -245,6 +252,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
         }
@@ -262,6 +270,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
         }
@@ -289,6 +298,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
         }
@@ -334,59 +344,85 @@ impl ManagedWalletInfo {
     ///
     /// For a wallet loaded without the transactions that spent its coins.
     /// Each entry is a spent outpoint and, when known, the transaction that
-    /// spent it (its claimant). A restored outpoint is never added to
-    /// `utxos`, and the guard survives ChainLock pruning. Outpoints this
-    /// wallet does not own are accepted.
+    /// spent it (its claimant). A restored outpoint is never added to the
+    /// `utxos` of any account that holds funds — a contact's watch-only
+    /// DashPay account and an account added after this call included — and
+    /// the guard survives ChainLock pruning. Outpoints this wallet does not
+    /// own are accepted.
     ///
-    /// **When to call:** once the funding accounts exist — snapshot loaded
-    /// or accounts created — and before any transaction funding a restored
-    /// outpoint is delivered, by replay or by sync. The guard only stops a
-    /// later credit: this creates no records, and changes no UTXOs or
-    /// balances, so an outpoint already in `utxos` stays credited and
-    /// spendable. Those outpoints are returned, sorted, and logged at
-    /// `warn`; an empty result means every guard is effective. Call again
-    /// after each load and after adding a funding account: claims are kept
-    /// per account and are not part of wallet snapshots.
+    /// **When to call:** once after each load, since claims are not part of
+    /// wallet snapshots. Either order works:
+    ///
+    /// * before any transaction funding a restored outpoint is delivered, by
+    ///   replay or by sync;
+    /// * after the host has replayed the records it holds, as long as no
+    ///   restored outpoint is left in `utxos` by then.
+    ///
+    /// The guard only stops a later credit: this creates no records, and
+    /// changes no UTXOs or balances, so an outpoint already in `utxos` stays
+    /// credited and spendable, and its claim guards it only once it has left
+    /// `utxos`. Those outpoints are returned, sorted, and logged at `warn`;
+    /// an empty result means every guard is effective.
     ///
     /// **Claimants:** when [`sweep_conflicts`](Self::sweep_conflicts) or
     /// [`abandon_transaction`](Self::abandon_transaction) removes the
-    /// claimant, the outpoint is released — unless another live record
-    /// spends it too, which then becomes the claimant. A confirmed or
-    /// InstantSend-locked transaction spending the outpoint turns its claim
-    /// into `None`, whoever the claimant was. `None` is never released.
-    /// Restoring an outpoint again merges the claimants: the same one
-    /// changes nothing, and any disagreement — `None` against a txid, or two
-    /// different txids — leaves `None`.
+    /// claimant, the outpoint is released. A confirmed or InstantSend-locked
+    /// transaction spending the outpoint turns its claim into `None`,
+    /// whoever the claimant was. `None` is never released. Restoring an
+    /// outpoint again merges the claimants: the same one changes nothing,
+    /// and any disagreement — `None` against a txid, or two different txids
+    /// — leaves `None`.
     ///
-    /// **Spenders:** the guarded output is kept aside, so a transaction
-    /// spending it that arrives after its funding is recorded as a spend of
-    /// the wallet's coin. A claim restored once the funding is held as a
-    /// txid only — ChainLocked, without `keep-finalized-transactions` — has
-    /// no output to keep, and such a spender is recorded as if the coin
-    /// were not the wallet's.
+    /// **Spenders:** the guarded output is kept aside — from its funding
+    /// transaction as that arrives, or from the funding's record when the
+    /// wallet already holds it — so a transaction spending it that arrives
+    /// later is recorded as a spend of the wallet's coin. A claim restored
+    /// once the funding is held as a txid only — ChainLocked, without
+    /// `keep-finalized-transactions` — has no output to keep, and such a
+    /// spender is recorded as if the coin were not the wallet's.
     ///
-    /// **Limits:** later changes to a claim stay in memory. Making it
-    /// permanent or passing it to another spender is not reported, and a
-    /// release is reported only by a sweep, in `released_outpoints`, so the
-    /// rows the host holds go stale. Calling this again with such rows
-    /// turns a claim the wallet passed to another spender into `None`, by
-    /// the merge rule above. A claimant the wallet holds no record of is
-    /// released by [`abandon_transaction`](Self::abandon_transaction) only:
-    /// a final transaction that beats it on another input does not release
-    /// its other claims.
+    /// **Limits:**
+    ///
+    /// * Only transactions processed by the wallet are guarded.
+    ///   `ManagedAccountRefMut::record_transaction` and `confirm_transaction`
+    ///   drive one account and credit a restored outpoint.
+    /// * Later changes to a claim stay in memory. Making it permanent is not
+    ///   reported, and a release is reported only by a sweep, in
+    ///   `released_outpoints`, so the rows the host holds go stale. Calling
+    ///   this again with such rows brings a released claim back, and turns
+    ///   one whose claimant no longer matches into `None`, by the merge rule
+    ///   above.
+    /// * A claimant the wallet holds no record of is released by
+    ///   [`abandon_transaction`](Self::abandon_transaction) only: a final
+    ///   transaction that beats it on another input does not release its
+    ///   other claims.
+    /// * A claim does not pass to another transaction. Once its claimant is
+    ///   removed the outpoint is released, even while a second live
+    ///   transaction still spends it; and an input of a removed transaction
+    ///   gets no claim on behalf of a live transaction that only another
+    ///   account recorded. Either way an account that never recorded that
+    ///   other spend credits the funding (dashpay/rust-dashcore#1114).
     pub fn restore_spent_outpoints(
         &mut self,
         outpoints: &[(OutPoint, Option<Txid>)],
     ) -> Vec<OutPoint> {
+        for (outpoint, claimant) in outpoints {
+            let held = self.spent_claims.entry(*outpoint).or_insert(*claimant);
+            if held != claimant {
+                *held = None;
+            }
+        }
         let mut still_held = BTreeSet::new();
-        for account in self.accounts.all_funding_accounts_mut() {
-            account.restore_spent_outpoints(outpoints);
-            still_held.extend(
-                outpoints
-                    .iter()
-                    .map(|(outpoint, _)| *outpoint)
-                    .filter(|outpoint| account.utxos.contains_key(outpoint)),
-            );
+        for mut account in self.accounts.all_accounts_mut() {
+            let Some(funds) = account.as_funds_mut() else {
+                continue;
+            };
+            for (outpoint, _) in outpoints {
+                if funds.utxos.contains_key(outpoint) {
+                    still_held.insert(*outpoint);
+                }
+                funds.keep_recorded_output_for_claim(outpoint);
+            }
         }
         if !still_held.is_empty() {
             tracing::warn!(

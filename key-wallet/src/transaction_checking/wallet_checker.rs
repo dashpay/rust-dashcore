@@ -302,6 +302,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             context.clone(),
                             tx_type,
                             &self.observed_spent_outpoints,
+                            &self.spent_claims,
                             &external_final_parents,
                         );
                         account.mark_utxos_instant_send(&txid);
@@ -335,6 +336,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     context.clone(),
                     tx_type,
                     &self.observed_spent_outpoints,
+                    &self.spent_claims,
                     &external_final_parents,
                 );
                 result.new_records.push(record);
@@ -347,6 +349,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     context.clone(),
                     tx_type,
                     &self.observed_spent_outpoints,
+                    &self.spent_claims,
                     &external_final_parents,
                 ) {
                     result.state_modified = true;
@@ -1677,6 +1680,7 @@ mod tests {
             block_context,
             tx_type,
             &BTreeMap::new(),
+            &BTreeMap::new(),
             &BTreeSet::new(),
         );
         assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
@@ -1734,6 +1738,7 @@ mod tests {
             &account_match,
             block_context,
             tx_type,
+            &BTreeMap::new(),
             &BTreeMap::new(),
             &BTreeSet::new(),
         );

@@ -1,12 +1,10 @@
 //! Tests for spent_outpoints deserialization and tracking.
 
-use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
-use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, TxIn, TxOut, Txid};
+use dashcore::{BlockHash, TxIn, Txid};
 
 use crate::account::{AccountType, StandardAccountType, TransactionRecord};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
@@ -61,6 +59,12 @@ fn restore_context() -> (TestWalletContext, dashcore::Address) {
     (ctx, addresses.remove(1))
 }
 
+/// The wallet's claim on `outpoint`: `None` when it holds none, `Some(None)`
+/// for a permanent one.
+fn claim_on(ctx: &TestWalletContext, outpoint: &OutPoint) -> Option<Option<Txid>> {
+    ctx.managed_wallet.spent_claims.get(outpoint).copied()
+}
+
 #[tokio::test]
 async fn restored_spends_survive_finality_without_records() {
     let (mut ctx, address) = restore_context();
@@ -90,7 +94,7 @@ async fn restored_spends_survive_finality_without_records() {
 #[test_case::test_case(true; "abandonment")]
 #[tokio::test]
 async fn restored_spends_release_only_removed_claimants(abandon: bool) {
-    for kind in 0..4 {
+    for kind in 0..3 {
         let (mut ctx, address) = restore_context();
         let funding = Transaction::dummy(&address, 20..21, &[150_000, 90_000]);
         let spent = OutPoint::new(funding.txid(), 0);
@@ -99,7 +103,7 @@ async fn restored_spends_release_only_removed_claimants(abandon: bool) {
         let mut loser = spending_tx(&[contested, spent]);
         loser.output = Transaction::dummy(&ctx.receive_address, 30..31, &[140_000]).output;
         let claimant = match kind {
-            0 | 3 => Some(loser.txid()),
+            0 => Some(loser.txid()),
             1 => None,
             _ => Some(Txid::from([0x99; 32])),
         };
@@ -109,12 +113,6 @@ async fn restored_spends_release_only_removed_claimants(abandon: bool) {
         assert!(
             !ctx.managed_wallet.accounts.standard_bip44_accounts[&1].has_transaction(&loser.txid())
         );
-        if kind == 3 {
-            let mut survivor = spending_tx(&[spent]);
-            survivor.output = loser.output.clone();
-            ctx.check_transaction(&survivor, TransactionContext::Mempool).await;
-            assert!(ctx.bip44_account().has_transaction(&survivor.txid()));
-        }
         if abandon {
             assert_eq!(ctx.managed_wallet.abandon_transaction(loser.txid()).records_removed, 1);
         } else {
@@ -131,6 +129,8 @@ async fn restored_spends_release_only_removed_claimants(abandon: bool) {
             assert_eq!(result.swept_transactions, vec![loser.txid()]);
             assert_eq!(result.released_outpoints.contains(&spent), kind == 0);
         }
+        assert_eq!(claim_on(&ctx, &spent), (kind != 0).then_some(claimant));
+        assert_eq!(claim_on(&ctx, &unrelated), Some(None));
         ctx.check_transaction(&funding, TransactionContext::Mempool).await;
         let account = &ctx.managed_wallet.accounts.standard_bip44_accounts[&1];
         assert_eq!(
@@ -195,6 +195,7 @@ async fn restored_claim_is_released_when_recordless_claimant_is_abandoned() {
 
     assert_eq!(ctx.managed_wallet.abandon_transaction(claimant).records_removed, 0);
 
+    assert_eq!(claim_on(&ctx, &spent), None);
     ctx.check_transaction(&funding, TransactionContext::Mempool).await;
     assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent));
 }
@@ -238,6 +239,7 @@ async fn finalized_mark_outlives_a_released_restored_claim() {
 
     ctx.managed_wallet.abandon_transaction(claimant);
 
+    assert_eq!(claim_on(&ctx, &coin), None);
     assert!(ctx.bip44_account().is_outpoint_spent(&coin));
     ctx.check_transaction(&funding, in_block(90)).await;
     assert!(!ctx.bip44_account().utxos.contains_key(&coin));
@@ -287,6 +289,7 @@ async fn restoring_an_outpoint_twice_merges_claimants(
 
         assert_eq!(ctx.managed_wallet.abandon_transaction(loser.txid()).records_removed, 1);
 
+        assert_eq!(claim_on(&ctx, &spent).is_none(), released);
         ctx.check_transaction(&funding, TransactionContext::Mempool).await;
         assert_eq!(
             ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent),
@@ -329,7 +332,8 @@ async fn claim_on_winner_input_stays_guarded_after_claimant_is_swept() {
 
 /// The claimant has no record, so no sweep can remove it. A final spend of
 /// the outpoint still settles it: abandoning the old claimant afterwards
-/// must not release the guard. An unconfirmed spend settles nothing.
+/// must not release the guard. An unconfirmed spend settles nothing, and no
+/// spend creates a claim on an input that had none.
 #[test_case::test_case(in_block(100), true; "spend in a block")]
 #[test_case::test_case(
     TransactionContext::InstantSend(InstantLock::default()), true;
@@ -346,16 +350,14 @@ async fn final_spend_makes_a_recordless_claim_permanent(
     let spent = OutPoint::new(funding.txid(), 0);
     let claimant = Txid::from([0x77; 32]);
     ctx.managed_wallet.restore_spent_outpoints(&[(spent, Some(claimant))]);
+    let unclaimed = OutPoint::new(Txid::from([0x56; 32]), 0);
+    let spend = spending_tx(&[spent, unclaimed]);
 
-    assert!(ctx.managed_wallet.sweep_conflicts(&spending_tx(&[spent]), &context).is_empty());
+    assert!(ctx.managed_wallet.sweep_conflicts(&spend, &context).is_empty());
+    assert_eq!(claim_on(&ctx, &unclaimed), None);
     ctx.managed_wallet.abandon_transaction(claimant);
 
-    assert!(ctx
-        .managed_wallet
-        .accounts
-        .all_funding_accounts()
-        .iter()
-        .all(|account| account.is_outpoint_spent(&spent) == is_final));
+    assert_eq!(claim_on(&ctx, &spent), is_final.then_some(None));
     ctx.check_transaction(&funding, TransactionContext::Mempool).await;
     assert_eq!(
         ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent),
@@ -363,123 +365,9 @@ async fn final_spend_makes_a_recordless_claim_permanent(
     );
 }
 
-/// Two live records spend the claimed outpoint. Removing the claimant hands
-/// the claim to the survivor, so the outpoint stays guarded in every funding
-/// account until the survivor is removed too.
-#[test_case::test_case(false; "conflict")]
-#[test_case::test_case(true; "abandonment")]
-#[tokio::test]
-async fn claim_passes_to_a_surviving_spender_until_it_is_removed_too(abandon: bool) {
-    let (mut ctx, address) = restore_context();
-    let funding = Transaction::dummy(&address, 20..21, &[150_000]);
-    let spent = OutPoint::new(funding.txid(), 0);
-    let claimant_input = OutPoint::new(Txid::from([0x55; 32]), 0);
-    let survivor_input = OutPoint::new(Txid::from([0x56; 32]), 0);
-    let claimant = spend_paying(&[claimant_input, spent], &ctx.receive_address);
-    let survivor = spend_paying(&[survivor_input, spent], &ctx.receive_address);
-    ctx.managed_wallet.restore_spent_outpoints(&[(spent, Some(claimant.txid()))]);
-    ctx.check_transaction(&claimant, TransactionContext::Mempool).await;
-    ctx.check_transaction(&survivor, TransactionContext::Mempool).await;
-
-    if abandon {
-        assert_eq!(ctx.managed_wallet.abandon_transaction(claimant.txid()).records_removed, 1);
-    } else {
-        let result = ctx.check_transaction(&spending_tx(&[claimant_input]), in_block(100)).await;
-        assert_eq!(result.swept_transactions, vec![claimant.txid()]);
-        assert!(result.released_outpoints.is_empty());
-    }
-    assert!(ctx
-        .managed_wallet
-        .accounts
-        .all_funding_accounts()
-        .iter()
-        .all(|account| account.is_outpoint_spent(&spent)));
-
-    if abandon {
-        assert_eq!(ctx.managed_wallet.abandon_transaction(survivor.txid()).records_removed, 1);
-    } else {
-        let result = ctx.check_transaction(&spending_tx(&[survivor_input]), in_block(101)).await;
-        assert_eq!(result.swept_transactions, vec![survivor.txid()]);
-        assert_eq!(result.released_outpoints, vec![spent]);
-    }
-    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
-    assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&spent));
-}
-
-/// Account 0 records a spend of its coin, whose funding is still to come, and
-/// account 1 alone records a second one. The first spend is then removed.
-/// Returns the funding, the surviving spend and the survivor's other input.
-async fn remove_spend_with_survivor_in_second_account(
-    ctx: &mut TestWalletContext,
-    second_address: &dashcore::Address,
-    abandon: bool,
-) -> (Transaction, Transaction, OutPoint) {
-    let funding = Transaction::dummy(&ctx.receive_address, 20..21, &[150_000]);
-    let coin = OutPoint::new(funding.txid(), 0);
-    let removed_input = OutPoint::new(Txid::from([0x55; 32]), 0);
-    let survivor_input = OutPoint::new(Txid::from([0x56; 32]), 0);
-    let removed = spend_paying(&[removed_input, coin], &ctx.receive_address);
-    let survivor = spend_paying(&[survivor_input, coin], second_address);
-    ctx.check_transaction(&removed, TransactionContext::Mempool).await;
-    ctx.check_transaction(&survivor, TransactionContext::Mempool).await;
-    assert!(ctx.bip44_account().has_transaction(&removed.txid()));
-    assert!(!ctx.bip44_account().has_transaction(&survivor.txid()));
-
-    if abandon {
-        assert_eq!(ctx.managed_wallet.abandon_transaction(removed.txid()).records_removed, 1);
-    } else {
-        let result = ctx.check_transaction(&spending_tx(&[removed_input]), in_block(100)).await;
-        assert_eq!(result.swept_transactions, vec![removed.txid()]);
-        assert!(result.released_outpoints.is_empty());
-    }
-    (funding, survivor, survivor_input)
-}
-
-/// An account releases a mark from its own records alone. A record removed
-/// from account 0 while account 1 still holds a live spend of the coin must
-/// leave the coin guarded in account 0, until that spend is removed too.
-#[test_case::test_case(false; "conflict")]
-#[test_case::test_case(true; "abandonment")]
-#[tokio::test]
-async fn coin_stays_guarded_until_another_accounts_spend_is_removed_too(abandon: bool) {
-    let (mut ctx, second_address) = restore_context();
-    let (funding, survivor, survivor_input) =
-        remove_spend_with_survivor_in_second_account(&mut ctx, &second_address, abandon).await;
-    let coin = OutPoint::new(funding.txid(), 0);
-    assert!(ctx
-        .managed_wallet
-        .accounts
-        .all_funding_accounts()
-        .iter()
-        .all(|account| account.is_outpoint_spent(&coin)));
-
-    if abandon {
-        assert_eq!(ctx.managed_wallet.abandon_transaction(survivor.txid()).records_removed, 1);
-    } else {
-        let result = ctx.check_transaction(&spending_tx(&[survivor_input]), in_block(101)).await;
-        assert_eq!(result.swept_transactions, vec![survivor.txid()]);
-        assert_eq!(result.released_outpoints, vec![coin]);
-    }
-    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
-    assert!(ctx.bip44_account().utxos.contains_key(&coin));
-}
-
-/// The funding arrives while account 1 still holds a live spend of the coin.
-#[test_case::test_case(false; "conflict")]
-#[test_case::test_case(true; "abandonment")]
-#[tokio::test]
-async fn funding_is_not_credited_while_another_accounts_spend_is_live(abandon: bool) {
-    let (mut ctx, second_address) = restore_context();
-    let (funding, _, _) =
-        remove_spend_with_survivor_in_second_account(&mut ctx, &second_address, abandon).await;
-
-    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
-
-    assert!(!ctx.bip44_account().utxos.contains_key(&OutPoint::new(funding.txid(), 0)));
-}
-
-/// The claimant's removal frees the outpoint in every account holding the
-/// claim, and the sweep reports it exactly once.
+/// The removed loser held the mark on the outpoint and is its claimant too,
+/// so the account's release and the claim's release both yield it: the sweep
+/// reports it exactly once.
 #[tokio::test]
 async fn swept_claimant_reports_its_released_claim_once() {
     let (mut ctx, address) = restore_context();
@@ -514,7 +402,8 @@ async fn released_claim_on_a_swept_transactions_output_is_not_reported() {
 }
 
 /// Restoring after the funding was delivered cannot take the coin back: it
-/// stays credited, and the caller is told which guards came too late.
+/// stays credited, and the caller is told which guards came too late. The
+/// claim is stored all the same.
 #[tokio::test]
 async fn restore_reports_outpoints_still_held_as_utxos() {
     let (mut ctx, address) = restore_context();
@@ -532,6 +421,7 @@ async fn restore_reports_outpoints_still_held_as_utxos() {
     ]);
 
     assert_eq!(still_held, vec![held]);
+    assert_eq!(claim_on(&ctx, &held), Some(None));
     assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&1].utxos.contains_key(&held));
     assert_eq!(ctx.managed_wallet.balance.total(), balance);
     assert!(ctx.managed_wallet.restore_spent_outpoints(&[(absent, None)]).is_empty());
@@ -589,19 +479,14 @@ async fn held_utxo_follows_its_funding_after_a_claim_is_restored_onto_it() {
     assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
 }
 
-/// Account 1 removes the loser and frees its extra input, but account 0 holds
-/// a restored claim on it, so the wallet must not report it released.
+/// Account 1 removes the loser and frees its extra input, but a claim still
+/// holds it, so the wallet must not report it released.
 #[tokio::test]
-async fn sweep_withholds_outpoints_another_account_still_guards() {
+async fn sweep_withholds_outpoints_a_claim_still_guards() {
     let (mut ctx, second_address) = restore_context();
     let contested = OutPoint::new(Txid::from([0x55; 32]), 0);
     let guarded = OutPoint::new(Txid::from([0x56; 32]), 0);
-    ctx.managed_wallet
-        .accounts
-        .standard_bip44_accounts
-        .get_mut(&0)
-        .unwrap()
-        .restore_spent_outpoints(&[(guarded, None)]);
+    ctx.managed_wallet.restore_spent_outpoints(&[(guarded, None)]);
     let loser = spend_paying(&[contested, guarded], &second_address);
     ctx.check_transaction(&loser, TransactionContext::Mempool).await;
     assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&1].has_transaction(&loser.txid()));
@@ -612,106 +497,70 @@ async fn sweep_withholds_outpoints_another_account_still_guards() {
     assert!(result.released_outpoints.is_empty());
 }
 
-/// Whether each funding account guards `outpoint`.
-fn guards(ctx: &TestWalletContext, outpoint: &OutPoint) -> Vec<bool> {
-    ctx.managed_wallet
-        .accounts
-        .all_funding_accounts()
-        .iter()
-        .map(|account| account.is_outpoint_spent(outpoint))
-        .collect()
+/// A wallet with BIP44 account 0 and a contact's watch-only DashPay chain,
+/// and an address of the latter.
+fn contact_context() -> (TestWalletContext, dashcore::Address) {
+    let (mut ctx, _) = context_with_accounts(1);
+    let contact = AccountType::DashpayExternalAccount {
+        index: 0,
+        user_identity_id: [0xaa; 32],
+        friend_identity_id: [0xbb; 32],
+    };
+    ctx.wallet.add_account(contact, None).unwrap();
+    ctx.managed_wallet.add_managed_account(&ctx.wallet, contact).unwrap();
+    let pool = contact_account(&ctx).managed_account_type().address_pools()[0];
+    let address = pool.address_at_index(0).unwrap();
+    (ctx, address)
 }
 
-/// Accounts 0 and 1 each record a spend of a coin of account 2, which
-/// records neither. `claim` restores a claim on the coin first, the spend of
-/// account 0 standing for `Claimant::Loser`. Returns the funding, and the
-/// two spends with the other input of each.
-async fn two_accounts_spend_a_coin_of_a_third(
-    ctx: &mut TestWalletContext,
-    addresses: &[dashcore::Address],
-    claim: Option<Claimant>,
-) -> (Transaction, [(Transaction, OutPoint); 2]) {
-    let funding = Transaction::dummy(&addresses[2], 20..21, &[150_000]);
-    let coin = OutPoint::new(funding.txid(), 0);
-    let inputs = [0x55, 0x56].map(|seed| OutPoint::new(Txid::from([seed; 32]), 0));
-    let spends = [
-        (spend_paying(&[inputs[0], coin], &addresses[0]), inputs[0]),
-        (spend_paying(&[inputs[1], coin], &addresses[1]), inputs[1]),
-    ];
-    if let Some(claim) = claim {
-        let claimant = match claim {
-            Claimant::Unknown => None,
-            Claimant::Loser => Some(spends[0].0.txid()),
-            Claimant::Other => Some(Txid::from([0x99; 32])),
-        };
-        ctx.managed_wallet.restore_spent_outpoints(&[(coin, claimant)]);
-    }
-    for (index, (spend, _)) in spends.iter().enumerate() {
-        ctx.check_transaction(spend, TransactionContext::Mempool).await;
-        let account = &ctx.managed_wallet.accounts.standard_bip44_accounts[&(index as u32)];
-        assert!(account.has_transaction(&spend.txid()));
-    }
-    (funding, spends)
+fn contact_account(ctx: &TestWalletContext) -> &ManagedCoreFundsAccount {
+    ctx.managed_wallet.accounts.dashpay_external_accounts.values().next().unwrap()
 }
 
-/// Three funding accounts: account 0 records the spend removed first,
-/// account 1 the one surviving it, and account 2 owns the coin and records
-/// neither. The coin stays guarded in all three until the survivor is
-/// removed too, whether the guard began as a restored claim or as the two
-/// accounts' own marks.
-#[test_case::test_case(false, false; "swept, marks only")]
-#[test_case::test_case(false, true; "swept, restored claim")]
-#[test_case::test_case(true, false; "abandoned, marks only")]
-#[test_case::test_case(true, true; "abandoned, restored claim")]
+/// Claims cover every account that holds funds, a contact's watch-only chain
+/// included: its credit is blocked, the output kept for the claim goes with
+/// the claim, and the restore reports a coin the account already holds.
 #[tokio::test]
-async fn coin_of_a_third_account_stays_guarded_until_every_spend_is_removed(
-    abandon: bool,
-    restored: bool,
-) {
-    let (mut ctx, addresses) = context_with_accounts(3);
-    let claim = restored.then_some(Claimant::Loser);
-    let (funding, spends) = two_accounts_spend_a_coin_of_a_third(&mut ctx, &addresses, claim).await;
+async fn claims_cover_a_watch_only_contact_account() {
+    let (mut ctx, address) = contact_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000]);
     let coin = OutPoint::new(funding.txid(), 0);
-
-    for (removal, (spend, other_input)) in spends.iter().enumerate() {
-        let last = removal == 1;
-        if abandon {
-            assert_eq!(ctx.managed_wallet.abandon_transaction(spend.txid()).records_removed, 1);
-        } else {
-            let winner = spending_tx(&[*other_input]);
-            let result = ctx.check_transaction(&winner, in_block(100 + removal as u32)).await;
-            assert_eq!(result.swept_transactions, vec![spend.txid()]);
-            let expected = if last {
-                vec![coin]
-            } else {
-                Vec::new()
-            };
-            assert_eq!(result.released_outpoints, expected);
-        }
-        assert_eq!(guards(&ctx, &coin), vec![!last; 3]);
-    }
+    let claimant = Txid::from([0x77; 32]);
+    assert!(ctx.managed_wallet.restore_spent_outpoints(&[(coin, Some(claimant))]).is_empty());
 
     ctx.check_transaction(&funding, TransactionContext::Mempool).await;
-    assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&2].utxos.contains_key(&coin));
+    assert!(!contact_account(&ctx).utxos.contains_key(&coin));
+    assert!(contact_account(&ctx).claim_guarded_outputs.contains_key(&coin));
+
+    ctx.managed_wallet.abandon_transaction(claimant);
+    assert!(contact_account(&ctx).claim_guarded_outputs.is_empty());
+    ctx.check_transaction(&funding, in_block(90)).await;
+    assert!(contact_account(&ctx).utxos.contains_key(&coin));
+
+    assert_eq!(ctx.managed_wallet.restore_spent_outpoints(&[(coin, None)]), vec![coin]);
 }
 
-/// A permanent claim is not replaced by an inherited one, which the removal
-/// of its spender would release: with both spends removed the coin must
-/// still be guarded.
+/// The mark a contact's watch-only chain keeps from its own ChainLocked spend
+/// withholds the coin when a double spend recorded in account 0 is swept.
 #[tokio::test]
-async fn inherited_claim_does_not_replace_a_permanent_one() {
-    let (mut ctx, addresses) = context_with_accounts(3);
-    let (funding, spends) =
-        two_accounts_spend_a_coin_of_a_third(&mut ctx, &addresses, Some(Claimant::Unknown)).await;
+async fn sweep_withholds_outpoints_a_watch_only_contact_account_still_marks() {
+    let (mut ctx, address) = contact_context();
+    let funding = Transaction::dummy(&address, 20..21, &[150_000]);
     let coin = OutPoint::new(funding.txid(), 0);
-
-    for (spend, _) in &spends {
-        assert_eq!(ctx.managed_wallet.abandon_transaction(spend.txid()).records_removed, 1);
-    }
-
-    assert_eq!(guards(&ctx, &coin), vec![true; 3]);
     ctx.check_transaction(&funding, TransactionContext::Mempool).await;
-    assert!(ctx.managed_wallet.accounts.standard_bip44_accounts[&2].utxos.is_empty());
+    ctx.check_transaction(&spending_tx(&[coin]), in_block(100)).await;
+    ctx.managed_wallet.update_synced_height(200);
+    ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(200));
+    assert!(contact_account(&ctx).is_outpoint_spent(&coin));
+    let contested = OutPoint::new(Txid::from([0x55; 32]), 0);
+    let double_spend = spend_paying(&[contested, coin], &ctx.receive_address);
+    ctx.check_transaction(&double_spend, TransactionContext::Mempool).await;
+    assert!(ctx.bip44_account().has_transaction(&double_spend.txid()));
+
+    let result = ctx.check_transaction(&spending_tx(&[contested]), in_block(201)).await;
+
+    assert_eq!(result.swept_transactions, vec![double_spend.txid()]);
+    assert!(result.released_outpoints.is_empty());
 }
 
 fn second_account(ctx: &TestWalletContext) -> &ManagedCoreFundsAccount {
@@ -932,6 +781,7 @@ async fn output_kept_for_a_claim_is_dropped_when_the_claim_is_released() {
 
     ctx.managed_wallet.abandon_transaction(claimant);
 
+    assert_eq!(claim_on(&ctx, &coin), None);
     assert!(second_account(&ctx).claim_guarded_outputs.is_empty());
     ctx.check_transaction(&funding, in_block(90)).await;
     assert!(second_account(&ctx).utxos.contains_key(&coin));
@@ -951,7 +801,8 @@ async fn permanent_claim_outlives_a_recorded_then_abandoned_spender() {
 
     assert_eq!(ctx.managed_wallet.abandon_transaction(spender.txid()).records_removed, 1);
 
-    assert!(second_account(&ctx).is_outpoint_spent(&coin));
+    assert!(!second_account(&ctx).is_outpoint_spent(&coin));
+    assert_eq!(claim_on(&ctx, &coin), Some(None));
     ctx.check_transaction(&funding, in_block(90)).await;
     assert!(!second_account(&ctx).utxos.contains_key(&coin));
 }
@@ -998,89 +849,6 @@ async fn output_kept_for_a_claim_goes_with_its_funding_transaction(abandon: bool
     }
 
     assert!(second_account(&ctx).claim_guarded_outputs.is_empty());
-}
-
-/// A wallet with BIP44 account 0 and the identity registration keys account,
-/// and an address of the latter.
-fn asset_lock_context() -> (TestWalletContext, dashcore::Address) {
-    let wallet =
-        Wallet::from_seed_bytes([42; 64], Network::Testnet, WalletAccountCreationOptions::Default)
-            .unwrap();
-    let mut managed_wallet = ManagedWalletInfo::from_wallet(&wallet, 0);
-    let xpub = wallet.accounts.standard_bip44_accounts[&0].account_xpub;
-    let receive_address = managed_wallet
-        .first_bip44_managed_account_mut()
-        .unwrap()
-        .next_receive_address(Some(&xpub), true)
-        .unwrap();
-    let identity_xpub = wallet.accounts.identity_registration.as_ref().unwrap().account_xpub;
-    let identity_address = managed_wallet
-        .identity_registration_managed_account_mut()
-        .unwrap()
-        .next_address(Some(&identity_xpub), true)
-        .unwrap();
-    (
-        TestWalletContext {
-            wallet,
-            managed_wallet,
-            receive_address,
-            xpub,
-        },
-        identity_address,
-    )
-}
-
-/// An asset lock spending `inputs` and crediting `identity_address`.
-fn asset_lock(inputs: &[OutPoint], identity_address: &dashcore::Address) -> Transaction {
-    let mut tx = spending_tx(inputs);
-    tx.version = 3;
-    tx.special_transaction_payload =
-        Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload {
-            version: 1,
-            credit_outputs: vec![TxOut {
-                value: 100_000,
-                script_pubkey: identity_address.script_pubkey(),
-            }],
-        }));
-    tx
-}
-
-/// An asset lock is recorded in its funding account and in the identity keys
-/// account it pays, and a sweep removes it from the funding account only.
-/// The record left in the keys account must not make the removed lock the
-/// surviving spender of its other input: that coin comes free.
-#[test_case::test_case(false, false; "swept, its mark released")]
-#[test_case::test_case(false, true; "swept, a restored claim naming it")]
-#[test_case::test_case(true, false; "abandoned, its mark released")]
-#[test_case::test_case(true, true; "abandoned, a restored claim naming it")]
-#[tokio::test]
-async fn removed_asset_lock_is_not_the_surviving_spender_of_its_input(
-    abandon: bool,
-    restored: bool,
-) {
-    let (mut ctx, identity_address) = asset_lock_context();
-    let funding = Transaction::dummy(&ctx.receive_address, 20..21, &[150_000]);
-    let coin = OutPoint::new(funding.txid(), 0);
-    let contested = OutPoint::new(Txid::from([0x55; 32]), 0);
-    let lock = asset_lock(&[coin, contested], &identity_address);
-    if restored {
-        ctx.managed_wallet.restore_spent_outpoints(&[(coin, Some(lock.txid()))]);
-    }
-    ctx.check_transaction(&funding, TransactionContext::Mempool).await;
-    ctx.check_transaction(&lock, TransactionContext::Mempool).await;
-    assert!(ctx.bip44_account().has_transaction(&lock.txid()));
-    let identity_account = ctx.managed_wallet.accounts.identity_registration.as_ref().unwrap();
-    assert!(identity_account.has_transaction(&lock.txid()));
-
-    if abandon {
-        assert_eq!(ctx.managed_wallet.abandon_transaction(lock.txid()).records_removed, 2);
-    } else {
-        let result = ctx.check_transaction(&spending_tx(&[contested]), in_block(100)).await;
-        assert_eq!(result.swept_transactions, vec![lock.txid()]);
-        assert_eq!(result.released_outpoints, vec![coin]);
-    }
-
-    assert!(!ctx.bip44_account().is_outpoint_spent(&coin));
 }
 
 /// Create a transaction that spends the given outpoints.

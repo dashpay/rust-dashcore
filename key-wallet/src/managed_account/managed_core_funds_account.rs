@@ -60,21 +60,14 @@ pub struct ManagedCoreFundsAccount {
     /// Rebuilt from `transactions` during deserialization.
     #[cfg_attr(feature = "serde", serde(skip_serializing))]
     spent_outpoints: HashSet<OutPoint>,
-    /// Spent outpoints claimed apart from this account's own records, each
-    /// with the transaction named as its spender; `None` guards permanently.
-    /// Restored from external persistence, or inherited when a record
-    /// removed here leaves a live record in another account spending the
-    /// outpoint. Guards on its own, apart from `spent_outpoints`, and is
-    /// reapplied after loading rather than serialized.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    restored_spent_claims: BTreeMap<OutPoint, Option<Txid>>,
     /// Ours, but spent before the funding arrived, so never in `utxos` (#649).
     /// Input matching falls back to these.
     pub(crate) spent_before_funded: BTreeMap<OutPoint, Utxo>,
-    /// Ours, but kept out of `utxos` by a claim alone. Input matching falls
-    /// back to these, so that the spender the claim stands for resolves its
-    /// input when it arrives. Not a guard: an entry goes with its claim, and
-    /// is not serialized.
+    /// Ours, but kept out of `utxos` by a wallet-level spent-output claim
+    /// alone (`ManagedWalletInfo::spent_claims`). Input matching falls back to
+    /// these, so that the spender the claim stands for resolves its input
+    /// when it arrives. Not a guard: an entry goes with its claim, and is not
+    /// serialized.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) claim_guarded_outputs: BTreeMap<OutPoint, Utxo>,
     /// Outpoints reserved by in-flight transaction builds so concurrent builds
@@ -86,16 +79,13 @@ pub struct ManagedCoreFundsAccount {
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct AbandonRemoval {
     /// UTXOs the abandoned transactions had contributed.
     pub utxos: usize,
     /// Transaction records actually dropped — a txid the account never held
     /// removes nothing.
     pub records: usize,
-    /// Outpoints whose mark this account released: inputs of the dropped
-    /// records that none of its surviving records spends.
-    pub released: HashSet<OutPoint>,
 }
 
 /// What [`ManagedCoreFundsAccount::drop_conflicted_transactions`] removed
@@ -121,7 +111,6 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
-            restored_spent_claims: BTreeMap::new(),
             spent_before_funded: BTreeMap::new(),
             claim_guarded_outputs: BTreeMap::new(),
             reservations: ReservationSet::default(),
@@ -151,7 +140,6 @@ impl ManagedCoreFundsAccount {
             balance: WalletCoreBalance::default(),
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
-            restored_spent_claims: BTreeMap::new(),
             spent_before_funded: BTreeMap::new(),
             claim_guarded_outputs: BTreeMap::new(),
             reservations: ReservationSet::default(),
@@ -208,33 +196,16 @@ impl ManagedCoreFundsAccount {
         &mut self.keys
     }
 
-    /// Check if an outpoint must not be credited: a recorded transaction
-    /// spent it, or a restored claim holds it.
+    /// Check if an outpoint was spent by a previously recorded transaction.
     pub(crate) fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
-        self.spent_outpoints.contains(outpoint) || self.restored_spent_claims.contains_key(outpoint)
-    }
-
-    /// Add restored claims, as `ManagedWalletInfo::restore_spent_outpoints`
-    /// documents. Claimants that disagree on an outpoint merge to `None`.
-    pub(crate) fn restore_spent_outpoints(&mut self, outpoints: &[(OutPoint, Option<Txid>)]) {
-        for (outpoint, claimant) in outpoints {
-            self.restored_spent_claims
-                .entry(*outpoint)
-                .and_modify(|held| {
-                    if held != claimant {
-                        *held = None;
-                    }
-                })
-                .or_insert(*claimant);
-            self.keep_recorded_output_for_claim(outpoint);
-        }
+        self.spent_outpoints.contains(outpoint)
     }
 
     /// Fill `claim_guarded_outputs` for a claim restored after its funding:
     /// the account holds the funding transaction's full record, the output
     /// pays one of its addresses, and the outpoint is neither in `utxos` nor
     /// marked by a record of this account.
-    fn keep_recorded_output_for_claim(&mut self, outpoint: &OutPoint) {
+    pub(crate) fn keep_recorded_output_for_claim(&mut self, outpoint: &OutPoint) {
         if self.utxos.contains_key(outpoint) || self.spent_outpoints.contains(outpoint) {
             return;
         }
@@ -260,67 +231,6 @@ impl ManagedCoreFundsAccount {
         self.claim_guarded_outputs.insert(*outpoint, utxo);
     }
 
-    /// Whether a restored claim names one of `removed` as its claimant.
-    pub(crate) fn has_restored_claim_of(&self, removed: &BTreeSet<Txid>) -> bool {
-        self.restored_spent_claims
-            .values()
-            .any(|claimant| claimant.is_some_and(|txid| removed.contains(&txid)))
-    }
-
-    /// Make the restored claims on the inputs of `tx` permanent (`None`),
-    /// whoever their claimant is: `tx` is final, so those outpoints are
-    /// spent for good and removing the old claimant must not release them.
-    pub(crate) fn settle_restored_claims_spent_by(&mut self, tx: &Transaction) {
-        for input in &tx.input {
-            if let Some(claimant) = self.restored_spent_claims.get_mut(&input.previous_output) {
-                *claimant = None;
-            }
-        }
-    }
-
-    /// Claim each outpoint for the live record still spending it, unless
-    /// this account already guards it.
-    pub(crate) fn inherit_spent_claims(&mut self, still_spent: &[(OutPoint, Txid)]) {
-        for (outpoint, spender) in still_spent {
-            if !self.is_outpoint_spent(outpoint) {
-                self.restored_spent_claims.insert(*outpoint, Some(*spender));
-            }
-        }
-    }
-
-    /// Settle every restored claim whose claimant is in `removed`:
-    ///
-    /// * outpoint in `live_spenders` — a live record somewhere in the wallet
-    ///   still spends it, so that record becomes the claimant;
-    /// * otherwise the claim is dropped, together with the output kept for
-    ///   it, and the outpoint returned.
-    ///
-    /// Never touches `spent_outpoints`, so a mark this account derived from
-    /// its own records — above all one whose ChainLocked record is pruned
-    /// to its txid — keeps guarding a returned outpoint.
-    pub(crate) fn release_restored_claims(
-        &mut self,
-        removed: &BTreeSet<Txid>,
-        live_spenders: &HashMap<OutPoint, Txid>,
-    ) -> Vec<OutPoint> {
-        let mut released = Vec::new();
-        self.restored_spent_claims.retain(|outpoint, claimant| {
-            if !claimant.is_some_and(|txid| removed.contains(&txid)) {
-                return true;
-            }
-            let Some(survivor) = live_spenders.get(outpoint) else {
-                released.push(*outpoint);
-                return false;
-            };
-            *claimant = Some(*survivor);
-            true
-        });
-        for outpoint in &released {
-            self.claim_guarded_outputs.remove(outpoint);
-        }
-        released
-    }
-
     /// Collect the outpoints among `tx`'s inputs that this account holds as a
     /// final UTXO — confirmed, InstantSend-locked, or trusted.
     ///
@@ -343,6 +253,10 @@ impl ManagedCoreFundsAccount {
     /// Skips any output whose outpoint is already in `observed_spent` — it is
     /// spent on-chain (dashpay/rust-dashcore#649), so the record stays consistent.
     ///
+    /// `spent_claims` is the wallet-level `ManagedWalletInfo::spent_claims`
+    /// view: an output it names is kept in `claim_guarded_outputs` instead of
+    /// being credited, unless the account already holds it as a UTXO.
+    ///
     /// `external_final_parents` carries the wallet-level view of the inputs:
     /// outpoints that a *sibling* account of the same wallet holds as final.
     /// See [`Self::record_transaction`] for why a per-account view is not
@@ -353,6 +267,7 @@ impl ManagedCoreFundsAccount {
         account_match: &AccountMatch,
         context: TransactionContext,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) {
         // Update UTXOs only for spendable account types
@@ -451,7 +366,7 @@ impl ManagedCoreFundsAccount {
                             // TODO: This is mostly needed for wallet rescan from storage with the
                             //       there is a timing issue with event processing which might lead to
                             //       invalid UTXO set / balances. There might be a way around it.
-                            if self.spent_outpoints.contains(&outpoint) {
+                            if self.is_outpoint_spent(&outpoint) {
                                 tracing::debug!(
                                     outpoint = %outpoint,
                                     "Skipping UTXO already spent by previously processed transaction"
@@ -486,24 +401,25 @@ impl ManagedCoreFundsAccount {
                             // Held back by a claim alone, so its spender is still to be
                             // recorded: keep the output to resolve that input. Checked
                             // after the observed spends, whose replay of the spending
-                            // block depends on `spent_before_funded`.
-                            if self.restored_spent_claims.contains_key(&outpoint) {
+                            // block depends on `spent_before_funded`. A coin already
+                            // held is past guarding and goes on following its funding.
+                            if spent_claims.contains_key(&outpoint)
+                                && !self.utxos.contains_key(&outpoint)
+                            {
                                 tracing::debug!(
                                     outpoint = %outpoint,
                                     "Skipping UTXO guarded by a spent-output claim"
                                 );
-                                if !self.utxos.contains_key(&outpoint) {
-                                    self.claim_guarded_outputs.insert(
+                                self.claim_guarded_outputs.insert(
+                                    outpoint,
+                                    Utxo::new(
                                         outpoint,
-                                        Utxo::new(
-                                            outpoint,
-                                            output.clone(),
-                                            addr.clone(),
-                                            context.block_info().map_or(0, |i| i.height),
-                                            tx.is_coin_base(),
-                                        ),
-                                    );
-                                }
+                                        output.clone(),
+                                        addr.clone(),
+                                        context.block_info().map_or(0, |i| i.height),
+                                        tx.is_coin_base(),
+                                    ),
+                                );
                                 continue;
                             }
 
@@ -592,11 +508,6 @@ impl ManagedCoreFundsAccount {
     /// `spent_outpoints` itself, so a caller that needs to tell a
     /// persistence mirror which coins are genuinely free again has to catch
     /// it here or not at all.
-    ///
-    /// Neither restored claims nor other accounts are consulted: a claim may
-    /// still guard a returned outpoint, and a live record in another account
-    /// may still spend it. `ManagedWalletInfo` settles both wallet-wide, in
-    /// `release_restored_claims` and `inherit_spent_claims`.
     fn release_spent_marks(&mut self, freed: &HashSet<OutPoint>) -> HashSet<OutPoint> {
         if freed.is_empty() {
             return HashSet::new();
@@ -654,7 +565,9 @@ impl ManagedCoreFundsAccount {
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
         }
-        let released = self.release_spent_marks(&freed);
+        if records > 0 {
+            self.release_spent_marks(&freed);
+        }
 
         if utxos > 0 {
             self.keys.bump_monitor_revision();
@@ -662,7 +575,6 @@ impl ManagedCoreFundsAccount {
         AbandonRemoval {
             utxos,
             records,
-            released,
         }
     }
 
@@ -872,6 +784,7 @@ impl ManagedCoreFundsAccount {
     ///   immutable; further events are redundant), or
     /// - the existing record's context already matches and confirmation
     ///   status didn't change.
+    #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
@@ -879,6 +792,7 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> Option<TransactionRecord> {
         let txid = tx.txid();
@@ -898,6 +812,7 @@ impl ManagedCoreFundsAccount {
                 context,
                 transaction_type,
                 observed_spent,
+                spent_claims,
                 external_final_parents,
             );
             return Some(record);
@@ -938,7 +853,14 @@ impl ManagedCoreFundsAccount {
         // chainlock catches up.
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        self.update_utxos(
+            tx,
+            account_match,
+            context,
+            observed_spent,
+            spent_claims,
+            external_final_parents,
+        );
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -962,6 +884,7 @@ impl ManagedCoreFundsAccount {
     /// under `unconfirmed` merely because the sibling account's UTXOs are
     /// invisible from here. Callers driving a single account directly pass an
     /// empty set and get the account-local behavior.
+    #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -969,6 +892,7 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
@@ -1073,7 +997,14 @@ impl ManagedCoreFundsAccount {
         // feature is on (we want to keep the full record).
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        self.update_utxos(
+            tx,
+            account_match,
+            context,
+            observed_spent,
+            spent_claims,
+            external_final_parents,
+        );
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -1483,7 +1414,6 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             balance: helper.balance,
             utxos: helper.utxos,
             spent_outpoints,
-            restored_spent_claims: BTreeMap::new(),
             spent_before_funded: helper.spent_before_funded,
             claim_guarded_outputs: BTreeMap::new(),
             reservations: ReservationSet::default(),
