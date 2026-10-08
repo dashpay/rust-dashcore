@@ -63,7 +63,6 @@ pub enum ProTxVersion {
 /// It must be signed by the operator's key that was set either at registration or by the last
 /// registrar update of the masternode.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateServicePayload {
     pub version: u16,
     pub mn_type: Option<u16>, // Only present from BasicBLS version (2)
@@ -267,7 +266,7 @@ impl Decodable for ProviderUpdateServicePayload {
 
 /// The `u128` the pre-v3 bincode layout stored the service ip as: its little-endian bytes are
 /// the 16 IPv6 octets in network order, IPv4 addresses mapped.
-#[cfg(feature = "bincode")]
+#[cfg(any(feature = "bincode", feature = "serde"))]
 fn legacy_ip_bits(addr: &SocketAddr) -> u128 {
     let octets = match addr.ip() {
         std::net::IpAddr::V4(v4) => v4.to_ipv6_mapped().octets(),
@@ -277,7 +276,7 @@ fn legacy_ip_bits(addr: &SocketAddr) -> u128 {
 }
 
 /// Inverse of [`legacy_ip_bits`].
-#[cfg(feature = "bincode")]
+#[cfg(any(feature = "bincode", feature = "serde"))]
 fn legacy_socket_addr(ip_bits: u128, port: u16) -> SocketAddr {
     let v6 = std::net::Ipv6Addr::from(ip_bits.to_le_bytes());
     match v6.to_ipv4_mapped() {
@@ -349,6 +348,177 @@ impl<C> bincode::Decode<C> for ProviderUpdateServicePayload {
 
 #[cfg(feature = "bincode")]
 bincode::impl_borrow_decode!(ProviderUpdateServicePayload);
+
+// Same shape as the earlier derived impl before version 3: the service as an ip `u128` and a
+// port. Version 3 writes `service_address` (the extended addresses) in their place. Payloads
+// persisted through binary serde before this field changed keep decoding.
+#[cfg(feature = "serde")]
+impl serde::Serialize for ProviderUpdateServicePayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeStruct};
+
+        let ext_addr = self.is_ext_addr();
+        let len = if ext_addr {
+            10
+        } else {
+            11
+        };
+        let mut state = serializer.serialize_struct("ProviderUpdateServicePayload", len)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("mn_type", &self.mn_type)?;
+        state.serialize_field("pro_tx_hash", &self.pro_tx_hash)?;
+        match (ext_addr, &self.service_address) {
+            (false, MasternodeNetInfo::Legacy(addr)) => {
+                state.serialize_field("ip_address", &legacy_ip_bits(addr))?;
+                state.serialize_field("port", &addr.port())?;
+            }
+            (true, MasternodeNetInfo::Extended(info)) => {
+                state.serialize_field("service_address", info)?;
+            }
+            _ => {
+                return Err(S::Error::custom("service_address does not match the payload version"));
+            }
+        }
+        state.serialize_field("script_payout", &self.script_payout)?;
+        state.serialize_field("inputs_hash", &self.inputs_hash)?;
+        state.serialize_field("platform_node_id", &self.platform_node_id)?;
+        state.serialize_field("platform_p2p_port", &self.platform_p2p_port)?;
+        state.serialize_field("platform_http_port", &self.platform_http_port)?;
+        state.serialize_field("payload_sig", &self.payload_sig)?;
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ProviderUpdateServicePayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use core::fmt;
+
+        use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+        const FIELDS: &[&str] = &[
+            "version",
+            "mn_type",
+            "pro_tx_hash",
+            "ip_address",
+            "port",
+            "script_payout",
+            "inputs_hash",
+            "platform_node_id",
+            "platform_p2p_port",
+            "platform_http_port",
+            "payload_sig",
+            "service_address",
+        ];
+
+        struct PayloadVisitor;
+
+        impl<'de> Visitor<'de> for PayloadVisitor {
+            type Value = ProviderUpdateServicePayload;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a provider update service payload")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut index = 0;
+                macro_rules! next {
+                    () => {{
+                        let value = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(index, &self))?;
+                        #[allow(unused_assignments)]
+                        {
+                            index += 1;
+                        }
+                        value
+                    }};
+                }
+                let version: u16 = next!();
+                let mn_type = next!();
+                let pro_tx_hash = next!();
+                let service_address = if version >= ProTxVersion::ExtAddr as u16 {
+                    MasternodeNetInfo::Extended(next!())
+                } else {
+                    let ip_bits: u128 = next!();
+                    MasternodeNetInfo::Legacy(legacy_socket_addr(ip_bits, next!()))
+                };
+                Ok(ProviderUpdateServicePayload {
+                    version,
+                    mn_type,
+                    pro_tx_hash,
+                    service_address,
+                    script_payout: next!(),
+                    inputs_hash: next!(),
+                    platform_node_id: next!(),
+                    platform_p2p_port: next!(),
+                    platform_http_port: next!(),
+                    payload_sig: next!(),
+                })
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut version = None;
+                let mut mn_type = None;
+                let mut pro_tx_hash = None;
+                let mut ip_address: Option<u128> = None;
+                let mut port: Option<u16> = None;
+                let mut service_address = None;
+                let mut script_payout = None;
+                let mut inputs_hash = None;
+                let mut platform_node_id = None;
+                let mut platform_p2p_port = None;
+                let mut platform_http_port = None;
+                let mut payload_sig = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "version" => version = Some(map.next_value()?),
+                        "mn_type" => mn_type = map.next_value()?,
+                        "pro_tx_hash" => pro_tx_hash = Some(map.next_value()?),
+                        "ip_address" => ip_address = Some(map.next_value()?),
+                        "port" => port = Some(map.next_value()?),
+                        "service_address" => service_address = Some(map.next_value()?),
+                        "script_payout" => script_payout = Some(map.next_value()?),
+                        "inputs_hash" => inputs_hash = Some(map.next_value()?),
+                        "platform_node_id" => platform_node_id = map.next_value()?,
+                        "platform_p2p_port" => platform_p2p_port = map.next_value()?,
+                        "platform_http_port" => platform_http_port = map.next_value()?,
+                        "payload_sig" => payload_sig = Some(map.next_value()?),
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                let service_address = match (service_address, ip_address, port) {
+                    (Some(info), _, _) => MasternodeNetInfo::Extended(info),
+                    (None, Some(ip_bits), Some(port)) => {
+                        MasternodeNetInfo::Legacy(legacy_socket_addr(ip_bits, port))
+                    }
+                    (None, None, _) => return Err(de::Error::missing_field("ip_address")),
+                    (None, Some(_), None) => return Err(de::Error::missing_field("port")),
+                };
+                Ok(ProviderUpdateServicePayload {
+                    version: version.ok_or_else(|| de::Error::missing_field("version"))?,
+                    mn_type,
+                    pro_tx_hash: pro_tx_hash
+                        .ok_or_else(|| de::Error::missing_field("pro_tx_hash"))?,
+                    service_address,
+                    script_payout: script_payout
+                        .ok_or_else(|| de::Error::missing_field("script_payout"))?,
+                    inputs_hash: inputs_hash
+                        .ok_or_else(|| de::Error::missing_field("inputs_hash"))?,
+                    platform_node_id,
+                    platform_p2p_port,
+                    platform_http_port,
+                    payload_sig: payload_sig
+                        .ok_or_else(|| de::Error::missing_field("payload_sig"))?,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("ProviderUpdateServicePayload", FIELDS, PayloadVisitor)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -912,5 +1082,99 @@ mod tests {
             MasternodeNetInfo::Legacy(SocketAddr::from(([52, 36, 64, 148], 19999)))
         );
         assert_eq!(bincode::encode_to_vec(&decoded, bincode::config::standard()).unwrap(), bytes);
+    }
+
+    /// The shape `ProviderUpdateServicePayload` had with derived serde before version 3.
+    #[cfg(feature = "serde")]
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct PreV3ProviderUpdateServicePayload {
+        version: u16,
+        mn_type: Option<u16>,
+        pro_tx_hash: Txid,
+        ip_address: u128,
+        port: u16,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        platform_node_id: Option<PlatformNodeId>,
+        platform_p2p_port: Option<u16>,
+        platform_http_port: Option<u16>,
+        payload_sig: BLSSignature,
+    }
+
+    /// A v2 Evo payload at 52.36.64.148:19999 and its pre-v3 derived shape.
+    #[cfg(feature = "serde")]
+    fn v2_payloads() -> (ProviderUpdateServicePayload, PreV3ProviderUpdateServicePayload) {
+        let node_id = Some(PlatformNodeId::from_bytes([7; 20]));
+        let payload = ProviderUpdateServicePayload {
+            version: 2,
+            mn_type: Some(1),
+            pro_tx_hash: Txid::from_byte_array([1; 32]),
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from((
+                [52, 36, 64, 148],
+                19999,
+            ))),
+            script_payout: ScriptBuf::from(vec![0xaa; 4]),
+            inputs_hash: InputsHash::from_byte_array([2; 32]),
+            platform_node_id: node_id,
+            platform_p2p_port: Some(26656),
+            platform_http_port: Some(443),
+            payload_sig: BLSSignature::from([3; 96]),
+        };
+        let mut octets = [0u8; 16];
+        octets[10..12].copy_from_slice(&[0xff, 0xff]);
+        octets[12..].copy_from_slice(&[52, 36, 64, 148]);
+        let pre_v3 = PreV3ProviderUpdateServicePayload {
+            version: 2,
+            mn_type: Some(1),
+            pro_tx_hash: payload.pro_tx_hash,
+            ip_address: u128::from_le_bytes(octets),
+            port: 19999,
+            script_payout: payload.script_payout.clone(),
+            inputs_hash: payload.inputs_hash,
+            platform_node_id: node_id,
+            platform_p2p_port: Some(26656),
+            platform_http_port: Some(443),
+            payload_sig: BLSSignature::from([3; 96]),
+        };
+        (payload, pre_v3)
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn binary_serde_keeps_the_pre_v3_shape_before_version_3() {
+        let (payload, pre_v3) = v2_payloads();
+        let config = bincode::config::standard();
+        let old_bytes = bincode::serde::encode_to_vec(&pre_v3, config).unwrap();
+        assert_eq!(bincode::serde::encode_to_vec(&payload, config).unwrap(), old_bytes);
+        let (decoded, read): (ProviderUpdateServicePayload, usize) =
+            bincode::serde::decode_from_slice(&old_bytes, config).unwrap();
+        assert_eq!((decoded, read), (payload, old_bytes.len()));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn json_keeps_the_pre_v3_shape_before_version_3() {
+        // As a string: `serde_json::Value` can't hold the `u128` ip.
+        let (payload, pre_v3) = v2_payloads();
+        let old_json = serde_json::to_string(&pre_v3).unwrap();
+        assert_eq!(serde_json::to_string(&payload).unwrap(), old_json);
+        assert_eq!(
+            serde_json::from_str::<ProviderUpdateServicePayload>(&old_json).unwrap(),
+            payload
+        );
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn serde_round_trips_the_extended_addresses_at_version_3() {
+        let payload = v3_payload(1, Some(PlatformNodeId::from_bytes([7; 20])));
+        let config = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(&payload, config).unwrap();
+        let (decoded, read): (ProviderUpdateServicePayload, usize) =
+            bincode::serde::decode_from_slice(&bytes, config).unwrap();
+        assert_eq!((decoded, read), (payload.clone(), bytes.len()));
+
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(serde_json::from_value::<ProviderUpdateServicePayload>(json).unwrap(), payload);
     }
 }

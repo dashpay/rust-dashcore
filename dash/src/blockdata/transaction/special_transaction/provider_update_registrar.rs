@@ -46,7 +46,6 @@ use crate::{ScriptBuf, VarInt, io};
 /// This is used to update the base aspects a Masternode on the network.
 /// It must be signed by the owner's key that was set at registration.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateRegistrarPayload {
     pub version: u16,
     pub pro_tx_hash: Txid,
@@ -228,6 +227,140 @@ impl<C> bincode::Decode<C> for ProviderUpdateRegistrarPayload {
 
 #[cfg(feature = "bincode")]
 bincode::impl_borrow_decode!(ProviderUpdateRegistrarPayload);
+
+// Same shape as the earlier derived impl, with `payouts` only from version 3, so payloads
+// persisted through binary serde before the field existed keep decoding.
+#[cfg(feature = "serde")]
+impl serde::Serialize for ProviderUpdateRegistrarPayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let ext_addr = self.is_ext_addr();
+        let len = if ext_addr {
+            9
+        } else {
+            8
+        };
+        let mut state = serializer.serialize_struct("ProviderUpdateRegistrarPayload", len)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("pro_tx_hash", &self.pro_tx_hash)?;
+        state.serialize_field("provider_mode", &self.provider_mode)?;
+        state.serialize_field("operator_public_key", &self.operator_public_key)?;
+        state.serialize_field("voting_key_hash", &self.voting_key_hash)?;
+        state.serialize_field("script_payout", &self.script_payout)?;
+        state.serialize_field("inputs_hash", &self.inputs_hash)?;
+        state.serialize_field("payload_sig", &self.payload_sig)?;
+        if ext_addr {
+            state.serialize_field("payouts", &self.payouts)?;
+        }
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ProviderUpdateRegistrarPayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use core::fmt;
+
+        use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+        const FIELDS: &[&str] = &[
+            "version",
+            "pro_tx_hash",
+            "provider_mode",
+            "operator_public_key",
+            "voting_key_hash",
+            "script_payout",
+            "inputs_hash",
+            "payload_sig",
+            "payouts",
+        ];
+
+        struct PayloadVisitor;
+
+        impl<'de> Visitor<'de> for PayloadVisitor {
+            type Value = ProviderUpdateRegistrarPayload;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a provider update registrar payload")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                macro_rules! next {
+                    ($index:expr) => {
+                        seq.next_element()?
+                            .ok_or_else(|| de::Error::invalid_length($index, &self))?
+                    };
+                }
+                let version: u16 = next!(0);
+                Ok(ProviderUpdateRegistrarPayload {
+                    version,
+                    pro_tx_hash: next!(1),
+                    provider_mode: next!(2),
+                    operator_public_key: next!(3),
+                    voting_key_hash: next!(4),
+                    script_payout: next!(5),
+                    inputs_hash: next!(6),
+                    payload_sig: next!(7),
+                    // Read only from version 3: earlier payloads were written without it.
+                    payouts: if version >= ProTxVersion::ExtAddr as u16 {
+                        next!(8)
+                    } else {
+                        None
+                    },
+                })
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut version = None;
+                let mut pro_tx_hash = None;
+                let mut provider_mode = None;
+                let mut operator_public_key = None;
+                let mut voting_key_hash = None;
+                let mut script_payout = None;
+                let mut inputs_hash = None;
+                let mut payload_sig = None;
+                let mut payouts = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "version" => version = Some(map.next_value()?),
+                        "pro_tx_hash" => pro_tx_hash = Some(map.next_value()?),
+                        "provider_mode" => provider_mode = Some(map.next_value()?),
+                        "operator_public_key" => operator_public_key = Some(map.next_value()?),
+                        "voting_key_hash" => voting_key_hash = Some(map.next_value()?),
+                        "script_payout" => script_payout = Some(map.next_value()?),
+                        "inputs_hash" => inputs_hash = Some(map.next_value()?),
+                        "payload_sig" => payload_sig = Some(map.next_value()?),
+                        "payouts" => payouts = map.next_value()?,
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(ProviderUpdateRegistrarPayload {
+                    version: version.ok_or_else(|| de::Error::missing_field("version"))?,
+                    pro_tx_hash: pro_tx_hash
+                        .ok_or_else(|| de::Error::missing_field("pro_tx_hash"))?,
+                    provider_mode: provider_mode
+                        .ok_or_else(|| de::Error::missing_field("provider_mode"))?,
+                    operator_public_key: operator_public_key
+                        .ok_or_else(|| de::Error::missing_field("operator_public_key"))?,
+                    voting_key_hash: voting_key_hash
+                        .ok_or_else(|| de::Error::missing_field("voting_key_hash"))?,
+                    script_payout: script_payout
+                        .ok_or_else(|| de::Error::missing_field("script_payout"))?,
+                    inputs_hash: inputs_hash
+                        .ok_or_else(|| de::Error::missing_field("inputs_hash"))?,
+                    payload_sig: payload_sig
+                        .ok_or_else(|| de::Error::missing_field("payload_sig"))?,
+                    payouts,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("ProviderUpdateRegistrarPayload", FIELDS, PayloadVisitor)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -485,5 +618,81 @@ mod tests {
         v3_payload().consensus_encode(&mut encoded).unwrap();
         encoded[..2].copy_from_slice(&version.to_le_bytes());
         assert!(ProviderUpdateRegistrarPayload::consensus_decode(&mut &encoded[..]).is_err());
+    }
+
+    /// The shape `ProviderUpdateRegistrarPayload` had with derived serde before version 3.
+    #[cfg(feature = "serde")]
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct PreV3ProviderUpdateRegistrarPayload {
+        version: u16,
+        pro_tx_hash: Txid,
+        provider_mode: u16,
+        operator_public_key: BLSPublicKey,
+        voting_key_hash: PubkeyHash,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        payload_sig: Vec<u8>,
+    }
+
+    #[cfg(feature = "serde")]
+    fn v2_payloads() -> (ProviderUpdateRegistrarPayload, PreV3ProviderUpdateRegistrarPayload) {
+        let payload = ProviderUpdateRegistrarPayload {
+            version: 2,
+            script_payout: ScriptBuf::from(vec![0xaa; 25]),
+            payouts: None,
+            ..v3_payload()
+        };
+        let pre_v3 = PreV3ProviderUpdateRegistrarPayload {
+            version: 2,
+            pro_tx_hash: payload.pro_tx_hash,
+            provider_mode: payload.provider_mode,
+            operator_public_key: payload.operator_public_key,
+            voting_key_hash: payload.voting_key_hash,
+            script_payout: payload.script_payout.clone(),
+            inputs_hash: payload.inputs_hash,
+            payload_sig: payload.payload_sig.clone(),
+        };
+        (payload, pre_v3)
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn binary_serde_keeps_the_pre_v3_shape_before_version_3() {
+        let (payload, pre_v3) = v2_payloads();
+        let config = bincode::config::standard();
+        let old_bytes = bincode::serde::encode_to_vec(&pre_v3, config).unwrap();
+        assert_eq!(bincode::serde::encode_to_vec(&payload, config).unwrap(), old_bytes);
+        let (decoded, read): (ProviderUpdateRegistrarPayload, usize) =
+            bincode::serde::decode_from_slice(&old_bytes, config).unwrap();
+        assert_eq!((decoded, read), (payload, old_bytes.len()));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn json_keeps_the_pre_v3_shape_before_version_3() {
+        let (payload, pre_v3) = v2_payloads();
+        let old_json = serde_json::to_value(&pre_v3).unwrap();
+        assert_eq!(serde_json::to_value(&payload).unwrap(), old_json);
+        assert_eq!(
+            serde_json::from_value::<ProviderUpdateRegistrarPayload>(old_json).unwrap(),
+            payload
+        );
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn serde_round_trips_the_payouts_at_version_3() {
+        let payload = v3_payload();
+        let config = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(&payload, config).unwrap();
+        let (decoded, read): (ProviderUpdateRegistrarPayload, usize) =
+            bincode::serde::decode_from_slice(&bytes, config).unwrap();
+        assert_eq!((decoded, read), (payload.clone(), bytes.len()));
+
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(
+            serde_json::from_value::<ProviderUpdateRegistrarPayload>(json).unwrap(),
+            payload
+        );
     }
 }
