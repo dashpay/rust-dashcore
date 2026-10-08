@@ -34,6 +34,8 @@
 //!
 //! The special transaction type used for ProUpServTx Transactions is 2.
 
+use std::net::SocketAddr;
+
 use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -42,6 +44,7 @@ use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, SpecialTransactionPayloadHash, Txid};
 use crate::platform_node_id::PlatformNodeId;
+use crate::sml::masternode_list_entry::MasternodeNetInfo;
 use crate::sml::masternode_list_entry::net_info::ExtNetInfo;
 use crate::{ScriptBuf, VarInt, io};
 
@@ -65,23 +68,20 @@ pub struct ProviderUpdateServicePayload {
     pub version: u16,
     pub mn_type: Option<u16>, // Only present from BasicBLS version (2)
     pub pro_tx_hash: Txid,
-    /// Service address before version 3, zero from version 3 (see `net_info`).
-    pub ip_address: u128,
-    /// Service port before version 3, zero from version 3 (see `net_info`).
-    pub port: u16,
+    /// The service address: [`MasternodeNetInfo::Legacy`] before version 3,
+    /// [`MasternodeNetInfo::Extended`] from version 3.
+    pub service_address: MasternodeNetInfo,
     pub script_payout: ScriptBuf,
     pub inputs_hash: InputsHash,
     // Platform fields (only from BasicBLS version and Evo masternode type).
     // The node ID is a Tenderdash/CometBFT node ID (SHA256 of the ed25519
     // public key truncated to 20 bytes), not a hash160 public key hash.
     pub platform_node_id: Option<PlatformNodeId>,
-    /// Only before version 3; from version 3 the platform ports are in `net_info`.
+    /// Only before version 3; from version 3 the platform ports are in `service_address`.
     pub platform_p2p_port: Option<u16>,
-    /// Only before version 3; from version 3 the platform ports are in `net_info`.
+    /// Only before version 3; from version 3 the platform ports are in `service_address`.
     pub platform_http_port: Option<u16>,
     pub payload_sig: BLSSignature,
-    /// Extended service addresses, present from version 3 in place of `ip_address`/`port`.
-    pub net_info: Option<ExtNetInfo>,
 }
 
 impl ProviderUpdateServicePayload {
@@ -93,8 +93,7 @@ impl ProviderUpdateServicePayload {
     pub fn new(
         mn_type: Option<u16>,
         pro_tx_hash: Txid,
-        ip_address: u128,
-        port: u16,
+        service_address: SocketAddr,
         script_payout: ScriptBuf,
         inputs_hash: InputsHash,
         platform_node_id: Option<PlatformNodeId>,
@@ -106,15 +105,13 @@ impl ProviderUpdateServicePayload {
             version: Self::CURRENT_VERSION,
             mn_type,
             pro_tx_hash,
-            ip_address,
-            port,
+            service_address: MasternodeNetInfo::Legacy(service_address),
             script_payout,
             inputs_hash,
             platform_node_id,
             platform_p2p_port,
             platform_http_port,
             payload_sig,
-            net_info: None,
         }
     }
 
@@ -132,18 +129,17 @@ impl ProviderUpdateServicePayload {
         let mut size = 2 + 32 + 32 + 96; // version + pro_tx_hash + inputs_hash + payload_sig
         size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();
 
-        if self.is_ext_addr() {
-            size += self.net_info.as_ref().map_or(0, ExtNetInfo::size);
-        } else {
-            size += 16 + 2; // ip_address + port
-        }
+        size += match &self.service_address {
+            MasternodeNetInfo::Legacy(_) => 16 + 2, // ip + port
+            MasternodeNetInfo::Extended(info) => info.size(),
+        };
 
         // Additional fields from BasicBLS version (v2+)
         if self.version >= ProTxVersion::BasicBLS as u16 {
             size += 2; // mn_type
         }
 
-        // Platform fields for Evo masternodes; the ports moved to `net_info` in v3
+        // Platform fields for Evo masternodes; the ports moved to `service_address` in v3
         if self.is_evo() {
             size += 20; // platform_node_id
             if !self.is_ext_addr() {
@@ -166,15 +162,16 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
         }
 
         len += self.pro_tx_hash.consensus_encode(&mut s)?;
-        if self.is_ext_addr() {
-            let Some(net_info) = &self.net_info else {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "net_info is not set"));
-            };
-            len += net_info.consensus_encode_ext(&mut s)?;
-        } else {
-            len += self.ip_address.consensus_encode(&mut s)?;
-            len += u16::swap_bytes(self.port).consensus_encode(&mut s)?;
-        }
+        len += match (self.is_ext_addr(), &self.service_address) {
+            (false, MasternodeNetInfo::Legacy(addr)) => addr.consensus_encode(&mut s)?,
+            (true, MasternodeNetInfo::Extended(info)) => info.consensus_encode_ext(&mut s)?,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "service_address does not match the payload version",
+                ));
+            }
+        };
         len += self.script_payout.consensus_encode(&mut s)?;
         len += self.inputs_hash.consensus_encode(&mut s)?;
 
@@ -225,17 +222,15 @@ impl Decodable for ProviderUpdateServicePayload {
 
         // Read core fields
         let pro_tx_hash = Txid::consensus_decode(r)?;
-        let (ip_address, port, net_info) = if is_ext_addr {
-            (0, 0, Some(ExtNetInfo::consensus_decode_ext(r)?))
+        let service_address = if is_ext_addr {
+            MasternodeNetInfo::Extended(ExtNetInfo::consensus_decode_ext(r)?)
         } else {
-            let ip_address = u128::consensus_decode(r)?;
-            let port = u16::swap_bytes(u16::consensus_decode(r)?);
-            (ip_address, port, None)
+            MasternodeNetInfo::Legacy(SocketAddr::consensus_decode(r)?)
         };
         let script_payout = ScriptBuf::consensus_decode(r)?;
         let inputs_hash = InputsHash::consensus_decode(r)?;
 
-        // Read Evo platform fields if needed; the ports moved to `net_info` in v3
+        // Read Evo platform fields if needed; the ports moved to `service_address` in v3
         let (platform_node_id, platform_p2p_port, platform_http_port) = if version
             >= ProTxVersion::BasicBLS as u16
             && mn_type == Some(ProviderMasternodeType::HighPerformance as u16)
@@ -259,21 +254,40 @@ impl Decodable for ProviderUpdateServicePayload {
             version,
             mn_type,
             pro_tx_hash,
-            ip_address,
-            port,
+            service_address,
             script_payout,
             inputs_hash,
             platform_node_id,
             platform_p2p_port,
             platform_http_port,
             payload_sig,
-            net_info,
         })
     }
 }
 
-// Same layout as a derived impl, with `net_info` only from version 3, so payloads persisted
-// before the field existed keep decoding.
+/// The `u128` the pre-v3 bincode layout stored the service ip as: its little-endian bytes are
+/// the 16 IPv6 octets in network order, IPv4 addresses mapped.
+#[cfg(feature = "bincode")]
+fn legacy_ip_bits(addr: &SocketAddr) -> u128 {
+    let octets = match addr.ip() {
+        std::net::IpAddr::V4(v4) => v4.to_ipv6_mapped().octets(),
+        std::net::IpAddr::V6(v6) => v6.octets(),
+    };
+    u128::from_le_bytes(octets)
+}
+
+/// Inverse of [`legacy_ip_bits`].
+#[cfg(feature = "bincode")]
+fn legacy_socket_addr(ip_bits: u128, port: u16) -> SocketAddr {
+    let v6 = std::net::Ipv6Addr::from(ip_bits.to_le_bytes());
+    match v6.to_ipv4_mapped() {
+        Some(v4) => SocketAddr::new(v4.into(), port),
+        None => SocketAddr::new(v6.into(), port),
+    }
+}
+
+// Keeps the layout of the earlier derived impl, which stored the service as an ip `u128` and a
+// port: payloads persisted before keep decoding. Version 3 stores the extended addresses there.
 #[cfg(feature = "bincode")]
 impl bincode::Encode for ProviderUpdateServicePayload {
     fn encode<E: bincode::enc::Encoder>(
@@ -283,17 +297,24 @@ impl bincode::Encode for ProviderUpdateServicePayload {
         self.version.encode(encoder)?;
         self.mn_type.encode(encoder)?;
         self.pro_tx_hash.encode(encoder)?;
-        self.ip_address.encode(encoder)?;
-        self.port.encode(encoder)?;
+        match (self.is_ext_addr(), &self.service_address) {
+            (false, MasternodeNetInfo::Legacy(addr)) => {
+                legacy_ip_bits(addr).encode(encoder)?;
+                addr.port().encode(encoder)?;
+            }
+            (true, MasternodeNetInfo::Extended(info)) => info.encode(encoder)?,
+            _ => {
+                return Err(bincode::error::EncodeError::Other(
+                    "service_address does not match the payload version",
+                ));
+            }
+        }
         self.script_payout.encode(encoder)?;
         self.inputs_hash.encode(encoder)?;
         self.platform_node_id.encode(encoder)?;
         self.platform_p2p_port.encode(encoder)?;
         self.platform_http_port.encode(encoder)?;
         self.payload_sig.encode(encoder)?;
-        if self.is_ext_addr() {
-            self.net_info.encode(encoder)?;
-        }
         Ok(())
     }
 }
@@ -310,19 +331,18 @@ impl<C> bincode::Decode<C> for ProviderUpdateServicePayload {
             version,
             mn_type: Decode::decode(decoder)?,
             pro_tx_hash: Decode::decode(decoder)?,
-            ip_address: Decode::decode(decoder)?,
-            port: Decode::decode(decoder)?,
+            service_address: if version >= ProTxVersion::ExtAddr as u16 {
+                MasternodeNetInfo::Extended(Decode::decode(decoder)?)
+            } else {
+                let ip_bits = u128::decode(decoder)?;
+                MasternodeNetInfo::Legacy(legacy_socket_addr(ip_bits, u16::decode(decoder)?))
+            },
             script_payout: Decode::decode(decoder)?,
             inputs_hash: Decode::decode(decoder)?,
             platform_node_id: Decode::decode(decoder)?,
             platform_p2p_port: Decode::decode(decoder)?,
             platform_http_port: Decode::decode(decoder)?,
             payload_sig: Decode::decode(decoder)?,
-            net_info: if version >= ProTxVersion::ExtAddr as u16 {
-                Decode::decode(decoder)?
-            } else {
-                None
-            },
         })
     }
 }
@@ -333,7 +353,7 @@ bincode::impl_borrow_decode!(ProviderUpdateServicePayload);
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, SocketAddr};
 
     use hashes::Hash;
 
@@ -345,6 +365,7 @@ mod tests {
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
     use crate::platform_node_id::PlatformNodeId;
+    use crate::sml::masternode_list_entry::MasternodeNetInfo;
     use crate::sml::masternode_list_entry::net_info::{
         Bip155Network, ExtNetInfo, NetInfoEntry, NetInfoPurpose,
     };
@@ -372,15 +393,13 @@ mod tests {
             version: 3,
             mn_type: Some(mn_type),
             pro_tx_hash: Txid::all_zeros(),
-            ip_address: 0,
-            port: 0,
+            service_address: MasternodeNetInfo::Extended(ext_net_info()),
             script_payout: ScriptBuf::new(),
             inputs_hash: InputsHash::all_zeros(),
             platform_node_id,
             platform_p2p_port: None,
             platform_http_port: None,
             payload_sig: BLSSignature::from([0; 96]),
-            net_info: Some(ext_net_info()),
         }
     }
 
@@ -470,13 +489,11 @@ mod tests {
                 .expect("expected to decode tx id");
         assert_eq!(expected_provider_update_service_payload.pro_tx_hash, pro_tx_hash);
 
-        let address = Ipv4Addr::from_str("52.36.64.148").expect("expected an ipv4 address");
-        let [a, b, c, d] = address.octets();
-        let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
-        assert_eq!(expected_provider_update_service_payload.ip_address.to_le_bytes(), ipv6_bytes);
-
-        let port = 19999;
-        assert_eq!(expected_provider_update_service_payload.port, port);
+        let service_address = MasternodeNetInfo::Legacy(SocketAddr::from((
+            Ipv4Addr::from_str("52.36.64.148").expect("expected an ipv4 address"),
+            19999,
+        )));
+        assert_eq!(expected_provider_update_service_payload.service_address, service_address);
 
         let inputs_hash_hex = "b198a9735b6e2ddf2a4c5e1584ab45487c7ee2eb05b16ff08004a29e795f72e6";
         assert_eq!(
@@ -516,15 +533,13 @@ mod tests {
                     version: provider_update_service_payload_version,
                     mn_type: None, // LegacyBLS version
                     pro_tx_hash,
-                    ip_address: u128::from_le_bytes(ipv6_bytes),
-                    port,
+                    service_address,
                     script_payout,
                     inputs_hash: InputsHash::from_str(inputs_hash_hex).unwrap(),
                     platform_node_id: None,
                     platform_p2p_port: None,
                     platform_http_port: None,
                     payload_sig,
-                    net_info: None,
                 },
             )),
         };
@@ -542,15 +557,13 @@ mod tests {
             version: 1,
             mn_type: None,
             pro_tx_hash: Txid::all_zeros(),
-            ip_address: 0,
-            port: 0,
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([0; 16], 0))),
             script_payout: ScriptBuf::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
             inputs_hash: InputsHash::all_zeros(),
             platform_node_id: None,
             platform_p2p_port: None,
             platform_http_port: None,
             payload_sig: BLSSignature::from([0; 96]),
-            net_info: None,
         };
 
         let mut encoded = Vec::new();
@@ -569,15 +582,13 @@ mod tests {
             version: 2,
             mn_type: Some(0), // Regular
             pro_tx_hash: Txid::all_zeros(),
-            ip_address: 0,
-            port: 0,
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([0; 16], 0))),
             script_payout: ScriptBuf::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
             inputs_hash: InputsHash::all_zeros(),
             platform_node_id: None,
             platform_p2p_port: None,
             platform_http_port: None,
             payload_sig: BLSSignature::from([0; 96]),
-            net_info: None,
         };
 
         let mut encoded = Vec::new();
@@ -596,15 +607,13 @@ mod tests {
             version: 2,
             mn_type: Some(1), // HighPerformance (Evo)
             pro_tx_hash: Txid::all_zeros(),
-            ip_address: 0,
-            port: 0,
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([0; 16], 0))),
             script_payout: ScriptBuf::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
             inputs_hash: InputsHash::all_zeros(),
             platform_node_id: Some(PlatformNodeId::from_bytes([0; 20])),
             platform_p2p_port: Some(0),
             platform_http_port: Some(0),
             payload_sig: BLSSignature::from([0; 96]),
-            net_info: None,
         };
 
         let mut encoded = Vec::new();
@@ -625,15 +634,13 @@ mod tests {
             version: 2,
             mn_type: Some(1), // HighPerformance (Evo)
             pro_tx_hash: Txid::all_zeros(),
-            ip_address: 0,
-            port: 0,
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([0; 16], 0))),
             script_payout: ScriptBuf::new(),
             inputs_hash: InputsHash::all_zeros(),
             platform_node_id: None,
             platform_p2p_port: None,
             platform_http_port: None,
             payload_sig: BLSSignature::from([0; 96]),
-            net_info: None,
         };
 
         let mut encoded = Vec::new();
@@ -727,7 +734,7 @@ mod tests {
                                     println!("    ✅ Successfully parsed ProUpServTx payload:");
                                     println!("       Version: {}", protx_payload.version);
                                     println!("       ProTxHash: {}", protx_payload.pro_tx_hash);
-                                    println!("       Port: {}", protx_payload.port);
+                                    println!("       Service: {:?}", protx_payload.service_address);
                                     println!(
                                         "       Script length: {}",
                                         protx_payload.script_payout.len()
@@ -863,5 +870,47 @@ mod tests {
                 panic!("❌ Block parsing failed: {}", e);
             }
         }
+    }
+
+    #[test_case::test_case(2, MasternodeNetInfo::Extended(ext_net_info()); "extended before v3")]
+    #[test_case::test_case(3, MasternodeNetInfo::Legacy(SocketAddr::from(([127, 0, 0, 1], 9999))); "legacy at v3")]
+    fn service_address_must_match_the_version(version: u16, service_address: MasternodeNetInfo) {
+        let payload = ProviderUpdateServicePayload {
+            version,
+            service_address,
+            ..v3_payload(0, None)
+        };
+        assert!(payload.consensus_encode(&mut Vec::new()).is_err());
+    }
+
+    #[cfg(feature = "bincode")]
+    #[test]
+    fn bincode_decodes_the_pre_v3_layout() {
+        // The earlier derived impl stored the service as an ip `u128`, whose little-endian bytes
+        // are the IPv6 octets, followed by the port.
+        let mut octets = [0u8; 16];
+        octets[10..12].copy_from_slice(&[0xff, 0xff]);
+        octets[12..].copy_from_slice(&[52, 36, 64, 148]);
+        let old_layout = (
+            2u16,
+            Some(0u16),
+            Txid::all_zeros(),
+            u128::from_le_bytes(octets),
+            19999u16,
+            ScriptBuf::new(),
+            InputsHash::all_zeros(),
+            None::<PlatformNodeId>,
+            None::<u16>,
+            None::<u16>,
+            BLSSignature::from([0; 96]),
+        );
+        let bytes = bincode::encode_to_vec(&old_layout, bincode::config::standard()).unwrap();
+        let (decoded, _): (ProviderUpdateServicePayload, usize) =
+            bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(
+            decoded.service_address,
+            MasternodeNetInfo::Legacy(SocketAddr::from(([52, 36, 64, 148], 19999)))
+        );
+        assert_eq!(bincode::encode_to_vec(&decoded, bincode::config::standard()).unwrap(), bytes);
     }
 }

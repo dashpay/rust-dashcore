@@ -15,7 +15,9 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use dashcore::hashes::Hash;
+use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::Txid;
+use std::net::SocketAddr;
 
 #[test]
 fn test_classify_standard_transaction() {
@@ -108,15 +110,13 @@ fn test_classify_provider_update_service_transaction() {
         version: 1,
         mn_type: None,
         pro_tx_hash: Txid::from_byte_array([1u8; 32]),
-        ip_address: 0x0100007f, // 127.0.0.1 in network byte order
-        port: 19999,
+        service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([127, 0, 0, 1], 19999))),
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         platform_node_id: None,
         platform_p2p_port: None,
         platform_http_port: None,
         payload_sig: BLSSignature::from([0u8; 96]),
-        net_info: None,
     };
     tx.special_transaction_payload =
         Some(TransactionPayload::ProviderUpdateServicePayloadType(payload));

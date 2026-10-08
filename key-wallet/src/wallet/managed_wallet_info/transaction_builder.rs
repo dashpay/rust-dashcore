@@ -2371,8 +2371,7 @@ mod tests {
         TransactionPayload::ProviderUpdateServicePayloadType(ProviderUpdateServicePayload::new(
             Some(0),
             Txid::all_zeros(),
-            0x00000000000000000000ffff7f000001, // 127.0.0.1 mapped
-            19999,
+            std::net::SocketAddr::from(([127, 0, 0, 1], 19999)),
             script_payout,
             InputsHash::all_zeros(),
             None,

@@ -11,6 +11,7 @@ use dashcore::blockdata::transaction::special_transaction::{
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::hash_types::{InputsHash, PubkeyHash};
 use dashcore::hashes::Hash;
+use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{OutPoint, PlatformNodeId, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::net::SocketAddr;
 
@@ -225,17 +226,16 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
                 version: 1,
                 mn_type: None, // LegacyBLS version
                 pro_tx_hash: Txid::from_byte_array([9u8; 32]),
-                ip_address: u128::from_be_bytes([
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 127, 0, 0, 1,
-                ]), // IPv4-mapped IPv6 for 127.0.0.1
-                port: 19999,
+                service_address: MasternodeNetInfo::Legacy(SocketAddr::from((
+                    [127, 0, 0, 1],
+                    19999,
+                ))),
                 script_payout: ScriptBuf::new(),
                 inputs_hash: InputsHash::from_byte_array([10u8; 32]),
                 platform_node_id: Some(PlatformNodeId::from_bytes([12u8; 20])),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(443),
                 payload_sig: BLSSignature::from([11u8; 96]),
-                net_info: None,
             };
             tx.special_transaction_payload =
                 Some(TransactionPayload::ProviderUpdateServicePayloadType(payload));
