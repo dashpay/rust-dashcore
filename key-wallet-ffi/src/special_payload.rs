@@ -153,10 +153,7 @@ impl From<&ProviderRegistrationPayload> for FFIProviderRegistrationPayload {
             script_payout,
             script_payout_len,
             has_platform_fields: p.platform_node_id.is_some(),
-            platform_node_id: p
-                .platform_node_id
-                .map(|id| id.to_canonical_bytes())
-                .unwrap_or([0; 20]),
+            platform_node_id: p.platform_node_id.map(|id| id.to_byte_array()).unwrap_or([0; 20]),
             platform_p2p_port: p.platform_p2p_port.map_or(-1, i32::from),
             platform_http_port: p.platform_http_port.map_or(-1, i32::from),
         }
@@ -226,10 +223,7 @@ impl From<&ProviderUpdateServicePayload> for FFIProviderUpdateServicePayload {
             script_payout,
             script_payout_len,
             has_platform_fields: p.platform_node_id.is_some(),
-            platform_node_id: p
-                .platform_node_id
-                .map(|id| id.to_canonical_bytes())
-                .unwrap_or([0; 20]),
+            platform_node_id: p.platform_node_id.map(|id| id.to_byte_array()).unwrap_or([0; 20]),
             platform_p2p_port: p.platform_p2p_port.map_or(-1, i32::from),
             platform_http_port: p.platform_http_port.map_or(-1, i32::from),
         }
