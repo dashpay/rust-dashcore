@@ -1142,6 +1142,12 @@ mod tests {
     fn unknown_special_transaction_type_without_inputs_is_not_segwit() {
         let tx = unknown_special_tx(vec![]);
         let bytes = serialize(&tx);
+        // No BIP144 marker: the input count (0) and output count (1) follow the version and
+        // type, then straight away the output value.
+        assert_eq!(&bytes[4..6], &[0x00, 0x01]);
+        assert_eq!(&bytes[6..14], &1_000u64.to_le_bytes());
+        assert_eq!(bytes.len(), tx.size());
+
         let decoded: Transaction = deserialize(&bytes).expect("input-less unknown type decodes");
         assert_eq!(decoded, tx);
         assert_eq!(serialize(&decoded), bytes);
