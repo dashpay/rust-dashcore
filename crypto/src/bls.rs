@@ -14,7 +14,9 @@ use dash_pkc::bls::{
     BlsSecretKey as PkcSecretKey, BlsSignature as PkcSignature, Fr,
 };
 use dash_types::{make_bytes, make_sbytes};
-use hex::FromHexError;
+use hex_conservative::DecodeFixedLengthBytesError;
+#[cfg(feature = "bls")]
+use hex_conservative::DisplayHex;
 #[cfg(feature = "bls")]
 use thiserror::Error as ThisError;
 #[cfg(feature = "bls")]
@@ -93,10 +95,8 @@ impl BlsPkBytes {
     }
 
     /// Reads these bytes from a hex string.
-    pub fn from_hex(s: &str) -> Result<Self, FromHexError> {
-        let mut bytes = [0u8; BLS_PK_LEN];
-        hex::decode_to_slice(s, &mut bytes)?;
-        Ok(Self::from_bytes(bytes))
+    pub fn from_hex(s: &str) -> Result<Self, DecodeFixedLengthBytesError> {
+        Ok(Self::from_bytes(hex_conservative::decode_to_array(s)?))
     }
 
     /// Returns `true` when every byte is zero.
@@ -332,10 +332,8 @@ impl BlsSigBytes {
     }
 
     /// Reads these bytes from a hex string.
-    pub fn from_hex(s: &str) -> Result<Self, FromHexError> {
-        let mut bytes = [0u8; BLS_SIG_LEN];
-        hex::decode_to_slice(s, &mut bytes)?;
-        Ok(Self::from_bytes(bytes))
+    pub fn from_hex(s: &str) -> Result<Self, DecodeFixedLengthBytesError> {
+        Ok(Self::from_bytes(hex_conservative::decode_to_array(s)?))
     }
 
     /// Returns `true` when every byte is zero.
@@ -407,7 +405,7 @@ impl BlsSignature {
 
     fn point<S: PkcScheme>(self) -> Result<PkcSignature<S>, BlsError> {
         PkcSignature::<S>::from_bytes(self.bytes.as_bytes())
-            .map_err(|_| BlsError::InvalidSignature(hex::encode(self.bytes.as_bytes())))
+            .map_err(|_| BlsError::InvalidSignature(self.bytes.as_bytes().to_lower_hex_string()))
     }
     fn verify_secure_in<'a, S, I>(
         self,
@@ -439,7 +437,7 @@ impl BlsSignature {
 
 #[cfg(all(test, feature = "bls"))]
 mod tests {
-    use hex_lit::hex;
+    use hex_conservative::hex;
 
     /// Operator public keys from the mainnet quorum at height 2300832.
     const OPERATOR_KEYS: [[u8; 48]; 3] = [
@@ -578,7 +576,7 @@ mod tests {
     mod benchmarks {
         use super::super::*;
         use super::{CHAINLOCK_SIG, OPERATOR_KEYS};
-        use hex_lit::hex;
+        use hex_conservative::hex;
         use std::time::Instant;
 
         #[test]

@@ -99,7 +99,8 @@ impl ChainWork {
         let hex = hex.strip_prefix("0x").unwrap_or(hex);
 
         // Parse hex string to bytes
-        let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex: {}", e))?;
+        let bytes =
+            hex_conservative::decode_to_vec(hex).map_err(|e| format!("Invalid hex: {}", e))?;
 
         if bytes.len() != 32 {
             return Err(format!("Invalid work length: expected 32 bytes, got {}", bytes.len()));

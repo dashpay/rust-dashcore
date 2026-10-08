@@ -7,6 +7,7 @@ mod tests {
     use crate::mnemonic;
     use std::ffi::CString;
 
+    use hex_conservative::DisplayHex;
     use std::ptr;
 
     const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -774,6 +775,6 @@ mod tests {
         };
         assert!(ok, "French phrase must derive a seed");
         assert_eq!(seed_len, 64);
-        assert_eq!(hex::encode(seed), FRENCH_REFERENCE_SEED_HEX);
+        assert_eq!(seed.to_lower_hex_string(), FRENCH_REFERENCE_SEED_HEX);
     }
 }

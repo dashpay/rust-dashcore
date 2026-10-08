@@ -38,6 +38,7 @@ use dashcore_rpc::dashcore_rpc_json::{
 };
 use dashcore_rpc::json::ProTxListType;
 use dashcore_rpc::json::QuorumType::LlmqTest;
+use hex_conservative::DisplayHex;
 
 const FAUCET_WALLET_NAME: &str = "main";
 const TEST_WALLET_NAME: &str = "testwallet";
@@ -454,7 +455,7 @@ fn test_get_block(cl: &Client) {
     let block = cl.get_block(&tip).unwrap();
     let hex = cl.get_block_hex(&tip).unwrap();
     assert_eq!(block, deserialize(&Vec::<u8>::from_hex(&hex).unwrap()).unwrap());
-    assert_eq!(hex, hex::encode(serialize(&block)));
+    assert_eq!(hex, serialize(&block).to_lower_hex_string());
 
     let tip = cl.get_best_block_hash().unwrap();
     let info = cl.get_block_info(&tip).unwrap();
@@ -618,8 +619,8 @@ fn test_get_raw_transaction(cl: &Client) {
         cl.send_to_address(&addr, btc(1), None, None, None, None, None, None, None, None).unwrap();
     let tx = cl.get_raw_transaction(&txid, None).unwrap();
     let hex = cl.get_raw_transaction_hex(&txid, None).unwrap();
-    assert_eq!(tx, deserialize(&hex::decode(&hex).unwrap()).unwrap());
-    assert_eq!(hex, hex::encode(serialize(&tx)));
+    assert_eq!(tx, deserialize(&hex_conservative::decode_to_vec(&hex).unwrap()).unwrap());
+    assert_eq!(hex, serialize(&tx).to_lower_hex_string());
 
     let info = cl.get_raw_transaction_info(&txid, None).unwrap();
     assert_eq!(info.txid, txid);
@@ -811,8 +812,8 @@ fn test_create_raw_transaction(cl: &Client) {
     let tx =
         cl.create_raw_transaction(std::slice::from_ref(&input), &output, Some(500_000)).unwrap();
     let hex = cl.create_raw_transaction_hex(&[input], &output, Some(500_000)).unwrap();
-    assert_eq!(tx, deserialize(&hex::decode(&hex).unwrap()).unwrap());
-    assert_eq!(hex, hex::encode(serialize(&tx)));
+    assert_eq!(tx, deserialize(&hex_conservative::decode_to_vec(&hex).unwrap()).unwrap());
+    assert_eq!(hex, serialize(&tx).to_lower_hex_string());
 }
 
 fn test_fund_raw_transaction(cl: &Client) {

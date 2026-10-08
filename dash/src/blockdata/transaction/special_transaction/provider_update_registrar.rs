@@ -159,6 +159,7 @@ mod tests {
     use crate::transaction::special_transaction::TransactionPayload::ProviderUpdateRegistrarPayloadType;
     use crate::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
     use crate::{Network, PubkeyHash, ScriptBuf, Transaction, Txid};
+    use hex_conservative::DisplayHex;
 
     #[test]
     fn test_provider_update_registrar_transaction() {
@@ -199,13 +200,19 @@ mod tests {
         let operator_key_hex = "139b654f0b1c031e1cf2b934c2d895178875cfe7c6a4f6758f02bc66eea7fc292d0040701acbe31f5e14a911cb061a2f";
         assert_eq!(
             operator_key_hex,
-            hex::encode(expected_provider_update_registrar_payload.operator_public_key)
+            expected_provider_update_registrar_payload
+                .operator_public_key
+                .as_bytes()
+                .to_lower_hex_string()
         );
 
         let voting_key_hash_hex = "6cc4a7bb877a80c11ae06b988d98305773f93b98";
         assert_eq!(
             voting_key_hash_hex,
-            hex::encode(expected_provider_update_registrar_payload.voting_key_hash)
+            expected_provider_update_registrar_payload
+                .voting_key_hash
+                .as_byte_array()
+                .to_lower_hex_string()
         );
 
         let inputs_hash_hex = "cf2b940faa8c46c7981f5bd082e5409bf08cffe3bccfa04093eb152f7a857f2d";

@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 use dash_spv::test_utils::{DashdTestContext, TestChain};
 
 use super::context::FFITestContext;
+use hex_conservative::DisplayHex;
 
 #[test]
 fn test_wallet_sync_via_ffi() {
@@ -17,7 +18,7 @@ fn test_wallet_sync_via_ffi() {
         let ctx = FFITestContext::new(dashd.addr);
 
         let wallet_id = ctx.add_wallet(&dashd.wallet.mnemonic);
-        tracing::info!("Added wallet, ID: {}", hex::encode(&wallet_id));
+        tracing::info!("Added wallet, ID: {}", wallet_id.to_lower_hex_string());
 
         ctx.run();
         tracing::info!("FFI client running");

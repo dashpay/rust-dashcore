@@ -5,6 +5,7 @@ use std::ptr;
 use clap::{Arg, ArgAction, Command};
 use dash_network::ffi::FFINetwork;
 use dash_spv_ffi::*;
+use hex_conservative::DisplayHex;
 use key_wallet_ffi::types::FFIBalance;
 use key_wallet_ffi::wallet_manager::wallet_manager_add_wallet_from_mnemonic;
 use key_wallet_ffi::FFIError;
@@ -68,7 +69,7 @@ extern "C" fn on_blocks_needed(blocks: *const FFIBlockNeeded, count: u32, _user_
     if !blocks.is_null() && count > 0 {
         let blocks_slice = unsafe { std::slice::from_raw_parts(blocks, count as usize) };
         for block in blocks_slice.iter() {
-            println!("  - height: {}, hash: {}", block.height, hex::encode(block.hash));
+            println!("  - height: {}, hash: {}", block.height, block.hash.to_lower_hex_string());
         }
     }
 }
@@ -98,8 +99,8 @@ extern "C" fn on_chainlock_received(
     validated: bool,
     _user_data: *mut c_void,
 ) {
-    let hash_hex = unsafe { hex::encode(*hash) };
-    let signature_hex = unsafe { hex::encode(*signature) };
+    let hash_hex = unsafe { (*hash).to_lower_hex_string() };
+    let signature_hex = unsafe { (*signature).to_lower_hex_string() };
     println!(
         "[Sync] ChainLock received: height={}, hash={}, signature={}, validated={}",
         height, hash_hex, signature_hex, validated
@@ -113,7 +114,7 @@ extern "C" fn on_instantlock_received(
     validated: bool,
     _user_data: *mut c_void,
 ) {
-    let txid_hex = unsafe { hex::encode(*txid) };
+    let txid_hex = unsafe { (*txid).to_lower_hex_string() };
     println!(
         "[Sync] InstantLock received: txid={}, validated={}, data_len={}",
         txid_hex, validated, instantlock_len
@@ -211,7 +212,7 @@ extern "C" fn on_transaction_detected(
     }
     let r = unsafe { &*record };
     let b = read_balance(balance);
-    let txid_hex = hex::encode(r.txid);
+    let txid_hex = r.txid.to_lower_hex_string();
     println!(
         "[Wallet] TX detected: wallet={}..., txid={}, account_kind={:?}, account_index={}, amount={} duffs, balance[confirmed={}, unconfirmed={}], changed_accounts={}, derived={}",
         wallet_short,
@@ -254,11 +255,11 @@ extern "C" fn on_transactions_swept(
     println!(
         "[Wallet] TXs swept: wallet={}..., removed=[{}], superseded_by={}, released=[{}], balance[confirmed={}, unconfirmed={}]",
         wallet_short,
-        list.iter().map(hex::encode).collect::<Vec<_>>().join(","),
-        hex::encode(winner),
+        list.iter().map(|h| h.to_lower_hex_string()).collect::<Vec<_>>().join(","),
+        winner.to_lower_hex_string(),
         released
             .iter()
-            .map(|o| format!("{}:{}", hex::encode(o.txid), o.vout))
+            .map(|o| format!("{}:{}", o.txid.to_lower_hex_string(), o.vout))
             .collect::<Vec<_>>()
             .join(","),
         b.confirmed,
@@ -283,7 +284,7 @@ extern "C" fn on_transaction_instant_locked(
     }
     let txid_bytes = unsafe { &*txid };
     let b = read_balance(balance);
-    let txid_hex = hex::encode(txid_bytes);
+    let txid_hex = txid_bytes.to_lower_hex_string();
     println!(
         "[Wallet] TX instant-locked: wallet={}..., txid={}, islock_len={}, balance[confirmed={}, unconfirmed={}], changed_accounts={}",
         wallet_short,

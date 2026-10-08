@@ -8,6 +8,7 @@ use dashcore::hash_types::{BlockHash, TxMerkleNode};
 use dashcore::network::message_headers2::{CompressedHeader, CompressionState, Headers2Message};
 use dashcore::pow::CompactTarget;
 use dashcore_hashes::Hash;
+use hex_conservative::DisplayHex;
 
 fn create_header(version: i32, prev_hash: [u8; 32], time: u32, bits: u32, nonce: u32) -> Header {
     Header {
@@ -241,7 +242,7 @@ fn test_serialization_roundtrip_single_header() {
     // Serialize
     let serialized = serialize(&compressed);
     println!("Serialized first header: {} bytes", serialized.len());
-    println!("  hex: {}", hex::encode(&serialized));
+    println!("  hex: {}", serialized.to_lower_hex_string());
     println!("  flags byte: 0b{:08b}", serialized[0]);
 
     // Deserialize

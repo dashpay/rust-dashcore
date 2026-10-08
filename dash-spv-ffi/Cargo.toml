@@ -17,7 +17,7 @@ dash-spv = { path = "../dash-spv" }
 dashcore = { path = "../dash" }
 dash-network = { path = "../dash-network", features = ["ffi"] }
 tokio = { version = "1", features = ["full"] }
-hex = { workspace = true }
+hex-conservative = { workspace = true }
 tracing = "0.1"
 # Use key-wallet-ffi for all wallet-related FFI types
 key-wallet-ffi = { path = "../key-wallet-ffi" }

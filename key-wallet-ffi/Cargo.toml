@@ -38,7 +38,7 @@ dash-network = { path = "../dash-network", features = ["ffi"] }
 secp256k1 = { workspace = true }
 tokio = { version = "1.32", features = ["rt-multi-thread", "sync"] }
 libc = "0.2"
-hex = { workspace = true }
+hex-conservative = { workspace = true }
 
 [build-dependencies]
 cbindgen = "0.29"
@@ -47,4 +47,3 @@ cbindgen = "0.29"
 dashcore = { path = "../dash", features = ["test-utils"] }
 key-wallet = { path = "../key-wallet", features = ["test-utils"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
-hex = { workspace = true }

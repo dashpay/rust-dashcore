@@ -7,7 +7,7 @@ use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
 use crate::Error;
-use hex;
+use hex_conservative::DisplayHex;
 
 impl Wallet {
     /// Get a bip44 account and index
@@ -542,7 +542,7 @@ impl Wallet {
 
         // Return as hex string
         let serialized = public_key.serialize(); // compressed
-        Ok(hex::encode(serialized))
+        Ok(serialized.to_lower_hex_string())
     }
 
     /// Get the extended public key for a specific account type

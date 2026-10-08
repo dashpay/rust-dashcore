@@ -76,6 +76,7 @@ The library is organized into several key modules:
 ```rust
 use key_wallet::{Wallet, Mnemonic, Network};
 use key_wallet::mnemonic::Language;
+use dashcore::hashes::hex::DisplayHex;
 
 // Generate a new mnemonic
 let mnemonic = Mnemonic::generate(24, Language::English)?;
@@ -85,7 +86,7 @@ println!("Mnemonic: {}", mnemonic.phrase());
 let wallet = Wallet::from_mnemonic(mnemonic.clone(), None, Network::Mainnet)?;
 
 // Get wallet ID (unique identifier)
-println!("Wallet ID: {:?}", hex::encode(wallet.wallet_id));
+println!("Wallet ID: {}", wallet.wallet_id.to_lower_hex_string());
 ```
 
 ### Managing Accounts
@@ -162,6 +163,7 @@ let pool_1_address = coinjoin_account.derive_address_at_pool(1, 0)?;
 ```rust
 #[cfg(feature = "eddsa")]
 {
+    use dashcore::hashes::hex::DisplayHex;
     use key_wallet::account::EdDSAAccount;
     
     // Create identity registration funding account
@@ -172,7 +174,7 @@ let pool_1_address = coinjoin_account.derive_address_at_pool(1, 0)?;
     
     // Get Ed25519 public key for Platform
     let pubkey = identity_account.get_public_key_bytes();
-    println!("Identity public key: {}", hex::encode(pubkey));
+    println!("Identity public key: {}", pubkey.to_lower_hex_string());
 }
 ```
 

@@ -50,9 +50,8 @@ serde = { workspace = true, features = ["derive", "alloc", "rc"], optional = tru
 
 base64 = { version = "0.22", optional = true }
 bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
-hex_lit = { workspace = true }
 anyhow = { version= "1.0" }
-hex = { workspace = true }
+hex-conservative = { workspace = true }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 blake3 = "1.8.1"
@@ -67,6 +66,7 @@ serde_derive = "1.0.219"
 secp256k1 = { workspace = true, features = ["recovery", "rand"] }
 bincode = { workspace = true, features = ["serde"] }
 assert_matches = "1.5.0"
+test-case = "3.3"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"
 

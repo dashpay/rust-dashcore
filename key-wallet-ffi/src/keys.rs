@@ -4,6 +4,7 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIWallet;
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
+use hex_conservative::DisplayHex;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
@@ -453,7 +454,7 @@ pub unsafe extern "C" fn public_key_to_hex(
     error: *mut FFIError,
 ) -> *mut c_char {
     let key = deref_ptr!(key, error);
-    unwrap_or_return!(CString::new(hex::encode(key.inner.serialize())), error).into_raw()
+    unwrap_or_return!(CString::new(key.inner.serialize().to_lower_hex_string()), error).into_raw()
 }
 
 /// Convert derivation path string to indices

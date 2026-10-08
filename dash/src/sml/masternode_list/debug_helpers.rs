@@ -2,6 +2,7 @@ use hashes::Hash;
 
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::masternode_list::MasternodeList;
+use hex_conservative::DisplayHex;
 
 impl std::fmt::Debug for MasternodeList {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -29,10 +30,12 @@ impl MasternodeList {
         format!(
             "\t\t{}: {}:\n\t\t\tmn: \n\t\t\t\troot: {}\n\t\t\t\tcount: {}\n\t\t\tllmq:\n\t\t\t\troot: {}\n\t\t\t\tdesc:\n{}\n",
             self.known_height,
-            hex::encode(self.block_hash),
-            self.masternode_merkle_root.map_or("None".to_string(), hex::encode),
+            self.block_hash.as_byte_array().to_lower_hex_string(),
+            self.masternode_merkle_root
+                .map_or("None".to_string(), |h| h.as_byte_array().to_lower_hex_string()),
             self.masternodes.len(),
-            self.llmq_merkle_root.map_or("None".to_string(), hex::encode),
+            self.llmq_merkle_root
+                .map_or("None".to_string(), |h| h.as_byte_array().to_lower_hex_string()),
             self.quorums_short_description()
         )
     }

@@ -6,7 +6,7 @@ use std::str::FromStr;
 #[test]
 fn test_extended_key_derivation() {
     // Test vector from BIP32
-    let seed = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
+    let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
     let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
     // m/0'
@@ -35,7 +35,7 @@ fn test_derivation_path_parsing() {
 
 #[test]
 fn test_extended_key_serialization() {
-    let seed = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
+    let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
     let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
     // Serialize and deserialize
@@ -52,7 +52,7 @@ fn test_extended_key_serialization() {
 
 #[test]
 fn test_public_key_derivation() {
-    let seed = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
+    let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
     let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
     let master_pub = ExtendedPubKey::from_priv(&master);
 
@@ -68,7 +68,7 @@ fn test_public_key_derivation() {
 
 #[test]
 fn test_fingerprint_calculation() {
-    let seed = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
+    let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
     let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
     let child = master.ckd_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
