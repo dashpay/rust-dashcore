@@ -66,6 +66,7 @@ impl BLSAccount {
         let public_key = BLSPublicKey::from_bytes(bls_public_key)
             .as_scheme(BlsScheme::Modern)
             .canonicalize()
+            .map(BLSPublicKey::from)
             .map_err(|_| Error::InvalidParameter("Invalid BLS public key".to_string()))?;
 
         // Create an extended public key with default metadata
