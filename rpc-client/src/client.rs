@@ -1626,7 +1626,7 @@ pub trait RpcApi: Sized {
     /// If the returned height is higher that the given chain lock this means that we ignored the chain lock because core had something better.
     fn submit_chain_lock(&self, chain_lock: &ChainLock) -> Result<u32> {
         let mut args = [
-            into_json(chain_lock.block_hash.as_byte_array().to_lower_hex_string())?,
+            into_json(chain_lock.block_hash)?,
             into_json(chain_lock.signature.as_bytes().to_lower_hex_string())?,
             into_json(chain_lock.block_height)?,
         ];
