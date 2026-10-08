@@ -18,15 +18,12 @@
 //! It is defined in DIP4 [dip-0004](https://github.com/dashpay/dips/blob/master/dip-0004.md).
 //!
 
-#[cfg(feature = "bincode")]
-use bincode::{Decode, Encode};
-
 use hashes::Hash;
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::encode::{compact_size_len, read_compact_size, write_compact_size};
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::io;
 use crate::io::{Error, ErrorKind};
 
@@ -34,7 +31,6 @@ use crate::io::{Error, ErrorKind};
 /// The Coinbase payload is described in DIP4.
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CoinbasePayload {
     pub version: u16,
@@ -44,6 +40,9 @@ pub struct CoinbasePayload {
     pub best_cl_height: Option<u32>,
     pub best_cl_signature: Option<BLSSignature>,
     pub asset_locked_amount: Option<u64>,
+    /// Merkle root over the instance hashes of the block's version 2 asset unlocks, all-zero
+    /// when there are none. Present from version 4.
+    pub merkle_root_asset_unlocks: Option<MerkleRootAssetUnlocks>,
 }
 
 impl CoinbasePayload {
@@ -67,6 +66,7 @@ impl CoinbasePayload {
             best_cl_height,
             best_cl_signature,
             asset_locked_amount,
+            merkle_root_asset_unlocks: None,
         }
     }
 
@@ -74,6 +74,7 @@ impl CoinbasePayload {
     /// version(2) + height(4) + merkle_root_masternode_list(32) + merkle_root_quorums(32)
     /// in addition to the above, if version >= 3: asset_locked_amount(8) + best_cl_height(compact_size) +
     /// best_cl_signature(96)
+    /// in addition to the above, if version >= 4: merkle_root_asset_unlocks(32)
     pub fn size(&self) -> usize {
         let mut size: usize = 2 + 4 + 32;
         if self.version >= 2 {
@@ -86,9 +87,62 @@ impl CoinbasePayload {
             }
             size += 8;
         }
+        if self.version >= 4 {
+            size += 32;
+        }
         size
     }
 }
+
+// Same layout as a derived impl, with `merkle_root_asset_unlocks` only from version 4, so
+// payloads persisted before the field existed keep decoding.
+#[cfg(feature = "bincode")]
+impl bincode::Encode for CoinbasePayload {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        self.version.encode(encoder)?;
+        self.height.encode(encoder)?;
+        self.merkle_root_masternode_list.encode(encoder)?;
+        self.merkle_root_quorums.encode(encoder)?;
+        self.best_cl_height.encode(encoder)?;
+        self.best_cl_signature.encode(encoder)?;
+        self.asset_locked_amount.encode(encoder)?;
+        if self.version >= 4 {
+            self.merkle_root_asset_unlocks.encode(encoder)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<C> bincode::Decode<C> for CoinbasePayload {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        use bincode::Decode;
+
+        let version = u16::decode(decoder)?;
+        Ok(CoinbasePayload {
+            version,
+            height: Decode::decode(decoder)?,
+            merkle_root_masternode_list: Decode::decode(decoder)?,
+            merkle_root_quorums: Decode::decode(decoder)?,
+            best_cl_height: Decode::decode(decoder)?,
+            best_cl_signature: Decode::decode(decoder)?,
+            asset_locked_amount: Decode::decode(decoder)?,
+            merkle_root_asset_unlocks: if version >= 4 {
+                Decode::decode(decoder)?
+            } else {
+                None
+            },
+        })
+    }
+}
+
+#[cfg(feature = "bincode")]
+bincode::impl_borrow_decode!(CoinbasePayload);
 
 impl Encodable for CoinbasePayload {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
@@ -116,6 +170,16 @@ impl Encodable for CoinbasePayload {
                 len += asset_locked_amount.consensus_encode(w)?;
             } else {
                 return Err(Error::new(ErrorKind::InvalidInput, "asset_locked_amount is not set"));
+            }
+        }
+        if self.version >= 4 {
+            if let Some(merkle_root_asset_unlocks) = self.merkle_root_asset_unlocks {
+                len += merkle_root_asset_unlocks.consensus_encode(w)?;
+            } else {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "merkle_root_asset_unlocks is not set",
+                ));
             }
         }
         Ok(len)
@@ -147,6 +211,11 @@ impl Decodable for CoinbasePayload {
         } else {
             None
         };
+        let merkle_root_asset_unlocks = if version >= 4 {
+            Some(MerkleRootAssetUnlocks::consensus_decode(r)?)
+        } else {
+            None
+        };
         Ok(CoinbasePayload {
             version,
             height,
@@ -155,6 +224,7 @@ impl Decodable for CoinbasePayload {
             best_cl_height,
             best_cl_signature,
             asset_locked_amount,
+            merkle_root_asset_unlocks,
         })
     }
 }
@@ -165,12 +235,12 @@ mod tests {
 
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::{Decodable, Encodable};
-    use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+    use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
     use crate::transaction::special_transaction::coinbase::CoinbasePayload;
 
     #[test]
     fn size() {
-        let test_cases: &[(usize, u16)] = &[(38, 1), (70, 2), (177, 3)];
+        let test_cases: &[(usize, u16)] = &[(38, 1), (70, 2), (177, 3), (209, 4)];
         for (want, version) in test_cases.iter() {
             let payload = CoinbasePayload {
                 height: 1000,
@@ -180,6 +250,7 @@ mod tests {
                 best_cl_height: Some(900),
                 best_cl_signature: Some(BLSSignature::from([0; 96])),
                 asset_locked_amount: Some(10000),
+                merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::all_zeros()),
             };
             assert_eq!(payload.size(), *want);
             let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
@@ -233,6 +304,7 @@ mod tests {
             best_cl_height: None,
             best_cl_signature: None,
             asset_locked_amount: None,
+            merkle_root_asset_unlocks: None,
         };
         assert_eq!(payload_v1.size(), 38); // 2 + 4 + 32 = 38 (no quorum root)
 
@@ -245,6 +317,7 @@ mod tests {
             best_cl_height: None,
             best_cl_signature: None,
             asset_locked_amount: None,
+            merkle_root_asset_unlocks: None,
         };
         assert_eq!(payload_v2.size(), 70); // 2 + 4 + 32 + 32 = 70 (includes quorum root)
 
@@ -269,6 +342,66 @@ mod tests {
             CoinbasePayload::consensus_decode(&mut std::io::Cursor::new(&encoded_v2)).unwrap();
         assert_eq!(decoded_v2.version, 2);
         assert_eq!(decoded_v2.height, 1000);
+    }
+
+    #[test]
+    fn version_4_round_trips_the_asset_unlocks_root() {
+        let root = MerkleRootAssetUnlocks::from_byte_array([0xab; 32]);
+        let payload = CoinbasePayload {
+            version: 4,
+            height: 1000,
+            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
+            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+            best_cl_height: Some(900),
+            best_cl_signature: Some(BLSSignature::from([0; 96])),
+            asset_locked_amount: Some(10000),
+            merkle_root_asset_unlocks: Some(root),
+        };
+
+        let mut encoded = Vec::new();
+        payload.consensus_encode(&mut encoded).unwrap();
+        // The root follows `asset_locked_amount` at the end of the payload.
+        assert_eq!(&encoded[encoded.len() - 32..], &[0xab; 32]);
+
+        let mut cursor = std::io::Cursor::new(&encoded);
+        let decoded = CoinbasePayload::consensus_decode(&mut cursor).unwrap();
+        assert_eq!(decoded, payload);
+        assert_eq!(cursor.position() as usize, encoded.len());
+    }
+
+    #[cfg(feature = "bincode")]
+    #[test]
+    fn version_4_bincode_round_trips_the_asset_unlocks_root() {
+        let payload = CoinbasePayload {
+            version: 4,
+            height: 1000,
+            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
+            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+            best_cl_height: Some(900),
+            best_cl_signature: Some(BLSSignature::from([0; 96])),
+            asset_locked_amount: Some(10000),
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::from_byte_array([0xab; 32])),
+        };
+        let bytes = bincode::encode_to_vec(&payload, bincode::config::standard()).unwrap();
+        let (decoded, read): (CoinbasePayload, usize) =
+            bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(decoded, payload);
+        assert_eq!(read, bytes.len());
+    }
+
+    #[test]
+    fn version_4_without_asset_unlocks_root_fails_to_encode() {
+        let payload = CoinbasePayload {
+            version: 4,
+            height: 1000,
+            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
+            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+            best_cl_height: Some(900),
+            best_cl_signature: Some(BLSSignature::from([0; 96])),
+            asset_locked_amount: Some(10000),
+            merkle_root_asset_unlocks: None,
+        };
+        assert!(payload.consensus_encode(&mut Vec::new()).is_err());
     }
 
     fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {

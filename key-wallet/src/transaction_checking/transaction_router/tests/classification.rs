@@ -183,6 +183,7 @@ fn test_classify_coinbase_transaction() {
         best_cl_height: Some(99900),
         best_cl_signature: Some(BLSSignature::from([9u8; 96])),
         asset_locked_amount: Some(100_000_000_000),
+        merkle_root_asset_unlocks: None,
     };
     tx.special_transaction_payload = Some(TransactionPayload::CoinbasePayloadType(payload));
 
