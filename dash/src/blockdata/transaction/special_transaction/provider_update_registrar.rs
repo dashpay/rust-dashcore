@@ -145,6 +145,12 @@ impl Encodable for ProviderUpdateRegistrarPayload {
 impl Decodable for ProviderUpdateRegistrarPayload {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(r)?;
+
+        // Version validation like C++ SERIALIZE_METHODS
+        if version == 0 || version > ProTxVersion::ExtAddr as u16 {
+            return Err(encode::Error::ParseFailed("unsupported ProUpRegTx version"));
+        }
+
         let pro_tx_hash = Txid::consensus_decode(r)?;
         let provider_mode = u16::consensus_decode(r)?;
         let operator_public_key = BLSPublicKey::consensus_decode(r)?;
@@ -470,5 +476,14 @@ mod tests {
             special_transaction_payload: Some(ProviderUpdateRegistrarPayloadType(payload)),
         };
         assert_eq!(tx.size(), crate::consensus::encode::serialize(&tx).len());
+    }
+
+    #[test_case::test_case(0; "version 0")]
+    #[test_case::test_case(4; "version above ExtAddr")]
+    fn rejects_unknown_version(version: u16) {
+        let mut encoded = Vec::new();
+        v3_payload().consensus_encode(&mut encoded).unwrap();
+        encoded[..2].copy_from_slice(&version.to_le_bytes());
+        assert!(ProviderUpdateRegistrarPayload::consensus_decode(&mut &encoded[..]).is_err());
     }
 }
