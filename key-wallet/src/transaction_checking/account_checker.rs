@@ -87,19 +87,16 @@ pub struct TransactionCheckResult {
     /// replay the dead transaction on the next load and re-create the phantom
     /// balance this removal just cleared.
     pub swept_transactions: Vec<Txid>,
-    /// Outpoints released from the wallet's spent-marks as a side effect of
-    /// `swept_transactions`: inputs the removed losers claimed to spend that
-    /// no surviving record spends too. Empty whenever `swept_transactions`
-    /// is.
+    /// Outpoints the sweep that removed `swept_transactions` released:
+    /// [`WalletConflictSweep::released_outpoints`] passed through, which
+    /// states the rule. Empty whenever `swept_transactions` is.
     ///
     /// Named explicitly because it cannot be inferred downstream: the winner
     /// that triggered the sweep need not be wallet-relevant, so it may never
-    /// appear in this wallet's output at all. See
-    /// [`ManagedCoreFundsAccount::drop_conflicted_transactions`], which
-    /// computes the distinction.
+    /// appear in this wallet's output at all.
     ///
-    /// [`ManagedCoreFundsAccount::drop_conflicted_transactions`]:
-    ///     crate::managed_account::ManagedCoreFundsAccount
+    /// [`WalletConflictSweep::released_outpoints`]:
+    ///     crate::wallet::managed_wallet_info::helpers::WalletConflictSweep::released_outpoints
     pub released_outpoints: Vec<OutPoint>,
 }
 
@@ -700,6 +697,7 @@ impl ManagedCoreFundsAccount {
                     .utxos
                     .get(&input.previous_output)
                     .or_else(|| self.spent_before_funded.get(&input.previous_output))
+                    .or_else(|| self.claim_guarded_outputs.get(&input.previous_output))
                 {
                     sent = sent.saturating_add(utxo.txout.value);
 

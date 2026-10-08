@@ -796,8 +796,11 @@ impl FFIOutPoint {
 /// `txids` points to `txids_count` consecutive 32-byte txids.
 /// `superseded_by` is the transaction whose arrival settled the inputs.
 /// `released_outpoints` points to `released_outpoints_count` outpoints freed
-/// by the removal: inputs the removed transactions claimed to spend that no
-/// surviving record spends too. Mark these coins spendable again. This is
+/// by the removal, as `WalletEvent::TransactionsSwept::released_outpoints`
+/// documents: inputs of the removed transactions that no surviving record
+/// spends too, and outpoints whose spent-output claim named a removed
+/// transaction, each listed only once nothing in the wallet guards it any
+/// more. Mark these coins spendable again. This is
 /// not the same set as `txids`' inputs — a loser spending A+B against a
 /// winner spending only A leaves A marked and frees only B — and it cannot
 /// be recomputed from `txids` on the consumer side: `superseded_by` need not

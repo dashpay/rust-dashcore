@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- Restore externally persisted spent-output claims with `ManagedWalletInfo::restore_spent_outpoints` in `key-wallet`.
+  Claims are held once per wallet and guard every account that holds funds, including one added later.
+  It returns the restored outpoints the wallet still holds as UTXOs, which stay credited.
+
 ### Changed
 
 - **Breaking:** the `bincode` feature and binary serialization dependencies now use
@@ -47,6 +53,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
   `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
 - All workspace crates declare a MSRV of 1.89
+- `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` release
+  a restored spent-output claim that names a transaction they remove. `released_outpoints` of a
+  sweep, as `WalletEvent::TransactionsSwept` and the `dash-spv-ffi` swept callback carry it, lists
+  an outpoint only once no claim and no account's own spent mark guards it.
 
 ### Fixed
 
