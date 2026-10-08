@@ -259,6 +259,7 @@ fn test_coinbase_classification() {
         best_cl_height: Some(99900),
         best_cl_signature: Some(BLSSignature::from([9u8; 96])),
         asset_locked_amount: Some(100_000_000_000),
+        merkle_root_asset_unlocks: None,
     };
     tx.special_transaction_payload = Some(TransactionPayload::CoinbasePayloadType(payload));
 
@@ -309,6 +310,7 @@ async fn test_coinbase_transaction_with_payload_routing() {
         best_cl_height: Some(99900),
         best_cl_signature: Some(BLSSignature::from([9u8; 96])),
         asset_locked_amount: Some(100_000_000_000), // 1000 DASH locked
+        merkle_root_asset_unlocks: None,
     };
     coinbase_tx.special_transaction_payload =
         Some(TransactionPayload::CoinbasePayloadType(payload));

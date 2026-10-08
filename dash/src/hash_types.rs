@@ -130,6 +130,9 @@ mod newtypes {
         /// The merkle root of the quorums
         #[hash_newtype(forward)]
         pub struct MerkleRootQuorums(sha256d::Hash);
+        /// The merkle root of a block's version 2 asset unlock instance hashes
+        #[hash_newtype(forward)]
+        pub struct MerkleRootAssetUnlocks(sha256d::Hash);
         /// A special transaction payload hash
         pub struct SpecialTransactionPayloadHash(sha256d::Hash);
         /// A hash of all transaction inputs
@@ -196,6 +199,7 @@ mod newtypes {
 
     impl_hashencode!(MerkleRootMasternodeList);
     impl_hashencode!(MerkleRootQuorums);
+    impl_hashencode!(MerkleRootAssetUnlocks);
 
     impl_hashencode!(SpecialTransactionPayloadHash);
     impl_hashencode!(InputsHash);

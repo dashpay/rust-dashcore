@@ -542,6 +542,7 @@ mod tests {
             best_cl_height: None,
             best_cl_signature: None,
             asset_locked_amount: None,
+            merkle_root_asset_unlocks: None,
         });
         let ffi = FFISpecialTransactionPayload::from(&payload);
 
