@@ -447,6 +447,10 @@ impl Encodable for RawNetworkMessage {
     }
 }
 
+/// Maximum number of headers Core sends in one `headers` message
+/// (`MAX_HEADERS_UNCOMPRESSED_RESULT`).
+const MAX_HEADERS_RESULTS: usize = 2000;
+
 struct HeaderDeserializationWrapper(Vec<block::Header>);
 
 impl Decodable for HeaderDeserializationWrapper {
@@ -455,9 +459,11 @@ impl Decodable for HeaderDeserializationWrapper {
         r: &mut R,
     ) -> Result<Self, encode::Error> {
         let len = VarInt::consensus_decode(r)?.0;
-        // should be above usual number of items to avoid
-        // allocation
-        let mut ret = Vec::with_capacity(core::cmp::min(1024 * 16, len as usize));
+        // Core never sends more and treats more as misbehaviour
+        if len > MAX_HEADERS_RESULTS as u64 {
+            return Err(encode::Error::ParseFailed("headers message has too many headers"));
+        }
+        let mut ret = Vec::with_capacity(len as usize);
         for _ in 0..len {
             ret.push(Decodable::consensus_decode(r)?);
             if u8::consensus_decode(r)? != 0u8 {
@@ -690,6 +696,8 @@ mod test {
     use crate::network::message_blockdata::{GetBlocksMessage, GetHeadersMessage, Inventory};
     use crate::network::message_bloom::{BloomFlags, FilterAdd, FilterLoad};
     use crate::network::message_compact_blocks::{GetBlockTxn, SendCmpct};
+    use test_case::test_case;
+
     use crate::network::message_filter::{
         CFCheckpt, CFHeaders, CFilter, GetCFCheckpt, GetCFHeaders, GetCFilters,
     };
@@ -1047,5 +1055,25 @@ mod test {
     fn test_senddsq_command_string() {
         let msg = NetworkMessage::SendDsq(true);
         assert_eq!(msg.cmd(), "senddsq");
+    }
+
+    #[test]
+    fn headers_short_frame_with_huge_count_fails() {
+        let payload = serialize(&VarInt(u64::MAX));
+        assert!(
+            HeaderDeserializationWrapper::consensus_decode_from_finite_reader(&mut &payload[..])
+                .is_err()
+        );
+    }
+
+    #[test_case(MAX_HEADERS_RESULTS, true; "full Core batch decodes")]
+    #[test_case(MAX_HEADERS_RESULTS + 1, false; "above Core batch is rejected")]
+    fn headers_count_limit(count: usize, decodes: bool) {
+        let msg = RawNetworkMessage {
+            magic: 0xd9b4bef9,
+            payload: NetworkMessage::Headers(block::Header::dummy_batch(0..count as u32)),
+        };
+        let decoded = deserialize::<RawNetworkMessage>(&serialize(&msg));
+        assert_eq!(decoded.ok(), decodes.then_some(msg));
     }
 }
