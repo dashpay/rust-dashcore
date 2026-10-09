@@ -130,8 +130,9 @@ pub fn classify_sync(peer_height: Option<u32>, reference_tip: Option<u32>) -> Sy
     }
 }
 
-/// Probe a Platform HTTP port: TCP connect, TLS handshake (chain check +
-/// cert introspection), and a minimal HTTP `GET /` to gauge liveness.
+/// Probe a Platform HTTP port: TCP connect, TLS handshake (leaf cert
+/// introspection, without chain verification), and a minimal HTTP `GET /` to
+/// gauge liveness.
 pub async fn probe_platform(ip: std::net::IpAddr, http_port: u16) -> PlatformStatus {
     let addr = SocketAddr::new(ip, http_port);
     match tokio::time::timeout(PLATFORM_PROBE_BUDGET, probe_platform_inner(addr)).await {

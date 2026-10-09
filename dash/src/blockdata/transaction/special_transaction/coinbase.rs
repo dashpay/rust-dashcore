@@ -398,7 +398,7 @@ mod tests {
         // This is the exact payload from block 1028171 that was causing the issue
         let payload_hex =
             "01004bb00f002176daba0c98fecfa0903fa527d118fbb704c497ee6ab817945e68ba9ba8743b";
-        let payload_bytes = hex_decode(payload_hex).unwrap();
+        let payload_bytes = hex_conservative::decode_to_vec(payload_hex).unwrap();
 
         // Verify payload is 38 bytes (version 1 should be: 2+4+32 = 38 bytes)
         assert_eq!(payload_bytes.len(), 38);
@@ -626,28 +626,5 @@ mod tests {
         let mut json = serde_json::to_value(&payload).unwrap();
         json["version"] = 3.into();
         assert!(serde_json::from_value::<CoinbasePayload>(json).is_err());
-    }
-
-    fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
-        if !s.len().is_multiple_of(2) {
-            return Err("Hex string has odd length");
-        }
-
-        let mut bytes = Vec::with_capacity(s.len() / 2);
-        for chunk in s.as_bytes().chunks(2) {
-            let high = hex_digit(chunk[0])?;
-            let low = hex_digit(chunk[1])?;
-            bytes.push((high << 4) | low);
-        }
-        Ok(bytes)
-    }
-
-    fn hex_digit(digit: u8) -> Result<u8, &'static str> {
-        match digit {
-            b'0'..=b'9' => Ok(digit - b'0'),
-            b'a'..=b'f' => Ok(digit - b'a' + 10),
-            b'A'..=b'F' => Ok(digit - b'A' + 10),
-            _ => Err("Invalid hex digit"),
-        }
     }
 }

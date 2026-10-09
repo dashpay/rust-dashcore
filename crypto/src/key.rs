@@ -16,8 +16,8 @@ use core::str::FromStr;
 use std::io;
 
 use dash_network::Network;
-use hashes::hex::FromHex;
-use hashes::{hash160, hash_newtype, hex, Hash as _};
+use hashes::{hash160, hash_newtype, Hash as _};
+use hex_conservative::DisplayHex;
 use internals::write_err;
 pub use secp256k1::{self, constants, Keypair, Parity, Secp256k1, Verification, XOnlyPublicKey};
 #[cfg(feature = "serde")]
@@ -40,7 +40,7 @@ pub enum Error {
     /// The base58 decoded correctly but the payload was the wrong length.
     InvalidBase58PayloadLength(usize),
     /// Hex decoding error
-    Hex(hex::HexToArrayError),
+    Hex(hex_conservative::DecodeFixedLengthBytesError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidHexLength(usize),
     /// Something is not supported based on active features
@@ -102,8 +102,8 @@ impl From<secp256k1::Error> for Error {
 }
 
 #[doc(hidden)]
-impl From<hex::HexToArrayError> for Error {
-    fn from(e: hex::HexToArrayError) -> Self {
+impl From<hex_conservative::DecodeFixedLengthBytesError> for Error {
+    fn from(e: hex_conservative::DecodeFixedLengthBytesError) -> Self {
         Error::Hex(e)
     }
 }
@@ -312,13 +312,7 @@ pub struct SortKey(u8, [u8; 32], [u8; 32]);
 
 impl fmt::Display for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // TODO: fast hex encoding
-        self.with_serialized(|bytes| {
-            for ch in bytes {
-                write!(f, "{:02x}", ch)?;
-            }
-            Ok(())
-        })
+        self.with_serialized(|bytes| write!(f, "{:x}", bytes.as_hex()))
     }
 }
 
@@ -326,8 +320,8 @@ impl FromStr for PublicKey {
     type Err = Error;
     fn from_str(s: &str) -> Result<PublicKey, Error> {
         match s.len() {
-            66 => PublicKey::from_slice(&<[u8; 33]>::from_hex(s)?),
-            130 => PublicKey::from_slice(&<[u8; 65]>::from_hex(s)?),
+            66 => PublicKey::from_slice(&hex_conservative::decode_to_array::<33>(s)?),
+            130 => PublicKey::from_slice(&hex_conservative::decode_to_array::<65>(s)?),
             len => Err(Error::InvalidHexLength(len)),
         }
     }
@@ -699,7 +693,6 @@ impl From<TweakedKeyPair> for TweakedPublicKey {
 
 #[cfg(test)]
 mod tests {
-    use hashes::hex::FromHex;
 
     use super::*;
 
@@ -715,7 +708,7 @@ mod tests {
         };
         let expected1 = SortKey(
             2,
-            <[u8; 32]>::from_hex(
+            hex_conservative::decode_to_array::<32>(
                 "ff12471208c14bd580709cb2358d98975247d8765f92bc25eab3b2763ed605f8",
             )
             .unwrap(),
@@ -723,11 +716,11 @@ mod tests {
         );
         let expected2 = SortKey(
             4,
-            <[u8; 32]>::from_hex(
+            hex_conservative::decode_to_array::<32>(
                 "ff12471208c14bd580709cb2358d98975247d8765f92bc25eab3b2763ed605f8",
             )
             .unwrap(),
-            <[u8; 32]>::from_hex(
+            hex_conservative::decode_to_array::<32>(
                 "1794e7f3d5e420641a3bc690067df5541470c966cbca8c694bf39aa16d836918",
             )
             .unwrap(),

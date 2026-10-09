@@ -24,8 +24,7 @@ use core::str;
 use std::io;
 use std::vec::Vec;
 
-use crate::hex::FromHex as _;
-use crate::{hex, FromSliceError, HashEngine as _};
+use crate::{FromSliceError, HashEngine as _};
 
 /// Output of the X11 hash function.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -38,10 +37,10 @@ crate::bincode_impl!(Hash, 32);
 crate::borrow_slice_impl!(Hash);
 
 impl str::FromStr for Hash {
-    type Err = hex::HexToArrayError;
+    type Err = hex_conservative::DecodeFixedLengthBytesError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut bytes = <[u8; 32]>::from_hex(s)?;
+        let mut bytes: [u8; 32] = hex_conservative::decode_to_array(s)?;
         bytes.reverse();
         Ok(Hash(bytes))
     }

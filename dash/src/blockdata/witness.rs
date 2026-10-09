@@ -428,8 +428,7 @@ impl<'de> serde::Deserialize<'de> for Witness {
                 self,
                 mut a: A,
             ) -> Result<Self::Value, A::Error> {
-                use hashes::hex::FromHex;
-                use hashes::hex::HexToBytesError::*;
+                use hex_conservative::DecodeVariableLengthBytesError::*;
                 use serde::de::{self, Unexpected};
 
                 let mut ret = match a.size_hint() {
@@ -438,7 +437,7 @@ impl<'de> serde::Deserialize<'de> for Witness {
                 };
 
                 while let Some(elem) = a.next_element::<String>()? {
-                    let vec = Vec::<u8>::from_hex(&elem).map_err(|e| match e {
+                    let vec = hex_conservative::decode_to_vec(&elem).map_err(|e| match e {
                         InvalidChar(e) => {
                             let b = e.invalid_char();
                             match core::char::from_u32(b.into()) {

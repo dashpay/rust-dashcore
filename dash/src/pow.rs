@@ -815,13 +815,13 @@ macro_rules! impl_hex {
     ($hex:ident, $case:expr) => {
         impl $hex for U256 {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                internals::hex::display::fmt_hex_exact!(f, 32, &self.to_be_bytes(), $case)
+                crate::internal_macros::fmt_hex_exact!(f, 32, &self.to_be_bytes(), $case)
             }
         }
     };
 }
-impl_hex!(LowerHex, internals::hex::Case::Lower);
-impl_hex!(UpperHex, internals::hex::Case::Upper);
+impl_hex!(LowerHex, hex_conservative::Case::Lower);
+impl_hex!(UpperHex, hex_conservative::Case::Upper);
 
 #[cfg(feature = "serde")]
 impl crate::serde::Serialize for U256 {
@@ -850,8 +850,6 @@ impl crate::serde::Serialize for U256 {
 #[cfg(feature = "serde")]
 impl<'de> crate::serde::Deserialize<'de> for U256 {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        use hashes::hex::FromHex;
-
         use crate::serde::de;
 
         if d.is_human_readable() {
@@ -872,7 +870,7 @@ impl<'de> crate::serde::Deserialize<'de> for U256 {
                         return Err(de::Error::invalid_length(s.len(), &self));
                     }
 
-                    let b = <[u8; 32]>::from_hex(s)
+                    let b = hex_conservative::decode_to_array::<32>(s)
                         .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(s), &self))?;
 
                     Ok(U256::from_be_bytes(b))
@@ -883,7 +881,7 @@ impl<'de> crate::serde::Deserialize<'de> for U256 {
                     E: de::Error,
                 {
                     if let Ok(hex) = core::str::from_utf8(v) {
-                        let b = <[u8; 32]>::from_hex(hex).map_err(|_| {
+                        let b = hex_conservative::decode_to_array::<32>(hex).map_err(|_| {
                             de::Error::invalid_value(de::Unexpected::Str(hex), &self)
                         })?;
 
@@ -1053,6 +1051,28 @@ mod tests {
             format!("{:#X}", U256::MAX),
             "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
         );
+    }
+
+    /// Width, fill and zero padding behave like an integer, and precision does
+    /// not cut digits.
+    #[test]
+    fn fixed_length_hex_pads_like_an_integer() {
+        let value = U256::from(0xDEADBEEF_u64);
+        let digits = format!("{:x}", value);
+        assert_eq!(digits.len(), 64);
+        assert_eq!(format!("{:70x}", value), format!("      {}", digits));
+        assert_eq!(format!("{:<70x}", value), format!("{}      ", digits));
+        assert_eq!(format!("{:*^70x}", value), format!("***{}***", digits));
+        assert_eq!(format!("{:070x}", value), format!("000000{}", digits));
+        assert_eq!(format!("{:#070x}", value), format!("0x0000{}", digits));
+        assert_eq!(format!("{:.4x}", value), digits);
+
+        let id: crate::bip152::ShortId = "abcd00000001".parse().unwrap();
+        assert_eq!(format!("{}", id), "abcd00000001");
+        assert_eq!(format!("{:?}", id), "abcd00000001");
+        assert_eq!(format!("{:#X}", id), "0xABCD00000001");
+        assert_eq!(format!("{:16}", id), "    abcd00000001");
+        assert_eq!(format!("{:016x}", id), "0000abcd00000001");
     }
 
     #[test]

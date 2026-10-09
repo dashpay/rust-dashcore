@@ -12,6 +12,21 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
+/// Writes already encoded hex in the style of `hex-conservative` 0.2.
+///
+/// Right aligned by default, `0x` under `{:#}`, and precision cuts the digits.
+/// `hex-conservative` 1.x pads like a string, so going through it directly
+/// would change how hashes print with a width.
+#[doc(hidden)]
+pub fn pad_hex(f: &mut core::fmt::Formatter, encoded: &str) -> core::fmt::Result {
+    match f.precision() {
+        Some(precision) if encoded.len() > precision => {
+            f.pad_integral(true, "0x", &encoded[..precision])
+        }
+        _ => f.pad_integral(true, "0x", encoded),
+    }
+}
+
 #[macro_export]
 /// Adds hexadecimal formatting implementation of a trait `$imp` to a given type `$ty`.
 macro_rules! hex_fmt_impl(
@@ -22,24 +37,28 @@ macro_rules! hex_fmt_impl(
         impl<$($generator: $gent),*> $crate::_export::_core::fmt::LowerHex for $ty<$($generator),*> {
             #[inline]
             fn fmt(&self, f: &mut $crate::_export::_core::fmt::Formatter) -> $crate::_export::_core::fmt::Result {
+                let mut encoder = $crate::_export::hex_conservative::buf_encoder::BufEncoder::<{ $len * 2 }>::new($crate::_export::hex_conservative::Case::Lower);
                 let bytes = $crate::Hash::as_byte_array(self);
                 if $reverse {
-                    $crate::hex::fmt_hex_exact!(f, $len, bytes.iter().rev(), $crate::hex::Case::Lower)
+                    encoder.put_bytes(bytes.iter().rev());
                 } else {
-                    $crate::hex::fmt_hex_exact!(f, $len, bytes.iter(), $crate::hex::Case::Lower)
+                    encoder.put_bytes(bytes.iter());
                 }
+                $crate::_export::pad_hex(f, encoder.as_str())
             }
         }
 
         impl<$($generator: $gent),*> $crate::_export::_core::fmt::UpperHex for $ty<$($generator),*> {
             #[inline]
             fn fmt(&self, f: &mut $crate::_export::_core::fmt::Formatter) -> $crate::_export::_core::fmt::Result {
+                let mut encoder = $crate::_export::hex_conservative::buf_encoder::BufEncoder::<{ $len * 2 }>::new($crate::_export::hex_conservative::Case::Upper);
                 let bytes = $crate::Hash::as_byte_array(self);
                 if $reverse {
-                    $crate::hex::fmt_hex_exact!(f, $len, bytes.iter().rev(), $crate::hex::Case::Upper)
+                    encoder.put_bytes(bytes.iter().rev());
                 } else {
-                    $crate::hex::fmt_hex_exact!(f, $len, bytes.iter(), $crate::hex::Case::Upper)
+                    encoder.put_bytes(bytes.iter());
                 }
+                $crate::_export::pad_hex(f, encoder.as_str())
             }
         }
 
@@ -268,11 +287,9 @@ macro_rules! hash_newtype {
         }
 
         impl $crate::_export::_core::str::FromStr for $newtype {
-            type Err = $crate::hex::HexToArrayError;
+            type Err = $crate::_export::hex_conservative::DecodeFixedLengthBytesError;
             fn from_str(s: &str) -> $crate::_export::_core::result::Result<$newtype, Self::Err> {
-                use $crate::hex::FromHex;
-
-                let mut bytes = <[u8; <Self as $crate::Hash>::LEN]>::from_hex(s)?;
+                let mut bytes: [u8; <Self as $crate::Hash>::LEN] = $crate::_export::hex_conservative::decode_to_array(s)?;
                 if <Self as $crate::Hash>::DISPLAY_BACKWARD {
                     bytes.reverse();
                 }
@@ -405,11 +422,9 @@ macro_rules! hash_newtype_no_ord {
         }
 
         impl $crate::_export::_core::str::FromStr for $newtype {
-            type Err = $crate::hex::HexToArrayError;
+            type Err = $crate::_export::hex_conservative::DecodeFixedLengthBytesError;
             fn from_str(s: &str) -> $crate::_export::_core::result::Result<$newtype, Self::Err> {
-                use $crate::hex::FromHex;
-
-                let mut bytes = <[u8; <Self as $crate::Hash>::LEN]>::from_hex(s)?;
+                let mut bytes: [u8; <Self as $crate::Hash>::LEN] = $crate::_export::hex_conservative::decode_to_array(s)?;
                 if <Self as $crate::Hash>::DISPLAY_BACKWARD {
                     bytes.reverse();
                 }
@@ -556,4 +571,32 @@ macro_rules! hash_newtype_known_attrs {
     (#[hash_newtype(backward)]) => {};
     (#[hash_newtype($($unknown:tt)*)]) => { compile_error!(concat!("Unrecognized attribute ", stringify!($($unknown)*))); };
     ($($ignore:tt)*) => {};
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{sha256, sha256d, Hash};
+
+    crate::hash_newtype! {
+        /// Displayed backward, like `sha256d`.
+        struct Backward(sha256d::Hash);
+        /// Displayed forward, like `sha256`.
+        struct Forward(sha256::Hash);
+    }
+
+    #[test]
+    fn newtype_formatting_matches_hex_conservative_0_2() {
+        let backward = sha256d::Hash::hash(b"backward");
+        let forward = sha256::Hash::hash(b"forward");
+        macro_rules! same {
+            ($($spec:literal),*) => {$(
+                assert_eq!(format!($spec, Backward(backward)), format!($spec, backward), "{}", $spec);
+                assert_eq!(format!($spec, Forward(forward)), format!($spec, forward), "{}", $spec);
+            )*};
+        }
+        same!(
+            "{}", "{:?}", "{:x}", "{:X}", "{:#}", "{:#x}", "{:#X}", "{:70}", "{:<70}", "{:>70}",
+            "{:^70}", "{:*^70}", "{:070}", "{:#070x}", "{:.10}", "{:#.10}", "{:20.10}"
+        );
+    }
 }

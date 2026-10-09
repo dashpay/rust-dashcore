@@ -155,7 +155,7 @@ pub mod prelude {
 
     pub use std::io::sink;
 
-    pub use internals::hex::display::DisplayHex;
+    pub use hex_conservative::DisplayHex;
 
     pub type CoreBlockHeight = u32;
 }

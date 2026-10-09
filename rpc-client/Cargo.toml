@@ -20,6 +20,7 @@ path = "src/lib.rs"
 
 [dependencies]
 dashcore-rpc-json = { path = "../rpc-json" }
+hex-conservative = { workspace = true }
 
 jsonrpc = "0.18.0"
 tracing = "0.1"

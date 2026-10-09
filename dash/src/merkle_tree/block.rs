@@ -15,13 +15,12 @@
 //!
 //! ```rust
 //! use dashcore::hash_types::Txid;
-//! use dashcore::hashes::hex::FromHex;
 //! use dashcore::{Block, MerkleBlock};
 //!
 //! // Get the proof from a dashcored by running in the terminal:
 //! // $ TXID="5a4ebf66822b0b2d56bd9dc64ece0bc38ee7844a23ff1d7320a88c5fdb2ad3e2"
 //! // $ dashcore-cli gettxoutproof [\"$TXID\"]
-//! let mb_bytes = Vec::from_hex("01000000ba8b9cda965dd8e536670f9ddec10e53aab14b20bacad27b913719\
+//! let mb_bytes = hex_conservative::decode_to_vec("01000000ba8b9cda965dd8e536670f9ddec10e53aab14b20bacad27b913719\
 //!     0000000000190760b278fe7b8565fda3b968b918d5fd997f993b23674c0af3b6fde300b38f33a5914ce6ed5b\
 //!     1b01e32f570200000002252bf9d75c4f481ebb6278d708257d1f12beb6dd30301d26c623f789b2ba6fc0e2d3\
 //!     2adb5f8ca820731dff234a84e78ec30bce4ec69dbd562d0b2b8266bf4e5a0105").unwrap();
@@ -75,11 +74,10 @@ impl MerkleBlock {
     ///
     /// ```rust
     /// use dashcore::hash_types::Txid;
-    /// use dashcore::hashes::hex::FromHex;
     /// use dashcore::{Block, MerkleBlock};
     ///
     /// // Block 80000
-    /// let block_bytes = Vec::from_hex("01000000ba8b9cda965dd8e536670f9ddec10e53aab14b20bacad2\
+    /// let block_bytes = hex_conservative::decode_to_vec("01000000ba8b9cda965dd8e536670f9ddec10e53aab14b20bacad2\
     ///     7b9137190000000000190760b278fe7b8565fda3b968b918d5fd997f993b23674c0af3b6fde300b38f33\
     ///     a5914ce6ed5b1b01e32f5702010000000100000000000000000000000000000000000000000000000000\
     ///     00000000000000ffffffff0704e6ed5b1b014effffffff0100f2052a01000000434104b68a50eaa0287e\
@@ -235,7 +233,6 @@ impl PartialMerkleTree {
     ///
     /// ```rust
     /// use dashcore::hash_types::Txid;
-    /// use dashcore::hashes::hex::FromHex;
     /// use dashcore::merkle_tree::{MerkleBlock, PartialMerkleTree};
     ///
     /// // Block 80000
@@ -771,8 +768,7 @@ mod tests {
     /// Returns a real block (0000000000013b8ab2cd513b0261a14096412195a72a0c4827d229dcc7e0f7af)
     /// with 9 txs.
     fn get_block_13b8a() -> Block {
-        use hashes::hex::FromHex;
         let block_hex = include_str!("../../tests/data/block_13b8a.hex");
-        deserialize(&Vec::from_hex(block_hex).unwrap()).unwrap()
+        deserialize(&hex_conservative::decode_to_vec(block_hex).unwrap()).unwrap()
     }
 }

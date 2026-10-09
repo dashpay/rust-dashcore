@@ -49,13 +49,26 @@ pub(crate) use impl_consensus_encoding;
 #[cfg(test)]
 pub(crate) use test_macros::*;
 
+/// Formats `$len` bytes as hex in integer style.
+///
+/// Right aligned by default and `0x` under `{:#}`, with precision ignored.
+/// Formatting through `hex_conservative` directly would pad like a string and
+/// change how these types print with a width.
+macro_rules! fmt_hex_exact {
+    ($f:expr, $len:expr, $bytes:expr, $case:expr) => {{
+        let mut encoder = hex_conservative::buf_encoder::BufEncoder::<{ $len * 2 }>::new($case);
+        encoder.put_bytes($bytes);
+        $f.pad_integral(true, "0x", encoder.as_str())
+    }};
+}
+pub(crate) use fmt_hex_exact;
+
 /// Implements several traits for byte-based newtypes.
 /// Implements:
 /// - core::fmt::LowerHex
 /// - core::fmt::UpperHex
 /// - core::fmt::Display
 /// - core::str::FromStr
-/// - hashes::hex::FromHex
 macro_rules! impl_bytes_newtype {
     ($t:ident, $len:literal) => {
         impl $t {
@@ -79,15 +92,23 @@ macro_rules! impl_bytes_newtype {
 
         impl core::fmt::LowerHex for $t {
             fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                use internals::hex::{Case, display};
-                display::fmt_hex_exact!(f, $len, &self.0, Case::Lower)
+                $crate::internal_macros::fmt_hex_exact!(
+                    f,
+                    $len,
+                    &self.0,
+                    hex_conservative::Case::Lower
+                )
             }
         }
 
         impl core::fmt::UpperHex for $t {
             fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                use internals::hex::{Case, display};
-                display::fmt_hex_exact!(f, $len, &self.0, Case::Upper)
+                $crate::internal_macros::fmt_hex_exact!(
+                    f,
+                    $len,
+                    &self.0,
+                    hex_conservative::Case::Upper
+                )
             }
         }
 
@@ -103,18 +124,10 @@ macro_rules! impl_bytes_newtype {
             }
         }
 
-        impl $crate::hashes::hex::FromHex for $t {
-            type Error = $crate::hashes::hex::HexToArrayError;
-
-            fn from_hex(s: &str) -> Result<Self, Self::Error> {
-                Ok($t(<[u8; $len] as $crate::hashes::hex::FromHex>::from_hex(s)?))
-            }
-        }
-
         impl core::str::FromStr for $t {
-            type Err = $crate::hashes::hex::HexToArrayError;
+            type Err = hex_conservative::DecodeFixedLengthBytesError;
             fn from_str(s: &str) -> Result<Self, Self::Err> {
-                $crate::hashes::hex::FromHex::from_hex(s)
+                Ok($t(hex_conservative::decode_to_array(s)?))
             }
         }
 
@@ -149,7 +162,7 @@ macro_rules! impl_bytes_newtype {
                             use $crate::serde::de::Unexpected;
 
                             if let Ok(hex) = core::str::from_utf8(v) {
-                                $crate::hashes::hex::FromHex::from_hex(hex).map_err(E::custom)
+                                hex.parse().map_err(E::custom)
                             } else {
                                 return Err(E::invalid_value(Unexpected::Bytes(v), &self));
                             }
@@ -159,7 +172,7 @@ macro_rules! impl_bytes_newtype {
                         where
                             E: $crate::serde::de::Error,
                         {
-                            $crate::hashes::hex::FromHex::from_hex(v).map_err(E::custom)
+                            v.parse().map_err(E::custom)
                         }
                     }
 
@@ -199,6 +212,6 @@ pub(crate) use impl_bytes_newtype;
 #[cfg(test)]
 mod test_macros {
 
-    macro_rules! hex (($hex:expr) => (<Vec<u8> as hashes::hex::FromHex>::from_hex($hex).unwrap()));
+    macro_rules! hex (($hex:expr) => (hex_conservative::decode_to_vec($hex).unwrap()));
     pub(crate) use hex;
 }

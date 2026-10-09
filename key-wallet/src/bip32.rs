@@ -35,6 +35,7 @@ use serde;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use dashcore::{base58, Network};
+use hex_conservative::DisplayHex;
 use zeroize::Zeroize;
 
 /// XpubIdentifier as a hash160 result
@@ -90,10 +91,7 @@ impl TryFrom<&[u8]> for ChainCode {
 
 impl fmt::Display for ChainCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for &byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "{:x}", self.0.as_hex())
     }
 }
 
@@ -122,10 +120,7 @@ impl zeroize::Zeroize for Fingerprint {
 
 impl fmt::LowerHex for ChainCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for &byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "{:x}", self.0.as_hex())
     }
 }
 
@@ -194,9 +189,7 @@ impl<'de> serde::Deserialize<'de> for ChainCode {
         use serde::de::Error;
 
         let s = String::deserialize(deserializer)?;
-        let mut bytes = [0u8; 32];
-        crate::utils::parse_hex_bytes(&s, &mut bytes).map_err(D::Error::custom)?;
-        Ok(ChainCode(bytes))
+        hex_conservative::decode_to_array(&s).map(ChainCode).map_err(D::Error::custom)
     }
 }
 
@@ -244,10 +237,7 @@ impl TryFrom<&[u8]> for Fingerprint {
 
 impl fmt::Display for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for &byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "{:x}", self.0.as_hex())
     }
 }
 
@@ -261,19 +251,15 @@ impl core::str::FromStr for Fingerprint {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut bytes = [0u8; 4];
-        crate::utils::parse_hex_bytes(s, &mut bytes)
-            .map_err(|_| Error::InvalidPublicKeyHexLength(s.len()))?;
-        Ok(Fingerprint(bytes))
+        hex_conservative::decode_to_array(s)
+            .map(Fingerprint)
+            .map_err(|_| Error::InvalidPublicKeyHexLength(s.len()))
     }
 }
 
 impl fmt::LowerHex for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for &byte in &self.0 {
-            write!(f, "{:02x}", byte)?;
-        }
-        Ok(())
+        write!(f, "{:x}", self.0.as_hex())
     }
 }
 
@@ -852,10 +838,7 @@ impl fmt::Display for ChildNumber {
             ChildNumber::Hardened256 {
                 index,
             } => {
-                write!(f, "0x")?;
-                for byte in index {
-                    write!(f, "{:02x}", byte)?;
-                }
+                write!(f, "0x{:x}", index.as_hex())?;
                 write!(
                     f,
                     "{}",
@@ -869,11 +852,7 @@ impl fmt::Display for ChildNumber {
             ChildNumber::Normal256 {
                 index,
             } => {
-                write!(f, "0x")?;
-                for byte in index {
-                    write!(f, "{:02x}", byte)?;
-                }
-                Ok(())
+                write!(f, "0x{:x}", index.as_hex())
             }
         }
     }
@@ -893,33 +872,8 @@ impl FromStr for ChildNumber {
         if index_str.starts_with("0x") || index_str.starts_with("0X") {
             // Parse as a 256-bit hex number
             let hex_str = &index_str[2..];
-            // Simple hex decoder
-            let hex_bytes = hex_str
-                .as_bytes()
-                .chunks(2)
-                .map(|chunk| {
-                    let high = chunk[0];
-                    let low = chunk.get(1).copied().unwrap_or(b'0');
-                    let h = match high {
-                        b'0'..=b'9' => high - b'0',
-                        b'a'..=b'f' => high - b'a' + 10,
-                        b'A'..=b'F' => high - b'A' + 10,
-                        _ => return Err(Error::InvalidChildNumberFormat),
-                    };
-                    let l = match low {
-                        b'0'..=b'9' => low - b'0',
-                        b'a'..=b'f' => low - b'a' + 10,
-                        b'A'..=b'F' => low - b'A' + 10,
-                        _ => return Err(Error::InvalidChildNumberFormat),
-                    };
-                    Ok((h << 4) | l)
-                })
-                .collect::<Result<Vec<u8>, Error>>()?;
-            if hex_bytes.len() != 32 {
-                return Err(Error::InvalidChildNumberFormat);
-            }
-            let mut index_bytes = [0u8; 32];
-            index_bytes[32 - hex_bytes.len()..].copy_from_slice(&hex_bytes);
+            let index_bytes = hex_conservative::decode_to_array::<32>(hex_str)
+                .map_err(|_| Error::InvalidChildNumberFormat)?;
             if is_hardened {
                 Ok(ChildNumber::Hardened256 {
                     index: index_bytes,
@@ -1296,7 +1250,7 @@ pub enum Error {
     /// Base58 encoding error
     Base58(base58::DecodeCheckError),
     /// Hexadecimal decoding error
-    Hex(dashcore_hashes::hex::HexToArrayError),
+    Hex(hex_conservative::DecodeFixedLengthBytesError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
     /// Something is not supported based on active features
@@ -1947,12 +1901,28 @@ impl FromStr for ExtendedPubKey {
 mod tests {
     use core::str::FromStr;
 
-    use dashcore_hashes::hex::FromHex;
-
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
     use dashcore::Network::{self, Mainnet};
     use hex_conservative::DisplayHex;
+    use test_case::{test_case, test_matrix};
+
+    const INDEX_256: &str = "00000000000000000000000000000000000000000000000000000000000000ab";
+
+    #[test_matrix(["0x", "0X"], [INDEX_256.to_owned(), INDEX_256.to_uppercase()], ["", "'"])]
+    fn child_number_256_round_trips(prefix: &str, digits: String, suffix: &str) {
+        let parsed: ChildNumber = format!("{prefix}{digits}{suffix}").parse().unwrap();
+        assert_eq!(parsed.is_hardened(), !suffix.is_empty());
+        assert_eq!(parsed.to_string(), format!("0x{INDEX_256}{suffix}"));
+    }
+
+    // 63 digits must not parse as if a trailing `0` were appended.
+    #[test_case(&INDEX_256[1..] ; "odd length")]
+    #[test_case(&INDEX_256[2..] ; "too short")]
+    #[test_case("00000000000000000000000000000000000000000000000000000000000000zz" ; "invalid digit")]
+    fn child_number_256_rejects(digits: &str) {
+        assert!(format!("0x{digits}").parse::<ChildNumber>().is_err());
+    }
 
     #[test]
     fn test_parse_derivation_path() {
@@ -2133,7 +2103,7 @@ mod tests {
 
     #[test]
     fn test_vector_1() {
-        let seed = Vec::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
+        let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // m
         test_path(
@@ -2192,7 +2162,7 @@ mod tests {
 
     #[test]
     fn test_vector_2() {
-        let seed = Vec::from_hex("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542").unwrap();
+        let seed = hex_conservative::decode_to_vec("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542").unwrap();
 
         // m
         test_path(
@@ -2251,7 +2221,7 @@ mod tests {
 
     #[test]
     fn test_vector_3() {
-        let seed = Vec::from_hex("4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be").unwrap();
+        let seed = hex_conservative::decode_to_vec("4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be").unwrap();
 
         // m
         test_path(
@@ -2356,7 +2326,7 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_1() {
-        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+        let seed = hex_conservative::decode_to_vec("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 1: Non-hardened / Hardened path example
         test_path(
@@ -2374,7 +2344,7 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_2() {
-        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+        let seed = hex_conservative::decode_to_vec("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 2: Multiple hardened derivations with final non-hardened index
         test_path(
@@ -2392,7 +2362,7 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_3() {
-        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+        let seed = hex_conservative::decode_to_vec("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 3: Non-hardened derivation
         test_path(
@@ -2406,7 +2376,7 @@ mod tests {
 
     #[test]
     fn test_dashpay_vector_4() {
-        let seed = Vec::from_hex("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
+        let seed = hex_conservative::decode_to_vec("b16d3782e714da7c55a397d5f19104cfed7ffa8036ac514509bbb50807f8ac598eeb26f0797bd8cc221a6cbff2168d90a5e9ee025a5bd977977b9eccd97894bb").unwrap();
 
         // Test Vector 4: Hardened path with complex indices
         test_path(
