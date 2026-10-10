@@ -262,11 +262,7 @@ pub unsafe extern "C" fn account_derive_private_key_as_wif_at(
         account.inner().derive_from_master_xpriv_extended_xpriv_at(master_xpriv.inner(), index),
         error
     );
-    let dash_priv = dashcore::PrivateKey {
-        compressed: true,
-        network: account.inner().network(),
-        inner: derived.private_key,
-    };
+    let dash_priv = dashcore::PrivateKey::new(derived.private_key, account.inner().network());
     unwrap_or_return!(CString::new(dash_priv.to_wif()), error).into_raw()
 }
 

@@ -113,9 +113,6 @@ fn input_address_from_script_sig(script_sig: &ScriptBuf, network: Network) -> Op
     if sig.is_empty() || sig[0] != 0x30 || sig.len() > 73 {
         return None;
     }
-    if pubkey_bytes.len() != 33 && pubkey_bytes.len() != 65 {
-        return None;
-    }
     let pubkey = PublicKey::from_slice(pubkey_bytes).ok()?;
     Some(Address::p2pkh(&pubkey, network))
 }

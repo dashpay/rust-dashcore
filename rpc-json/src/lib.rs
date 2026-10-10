@@ -1866,7 +1866,7 @@ pub enum AddressType {
 }
 
 /// Used to represent arguments that can either be an address or a public key.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PubKeyOrAddress<'a> {
     Address(&'a Address),
     PubKey(&'a PublicKey),
