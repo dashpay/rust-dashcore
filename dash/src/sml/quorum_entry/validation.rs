@@ -1,4 +1,4 @@
-use crate::bls_sig_utils::BlsScheme;
+use crate::bls_sig_utils::{BlsPkBytes, BlsScheme};
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
@@ -35,19 +35,22 @@ impl QualifiedQuorumEntry {
 
         // A key's encoding follows its own entry's version; the scheme the
         // aggregate is verified in is one value for the whole quorum.
-        let keys = operator_keys.into_iter().map(|entry| {
-            let encoding = if entry.use_legacy_bls_keys() {
-                BlsScheme::Legacy
-            } else {
-                BlsScheme::Modern
-            };
-            (encoding, &entry.operator_public_key)
-        });
+        let keys: Vec<(BlsScheme, BlsPkBytes)> = operator_keys
+            .into_iter()
+            .map(|entry| {
+                let encoding = if entry.use_legacy_bls_keys() {
+                    BlsScheme::Legacy
+                } else {
+                    BlsScheme::Modern
+                };
+                (encoding, entry.operator_public_key.into())
+            })
+            .collect();
 
         self.quorum_entry
             .all_commitment_aggregated_signature
             .as_scheme(scheme)
-            .verify_secure_aggregate(&message, keys)
+            .verify_secure_aggregate(&message, keys.iter().map(|(scheme, key)| (*scheme, key)))
             .map_err(|e| {
                 QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(e.to_string())
             })
