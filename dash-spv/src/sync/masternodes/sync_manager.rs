@@ -974,7 +974,15 @@ mod tests {
         };
         let events = deliver(&mut manager, &requests, work_list).await;
 
-        assert!(engine.read().await.masternode_lists.contains_key(&work));
+        let engine = engine.read().await;
+        assert!(engine.masternode_lists.contains_key(&work));
+        assert_ne!(
+            engine.latest_masternode_list().unwrap().quorums[&LLMQType::LlmqtypeTest]
+                [&quorum_hash_at(&hashes, MINED)]
+                .verified,
+            LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(work)),
+            "the quorum is checked again against its work-block list"
+        );
         assert!(
             matches!(
                 events.as_slice(),
@@ -983,6 +991,25 @@ mod tests {
             "the update completes at the tip once the work-block list is applied, got {events:?}"
         );
         assert!(rx.try_recv().is_err(), "nothing more to fetch");
+    }
+
+    /// A tip update the engine rejects leaves the state unchanged, so it
+    /// publishes nothing and asks for no work-block list.
+    #[tokio::test]
+    async fn a_failed_tip_update_publishes_nothing() {
+        let (mut manager, engine, requests, mut rx, tip_update, _hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let rejected = MnListDiff {
+            // A new quorum needs a ChainLock signature to be applied.
+            quorums_chainlock_signatures: Vec::new(),
+            ..tip_update
+        };
+
+        let events = deliver(&mut manager, &requests, rejected).await;
+
+        assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
+        assert!(events.is_empty(), "a rejected tip update must not complete, got {events:?}");
+        assert!(rx.try_recv().is_err(), "a rejected tip update asks for nothing");
     }
 
     /// A work-block list that fails to apply leaves the tip update it was

@@ -678,7 +678,9 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
     );
 
     // Record the quorum statuses of every list the client publishes, at the
-    // height it publishes it.
+    // height it publishes it. The observer reads the engine after the event,
+    // so a later QRInfo could already have verified the quorum in that list;
+    // the tip-update check below rules out the common case.
     let mut events = client_handle.sync_event_receiver.resubscribe();
     let engine = Arc::clone(&client_handle.engine);
     let published = Arc::new(Mutex::new(Vec::new()));
@@ -731,8 +733,10 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
         })
         .collect();
     // The llmq_test mining window opens before the DIP24 one, in which the
-    // client fires QRInfo, so a tip update brings the commitment. A QRInfo
-    // fetches the work-block lists itself and would not cover the fix.
+    // client fires QRInfo, so a tip update should bring the commitment. A
+    // QRInfo fetches the work-block lists itself and would not cover the fix.
+    // (A list published after every QRInfo attempt failed also carries no
+    // result, which this cannot tell apart.)
     assert!(
         arrivals.first().is_some_and(|(_, tip_update, _)| *tip_update),
         "the llmq_test quorum {quorum_hash} must first reach the client through a tip update, \
