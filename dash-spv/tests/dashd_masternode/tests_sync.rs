@@ -688,7 +688,7 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
             while let Ok(event) = events.recv().await {
                 let SyncEvent::MasternodeStateUpdated {
                     height,
-                    ..
+                    qr_info_result,
                 } = event
                 else {
                     continue;
@@ -704,7 +704,7 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
                     .flatten()
                     .map(|(hash, quorum)| (*hash, quorum.verified.clone()))
                     .collect();
-                published.lock().await.push((height, statuses));
+                published.lock().await.push((height, qr_info_result.is_none(), statuses));
             }
         }
     });
@@ -725,17 +725,22 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
     let quorum_hash = QuorumHash::from_byte_array(quorum_hash.to_byte_array());
     let arrivals: Vec<_> = published
         .iter()
-        .filter_map(|(height, statuses)| {
-            statuses.iter().find(|(hash, _)| *hash == quorum_hash).map(|(_, s)| (*height, s))
+        .filter_map(|(height, tip_update, statuses)| {
+            let (_, status) = statuses.iter().find(|(hash, _)| *hash == quorum_hash)?;
+            Some((*height, *tip_update, status))
         })
         .collect();
+    // The llmq_test mining window opens before the DIP24 one, in which the
+    // client fires QRInfo, so a tip update brings the commitment. A QRInfo
+    // fetches the work-block lists itself and would not cover the fix.
     assert!(
-        !arrivals.is_empty(),
-        "no list the client published up to {tip} holds the llmq_test quorum {quorum_hash}"
+        arrivals.first().is_some_and(|(_, tip_update, _)| *tip_update),
+        "the llmq_test quorum {quorum_hash} must first reach the client through a tip update, \
+         got {arrivals:?}"
     );
     let unverified: Vec<_> = arrivals
         .iter()
-        .filter(|(_, status)| **status != LLMQEntryVerificationStatus::Verified)
+        .filter(|(_, _, status)| **status != LLMQEntryVerificationStatus::Verified)
         .collect();
     assert!(
         unverified.is_empty(),

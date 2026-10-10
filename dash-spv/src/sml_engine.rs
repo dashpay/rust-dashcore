@@ -221,6 +221,28 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// unverified non-rotating quorum of the newest list, oldest first. A
     /// retired quorum type is never validated, so it needs none.
     pub async fn missing_work_block_list_requests(&self) -> Vec<(BlockHash, BlockHash)> {
+        self.work_block_list_requests(|_, _| true).await
+    }
+
+    /// [`Self::missing_work_block_list_requests`] for only the quorums `diff`
+    /// adds, so that a tip update asks once for each quorum it brings rather
+    /// than again for every quorum still unverified.
+    pub async fn missing_work_block_list_requests_for(
+        &self,
+        diff: &MnListDiff,
+    ) -> Vec<(BlockHash, BlockHash)> {
+        let added: BTreeSet<(LLMQType, QuorumHash)> =
+            diff.new_quorums.iter().map(|quorum| (quorum.llmq_type, quorum.quorum_hash)).collect();
+        self.work_block_list_requests(|llmq_type, quorum_hash| {
+            added.contains(&(*llmq_type, *quorum_hash))
+        })
+        .await
+    }
+
+    async fn work_block_list_requests(
+        &self,
+        wanted: impl Fn(&LLMQType, &QuorumHash) -> bool,
+    ) -> Vec<(BlockHash, BlockHash)> {
         let Some(newest) = self.latest_masternode_list() else {
             return Vec::new();
         };
@@ -232,7 +254,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 continue;
             }
             for (quorum_hash, quorum) in quorums {
-                if quorum.verified == LLMQEntryVerificationStatus::Verified {
+                if quorum.verified == LLMQEntryVerificationStatus::Verified
+                    || !wanted(llmq_type, quorum_hash)
+                {
                     continue;
                 }
                 match self.height_of(quorum_hash).await {
