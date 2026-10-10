@@ -30,8 +30,10 @@ use crate::managed_account::transaction_record::TransactionDirection;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::ManagedWalletInfo;
 use crate::AccountType;
+use test_case::test_case;
 
 /// A transaction whose inputs spend exactly `spent`, with no outputs. Enough to
 /// drive `record_observed_spends` (reads inputs) and the removal guard.
@@ -652,4 +654,79 @@ async fn recording_observed_spend_reports_state_modified() {
     let mempool_spend = spending_tx(&[OutPoint::new(Txid::from([0x78; 32]), 0)]);
     let result = ctx.check_transaction(&mempool_spend, TransactionContext::Mempool).await;
     assert!(!result.state_modified, "a mempool spend records nothing");
+}
+
+#[test]
+fn truncate_above_drops_spends_observed_above_the_fork() {
+    let mut info = ManagedWalletInfo::dummy(9);
+    let op_kept = OutPoint::new(Txid::from([0x01; 32]), 0);
+    let op_dropped = OutPoint::new(Txid::from([0x02; 32]), 0);
+    info.record_observed_spends(&spending_tx(&[op_kept]), 100);
+    info.record_observed_spends(&spending_tx(&[op_dropped]), 101);
+
+    info.truncate_above(100).expect("truncates");
+
+    assert!(info.observed_spent_outpoints().contains_key(&op_kept));
+    assert!(!info.observed_spent_outpoints().contains_key(&op_dropped));
+}
+
+#[test_case(false; "held")]
+#[test_case(true; "spend replayed after the funding")]
+#[tokio::test]
+async fn truncate_above_restores_a_held_output_whose_spend_it_drops(replay_spend: bool) {
+    let (mut ctx, funding, spend) = spend_first_context(in_block(100, 1)).await;
+    let outpoint = OutPoint::new(funding.txid(), 0);
+    if replay_spend {
+        // As `reapply_heights` does once the funding is known.
+        assert!(ctx.check_transaction(&spend, in_block(200, 2)).await.is_relevant);
+    }
+
+    let truncation = ctx.managed_wallet.truncate_above(150).expect("truncates");
+
+    assert_eq!(truncation.restored_outpoints, vec![outpoint]);
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(account.spent_before_funded.is_empty());
+    let utxo = account.utxos.get(&outpoint).expect("the held output is a UTXO again");
+    assert!(utxo.is_confirmed);
+    assert_eq!(ctx.managed_wallet.balance.total(), SPEND_FIRST_FUNDING_VALUE);
+}
+
+/// A spend this account recorded before its funding, through a change output,
+/// leaves the funding output out of `utxos`. A fork dropping the spend gives
+/// it back.
+#[tokio::test]
+async fn truncate_above_restores_an_output_the_account_saw_spent_first() {
+    use dashcore::blockdata::script::ScriptBuf;
+    use dashcore::TxOut;
+
+    const CHANGE_VALUE: u64 = 100_000;
+    let mut ctx = TestWalletContext::new_random();
+    let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[SPEND_FIRST_FUNDING_VALUE]);
+    let outpoint = OutPoint::new(funding.txid(), 0);
+    let spend = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        }],
+        output: vec![TxOut {
+            value: CHANGE_VALUE,
+            script_pubkey: ctx.receive_address.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    assert!(ctx.check_transaction(&spend, in_block(200, 2)).await.is_relevant);
+    assert!(ctx.check_transaction(&funding, in_block(100, 1)).await.is_relevant);
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(!account.utxos.contains_key(&outpoint), "the funding output is spent");
+
+    let truncation = ctx.managed_wallet.truncate_above(150).expect("truncates");
+
+    assert_eq!(truncation.restored_outpoints, vec![outpoint]);
+    let account = ctx.managed_wallet.first_bip44_managed_account().expect("BIP44 account");
+    assert!(account.utxos.get(&outpoint).expect("a UTXO again").is_confirmed);
+    assert_eq!(ctx.managed_wallet.balance.total(), SPEND_FIRST_FUNDING_VALUE);
 }

@@ -298,6 +298,35 @@ pub enum WalletEvent {
         /// full balance after the change — not a delta.
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
+    /// A fork replaced the chain above `height`, and the wallet dropped what it
+    /// recorded from the blocks above it, as if they were never processed. The
+    /// new branch is then processed from `height`. Only a wallet that processed
+    /// a block above `height` gets it.
+    ///
+    /// A consumer mirroring wallet state to disk must delete the removed
+    /// transactions with any UTXO they created, move the unconfirmed ones back
+    /// to the mempool with their UTXOs, mark the restored coins unspent, and
+    /// lower its synced height to `height` when it is above it.
+    ChainTruncated {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// Height of the last block the fork keeps.
+        height: CoreBlockHeight,
+        /// Transactions removed: they were recorded in blocks above `height`.
+        txids: Vec<Txid>,
+        /// InstantSend-locked transactions recorded in blocks above `height`,
+        /// kept as unconfirmed: the network mines them again, so the coins they
+        /// spent stay spent and their outputs stay InstantSend-locked.
+        unconfirmed_txids: Vec<Txid>,
+        /// Coins the removed transactions spent, unspent again.
+        restored_outpoints: Vec<OutPoint>,
+        /// Wallet balance after the truncation.
+        balance: WalletCoreBalance,
+        /// Post-event balance **snapshots** for accounts whose balance
+        /// changed as a result of this event. Each value is the account's
+        /// full balance after the change — not a delta.
+        account_balances: BTreeMap<AccountType, WalletCoreBalance>,
+    },
     /// A block was processed for a wallet. Carries records bucketed by what
     /// happened to them in this block, plus the post-block balance.
     /// `inserted` is records first stored in this block, `updated` is
@@ -412,6 +441,10 @@ impl WalletEvent {
                 wallet_id,
                 ..
             }
+            | WalletEvent::ChainTruncated {
+                wallet_id,
+                ..
+            }
             | WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 ..
@@ -477,6 +510,24 @@ impl fmt::Display for WalletEvent {
                 superseded_by,
                 winner_mined_height,
                 released_outpoints.len(),
+                balance,
+                format_account_balances(account_balances),
+            ),
+            WalletEvent::ChainTruncated {
+                height,
+                txids,
+                unconfirmed_txids,
+                restored_outpoints,
+                balance,
+                account_balances,
+                ..
+            } => write!(
+                f,
+                "ChainTruncated(height={}, removed={}, unconfirmed={}, restored={}, balance={}, account_balances={})",
+                height,
+                txids.len(),
+                unconfirmed_txids.len(),
+                restored_outpoints.len(),
                 balance,
                 format_account_balances(account_balances),
             ),

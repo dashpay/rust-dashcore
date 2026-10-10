@@ -397,9 +397,8 @@ impl<I: Persistable> SegmentCache<I> {
     /// has its tail slots reset to `I::sentinel()` so subsequent `Segment::insert`
     /// calls into the same range remain sound.
     ///
-    /// Returns an error if `target_height` is below `start_height`, since the
-    /// resulting cache would have a hole below its origin. Callers must guard
-    /// against truncating an empty cache except as a no-op (no error).
+    /// A `target_height` below `start_height` drops every item, as
+    /// [`Self::clear`] does.
     ///
     /// The reset of the boundary segment is not durable until the next
     /// successful `persist` call. A crash in between reopens the cache with the
@@ -414,12 +413,8 @@ impl<I: Persistable> SegmentCache<I> {
             return Ok(());
         }
 
-        if let Some(start) = self.start_height {
-            if target_height < start {
-                return Err(StorageError::InvalidArgument(format!(
-                    "truncate_above({target_height}) below start_height ({start})"
-                )));
-            }
+        if self.start_height.is_some_and(|start| target_height < start) {
+            return self.clear().await;
         }
 
         let boundary_segment_id = Self::height_to_segment_id(target_height);
@@ -1065,7 +1060,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_truncate_below_start_errors() {
+    async fn test_truncate_below_start_clears() {
         let tmp_dir = TempDir::new().unwrap();
 
         let items = FilterHeader::dummy_batch(0..5);
@@ -1074,9 +1069,9 @@ mod tests {
         cache.store_items_at_height(&items, 10).await.unwrap();
         assert_eq!(cache.start_height(), Some(10));
 
-        assert!(cache.truncate_above(5).await.is_err());
-        assert_eq!(cache.tip_height(), Some(14));
-        assert_eq!(cache.start_height(), Some(10));
+        cache.truncate_above(5).await.unwrap();
+        assert_eq!(cache.tip_height(), None);
+        assert_eq!(cache.start_height(), None);
     }
 
     #[tokio::test]

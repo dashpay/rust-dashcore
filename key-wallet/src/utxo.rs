@@ -63,6 +63,14 @@ impl Utxo {
         }
     }
 
+    /// Back to an InstantSend-locked output of a transaction not in a block,
+    /// as when a fork drops the block of an InstantSend-locked transaction.
+    pub(crate) fn mark_unconfirmed_instant_locked(&mut self) {
+        self.is_confirmed = false;
+        self.is_instantlocked = true;
+        self.height = 0;
+    }
+
     /// Get the value of this UTXO in satoshis
     pub fn value(&self) -> u64 {
         self.txout.value

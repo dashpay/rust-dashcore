@@ -2,7 +2,7 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
-use crate::{WalletEvent, WalletId};
+use crate::{WalletError, WalletEvent, WalletId};
 use async_trait::async_trait;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -165,6 +165,16 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Advance one wallet's committed sync checkpoint. Implementations must
     /// only advance forward (a value below the current is silently ignored).
     fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight);
+
+    /// Drop what every wallet recorded from blocks above `height`, including
+    /// their sync heights, so blocks above it are processed again, and emit a
+    /// [`WalletEvent::ChainTruncated`] per wallet that processed a block above
+    /// it. A wallet that did not is left as it is. Called when a fork replaces
+    /// the chain above `height`.
+    ///
+    /// Fails with [`WalletError::TruncateBelowChainLock`] and changes no wallet
+    /// when `height` is below any wallet's applied ChainLock.
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<(), WalletError>;
 
     /// Advance one wallet's last-processed height after a block has been applied
     /// to its state. Implementations must only advance forward.

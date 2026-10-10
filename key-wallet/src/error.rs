@@ -53,6 +53,13 @@ pub enum Error {
         /// What must be supplied instead, e.g. `"extended public key (xpub)"`.
         required_key: &'static str,
     },
+    /// A truncation below the wallet's applied ChainLock, whose blocks are final.
+    TruncateBelowChainLock {
+        /// The height asked to truncate above.
+        height: u32,
+        /// The height of the wallet's applied ChainLock.
+        chain_locked: u32,
+    },
 }
 
 impl fmt::Display for Error {
@@ -85,6 +92,14 @@ impl fmt::Display for Error {
                  derive the {} account from a root key. Supply the account's {} via the \
                  Some(..) argument of the add_*account method.",
                 account_type, required_key
+            ),
+            Error::TruncateBelowChainLock {
+                height,
+                chain_locked,
+            } => write!(
+                f,
+                "Cannot truncate above {}: blocks up to the ChainLock at {} are final",
+                height, chain_locked
             ),
         }
     }

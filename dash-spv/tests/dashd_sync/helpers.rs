@@ -1,8 +1,13 @@
 use dash_spv::network::NetworkEvent;
 use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncProgress, SyncState};
 use dash_spv::test_utils::DashCoreNode;
-use dashcore::Txid;
+use dashcore::address::NetworkUnchecked;
+use dashcore::{Address, Txid};
+use key_wallet::account::ManagedAccountTrait;
 use key_wallet::transaction_checking::TransactionContext;
+use key_wallet::wallet::managed_wallet_info::transaction_builder::{
+    BuilderError, TransactionBuilder,
+};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletEvent;
@@ -473,4 +478,31 @@ pub(super) async fn wait_for_network_event_both(
         wait_for_network_event(&mut b.network_event_receiver, pred_clone, max_wait),
     );
     r_a && r_b
+}
+
+/// Build and sign a payment of `amount` to `destination` from account 0.
+pub(super) async fn build_and_sign(
+    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    wallet_id: &WalletId,
+    destination: &Address,
+    amount: u64,
+) -> Result<(dashcore::Transaction, u64), BuilderError> {
+    let dest_unchecked: Address<NetworkUnchecked> =
+        destination.to_string().parse().expect("destination address");
+
+    let mut wallet_lock = wallet.write().await;
+    let (w, info) = wallet_lock.get_wallet_and_info_mut(wallet_id).expect("wallet present");
+
+    let height = info.last_processed_height();
+    let network = w.network;
+    let account = w.get_bip44_account(0).expect("account 0").clone();
+    let funds_account = info.accounts.standard_bip44_accounts.get_mut(&0).expect("account 0");
+    let dest = dest_unchecked.require_network(network).expect("destination network");
+
+    TransactionBuilder::new()
+        .set_current_height(height)
+        .add_funding(funds_account, &account)
+        .add_output(&dest, amount)
+        .build_signed(w, |a| funds_account.address_derivation_path(&a))
+        .await
 }
