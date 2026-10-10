@@ -95,6 +95,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** remove `signer::CompactSignature`. Use `MessageSignature`
   instead
 
+### Fixed
+
+- Correct retained spender amounts and direction when late funding reveals owned inputs,
+  including newly discovered owned outputs and InstantSend locks received through live SPV
+  after account import. Preserve spender context and suppress duplicate lock notifications.
+
 ## 0.44.0 - 2026-07-01
 
 ### Added

@@ -730,7 +730,8 @@ impl Drop for FFIDerivedAddress {
 /// record's `context` is `InstantSend(..)`). Also fires when an off-chain
 /// funding arrival corrects an earlier transaction's accounting. Consumers must
 /// upsert by wallet, account and txid; a correction retains the spender's context.
-/// A plain InstantSend lock on a known mempool transaction emits only the lock callback.
+/// A lock on a known mempool transaction emits only the lock callback when no
+/// account backfill or accounting correction is needed.
 ///
 /// All pointer parameters are borrowed and only valid for the duration of the
 /// callback. `balance` is the wallet's balance *after* the transaction was

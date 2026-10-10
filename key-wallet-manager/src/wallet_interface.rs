@@ -199,6 +199,18 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Marks UTXOs as IS-locked, emits status change and balance update events.
     fn process_instant_send_lock(&mut self, _instant_lock: InstantLock) {}
 
+    /// Process a lock for a transaction tracked by the mempool manager.
+    /// Implementations can use the full transaction to backfill account history.
+    /// The default delegates once to the existing lock-only hook, preserving
+    /// notification behavior for custom wallet implementations.
+    async fn process_mempool_instant_send_lock(
+        &mut self,
+        _tx: &Transaction,
+        instant_lock: InstantLock,
+    ) {
+        self.process_instant_send_lock(instant_lock);
+    }
+
     /// Apply a validated `chain_lock` to every wallet, promoting any
     /// `InBlock` records at height `<= chain_lock.block_height` to
     /// `InChainLockedBlock` and advancing each wallet's
