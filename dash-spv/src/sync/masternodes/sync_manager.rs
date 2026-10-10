@@ -975,13 +975,19 @@ mod tests {
         let events = deliver(&mut manager, &requests, work_list).await;
 
         let engine = engine.read().await;
-        assert!(engine.masternode_lists.contains_key(&work));
-        assert_ne!(
-            engine.latest_masternode_list().unwrap().quorums[&LLMQType::LlmqtypeTest]
-                [&quorum_hash_at(&hashes, MINED)]
-                .verified,
-            LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(work)),
-            "the quorum is checked again against its work-block list"
+        let status = &engine.latest_masternode_list().unwrap().quorums[&LLMQType::LlmqtypeTest]
+            [&quorum_hash_at(&hashes, MINED)]
+            .verified;
+        assert!(
+            matches!(
+                status,
+                LLMQEntryVerificationStatus::Verified | LLMQEntryVerificationStatus::Invalid(_)
+            ),
+            "the quorum is checked again against its work-block list, got {status:?}"
+        );
+        assert!(
+            !engine.masternode_lists.contains_key(&work),
+            "the work-block list is dropped once its quorum is validated"
         );
         assert!(
             matches!(
