@@ -60,6 +60,11 @@ pub struct ManagedWalletInfo {
     /// Transactions that have received an InstantSend lock.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) instant_send_locks: HashSet<Txid>,
+    /// CoinJoin addresses derived past the pool ends while probing for lost
+    /// mixed coins; a cache only, never persisted.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) coinjoin_probe_cache:
+        crate::transaction_checking::coinjoin_recovery::CoinJoinProbeCache,
     /// Outpoints observed spent by transactions seen in a processed block,
     /// mapped to the height of the block that spent them.
     ///
@@ -244,6 +249,7 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::new(),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
+            coinjoin_probe_cache: Default::default(),
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
@@ -261,6 +267,7 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::new(),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
+            coinjoin_probe_cache: Default::default(),
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
@@ -288,6 +295,7 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::from_account_collection(&wallet.accounts),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
+            coinjoin_probe_cache: Default::default(),
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
