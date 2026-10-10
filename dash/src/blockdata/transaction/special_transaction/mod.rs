@@ -31,12 +31,12 @@ use crate::blockdata::transaction::special_transaction::TransactionPayload::{
     ClassicalWithNonStandardVersionTypeBytesPayloadType, CoinbasePayloadType,
     MnhfSignalPayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
     ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType,
-    QuorumCommitmentPayloadType,
+    QuorumCommitmentPayloadType, UnknownPayloadType,
 };
 use crate::blockdata::transaction::special_transaction::TransactionType::{
     AssetLock, AssetUnlock, Classic, ClassicalWithNonStandardVersionTypeBytes, Coinbase,
     MnhfSignal, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation,
-    ProviderUpdateService, QuorumCommitment,
+    ProviderUpdateService, QuorumCommitment, Unknown,
 };
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
@@ -92,6 +92,10 @@ pub enum TransactionPayload {
     /// `consensus_encode` and `txid` continue to round-trip the on-wire bytes faithfully.
     /// This variant has no payload section on the wire.
     ClassicalWithNonStandardVersionTypeBytesPayloadType(u16),
+    /// The raw payload of a special transaction type this crate does not know, together
+    /// with its `nTxType`. Keeping the bytes lets blocks containing newer special
+    /// transaction types decode, and re-encode to the same bytes and txid.
+    UnknownPayloadType(u16, Vec<u8>),
 }
 
 impl Encodable for TransactionPayload {
@@ -107,6 +111,10 @@ impl Encodable for TransactionPayload {
             AssetLockPayloadType(p) => p.consensus_encode(w),
             AssetUnlockPayloadType(p) => p.consensus_encode(w),
             ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => Ok(0),
+            UnknownPayloadType(_, bytes) => {
+                w.write_all(bytes)?;
+                Ok(bytes.len())
+            }
         }
     }
 }
@@ -127,6 +135,7 @@ impl TransactionPayload {
             ClassicalWithNonStandardVersionTypeBytesPayloadType(raw) => {
                 ClassicalWithNonStandardVersionTypeBytes(*raw)
             }
+            UnknownPayloadType(raw, _) => Unknown(*raw),
         }
     }
 
@@ -146,6 +155,7 @@ impl TransactionPayload {
             AssetUnlockPayloadType(p) => 1 + p.size(),
             // Pre-DIP-0002 transactions have no payload section on the wire.
             ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => 0,
+            UnknownPayloadType(_, bytes) => VarInt(bytes.len() as u64).len() + bytes.len(),
         }
     }
 
@@ -318,6 +328,9 @@ pub enum TransactionType {
     /// bytes were non-zero. The wrapped value is the original u16 read from the wire,
     /// which must be re-emitted verbatim during serialization to preserve the txid.
     ClassicalWithNonStandardVersionTypeBytes(u16),
+    /// A special transaction type this crate does not know. The wrapped value is the
+    /// on-wire `nTxType`; the payload is kept as raw bytes.
+    Unknown(u16),
 }
 
 impl Debug for TransactionType {
@@ -336,6 +349,7 @@ impl Debug for TransactionType {
             ClassicalWithNonStandardVersionTypeBytes(raw) => {
                 write!(f, "Classic Transaction (pre-DIP-0002, raw type bytes 0x{raw:04x})")
             }
+            Unknown(raw) => write!(f, "Unknown Special Transaction (type {raw})"),
         }
     }
 }
@@ -356,6 +370,7 @@ impl Display for TransactionType {
             ClassicalWithNonStandardVersionTypeBytes(raw) => {
                 write!(f, "Classic (pre-DIP-0002, raw 0x{raw:04x})")
             }
+            Unknown(raw) => write!(f, "Unknown ({raw})"),
         }
     }
 }
@@ -415,6 +430,7 @@ impl TransactionType {
             AssetLock => 8,
             AssetUnlock => 9,
             ClassicalWithNonStandardVersionTypeBytes(raw) => raw,
+            Unknown(raw) => raw,
         }
     }
 
@@ -424,9 +440,10 @@ impl TransactionType {
         d: &mut R,
     ) -> Result<Option<TransactionPayload>, encode::Error> {
         // Pre-DIP-0002 transactions and Classic transactions have no payload section
-        // on the wire — there isn't even a length prefix to consume.
+        // on the wire — there isn't even a length prefix to consume. An unknown type's
+        // length prefix is read together with its bytes below.
         let _len = match self {
-            Classic | ClassicalWithNonStandardVersionTypeBytes(_) => VarInt(0),
+            Classic | ClassicalWithNonStandardVersionTypeBytes(_) | Unknown(_) => VarInt(0),
             _ => VarInt::consensus_decode(d)?,
         };
 
@@ -454,6 +471,7 @@ impl TransactionType {
             MnhfSignal => Some(MnhfSignalPayloadType(MnhfSignalPayload::consensus_decode(d)?)),
             AssetLock => Some(AssetLockPayloadType(AssetLockPayload::consensus_decode(d)?)),
             AssetUnlock => Some(AssetUnlockPayloadType(AssetUnlockPayload::consensus_decode(d)?)),
+            Unknown(raw) => Some(UnknownPayloadType(raw, Vec::<u8>::consensus_decode(d)?)),
         })
     }
 }
