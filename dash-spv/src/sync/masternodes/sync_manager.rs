@@ -201,6 +201,11 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
                     return Ok(vec![]);
                 };
+                // Only a tip update builds on the newest list. The work-block
+                // lists it may ask for below build on older ones.
+                let extends_tip = engine
+                    .latest_masternode_list()
+                    .is_some_and(|list| list.block_hash == diff.base_block_hash);
                 let apply_ok = match engine.apply_diff((**diff).clone()).await {
                     Ok(_) => {
                         tracing::debug!("Applied MnListDiff at height {}", target_height);
@@ -215,6 +220,17 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         false
                     }
                 };
+                // A tip update can bring a quorum whose work block lies below
+                // every list the engine built since its last QRInfo, as the
+                // first quorum after a start does. Fetch those lists now, as
+                // the QRInfo path does, instead of leaving the quorum
+                // `Skipped(MissedList)` until the next QRInfo, a rotation cycle
+                // later. The pipeline completes only once they are applied.
+                let work_block_lists = if apply_ok && extends_tip {
+                    engine.missing_work_block_list_requests().await
+                } else {
+                    Vec::new()
+                };
                 drop(engine);
 
                 if apply_ok {
@@ -228,15 +244,19 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 self.progress.add_diffs_processed(1);
                 self.sync_state.mnlistdiff_pipeline.receive(diff);
+                self.sync_state.mnlistdiff_pipeline.queue_requests(work_block_lists);
                 self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
 
                 // Check if all responses received
                 if self.sync_state.mnlistdiff_pipeline.is_complete() {
-                    // In `Incremental` mode, a failed `apply_diff` means the engine
+                    // In `Incremental` mode, a failed tip update means the engine
                     // state is unchanged. Skip completion to avoid emitting a
                     // spurious `MasternodeStateUpdated` for stale state. The next
                     // `BlockHeadersStored` event will re-drive an incremental update.
+                    // A failed work-block list leaves the tip it was fetched for
+                    // applied, so that pipeline still completes.
                     if !apply_ok
+                        && extends_tip
                         && matches!(self.sync_state.pipeline_mode, PipelineMode::Incremental)
                     {
                         return Ok(vec![]);
@@ -784,6 +804,134 @@ mod tests {
         assert!(engine.read().await.masternode_lists.contains_key(&target));
         let file = dir.path().join("masternodes").join(format!("diff_{target}.dat"));
         assert_eq!(file.exists(), stored);
+    }
+
+    /// A tip update whose list holds a non-rotating quorum it cannot verify
+    /// for want of the work-block list fetches that list before the update
+    /// completes, instead of leaving the quorum `Skipped(MissedList)` until the
+    /// next QRInfo. This is the first quorum mined after a start: its work
+    /// block lies below every list the engine built since its QRInfo.
+    #[tokio::test]
+    async fn a_tip_update_fetches_the_work_block_list_of_an_unverified_quorum() {
+        use crate::sync::SyncEvent;
+        use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+        use dashcore::hash_types::QuorumVVecHash;
+        use dashcore::network::message_sml::GetMnListDiff;
+        use dashcore::sml::llmq_entry_verification::{
+            LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
+        };
+        use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
+        use dashcore::sml::masternode_list::MasternodeList;
+        use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+        use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
+        use dashcore::QuorumHash;
+        use std::collections::BTreeMap;
+
+        let tip = 100;
+        let target = tip + 1;
+        let mined = 96;
+        let work = mined - QUORUM_MEMBER_LIST_OFFSET;
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let headers = Header::dummy_batch(0..target + 1);
+        let block_headers = storage.block_headers();
+        block_headers
+            .write()
+            .await
+            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        let hash_at = |height: u32| headers[height as usize].block_hash();
+
+        let quorum_hash = QuorumHash::from_byte_array(hash_at(mined).to_byte_array());
+        let quorum: QualifiedQuorumEntry = QuorumEntry {
+            version: 1,
+            llmq_type: LLMQType::LlmqtypeTest,
+            quorum_hash,
+            quorum_index: None,
+            signers: vec![true; 3],
+            valid_members: vec![true; 3],
+            quorum_public_key: BLSPublicKey::from([1; 48]),
+            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
+            threshold_sig: BLSSignature::from([1; 96]),
+            all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
+        }
+        .into();
+        let quorums = BTreeMap::from([(
+            LLMQType::LlmqtypeTest,
+            BTreeMap::from([(quorum_hash, Arc::new(quorum))]),
+        )]);
+        // A list below the work block, as an earlier QRInfo leaves one.
+        let older = work - 8;
+        let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
+        engine.masternode_lists.insert(older, MasternodeList::empty(hash_at(older), older));
+        engine.masternode_lists.insert(
+            tip,
+            MasternodeList::build(BTreeMap::new(), quorums, hash_at(tip), tip).build(),
+        );
+        let engine = Arc::new(RwLock::new(engine));
+        let mut manager =
+            MasternodesManager::new(block_headers, Arc::clone(&engine), Network::Regtest, None)
+                .await;
+        manager.set_state(SyncState::Synced);
+        manager.progress.update_block_header_tip_height(target);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+        manager.send_tip_mnlistdiff_update(&requests).await.unwrap();
+        rx.try_recv().expect("the tip update is sent");
+
+        let peer = "127.0.0.1:19999".parse().unwrap();
+        let tip_update = MnListDiff {
+            base_block_hash: hash_at(tip),
+            block_hash: hash_at(target),
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let events = manager
+            .handle_message(
+                Message::new(peer, NetworkMessage::MnListDiff(Box::new(tip_update))),
+                &requests,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            engine.read().await.latest_masternode_list().unwrap().quorums[&LLMQType::LlmqtypeTest]
+                [&quorum_hash]
+                .verified,
+            LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(work)),
+            "the tip list cannot verify the quorum without its work-block list"
+        );
+        assert!(events.is_empty(), "the update must not complete before the work-block list");
+        let Ok(NetworkRequest::SendMessage(NetworkMessage::GetMnListD(GetMnListDiff {
+            base_block_hash,
+            block_hash,
+        }))) = rx.try_recv()
+        else {
+            panic!("the tip update must ask for the quorum's work-block list");
+        };
+        assert_eq!((base_block_hash, block_hash), (hash_at(older), hash_at(work)));
+
+        let work_list = MnListDiff {
+            base_block_hash,
+            block_hash,
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let events = manager
+            .handle_message(
+                Message::new(peer, NetworkMessage::MnListDiff(Box::new(work_list))),
+                &requests,
+            )
+            .await
+            .unwrap();
+
+        assert!(engine.read().await.masternode_lists.contains_key(&work));
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated { height, .. }] if *height == target
+            ),
+            "the update completes at the tip once the work-block list is applied, got {events:?}"
+        );
+        assert!(rx.try_recv().is_err(), "nothing more to fetch");
     }
 
     /// A QRInfo the engine rejects must not release the request slot.
