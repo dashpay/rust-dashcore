@@ -5,9 +5,12 @@
 
 use std::sync::Arc;
 
-use dash_spv::sync::{ProgressPercentage, SyncState};
+use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncState};
+use dashcore::hashes::Hash;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use dashcore::sml::llmq_type::LLMQType;
+use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
+use dashcore::QuorumHash;
+use tokio::sync::Mutex;
 
 use super::helpers::{
     assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
@@ -626,4 +629,126 @@ async fn test_masternode_list_sync_end_to_end() {
     tracing::info!("SPV synced to ChainLocked height {}", cl_sync_height);
 
     client_handle.stop().await;
+}
+
+/// A non-rotating quorum mined after the client synced, whose work block lies
+/// at or below the height of that first sync, is `Verified` in every list the
+/// client publishes it in.
+///
+/// Once synced, the client follows the tip with one `GetMnListDiff` per block,
+/// so it holds a list for every block after the sync but none for the blocks
+/// before it. The first quorum mined after the sync has its work block
+/// (`quorum height - QUORUM_MEMBER_LIST_OFFSET`) among those, and a tip update
+/// that does not fetch it leaves the quorum `Skipped(MissedList)` until the
+/// next QRInfo, about 12 hours later on mainnet and testnet. Regtest fires a
+/// QRInfo in every cycle's mining window, so this checks each list at the
+/// moment the client publishes it rather than the state after the cycle.
+///
+/// The client's tasks must keep running while the test thread mines blocks,
+/// hence the multi-threaded runtime.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_quorum_mined_after_start_is_verified_on_arrival() {
+    let Some(mut ctx) = TestContext::new(false).await else {
+        return;
+    };
+
+    // Stop the chain a few blocks short of the next cycle, past the work block
+    // of the quorum that cycle mines. Each block waits for its ChainLock, as
+    // `mine_dkg_cycle`'s alignment blocks do.
+    let interval = ctx.mn_ctx.metadata.dkg_interval;
+    let next_quorum_height = (ctx.mn_ctx.expected_height / interval + 1) * interval;
+    let start_height = next_quorum_height - QUORUM_MEMBER_LIST_OFFSET / 2;
+    if let Some(blocks) = start_height.checked_sub(ctx.mn_ctx.expected_height) {
+        ctx.mn_ctx.mine_blocks_and_wait_for_chainlock(blocks.into(), 15);
+    }
+
+    let wallet = create_dummy_wallet();
+    let config =
+        create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
+    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let mn_progress =
+        wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
+    assert_eq!(mn_progress.state(), SyncState::Synced);
+
+    let synced_height = mn_progress.current_height();
+    assert!(
+        next_quorum_height - QUORUM_MEMBER_LIST_OFFSET <= synced_height,
+        "the next quorum (height {next_quorum_height}) must have its work block at or below the \
+         synced height {synced_height} for this test to cover the first quorum after the start"
+    );
+
+    // Record the quorum statuses of every list the client publishes, at the
+    // height it publishes it. The observer reads the engine after the event,
+    // so a later QRInfo could already have verified the quorum in that list;
+    // the tip-update check below rules out the common case.
+    let mut events = client_handle.sync_event_receiver.resubscribe();
+    let engine = Arc::clone(&client_handle.engine);
+    let published = Arc::new(Mutex::new(Vec::new()));
+    let observer = tokio::spawn({
+        let published = Arc::clone(&published);
+        async move {
+            while let Ok(event) = events.recv().await {
+                let SyncEvent::MasternodeStateUpdated {
+                    height,
+                    qr_info_result,
+                } = event
+                else {
+                    continue;
+                };
+                let engine = engine.read().await;
+                let Some(list) = engine.masternode_lists.get(&height) else {
+                    continue;
+                };
+                let statuses: Vec<(QuorumHash, LLMQEntryVerificationStatus)> = list
+                    .quorums
+                    .get(&LLMQType::LlmqtypeTest)
+                    .into_iter()
+                    .flatten()
+                    .map(|(hash, quorum)| (*hash, quorum.verified.clone()))
+                    .collect();
+                published.lock().await.push((height, qr_info_result.is_none(), statuses));
+            }
+        }
+    });
+
+    let quorum_hash = ctx.mn_ctx.mine_dkg_cycle().expect("DKG cycle should succeed");
+    let tip = ctx
+        .mn_ctx
+        .controller
+        .try_rpc_call("getblockcount", &[])
+        .and_then(|count| count.as_u64())
+        .expect("getblockcount") as u32;
+    wait_for_mn_state_event_above(&mut client_handle.sync_event_receiver, tip - 1, SYNC_TIMEOUT)
+        .await;
+    client_handle.stop().await;
+    observer.abort();
+    let published = std::mem::take(&mut *published.lock().await);
+
+    let quorum_hash = QuorumHash::from_byte_array(quorum_hash.to_byte_array());
+    let arrivals: Vec<_> = published
+        .iter()
+        .filter_map(|(height, tip_update, statuses)| {
+            let (_, status) = statuses.iter().find(|(hash, _)| *hash == quorum_hash)?;
+            Some((*height, *tip_update, status))
+        })
+        .collect();
+    // The llmq_test mining window opens before the DIP24 one, in which the
+    // client fires QRInfo, so a tip update should bring the commitment. A
+    // QRInfo fetches the work-block lists itself and would not cover the fix.
+    // (A list published after every QRInfo attempt failed also carries no
+    // result, which this cannot tell apart.)
+    assert!(
+        arrivals.first().is_some_and(|(_, tip_update, _)| *tip_update),
+        "the llmq_test quorum {quorum_hash} must first reach the client through a tip update, \
+         got {arrivals:?}"
+    );
+    let unverified: Vec<_> = arrivals
+        .iter()
+        .filter(|(_, _, status)| **status != LLMQEntryVerificationStatus::Verified)
+        .collect();
+    assert!(
+        unverified.is_empty(),
+        "the llmq_test quorum {quorum_hash} mined after the start must be Verified in every \
+         published list, got {unverified:?} (synced at {synced_height})"
+    );
 }
