@@ -475,7 +475,7 @@ impl fmt::Debug for ExtendedPrivKey {
 }
 
 /// Extended public key
-#[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct ExtendedPubKey {
     /// The network this key is to be used on
     pub network: Network,
@@ -1247,14 +1247,14 @@ pub enum Error {
     UnknownVersion([u8; 4]),
     /// Encoded extended key data has wrong length
     WrongExtendedKeyLength(usize),
+    /// A master key seed must be 16 to 64 bytes
+    InvalidSeedLength(usize),
     /// Base58 encoding error
     Base58(base58::DecodeCheckError),
     /// Hexadecimal decoding error
     Hex(hex_conservative::DecodeFixedLengthBytesError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
-    /// Something is not supported based on active features
-    NotSupported(String),
 }
 
 impl fmt::Display for Error {
@@ -1275,12 +1275,14 @@ impl fmt::Display for Error {
             Error::WrongExtendedKeyLength(ref len) => {
                 write!(f, "encoded extended key data has wrong length {}", len)
             }
+            Error::InvalidSeedLength(len) => {
+                write!(f, "seed must be 16 to 64 bytes, got {}", len)
+            }
             Error::Base58(ref err) => write!(f, "base58 encoding error: {}", err),
             Error::Hex(ref e) => write!(f, "Hexadecimal decoding error: {}", e),
             Error::InvalidPublicKeyHexLength(got) => {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
             }
-            Error::NotSupported(ref msg) => write!(f, "Not supported: {}", msg),
         }
     }
 }
@@ -1318,6 +1320,11 @@ fn hmac_secret_half(hmac: &Hmac<sha512::Hash>) -> [u8; secp256k1::constants::SEC
 impl ExtendedPrivKey {
     /// Construct a new master key from a seed value
     pub fn new_master(network: Network, seed: &[u8]) -> Result<ExtendedPrivKey, Error> {
+        // BIP32 seeds are 128 to 512 bits.
+        if !(16..=64).contains(&seed.len()) {
+            return Err(Error::InvalidSeedLength(seed.len()));
+        }
+
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"Bitcoin seed");
         hmac_engine.input(seed);
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
@@ -1385,10 +1392,12 @@ impl ExtendedPrivKey {
             }
         }
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
-        let sk = secp256k1::SecretKey::from_secret_bytes(hmac_secret_half(&hmac_result))
+        // IL added to the parent scalar; this rejects IL >= n and a zero sum,
+        // the two cases BIP32 declares invalid.
+        let tweaked = secp256k1::Scalar::from_be_bytes(hmac_secret_half(&hmac_result))
+            .ok()
+            .and_then(|il| self.private_key.add_tweak(&il).ok())
             .expect("statistically impossible to hit");
-        let tweaked =
-            sk.add_tweak(&self.private_key.into()).expect("statistically impossible to hit");
 
         Ok(ExtendedPrivKey {
             network: self.network,
@@ -1574,11 +1583,7 @@ impl ExtendedPrivKey {
 
     /// Convert to a PrivateKey for signing operations
     pub fn to_priv(&self) -> dashcore::PrivateKey {
-        dashcore::PrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: self.private_key,
-        }
+        dashcore::PrivateKey::new(self.private_key, self.network)
     }
 }
 
@@ -1846,11 +1851,11 @@ impl ExtendedPubKey {
         })
     }
 
-    /// Returns the HASH160 of the chaincode
+    /// Returns the HASH160 of the compressed public key
     pub fn identifier(&self) -> XpubIdentifier {
-        let mut engine = XpubIdentifier::engine();
-        engine.input(&self.public_key.serialize());
-        XpubIdentifier::from_engine(engine)
+        XpubIdentifier::from_byte_array(
+            dashcore::PublicKey::new(self.public_key).pubkey_hash().to_byte_array(),
+        )
     }
 
     /// Returns the first four bytes of the identifier
@@ -1922,6 +1927,14 @@ mod tests {
     #[test_case("00000000000000000000000000000000000000000000000000000000000000zz" ; "invalid digit")]
     fn child_number_256_rejects(digits: &str) {
         assert!(format!("0x{digits}").parse::<ChildNumber>().is_err());
+    }
+
+    #[test_case::test_case(15 => Err(Error::InvalidSeedLength(15)) ; "too short")]
+    #[test_case::test_case(16 => Ok(()) ; "shortest")]
+    #[test_case::test_case(64 => Ok(()) ; "longest")]
+    #[test_case::test_case(65 => Err(Error::InvalidSeedLength(65)) ; "too long")]
+    fn master_seed_length(len: usize) -> Result<(), Error> {
+        ExtendedPrivKey::new_master(Mainnet, &vec![0x2a; len]).map(|_| ())
     }
 
     #[test]

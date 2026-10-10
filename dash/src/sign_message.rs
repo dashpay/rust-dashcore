@@ -135,8 +135,9 @@ mod message_signing {
             if bytes.len() != 65 {
                 return Err(MessageSignatureError::InvalidLength);
             }
-            // We just check this here so we can safely subtract further.
-            if bytes[0] < 27 {
+            // Only headers 27..=34 encode a recovery id and a compression
+            // flag.
+            if !(27..=34).contains(&bytes[0]) {
                 return Err(MessageSignatureError::InvalidEncoding(
                     secp256k1::Error::InvalidRecoveryId,
                 ));
@@ -280,6 +281,17 @@ mod tests {
         assert_eq!(
             signature2.is_signed_by_address(&p2shwpkh, msg_hash),
             Err(MessageSignatureError::UnsupportedAddressType(AddressType::P2sh))
+        );
+    }
+
+    #[test_case::test_matrix([26, 35])]
+    #[cfg(feature = "secp-recovery")]
+    fn test_message_signature_header_out_of_range(header: u8) {
+        let mut bytes = [0u8; 65];
+        bytes[0] = header;
+        assert_eq!(
+            MessageSignature::from_slice(&bytes),
+            Err(MessageSignatureError::InvalidEncoding(secp256k1::Error::InvalidRecoveryId))
         );
     }
 

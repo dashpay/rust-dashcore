@@ -316,11 +316,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
     ) -> std::result::Result<dashcore::PrivateKey, Error> {
         let xpriv = self.derive_from_master_xpriv_extended_xpriv_at(master_xpriv, index)?;
         // Wrap into dashcore::PrivateKey with compressed=true
-        Ok(dashcore::PrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: xpriv.private_key,
-        })
+        Ok(dashcore::PrivateKey::new(xpriv.private_key, self.network))
     }
 
     fn derive_from_seed_extended_xpriv_at(
@@ -338,11 +334,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
         index: u32,
     ) -> std::result::Result<dashcore::PrivateKey, Error> {
         let xpriv = self.derive_from_seed_extended_xpriv_at(seed, index)?;
-        Ok(dashcore::PrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: xpriv.private_key,
-        })
+        Ok(dashcore::PrivateKey::new(xpriv.private_key, self.network))
     }
 }
 

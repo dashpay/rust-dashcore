@@ -3802,7 +3802,7 @@ transaction_sign_input(tx: *mut FFITransaction, input_index: u32, private_key: *
 ```
 
 **Description:**
-Sign a transaction input  # Safety - `tx` must be a valid pointer to an FFITransaction - `private_key` must be a valid pointer to a 32-byte private key - `script_pubkey` must be a valid pointer to the script pubkey  # Returns - 0 on success - -1 on error
+Sign a transaction input  # Safety - `tx` must be a valid pointer to an FFITransaction - `private_key` must be a valid pointer to a 32-byte private key - `script_pubkey` must be a valid pointer to the script pubkey  # Returns - 0 on success - -1 on error, including a `sighash_type` above 0xff
 
 **Safety:**
 - `tx` must be a valid pointer to an FFITransaction - `private_key` must be a valid pointer to a 32-byte private key - `script_pubkey` must be a valid pointer to the script pubkey

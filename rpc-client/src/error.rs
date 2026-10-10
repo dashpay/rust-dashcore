@@ -11,7 +11,6 @@
 use std::{error, fmt, io};
 
 use crate::dashcore;
-use dashcore::secp256k1;
 
 pub type OldVecLen = usize;
 pub type FixedSizeLen = usize;
@@ -23,7 +22,6 @@ pub enum Error {
     Hex(hex_conservative::DecodeVariableLengthBytesError),
     Json(serde_json::error::Error),
     BitcoinSerialization(dashcore::consensus::encode::Error),
-    Secp256k1(secp256k1::Error),
     Io(io::Error),
     InvalidAmount(dashcore::amount::ParseAmountError),
     InvalidCookieFile,
@@ -55,12 +53,6 @@ impl From<dashcore::consensus::encode::Error> for Error {
     }
 }
 
-impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error {
-        Error::Secp256k1(e)
-    }
-}
-
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Error {
         Error::Io(e)
@@ -80,7 +72,6 @@ impl fmt::Display for Error {
             Error::Hex(ref e) => write!(f, "hex decode error: {}", e),
             Error::Json(ref e) => write!(f, "JSON error: {}", e),
             Error::BitcoinSerialization(ref e) => write!(f, "Bitcoin serialization error: {}", e),
-            Error::Secp256k1(ref e) => write!(f, "secp256k1 error: {}", e),
             Error::Io(ref e) => write!(f, "I/O error: {}", e),
             Error::InvalidAmount(ref e) => write!(f, "invalid amount: {}", e),
             Error::InvalidCookieFile => write!(f, "invalid cookie file"),
@@ -102,7 +93,6 @@ impl error::Error for Error {
             Error::Hex(ref e) => Some(e),
             Error::Json(ref e) => Some(e),
             Error::BitcoinSerialization(ref e) => Some(e),
-            Error::Secp256k1(ref e) => Some(e),
             Error::Io(ref e) => Some(e),
             _ => None,
         }

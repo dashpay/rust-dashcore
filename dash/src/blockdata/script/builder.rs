@@ -73,11 +73,9 @@ impl Builder {
 
     /// Adds instructions to push a public key onto the stack.
     pub fn push_key(self, key: &PublicKey) -> Builder {
-        if key.compressed {
-            self.push_slice(key.inner.serialize())
-        } else {
-            self.push_slice(key.inner.serialize_uncompressed())
-        }
+        key.with_serialized(|bytes| {
+            self.push_slice(<&PushBytes>::try_from(bytes).expect("a key is 33 or 65 bytes"))
+        })
     }
 
     /// Adds instructions to push an XOnly public key onto the stack.

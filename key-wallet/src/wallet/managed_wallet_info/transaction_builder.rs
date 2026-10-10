@@ -1020,16 +1020,10 @@ pub trait TransactionSigner {
         for (sighash, path) in tasks {
             let (sig, pubkey) = self.sig_and_pubkey(sighash, path).await?;
 
-            let mut sig_bytes = sig.serialize_der().to_vec();
-            sig_bytes.push(EcdsaSighashType::All.to_u32() as u8);
-
-            let script_sig =
-                Builder::new()
-                    .push_slice(<&PushBytes>::try_from(sig_bytes.as_slice()).map_err(|_| {
-                        BuilderError::SigningFailed("invalid signature length".into())
-                    })?)
-                    .push_slice(pubkey.serialize())
-                    .into_script();
+            let script_sig = Builder::new()
+                .push_slice(dashcore::ecdsa::Signature::sighash_all(sig).serialize())
+                .push_key(&dashcore::PublicKey::new(pubkey))
+                .into_script();
 
             signatures.push(script_sig);
         }
