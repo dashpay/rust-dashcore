@@ -17,7 +17,7 @@ use bitcoin_crypto::key::rand;
 use bitcoin_crypto::key::Keypair;
 use dash_types::type_cvrt;
 use hex_conservative::DisplayHex;
-use internals::debug_from_display;
+use internals::{debug_from_display, impl_array_newtype, impl_bytes_newtype};
 use secp256k1;
 use thiserror::Error as ThisError;
 use zeroize::{Zeroize, Zeroizing};
@@ -36,6 +36,9 @@ pub const ECDSA_SK_LEN: usize = 32;
 /// Compact (`r || s`) signature length.
 pub const ECDSA_SIG_LEN: usize = 64;
 
+/// Compact recoverable signature length (a header byte, then `r || s`).
+pub const ECDSA_REC_SIG_LEN: usize = ECDSA_SIG_LEN + 1;
+
 /// Errors produced by secp256k1 operations.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, ThisError)]
 #[non_exhaustive]
@@ -46,14 +49,20 @@ pub enum EcdsaError {
     /// Secret key bytes are zero or not below the curve order.
     #[error("invalid secp256k1 secret key")]
     InvalidSecretKey,
+    /// Recovery id is outside `0..=3`.
+    #[error("invalid secp256k1 recovery id")]
+    InvalidRecoveryId,
     /// Signature bytes are not a valid encoding.
     #[error("invalid secp256k1 signature")]
     InvalidSignature,
+    /// No public key could be recovered from the signature and message.
+    #[error("secp256k1 public key recovery failed")]
+    RecoveryFailed,
     /// Tweak is out of range or produced the point at infinity.
     #[error("invalid secp256k1 tweak")]
     InvalidTweak,
     /// Signature does not verify against the key and message.
-    #[error("secp256k1 signature verification failed")]
+    #[error("signature failed verification")]
     VerifyFailed,
 }
 
@@ -103,6 +112,16 @@ impl EcdsaPublicKey {
             .0
             .verify(secp256k1::Message::from_digest(*msg_hash), &self.0)
             .map_err(|_| EcdsaError::VerifyFailed)
+    }
+
+    /// Recovers the signing key from a recoverable signature over the 32-byte
+    /// prehashed message.
+    pub fn recover(msg_hash: &[u8; 32], sig: &EcdsaRecSignature) -> Result<Self, EcdsaError> {
+        sig.parse()?
+            .0
+            .recover(secp256k1::Message::from_digest(*msg_hash))
+            .map(Self)
+            .map_err(|_| EcdsaError::RecoveryFailed)
     }
 }
 
@@ -166,6 +185,17 @@ impl EcdsaSecretKey {
             secp256k1::Message::from_digest(*msg_hash),
             &self.0,
         ))
+    }
+
+    /// Signs a 32-byte prehashed message recoverably (RFC 6979, low-S).
+    pub fn sign_recoverable(&self, msg_hash: &[u8; 32]) -> EcdsaRecSignature {
+        let (recovery_id, compact) =
+            secp256k1::ecdsa::RecoverableSignature::sign_ecdsa_recoverable(
+                secp256k1::Message::from_digest(*msg_hash),
+                &self.0,
+            )
+            .serialize_compact();
+        EcdsaRecSignature::from_compact(compact, recovery_id.to_u8(), true)
     }
 
     /// Draws a random scalar from the thread RNG.
@@ -261,6 +291,61 @@ impl FromStr for EcdsaSignature {
 type_cvrt!(From<secp256k1::ecdsa::Signature> for EcdsaSignature, |sig| Self(*sig));
 type_cvrt!(From<EcdsaSignature> for secp256k1::ecdsa::Signature, |sig| sig.0);
 
+/// A compact recoverable signature as Dash Core writes it, a header byte
+/// carrying the recovery id and key compression, then `r || s`. Checked by
+/// the operations that read it.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "bincode", derive(bincode_derive::Encode, bincode_derive::Decode))]
+pub struct EcdsaRecSignature([u8; ECDSA_REC_SIG_LEN]);
+
+impl_array_newtype!(EcdsaRecSignature, u8, ECDSA_REC_SIG_LEN);
+impl_bytes_newtype!(EcdsaRecSignature, ECDSA_REC_SIG_LEN);
+
+impl EcdsaRecSignature {
+    /// Pairs a signature with its recovery id and key compression.
+    pub fn from_parts(
+        sig: EcdsaSignature,
+        recovery_id: u8,
+        compressed: bool,
+    ) -> Result<Self, EcdsaError> {
+        if recovery_id > 3 {
+            return Err(EcdsaError::InvalidRecoveryId);
+        }
+        Ok(Self::from_compact(sig.to_bytes(), recovery_id, compressed))
+    }
+
+    fn from_compact(compact: [u8; ECDSA_SIG_LEN], recovery_id: u8, compressed: bool) -> Self {
+        let mut bytes = [27 + recovery_id + 4 * u8::from(compressed); ECDSA_REC_SIG_LEN];
+        bytes[1..].copy_from_slice(&compact);
+        Self(bytes)
+    }
+
+    fn parse(&self) -> Result<(secp256k1::ecdsa::RecoverableSignature, bool), EcdsaError> {
+        let [header @ 27..=34, compact @ ..] = self.0 else {
+            return Err(EcdsaError::InvalidRecoveryId);
+        };
+        let recovery_id = secp256k1::ecdsa::RecoveryId::from_u8_masked(header - 27);
+        secp256k1::ecdsa::RecoverableSignature::from_compact(&compact, recovery_id)
+            .map(|sig| (sig, header >= 31))
+            .map_err(|_| EcdsaError::InvalidSignature)
+    }
+
+    /// Whether the signing key serializes compressed.
+    pub fn is_compressed(&self) -> Result<bool, EcdsaError> {
+        self.parse().map(|(_, compressed)| compressed)
+    }
+
+    /// The recovery id, in `0..=3`.
+    pub fn recovery_id(&self) -> Result<u8, EcdsaError> {
+        self.parse().map(|(sig, _)| sig.serialize_compact().0.to_u8())
+    }
+
+    /// The signature without its recovery id.
+    pub fn signature(&self) -> Result<EcdsaSignature, EcdsaError> {
+        self.parse().map(|(sig, _)| EcdsaSignature(sig.to_standard()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
@@ -301,6 +386,79 @@ mod tests {
             assert_eq!(pk.verify(&[i ^ 1; 32], sig), Err(EcdsaError::VerifyFailed));
             assert_eq!(EcdsaSignature::from_bytes(&sig.to_bytes()), Ok(sig));
             assert_eq!(sig.with_der(EcdsaSignature::from_der), Ok(sig));
+        }
+    }
+
+    #[test]
+    fn rec_signature_keeps_compression() {
+        let sk = EcdsaSecretKey::from_bytes(&[0x42; ECDSA_SK_LEN]).expect("valid secret key");
+        let rec = sk.sign_recoverable(&[0x07; 32]);
+        assert_eq!(rec.is_compressed(), Ok(true));
+
+        let sig = rec.signature().unwrap();
+        let id = rec.recovery_id().unwrap();
+        assert_eq!(EcdsaRecSignature::from_parts(sig, id, true), Ok(rec));
+        let legacy = EcdsaRecSignature::from_parts(sig, id, false).unwrap();
+        assert_eq!(legacy.is_compressed(), Ok(false));
+        assert_ne!(legacy, rec);
+        assert_eq!(EcdsaRecSignature::from_parts(sig, 4, true), Err(EcdsaError::InvalidRecoveryId));
+    }
+
+    #[test]
+    fn rec_signature_carries_the_core_header() {
+        let sk = EcdsaSecretKey::from_bytes(&[0x42; ECDSA_SK_LEN]).expect("valid secret key");
+        let rec = sk.sign_recoverable(&[0x07; 32]);
+        let id = rec.recovery_id().unwrap();
+        assert_eq!(rec[0], 31 + id);
+        assert_eq!(rec[1..], rec.signature().unwrap().to_bytes());
+
+        let legacy = EcdsaRecSignature::from_parts(rec.signature().unwrap(), id, false);
+        assert_eq!(legacy.unwrap()[0], 27 + id);
+        assert_eq!(rec.to_string().parse::<EcdsaRecSignature>(), Ok(rec));
+    }
+
+    #[test]
+    fn rec_signature_is_checked_when_read() {
+        let pk = EcdsaSecretKey::from_bytes(&[0x42; ECDSA_SK_LEN]).unwrap().public_key();
+        for header in [26, 35] {
+            let mut raw = [0x01; ECDSA_REC_SIG_LEN];
+            raw[0] = header;
+            let rec = EcdsaRecSignature::from(raw);
+            assert_eq!(rec.to_bytes(), raw, "raw bytes stay unchecked");
+            assert_eq!(rec.recovery_id(), Err(EcdsaError::InvalidRecoveryId));
+            assert_eq!(
+                EcdsaPublicKey::recover(&[0x07; 32], &rec),
+                Err(EcdsaError::InvalidRecoveryId)
+            );
+        }
+        let mut raw = [0xff; ECDSA_REC_SIG_LEN];
+        raw[0] = 31;
+        let rec = EcdsaRecSignature::from(raw);
+        assert_eq!(rec.signature(), Err(EcdsaError::InvalidSignature));
+        assert_ne!(EcdsaPublicKey::recover(&[0x07; 32], &rec), Ok(pk));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn rec_signature_serde_layout_is_hex_or_bytes() {
+        let bytes = EcdsaRecSignature::from([0x22; ECDSA_REC_SIG_LEN]);
+        let hex = "22".repeat(ECDSA_REC_SIG_LEN);
+
+        let json = serde_json::to_string(&bytes).expect("serialize signature");
+        assert_eq!(json, format!("\"{}\"", hex));
+        assert_eq!(serde_json::from_str::<EcdsaRecSignature>(&json).expect("deserialize"), bytes);
+
+        #[cfg(feature = "bincode")]
+        {
+            let config = bincode::config::standard();
+            let raw = bincode::encode_to_vec(bytes, config).expect("encode signature");
+            assert_eq!(raw, [0x22; ECDSA_REC_SIG_LEN]);
+
+            let encoded = bincode::serde::encode_to_vec(bytes, config).expect("encode signature");
+            assert_eq!(encoded, [&[65u8][..], &[0x22; ECDSA_REC_SIG_LEN]].concat());
+            let (decoded, _): (EcdsaRecSignature, _) =
+                bincode::serde::decode_from_slice(&encoded, config).expect("decode signature");
+            assert_eq!(decoded, bytes);
         }
     }
 

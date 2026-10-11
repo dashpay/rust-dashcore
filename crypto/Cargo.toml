@@ -30,7 +30,7 @@ dash-types = { workspace = true }
 dashcore_hashes = { path = "../hashes" }
 hex-conservative = { workspace = true }
 internals = { path = "../internals", package = "dashcore-private" }
-secp256k1 = { workspace = true }
+secp256k1 = { workspace = true, features = ["recovery"] }
 serde = { workspace = true, features = ["derive", "alloc"], optional = true }
 thiserror = "2"
 tracing = { version = "0.1", optional = true }

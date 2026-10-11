@@ -602,18 +602,14 @@ mod tests {
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
 
         // Create recoverable signature
-        let signature = secp256k1::ecdsa::RecoverableSignature::sign_ecdsa_recoverable(
-            secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &secp256k1::SecretKey::from(&signing_key.private_key),
-        );
+        let signature = signing_key.private_key.sign_recoverable(&message_hash.to_byte_array());
 
         // Recover the public key from signature
-        let recovered_pubkey = signature
-            .recover(secp256k1::Message::from_digest(message_hash.to_byte_array()))
-            .unwrap();
+        let recovered_pubkey =
+            EcdsaPublicKey::recover(&message_hash.to_byte_array(), &signature).unwrap();
 
         // Should match original public key
-        assert_eq!(EcdsaPublicKey::from(recovered_pubkey), public_key.public_key);
+        assert_eq!(recovered_pubkey, public_key.public_key);
     }
 
     // ✓ Test DashPay contact key derivation - m/15'/5'/15'/accountNumber

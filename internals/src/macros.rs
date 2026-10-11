@@ -4,7 +4,7 @@
 /// Implements standard array methods for a given wrapper type.
 #[macro_export]
 macro_rules! impl_array_newtype {
-    ($thing:ident, $ty:ty, $len:literal) => {
+    ($thing:ident, $ty:ty, $len:expr) => {
         impl<'a> core::convert::From<[$ty; $len]> for $thing {
             fn from(data: [$ty; $len]) -> Self {
                 $thing(data)
