@@ -125,6 +125,10 @@ pub struct FFIProviderRegistrationPayload {
 
 impl From<&ProviderRegistrationPayload> for FFIProviderRegistrationPayload {
     fn from(p: &ProviderRegistrationPayload) -> Self {
+        let service = p
+            .service_address
+            .primary_service_address()
+            .unwrap_or_else(|| SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0));
         let (script_payout, script_payout_len) = script_to_raw(&p.script_payout);
         FFIProviderRegistrationPayload {
             version: p.version,
@@ -132,9 +136,9 @@ impl From<&ProviderRegistrationPayload> for FFIProviderRegistrationPayload {
             masternode_mode: p.masternode_mode,
             collateral_txid: p.collateral_outpoint.txid.to_byte_array(),
             collateral_vout: p.collateral_outpoint.vout,
-            service_address: socket_addr_to_cstring(&p.service_address),
-            service_ip: socket_addr_to_ipv6_octets(&p.service_address),
-            service_port: p.service_address.port(),
+            service_address: socket_addr_to_cstring(&service),
+            service_ip: socket_addr_to_ipv6_octets(&service),
+            service_port: service.port(),
             owner_key_hash: p.owner_key_hash.to_byte_array(),
             voting_key_hash: p.voting_key_hash.to_byte_array(),
             operator_public_key: bls_public_key_bytes(&p.operator_public_key),
@@ -373,6 +377,7 @@ impl Drop for FFISpecialTransactionPayload {
 #[cfg(test)]
 pub(crate) fn mainnet_shape_proreg_payload() -> ProviderRegistrationPayload {
     use dashcore::blockdata::transaction::special_transaction::provider_registration::ProviderMasternodeType;
+    use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use std::str::FromStr;
 
     let key_hash = dashcore::PubkeyHash::from_hex("70993555a01f7e8d6179d6135b5c56809d2d1d36")
@@ -388,7 +393,9 @@ pub(crate) fn mainnet_shape_proreg_payload() -> ProviderRegistrationPayload {
             .expect("txid"),
             vout: 1,
         },
-        service_address: SocketAddr::from_str("54.148.58.128:9999").expect("socket addr"),
+        service_address: MasternodeNetInfo::Legacy(
+            SocketAddr::from_str("54.148.58.128:9999").expect("socket addr"),
+        ),
         owner_key_hash: key_hash,
         operator_public_key: BLSPublicKey::from([0x11; 48]),
         voting_key_hash: key_hash,
@@ -401,6 +408,8 @@ pub(crate) fn mainnet_shape_proreg_payload() -> ProviderRegistrationPayload {
         platform_node_id: None,
         platform_p2p_port: None,
         platform_http_port: None,
+        payouts: None,
+        shared_collateral: None,
     }
 }
 
