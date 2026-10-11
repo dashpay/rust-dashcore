@@ -128,7 +128,7 @@ mod test {
         let signature = sign(&data, &k.private_key).expect("singing shouldn't fail");
         let verification_result =
             verify_data_signature(&incorrect_data, &signature, &k.public_key_compressed);
-        assert_error_contains!(verification_result, "signature failed verification");
+        assert_error_contains!(verification_result, "signature verification failed");
     }
 
     #[test]
@@ -141,7 +141,7 @@ mod test {
         let verification_result =
             verify_data_signature(&data, &signature, &different_public_key.to_compressed());
 
-        assert_error_contains!(verification_result, "signature failed verification")
+        assert_error_contains!(verification_result, "signature verification failed")
     }
 
     #[test]

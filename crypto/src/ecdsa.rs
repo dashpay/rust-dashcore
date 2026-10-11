@@ -23,10 +23,10 @@ use dash_pkc::ecdsa::{
 use dash_types::type_cvrt;
 use hex_conservative::DisplayHex;
 use internals::{debug_from_display, impl_array_newtype, impl_bytes_newtype};
-use thiserror::Error as ThisError;
 use zeroize::{Zeroize, Zeroizing};
 
 pub use bitcoin_crypto::ecdsa::{DecodeError, ParseSignatureError, SerializedSignature, Signature};
+pub use dash_pkc::ecdsa::EcdsaError;
 
 /// Compressed SEC1 public key length.
 pub const ECDSA_PK_LEN: usize = 33;
@@ -43,33 +43,6 @@ pub const ECDSA_SIG_LEN: usize = 64;
 /// Compact recoverable signature length (a header byte, then `r || s`).
 pub const ECDSA_REC_SIG_LEN: usize = ECDSA_SIG_LEN + 1;
 
-/// Errors produced by secp256k1 operations.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, ThisError)]
-#[non_exhaustive]
-pub enum EcdsaError {
-    /// Public key bytes are not a usable curve point.
-    #[error("invalid secp256k1 public key")]
-    InvalidPublicKey,
-    /// Secret key bytes are zero or not below the curve order.
-    #[error("invalid secp256k1 secret key")]
-    InvalidSecretKey,
-    /// Recovery id is outside `0..=3`.
-    #[error("invalid secp256k1 recovery id")]
-    InvalidRecoveryId,
-    /// Signature bytes are not a valid encoding.
-    #[error("invalid secp256k1 signature")]
-    InvalidSignature,
-    /// No public key could be recovered from the signature and message.
-    #[error("secp256k1 public key recovery failed")]
-    RecoveryFailed,
-    /// Tweak is out of range or produced the point at infinity.
-    #[error("invalid secp256k1 tweak")]
-    InvalidTweak,
-    /// Signature does not verify against the key and message.
-    #[error("signature failed verification")]
-    VerifyFailed,
-}
-
 /// A secp256k1 public key.
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -83,7 +56,7 @@ impl EcdsaPublicKey {
         if bytes.len() != ECDSA_PK_LEN && bytes.len() != ECDSA_PK_UNCOMPRESSED_LEN {
             return Err(EcdsaError::InvalidPublicKey);
         }
-        PkcPublicKey::from_bytes(bytes).map(Self).map_err(|_| EcdsaError::InvalidPublicKey)
+        PkcPublicKey::from_bytes(bytes).map(Self)
     }
 
     /// The compressed SEC1 encoding.
@@ -98,7 +71,7 @@ impl EcdsaPublicKey {
 
     /// Adds `tweak * G` to the point.
     pub fn add_tweak(&self, tweak: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError> {
-        self.0.add_tweak(tweak).map(Self).map_err(|_| EcdsaError::InvalidTweak)
+        self.0.add_tweak(tweak).map(Self)
     }
 
     /// Checks `sig` over the 32-byte prehashed message.
@@ -107,15 +80,13 @@ impl EcdsaPublicKey {
         msg_hash: &[u8; 32],
         sig: impl AsRef<EcdsaSignature>,
     ) -> Result<(), EcdsaError> {
-        self.0.verify(msg_hash, sig.as_ref().0).map_err(|_| EcdsaError::VerifyFailed)
+        self.0.verify(msg_hash, sig.as_ref().0)
     }
 
     /// Recovers the signing key from a recoverable signature over the 32-byte
     /// prehashed message.
     pub fn recover(msg_hash: &[u8; 32], sig: &EcdsaRecSignature) -> Result<Self, EcdsaError> {
-        PkcPublicKey::recover(msg_hash, &sig.parse()?)
-            .map(Self)
-            .map_err(|_| EcdsaError::RecoveryFailed)
+        PkcPublicKey::recover(msg_hash, &sig.parse()?).map(Self)
     }
 }
 
@@ -164,9 +135,7 @@ pub struct EcdsaSecretKey(PkcSecretKey);
 impl EcdsaSecretKey {
     /// Wraps a big-endian scalar.
     pub fn from_bytes(bytes: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError> {
-        PkcSecretKey::from_bytes(bytes, Compression::Compressed)
-            .map(Self)
-            .map_err(|_| EcdsaError::InvalidSecretKey)
+        PkcSecretKey::from_bytes(bytes, Compression::Compressed).map(Self)
     }
 
     /// Copies out the big-endian scalar.
@@ -181,7 +150,7 @@ impl EcdsaSecretKey {
 
     /// Adds `tweak` to the scalar.
     pub fn add_tweak(&self, tweak: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError> {
-        self.0.add_tweak(tweak).map(Self).map_err(|_| EcdsaError::InvalidTweak)
+        self.0.add_tweak(tweak).map(Self)
     }
 
     /// Signs a 32-byte prehashed message (RFC 6979, low-S, low-R ground).
@@ -238,12 +207,12 @@ pub struct EcdsaSignature(PkcSignature);
 impl EcdsaSignature {
     /// Parses the compact (`r || s`) encoding.
     pub fn from_bytes(bytes: &[u8; ECDSA_SIG_LEN]) -> Result<Self, EcdsaError> {
-        PkcSignature::from_bytes(bytes).map(Self).map_err(|_| EcdsaError::InvalidSignature)
+        PkcSignature::from_bytes(bytes).map(Self)
     }
 
     /// Parses a DER encoding.
     pub fn from_der(bytes: &[u8]) -> Result<Self, EcdsaError> {
-        PkcSignature::from_der(bytes).map(Self).map_err(|_| EcdsaError::InvalidSignature)
+        PkcSignature::from_der(bytes).map(Self)
     }
 
     /// The compact (`r || s`) encoding.
@@ -303,9 +272,7 @@ impl EcdsaRecSignature {
         recovery_id: u8,
         compressed: bool,
     ) -> Result<Self, EcdsaError> {
-        PkcRecSignature::from_parts(sig.0, recovery_id, compressed.into())
-            .map(Self::from_pkc)
-            .map_err(|_| EcdsaError::InvalidRecoveryId)
+        PkcRecSignature::from_parts(sig.0, recovery_id, compressed.into()).map(Self::from_pkc)
     }
 
     fn from_pkc(sig: PkcRecSignature) -> Self {
@@ -313,10 +280,7 @@ impl EcdsaRecSignature {
     }
 
     fn parse(&self) -> Result<PkcRecSignature, EcdsaError> {
-        PkcRecSigBytes::from_raw(self.0)
-            .ok_or(EcdsaError::InvalidRecoveryId)?
-            .try_into()
-            .map_err(|_| EcdsaError::InvalidSignature)
+        PkcRecSigBytes::from_raw(self.0).ok_or(EcdsaError::InvalidRecoveryId)?.try_into()
     }
 
     /// Whether the signing key serializes compressed.
