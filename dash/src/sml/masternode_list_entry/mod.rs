@@ -48,7 +48,7 @@ impl_consensus_encoding!(OperatorPublicKey, data, version);
 ///
 /// Pre-v3 entries carry a single fixed-length legacy `SocketAddr`; v3 entries carry a
 /// variable-length `ExtNetInfo` map.
-#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum MasternodeNetInfo {
     Legacy(SocketAddr),

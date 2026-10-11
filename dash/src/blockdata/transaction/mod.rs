@@ -443,11 +443,17 @@ impl Transaction {
         }
     }
 
-    /// Returns the length of the special transaction payload, if any.
+    /// Returns the serialized length of the special transaction payload section, length
+    /// prefix included, or 0 when there is none.
     pub fn special_transaction_len(&self) -> usize {
         match self.special_transaction_payload.as_ref() {
-            Some(payload) => payload.len(),
-            None => 0,
+            // Pre-DIP-0002 transactions have no payload section on the wire.
+            None
+            | Some(TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)) => 0,
+            Some(payload) => {
+                let size = payload.size();
+                VarInt(size as u64).len() + size
+            }
         }
     }
 

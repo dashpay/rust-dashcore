@@ -29,11 +29,13 @@
 //!
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
-#[cfg(feature = "bincode")]
-use bincode::{Decode, Encode};
 use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::blockdata::transaction::special_transaction::provider_registration::{
+    MasternodePayoutShare, decode_payouts, encode_payouts,
+};
+use crate::blockdata::transaction::special_transaction::provider_update_service::ProTxVersion;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash, Txid};
@@ -44,17 +46,18 @@ use crate::{ScriptBuf, VarInt, io};
 /// This is used to update the base aspects a Masternode on the network.
 /// It must be signed by the owner's key that was set at registration.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderUpdateRegistrarPayload {
     pub version: u16,
     pub pro_tx_hash: Txid,
     pub provider_mode: u16,
     pub operator_public_key: BLSPublicKey,
     pub voting_key_hash: PubkeyHash,
+    /// Payout script before version 3, empty from version 3 (see `payouts`).
     pub script_payout: ScriptBuf,
     pub inputs_hash: InputsHash,
     pub payload_sig: Vec<u8>, // TODO: Need to figure out, is this signature BLS Signature (length 96)
+    /// DIP-0026 payouts, present from version 3 in place of `script_payout`.
+    pub payouts: Option<Vec<MasternodePayoutShare>>,
 }
 
 impl ProviderUpdateRegistrarPayload {
@@ -80,13 +83,23 @@ impl ProviderUpdateRegistrarPayload {
             script_payout,
             inputs_hash,
             payload_sig,
+            payouts: None,
         }
+    }
+
+    fn is_ext_addr(&self) -> bool {
+        self.version >= ProTxVersion::ExtAddr as u16
     }
 
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         let mut size = 2 + 32 + 2 + 48 + 20 + 32; // 136
-        size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();
+        if self.is_ext_addr() {
+            let payouts = self.payouts.as_deref().unwrap_or_default();
+            size += 1 + payouts.iter().map(MasternodePayoutShare::size).sum::<usize>();
+        } else {
+            size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();
+        }
         size += VarInt(self.payload_sig.len() as u64).len() + self.payload_sig.len();
         size
     }
@@ -100,7 +113,14 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
         len += self.provider_mode.consensus_encode(&mut s)?;
         len += self.operator_public_key.consensus_encode(&mut s)?;
         len += self.voting_key_hash.consensus_encode(&mut s)?;
-        len += self.script_payout.consensus_encode(&mut s)?;
+        if self.is_ext_addr() {
+            let Some(payouts) = &self.payouts else {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "payouts is not set"));
+            };
+            len += encode_payouts(payouts, &mut s)?;
+        } else {
+            len += self.script_payout.consensus_encode(&mut s)?;
+        }
         len += self.inputs_hash.consensus_encode(&mut s)?;
         Ok(len)
     }
@@ -124,11 +144,21 @@ impl Encodable for ProviderUpdateRegistrarPayload {
 impl Decodable for ProviderUpdateRegistrarPayload {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(r)?;
+
+        // Version validation like C++ SERIALIZE_METHODS
+        if version == 0 || version > ProTxVersion::ExtAddr as u16 {
+            return Err(encode::Error::ParseFailed("unsupported ProUpRegTx version"));
+        }
+
         let pro_tx_hash = Txid::consensus_decode(r)?;
         let provider_mode = u16::consensus_decode(r)?;
         let operator_public_key = BLSPublicKey::consensus_decode(r)?;
         let voting_key_hash = PubkeyHash::consensus_decode(r)?;
-        let script_payout = ScriptBuf::consensus_decode(r)?;
+        let (script_payout, payouts) = if version >= ProTxVersion::ExtAddr as u16 {
+            (ScriptBuf::new(), Some(decode_payouts(r)?))
+        } else {
+            (ScriptBuf::consensus_decode(r)?, None)
+        };
         let inputs_hash = InputsHash::consensus_decode(r)?;
         let payload_sig = Vec::<u8>::consensus_decode(r)?;
 
@@ -141,7 +171,200 @@ impl Decodable for ProviderUpdateRegistrarPayload {
             script_payout,
             inputs_hash,
             payload_sig,
+            payouts,
         })
+    }
+}
+
+// Same layout as a derived impl, with `payouts` only from version 3, so payloads persisted
+// before the field existed keep decoding.
+#[cfg(feature = "bincode")]
+impl bincode::Encode for ProviderUpdateRegistrarPayload {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        self.version.encode(encoder)?;
+        self.pro_tx_hash.encode(encoder)?;
+        self.provider_mode.encode(encoder)?;
+        self.operator_public_key.encode(encoder)?;
+        self.voting_key_hash.encode(encoder)?;
+        self.script_payout.encode(encoder)?;
+        self.inputs_hash.encode(encoder)?;
+        self.payload_sig.encode(encoder)?;
+        if self.is_ext_addr() {
+            self.payouts.encode(encoder)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<C> bincode::Decode<C> for ProviderUpdateRegistrarPayload {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        use bincode::Decode;
+
+        let version = u16::decode(decoder)?;
+        Ok(ProviderUpdateRegistrarPayload {
+            version,
+            pro_tx_hash: Decode::decode(decoder)?,
+            provider_mode: Decode::decode(decoder)?,
+            operator_public_key: Decode::decode(decoder)?,
+            voting_key_hash: Decode::decode(decoder)?,
+            script_payout: Decode::decode(decoder)?,
+            inputs_hash: Decode::decode(decoder)?,
+            payload_sig: Decode::decode(decoder)?,
+            payouts: if version >= ProTxVersion::ExtAddr as u16 {
+                Decode::decode(decoder)?
+            } else {
+                None
+            },
+        })
+    }
+}
+
+#[cfg(feature = "bincode")]
+bincode::impl_borrow_decode!(ProviderUpdateRegistrarPayload);
+
+// Same shape as the earlier derived impl, with `payouts` only from version 3, so payloads
+// persisted through binary serde before the field existed keep decoding.
+#[cfg(feature = "serde")]
+impl serde::Serialize for ProviderUpdateRegistrarPayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let ext_addr = self.is_ext_addr();
+        let len = if ext_addr {
+            9
+        } else {
+            8
+        };
+        let mut state = serializer.serialize_struct("ProviderUpdateRegistrarPayload", len)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("pro_tx_hash", &self.pro_tx_hash)?;
+        state.serialize_field("provider_mode", &self.provider_mode)?;
+        state.serialize_field("operator_public_key", &self.operator_public_key)?;
+        state.serialize_field("voting_key_hash", &self.voting_key_hash)?;
+        state.serialize_field("script_payout", &self.script_payout)?;
+        state.serialize_field("inputs_hash", &self.inputs_hash)?;
+        state.serialize_field("payload_sig", &self.payload_sig)?;
+        if ext_addr {
+            state.serialize_field("payouts", &self.payouts)?;
+        }
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ProviderUpdateRegistrarPayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use core::fmt;
+
+        use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+        const FIELDS: &[&str] = &[
+            "version",
+            "pro_tx_hash",
+            "provider_mode",
+            "operator_public_key",
+            "voting_key_hash",
+            "script_payout",
+            "inputs_hash",
+            "payload_sig",
+            "payouts",
+        ];
+
+        struct PayloadVisitor;
+
+        impl<'de> Visitor<'de> for PayloadVisitor {
+            type Value = ProviderUpdateRegistrarPayload;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a provider update registrar payload")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                macro_rules! next {
+                    ($index:expr) => {
+                        seq.next_element()?
+                            .ok_or_else(|| de::Error::invalid_length($index, &self))?
+                    };
+                }
+                let version: u16 = next!(0);
+                Ok(ProviderUpdateRegistrarPayload {
+                    version,
+                    pro_tx_hash: next!(1),
+                    provider_mode: next!(2),
+                    operator_public_key: next!(3),
+                    voting_key_hash: next!(4),
+                    script_payout: next!(5),
+                    inputs_hash: next!(6),
+                    payload_sig: next!(7),
+                    // Read only from version 3: earlier payloads were written without it.
+                    payouts: if version >= ProTxVersion::ExtAddr as u16 {
+                        next!(8)
+                    } else {
+                        None
+                    },
+                })
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut version = None;
+                let mut pro_tx_hash = None;
+                let mut provider_mode = None;
+                let mut operator_public_key = None;
+                let mut voting_key_hash = None;
+                let mut script_payout = None;
+                let mut inputs_hash = None;
+                let mut payload_sig = None;
+                let mut payouts = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "version" => version = Some(map.next_value()?),
+                        "pro_tx_hash" => pro_tx_hash = Some(map.next_value()?),
+                        "provider_mode" => provider_mode = Some(map.next_value()?),
+                        "operator_public_key" => operator_public_key = Some(map.next_value()?),
+                        "voting_key_hash" => voting_key_hash = Some(map.next_value()?),
+                        "script_payout" => script_payout = Some(map.next_value()?),
+                        "inputs_hash" => inputs_hash = Some(map.next_value()?),
+                        "payload_sig" => payload_sig = Some(map.next_value()?),
+                        "payouts" => payouts = map.next_value()?,
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                // `payouts` only exists from version 3, as in `visit_seq`; reject it rather than
+                // drop it silently on the next encode.
+                let version: u16 = version.ok_or_else(|| de::Error::missing_field("version"))?;
+                if version < ProTxVersion::ExtAddr as u16 && payouts.is_some() {
+                    return Err(de::Error::custom("payouts only exist from version 3"));
+                }
+                Ok(ProviderUpdateRegistrarPayload {
+                    version,
+                    pro_tx_hash: pro_tx_hash
+                        .ok_or_else(|| de::Error::missing_field("pro_tx_hash"))?,
+                    provider_mode: provider_mode
+                        .ok_or_else(|| de::Error::missing_field("provider_mode"))?,
+                    operator_public_key: operator_public_key
+                        .ok_or_else(|| de::Error::missing_field("operator_public_key"))?,
+                    voting_key_hash: voting_key_hash
+                        .ok_or_else(|| de::Error::missing_field("voting_key_hash"))?,
+                    script_payout: script_payout
+                        .ok_or_else(|| de::Error::missing_field("script_payout"))?,
+                    inputs_hash: inputs_hash
+                        .ok_or_else(|| de::Error::missing_field("inputs_hash"))?,
+                    payload_sig: payload_sig
+                        .ok_or_else(|| de::Error::missing_field("payload_sig"))?,
+                    payouts,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("ProviderUpdateRegistrarPayload", FIELDS, PayloadVisitor)
     }
 }
 
@@ -152,7 +375,9 @@ mod tests {
     use hashes::Hash;
 
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+    use crate::blockdata::transaction::special_transaction::provider_registration::MasternodePayoutShare;
     use crate::bls_sig_utils::BLSPublicKey;
+    use crate::consensus::Decodable;
     use crate::consensus::{Encodable, deserialize};
     use crate::hash_types::InputsHash;
     use crate::internal_macros::hex;
@@ -260,6 +485,7 @@ mod tests {
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
                     payload_sig,
+                    payouts: None,
                 },
             )),
         };
@@ -283,9 +509,204 @@ mod tests {
             script_payout: ScriptBuf::from_hex("00000000000000000000").unwrap(), // 10 bytes
             inputs_hash: InputsHash::all_zeros(),
             payload_sig: vec![0; 96],
+            payouts: None,
         };
         assert_eq!(payload.size(), want);
         let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
         assert_eq!(actual, want);
+    }
+
+    fn v3_payload() -> ProviderUpdateRegistrarPayload {
+        ProviderUpdateRegistrarPayload {
+            version: 3,
+            pro_tx_hash: Txid::all_zeros(),
+            provider_mode: 0,
+            operator_public_key: BLSPublicKey::from([0; 48]),
+            voting_key_hash: PubkeyHash::all_zeros(),
+            script_payout: ScriptBuf::new(),
+            inputs_hash: InputsHash::all_zeros(),
+            payload_sig: vec![0; 65],
+            payouts: Some(vec![
+                MasternodePayoutShare {
+                    script_payout: ScriptBuf::from(vec![0xaa; 25]),
+                    reward: 7000,
+                },
+                MasternodePayoutShare {
+                    script_payout: ScriptBuf::from(vec![0xbb; 23]),
+                    reward: 3000,
+                },
+            ]),
+        }
+    }
+
+    #[test]
+    fn round_trip_v3_payouts() {
+        let original = v3_payload();
+        let mut encoded = Vec::new();
+        original.consensus_encode(&mut encoded).unwrap();
+
+        // A u8 payout count follows the voting key, in place of `scriptPayout`:
+        // version(2) + pro_tx_hash(32) + mode(2) + operator key(48) + voting key(20).
+        assert_eq!(encoded[104], 2);
+        assert_eq!(&encoded[105..107], &[25, 0xaa]);
+        // count(1) + (1 + 25 + 2) + (1 + 23 + 2) + inputs_hash(32) + sig(1 + 65)
+        assert_eq!(encoded.len(), 104 + 1 + 28 + 26 + 32 + 66);
+        assert_eq!(original.size(), encoded.len());
+
+        let mut reader = &encoded[..];
+        let decoded = ProviderUpdateRegistrarPayload::consensus_decode(&mut reader).unwrap();
+        assert!(reader.is_empty());
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn v3_without_payouts_fails_to_encode() {
+        let payload = ProviderUpdateRegistrarPayload {
+            payouts: None,
+            ..v3_payload()
+        };
+        assert!(payload.consensus_encode(&mut Vec::new()).is_err());
+    }
+
+    #[cfg(feature = "bincode")]
+    #[test]
+    fn bincode_round_trip_v3() {
+        let original = v3_payload();
+        let bytes = bincode::encode_to_vec(&original, bincode::config::standard()).unwrap();
+        let (decoded, read): (ProviderUpdateRegistrarPayload, usize) =
+            bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(read, bytes.len());
+    }
+
+    #[test]
+    fn max_signed_size_reserves_the_largest_ecdsa_signature() {
+        use crate::blockdata::transaction::special_transaction::MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE;
+
+        let unsigned = ProviderUpdateRegistrarPayloadType(ProviderUpdateRegistrarPayload {
+            payload_sig: vec![],
+            ..v3_payload()
+        });
+        let signed = ProviderUpdateRegistrarPayloadType(v3_payload());
+
+        // Unsigned and signed placeholders reserve the same bound, so a fee set from one
+        // covers the other.
+        assert_eq!(unsigned.max_signed_size(), unsigned.size() + MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE);
+        assert_eq!(signed.max_signed_size(), unsigned.max_signed_size());
+        assert!(signed.max_signed_size() >= signed.size());
+    }
+
+    #[test]
+    fn transaction_size_counts_a_multi_byte_payload_length_prefix() {
+        // A payload above 252 bytes takes a 3-byte length prefix.
+        let payload = ProviderUpdateRegistrarPayload {
+            payouts: Some(vec![MasternodePayoutShare {
+                script_payout: ScriptBuf::from(vec![0xaa; 200]),
+                reward: 10000,
+            }]),
+            ..v3_payload()
+        };
+        assert!(payload.size() > 252);
+        let tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![crate::TxIn::default()],
+            output: vec![],
+            special_transaction_payload: Some(ProviderUpdateRegistrarPayloadType(payload)),
+        };
+        assert_eq!(tx.size(), crate::consensus::encode::serialize(&tx).len());
+    }
+
+    #[test_case::test_case(0; "version 0")]
+    #[test_case::test_case(4; "version above ExtAddr")]
+    fn rejects_unknown_version(version: u16) {
+        let mut encoded = Vec::new();
+        v3_payload().consensus_encode(&mut encoded).unwrap();
+        encoded[..2].copy_from_slice(&version.to_le_bytes());
+        assert!(ProviderUpdateRegistrarPayload::consensus_decode(&mut &encoded[..]).is_err());
+    }
+
+    /// The shape `ProviderUpdateRegistrarPayload` had with derived serde before version 3.
+    #[cfg(feature = "serde")]
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct PreV3ProviderUpdateRegistrarPayload {
+        version: u16,
+        pro_tx_hash: Txid,
+        provider_mode: u16,
+        operator_public_key: BLSPublicKey,
+        voting_key_hash: PubkeyHash,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        payload_sig: Vec<u8>,
+    }
+
+    #[cfg(feature = "serde")]
+    fn v2_payloads() -> (ProviderUpdateRegistrarPayload, PreV3ProviderUpdateRegistrarPayload) {
+        let payload = ProviderUpdateRegistrarPayload {
+            version: 2,
+            script_payout: ScriptBuf::from(vec![0xaa; 25]),
+            payouts: None,
+            ..v3_payload()
+        };
+        let pre_v3 = PreV3ProviderUpdateRegistrarPayload {
+            version: 2,
+            pro_tx_hash: payload.pro_tx_hash,
+            provider_mode: payload.provider_mode,
+            operator_public_key: payload.operator_public_key,
+            voting_key_hash: payload.voting_key_hash,
+            script_payout: payload.script_payout.clone(),
+            inputs_hash: payload.inputs_hash,
+            payload_sig: payload.payload_sig.clone(),
+        };
+        (payload, pre_v3)
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn binary_serde_keeps_the_pre_v3_shape_before_version_3() {
+        let (payload, pre_v3) = v2_payloads();
+        let config = bincode::config::standard();
+        let old_bytes = bincode::serde::encode_to_vec(&pre_v3, config).unwrap();
+        assert_eq!(bincode::serde::encode_to_vec(&payload, config).unwrap(), old_bytes);
+        let (decoded, read): (ProviderUpdateRegistrarPayload, usize) =
+            bincode::serde::decode_from_slice(&old_bytes, config).unwrap();
+        assert_eq!((decoded, read), (payload, old_bytes.len()));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn json_keeps_the_pre_v3_shape_before_version_3() {
+        let (payload, pre_v3) = v2_payloads();
+        let old_json = serde_json::to_value(&pre_v3).unwrap();
+        assert_eq!(serde_json::to_value(&payload).unwrap(), old_json);
+        assert_eq!(
+            serde_json::from_value::<ProviderUpdateRegistrarPayload>(old_json).unwrap(),
+            payload
+        );
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn serde_round_trips_the_payouts_at_version_3() {
+        let payload = v3_payload();
+        let config = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(&payload, config).unwrap();
+        let (decoded, read): (ProviderUpdateRegistrarPayload, usize) =
+            bincode::serde::decode_from_slice(&bytes, config).unwrap();
+        assert_eq!((decoded, read), (payload.clone(), bytes.len()));
+
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(
+            serde_json::from_value::<ProviderUpdateRegistrarPayload>(json).unwrap(),
+            payload
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn json_rejects_payouts_before_version_3() {
+        let mut json = serde_json::to_value(v3_payload()).unwrap();
+        json["version"] = 2.into();
+        assert!(serde_json::from_value::<ProviderUpdateRegistrarPayload>(json).is_err());
     }
 }
