@@ -87,14 +87,13 @@ impl Decodable for TxIn {
 
 #[cfg(test)]
 mod tests {
-    use hashes::hex::FromHex;
 
     use super::*;
     use crate::consensus::encode::deserialize;
 
     #[test]
     fn test_txin() {
-        let txin: Result<TxIn, _> = deserialize(&Vec::from_hex("a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff").unwrap());
+        let txin: Result<TxIn, _> = deserialize(&hex_conservative::decode_to_vec("a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff").unwrap());
         assert!(txin.is_ok());
     }
 

@@ -141,8 +141,7 @@ mod tests {
     use core::str::FromStr;
 
     use hashes::Hash;
-    use internals::hex::Case;
-    use internals::hex::display::DisplayHex;
+    use hex_conservative::{Case, DisplayHex};
 
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::Encodable;

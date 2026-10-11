@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- Make `PublicKey::with_serialized` public
+
 ### Changed
 
 - **Breaking:** the `bincode` feature and binary serialization dependencies now use
@@ -15,17 +19,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The dependency switch does not automatically opt types into `DecodeUntrusted`.
 - **Breaking:** `dashcore_hashes` re-exports the hash primitives (`sha1`,
   `sha256`, `sha256d`, `sha512`, `sha512_256`, `ripemd160`, `hash160`, `hmac`,
-  `siphash24`, `cmp`, `hex`) from `bitcoin_hashes` 0.14. The raw types no longer
-  implement bincode or accept byte and sequence forms in serde, `Error` is
-  `FromSliceError`, and `forward_hex`, `backward_hex` and the `schemars` feature
-  are removed
+  `siphash24`, `cmp`) from `bitcoin_hashes` 0.14. The raw types no longer
+  implement bincode or accept byte and sequence forms in serde, and `Error` is
+  `FromSliceError`
+- **Breaking:** hex goes through `hex-conservative` 1.x, so `HexToArrayError`
+  and `HexToBytesError` become `DecodeFixedLengthBytesError` and
+  `DecodeVariableLengthBytesError` wherever `from_hex`, `FromStr` or a hex
+  error variant carried them. The raw hash types still report the 0.2 errors,
+  found under `dashcore_hashes::bitcoin_hashes::hex`
 - **Breaking:** `BlsPkBytes::from_hex` and `BlsSigBytes::from_hex` report
   `DecodeFixedLengthBytesError` instead of `hex::FromHexError`, and
   `dashcore_rpc_json::HexError` wraps `DecodeVariableLengthBytesError`
 - **Breaking:** hashes honour the format precision, so `{:.8}` prints 8 digits
-- **Breaking:** `hash_x11::Hash` loses `forward_hex`, `backward_hex`,
-  `from_bytes_ref` and `from_bytes_mut`, `hash_x11::Midstate` is replaced by
-  `[u8; 32]`, and `n_bytes_hashed()` returns the bytes written
+- **Breaking:** `hash_x11::Midstate` is replaced by `[u8; 32]`, and
+  `hash_x11::HashEngine::n_bytes_hashed()` returns the bytes written
 - **Breaking:** `EcdsaSighashType` comes from `bitcoin-crypto` and gains a
   `NonStandard` variant, which `from_consensus` returns for non-standard flags
   and which displays, parses and serializes as `0xNN`. The `from_standard` error
@@ -44,6 +51,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `dashcore::base58` is `base58ck` 0.5.0, so `Base58CkString`
   replaces the `encode_*` functions and the `Base58` error variants carry
   `base58::DecodeCheckError`
+- **Breaking:** `Work` and `Target` display as 64-digit hex instead of decimal,
+  and their hex formatting ignores width and fill
+- **Breaking:** `Target::difficulty` returns 0 for a zero target instead of
+  panicking, and `Work` addition and subtraction wrap instead of panicking on
+  overflow in debug builds
+- **Breaking:** `ExtendedPrivKey::new_master` rejects seeds outside 16 to 64
+  bytes with `bip32::Error::InvalidSeedLength`, which
+  `RootExtendedPrivKey::new_master` returns instead of `InvalidParameter`
+- **Breaking:** `MessageSignature::from_slice` rejects headers above 34
 - Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
   `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
 - All workspace crates declare a MSRV of 1.89
@@ -54,12 +70,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   single when checking for the legacy `SIGHASH_SINGLE` bug
 - `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
   and rejects flags above `0xff`
+- Reject 256-bit child numbers in `key-wallet` with an odd number of hex digits
+- **Breaking:** a header whose nBits is negative or overflows now has zero
+  work. Previously it decoded to `Target::ZERO`, whose `to_work()` returned the
+  maximum work, so it outweighed any valid chain in chainwork comparisons
+- **Breaking:** `Target::from_compact` returns `Target::ZERO` for overflowing
+  nBits instead of a wrapped value
+- Reject WIF keys whose compression flag is not `0x01`, with
+  `key::Error::InvalidWifCompressionFlag`
+- Accept an IL of zero in `key-wallet` private child derivation
+- `transaction_sign_input` in `key-wallet-ffi` rejects flags above `0xff`
 
 ### Removed
 
 - **Breaking:** remove BIP38 from `key-wallet` (the `bip38` feature, `Bip38EncryptedKey`,
   `Bip38Mode`, `encrypt_private_key`, `generate_intermediate_code` and the `Wallet` BIP38
   export/import methods) and the unimplemented `bip38_*` functions from `key-wallet-ffi`
+- **Breaking:** remove the `hex` re-export from `dashcore_hashes`. Depend on
+  `hex-conservative` 1.x directly, where `decode_to_array` and `decode_to_vec`
+  replace `FromHex`
+- **Breaking:** remove `forward_hex` and `backward_hex` from the hash types,
+  and the `schemars` feature from `dashcore_hashes`
+- **Breaking:** remove `from_bytes_ref` and `from_bytes_mut` from
+  `hash_x11::Hash`
+- **Breaking:** remove the `hex` module from `dashcore-private`, and the
+  `btreemap_byte_values`, `btreemap_as_seq`, `btreemap_as_seq_byte_values` and
+  `hex_bytes` serde helpers from `dashcore::serde_utils`
+- **Breaking:** remove ordering from `PublicKey`, `ExtendedPubKey` and
+  `PubKeyOrAddress`, and `PublicKey::to_sort_key` and `SortKey` with it
+- **Breaking:** remove `PublicKey::read_from` and
+  `Witness::push_bitcoin_signature`
+- **Breaking:** remove `key::Error::NotSupported`,
+  `bip32::Error::NotSupported` and `dashcore_rpc::Error::Secp256k1`
+- **Breaking:** remove `signer::CompactSignature`. Use `MessageSignature`
+  instead
 
 ## 0.44.0 - 2026-07-01
 

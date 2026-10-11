@@ -419,7 +419,6 @@ impl From<&Block> for BlockHash {
 
 #[cfg(test)]
 mod tests {
-    use hashes::hex::FromHex;
 
     use super::*;
     use crate::consensus::encode::{deserialize, serialize};
@@ -440,7 +439,7 @@ mod tests {
         const BAD_HEX: &str = "0200000035ab154183570282ce9afc0b494c9fc6a3cfea05aa8c1add2ecc56490000000038ba3d78e4500a5a7570dbe61960398add4410d278b21cd9708e6d9743f374d544fc055227f1001c29c1ea3b0101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff3d09a08601112233445566000427f1001c046a510100522cfabe6d6d0000000000000000000068692066726f6d20706f6f6c7365727665726aac1eeeed88ffffffff0100f2052a010000001976a914912e2b234f941f30b18afbb4fa46171214bf66c888ac00000000";
         let bad: Block = deserialize(&hex!(BAD_HEX)).unwrap();
 
-        let push = Vec::<u8>::from_hex("a08601112233445566").unwrap();
+        let push = hex_conservative::decode_to_vec("a08601112233445566").unwrap();
         assert_eq!(bad.bip34_block_height(), Err(super::Bip34Error::UnexpectedPush(push)));
     }
 

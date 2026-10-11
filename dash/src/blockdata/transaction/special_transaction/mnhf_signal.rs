@@ -121,7 +121,7 @@ mod tests {
         // Test the actual failing payload from the error message
         // extraPayload: "010bdd1ec5c4a8db99beced78f2c16565d31458bbf4771a55f552900000000000000afc931a000054238f952286289448847d86e25c20b6d357bf2845ed286ecdee426ca53a0f06de790c5b3a8c13913c1ad10da511122f9de8cd98c4af693acda58379fe572c2a8b41e7a860b85653306a6a2c1a6e8e3ba47560f17c1d5bf1a4889"
         let payload_hex = "010bdd1ec5c4a8db99beced78f2c16565d31458bbf4771a55f552900000000000000afc931a000054238f952286289448847d86e25c20b6d357bf2845ed286ecdee426ca53a0f06de790c5b3a8c13913c1ad10da511122f9de8cd98c4af693acda58379fe572c2a8b41e7a860b85653306a6a2c1a6e8e3ba47560f17c1d5bf1a4889";
-        let payload_bytes = hex_decode(payload_hex).unwrap();
+        let payload_bytes = hex_conservative::decode_to_vec(payload_hex).unwrap();
 
         // Verify payload is 130 bytes
         assert_eq!(payload_bytes.len(), 130);
@@ -151,28 +151,5 @@ mod tests {
         let mut encoded = Vec::new();
         payload.consensus_encode(&mut encoded).unwrap();
         assert_eq!(encoded, payload_bytes);
-    }
-
-    fn hex_decode(s: &str) -> Result<Vec<u8>, &'static str> {
-        if !s.len().is_multiple_of(2) {
-            return Err("Hex string has odd length");
-        }
-
-        let mut bytes = Vec::with_capacity(s.len() / 2);
-        for chunk in s.as_bytes().chunks(2) {
-            let high = hex_digit(chunk[0])?;
-            let low = hex_digit(chunk[1])?;
-            bytes.push((high << 4) | low);
-        }
-        Ok(bytes)
-    }
-
-    fn hex_digit(digit: u8) -> Result<u8, &'static str> {
-        match digit {
-            b'0'..=b'9' => Ok(digit - b'0'),
-            b'a'..=b'f' => Ok(digit - b'a' + 10),
-            b'A'..=b'F' => Ok(digit - b'A' + 10),
-            _ => Err("Invalid hex digit"),
-        }
     }
 }

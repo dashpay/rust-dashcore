@@ -17,7 +17,20 @@ mod tests {
     use crate::Network::{Mainnet, Testnet};
     use crate::address::Address;
     use crate::crypto::key::{PrivateKey, PublicKey};
-    use crate::io;
+
+    /// Core's `DecodeSecret` takes a 34-byte payload only when it ends in
+    /// the 0x01 compression flag.
+    #[test_case::test_matrix([0x00, 0x02, 0xff])]
+    fn wif_compression_flag_must_be_one(flag: u8) {
+        let mut data =
+            crate::base58::decode_check("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy")
+                .unwrap();
+        data[33] = flag;
+        assert_eq!(
+            PrivateKey::from_wif(crate::base58::Base58CkString::encode_unbounded(&data).as_str()),
+            Err(crate::crypto::key::Error::InvalidWifCompressionFlag(flag))
+        );
+    }
 
     #[test]
     fn test_key_derivation() {
@@ -137,55 +150,6 @@ mod tests {
         assert_tokens(&pk.readable(), &[Token::BorrowedStr(PK_STR)]);
         assert_tokens(&pk_u.compact(), &[Token::BorrowedBytes(&PK_BYTES_U[..])]);
         assert_tokens(&pk_u.readable(), &[Token::BorrowedStr(PK_STR_U)]);
-    }
-
-    fn random_key(mut seed: u8) -> PublicKey {
-        loop {
-            let mut data = [0; 65];
-            for byte in &mut data[..] {
-                *byte = seed;
-                // totally a rng
-                seed = seed.wrapping_mul(41).wrapping_add(43);
-            }
-            if data[0] % 2 == 0 {
-                data[0] = 4;
-                if let Ok(key) = PublicKey::from_slice(&data[..]) {
-                    return key;
-                }
-            } else {
-                data[0] = 2 + (data[0] >> 7);
-                if let Ok(key) = PublicKey::from_slice(&data[..33]) {
-                    return key;
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn pubkey_read_write() {
-        const N_KEYS: usize = 20;
-        let keys: Vec<_> = (0..N_KEYS).map(|i| random_key(i as u8)).collect();
-
-        let mut v = vec![];
-        for k in &keys {
-            k.write_into(&mut v).expect("writing into vec");
-        }
-
-        let mut dec_keys = vec![];
-        let mut cursor = io::Cursor::new(&v);
-        for _ in 0..N_KEYS {
-            dec_keys.push(PublicKey::read_from(&mut cursor).expect("reading from vec"));
-        }
-
-        assert_eq!(keys, dec_keys);
-
-        // sanity checks
-        assert!(PublicKey::read_from(&mut cursor).is_err());
-        assert!(PublicKey::read_from(io::Cursor::new(&[])).is_err());
-        assert!(PublicKey::read_from(io::Cursor::new(&[0; 33][..])).is_err());
-        assert!(PublicKey::read_from(io::Cursor::new(&[2; 32][..])).is_err());
-        assert!(PublicKey::read_from(io::Cursor::new(&[0; 65][..])).is_err());
-        assert!(PublicKey::read_from(io::Cursor::new(&[4; 64][..])).is_err());
     }
 
     #[test]

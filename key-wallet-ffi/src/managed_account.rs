@@ -2771,8 +2771,6 @@ mod tests {
     /// consumer decoding `tx_data`.
     #[test]
     fn test_transaction_record_exposes_typed_proreg_payload() {
-        use dashcore::hashes::hex::FromHex;
-
         let tx = proreg_transaction();
         let record = TransactionRecord::new(
             tx,
@@ -2797,7 +2795,8 @@ mod tests {
         assert_eq!(service, "54.148.58.128:9999");
         assert_eq!(reg.service_port, 9999);
         let expected_hash =
-            <[u8; 20]>::from_hex("70993555a01f7e8d6179d6135b5c56809d2d1d36").expect("hash160");
+            hex_conservative::decode_to_array::<20>("70993555a01f7e8d6179d6135b5c56809d2d1d36")
+                .expect("hash160");
         assert_eq!(reg.owner_key_hash, expected_hash);
         assert_eq!(reg.voting_key_hash, expected_hash);
 

@@ -7,9 +7,10 @@ use crate::types::{
 use crate::{check_ptr, FFIWalletManager};
 use crate::{deref_ptr, deref_ptr_mut, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
+use dashcore::blockdata::script::Builder;
 use dashcore::{
-    consensus, hashes::Hash, sighash::SighashCache, Network, OutPoint, Script, ScriptBuf,
-    Transaction, TxIn, TxOut, Txid,
+    consensus, hashes::Hash, sighash::SighashCache, EcdsaSighashType, Network, OutPoint, Script,
+    ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
 use key_wallet::wallet::managed_wallet_info::asset_lock_builder::{
     AssetLockFundingType, CreditOutputFunding,
@@ -550,7 +551,7 @@ pub unsafe extern "C" fn transaction_sighash(
 ///
 /// # Returns
 /// - 0 on success
-/// - -1 on error
+/// - -1 on error, including a `sighash_type` above 0xff
 #[no_mangle]
 pub unsafe extern "C" fn transaction_sign_input(
     tx: *mut FFITransaction,
@@ -568,6 +569,12 @@ pub unsafe extern "C" fn transaction_sign_input(
     let input_index = input_index as usize;
 
     if input_index >= tx.inner.input.len() {
+        return -1;
+    }
+
+    // Only the low byte of the type is appended to the signature, and that
+    // byte is what the input is verified under.
+    if u8::try_from(sighash_type).is_err() {
         return -1;
     }
 
@@ -601,19 +608,17 @@ pub unsafe extern "C" fn transaction_sign_input(
     let sig = privkey.sign_ecdsa(message);
 
     // Build signature script (simplified P2PKH)
-    let mut sig_bytes = sig.serialize_der().to_vec();
-    sig_bytes.push(sighash_type as u8);
-
-    let pubkey = secp256k1::PublicKey::from_secret_key(&privkey);
-    let pubkey_bytes = pubkey.serialize();
-
-    let mut script_sig = vec![];
-    script_sig.push(sig_bytes.len() as u8);
-    script_sig.extend_from_slice(&sig_bytes);
-    script_sig.push(pubkey_bytes.len() as u8);
-    script_sig.extend_from_slice(&pubkey_bytes);
-
-    tx.inner.input[input_index].script_sig = ScriptBuf::from(script_sig);
+    let pubkey = dashcore::PublicKey::new(secp256k1::PublicKey::from_secret_key(&privkey));
+    tx.inner.input[input_index].script_sig = Builder::new()
+        .push_slice(
+            dashcore::ecdsa::Signature {
+                sig,
+                hash_ty: EcdsaSighashType::from_consensus(sighash_type),
+            }
+            .serialize(),
+        )
+        .push_key(&pubkey)
+        .into_script();
     0
 }
 
@@ -639,12 +644,8 @@ pub unsafe extern "C" fn script_p2pkh(
         return -1;
     }
 
-    let hash_slice = slice::from_raw_parts(pubkey_hash, 20);
-
-    // Build P2PKH script: OP_DUP OP_HASH160 <hash> OP_EQUALVERIFY OP_CHECKSIG
-    let mut script = vec![0x76, 0xa9, 0x14]; // OP_DUP OP_HASH160 PUSH(20)
-    script.extend_from_slice(hash_slice);
-    script.extend_from_slice(&[0x88, 0xac]); // OP_EQUALVERIFY OP_CHECKSIG
+    let hash = <[u8; 20]>::try_from(slice::from_raw_parts(pubkey_hash, 20)).expect("20 bytes");
+    let script = ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array(hash));
 
     let size = script.len() as u32;
 
@@ -659,7 +660,7 @@ pub unsafe extern "C" fn script_p2pkh(
         return -1;
     }
 
-    ptr::copy_nonoverlapping(script.as_ptr(), out_buf, script.len());
+    ptr::copy_nonoverlapping(script.as_bytes().as_ptr(), out_buf, script.len());
     *out_len = size;
     0
 }
@@ -991,6 +992,86 @@ pub unsafe extern "C" fn wallet_build_and_sign_asset_lock_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn script_p2pkh_is_dup_hash160_push_equalverify_checksig() {
+        let hash = [0x11u8; 20];
+        let mut out = [0u8; 25];
+        let mut len = out.len() as u32;
+        assert_eq!(unsafe { script_p2pkh(hash.as_ptr(), out.as_mut_ptr(), &mut len) }, 0);
+        assert_eq!(len, 25);
+        assert_eq!(out[..3], [0x76, 0xa9, 0x14]);
+        assert_eq!(out[3..23], hash);
+        assert_eq!(out[23..], [0x88, 0xac]);
+    }
+
+    /// A type that fits in a byte signs, and the scriptSig carries that byte
+    /// with a signature over the sighash computed under it; a wider type is
+    /// refused.
+    #[test_case::test_case(0x01, true ; "all")]
+    #[test_case::test_case(0x81, true ; "all anyone can pay")]
+    #[test_case::test_case(0x04, true ; "non-standard")]
+    #[test_case::test_case(0x101, false ; "all with a high bit")]
+    #[test_case::test_case(0xffff_ff81, false ; "all anyone can pay with high bits")]
+    fn sign_input_appends_the_sighash_type_it_signed(sighash_type: u32, ok: bool) {
+        let secret = [0x42u8; 32];
+        let pubkey =
+            secp256k1::PublicKey::from_secret_key(&SecretKey::from_secret_bytes(secret).unwrap());
+        let script_pubkey = ScriptBuf::new_p2pkh(&dashcore::PublicKey::new(pubkey).pubkey_hash());
+
+        unsafe {
+            let tx = transaction_create();
+            let input = FFITxIn {
+                txid: [1; 32],
+                vout: 0,
+                script_sig_len: 0,
+                script_sig: ptr::null(),
+                sequence: u32::MAX,
+            };
+            assert_eq!(transaction_add_input(tx, &input), 0);
+
+            let signed = transaction_sign_input(
+                tx,
+                0,
+                secret.as_ptr(),
+                script_pubkey.as_bytes().as_ptr(),
+                script_pubkey.len() as u32,
+                sighash_type,
+            );
+            assert_eq!(signed == 0, ok);
+
+            if ok {
+                let mut pushes = (&(*tx).inner.input)[0]
+                    .script_sig
+                    .instructions()
+                    .map(|i| i.unwrap().push_bytes().unwrap().as_bytes().to_vec());
+                let sig = pushes.next().unwrap();
+                let (&hash_ty, der) = sig.split_last().unwrap();
+                assert_eq!(hash_ty as u32, sighash_type);
+                assert_eq!(pushes.next().unwrap(), pubkey.serialize());
+                assert_eq!(pushes.next(), None);
+
+                let mut sighash = [0u8; 32];
+                assert_eq!(
+                    transaction_sighash(
+                        tx,
+                        0,
+                        script_pubkey.as_bytes().as_ptr(),
+                        script_pubkey.len() as u32,
+                        hash_ty as u32,
+                        sighash.as_mut_ptr(),
+                    ),
+                    0
+                );
+                secp256k1::ecdsa::Signature::from_der(der)
+                    .unwrap()
+                    .verify(Message::from_digest(sighash), &pubkey)
+                    .unwrap();
+            }
+
+            transaction_destroy(tx);
+        }
+    }
 
     fn preference(kind: FFIAccountTypePreferenceKind) -> FFIAccountTypePreference {
         FFIAccountTypePreference {

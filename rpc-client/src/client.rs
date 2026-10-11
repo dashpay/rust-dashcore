@@ -26,7 +26,6 @@ use crate::error::*;
 use crate::json;
 use crate::queryable;
 use dashcore::hashes::Hash;
-use dashcore::hashes::hex::FromHex;
 use dashcore::secp256k1::ecdsa::Signature;
 use dashcore::{
     Address, Amount, Block, OutPoint, PrivateKey, ProTxHash, PublicKey, QuorumHash, Transaction,
@@ -318,7 +317,7 @@ pub trait RpcApi: Sized {
 
     fn get_block(&self, hash: &BlockHash) -> Result<Block> {
         let hex: String = self.call("getblock", &[into_json(hash)?, 0.into()])?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -337,7 +336,7 @@ pub trait RpcApi: Sized {
 
     fn get_block_header(&self, hash: &BlockHash) -> Result<block::Header> {
         let hex: String = self.call("getblockheader", &[into_json(hash)?, false.into()])?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -440,7 +439,7 @@ pub trait RpcApi: Sized {
     ) -> Result<Transaction> {
         let mut args = [into_json(txid)?, into_json(false)?, opt_into_json(block_hash)?];
         let hex: String = self.call("getrawtransaction", handle_defaults(&mut args, &[null()]))?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -579,7 +578,7 @@ pub trait RpcApi: Sized {
     ) -> Result<Vec<u8>> {
         let mut args = [into_json(txids)?, opt_into_json(block_hash)?];
         let hex: String = self.call("gettxoutproof", handle_defaults(&mut args, &[null()]))?;
-        Ok(FromHex::from_hex(&hex)?)
+        Ok(hex_conservative::decode_to_vec(&hex)?)
     }
 
     fn import_public_key(
@@ -730,7 +729,7 @@ pub trait RpcApi: Sized {
         locktime: Option<i64>,
     ) -> Result<Transaction> {
         let hex: String = self.create_raw_transaction_hex(utxos, outs, locktime)?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -1626,7 +1625,7 @@ pub trait RpcApi: Sized {
     /// If the returned height is higher that the given chain lock this means that we ignored the chain lock because core had something better.
     fn submit_chain_lock(&self, chain_lock: &ChainLock) -> Result<u32> {
         let mut args = [
-            into_json(chain_lock.block_hash.as_byte_array().to_lower_hex_string())?,
+            into_json(chain_lock.block_hash)?,
             into_json(chain_lock.signature.as_bytes().to_lower_hex_string())?,
             into_json(chain_lock.block_height)?,
         ];
@@ -1707,7 +1706,7 @@ impl RpcApi for Client {
         let raw_args = Some(serde_json::value::RawValue::from_string(raw_args_json)?);
         let req = self.client.build_request(cmd, raw_args.as_deref());
         if tracing::enabled!(target: "dashcore_rpc", Level::DEBUG) {
-            tracing::debug!(target: "dashcore_rpc", "JSON-RPC request: {} {}", cmd, serde_json::Value::from(args));
+            tracing::debug!(target: "dashcore_rpc", "JSON-RPC request: {}", cmd);
         }
 
         let resp = self.client.send_request(req).map_err(Error::from);
@@ -1733,13 +1732,7 @@ fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
                         tracing::debug!(target: "dashcore_rpc", "JSON-RPC error for {}: {:?}", cmd, e);
                     }
                 } else if tracing::enabled!(target: "dashcore_rpc", Level::TRACE) {
-                    // we can't use to_raw_value here due to compat with Rust 1.29
-                    let def = serde_json::value::RawValue::from_string(
-                        serde_json::Value::Null.to_string(),
-                    )
-                    .unwrap();
-                    let result = resp.result.as_ref().unwrap_or(&def);
-                    tracing::trace!(target: "dashcore_rpc", "JSON-RPC response for {}: {}", cmd, result);
+                    tracing::trace!(target: "dashcore_rpc", "JSON-RPC response for {}", cmd);
                 }
             }
         }
@@ -1756,7 +1749,7 @@ mod tests {
     fn test_raw_tx() {
         use dashcore::consensus::encode;
         let client = Client::new("http://localhost/", Auth::None).unwrap();
-        let tx: Transaction = encode::deserialize(&Vec::<u8>::from_hex("0200000001586bd02815cf5faabfec986a4e50d25dbee089bd2758621e61c5fab06c334af0000000006b483045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c012103dae30a4d7870cd87b45dd53e6012f71318fdd059c1c2623b8cc73f8af287bb2dfeffffff021dc4260c010000001976a914f602e88b2b5901d8aab15ebe4a97cf92ec6e03b388ac00e1f505000000001976a914687ffeffe8cf4e4c038da46a9b1d37db385a472d88acfd211500").unwrap()).unwrap();
+        let tx: Transaction = encode::deserialize(&hex_conservative::decode_to_vec("0200000001586bd02815cf5faabfec986a4e50d25dbee089bd2758621e61c5fab06c334af0000000006b483045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c012103dae30a4d7870cd87b45dd53e6012f71318fdd059c1c2623b8cc73f8af287bb2dfeffffff021dc4260c010000001976a914f602e88b2b5901d8aab15ebe4a97cf92ec6e03b388ac00e1f505000000001976a914687ffeffe8cf4e4c038da46a9b1d37db385a472d88acfd211500").unwrap()).unwrap();
 
         assert!(client.send_raw_transaction(&tx).is_err());
         assert!(client.send_raw_transaction(&encode::serialize(&tx)).is_err());
