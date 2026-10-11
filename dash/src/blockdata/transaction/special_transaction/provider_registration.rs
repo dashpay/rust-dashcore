@@ -40,15 +40,19 @@ use std::net::SocketAddr;
 use bincode::{Decode, Encode};
 use hashes::Hash;
 use hex_conservative::Case::Lower;
+use internals::impl_array_newtype;
 
 use crate::address::Payload;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
+use crate::blockdata::transaction::special_transaction::provider_update_service::ProTxVersion;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash};
-use crate::internal_macros::impl_consensus_encoding;
+use crate::internal_macros::{impl_bytes_newtype, impl_consensus_encoding};
 use crate::platform_node_id::PlatformNodeId;
 use crate::prelude::*;
+use crate::sml::masternode_list_entry::MasternodeNetInfo;
+use crate::sml::masternode_list_entry::net_info::ExtNetInfo;
 use crate::{Address, Network, OutPoint, ScriptBuf, VarInt, io};
 
 /// One owner reward payee of a version 3 (extended address) ProTx, as defined by DIP-0026.
@@ -123,11 +127,124 @@ impl Decodable for ProviderMasternodeType {
     }
 }
 
+/// A compact recoverable ECDSA signature of 65 bytes, written without a length prefix.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+pub struct JoinSignature([u8; 65]);
+
+impl_array_newtype!(JoinSignature, u8, 65);
+impl_bytes_newtype!(JoinSignature, 65);
+
+impl Encodable for JoinSignature {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        w.write_all(&self.0)?;
+        Ok(self.0.len())
+    }
+}
+
+impl Decodable for JoinSignature {
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let mut bytes = [0; 65];
+        r.read_exact(&mut bytes).map_err(encode::Error::Io)?;
+        Ok(JoinSignature(bytes))
+    }
+}
+
+/// One participant's contribution to the collateral of a shared masternode.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct CollateralShare {
+    /// Contributed amount in duffs.
+    pub amount: i64,
+    pub script_refund: ScriptBuf,
+    /// Script the share's owner rewards are paid to, `script_refund` when empty.
+    pub script_reward: ScriptBuf,
+    pub owner_key_hash: PubkeyHash,
+}
+
+impl_consensus_encoding!(CollateralShare, amount, script_refund, script_reward, owner_key_hash);
+
+impl CollateralShare {
+    /// The size of the share in bytes.
+    pub fn size(&self) -> usize {
+        8 + VarInt(self.script_refund.len() as u64).len()
+            + self.script_refund.len()
+            + VarInt(self.script_reward.len() as u64).len()
+            + self.script_reward.len()
+            + 20
+    }
+}
+
+/// The collateral sharing terms of a version 3 ProRegTx. `shares` is empty when the collateral
+/// has a single owner.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct SharedCollateral {
+    pub shares: Vec<CollateralShare>,
+    /// One consent signature per share, in share order.
+    pub join_sigs: Vec<JoinSignature>,
+    pub early_period_blocks: u32,
+    /// Penalty in duffs for leaving within `early_period_blocks`.
+    pub early_penalty: i64,
+}
+
+impl SharedCollateral {
+    /// The size of the terms in bytes.
+    pub fn size(&self) -> usize {
+        1 + self.shares.iter().map(CollateralShare::size).sum::<usize>()
+            + 65 * self.join_sigs.len()
+            + 4
+            + 8
+    }
+}
+
+// Core writes the share count once, as a `u8`, ahead of the shares and then of their
+// signatures.
+impl Encodable for SharedCollateral {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        let count = u8::try_from(self.shares.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "more than 255 shares"))?;
+        if self.join_sigs.len() != self.shares.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "join signature count mismatch",
+            ));
+        }
+        let mut len = count.consensus_encode(w)?;
+        for share in &self.shares {
+            len += share.consensus_encode(w)?;
+        }
+        for sig in &self.join_sigs {
+            len += sig.consensus_encode(w)?;
+        }
+        len += self.early_period_blocks.consensus_encode(w)?;
+        len += self.early_penalty.consensus_encode(w)?;
+        Ok(len)
+    }
+}
+
+impl Decodable for SharedCollateral {
+    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        let count = u8::consensus_decode(r)?;
+        let shares =
+            (0..count).map(|_| CollateralShare::consensus_decode(r)).collect::<Result<_, _>>()?;
+        let join_sigs =
+            (0..count).map(|_| JoinSignature::consensus_decode(r)).collect::<Result<_, _>>()?;
+        Ok(SharedCollateral {
+            shares,
+            join_sigs,
+            early_period_blocks: u32::consensus_decode(r)?,
+            early_penalty: i64::consensus_decode(r)?,
+        })
+    }
+}
+
 /// A Provider Registration Payload used in a Provider Registration Special Transaction.
 /// This is used to register a Masternode on the network.
-/// The current version is 0.
 /// Interesting Fields:
-/// *Provider type refers to the type of Masternode. Currently only valid value is 0.
+/// *Provider type refers to the type of Masternode.
 /// *Provider mode refers to the mode of the Masternode. Currently only valid value is 0.
 /// *The collateral outpoint links to a transaction with a 1000 Dash unspent (at registration)
 /// outpoint.
@@ -136,18 +253,19 @@ impl Decodable for ProviderMasternodeType {
 /// *The script payout is the script to which one wants to have the masternode pay out.
 /// *The inputs hash is used to guarantee the uniqueness of the payload sig.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ProviderRegistrationPayload {
     pub version: u16,
     pub masternode_type: ProviderMasternodeType,
     pub masternode_mode: u16,
     pub collateral_outpoint: OutPoint,
-    pub service_address: SocketAddr,
+    /// The service address: [`MasternodeNetInfo::Legacy`] before version 3,
+    /// [`MasternodeNetInfo::Extended`] from version 3.
+    pub service_address: MasternodeNetInfo,
     pub owner_key_hash: PubkeyHash,
     pub operator_public_key: BLSPublicKey,
     pub voting_key_hash: PubkeyHash,
     pub operator_reward: u16,
+    /// Payout script before version 3, empty from version 3 (see `payouts`).
     pub script_payout: ScriptBuf,
     pub inputs_hash: InputsHash,
     pub signature: Vec<u8>,
@@ -156,8 +274,14 @@ pub struct ProviderRegistrationPayload {
     /// public key hash. Only present for high-performance (Evo) masternodes
     /// on payload version 2+.
     pub platform_node_id: Option<PlatformNodeId>,
+    /// Only before version 3; from version 3 the platform ports are in `service_address`.
     pub platform_p2p_port: Option<u16>,
+    /// Only before version 3; from version 3 the platform ports are in `service_address`.
     pub platform_http_port: Option<u16>,
+    /// DIP-0026 payouts, present from version 3 in place of `script_payout`.
+    pub payouts: Option<Vec<MasternodePayoutShare>>,
+    /// Collateral sharing terms, present from version 3.
+    pub shared_collateral: Option<SharedCollateral>,
 }
 
 impl ProviderRegistrationPayload {
@@ -187,7 +311,7 @@ impl ProviderRegistrationPayload {
             masternode_type,
             masternode_mode,
             collateral_outpoint,
-            service_address,
+            service_address: MasternodeNetInfo::Legacy(service_address),
             owner_key_hash,
             operator_public_key,
             voting_key_hash,
@@ -198,7 +322,18 @@ impl ProviderRegistrationPayload {
             platform_node_id,
             platform_p2p_port,
             platform_http_port,
+            payouts: None,
+            shared_collateral: None,
         }
+    }
+
+    fn is_ext_addr(&self) -> bool {
+        self.version >= ProTxVersion::ExtAddr as u16
+    }
+
+    fn is_evo(&self) -> bool {
+        self.version >= ProTxVersion::BasicBLS as u16
+            && self.masternode_type == ProviderMasternodeType::HighPerformance
     }
 
     /// A convenience method to get the address from payout script
@@ -218,8 +353,13 @@ impl ProviderRegistrationPayload {
     }
     /// This is used to prove access to the collateral. The collateral private key signs
     /// a string of formatted values proving access to the 1000 Dash and therefore the ability
-    /// to register the masternode.
+    /// to register the masternode. Not supported from version 3, which lists its payouts there.
     pub fn payload_collateral_string(&self, network: Network) -> Result<String, encode::Error> {
+        if self.is_ext_addr() {
+            return Err(encode::Error::ParseFailed(
+                "collateral string of a version 3 ProRegTx is not supported",
+            ));
+        }
         let base_payload_hash = self.base_payload_hash();
         let mut base_payload_hash = *base_payload_hash.as_raw_hash().as_byte_array();
         base_payload_hash.reverse();
@@ -236,17 +376,28 @@ impl ProviderRegistrationPayload {
     }
 
     /// The size of the payload in bytes.
-    /// version(2) + provider_type(2) + provider_mode(2) + collateral_outpoint(32 + 4) + ip_address(16) +
-    /// port(2) + owner_key_hash(20) + operator_public_key(48) + voting_key_hash(20) + operator_reward(2) +
-    /// script_payout(VarInt(script_payout_len).len() + script_payout_len) +
-    /// inputs_hash(32) +
-    /// payload_sig(VarInt(payload_sig_len).len() + payload_sig_len)
     pub fn size(&self) -> usize {
-        let mut size = 2 + 2 + 2 + 32 + 4 + 16 + 2 + 20 + 48 + 20 + 2 + 32; // 182 bytes
-        let script_payout_len = self.script_payout.0.len();
-        let signature_len = self.signature.len();
-        size += VarInt(script_payout_len as u64).len() + script_payout_len;
-        size += VarInt(signature_len as u64).len() + signature_len;
+        // version + type + mode + collateral outpoint + owner key hash + operator key +
+        // voting key hash + operator reward + inputs hash
+        let mut size = 2 + 2 + 2 + 36 + 20 + 48 + 20 + 2 + 32;
+        size += match &self.service_address {
+            MasternodeNetInfo::Legacy(_) => 16 + 2, // ip + port
+            MasternodeNetInfo::Extended(info) => info.size(),
+        };
+        if self.is_ext_addr() {
+            let payouts = self.payouts.as_deref().unwrap_or_default();
+            size += 1 + payouts.iter().map(MasternodePayoutShare::size).sum::<usize>();
+            size += self.shared_collateral.as_ref().map_or(1 + 4 + 8, SharedCollateral::size);
+        } else {
+            size += VarInt(self.script_payout.len() as u64).len() + self.script_payout.len();
+        }
+        if self.is_evo() {
+            size += 20; // platform_node_id
+            if !self.is_ext_addr() {
+                size += 2 + 2; // p2p_port + http_port
+            }
+        }
+        size += VarInt(self.signature.len() as u64).len() + self.signature.len();
         size
     }
 }
@@ -259,18 +410,42 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
         len += self.masternode_type.consensus_encode(&mut s)?;
         len += self.masternode_mode.consensus_encode(&mut s)?;
         len += self.collateral_outpoint.consensus_encode(&mut s)?;
-        len += self.service_address.consensus_encode(&mut s)?;
+        len += match (self.is_ext_addr(), &self.service_address) {
+            (false, MasternodeNetInfo::Legacy(addr)) => addr.consensus_encode(&mut s)?,
+            (true, MasternodeNetInfo::Extended(info)) => info.consensus_encode_ext(&mut s)?,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "service_address does not match the payload version",
+                ));
+            }
+        };
         len += self.owner_key_hash.consensus_encode(&mut s)?;
         len += self.operator_public_key.consensus_encode(&mut s)?;
         len += self.voting_key_hash.consensus_encode(&mut s)?;
         len += self.operator_reward.consensus_encode(&mut s)?;
-        len += self.script_payout.consensus_encode(&mut s)?;
+        if self.is_ext_addr() {
+            let (Some(payouts), Some(shared_collateral)) = (&self.payouts, &self.shared_collateral)
+            else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "payouts or shared_collateral is not set",
+                ));
+            };
+            len += encode_payouts(payouts, &mut s)?;
+            len += shared_collateral.consensus_encode(&mut s)?;
+        } else {
+            len += self.script_payout.consensus_encode(&mut s)?;
+        }
         len += self.inputs_hash.consensus_encode(&mut s)?;
 
-        if self.version >= 2 && self.masternode_type == ProviderMasternodeType::HighPerformance {
+        // Platform fields for Evo masternodes (v2+, ports only before v3)
+        if self.is_evo() {
             len += self.platform_node_id.unwrap_or_default().consensus_encode(&mut s)?;
-            len += self.platform_p2p_port.unwrap_or_default().consensus_encode(&mut s)?;
-            len += self.platform_http_port.unwrap_or_default().consensus_encode(&mut s)?;
+            if !self.is_ext_addr() {
+                len += self.platform_p2p_port.unwrap_or_default().consensus_encode(&mut s)?;
+                len += self.platform_http_port.unwrap_or_default().consensus_encode(&mut s)?;
+            }
         }
 
         Ok(len)
@@ -295,33 +470,54 @@ impl Encodable for ProviderRegistrationPayload {
 impl Decodable for ProviderRegistrationPayload {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode(r)?;
-        let provider_type = ProviderMasternodeType::consensus_decode(r)?;
-        let provider_mode = u16::consensus_decode(r)?;
+
+        // Version validation like C++ SERIALIZE_METHODS
+        if version == 0 || version > ProTxVersion::ExtAddr as u16 {
+            return Err(encode::Error::ParseFailed("unsupported ProRegTx version"));
+        }
+        let is_ext_addr = version >= ProTxVersion::ExtAddr as u16;
+
+        let masternode_type = ProviderMasternodeType::consensus_decode(r)?;
+        let masternode_mode = u16::consensus_decode(r)?;
         let collateral_outpoint = OutPoint::consensus_decode(r)?;
-        let service_address = SocketAddr::consensus_decode(r)?;
+        let service_address = if is_ext_addr {
+            MasternodeNetInfo::Extended(ExtNetInfo::consensus_decode_ext(r)?)
+        } else {
+            MasternodeNetInfo::Legacy(SocketAddr::consensus_decode(r)?)
+        };
         let owner_key_hash = PubkeyHash::consensus_decode(r)?;
         let operator_public_key = BLSPublicKey::consensus_decode(r)?;
         let voting_key_hash = PubkeyHash::consensus_decode(r)?;
         let operator_reward = u16::consensus_decode(r)?;
-        let script_payout = ScriptBuf::consensus_decode(r)?;
+        let (script_payout, payouts, shared_collateral) = if is_ext_addr {
+            let payouts = decode_payouts(r)?;
+            (ScriptBuf::new(), Some(payouts), Some(SharedCollateral::consensus_decode(r)?))
+        } else {
+            (ScriptBuf::consensus_decode(r)?, None, None)
+        };
         let inputs_hash = InputsHash::consensus_decode(r)?;
 
-        let mut platform_node_id = None;
-        let mut platform_p2p_port = None;
-        let mut platform_http_port = None;
+        // Platform fields for Evo masternodes; the ports moved to `service_address` in v3
+        let (platform_node_id, platform_p2p_port, platform_http_port) = if version
+            >= ProTxVersion::BasicBLS as u16
+            && masternode_type == ProviderMasternodeType::HighPerformance
+        {
+            let node_id = PlatformNodeId::consensus_decode(r)?;
+            if is_ext_addr {
+                (Some(node_id), None, None)
+            } else {
+                (Some(node_id), Some(u16::consensus_decode(r)?), Some(u16::consensus_decode(r)?))
+            }
+        } else {
+            (None, None, None)
+        };
 
-        if version >= 2 && provider_type == ProviderMasternodeType::HighPerformance {
-            platform_node_id = Some(PlatformNodeId::consensus_decode(r)?);
-            platform_p2p_port = Some(u16::consensus_decode(r)?);
-            platform_http_port = Some(u16::consensus_decode(r)?);
-        }
-
-        let payload_sig = Vec::<u8>::consensus_decode(r)?;
+        let signature = Vec::<u8>::consensus_decode(r)?;
 
         Ok(ProviderRegistrationPayload {
             version,
-            masternode_type: provider_type,
-            masternode_mode: provider_mode,
+            masternode_type,
+            masternode_mode,
             collateral_outpoint,
             service_address,
             owner_key_hash,
@@ -330,11 +526,356 @@ impl Decodable for ProviderRegistrationPayload {
             operator_reward,
             script_payout,
             inputs_hash,
-            signature: payload_sig,
+            signature,
             platform_node_id,
             platform_p2p_port,
             platform_http_port,
+            payouts,
+            shared_collateral,
         })
+    }
+}
+
+// Same layout as the earlier derived impl before version 3. Version 3 stores the extended
+// addresses in place of the service address and appends `payouts` and `shared_collateral`, so
+// payloads persisted before keep decoding.
+#[cfg(feature = "bincode")]
+impl bincode::Encode for ProviderRegistrationPayload {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        self.version.encode(encoder)?;
+        self.masternode_type.encode(encoder)?;
+        self.masternode_mode.encode(encoder)?;
+        self.collateral_outpoint.encode(encoder)?;
+        match (self.is_ext_addr(), &self.service_address) {
+            (false, MasternodeNetInfo::Legacy(addr)) => addr.encode(encoder)?,
+            (true, MasternodeNetInfo::Extended(info)) => info.encode(encoder)?,
+            _ => {
+                return Err(bincode::error::EncodeError::Other(
+                    "service_address does not match the payload version",
+                ));
+            }
+        }
+        self.owner_key_hash.encode(encoder)?;
+        self.operator_public_key.encode(encoder)?;
+        self.voting_key_hash.encode(encoder)?;
+        self.operator_reward.encode(encoder)?;
+        self.script_payout.encode(encoder)?;
+        self.inputs_hash.encode(encoder)?;
+        self.signature.encode(encoder)?;
+        self.platform_node_id.encode(encoder)?;
+        self.platform_p2p_port.encode(encoder)?;
+        self.platform_http_port.encode(encoder)?;
+        if self.is_ext_addr() {
+            self.payouts.encode(encoder)?;
+            self.shared_collateral.encode(encoder)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<C> bincode::Decode<C> for ProviderRegistrationPayload {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let version = u16::decode(decoder)?;
+        let is_ext_addr = version >= ProTxVersion::ExtAddr as u16;
+        let masternode_type = Decode::decode(decoder)?;
+        let masternode_mode = Decode::decode(decoder)?;
+        let collateral_outpoint = Decode::decode(decoder)?;
+        let service_address = if is_ext_addr {
+            MasternodeNetInfo::Extended(Decode::decode(decoder)?)
+        } else {
+            MasternodeNetInfo::Legacy(Decode::decode(decoder)?)
+        };
+        let owner_key_hash = Decode::decode(decoder)?;
+        let operator_public_key = Decode::decode(decoder)?;
+        let voting_key_hash = Decode::decode(decoder)?;
+        let operator_reward = Decode::decode(decoder)?;
+        let script_payout = Decode::decode(decoder)?;
+        let inputs_hash = Decode::decode(decoder)?;
+        let signature = Decode::decode(decoder)?;
+        let platform_node_id = Decode::decode(decoder)?;
+        let platform_p2p_port = Decode::decode(decoder)?;
+        let platform_http_port = Decode::decode(decoder)?;
+        let (payouts, shared_collateral) = if is_ext_addr {
+            (Decode::decode(decoder)?, Decode::decode(decoder)?)
+        } else {
+            (None, None)
+        };
+        Ok(ProviderRegistrationPayload {
+            version,
+            masternode_type,
+            masternode_mode,
+            collateral_outpoint,
+            service_address,
+            owner_key_hash,
+            operator_public_key,
+            voting_key_hash,
+            operator_reward,
+            script_payout,
+            inputs_hash,
+            signature,
+            platform_node_id,
+            platform_p2p_port,
+            platform_http_port,
+            payouts,
+            shared_collateral,
+        })
+    }
+}
+
+#[cfg(feature = "bincode")]
+bincode::impl_borrow_decode!(ProviderRegistrationPayload);
+
+// Same shape as the earlier derived impl before version 3. Version 3 writes the extended
+// addresses as `net_info` in place of `service_address` and appends `payouts` and
+// `shared_collateral`. Payloads persisted through serde before keep decoding.
+#[cfg(feature = "serde")]
+impl serde::Serialize for ProviderRegistrationPayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeStruct};
+
+        let ext_addr = self.is_ext_addr();
+        let len = if ext_addr {
+            17
+        } else {
+            15
+        };
+        let mut state = serializer.serialize_struct("ProviderRegistrationPayload", len)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("masternode_type", &self.masternode_type)?;
+        state.serialize_field("masternode_mode", &self.masternode_mode)?;
+        state.serialize_field("collateral_outpoint", &self.collateral_outpoint)?;
+        match (ext_addr, &self.service_address) {
+            (false, MasternodeNetInfo::Legacy(addr)) => {
+                state.serialize_field("service_address", addr)?;
+            }
+            (true, MasternodeNetInfo::Extended(info)) => {
+                state.serialize_field("net_info", info)?;
+            }
+            _ => {
+                return Err(S::Error::custom("service_address does not match the payload version"));
+            }
+        }
+        state.serialize_field("owner_key_hash", &self.owner_key_hash)?;
+        state.serialize_field("operator_public_key", &self.operator_public_key)?;
+        state.serialize_field("voting_key_hash", &self.voting_key_hash)?;
+        state.serialize_field("operator_reward", &self.operator_reward)?;
+        state.serialize_field("script_payout", &self.script_payout)?;
+        state.serialize_field("inputs_hash", &self.inputs_hash)?;
+        state.serialize_field("signature", &self.signature)?;
+        state.serialize_field("platform_node_id", &self.platform_node_id)?;
+        state.serialize_field("platform_p2p_port", &self.platform_p2p_port)?;
+        state.serialize_field("platform_http_port", &self.platform_http_port)?;
+        if ext_addr {
+            state.serialize_field("payouts", &self.payouts)?;
+            state.serialize_field("shared_collateral", &self.shared_collateral)?;
+        }
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ProviderRegistrationPayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use core::fmt;
+
+        use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+        const FIELDS: &[&str] = &[
+            "version",
+            "masternode_type",
+            "masternode_mode",
+            "collateral_outpoint",
+            "service_address",
+            "owner_key_hash",
+            "operator_public_key",
+            "voting_key_hash",
+            "operator_reward",
+            "script_payout",
+            "inputs_hash",
+            "signature",
+            "platform_node_id",
+            "platform_p2p_port",
+            "platform_http_port",
+            "net_info",
+            "payouts",
+            "shared_collateral",
+        ];
+
+        struct PayloadVisitor;
+
+        impl<'de> Visitor<'de> for PayloadVisitor {
+            type Value = ProviderRegistrationPayload;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a provider registration payload")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut index = 0;
+                macro_rules! next {
+                    () => {{
+                        let value = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(index, &self))?;
+                        #[allow(unused_assignments)]
+                        {
+                            index += 1;
+                        }
+                        value
+                    }};
+                }
+                let version: u16 = next!();
+                let ext_addr = version >= ProTxVersion::ExtAddr as u16;
+                let masternode_type = next!();
+                let masternode_mode = next!();
+                let collateral_outpoint = next!();
+                let service_address = if ext_addr {
+                    MasternodeNetInfo::Extended(next!())
+                } else {
+                    MasternodeNetInfo::Legacy(next!())
+                };
+                let owner_key_hash = next!();
+                let operator_public_key = next!();
+                let voting_key_hash = next!();
+                let operator_reward = next!();
+                let script_payout = next!();
+                let inputs_hash = next!();
+                let signature = next!();
+                let platform_node_id = next!();
+                let platform_p2p_port = next!();
+                let platform_http_port = next!();
+                // Read only from version 3: earlier payloads were written without them.
+                let (payouts, shared_collateral) = if ext_addr {
+                    (next!(), next!())
+                } else {
+                    (None, None)
+                };
+                Ok(ProviderRegistrationPayload {
+                    version,
+                    masternode_type,
+                    masternode_mode,
+                    collateral_outpoint,
+                    service_address,
+                    owner_key_hash,
+                    operator_public_key,
+                    voting_key_hash,
+                    operator_reward,
+                    script_payout,
+                    inputs_hash,
+                    signature,
+                    platform_node_id,
+                    platform_p2p_port,
+                    platform_http_port,
+                    payouts,
+                    shared_collateral,
+                })
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut version = None;
+                let mut masternode_type = None;
+                let mut masternode_mode = None;
+                let mut collateral_outpoint = None;
+                let mut service_address: Option<SocketAddr> = None;
+                let mut net_info: Option<ExtNetInfo> = None;
+                let mut owner_key_hash = None;
+                let mut operator_public_key = None;
+                let mut voting_key_hash = None;
+                let mut operator_reward = None;
+                let mut script_payout = None;
+                let mut inputs_hash = None;
+                let mut signature = None;
+                let mut platform_node_id = None;
+                let mut platform_p2p_port = None;
+                let mut platform_http_port = None;
+                let mut payouts = None;
+                let mut shared_collateral = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "version" => version = Some(map.next_value()?),
+                        "masternode_type" => masternode_type = Some(map.next_value()?),
+                        "masternode_mode" => masternode_mode = Some(map.next_value()?),
+                        "collateral_outpoint" => collateral_outpoint = Some(map.next_value()?),
+                        "service_address" => service_address = Some(map.next_value()?),
+                        "net_info" => net_info = Some(map.next_value()?),
+                        "owner_key_hash" => owner_key_hash = Some(map.next_value()?),
+                        "operator_public_key" => operator_public_key = Some(map.next_value()?),
+                        "voting_key_hash" => voting_key_hash = Some(map.next_value()?),
+                        "operator_reward" => operator_reward = Some(map.next_value()?),
+                        "script_payout" => script_payout = Some(map.next_value()?),
+                        "inputs_hash" => inputs_hash = Some(map.next_value()?),
+                        "signature" => signature = Some(map.next_value()?),
+                        "platform_node_id" => platform_node_id = map.next_value()?,
+                        "platform_p2p_port" => platform_p2p_port = map.next_value()?,
+                        "platform_http_port" => platform_http_port = map.next_value()?,
+                        "payouts" => payouts = map.next_value()?,
+                        "shared_collateral" => shared_collateral = map.next_value()?,
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                // The version picks the fields, as in `visit_seq`; those of another version are
+                // rejected rather than read into a payload that can't be encoded.
+                let version: u16 = version.ok_or_else(|| de::Error::missing_field("version"))?;
+                let service_address = if version >= ProTxVersion::ExtAddr as u16 {
+                    if service_address.is_some() {
+                        return Err(de::Error::custom(
+                            "service_address only exists before version 3",
+                        ));
+                    }
+                    MasternodeNetInfo::Extended(
+                        net_info.ok_or_else(|| de::Error::missing_field("net_info"))?,
+                    )
+                } else {
+                    if net_info.is_some() || payouts.is_some() || shared_collateral.is_some() {
+                        return Err(de::Error::custom(
+                            "net_info, payouts and shared_collateral only exist from version 3",
+                        ));
+                    }
+                    MasternodeNetInfo::Legacy(
+                        service_address
+                            .ok_or_else(|| de::Error::missing_field("service_address"))?,
+                    )
+                };
+                Ok(ProviderRegistrationPayload {
+                    version,
+                    masternode_type: masternode_type
+                        .ok_or_else(|| de::Error::missing_field("masternode_type"))?,
+                    masternode_mode: masternode_mode
+                        .ok_or_else(|| de::Error::missing_field("masternode_mode"))?,
+                    collateral_outpoint: collateral_outpoint
+                        .ok_or_else(|| de::Error::missing_field("collateral_outpoint"))?,
+                    service_address,
+                    owner_key_hash: owner_key_hash
+                        .ok_or_else(|| de::Error::missing_field("owner_key_hash"))?,
+                    operator_public_key: operator_public_key
+                        .ok_or_else(|| de::Error::missing_field("operator_public_key"))?,
+                    voting_key_hash: voting_key_hash
+                        .ok_or_else(|| de::Error::missing_field("voting_key_hash"))?,
+                    operator_reward: operator_reward
+                        .ok_or_else(|| de::Error::missing_field("operator_reward"))?,
+                    script_payout: script_payout
+                        .ok_or_else(|| de::Error::missing_field("script_payout"))?,
+                    inputs_hash: inputs_hash
+                        .ok_or_else(|| de::Error::missing_field("inputs_hash"))?,
+                    signature: signature.ok_or_else(|| de::Error::missing_field("signature"))?,
+                    platform_node_id,
+                    platform_p2p_port,
+                    platform_http_port,
+                    payouts,
+                    shared_collateral,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("ProviderRegistrationPayload", FIELDS, PayloadVisitor)
     }
 }
 
@@ -438,7 +979,12 @@ mod tests {
         let [a, b, c, d] = address.octets();
         let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
 
-        let expected_ip_octets = match expected_provider_registration_payload.service_address.ip() {
+        let expected_ip_octets = match expected_provider_registration_payload
+            .service_address
+            .primary_service_address()
+            .unwrap()
+            .ip()
+        {
             IpAddr::V4(v4) => v4.to_ipv6_mapped().octets(),
             IpAddr::V6(v6) => v6.octets(),
         };
@@ -447,7 +993,14 @@ mod tests {
         assert_eq!(address.to_ipv6_mapped().octets(), expected_ip_octets);
 
         let port = 19999;
-        assert_eq!(port, expected_provider_registration_payload.service_address.port());
+        assert_eq!(
+            port,
+            expected_provider_registration_payload
+                .service_address
+                .primary_service_address()
+                .unwrap()
+                .port()
+        );
 
         let owner_key_hash_hex = "3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c";
         assert_eq!(
@@ -527,7 +1080,9 @@ mod tests {
                     masternode_type: provider_type,
                     masternode_mode: provider_mode,
                     collateral_outpoint,
-                    service_address: SocketAddr::V4(SocketAddrV4::new(address, port)),
+                    service_address: MasternodeNetInfo::Legacy(SocketAddr::V4(SocketAddrV4::new(
+                        address, port,
+                    ))),
                     owner_key_hash: PubkeyHash::from_str(owner_key_hash_hex).unwrap(),
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
                     voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
@@ -538,6 +1093,8 @@ mod tests {
                     platform_node_id: None,
                     platform_p2p_port: None,
                     platform_http_port: None,
+                    payouts: None,
+                    shared_collateral: None,
                 },
             )),
         };
@@ -617,7 +1174,12 @@ mod tests {
         let [a, b, c, d] = address.octets();
         let ipv6_bytes: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, a, b, c, d];
 
-        let expected_octets = match expected_provider_registration_payload.service_address.ip() {
+        let expected_octets = match expected_provider_registration_payload
+            .service_address
+            .primary_service_address()
+            .unwrap()
+            .ip()
+        {
             IpAddr::V4(v4) => v4.to_ipv6_mapped().octets(),
             IpAddr::V6(v6) => v6.octets(),
         };
@@ -625,7 +1187,14 @@ mod tests {
         assert_eq!(ipv6_bytes, expected_octets);
 
         let port = 19999;
-        assert_eq!(port, expected_provider_registration_payload.service_address.port());
+        assert_eq!(
+            port,
+            expected_provider_registration_payload
+                .service_address
+                .primary_service_address()
+                .unwrap()
+                .port()
+        );
 
         let service_address = SocketAddr::V4(SocketAddrV4::new(address, port));
 
@@ -707,7 +1276,7 @@ mod tests {
                     masternode_type: provider_type,
                     masternode_mode: provider_mode,
                     collateral_outpoint,
-                    service_address,
+                    service_address: MasternodeNetInfo::Legacy(service_address),
                     owner_key_hash: PubkeyHash::from_str(owner_key_hash_hex).unwrap(),
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
                     voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
@@ -718,6 +1287,8 @@ mod tests {
                     platform_node_id: None,
                     platform_p2p_port: None,
                     platform_http_port: None,
+                    payouts: None,
+                    shared_collateral: None,
                 },
             )),
         };
@@ -747,7 +1318,10 @@ mod tests {
                 txid: Txid::all_zeros(),
                 vout: 0,
             },
-            service_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from_bits(0), 0)),
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::from_bits(0),
+                0,
+            ))),
             owner_key_hash: PubkeyHash::all_zeros(),
             operator_public_key: BLSPublicKey::from([0; 48]),
             voting_key_hash: PubkeyHash::all_zeros(),
@@ -758,6 +1332,8 @@ mod tests {
             platform_node_id: None,
             platform_p2p_port: None,
             platform_http_port: None,
+            payouts: None,
+            shared_collateral: None,
         };
         assert_eq!(payload.size(), want);
         let actual = payload.consensus_encode(&mut Vec::new()).unwrap();
@@ -776,7 +1352,10 @@ mod tests {
                 txid: Txid::all_zeros(),
                 vout: 0,
             },
-            service_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from_bits(0), 0)),
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::from_bits(0),
+                0,
+            ))),
             owner_key_hash: PubkeyHash::all_zeros(),
             operator_public_key: BLSPublicKey::from([0; 48]),
             voting_key_hash: PubkeyHash::all_zeros(),
@@ -787,6 +1366,8 @@ mod tests {
             platform_node_id: None,
             platform_p2p_port: None,
             platform_http_port: None,
+            payouts: None,
+            shared_collateral: None,
         };
 
         let mut encoded = Vec::new();
@@ -828,5 +1409,242 @@ mod tests {
         payload.consensus_encode(&mut serialized_payload_bytes).expect("serialize payload");
 
         assert_eq!(serialized_payload_bytes, payload_bytes);
+    }
+
+    fn ext_net_info() -> ExtNetInfo {
+        use crate::sml::masternode_list_entry::net_info::{
+            Bip155Network, NetInfoEntry, NetInfoPurpose,
+        };
+        ExtNetInfo {
+            version: 1,
+            purposes: vec![(
+                NetInfoPurpose::CoreP2P,
+                vec![NetInfoEntry::Service {
+                    network: Bip155Network::Ipv4,
+                    addr: vec![1, 2, 3, 4],
+                    port: 9999,
+                }],
+            )],
+        }
+    }
+
+    fn share(owner: u8) -> CollateralShare {
+        CollateralShare {
+            amount: 500 * 100_000_000,
+            script_refund: ScriptBuf::from(vec![owner; 25]),
+            script_reward: ScriptBuf::new(),
+            owner_key_hash: PubkeyHash::from_byte_array([owner; 20]),
+        }
+    }
+
+    /// A version 2 payload, an Evo one at 52.36.64.148:19999 when `evo`.
+    fn v2_payload(evo: bool) -> ProviderRegistrationPayload {
+        ProviderRegistrationPayload {
+            version: 2,
+            masternode_type: if evo {
+                ProviderMasternodeType::HighPerformance
+            } else {
+                ProviderMasternodeType::Regular
+            },
+            masternode_mode: 0,
+            collateral_outpoint: OutPoint::new(Txid::from_byte_array([1; 32]), 1),
+            service_address: MasternodeNetInfo::Legacy(SocketAddr::from((
+                [52, 36, 64, 148],
+                19999,
+            ))),
+            owner_key_hash: PubkeyHash::from_byte_array([2; 20]),
+            operator_public_key: BLSPublicKey::from([3; 48]),
+            voting_key_hash: PubkeyHash::from_byte_array([4; 20]),
+            operator_reward: 100,
+            script_payout: ScriptBuf::from(vec![5; 25]),
+            inputs_hash: InputsHash::from_byte_array([6; 32]),
+            signature: vec![7; 65],
+            platform_node_id: evo.then(|| PlatformNodeId::from_bytes([8; 20])),
+            platform_p2p_port: evo.then_some(26656),
+            platform_http_port: evo.then_some(443),
+            payouts: None,
+            shared_collateral: None,
+        }
+    }
+
+    /// A version 3 payload with `shares` collateral owners.
+    fn v3_payload(evo: bool, shares: u8) -> ProviderRegistrationPayload {
+        ProviderRegistrationPayload {
+            version: 3,
+            service_address: MasternodeNetInfo::Extended(ext_net_info()),
+            script_payout: ScriptBuf::new(),
+            platform_p2p_port: None,
+            platform_http_port: None,
+            payouts: Some(vec![MasternodePayoutShare {
+                script_payout: ScriptBuf::from(vec![5; 25]),
+                reward: 10000,
+            }]),
+            shared_collateral: Some(SharedCollateral {
+                shares: (0..shares).map(share).collect(),
+                join_sigs: (0..shares).map(|i| JoinSignature::from([i; 65])).collect(),
+                early_period_blocks: 1000,
+                early_penalty: 100_000_000,
+            }),
+            ..v2_payload(evo)
+        }
+    }
+
+    #[test_case::test_case(v2_payload(false) ; "v2 regular")]
+    #[test_case::test_case(v2_payload(true) ; "v2 evo")]
+    #[test_case::test_case(v3_payload(false, 0) ; "v3 regular")]
+    #[test_case::test_case(v3_payload(false, 2) ; "v3 shared")]
+    #[test_case::test_case(v3_payload(true, 2) ; "v3 shared evo")]
+    fn round_trips(payload: ProviderRegistrationPayload) {
+        let mut encoded = Vec::new();
+        payload.consensus_encode(&mut encoded).unwrap();
+        assert_eq!(payload.size(), encoded.len());
+        let mut reader = &encoded[..];
+        assert_eq!(ProviderRegistrationPayload::consensus_decode(&mut reader).unwrap(), payload);
+        assert!(reader.is_empty());
+
+        #[cfg(feature = "bincode")]
+        {
+            let config = bincode::config::standard();
+            let bytes = bincode::encode_to_vec(&payload, config).unwrap();
+            assert_eq!(
+                bincode::decode_from_slice(&bytes, config).unwrap(),
+                (payload.clone(), bytes.len())
+            );
+        }
+        #[cfg(all(feature = "serde", feature = "bincode"))]
+        {
+            let config = bincode::config::standard();
+            let bytes = bincode::serde::encode_to_vec(&payload, config).unwrap();
+            assert_eq!(
+                bincode::serde::decode_from_slice(&bytes, config).unwrap(),
+                (payload.clone(), bytes.len())
+            );
+        }
+        #[cfg(feature = "serde")]
+        {
+            let json = serde_json::to_string(&payload).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ProviderRegistrationPayload>(&json).unwrap(),
+                payload
+            );
+        }
+    }
+
+    #[test]
+    fn v3_layout_follows_core() {
+        let payload = v3_payload(true, 2);
+        let mut encoded = Vec::new();
+        payload.consensus_encode(&mut encoded).unwrap();
+
+        // `netInfo` follows version + type + mode + collateral outpoint, in place of ip + port.
+        let mut net_info = Vec::new();
+        ext_net_info().consensus_encode_ext(&mut net_info).unwrap();
+        let mut at = 2 + 2 + 2 + 36;
+        assert_eq!(&encoded[at..at + net_info.len()], net_info.as_slice());
+        // Then the owner, operator and voting keys and the operator reward, the payouts and
+        // the share count.
+        at += net_info.len() + 20 + 48 + 20 + 2;
+        assert_eq!(encoded[at], 1);
+        at += 1 + payload.payouts.as_ref().unwrap()[0].size();
+        assert_eq!(encoded[at], 2);
+        // The join signatures come after both shares, as bare 65 bytes each.
+        at += 1 + share(0).size() + share(1).size();
+        assert_eq!(&encoded[at..at + 65], &[0; 65]);
+        assert_eq!(&encoded[at + 65..at + 130], &[1; 65]);
+        // The Evo node id sits right before the signature, with no platform ports after it.
+        assert_eq!(&encoded[encoded.len() - 66 - 20..encoded.len() - 66], &[8; 20]);
+    }
+
+    #[test_case::test_case(0 ; "version 0")]
+    #[test_case::test_case(4 ; "version 4")]
+    fn rejects_unknown_versions(version: u16) {
+        let mut encoded = Vec::new();
+        v3_payload(false, 0).consensus_encode(&mut encoded).unwrap();
+        encoded[..2].copy_from_slice(&version.to_le_bytes());
+        assert!(ProviderRegistrationPayload::consensus_decode(&mut &encoded[..]).is_err());
+    }
+
+    #[test_case::test_case(ProviderRegistrationPayload { version: 2, ..v3_payload(false, 0) } ; "extended address before v3")]
+    #[test_case::test_case(ProviderRegistrationPayload { version: 3, ..v2_payload(false) } ; "legacy address at v3")]
+    #[test_case::test_case(ProviderRegistrationPayload { payouts: None, ..v3_payload(false, 0) } ; "v3 without payouts")]
+    #[test_case::test_case(ProviderRegistrationPayload { shared_collateral: None, ..v3_payload(false, 0) } ; "v3 without shared collateral")]
+    #[test_case::test_case({
+        let mut payload = v3_payload(false, 2);
+        payload.shared_collateral.as_mut().unwrap().join_sigs.pop();
+        payload
+    } ; "a join signature missing")]
+    fn fails_to_encode(payload: ProviderRegistrationPayload) {
+        assert!(payload.consensus_encode(&mut Vec::new()).is_err());
+    }
+
+    /// The shape `ProviderRegistrationPayload` had with derived serde and bincode before version 3.
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[derive(serde::Serialize, bincode::Encode)]
+    struct PreV3ProviderRegistrationPayload {
+        version: u16,
+        masternode_type: ProviderMasternodeType,
+        masternode_mode: u16,
+        collateral_outpoint: OutPoint,
+        service_address: SocketAddr,
+        owner_key_hash: PubkeyHash,
+        operator_public_key: BLSPublicKey,
+        voting_key_hash: PubkeyHash,
+        operator_reward: u16,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        signature: Vec<u8>,
+        platform_node_id: Option<PlatformNodeId>,
+        platform_p2p_port: Option<u16>,
+        platform_http_port: Option<u16>,
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test_case::test_case(false ; "regular")]
+    #[test_case::test_case(true ; "evo")]
+    fn keeps_the_pre_v3_formats_before_version_3(evo: bool) {
+        let payload = v2_payload(evo);
+        let MasternodeNetInfo::Legacy(service_address) = payload.service_address.clone() else {
+            unreachable!()
+        };
+        let old = PreV3ProviderRegistrationPayload {
+            version: payload.version,
+            masternode_type: payload.masternode_type,
+            masternode_mode: payload.masternode_mode,
+            collateral_outpoint: payload.collateral_outpoint,
+            service_address,
+            owner_key_hash: payload.owner_key_hash,
+            operator_public_key: payload.operator_public_key,
+            voting_key_hash: payload.voting_key_hash,
+            operator_reward: payload.operator_reward,
+            script_payout: payload.script_payout.clone(),
+            inputs_hash: payload.inputs_hash,
+            signature: payload.signature.clone(),
+            platform_node_id: payload.platform_node_id,
+            platform_p2p_port: payload.platform_p2p_port,
+            platform_http_port: payload.platform_http_port,
+        };
+        let config = bincode::config::standard();
+        assert_eq!(
+            bincode::encode_to_vec(&payload, config).unwrap(),
+            bincode::encode_to_vec(&old, config).unwrap()
+        );
+        assert_eq!(
+            bincode::serde::encode_to_vec(&payload, config).unwrap(),
+            bincode::serde::encode_to_vec(&old, config).unwrap()
+        );
+        assert_eq!(serde_json::to_value(&payload).unwrap(), serde_json::to_value(&old).unwrap());
+    }
+
+    /// The JSON of a valid payload relabelled with the version of the other layout.
+    #[cfg(feature = "serde")]
+    #[test_case::test_case(v3_payload(false, 0), 2 ; "v3 fields before version 3")]
+    #[test_case::test_case(v2_payload(false), 3 ; "service_address at version 3")]
+    fn json_rejects_the_fields_of_another_version(
+        payload: ProviderRegistrationPayload,
+        version: u16,
+    ) {
+        let mut json = serde_json::to_value(&payload).unwrap();
+        json["version"] = version.into();
+        assert!(serde_json::from_value::<ProviderRegistrationPayload>(json).is_err());
     }
 }

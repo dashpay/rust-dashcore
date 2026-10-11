@@ -1028,7 +1028,7 @@ mod tests {
                                         pro_reg_payload.masternode_type
                                     );
                                     println!(
-                                        "       Service address: {}",
+                                        "       Service address: {:?}",
                                         pro_reg_payload.service_address
                                     );
                                     println!(
