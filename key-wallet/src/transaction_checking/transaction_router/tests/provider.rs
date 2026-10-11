@@ -206,9 +206,9 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999"
-                    .parse()
-                    .expect("Failed to parse service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("Failed to parse service address"),
+                ),
                 owner_key_hash: *owner_address
                     .payload()
                     .as_pubkey_hash()
@@ -226,6 +226,8 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
                 platform_node_id: None,
                 platform_p2p_port: None,
                 platform_http_port: None,
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     };
@@ -341,9 +343,9 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999"
-                    .parse()
-                    .expect("Failed to parse service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("Failed to parse service address"),
+                ),
                 owner_key_hash: *owner_address
                     .payload()
                     .as_pubkey_hash()
@@ -361,6 +363,8 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
                 platform_node_id: None,
                 platform_p2p_port: None,
                 platform_http_port: None,
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     };
@@ -477,9 +481,9 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999"
-                    .parse()
-                    .expect("Failed to parse service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("Failed to parse service address"),
+                ),
                 owner_key_hash: *owner_address
                     .payload()
                     .as_pubkey_hash()
@@ -497,6 +501,8 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
                 platform_node_id: None,
                 platform_p2p_port: None,
                 platform_http_port: None,
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     };
@@ -681,9 +687,9 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999"
-                    .parse()
-                    .expect("Failed to parse service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("Failed to parse service address"),
+                ),
                 owner_key_hash: *owner_address
                     .payload()
                     .as_pubkey_hash()
@@ -707,6 +713,8 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
                 )),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(8080),
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     };

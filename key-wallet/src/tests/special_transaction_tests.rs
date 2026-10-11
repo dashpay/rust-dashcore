@@ -199,7 +199,9 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
                     txid: Txid::from_byte_array([2u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999".parse::<SocketAddr>().unwrap(),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse::<SocketAddr>().unwrap(),
+                ),
                 owner_key_hash: PubkeyHash::from_byte_array([3u8; 20]),
                 operator_public_key: BLSPublicKey::from([4u8; 48]),
                 voting_key_hash: PubkeyHash::from_byte_array([5u8; 20]),
@@ -210,6 +212,8 @@ fn create_special_transaction(tx_type: SpecialTransactionType) -> Transaction {
                 platform_node_id: Some(PlatformNodeId::from_bytes([8u8; 20])),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(443),
+                payouts: None,
+                shared_collateral: None,
             };
             tx.special_transaction_payload =
                 Some(TransactionPayload::ProviderRegistrationPayloadType(payload));
