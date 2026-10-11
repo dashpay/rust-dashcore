@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Make `PublicKey::with_serialized` public
+- `EcdsaPublicKey`, `EcdsaSecretKey`, `EcdsaSignature`, `EcdsaRecSignature`,
+  `EcdsaError` and the `ECDSA_*_LEN` constants in `dashcore::ecdsa`
+- `EcdsaSecretKey::generate` with the `rand` feature
+- `TryFrom<&[u8]>` for `PublicKey`
 
 ### Changed
 
@@ -41,6 +45,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** the taproot types come from `bitcoin-crypto`. `Signature`
   fields are renamed to `signature` and `sighash_type`, and `taproot::Error` is
   `SigFromSliceError`, without a `Secp256k1` variant
+- **Breaking:** `ecdsa::Signature` and `ecdsa::SerializedSignature` come from
+  `bitcoin-crypto`. `Signature` fields and human-readable serde keys are
+  renamed from `sig` and `hash_ty` to `signature` and `sighash_type`.
+  `signature` is a `secp256k1` signature.
+  `DecodeError` and `ParseSignatureError` replace `ecdsa::Error`. Formatting
+  flags apply to the whole encoding instead of being ignored
+- **Breaking:** the `dashcore::ecdsa` newtypes replace the `secp256k1` keys and
+  signatures in `PublicKey`, `PrivateKey`, `ExtendedPrivKey`, `ExtendedPubKey`,
+  `RootExtendedPrivKey`, `RootExtendedPubKey`, `Wallet` key derivation,
+  `AssetLockCreditKeys` and `Signer`. `EcdsaPublicKey` converts into
+  `XOnlyPublicKey` and `EcdsaSecretKey` into `Keypair`
+- **Breaking:** `key::XOnlyPublicKey`, `Keypair`, `Parity`, `TweakedPublicKey`
+  and `UntweakedPublicKey` come from `bitcoin-crypto`, whose `XOnlyPublicKey`
+  keeps its parity. `TweakedKeyPair` and `UntweakedKeyPair` are renamed to
+  `TweakedKeypair` and `UntweakedKeypair`
+- **Breaking:** `TaprootError::InvalidInternalKey` and
+  `TaprootBuilderError::InvalidInternalKey` no longer hold a `secp256k1::Error`
+- **Breaking:** `PrivateKey` is no longer `Copy`. `to_bytes` and `to_wif` take
+  `&self` instead of `self`
+- **Breaking:** `Ecdsa(EcdsaError)` replaces `key::Error::Secp256k1` and
+  `bip32::Error::Secp256k1`. `MessageSignatureError::InvalidEncoding` holds an
+  `EcdsaError` instead of a `secp256k1::Error`. Failed verification reads
+  "signature verification failed" instead of "signature failed verification"
 - **Breaking:** `dashcore::eddsa` uses the `dash-pkc` types, so `EddsaPkBytes`
   and `EddsaSkBytes` no longer implement `BaseCodec` and `EddsaError` changes
   shape. Use `EddsaPublicKey::try_from`, `EddsaPkHash::from` and
@@ -59,10 +86,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `ExtendedPrivKey::new_master` rejects seeds outside 16 to 64
   bytes with `bip32::Error::InvalidSeedLength`, which
   `RootExtendedPrivKey::new_master` returns instead of `InvalidParameter`
-- **Breaking:** `MessageSignature::from_slice` rejects headers above 34
+- **Breaking:** `EcdsaRecSignature` rejects headers above 34 when read
 - Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
   `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
 - All workspace crates declare a MSRV of 1.89
+- Human-readable serde of `PublicKey`, `ShortId` and `PlatformNodeId` also
+  accepts raw bytes, and their deserialization errors read differently
+- `RootExtendedPubKey` now supports hybrid SEC1 public keys in human-readable
+  serde, and writes them back compressed
 
 ### Fixed
 
@@ -102,8 +133,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Witness::push_bitcoin_signature`
 - **Breaking:** remove `key::Error::NotSupported`,
   `bip32::Error::NotSupported` and `dashcore_rpc::Error::Secp256k1`
-- **Breaking:** remove `signer::CompactSignature`. Use `MessageSignature`
+- **Breaking:** remove `signer::CompactSignature`. Use `EcdsaRecSignature`
   instead
+- **Breaking:** remove `bip32::PublicKey`, `bip32::PrivateKey`,
+  `key_wallet::Error::Secp256k1` and `Index<RangeFull>` for `PrivateKey`
+- **Breaking:** remove the `secp256k1` re-exports from `dashcore` and
+  `dashcore-crypto`, `key::Secp256k1`, `key::Verification` and
+  `TaprootError::InvalidParity`
+- **Breaking:** remove the `secp-recovery` and `secp-lowmemory` features.
+  Message signature recovery is always available
+- **Breaking:** remove `MessageSignature`. Signed messages are
+  `EcdsaRecSignature`s, which carry the key compression, and the
+  `sign_message` functions `from_slice`, `from_base64`, `to_base64`,
+  `recover_pubkey` and `is_signed_by_address` replace its methods
 
 ### Fixed
 
