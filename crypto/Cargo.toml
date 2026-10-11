@@ -27,6 +27,7 @@ bincode_derive = { workspace = true, optional = true }
 dash-network = { path = "../dash-network" }
 dash-pkc = { workspace = true, features = ["ecdsa", "std"] }
 dash-types = { workspace = true }
+delegate = "0.13"
 dashcore_hashes = { path = "../hashes" }
 hex-conservative = { workspace = true }
 internals = { path = "../internals", package = "dashcore-private" }
