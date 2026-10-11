@@ -9,6 +9,7 @@ use crate::{Error, Network, Wallet};
 use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]
 use dashcore::bls_sig_utils::BlsSkBytes;
+use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSecretKey};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -16,13 +17,13 @@ use zeroize::Zeroize;
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RootExtendedPrivKey {
-    pub root_private_key: secp256k1::SecretKey,
+    pub root_private_key: EcdsaSecretKey,
     pub root_chain_code: ChainCode,
 }
 
 impl Zeroize for RootExtendedPrivKey {
     fn zeroize(&mut self) {
-        self.root_private_key.non_secure_erase();
+        self.root_private_key.zeroize();
         self.root_chain_code.zeroize();
     }
 }
@@ -37,7 +38,7 @@ impl RootExtendedPrivKey {
     /// Create a new RootExtendedPrivKey
     pub fn new(root_private_key: secp256k1::SecretKey, root_chain_code: ChainCode) -> Self {
         Self {
-            root_private_key,
+            root_private_key: root_private_key.into(),
             root_chain_code,
         }
     }
@@ -52,7 +53,7 @@ impl RootExtendedPrivKey {
     /// Create from an ExtendedPrivKey (must be depth 0)
     pub fn from_extended_priv_key(key: &ExtendedPrivKey) -> Self {
         Self {
-            root_private_key: key.private_key,
+            root_private_key: key.private_key.into(),
             root_chain_code: key.chain_code,
         }
     }
@@ -64,7 +65,7 @@ impl RootExtendedPrivKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from(0),
-            private_key: self.root_private_key,
+            private_key: self.root_private_key.into(),
             chain_code: self.root_chain_code,
         }
     }
@@ -77,7 +78,7 @@ impl RootExtendedPrivKey {
         // Convert secp256k1 private key bytes to BLS private key
         // The scalar is read little-endian from the secp secret, the bag holds
         // big-endian, so the bytes are reversed going in.
-        let mut scalar_bytes = self.root_private_key.to_secret_bytes();
+        let mut scalar_bytes = secp256k1::SecretKey::from(self.root_private_key).to_secret_bytes();
         scalar_bytes.reverse();
 
         ExtendedBLSPrivKey::from_parts(
@@ -105,7 +106,7 @@ impl RootExtendedPrivKey {
 
         // Convert secp256k1 private key bytes to Ed25519 seed
         // Ed25519 uses 32-byte seeds to generate keys
-        let seed_bytes = self.root_private_key.to_secret_bytes();
+        let seed_bytes = secp256k1::SecretKey::from(self.root_private_key).to_secret_bytes();
 
         // Create Ed25519 extended private key from seed using new_master
         let eddsa_key = ExtendedEd25519PrivKey::new_master(network, &seed_bytes).map_err(|e| {
@@ -117,9 +118,9 @@ impl RootExtendedPrivKey {
 
     /// Get the corresponding public key
     pub fn to_root_extended_pub_key(&self) -> RootExtendedPubKey {
-        let public_key = secp256k1::PublicKey::from_secret_key(&self.root_private_key);
+        let public_key = secp256k1::PublicKey::from_secret_key(&self.root_private_key.into());
         RootExtendedPubKey {
-            root_public_key: public_key,
+            root_public_key: public_key.into(),
             root_chain_code: self.root_chain_code,
         }
     }
@@ -132,7 +133,7 @@ impl Encode for RootExtendedPrivKey {
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
         // Encode the private key as 32 bytes
-        let private_key_bytes = self.root_private_key.to_secret_bytes();
+        let private_key_bytes = secp256k1::SecretKey::from(self.root_private_key).to_secret_bytes();
         bincode::Encode::encode(&private_key_bytes, encoder)?;
 
         // Encode the chain code
@@ -158,7 +159,7 @@ impl<C> Decode<C> for RootExtendedPrivKey {
         let root_chain_code: ChainCode = bincode::Decode::decode(decoder)?;
 
         Ok(Self {
-            root_private_key,
+            root_private_key: root_private_key.into(),
             root_chain_code,
         })
     }
@@ -202,7 +203,7 @@ impl FromOnNetwork<RootExtendedPrivKey> for ExtendedPrivKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from(0),
-            private_key: value.root_private_key,
+            private_key: value.root_private_key.into(),
             chain_code: value.root_chain_code,
         }
     }
@@ -211,7 +212,7 @@ impl FromOnNetwork<RootExtendedPrivKey> for ExtendedPrivKey {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RootExtendedPubKey {
-    pub root_public_key: secp256k1::PublicKey,
+    pub root_public_key: EcdsaPublicKey,
     pub root_chain_code: ChainCode,
 }
 
@@ -224,7 +225,8 @@ impl zeroize::Zeroize for RootExtendedPubKey {
             0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81,
             0x5b, 0x16, 0xf8, 0x17, 0x98,
         ])
-        .expect("hardcoded generator point should be valid");
+        .expect("hardcoded generator point should be valid")
+        .into();
 
         // Zeroize the chain code
         self.root_chain_code.zeroize();
@@ -235,7 +237,7 @@ impl RootExtendedPubKey {
     /// Create a new RootExtendedPubKey
     pub fn new(root_public_key: secp256k1::PublicKey, root_chain_code: ChainCode) -> Self {
         Self {
-            root_public_key,
+            root_public_key: root_public_key.into(),
             root_chain_code,
         }
     }
@@ -243,7 +245,7 @@ impl RootExtendedPubKey {
     /// Create from an ExtendedPubKey (must be depth 0)
     pub fn from_extended_pub_key(key: &ExtendedPubKey) -> Self {
         Self {
-            root_public_key: key.public_key,
+            root_public_key: key.public_key.into(),
             root_chain_code: key.chain_code,
         }
     }
@@ -255,7 +257,7 @@ impl RootExtendedPubKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from(0),
-            public_key: self.root_public_key,
+            public_key: self.root_public_key.into(),
             chain_code: self.root_chain_code,
         }
     }
@@ -268,7 +270,7 @@ impl Encode for RootExtendedPubKey {
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
         // Encode the public key as serialized bytes (33 bytes compressed)
-        let public_key_bytes = self.root_public_key.serialize();
+        let public_key_bytes = secp256k1::PublicKey::from(self.root_public_key).serialize();
         bincode::Encode::encode(&public_key_bytes, encoder)?;
 
         // Encode the chain code
@@ -294,7 +296,7 @@ impl<C> Decode<C> for RootExtendedPubKey {
         let root_chain_code: ChainCode = bincode::Decode::decode(decoder)?;
 
         Ok(Self {
-            root_public_key,
+            root_public_key: root_public_key.into(),
             root_chain_code,
         })
     }
@@ -318,7 +320,7 @@ impl FromOnNetwork<RootExtendedPubKey> for ExtendedPubKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from(0),
-            public_key: value.root_public_key,
+            public_key: value.root_public_key.into(),
             chain_code: value.root_chain_code,
         }
     }

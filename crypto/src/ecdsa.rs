@@ -13,14 +13,58 @@
 use bitcoin_crypto::key::rand;
 #[cfg(feature = "rand")]
 use bitcoin_crypto::secp256k1::SecretKey;
+use dash_types::type_cvrt;
+use zeroize::Zeroize;
 
 pub use bitcoin_crypto::ecdsa::{DecodeError, ParseSignatureError, SerializedSignature, Signature};
+
+/// Compressed SEC1 public key length.
+pub const ECDSA_PK_LEN: usize = 33;
+
+/// Uncompressed SEC1 public key length.
+pub const ECDSA_PK_UNCOMPRESSED_LEN: usize = 65;
+
+/// Scalar (secret key or tweak) length.
+pub const ECDSA_SK_LEN: usize = 32;
 
 /// Draws a random secret key from the thread RNG.
 #[cfg(feature = "rand")]
 pub fn generate() -> SecretKey {
     SecretKey::new(&mut rand::rng())
 }
+
+/// A secp256k1 public key.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct EcdsaPublicKey(secp256k1::PublicKey);
+
+type_cvrt!(From<secp256k1::PublicKey> for EcdsaPublicKey, |pk| Self(*pk));
+type_cvrt!(From<EcdsaPublicKey> for secp256k1::PublicKey, |pk| pk.0);
+
+/// A secp256k1 secret key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct EcdsaSecretKey(secp256k1::SecretKey);
+
+type_cvrt!(From<secp256k1::SecretKey> for EcdsaSecretKey, |sk| Self(*sk));
+type_cvrt!(From<EcdsaSecretKey> for secp256k1::SecretKey, |sk| sk.0);
+
+impl Zeroize for EcdsaSecretKey {
+    fn zeroize(&mut self) {
+        self.0.non_secure_erase();
+    }
+}
+
+/// A secp256k1 ECDSA signature, without a sighash type.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct EcdsaSignature(secp256k1::ecdsa::Signature);
+
+type_cvrt!(From<secp256k1::ecdsa::Signature> for EcdsaSignature, |sig| Self(*sig));
+type_cvrt!(From<EcdsaSignature> for secp256k1::ecdsa::Signature, |sig| sig.0);
 
 #[cfg(test)]
 mod tests {

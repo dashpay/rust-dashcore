@@ -114,7 +114,7 @@ fn test_wallet_creation_from_extended_key() {
     // Verify extended key is stored
     match &wallet.wallet_type {
         WalletType::ExtendedPrivKey(wallet_key) => {
-            assert_eq!(wallet_key.root_private_key, master_private_key);
+            assert_eq!(wallet_key.root_private_key, master_private_key.into());
         }
         _ => panic!("Expected extended private key wallet type"),
     }

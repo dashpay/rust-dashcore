@@ -124,7 +124,9 @@ impl Wallet {
         network: Option<Network>,
     ) -> [u8; 32] {
         let mut data = Vec::new();
-        data.extend_from_slice(&root_pub_key.root_public_key.serialize());
+        data.extend_from_slice(
+            &secp256k1::PublicKey::from(root_pub_key.root_public_key).serialize(),
+        );
         data.extend_from_slice(&root_pub_key.root_chain_code[..]);
         // A concrete network appends the domain tag + discriminant byte; with no
         // network the preimage stops here, giving a network-independent digest.
