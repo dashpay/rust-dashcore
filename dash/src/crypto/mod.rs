@@ -7,7 +7,9 @@
 //!
 
 pub mod ecdsa {
-    pub use dashcore_crypto::ecdsa::{Error, SerializedSignature, Signature};
+    pub use dashcore_crypto::ecdsa::{
+        DecodeError, ParseSignatureError, SerializedSignature, Signature,
+    };
 }
 pub mod key;
 pub mod sighash;

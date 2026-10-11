@@ -612,8 +612,8 @@ pub unsafe extern "C" fn transaction_sign_input(
     tx.inner.input[input_index].script_sig = Builder::new()
         .push_slice(
             dashcore::ecdsa::Signature {
-                sig,
-                hash_ty: EcdsaSighashType::from_consensus(sighash_type),
+                signature: sig,
+                sighash_type: EcdsaSighashType::from_consensus(sighash_type),
             }
             .serialize(),
         )
