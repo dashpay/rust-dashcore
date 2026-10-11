@@ -618,6 +618,7 @@ async fn provider_update_registrar_with_voting_key_change_matches_provider_votin
                 script_payout: ScriptBuf::new(),
                 inputs_hash: [3u8; 32].into(),
                 payload_sig: vec![4u8; 65],
+                payouts: None,
             },
         )),
     };
@@ -671,6 +672,7 @@ async fn provider_update_registrar_with_operator_key_change_matches_provider_ope
                 script_payout: ScriptBuf::new(),
                 inputs_hash: [3u8; 32].into(),
                 payload_sig: vec![4u8; 65],
+                payouts: None,
             },
         )),
     };

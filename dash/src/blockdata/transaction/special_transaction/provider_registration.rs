@@ -46,9 +46,51 @@ use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePa
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash};
+use crate::internal_macros::impl_consensus_encoding;
 use crate::platform_node_id::PlatformNodeId;
 use crate::prelude::*;
 use crate::{Address, Network, OutPoint, ScriptBuf, VarInt, io};
+
+/// One owner reward payee of a version 3 (extended address) ProTx, as defined by DIP-0026.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct MasternodePayoutShare {
+    pub script_payout: ScriptBuf,
+    /// Share of the owner reward in basis points.
+    pub reward: u16,
+}
+
+impl_consensus_encoding!(MasternodePayoutShare, script_payout, reward);
+
+impl MasternodePayoutShare {
+    /// The size of the payout in bytes.
+    pub fn size(&self) -> usize {
+        VarInt(self.script_payout.len() as u64).len() + self.script_payout.len() + 2
+    }
+}
+
+/// Encodes payouts as Core does: a `u8` count followed by the entries.
+pub(crate) fn encode_payouts<W: io::Write + ?Sized>(
+    payouts: &[MasternodePayoutShare],
+    w: &mut W,
+) -> Result<usize, io::Error> {
+    let count = u8::try_from(payouts.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "more than 255 payouts"))?;
+    let mut len = count.consensus_encode(w)?;
+    for payout in payouts {
+        len += payout.consensus_encode(w)?;
+    }
+    Ok(len)
+}
+
+/// Decodes payouts written by [`encode_payouts`].
+pub(crate) fn decode_payouts<R: io::Read + ?Sized>(
+    r: &mut R,
+) -> Result<Vec<MasternodePayoutShare>, encode::Error> {
+    let count = u8::consensus_decode(r)?;
+    (0..count).map(|_| MasternodePayoutShare::consensus_decode(r)).collect()
+}
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Copy)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
