@@ -10,6 +10,7 @@ use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]
 use dashcore::bls_sig_utils::BlsSkBytes;
 use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSecretKey};
+use hex_conservative::hex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -220,13 +221,10 @@ impl zeroize::Zeroize for RootExtendedPubKey {
     fn zeroize(&mut self) {
         // Replace the public key with a dummy value (generator point G)
         // This is a best-effort zeroization since PublicKey doesn't implement Zeroize
-        self.root_public_key = secp256k1::PublicKey::from_byte_array_compressed([
-            0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce,
-            0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81,
-            0x5b, 0x16, 0xf8, 0x17, 0x98,
-        ])
-        .expect("hardcoded generator point should be valid")
-        .into();
+        self.root_public_key = EcdsaPublicKey::from_bytes(&hex!(
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        ))
+        .expect("hardcoded generator point should be valid");
 
         // Zeroize the chain code
         self.root_chain_code.zeroize();
@@ -235,9 +233,9 @@ impl zeroize::Zeroize for RootExtendedPubKey {
 
 impl RootExtendedPubKey {
     /// Create a new RootExtendedPubKey
-    pub fn new(root_public_key: secp256k1::PublicKey, root_chain_code: ChainCode) -> Self {
+    pub fn new(root_public_key: EcdsaPublicKey, root_chain_code: ChainCode) -> Self {
         Self {
-            root_public_key: root_public_key.into(),
+            root_public_key,
             root_chain_code,
         }
     }
@@ -245,7 +243,7 @@ impl RootExtendedPubKey {
     /// Create from an ExtendedPubKey (must be depth 0)
     pub fn from_extended_pub_key(key: &ExtendedPubKey) -> Self {
         Self {
-            root_public_key: key.public_key.into(),
+            root_public_key: key.public_key,
             root_chain_code: key.chain_code,
         }
     }
@@ -257,7 +255,7 @@ impl RootExtendedPubKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from(0),
-            public_key: self.root_public_key.into(),
+            public_key: self.root_public_key,
             chain_code: self.root_chain_code,
         }
     }
@@ -270,7 +268,7 @@ impl Encode for RootExtendedPubKey {
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
         // Encode the public key as serialized bytes (33 bytes compressed)
-        let public_key_bytes = secp256k1::PublicKey::from(self.root_public_key).serialize();
+        let public_key_bytes = self.root_public_key.to_compressed();
         bincode::Encode::encode(&public_key_bytes, encoder)?;
 
         // Encode the chain code
@@ -287,16 +285,15 @@ impl<C> Decode<C> for RootExtendedPubKey {
     ) -> Result<Self, bincode::error::DecodeError> {
         // Decode the public key bytes
         let public_key_bytes: [u8; 33] = bincode::Decode::decode(decoder)?;
-        let root_public_key = secp256k1::PublicKey::from_byte_array_compressed(public_key_bytes)
-            .map_err(|e| {
-                bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-            })?;
+        let root_public_key = EcdsaPublicKey::from_bytes(&public_key_bytes).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+        })?;
 
         // Decode the chain code
         let root_chain_code: ChainCode = bincode::Decode::decode(decoder)?;
 
         Ok(Self {
-            root_public_key: root_public_key.into(),
+            root_public_key,
             root_chain_code,
         })
     }
@@ -320,7 +317,7 @@ impl FromOnNetwork<RootExtendedPubKey> for ExtendedPubKey {
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from(0),
-            public_key: value.root_public_key.into(),
+            public_key: value.root_public_key,
             chain_code: value.root_chain_code,
         }
     }

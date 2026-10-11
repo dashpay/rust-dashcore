@@ -15,12 +15,13 @@ use dashcore::blockdata::opcodes;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::ecdsa::EcdsaPublicKey;
 use dashcore::sighash::{EcdsaSighashType, LegacySighash, SighashCache};
 use dashcore::Address;
 use dashcore::{Network, TxIn, TxOut};
 use dashcore_hashes::Hash;
 use secp256k1::ecdsa::Signature;
-use secp256k1::{Message, PublicKey};
+use secp256k1::Message;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
@@ -958,7 +959,7 @@ pub trait TransactionSigner {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError>;
+    ) -> Result<(Signature, EcdsaPublicKey), BuilderError>;
 }
 
 #[async_trait::async_trait]
@@ -967,7 +968,7 @@ impl TransactionSigner for Wallet {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError> {
+    ) -> Result<(Signature, EcdsaPublicKey), BuilderError> {
         let root_xpriv =
             self.root_extended_priv_key().map_err(|_| BuilderError::WatchOnlyWallet)?;
 
@@ -979,7 +980,7 @@ impl TransactionSigner for Wallet {
 
         let message = Message::from_digest(*sighash.as_byte_array());
         let signature = key.sign_ecdsa(message);
-        let pubkey = PublicKey::from_secret_key(&key);
+        let pubkey = EcdsaPublicKey::from(secp256k1::PublicKey::from_secret_key(&key));
 
         Ok((signature, pubkey))
     }
@@ -991,7 +992,7 @@ impl<S: Signer> TransactionSigner for S {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError> {
+    ) -> Result<(Signature, EcdsaPublicKey), BuilderError> {
         if !self.supports(crate::signer::SignerMethod::Digest) {
             return Err(BuilderError::SigningFailed(format!(
                 "signer does not support required method {:?}",

@@ -26,7 +26,7 @@ pub fn verify_data_signature(
 
     let pub_key = ECDSAPublicKey::from_slice(public_key).map_err(anyhow::Error::msg)?;
 
-    sig.to_standard().verify(msg, &pub_key.inner).map_err(anyhow::Error::msg)
+    sig.to_standard().verify(msg, &pub_key.inner.into()).map_err(anyhow::Error::msg)
 }
 
 /// verifies the the hash signature. From provided signature and hash recovers the public key

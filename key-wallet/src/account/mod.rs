@@ -158,7 +158,7 @@ impl AccountTrait for Account {
     }
 
     fn get_public_key_bytes(&self) -> Vec<u8> {
-        self.account_xpub.public_key.serialize().to_vec()
+        self.account_xpub.public_key.to_compressed().to_vec()
     }
 }
 

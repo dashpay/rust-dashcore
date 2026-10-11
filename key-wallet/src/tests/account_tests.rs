@@ -398,7 +398,7 @@ fn test_account_network_consistency() {
     ];
 
     let address_xpub = account.account_xpub.derive_pub(&receive_path).unwrap();
-    let pubkey = dashcore::PublicKey::from_slice(&address_xpub.public_key.serialize()).unwrap();
+    let pubkey = dashcore::PublicKey::from_slice(&address_xpub.public_key.to_compressed()).unwrap();
     let address = dashcore::Address::p2pkh(&pubkey, network);
 
     // Verify the address is for the correct network

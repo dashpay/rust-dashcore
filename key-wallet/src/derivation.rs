@@ -274,6 +274,7 @@ impl DerivationStrategy {
 mod tests {
     use super::*;
     use crate::mnemonic::Mnemonic;
+    use dashcore::ecdsa::EcdsaPublicKey;
     use dashcore_hashes::Hash;
 
     // ✓ Test BIP32 derivation with exact DashSync test vectors
@@ -577,7 +578,7 @@ mod tests {
         let pubkey = ExtendedPubKey::from_priv(&signing_key);
         let verified = signature1.verify(
             secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &pubkey.public_key,
+            &pubkey.public_key.into(),
         );
         assert!(verified.is_ok());
     }
@@ -613,7 +614,7 @@ mod tests {
             .unwrap();
 
         // Should match original public key
-        assert_eq!(recovered_pubkey, public_key.public_key);
+        assert_eq!(EcdsaPublicKey::from(recovered_pubkey), public_key.public_key);
     }
 
     // ✓ Test DashPay contact key derivation - m/15'/5'/15'/accountNumber
@@ -724,7 +725,7 @@ mod tests {
 
         let verified = signature.verify(
             secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &dashpay_pubkey.public_key,
+            &dashpay_pubkey.public_key.into(),
         );
         assert!(verified.is_ok());
     }

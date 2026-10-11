@@ -4,6 +4,7 @@ use crate::error::{FFIError, FFIErrorCode};
 use crate::types::FFIWallet;
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
+use dashcore::ecdsa::EcdsaPublicKey;
 use hex_conservative::DisplayHex;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
@@ -21,7 +22,7 @@ pub struct FFIExtendedPrivKey {
 
 /// Opaque type for a public key
 pub struct FFIPublicKey {
-    inner: secp256k1::PublicKey,
+    inner: EcdsaPublicKey,
 }
 
 /// Opaque type for an extended public key
@@ -449,7 +450,8 @@ pub unsafe extern "C" fn public_key_to_hex(
     error: *mut FFIError,
 ) -> *mut c_char {
     let key = deref_ptr!(key, error);
-    unwrap_or_return!(CString::new(key.inner.serialize().to_lower_hex_string()), error).into_raw()
+    unwrap_or_return!(CString::new(key.inner.to_compressed().to_lower_hex_string()), error)
+        .into_raw()
 }
 
 /// Convert derivation path string to indices

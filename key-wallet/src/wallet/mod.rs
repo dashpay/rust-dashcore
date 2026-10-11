@@ -104,7 +104,7 @@ impl Wallet {
     ///   distinct ids per network. The preimage is:
     ///
     ///   ```text
-    ///   root_public_key.serialize() || root_chain_code || DOMAIN_TAG || network_byte
+    ///   root_public_key.to_compressed() || root_chain_code || DOMAIN_TAG || network_byte
     ///   ```
     ///
     ///   where `DOMAIN_TAG` is the private `NETWORK_SCOPED_WALLET_ID_DOMAIN`
@@ -113,7 +113,8 @@ impl Wallet {
     ///   `Network as u8`). The tag guarantees a `Some(_)` digest can never collide
     ///   with the `None` digest.
     /// * `None` → a **network-independent id**. The preimage is exactly
-    ///   `root_public_key.serialize() || root_chain_code` (no tag, no discriminant)
+    ///   `root_public_key.to_compressed() || root_chain_code` (no tag, no
+    ///   discriminant)
     ///   — useful when a caller deliberately wants one id shared across networks.
     ///
     /// Callers comparing a `Some(network)` id against a `None` id (or against a
@@ -124,9 +125,7 @@ impl Wallet {
         network: Option<Network>,
     ) -> [u8; 32] {
         let mut data = Vec::new();
-        data.extend_from_slice(
-            &secp256k1::PublicKey::from(root_pub_key.root_public_key).serialize(),
-        );
+        data.extend_from_slice(&root_pub_key.root_public_key.to_compressed());
         data.extend_from_slice(&root_pub_key.root_chain_code[..]);
         // A concrete network appends the domain tag + discriminant byte; with no
         // network the preimage stops here, giving a network-independent digest.

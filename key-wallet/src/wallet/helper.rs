@@ -7,6 +7,7 @@ use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
 use crate::Error;
+use dashcore::ecdsa::EcdsaPublicKey;
 use hex_conservative::DisplayHex;
 
 impl Wallet {
@@ -495,9 +496,9 @@ impl Wallet {
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
-    /// The public key (secp256k1::PublicKey), or an error if the path cannot be
-    /// derived for this wallet type.
-    pub fn derive_public_key(&self, path: &crate::DerivationPath) -> Result<secp256k1::PublicKey> {
+    /// The public key, or an error if the path cannot be derived for this
+    /// wallet type.
+    pub fn derive_public_key(&self, path: &crate::DerivationPath) -> Result<EcdsaPublicKey> {
         // Check if the path contains hardened derivation
         let has_hardened = path.into_iter().any(|child| child.is_hardened());
 
@@ -511,7 +512,7 @@ impl Wallet {
             // For hardened paths, derive the private key first, then get public key
             let private_key = self.derive_private_key(path)?;
 
-            Ok(secp256k1::PublicKey::from_secret_key(&private_key))
+            Ok(secp256k1::PublicKey::from_secret_key(&private_key).into())
         } else {
             // For non-hardened paths, derive directly from public key
             let extended = self.derive_extended_public_key(path)?;
@@ -536,7 +537,7 @@ impl Wallet {
         let public_key = self.derive_public_key(path)?;
 
         // Return as hex string
-        let serialized = public_key.serialize(); // compressed
+        let serialized = public_key.to_compressed();
         Ok(serialized.to_lower_hex_string())
     }
 

@@ -9,11 +9,18 @@
 //!
 //! This module provides ECDSA signatures used Bitcoin that can be roundtrip (de)serialized.
 
+use core::fmt;
+use core::str::FromStr;
+
 #[cfg(feature = "rand")]
 use bitcoin_crypto::key::rand;
 #[cfg(feature = "rand")]
 use bitcoin_crypto::secp256k1::SecretKey;
 use dash_types::type_cvrt;
+use hex_conservative::DisplayHex;
+use internals::debug_from_display;
+use secp256k1;
+use thiserror::Error as ThisError;
 use zeroize::Zeroize;
 
 pub use bitcoin_crypto::ecdsa::{DecodeError, ParseSignatureError, SerializedSignature, Signature};
@@ -33,11 +40,74 @@ pub fn generate() -> SecretKey {
     SecretKey::new(&mut rand::rng())
 }
 
+/// Errors produced by secp256k1 operations.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, ThisError)]
+#[non_exhaustive]
+pub enum EcdsaError {
+    /// Public key bytes are not a usable curve point.
+    #[error("invalid secp256k1 public key")]
+    InvalidPublicKey,
+    /// Tweak is out of range or produced the point at infinity.
+    #[error("invalid secp256k1 tweak")]
+    InvalidTweak,
+}
+
 /// A secp256k1 public key.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct EcdsaPublicKey(secp256k1::PublicKey);
+
+impl EcdsaPublicKey {
+    /// Parses a compressed (33-byte) or uncompressed (65-byte) SEC1 encoding.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, EcdsaError> {
+        let inner = if let Ok(bytes) = <[u8; ECDSA_PK_LEN]>::try_from(bytes) {
+            secp256k1::PublicKey::from_byte_array_compressed(bytes)
+        } else if let Ok(bytes) = <[u8; ECDSA_PK_UNCOMPRESSED_LEN]>::try_from(bytes) {
+            secp256k1::PublicKey::from_byte_array_uncompressed(bytes)
+        } else {
+            return Err(EcdsaError::InvalidPublicKey);
+        };
+        inner.map(Self).map_err(|_| EcdsaError::InvalidPublicKey)
+    }
+
+    /// The compressed SEC1 encoding.
+    pub fn to_compressed(&self) -> [u8; ECDSA_PK_LEN] {
+        self.0.serialize()
+    }
+
+    /// The uncompressed SEC1 encoding.
+    pub fn to_uncompressed(&self) -> [u8; ECDSA_PK_UNCOMPRESSED_LEN] {
+        self.0.serialize_uncompressed()
+    }
+
+    /// Adds `tweak * G` to the point.
+    pub fn add_tweak(&self, tweak: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError> {
+        let tweak =
+            secp256k1::Scalar::from_be_bytes(*tweak).map_err(|_| EcdsaError::InvalidTweak)?;
+        self.0.add_exp_tweak(&tweak).map(Self).map_err(|_| EcdsaError::InvalidTweak)
+    }
+}
+
+debug_from_display!(EcdsaPublicKey);
+
+/// Hex of the compressed encoding.
+impl fmt::Display for EcdsaPublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:x}", self.to_compressed().as_hex())
+    }
+}
+
+/// Hex of either SEC1 encoding.
+impl FromStr for EcdsaPublicKey {
+    type Err = EcdsaError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_bytes(
+            &hex_conservative::decode_to_vec(s).map_err(|_| EcdsaError::InvalidPublicKey)?,
+        )
+    }
+}
 
 type_cvrt!(From<secp256k1::PublicKey> for EcdsaPublicKey, |pk| Self(*pk));
 type_cvrt!(From<EcdsaPublicKey> for secp256k1::PublicKey, |pk| pk.0);

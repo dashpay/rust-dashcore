@@ -5,8 +5,8 @@
 
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::ecdsa::EcdsaPublicKey;
 use dashcore::{OutPoint, Transaction, TxOut};
-use secp256k1::PublicKey;
 use std::fmt;
 
 use crate::account::AccountType;
@@ -130,7 +130,7 @@ pub enum AssetLockCreditKeys {
     /// Public key + derivation path per credit output. Produced by
     /// [`ManagedWalletInfo::build_asset_lock_with_signer`] when the
     /// private keys never leave the signing device.
-    Public(Vec<(PublicKey, DerivationPath)>),
+    Public(Vec<(EcdsaPublicKey, DerivationPath)>),
 }
 
 /// Result of building an asset lock transaction.
@@ -1005,7 +1005,7 @@ mod tests {
             &self,
             path: &DerivationPath,
             sighash: [u8; 32],
-        ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+        ) -> Result<(secp256k1::ecdsa::Signature, EcdsaPublicKey), Self::Error> {
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
@@ -1013,17 +1013,18 @@ mod tests {
                 .map_err(|e| e.to_string())?;
             let msg = secp256k1::Message::from_digest(sighash);
             let sig = xpriv.private_key.sign_ecdsa(msg);
-            let pk = secp256k1::PublicKey::from_secret_key(&xpriv.private_key);
+            let pk =
+                EcdsaPublicKey::from(secp256k1::PublicKey::from_secret_key(&xpriv.private_key));
             Ok((sig, pk))
         }
 
-        async fn public_key(&self, path: &DerivationPath) -> Result<PublicKey, Self::Error> {
+        async fn public_key(&self, path: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
                 .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            Ok(secp256k1::PublicKey::from_secret_key(&xpriv.private_key))
+            Ok(secp256k1::PublicKey::from_secret_key(&xpriv.private_key).into())
         }
     }
 
@@ -1144,10 +1145,10 @@ mod tests {
                 &self,
                 _: &DerivationPath,
                 _: [u8; 32],
-            ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+            ) -> Result<(secp256k1::ecdsa::Signature, EcdsaPublicKey), Self::Error> {
                 unreachable!("should be rejected before any signing is attempted")
             }
-            async fn public_key(&self, _: &DerivationPath) -> Result<PublicKey, Self::Error> {
+            async fn public_key(&self, _: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
                 unreachable!()
             }
         }
@@ -1587,11 +1588,14 @@ mod tests {
                 &self,
                 _path: &DerivationPath,
                 _sighash: [u8; 32],
-            ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+            ) -> Result<(secp256k1::ecdsa::Signature, EcdsaPublicKey), Self::Error> {
                 Err("signing device unavailable".to_string())
             }
 
-            async fn public_key(&self, _path: &DerivationPath) -> Result<PublicKey, Self::Error> {
+            async fn public_key(
+                &self,
+                _path: &DerivationPath,
+            ) -> Result<EcdsaPublicKey, Self::Error> {
                 Err("signing device unavailable".to_string())
             }
         }

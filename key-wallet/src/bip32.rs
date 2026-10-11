@@ -34,6 +34,7 @@ use serde;
 
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
+use dashcore::ecdsa::{EcdsaError, EcdsaPublicKey};
 use dashcore::{base58, Network};
 use hex_conservative::DisplayHex;
 use zeroize::Zeroize;
@@ -43,7 +44,6 @@ type XpubIdentifier = hash160::Hash;
 
 pub use crate::dip9::{ApplicationKeyPurpose, KeyDerivationType};
 pub use dashcore::key::Keypair;
-pub use secp256k1::PublicKey;
 /// Re-export key types from secp256k1
 pub use secp256k1::SecretKey as PrivateKey;
 
@@ -486,7 +486,7 @@ pub struct ExtendedPubKey {
     /// Child number of the key used to derive from parent (0 for master)
     pub child_number: ChildNumber,
     /// Public key
-    pub public_key: secp256k1::PublicKey,
+    pub public_key: EcdsaPublicKey,
     /// Chain code
     pub chain_code: ChainCode,
 }
@@ -502,7 +502,7 @@ impl bincode::Encode for ExtendedPubKey {
         self.parent_fingerprint.encode(encoder)?;
         self.child_number.encode(encoder)?;
         // Encode the public key as bytes (33 bytes for compressed)
-        self.public_key.serialize().encode(encoder)?;
+        self.public_key.to_compressed().encode(encoder)?;
         self.chain_code.encode(encoder)?;
         Ok(())
     }
@@ -519,10 +519,9 @@ impl<C> bincode::Decode<C> for ExtendedPubKey {
         let child_number = ChildNumber::decode(decoder)?;
         // Decode the public key from bytes (33 bytes for compressed)
         let public_key_bytes: [u8; 33] = <[u8; 33]>::decode(decoder)?;
-        let public_key = secp256k1::PublicKey::from_byte_array_compressed(public_key_bytes)
-            .map_err(|e| {
-                bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-            })?;
+        let public_key = EcdsaPublicKey::from_bytes(&public_key_bytes).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
+        })?;
         let chain_code = ChainCode::decode(decoder)?;
 
         Ok(ExtendedPubKey {
@@ -541,26 +540,7 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedPubKey {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
-        let network = Network::borrow_decode(decoder)?;
-        let depth = u8::borrow_decode(decoder)?;
-        let parent_fingerprint = Fingerprint::borrow_decode(decoder)?;
-        let child_number = ChildNumber::borrow_decode(decoder)?;
-        // Decode the public key from bytes (33 bytes for compressed)
-        let public_key_bytes: [u8; 33] = <[u8; 33]>::borrow_decode(decoder)?;
-        let public_key = secp256k1::PublicKey::from_byte_array_compressed(public_key_bytes)
-            .map_err(|e| {
-                bincode::error::DecodeError::OtherString(format!("Invalid public key: {}", e))
-            })?;
-        let chain_code = ChainCode::borrow_decode(decoder)?;
-
-        Ok(ExtendedPubKey {
-            network,
-            depth,
-            parent_fingerprint,
-            child_number,
-            public_key,
-            chain_code,
-        })
+        <Self as bincode::Decode<C>>::decode(decoder)
     }
 }
 
@@ -1237,6 +1217,8 @@ pub enum Error {
     CannotDeriveFromHardenedKey,
     /// A secp256k1 error occurred
     Secp256k1(secp256k1::Error),
+    /// An ECDSA key error occurred
+    Ecdsa(EcdsaError),
     /// A child number was provided that was out of range
     InvalidChildNumber(u32),
     /// Invalid childnumber format.
@@ -1264,6 +1246,7 @@ impl fmt::Display for Error {
                 f.write_str("cannot derive hardened key from public key")
             }
             Error::Secp256k1(ref e) => fmt::Display::fmt(e, f),
+            Error::Ecdsa(ref e) => fmt::Display::fmt(e, f),
             Error::InvalidChildNumber(ref n) => {
                 write!(f, "child number {} is invalid (not within [0, 2^31 - 1])", n)
             }
@@ -1289,10 +1272,10 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
-        if let Error::Secp256k1(ref e) = *self {
-            Some(e)
-        } else {
-            None
+        match *self {
+            Error::Secp256k1(ref e) => Some(e),
+            Error::Ecdsa(ref e) => Some(e),
+            _ => None,
         }
     }
 }
@@ -1300,6 +1283,12 @@ impl error::Error for Error {
 impl From<secp256k1::Error> for Error {
     fn from(e: secp256k1::Error) -> Error {
         Error::Secp256k1(e)
+    }
+}
+
+impl From<EcdsaError> for Error {
+    fn from(e: EcdsaError) -> Error {
+        Error::Ecdsa(e)
     }
 }
 
@@ -1601,7 +1590,7 @@ impl ExtendedPubKey {
             depth: sk.depth,
             parent_fingerprint: sk.parent_fingerprint,
             child_number: sk.child_number,
-            public_key: sk.private_key.public_key(),
+            public_key: sk.private_key.public_key().into(),
             chain_code: sk.chain_code,
         }
     }
@@ -1609,7 +1598,7 @@ impl ExtendedPubKey {
     /// Constructs BIP340 x-only public key for BIP-340 signatures and Taproot use matching
     /// the internal public key representation.
     pub fn to_x_only_pub(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from(self.public_key)
+        XOnlyPublicKey::from(secp256k1::PublicKey::from(self.public_key))
     }
 
     /// Attempts to derive an extended public key from a path.
@@ -1641,7 +1630,7 @@ impl ExtendedPubKey {
             } => {
                 let mut hmac_engine: HmacEngine<sha512::Hash> =
                     HmacEngine::new(&self.chain_code[..]);
-                hmac_engine.input(&self.public_key.serialize()[..]);
+                hmac_engine.input(&self.public_key.to_compressed()[..]);
                 hmac_engine.input(&n.to_be_bytes());
 
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
@@ -1659,7 +1648,7 @@ impl ExtendedPubKey {
                     HmacEngine::new(&self.chain_code[..]);
 
                 // HMAC Input: serP(Kpar) || ser256(i)
-                hmac_engine.input(&self.public_key.serialize()[..]);
+                hmac_engine.input(&self.public_key.to_compressed()[..]);
                 hmac_engine.input(&idx);
 
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
@@ -1677,7 +1666,7 @@ impl ExtendedPubKey {
     /// Public->Public child key derivation
     pub fn ckd_pub(&self, i: ChildNumber) -> Result<ExtendedPubKey, Error> {
         let (sk, chain_code) = self.ckd_pub_tweak(i)?;
-        let tweaked = self.public_key.add_exp_tweak(&sk.into())?;
+        let tweaked = self.public_key.add_tweak(&sk.to_secret_bytes())?;
 
         Ok(ExtendedPubKey {
             network: self.network,
@@ -1730,9 +1719,7 @@ impl ExtendedPubKey {
             chain_code: data[13..45]
                 .try_into()
                 .expect("45 - 13 == 32, which is the ChainCode length"),
-            public_key: secp256k1::PublicKey::from_byte_array_compressed(
-                <[u8; 33]>::try_from(&data[45..78]).expect("78 - 45 == 33, the key length"),
-            )?,
+            public_key: EcdsaPublicKey::from_bytes(&data[45..78])?,
         })
     }
 
@@ -1749,7 +1736,7 @@ impl ExtendedPubKey {
         ret[5..9].copy_from_slice(&self.parent_fingerprint[..]);
         ret[9..13].copy_from_slice(&u32::from(self.child_number).to_be_bytes());
         ret[13..45].copy_from_slice(&self.chain_code[..]);
-        ret[45..78].copy_from_slice(&self.public_key.serialize()[..]);
+        ret[45..78].copy_from_slice(&self.public_key.to_compressed()[..]);
         ret
     }
 
@@ -1798,7 +1785,7 @@ impl ExtendedPubKey {
         ret[42..74].copy_from_slice(&self.chain_code[..]);
 
         // Key data (33 bytes)
-        ret[74..107].copy_from_slice(&self.public_key.serialize()[..]);
+        ret[74..107].copy_from_slice(&self.public_key.to_compressed()[..]);
 
         ret
     }
@@ -1837,9 +1824,7 @@ impl ExtendedPubKey {
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
 
         // Key data (33 bytes)
-        let public_key = secp256k1::PublicKey::from_byte_array_compressed(
-            <[u8; 33]>::try_from(&data[74..107]).expect("107 - 74 == 33, the key length"),
-        )?;
+        let public_key = EcdsaPublicKey::from_bytes(&data[74..107])?;
 
         Ok(ExtendedPubKey {
             network,
@@ -2549,7 +2534,7 @@ mod tests {
             path.derive_pub_ecdsa_for_master_seed(&seed, network)
                 .unwrap()
                 .public_key
-                .serialize()
+                .to_compressed()
                 .to_lower_hex_string()
         };
 

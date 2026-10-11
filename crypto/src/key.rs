@@ -27,92 +27,43 @@ use dash_network::Network;
 use dash_types::serialize::hex as serde_hex;
 use hashes::{hash160, hash_newtype, Hash as _};
 use hex_conservative::DisplayHex;
-use internals::write_err;
+use thiserror::Error as ThisError;
 
 use crate::base58;
+use crate::ecdsa::{EcdsaError, EcdsaPublicKey, ECDSA_PK_LEN, ECDSA_PK_UNCOMPRESSED_LEN};
 
 /// A key-related error.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, ThisError)]
 #[non_exhaustive]
 pub enum Error {
     /// Base58 encoding error
-    Base58(base58::DecodeCheckError),
+    #[error("key base58 error")]
+    Base58(#[from] base58::DecodeCheckError),
     /// secp256k1-related error
-    Secp256k1(secp256k1::Error),
+    #[error("key secp256k1 error")]
+    Secp256k1(#[from] secp256k1::Error),
+    /// ECDSA key error
+    #[error("key ECDSA error")]
+    Ecdsa(#[from] EcdsaError),
     /// Invalid key prefix error
+    #[error("key prefix invalid: {0}")]
     InvalidKeyPrefix(u8),
     /// The WIF or extended key version byte was not one we recognise.
+    #[error("address version {0} is invalid for this base58 type")]
     InvalidAddressVersion(u8),
     /// The base58 decoded correctly but the payload was the wrong length.
+    #[error("length {0} invalid for this base58 type")]
     InvalidBase58PayloadLength(usize),
     /// A 34-byte WIF payload ended in something other than the `0x01`
     /// compression flag.
+    #[error("WIF compression flag must be 0x01, got: {0:#04x}")]
     InvalidWifCompressionFlag(u8),
     /// Hex decoding error
-    Hex(hex_conservative::DecodeFixedLengthBytesError),
+    #[error("key hex decoding error")]
+    Hex(#[from] hex_conservative::DecodeFixedLengthBytesError),
     /// `PublicKey` hex should be 66 or 130 digits long.
+    #[error("PublicKey hex should be 66 or 130 digits long, got: {0}")]
     InvalidHexLength(usize),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::Base58(e) => write_err!(f, "key base58 error"; e),
-            Error::Secp256k1(e) => write_err!(f, "key secp256k1 error"; e),
-            Error::InvalidAddressVersion(v) => {
-                write!(f, "address version {} is invalid for this base58 type", v)
-            }
-            Error::InvalidBase58PayloadLength(l) => {
-                write!(f, "length {} invalid for this base58 type", l)
-            }
-            Error::InvalidKeyPrefix(b) => write!(f, "key prefix invalid: {}", b),
-            Error::InvalidWifCompressionFlag(b) => {
-                write!(f, "WIF compression flag must be 0x01, got: {:#04x}", b)
-            }
-            Error::Hex(e) => write_err!(f, "key hex decoding error"; e),
-            Error::InvalidHexLength(got) => {
-                write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
-            }
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        use self::Error::*;
-
-        match self {
-            Base58(e) => Some(e),
-            Secp256k1(e) => Some(e),
-            Hex(e) => Some(e),
-            InvalidAddressVersion(_)
-            | InvalidBase58PayloadLength(_)
-            | InvalidKeyPrefix(_)
-            | InvalidWifCompressionFlag(_)
-            | InvalidHexLength(_) => None,
-        }
-    }
-}
-
-#[doc(hidden)]
-impl From<base58::DecodeCheckError> for Error {
-    fn from(e: base58::DecodeCheckError) -> Error {
-        Error::Base58(e)
-    }
-}
-
-#[doc(hidden)]
-impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error {
-        Error::Secp256k1(e)
-    }
-}
-
-#[doc(hidden)]
-impl From<hex_conservative::DecodeFixedLengthBytesError> for Error {
-    fn from(e: hex_conservative::DecodeFixedLengthBytesError) -> Self {
-        Error::Hex(e)
-    }
 }
 
 /// A Dash ECDSA public key
@@ -121,12 +72,12 @@ pub struct PublicKey {
     /// Whether this public key should be serialized as compressed
     pub compressed: bool,
     /// The actual ECDSA key
-    pub inner: secp256k1::PublicKey,
+    pub inner: EcdsaPublicKey,
 }
 
 impl PublicKey {
     /// Constructs compressed ECDSA public key from the provided generic Secp256k1 public key
-    pub fn new(key: impl Into<secp256k1::PublicKey>) -> PublicKey {
+    pub fn new(key: impl Into<EcdsaPublicKey>) -> PublicKey {
         PublicKey {
             compressed: true,
             inner: key.into(),
@@ -135,7 +86,7 @@ impl PublicKey {
 
     /// Constructs uncompressed (legacy) ECDSA public key from the provided generic Secp256k1
     /// public key
-    pub fn new_uncompressed(key: impl Into<secp256k1::PublicKey>) -> PublicKey {
+    pub fn new_uncompressed(key: impl Into<EcdsaPublicKey>) -> PublicKey {
         PublicKey {
             compressed: false,
             inner: key.into(),
@@ -146,9 +97,9 @@ impl PublicKey {
     /// `compressed` says, without allocating.
     pub fn with_serialized<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
         if self.compressed {
-            f(&self.inner.serialize())
+            f(&self.inner.to_compressed())
         } else {
-            f(&self.inner.serialize_uncompressed())
+            f(&self.inner.to_uncompressed())
         }
     }
 
@@ -166,28 +117,18 @@ impl PublicKey {
 
     /// Deserialize a public key from a slice
     pub fn from_slice(data: &[u8]) -> Result<PublicKey, Error> {
-        let (compressed, inner) = match data.len() {
-            constants::PUBLIC_KEY_SIZE => {
-                let data = <[u8; constants::PUBLIC_KEY_SIZE]>::try_from(data)
-                    .map_err(|_| Error::Secp256k1(secp256k1::Error::InvalidPublicKey))?;
-                (true, secp256k1::PublicKey::from_byte_array_compressed(data)?)
+        let compressed = match (data.len(), data.first()) {
+            (ECDSA_PK_LEN, _) => true,
+            (ECDSA_PK_UNCOMPRESSED_LEN, Some(&0x04)) => false,
+            (ECDSA_PK_UNCOMPRESSED_LEN, Some(&prefix)) => {
+                return Err(Error::InvalidKeyPrefix(prefix));
             }
-            constants::UNCOMPRESSED_PUBLIC_KEY_SIZE => {
-                if data[0] != 0x04 {
-                    return Err(Error::InvalidKeyPrefix(data[0]));
-                }
-                let data = <[u8; constants::UNCOMPRESSED_PUBLIC_KEY_SIZE]>::try_from(data)
-                    .map_err(|_| Error::Secp256k1(secp256k1::Error::InvalidPublicKey))?;
-                (false, secp256k1::PublicKey::from_byte_array_uncompressed(data)?)
-            }
-            len => {
-                return Err(Error::InvalidBase58PayloadLength(len));
-            }
+            (len, _) => return Err(Error::InvalidBase58PayloadLength(len)),
         };
 
         Ok(PublicKey {
             compressed,
-            inner,
+            inner: EcdsaPublicKey::from_bytes(data)?,
         })
     }
 
@@ -203,15 +144,7 @@ impl PublicKey {
 
     /// Returns dash 160-bit hash of the public key for witness program
     pub fn wpubkey_hash(&self) -> Option<WPubkeyHash> {
-        if self.compressed {
-            Some(WPubkeyHash::from_byte_array(
-                hash160::Hash::hash(&self.inner.serialize()).to_byte_array(),
-            ))
-        } else {
-            // We can't create witness pubkey hashes for an uncompressed
-            // public keys
-            None
-        }
+        self.compressed.then(|| WPubkeyHash::hash(&self.inner.to_compressed()))
     }
 }
 
@@ -289,7 +222,7 @@ impl PrivateKey {
     pub fn public_key(&self) -> PublicKey {
         PublicKey {
             compressed: self.compressed,
-            inner: self.inner.public_key(),
+            inner: self.inner.public_key().into(),
         }
     }
 

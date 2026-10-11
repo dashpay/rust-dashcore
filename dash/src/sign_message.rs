@@ -159,7 +159,7 @@ mod message_signing {
             let msg = secp256k1::Message::from_digest(msg_hash.to_byte_array());
             let pubkey = self.signature.recover(msg)?;
             Ok(PublicKey {
-                inner: pubkey,
+                inner: pubkey.into(),
                 compressed: self.compressed,
             })
         }
@@ -269,7 +269,7 @@ mod tests {
         let signature2 = MessageSignature::from_str(&signature.to_string()).unwrap();
         let pubkey = signature2.recover_pubkey(msg_hash).unwrap();
         assert!(pubkey.compressed);
-        assert_eq!(pubkey.inner, secp256k1::PublicKey::from_secret_key(&privkey));
+        assert_eq!(pubkey.inner, secp256k1::PublicKey::from_secret_key(&privkey).into());
 
         let p2pkh = Address::p2pkh(&pubkey, Network::Mainnet);
         assert_eq!(signature2.is_signed_by_address(&p2pkh, msg_hash), Ok(true));

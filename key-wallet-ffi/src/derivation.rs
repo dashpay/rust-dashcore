@@ -551,7 +551,7 @@ pub unsafe extern "C" fn key_wallet_derive_address_from_seed(
     // Get public key
     let extended_pubkey = ExtendedPubKey::from_priv(&derived_key);
 
-    // Convert secp256k1::PublicKey to dashcore::PublicKey
+    // Wrap as a dashcore::PublicKey
     let dash_pubkey = dashcore::PublicKey::new(extended_pubkey.public_key);
 
     // Convert to address

@@ -12,7 +12,8 @@
 //! sync derive-and-sign in `async {}` without meaningful overhead.
 
 use async_trait::async_trait;
-use secp256k1::{ecdsa, PublicKey};
+use dashcore::ecdsa::EcdsaPublicKey;
+use secp256k1::ecdsa;
 
 use crate::bip32::{DerivationPath, ExtendedPubKey};
 
@@ -117,14 +118,14 @@ pub trait Signer: Send + Sync {
         &self,
         path: &DerivationPath,
         sighash: [u8; 32],
-    ) -> Result<(ecdsa::Signature, PublicKey), Self::Error>;
+    ) -> Result<(ecdsa::Signature, EcdsaPublicKey), Self::Error>;
 
     /// Return the compressed public key at `path` without signing.
     ///
     /// Used to capture per-output public keys (e.g. asset-lock credit-output
     /// keys) that the caller later references when signing Platform state
     /// transitions.
-    async fn public_key(&self, path: &DerivationPath) -> Result<PublicKey, Self::Error>;
+    async fn public_key(&self, path: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error>;
 }
 
 /// A [`Signer`] that can additionally export BIP-32 extended public keys.
