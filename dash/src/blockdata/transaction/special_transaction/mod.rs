@@ -31,7 +31,7 @@ use crate::blockdata::transaction::special_transaction::TransactionPayload::{
     ClassicalWithNonStandardVersionTypeBytesPayloadType, CoinbasePayloadType,
     MnhfSignalPayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
     ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType,
-    QuorumCommitmentPayloadType, UnknownPayloadType,
+    QuorumCommitmentPayloadType, RawPayloadType,
 };
 use crate::blockdata::transaction::special_transaction::TransactionType::{
     AssetLock, AssetUnlock, Classic, ClassicalWithNonStandardVersionTypeBytes, Coinbase,
@@ -47,7 +47,6 @@ use crate::blockdata::transaction::special_transaction::provider_update_registra
 use crate::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
-use crate::consensus::encode::VarInt;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::SpecialTransactionPayloadHash;
 use crate::io;
@@ -95,10 +94,11 @@ pub enum TransactionPayload {
     /// `consensus_encode` and `txid` continue to round-trip the on-wire bytes faithfully.
     /// This variant has no payload section on the wire.
     ClassicalWithNonStandardVersionTypeBytesPayloadType(u16),
-    /// The raw payload of a special transaction type this crate does not know, together
-    /// with its `nTxType`. Keeping the bytes lets blocks containing newer special
-    /// transaction types decode, and re-encode to the same bytes and txid.
-    UnknownPayloadType(u16, Vec<u8>),
+    /// The raw payload of a special transaction this crate can't decode, together with its
+    /// `nTxType`: the type is unknown, or its payload has a layout this crate doesn't know,
+    /// like a newer version. Keeping the bytes lets the block decode, and the transaction
+    /// re-encode to the same bytes and txid. [`Self::get_type`] still reports a known type.
+    RawPayloadType(u16, Vec<u8>),
 }
 
 impl Encodable for TransactionPayload {
@@ -114,7 +114,7 @@ impl Encodable for TransactionPayload {
             AssetLockPayloadType(p) => p.consensus_encode(w),
             AssetUnlockPayloadType(p) => p.consensus_encode(w),
             ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => Ok(0),
-            UnknownPayloadType(_, bytes) => {
+            RawPayloadType(_, bytes) => {
                 w.write_all(bytes)?;
                 Ok(bytes.len())
             }
@@ -138,7 +138,11 @@ impl TransactionPayload {
             ClassicalWithNonStandardVersionTypeBytesPayloadType(raw) => {
                 ClassicalWithNonStandardVersionTypeBytes(*raw)
             }
-            UnknownPayloadType(raw, _) => Unknown(*raw),
+            // A payload section means a special type, so 0 is not Classic here.
+            RawPayloadType(raw, _) => match TransactionType::try_from(*raw) {
+                Ok(Classic) | Err(_) => Unknown(*raw),
+                Ok(tx_type) => tx_type,
+            },
         }
     }
 
@@ -156,7 +160,7 @@ impl TransactionPayload {
             AssetUnlockPayloadType(p) => p.size(),
             // Pre-DIP-0002 transactions have no payload section on the wire.
             ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => 0,
-            UnknownPayloadType(_, bytes) => bytes.len(),
+            RawPayloadType(_, bytes) => bytes.len(),
         }
     }
 
@@ -452,40 +456,49 @@ impl TransactionType {
         self,
         d: &mut R,
     ) -> Result<Option<TransactionPayload>, encode::Error> {
-        // Pre-DIP-0002 transactions and Classic transactions have no payload section
-        // on the wire — there isn't even a length prefix to consume. An unknown type's
-        // length prefix is read together with its bytes below.
-        let _len = match self {
-            Classic | ClassicalWithNonStandardVersionTypeBytes(_) | Unknown(_) => VarInt(0),
-            _ => VarInt::consensus_decode(d)?,
-        };
-
-        Ok(match self {
-            Classic => None,
+        // Exactly the bytes the length prefix announces, as Core reads them: a payload this
+        // crate can't decode is kept raw rather than misaligning the rest of the block.
+        let bytes = match self {
+            // Pre-DIP-0002 transactions and Classic transactions have no payload section on
+            // the wire, not even a length prefix.
+            Classic => return Ok(None),
             ClassicalWithNonStandardVersionTypeBytes(raw) => {
-                Some(ClassicalWithNonStandardVersionTypeBytesPayloadType(raw))
+                return Ok(Some(ClassicalWithNonStandardVersionTypeBytesPayloadType(raw)));
             }
-            ProviderRegistration => Some(ProviderRegistrationPayloadType(
-                ProviderRegistrationPayload::consensus_decode(d)?,
-            )),
-            ProviderUpdateService => Some(ProviderUpdateServicePayloadType(
-                ProviderUpdateServicePayload::consensus_decode(d)?,
-            )),
-            ProviderUpdateRegistrar => Some(ProviderUpdateRegistrarPayloadType(
-                ProviderUpdateRegistrarPayload::consensus_decode(d)?,
-            )),
-            ProviderUpdateRevocation => Some(ProviderUpdateRevocationPayloadType(
-                ProviderUpdateRevocationPayload::consensus_decode(d)?,
-            )),
-            Coinbase => Some(CoinbasePayloadType(CoinbasePayload::consensus_decode(d)?)),
+            _ => Vec::<u8>::consensus_decode(d)?,
+        };
+        let r = &mut &bytes[..];
+        let typed = match self {
+            ProviderRegistration => ProviderRegistrationPayload::consensus_decode(r)
+                .map(ProviderRegistrationPayloadType),
+            ProviderUpdateService => ProviderUpdateServicePayload::consensus_decode(r)
+                .map(ProviderUpdateServicePayloadType),
+            ProviderUpdateRegistrar => ProviderUpdateRegistrarPayload::consensus_decode(r)
+                .map(ProviderUpdateRegistrarPayloadType),
+            ProviderUpdateRevocation => ProviderUpdateRevocationPayload::consensus_decode(r)
+                .map(ProviderUpdateRevocationPayloadType),
+            Coinbase => CoinbasePayload::consensus_decode(r).map(CoinbasePayloadType),
             QuorumCommitment => {
-                Some(QuorumCommitmentPayloadType(QuorumCommitmentPayload::consensus_decode(d)?))
+                QuorumCommitmentPayload::consensus_decode(r).map(QuorumCommitmentPayloadType)
             }
-            MnhfSignal => Some(MnhfSignalPayloadType(MnhfSignalPayload::consensus_decode(d)?)),
-            AssetLock => Some(AssetLockPayloadType(AssetLockPayload::consensus_decode(d)?)),
-            AssetUnlock => Some(AssetUnlockPayloadType(AssetUnlockPayload::consensus_decode(d)?)),
-            Unknown(raw) => Some(UnknownPayloadType(raw, Vec::<u8>::consensus_decode(d)?)),
-        })
+            MnhfSignal => MnhfSignalPayload::consensus_decode(r).map(MnhfSignalPayloadType),
+            AssetLock => AssetLockPayload::consensus_decode(r).map(AssetLockPayloadType),
+            AssetUnlock => AssetUnlockPayload::consensus_decode(r).map(AssetUnlockPayloadType),
+            _ => return Ok(Some(RawPayloadType(self.to_u16(), bytes))),
+        };
+        // Typed only if it decodes from all the bytes and re-encodes to them, as a newer
+        // version of a known type may not. An encoder error keeps it raw too.
+        let mut encoded = Vec::with_capacity(bytes.len());
+        Ok(Some(match typed {
+            Ok(payload)
+                if r.is_empty()
+                    && payload.consensus_encode(&mut encoded).is_ok()
+                    && encoded == bytes =>
+            {
+                payload
+            }
+            _ => RawPayloadType(self.to_u16(), bytes),
+        }))
     }
 }
 

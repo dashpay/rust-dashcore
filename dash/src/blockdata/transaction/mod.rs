@@ -154,7 +154,7 @@ impl<E> EncodeSigningDataResult<E> {
 /// We therefore deviate from the spec by always using the Segwit witness encoding
 /// for 0-input transactions, which results in unambiguously parseable transactions.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "bincode", derive(Encode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Transaction {
     /// The protocol version, is currently expected to be 1 or 2 (BIP 68).
@@ -166,8 +166,52 @@ pub struct Transaction {
     /// List of transaction outputs.
     pub output: Vec<TxOut>,
     /// Special Transaction Payload
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_payload"))]
     pub special_transaction_payload: Option<TransactionPayload>,
 }
+
+/// A payload kept raw by an earlier version, for a layout it didn't know, goes back through
+/// [`TransactionType::consensus_decode`], which decodes it typed once this version knows it.
+#[cfg(any(feature = "serde", feature = "bincode"))]
+fn decode_raw_payload(
+    payload: Option<TransactionPayload>,
+) -> Result<Option<TransactionPayload>, encode::Error> {
+    match &payload {
+        Some(raw @ TransactionPayload::RawPayloadType(_, bytes)) => {
+            raw.get_type().consensus_decode(&mut encode::serialize(bytes).as_slice())
+        }
+        _ => Ok(payload),
+    }
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_payload<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<TransactionPayload>, D::Error> {
+    let payload = <Option<TransactionPayload> as serde::Deserialize>::deserialize(deserializer)?;
+    decode_raw_payload(payload).map_err(serde::de::Error::custom)
+}
+
+// As derived, with the payload going through `decode_raw_payload` like in
+// `deserialize_payload`.
+#[cfg(feature = "bincode")]
+impl<C> bincode::Decode<C> for Transaction {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Transaction {
+            version: Decode::decode(decoder)?,
+            lock_time: Decode::decode(decoder)?,
+            input: Decode::decode(decoder)?,
+            output: Decode::decode(decoder)?,
+            special_transaction_payload: decode_raw_payload(Decode::decode(decoder)?)
+                .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))?,
+        })
+    }
+}
+
+#[cfg(feature = "bincode")]
+bincode::impl_borrow_decode!(Transaction);
 
 impl Transaction {
     /// Computes a "normalized TXID" which does not include any signatures.
@@ -1114,7 +1158,7 @@ mod tests {
                 value: 1_000,
                 script_pubkey: ScriptBuf::new_op_return(&[0xab; 4]),
             }],
-            special_transaction_payload: Some(TransactionPayload::UnknownPayloadType(
+            special_transaction_payload: Some(TransactionPayload::RawPayloadType(
                 UNASSIGNED_SPECIAL_TX_TYPE,
                 vec![0x01, 0x00, 0xde, 0xad, 0xbe, 0xef],
             )),
@@ -1154,6 +1198,89 @@ mod tests {
         assert_eq!(Transaction::consensus_decode(&mut cursor).unwrap(), unknown);
         assert_eq!(Transaction::consensus_decode(&mut cursor).unwrap(), classic);
         assert_eq!(cursor.position() as usize, bytes.len());
+    }
+
+    /// The bytes of a ProUpRevTx payload, a known type.
+    fn revocation_bytes() -> Vec<u8> {
+        use crate::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
+        use crate::bls_sig_utils::BLSSignature;
+        use crate::hash_types::InputsHash;
+
+        serialize(&ProviderUpdateRevocationPayload {
+            version: 1,
+            pro_tx_hash: Txid::from_byte_array([1; 32]),
+            reason: 0,
+            inputs_hash: InputsHash::from_byte_array([2; 32]),
+            payload_sig: BLSSignature::from([3; 96]),
+        })
+    }
+
+    /// The bytes of a quorum commitment payload without signers, whose LLMQ type is `llmq_type`.
+    fn quorum_commitment_bytes(llmq_type: u8) -> Vec<u8> {
+        let mut bytes = vec![1, 0, 0, 0, 0, 0, 1, 0, llmq_type];
+        bytes.extend([0; 32]); // quorum hash
+        bytes.extend([0, 0]); // no signers, no valid members
+        bytes.extend([0; 48 + 32 + 96 + 96]); // public key, vvec hash and signatures
+        bytes
+    }
+
+    fn raw_tx(tx_type: TransactionType, payload: Vec<u8>) -> Transaction {
+        Transaction {
+            special_transaction_payload: Some(TransactionPayload::RawPayloadType(
+                tx_type.to_u16(),
+                payload,
+            )),
+            ..unknown_special_tx(vec![TxIn::default()])
+        }
+    }
+
+    #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes(), false ; "known layout")]
+    #[test_case(TransactionType::ProviderUpdateRevocation, [revocation_bytes(), vec![0]].concat(), true ; "trailing byte")]
+    #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes()[..100].to_vec(), true ; "truncated")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(1), false ; "known llmq type")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), true ; "unknown llmq type re-encodes differently")]
+    fn known_type_payload_decodes_typed_or_stays_raw(
+        tx_type: TransactionType,
+        payload: Vec<u8>,
+        raw: bool,
+    ) {
+        let bytes = serialize(&raw_tx(tx_type, payload));
+        // Fails unless the transaction consumes all the bytes.
+        let decoded: Transaction = deserialize(&bytes).unwrap();
+        assert_eq!(decoded.tx_type(), tx_type);
+        assert_eq!(
+            matches!(
+                decoded.special_transaction_payload,
+                Some(TransactionPayload::RawPayloadType(..))
+            ),
+            raw
+        );
+        assert_eq!(serialize(&decoded), bytes);
+    }
+
+    #[test]
+    fn raw_payload_of_type_0_is_not_classic() {
+        let payload = TransactionPayload::RawPayloadType(0, vec![1]);
+        assert_eq!(payload.get_type(), TransactionType::Unknown(0));
+    }
+
+    #[cfg(feature = "bincode")]
+    const CONFIG: bincode::config::Configuration = bincode::config::standard();
+
+    /// A raw payload persisted by an earlier version decodes typed once its layout is known.
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test_case::test_case(|tx| serde_json::from_str(&serde_json::to_string(tx).unwrap()).unwrap() ; "json")]
+    #[test_case::test_case(|tx| bincode::serde::decode_from_slice(&bincode::serde::encode_to_vec(tx, CONFIG).unwrap(), CONFIG).unwrap().0 ; "binary serde")]
+    #[test_case::test_case(|tx| bincode::decode_from_slice(&bincode::encode_to_vec(tx, CONFIG).unwrap(), CONFIG).unwrap().0 ; "bincode")]
+    fn raw_payload_of_a_known_layout_deserializes_typed(
+        round_trip: fn(&Transaction) -> Transaction,
+    ) {
+        let decoded =
+            round_trip(&raw_tx(TransactionType::ProviderUpdateRevocation, revocation_bytes()));
+        assert!(matches!(
+            decoded.special_transaction_payload,
+            Some(TransactionPayload::ProviderUpdateRevocationPayloadType(_))
+        ));
     }
 
     #[test]
