@@ -158,7 +158,11 @@ impl TransactionPayload {
             ClassicalWithNonStandardVersionTypeBytesPayloadType(raw) => {
                 ClassicalWithNonStandardVersionTypeBytes(*raw)
             }
-            RawPayloadType(raw, _) => TransactionType::try_from(*raw).unwrap_or(Unknown(*raw)),
+            // A payload section means a special type, so 0 is not Classic here.
+            RawPayloadType(raw, _) => match TransactionType::try_from(*raw) {
+                Ok(Classic) | Err(_) => Unknown(*raw),
+                Ok(tx_type) => tx_type,
+            },
         }
     }
 

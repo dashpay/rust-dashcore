@@ -173,13 +173,11 @@ pub struct Transaction {
 fn decode_raw_payload(
     payload: Option<TransactionPayload>,
 ) -> Result<Option<TransactionPayload>, encode::Error> {
-    match payload {
-        Some(TransactionPayload::RawPayloadType(tx_type, bytes)) => {
-            let tx_type =
-                TransactionType::try_from(tx_type).unwrap_or(TransactionType::Unknown(tx_type));
-            tx_type.consensus_decode(&mut encode::serialize(&bytes).as_slice())
+    match &payload {
+        Some(raw @ TransactionPayload::RawPayloadType(_, bytes)) => {
+            raw.get_type().consensus_decode(&mut encode::serialize(bytes).as_slice())
         }
-        payload => Ok(payload),
+        _ => Ok(payload),
     }
 }
 
@@ -1256,6 +1254,12 @@ mod tests {
             raw
         );
         assert_eq!(serialize(&decoded), bytes);
+    }
+
+    #[test]
+    fn raw_payload_of_type_0_is_not_classic() {
+        let payload = TransactionPayload::RawPayloadType(0, vec![1]);
+        assert_eq!(payload.get_type(), TransactionType::Unknown(0));
     }
 
     #[cfg(feature = "bincode")]
