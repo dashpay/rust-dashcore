@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn round_trip_v3_ext_addr_evo_masternode_without_platform_ports() {
-        let original = v3_payload(1, Some(PlatformNodeId::from_bytes([7; 20])));
+        let original = v3_payload(1, Some(PlatformNodeId::from_byte_array([7; 20])));
         let mut encoded = Vec::new();
         original.consensus_encode(&mut encoded).unwrap();
 
@@ -634,7 +634,7 @@ mod tests {
     #[cfg(feature = "bincode")]
     #[test]
     fn bincode_round_trip_v3() {
-        let original = v3_payload(1, Some(PlatformNodeId::from_bytes([7; 20])));
+        let original = v3_payload(1, Some(PlatformNodeId::from_byte_array([7; 20])));
         let bytes = bincode::encode_to_vec(&original, bincode::config::standard()).unwrap();
         let (decoded, read): (ProviderUpdateServicePayload, usize) =
             bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
@@ -796,7 +796,7 @@ mod tests {
             service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([0; 16], 0))),
             script_payout: ScriptBuf::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
             inputs_hash: InputsHash::all_zeros(),
-            platform_node_id: Some(PlatformNodeId::from_bytes([0; 20])),
+            platform_node_id: Some(PlatformNodeId::from_byte_array([0; 20])),
             platform_p2p_port: Some(0),
             platform_http_port: Some(0),
             payload_sig: BLSSignature::from([0; 96]),
@@ -837,7 +837,7 @@ mod tests {
         assert_eq!(encoded.len(), 207);
 
         let decoded = ProviderUpdateServicePayload::consensus_decode(&mut &encoded[..]).unwrap();
-        assert_eq!(decoded.platform_node_id, Some(PlatformNodeId::from_bytes([0; 20])));
+        assert_eq!(decoded.platform_node_id, Some(PlatformNodeId::from_byte_array([0; 20])));
         assert_eq!(decoded.platform_p2p_port, Some(0));
         assert_eq!(decoded.platform_http_port, Some(0));
     }
@@ -1120,7 +1120,7 @@ mod tests {
     /// A v2 Evo payload at 52.36.64.148:19999 and its pre-v3 derived shape.
     #[cfg(feature = "serde")]
     fn v2_payloads() -> (ProviderUpdateServicePayload, PreV3ProviderUpdateServicePayload) {
-        let node_id = Some(PlatformNodeId::from_bytes([7; 20]));
+        let node_id = Some(PlatformNodeId::from_byte_array([7; 20]));
         let payload = ProviderUpdateServicePayload {
             version: 2,
             mn_type: Some(1),
@@ -1183,7 +1183,7 @@ mod tests {
     #[cfg(all(feature = "serde", feature = "bincode"))]
     #[test]
     fn serde_round_trips_the_extended_addresses_at_version_3() {
-        let payload = v3_payload(1, Some(PlatformNodeId::from_bytes([7; 20])));
+        let payload = v3_payload(1, Some(PlatformNodeId::from_byte_array([7; 20])));
         let config = bincode::config::standard();
         let bytes = bincode::serde::encode_to_vec(&payload, config).unwrap();
         let (decoded, read): (ProviderUpdateServicePayload, usize) =

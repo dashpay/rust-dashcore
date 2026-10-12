@@ -303,7 +303,11 @@ impl ExtendedBLSPrivKey {
 
     /// Get the public key for this private key
     pub fn public_key(&self) -> Result<BLSPublicKey, Error> {
-        self.private_key.as_scheme(CANONICAL).public_key().map_err(|_| Error::InvalidPrivateKey)
+        self.private_key
+            .as_scheme(CANONICAL)
+            .public_key()
+            .map(BLSPublicKey::from)
+            .map_err(|_| Error::InvalidPrivateKey)
     }
 
     /// Get the public key bytes (modern/IETF serialization)
@@ -460,11 +464,12 @@ impl ExtendedBLSPubKey {
         // Second HMAC-SHA256 with suffix 1 for the chain code
         let chain_code_bytes = derivation_hmac(&self.chain_code[..], &input_data, 1);
 
-        let derived_pubkey = self
+        let derived_pubkey: BLSPublicKey = self
             .public_key
             .as_scheme(CANONICAL)
             .add_tweak(&tweak_bytes)
-            .map_err(|_| Error::InvalidPublicKey)?;
+            .map_err(|_| Error::InvalidPublicKey)?
+            .into();
 
         Ok(ExtendedBLSPubKey {
             network: self.network,
@@ -647,11 +652,12 @@ impl<'de> serde::Deserialize<'de> for ExtendedBLSPubKey {
         }
 
         let helper = Helper::deserialize(deserializer)?;
-        let public_key = BLSPublicKey::try_from(helper.public_key.as_slice())
+        let public_key: BLSPublicKey = BLSPublicKey::try_from(helper.public_key.as_slice())
             .map_err(|e| serde::de::Error::custom(format!("Invalid BLS public key: {}", e)))?
             .as_scheme(CANONICAL)
             .canonicalize()
-            .map_err(|e| serde::de::Error::custom(format!("Invalid BLS public key: {}", e)))?;
+            .map_err(|e| serde::de::Error::custom(format!("Invalid BLS public key: {}", e)))?
+            .into();
 
         Ok(ExtendedBLSPubKey {
             network: helper.network,
@@ -747,7 +753,7 @@ impl<C> bincode::Decode<C> for ExtendedBLSPubKey {
         let parent_fingerprint = Fingerprint::decode(decoder)?;
         let child_number = ChildNumber::decode(decoder)?;
         let public_key_bytes: Vec<u8> = Vec::<u8>::decode(decoder)?;
-        let public_key = BLSPublicKey::try_from(public_key_bytes.as_slice())
+        let public_key: BLSPublicKey = BLSPublicKey::try_from(public_key_bytes.as_slice())
             .map_err(|e| {
                 bincode::error::DecodeError::OtherString(format!("Invalid BLS public key: {}", e))
             })?
@@ -755,7 +761,8 @@ impl<C> bincode::Decode<C> for ExtendedBLSPubKey {
             .canonicalize()
             .map_err(|e| {
                 bincode::error::DecodeError::OtherString(format!("Invalid BLS public key: {}", e))
-            })?;
+            })?
+            .into();
         let chain_code = ChainCode::decode(decoder)?;
 
         Ok(ExtendedBLSPubKey {
