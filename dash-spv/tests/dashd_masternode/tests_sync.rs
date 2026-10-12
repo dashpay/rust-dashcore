@@ -700,19 +700,21 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
                 else {
                     continue;
                 };
+                let statuses: Option<Vec<(QuorumHash, LLMQEntryVerificationStatus)>> =
+                    engine.read().await.masternode_lists.get(&height).map(|list| {
+                        list.quorums
+                            .get(&LLMQType::LlmqtypeTest)
+                            .into_iter()
+                            .flatten()
+                            .map(|(hash, quorum)| (*hash, quorum.verified.clone()))
+                            .collect()
+                    });
+                if let Some(statuses) = statuses {
+                    published.lock().await.push((height, qr_info_result.is_none(), statuses));
+                }
+                // Only now may the mining hook go on: a later block, or a QRInfo
+                // it brings, must not reach the list before it is recorded.
                 newest_published.fetch_max(height, Ordering::SeqCst);
-                let engine = engine.read().await;
-                let Some(list) = engine.masternode_lists.get(&height) else {
-                    continue;
-                };
-                let statuses: Vec<(QuorumHash, LLMQEntryVerificationStatus)> = list
-                    .quorums
-                    .get(&LLMQType::LlmqtypeTest)
-                    .into_iter()
-                    .flatten()
-                    .map(|(hash, quorum)| (*hash, quorum.verified.clone()))
-                    .collect();
-                published.lock().await.push((height, qr_info_result.is_none(), statuses));
             }
         }
     });
