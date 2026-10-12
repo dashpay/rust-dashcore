@@ -621,7 +621,8 @@ impl Decodable for Transaction {
     ) -> Result<Self, encode::Error> {
         let version = u16::consensus_decode_from_finite_reader(r)?;
         let special_transaction_type_u16 = u16::consensus_decode(r)?;
-        let special_transaction_type = if version != 0 {
+        // Core reads the version as an `int16_t` and a payload only from version 3.
+        let special_transaction_type = if version as i16 >= 3 {
             // Keep types we don't know as raw payloads, so a block carrying a newer special
             // transaction type still decodes.
             TransactionType::try_from(special_transaction_type_u16)
@@ -629,9 +630,9 @@ impl Decodable for Transaction {
         } else if special_transaction_type_u16 == 0 {
             TransactionType::Classic
         } else {
-            // Pre-DIP-0002 (version 0) transactions are logically Classic, but at least
-            // one mainnet tx put non-zero bytes in the type slot. Preserve the raw u16
-            // so consensus_encode/txid keep matching the on-chain bytes.
+            // Below version 3 transactions are logically Classic, but at least one mainnet
+            // tx put non-zero bytes in the type slot. Preserve the raw u16 so
+            // consensus_encode/txid keep matching the on-chain bytes.
             TransactionType::ClassicalWithNonStandardVersionTypeBytes(special_transaction_type_u16)
         };
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
@@ -930,6 +931,7 @@ mod tests {
     use crate::internal_macros::hex;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::test_utils::UNASSIGNED_SPECIAL_TX_TYPE;
+    use test_case::test_case;
 
     #[test]
     fn test_is_coinbase() {
@@ -1052,21 +1054,25 @@ mod tests {
         assert_eq!(realtx2.version, 0);
     }
 
-    #[test]
-    fn test_pre_dip2_classical_with_non_standard_version_type_bytes_roundtrip() {
+    #[test_case(0; "version 0")]
+    #[test_case(1; "version 1")]
+    #[test_case(2; "version 2")]
+    #[test_case(0xffff; "negative version")]
+    fn test_pre_dip2_classical_with_non_standard_version_type_bytes_roundtrip(version: u16) {
         use crate::blockdata::transaction::special_transaction::{
             TransactionPayload, TransactionType,
         };
 
         // Same tx as `test_transaction_version`'s second case, but with the on-wire
         // `nTxType` slot set to a non-zero u16 (0x2A in little-endian => 0x002A).
-        // Pre-DIP-0002 these bytes were ignored by consensus but still part of the
+        // Below version 3 these bytes are ignored by consensus but still part of the
         // serialized transaction and therefore part of the txid pre-image. Bytes 2..4
-        // are the `nTxType` field; bytes 0..2 are version=0.
-        let tx_bytes = Vec::from_hex("00002a000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
+        // are the `nTxType` field; bytes 0..2 are the version.
+        let mut tx_bytes = Vec::from_hex("00002a000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
+        tx_bytes[0..2].copy_from_slice(&version.to_le_bytes());
         let tx: Transaction =
             deserialize(&tx_bytes).expect("decoder must accept pre-DIP-0002 raw type bytes");
-        assert_eq!(tx.version, 0);
+        assert_eq!(tx.version, version);
         assert_eq!(
             tx.tx_type(),
             TransactionType::ClassicalWithNonStandardVersionTypeBytes(0x002A),
