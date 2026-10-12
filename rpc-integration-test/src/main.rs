@@ -26,7 +26,6 @@ use dashcore_rpc::{
         SignedAmount, Transaction, TxIn, TxOut, Txid, Witness,
         consensus::encode::{deserialize, serialize},
         hashes::Hash,
-        hashes::hex::FromHex,
         secp256k1,
     },
 };
@@ -454,7 +453,7 @@ fn test_get_block(cl: &Client) {
     let tip = cl.get_best_block_hash().unwrap();
     let block = cl.get_block(&tip).unwrap();
     let hex = cl.get_block_hex(&tip).unwrap();
-    assert_eq!(block, deserialize(&Vec::<u8>::from_hex(&hex).unwrap()).unwrap());
+    assert_eq!(block, deserialize(&hex_conservative::decode_to_vec(&hex).unwrap()).unwrap());
     assert_eq!(hex, serialize(&block).to_lower_hex_string());
 
     let tip = cl.get_best_block_hash().unwrap();
@@ -712,11 +711,8 @@ fn test_get_block_filter(cl: &Client) {
 }
 
 fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
-        compressed: true,
-    };
+    let sk =
+        PrivateKey::new(secp256k1::SecretKey::new(&mut secp256k1::rand::rng()), Network::Regtest);
     let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
 
     let options = json::ListUnspentQueryOptions {
@@ -1030,33 +1026,24 @@ fn test_list_received_by_address(cl: &Client) {
 }
 
 fn test_import_public_key(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
-        compressed: true,
-    };
+    let sk =
+        PrivateKey::new(secp256k1::SecretKey::new(&mut secp256k1::rand::rng()), Network::Regtest);
     cl.import_public_key(&sk.public_key(), None, None).unwrap();
     cl.import_public_key(&sk.public_key(), Some("l"), None).unwrap();
     cl.import_public_key(&sk.public_key(), None, Some(false)).unwrap();
 }
 
 fn test_import_priv_key(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
-        compressed: true,
-    };
+    let sk =
+        PrivateKey::new(secp256k1::SecretKey::new(&mut secp256k1::rand::rng()), Network::Regtest);
     cl.import_private_key(&sk, None, None).unwrap();
     cl.import_private_key(&sk, Some("l"), None).unwrap();
     cl.import_private_key(&sk, None, Some(false)).unwrap();
 }
 
 fn test_import_address(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
-        compressed: true,
-    };
+    let sk =
+        PrivateKey::new(secp256k1::SecretKey::new(&mut secp256k1::rand::rng()), Network::Regtest);
     let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
     cl.import_address(&addr, None, None).unwrap();
     cl.import_address(&addr, Some("l"), None).unwrap();
@@ -1064,11 +1051,8 @@ fn test_import_address(cl: &Client) {
 }
 
 fn test_import_address_script(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::rng()),
-        compressed: true,
-    };
+    let sk =
+        PrivateKey::new(secp256k1::SecretKey::new(&mut secp256k1::rand::rng()), Network::Regtest);
     let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
     cl.import_address_script(&addr.script_pubkey(), None, None, None).unwrap();
     cl.import_address_script(&addr.script_pubkey(), Some("l"), None, None).unwrap();

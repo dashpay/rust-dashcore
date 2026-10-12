@@ -27,7 +27,7 @@ impl<C: RpcApi> Queryable<C> for dashcore::blockdata::block::Block {
     fn query(rpc: &C, id: &Self::Id) -> Result<Self> {
         let rpc_name = "getblock";
         let hex: String = rpc.call(rpc_name, &[serde_json::to_value(id)?, 0.into()])?;
-        let bytes: Vec<u8> = dashcore::hashes::hex::FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 }
@@ -38,7 +38,7 @@ impl<C: RpcApi> Queryable<C> for dashcore::blockdata::transaction::Transaction {
     fn query(rpc: &C, id: &Self::Id) -> Result<Self> {
         let rpc_name = "getrawtransaction";
         let hex: String = rpc.call(rpc_name, &[serde_json::to_value(id)?])?;
-        let bytes: Vec<u8> = dashcore::hashes::hex::FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 }

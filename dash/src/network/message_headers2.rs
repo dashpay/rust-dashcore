@@ -940,7 +940,6 @@ mod tests {
     #[test]
     fn test_headers2_message_capacity_overflow() {
         use crate::consensus::encode::deserialize;
-        use crate::hashes::hex::FromHex;
         use crate::network::message::RawNetworkMessage;
 
         let crash_inputs: &[&str] = &[
@@ -949,7 +948,7 @@ mod tests {
         ];
 
         for hex in crash_inputs {
-            let data = Vec::from_hex(hex).expect("valid hex");
+            let data = hex_conservative::decode_to_vec(hex).expect("valid hex");
             let result = deserialize::<RawNetworkMessage>(&data);
             assert!(result.is_err(), "should return Err, not panic");
         }

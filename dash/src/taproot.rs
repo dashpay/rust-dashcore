@@ -1765,7 +1765,6 @@ impl TapTweak for UntweakedKeyPair {
 mod test {
     use core::str::FromStr;
 
-    use hashes::hex::FromHex;
     use hashes::sha256t::Tag;
     use hashes::{Hash, HashEngine, sha256};
     use secp256k1::XOnlyPublicKey;
@@ -1863,7 +1862,8 @@ mod test {
         let out_pk = TweakedPublicKey::dangerous_assume_tweaked(out_pk);
         let script = ScriptBuf::from_hex(script_hex).unwrap();
         let control_block =
-            ControlBlock::decode(&Vec::<u8>::from_hex(control_block_hex).unwrap()).unwrap();
+            ControlBlock::decode(&hex_conservative::decode_to_vec(control_block_hex).unwrap())
+                .unwrap();
         assert_eq!(control_block_hex, control_block.serialize().to_lower_hex_string());
         assert!(control_block.verify_taproot_commitment(out_pk.to_inner(), &script));
     }
@@ -2249,7 +2249,7 @@ mod test {
                 for (i, script_ver) in leaves.iter().enumerate() {
                     let expected_leaf_hash = leaf_hashes[i].as_str().unwrap();
                     let expected_ctrl_blk = ControlBlock::decode(
-                        &Vec::<u8>::from_hex(ctrl_blks[i].as_str().unwrap()).unwrap(),
+                        &hex_conservative::decode_to_vec(ctrl_blks[i].as_str().unwrap()).unwrap(),
                     )
                     .unwrap();
 

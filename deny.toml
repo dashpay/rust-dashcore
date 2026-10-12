@@ -37,6 +37,16 @@ confidence-threshold = 0.8
 multiple-versions = "warn"
 wildcards = "allow"
 highlight = "all"
+deny = [
+    # Hex goes through `hex-conservative` 1.x.
+    { crate = "hex", reason = "use `hex-conservative` 1.x instead" },
+    { crate = "hex_lit", reason = "use `hex!` from `hex-conservative` 1.x instead" },
+    { crate = "hex-literal", reason = "use `hex!` from `hex-conservative` 1.x instead" },
+]
+skip = [
+    # Older releases still come in through upstream crates (`bitcoin_hashes` 0.14 via `bip39`),
+    { crate = "hex-conservative:<1.0.0", reason = "depended on by rust-bitcoin crates" },
+]
 
 [sources]
 unknown-registry = "deny"

@@ -1244,6 +1244,102 @@ async fn test_update_wallet_synced_height_emits_event_per_wallet() {
 }
 
 #[tokio::test]
+async fn test_truncate_above_emits_chain_truncated_per_wallet() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let wallets = BTreeSet::from([wallet_id]);
+    let funding = create_tx_paying_to(&addr, 0xcc);
+    let block = make_block(vec![funding.clone()], 0xcc, 1000);
+    manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
+
+    let mut spend = create_tx_paying_to(&addr, 0xdd);
+    spend.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+    spend.output[0].value = TX_AMOUNT - 1_000;
+    let block = make_block(vec![spend.clone()], 0xdd, 1001);
+    manager.process_block_for_wallets(&block, block.block_hash(), 101, &wallets).await;
+
+    let mut rx = manager.subscribe_events();
+    manager.truncate_above(100).expect("truncates");
+
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "one event per wallet expected, got {:?}", events);
+    match &events[0] {
+        WalletEvent::ChainTruncated {
+            wallet_id: wid,
+            height,
+            txids,
+            unconfirmed_txids,
+            restored_outpoints,
+            balance,
+            account_balances,
+        } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(*height, 100);
+            assert_eq!(txids, &vec![spend.txid()]);
+            assert!(unconfirmed_txids.is_empty());
+            assert_eq!(restored_outpoints, &vec![OutPoint::new(funding.txid(), 0)]);
+            assert_eq!(balance.total(), TX_AMOUNT);
+            assert_eq!(account_balances.values().map(|b| b.total()).sum::<u64>(), TX_AMOUNT);
+        }
+        other => panic!("expected ChainTruncated, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_truncate_above_leaves_a_wallet_behind_the_fork_as_it_is() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let wallets = BTreeSet::from([wallet_id]);
+    let funding = create_tx_paying_to(&addr, 0xcc);
+    let block = make_block(vec![funding], 0xcc, 1000);
+    manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
+    manager.update_wallet_synced_height(&wallet_id, 100);
+    let mut rx = manager.subscribe_events();
+
+    manager.truncate_above(150).expect("truncates");
+
+    assert!(drain_events(&mut rx).is_empty(), "no ChainTruncated for a wallet behind the fork");
+    let info = manager.get_wallet_info(&wallet_id).unwrap();
+    assert_eq!(info.synced_height(), 100);
+    assert_eq!(info.balance().total(), TX_AMOUNT);
+}
+
+#[tokio::test]
+async fn test_truncate_above_below_a_chain_lock_changes_no_wallet() {
+    let (mut manager, locked_id, _addr) = setup_manager_with_wallet();
+    manager.update_wallet_last_processed_height(&locked_id, 200);
+    manager.update_wallet_synced_height(&locked_id, 200);
+    manager.apply_chain_lock(ChainLock::dummy(100));
+    // Created after the ChainLock, so only `locked_id` refuses.
+    let other_id = manager
+        .create_wallet_from_mnemonic(
+            "legal winner thank year wave sausage worth useful legal winner thank yellow",
+            0,
+            key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+    manager.update_wallet_last_processed_height(&other_id, 200);
+    manager.update_wallet_synced_height(&other_id, 200);
+    let mut rx = manager.subscribe_events();
+
+    match manager.truncate_above(99) {
+        Err(WalletError::TruncateBelowChainLock {
+            wallet_id,
+            height: 99,
+            chain_locked: 100,
+        }) => assert_eq!(wallet_id, locked_id),
+        other => panic!("expected TruncateBelowChainLock, got {:?}", other),
+    }
+    assert!(drain_events(&mut rx).is_empty(), "a refused truncation emits nothing");
+    for wallet_id in [locked_id, other_id] {
+        assert_eq!(manager.get_wallet_info(&wallet_id).unwrap().synced_height(), 200);
+    }
+
+    manager.truncate_above(100).expect("truncates at the ChainLock");
+    for wallet_id in [locked_id, other_id] {
+        assert_eq!(manager.get_wallet_info(&wallet_id).unwrap().synced_height(), 100);
+    }
+}
+
+#[tokio::test]
 async fn test_update_wallet_synced_height_does_not_re_emit_when_unchanged() {
     let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
     let mut rx = manager.subscribe_events();
