@@ -29,23 +29,28 @@ use bincode::{Decode, Encode};
 use crate::blockdata::transaction::special_transaction::TransactionPayload::{
     AssetLockPayloadType, AssetUnlockPayloadType,
     ClassicalWithNonStandardVersionTypeBytesPayloadType, CoinbasePayloadType,
-    MnhfSignalPayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
-    ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType,
-    QuorumCommitmentPayloadType, UnknownPayloadType,
+    MnhfSignalPayloadType, ProviderDissolvePayloadType, ProviderRegistrationPayloadType,
+    ProviderUpdateRegistrarPayloadType, ProviderUpdateRevocationPayloadType,
+    ProviderUpdateServicePayloadType, ProviderUpdateSharePayloadType,
+    ProviderUpdateSharedRegistrarPayloadType, QuorumCommitmentPayloadType, UnknownPayloadType,
 };
 use crate::blockdata::transaction::special_transaction::TransactionType::{
     AssetLock, AssetUnlock, Classic, ClassicalWithNonStandardVersionTypeBytes, Coinbase,
-    MnhfSignal, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation,
-    ProviderUpdateService, QuorumCommitment, Unknown,
+    MnhfSignal, ProviderDissolve, ProviderRegistration, ProviderUpdateRegistrar,
+    ProviderUpdateRevocation, ProviderUpdateService, ProviderUpdateShare,
+    ProviderUpdateSharedRegistrar, QuorumCommitment, Unknown,
 };
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
 use crate::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::blockdata::transaction::special_transaction::mnhf_signal::MnhfSignalPayload;
+use crate::blockdata::transaction::special_transaction::provider_dissolve::ProviderDissolvePayload;
 use crate::blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
+use crate::blockdata::transaction::special_transaction::provider_update_share::ProviderUpdateSharePayload;
+use crate::blockdata::transaction::special_transaction::provider_update_shared_registrar::ProviderUpdateSharedRegistrarPayload;
 use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
 use crate::consensus::encode::VarInt;
 use crate::consensus::{Decodable, Encodable, encode};
@@ -56,10 +61,13 @@ pub mod asset_lock;
 pub mod asset_unlock;
 pub mod coinbase;
 pub mod mnhf_signal;
+pub mod provider_dissolve;
 pub mod provider_registration;
 pub mod provider_update_registrar;
 pub mod provider_update_revocation;
 pub mod provider_update_service;
+pub mod provider_update_share;
+pub mod provider_update_shared_registrar;
 pub mod quorum_commitment;
 
 /// Largest ECDSA signature a ProRegTx or ProUpRegTx payload is sized with before it is signed.
@@ -89,6 +97,12 @@ pub enum TransactionPayload {
     AssetLockPayloadType(AssetLockPayload),
     /// A wrapper for an Asset Unlock payload
     AssetUnlockPayloadType(AssetUnlockPayload),
+    /// A wrapper for a Masternode Dissolve payload
+    ProviderDissolvePayloadType(ProviderDissolvePayload),
+    /// A wrapper for a Masternode Update Share payload
+    ProviderUpdateSharePayloadType(ProviderUpdateSharePayload),
+    /// A wrapper for a Masternode Update Shared Registrar payload
+    ProviderUpdateSharedRegistrarPayloadType(ProviderUpdateSharedRegistrarPayload),
     /// A pseudo-payload that carries the raw `nTxType` u16 read from a pre-DIP-0002
     /// transaction (`version == 0`). Older transactions on the chain were free to put
     /// arbitrary bytes in the type slot; we keep the original value here so that
@@ -113,6 +127,9 @@ impl Encodable for TransactionPayload {
             MnhfSignalPayloadType(p) => p.consensus_encode(w),
             AssetLockPayloadType(p) => p.consensus_encode(w),
             AssetUnlockPayloadType(p) => p.consensus_encode(w),
+            ProviderDissolvePayloadType(p) => p.consensus_encode(w),
+            ProviderUpdateSharePayloadType(p) => p.consensus_encode(w),
+            ProviderUpdateSharedRegistrarPayloadType(p) => p.consensus_encode(w),
             ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => Ok(0),
             UnknownPayloadType(_, bytes) => {
                 w.write_all(bytes)?;
@@ -135,6 +152,9 @@ impl TransactionPayload {
             MnhfSignalPayloadType(_) => MnhfSignal,
             AssetLockPayloadType(_) => AssetLock,
             AssetUnlockPayloadType(_) => AssetUnlock,
+            ProviderDissolvePayloadType(_) => ProviderDissolve,
+            ProviderUpdateSharePayloadType(_) => ProviderUpdateShare,
+            ProviderUpdateSharedRegistrarPayloadType(_) => ProviderUpdateSharedRegistrar,
             ClassicalWithNonStandardVersionTypeBytesPayloadType(raw) => {
                 ClassicalWithNonStandardVersionTypeBytes(*raw)
             }
@@ -154,6 +174,9 @@ impl TransactionPayload {
             MnhfSignalPayloadType(p) => p.size(),
             AssetLockPayloadType(p) => p.size(),
             AssetUnlockPayloadType(p) => p.size(),
+            ProviderDissolvePayloadType(p) => p.size(),
+            ProviderUpdateSharePayloadType(p) => p.size(),
+            ProviderUpdateSharedRegistrarPayloadType(p) => p.size(),
             // Pre-DIP-0002 transactions have no payload section on the wire.
             ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => 0,
             UnknownPayloadType(_, bytes) => bytes.len(),
@@ -337,6 +360,13 @@ pub enum TransactionType {
     AssetLock,
     /// An Asset Unlock Transaction, used to withdraw credits from Dash Platform, by unlocking them
     AssetUnlock,
+    /// A Masternode Dissolve Transaction, used to dissolve a masternode with a shared collateral
+    ProviderDissolve,
+    /// A Masternode Update Share Transaction, used to change the reward script of a collateral share
+    ProviderUpdateShare,
+    /// A Masternode Update Shared Registrar Transaction, used by all collateral shares to change
+    /// the operator and voting keys
+    ProviderUpdateSharedRegistrar,
     /// A pre-DIP-0002 Classic transaction (`version == 0`) whose on-wire `nTxType`
     /// bytes were non-zero. The wrapped value is the original u16 read from the wire,
     /// which must be re-emitted verbatim during serialization to preserve the txid.
@@ -359,6 +389,11 @@ impl Debug for TransactionType {
             MnhfSignal => write!(f, "MNHF Signal Transaction"),
             AssetLock => write!(f, "Asset Lock Transaction"),
             AssetUnlock => write!(f, "Asset Unlock Transaction"),
+            ProviderDissolve => write!(f, "Provider Dissolve Transaction"),
+            ProviderUpdateShare => write!(f, "Provider Update Share Transaction"),
+            ProviderUpdateSharedRegistrar => {
+                write!(f, "Provider Update Shared Registrar Transaction")
+            }
             ClassicalWithNonStandardVersionTypeBytes(raw) => {
                 write!(f, "Classic Transaction (pre-DIP-0002, raw type bytes 0x{raw:04x})")
             }
@@ -380,6 +415,9 @@ impl Display for TransactionType {
             MnhfSignal => write!(f, "MNHF Signal"),
             AssetLock => write!(f, "Asset Lock"),
             AssetUnlock => write!(f, "Asset Unlock"),
+            ProviderDissolve => write!(f, "Provider Dissolve"),
+            ProviderUpdateShare => write!(f, "Provider Update Share"),
+            ProviderUpdateSharedRegistrar => write!(f, "Provider Update Shared Registrar"),
             ClassicalWithNonStandardVersionTypeBytes(raw) => {
                 write!(f, "Classic (pre-DIP-0002, raw 0x{raw:04x})")
             }
@@ -403,6 +441,9 @@ impl TryFrom<u16> for TransactionType {
             7 => Ok(MnhfSignal),
             8 => Ok(AssetLock),
             9 => Ok(AssetUnlock),
+            10 => Ok(ProviderDissolve),
+            11 => Ok(ProviderUpdateShare),
+            12 => Ok(ProviderUpdateSharedRegistrar),
             _ => Err(encode::Error::UnknownSpecialTransactionType(value)),
         }
     }
@@ -442,6 +483,9 @@ impl TransactionType {
             MnhfSignal => 7,
             AssetLock => 8,
             AssetUnlock => 9,
+            ProviderDissolve => 10,
+            ProviderUpdateShare => 11,
+            ProviderUpdateSharedRegistrar => 12,
             ClassicalWithNonStandardVersionTypeBytes(raw) => raw,
             Unknown(raw) => raw,
         }
@@ -484,6 +528,15 @@ impl TransactionType {
             MnhfSignal => Some(MnhfSignalPayloadType(MnhfSignalPayload::consensus_decode(d)?)),
             AssetLock => Some(AssetLockPayloadType(AssetLockPayload::consensus_decode(d)?)),
             AssetUnlock => Some(AssetUnlockPayloadType(AssetUnlockPayload::consensus_decode(d)?)),
+            ProviderDissolve => {
+                Some(ProviderDissolvePayloadType(ProviderDissolvePayload::consensus_decode(d)?))
+            }
+            ProviderUpdateShare => Some(ProviderUpdateSharePayloadType(
+                ProviderUpdateSharePayload::consensus_decode(d)?,
+            )),
+            ProviderUpdateSharedRegistrar => Some(ProviderUpdateSharedRegistrarPayloadType(
+                ProviderUpdateSharedRegistrarPayload::consensus_decode(d)?,
+            )),
             Unknown(raw) => Some(UnknownPayloadType(raw, Vec::<u8>::consensus_decode(d)?)),
         })
     }

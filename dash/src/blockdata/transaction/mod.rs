@@ -918,10 +918,17 @@ mod tests {
 
     use super::*;
     use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
+    use crate::blockdata::transaction::special_transaction::provider_dissolve::ProviderDissolvePayload;
+    use crate::blockdata::transaction::special_transaction::provider_registration::CompactSignature;
+    use crate::blockdata::transaction::special_transaction::provider_update_share::ProviderUpdateSharePayload;
+    use crate::blockdata::transaction::special_transaction::provider_update_shared_registrar::ProviderUpdateSharedRegistrarPayload;
+    use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::encode::{deserialize, serialize};
+    use crate::hash_types::PubkeyHash;
     use crate::internal_macros::hex;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::test_utils::UNASSIGNED_SPECIAL_TX_TYPE;
+    use test_case::test_case;
 
     #[test]
     fn test_is_coinbase() {
@@ -1155,6 +1162,44 @@ mod tests {
         let decoded: Transaction = deserialize(&bytes).expect("input-less unknown type decodes");
         assert_eq!(decoded, tx);
         assert_eq!(serialize(&decoded), bytes);
+    }
+
+    #[test_case(10, TransactionPayload::ProviderDissolvePayloadType(ProviderDissolvePayload {
+        version: 1,
+        pro_tx_hash: Txid::all_zeros(),
+        actor_index: 0,
+        signatures: vec![CompactSignature::from([1; 65])],
+    }); "ProDisTx")]
+    #[test_case(11, TransactionPayload::ProviderUpdateSharePayloadType(ProviderUpdateSharePayload {
+        version: 1,
+        pro_tx_hash: Txid::all_zeros(),
+        share_index: 0,
+        script_reward: ScriptBuf::new(),
+        inputs_hash: InputsHash::all_zeros(),
+        payload_sig: vec![1; 65],
+    }); "ProUpShareTx")]
+    #[test_case(12, TransactionPayload::ProviderUpdateSharedRegistrarPayloadType(
+        ProviderUpdateSharedRegistrarPayload {
+            version: 1,
+            pro_tx_hash: Txid::all_zeros(),
+            operator_public_key: BLSPublicKey::from([1; 48]),
+            voting_key_hash: PubkeyHash::all_zeros(),
+            inputs_hash: InputsHash::all_zeros(),
+            signatures: vec![CompactSignature::from([1; 65])],
+        }
+    ); "ProUpSharedRegTx")]
+    fn shared_masternode_types_decode_typed(tx_type: u16, payload: TransactionPayload) {
+        let tx = Transaction {
+            special_transaction_payload: Some(payload),
+            ..unknown_special_tx(vec![TxIn::default()])
+        };
+        let bytes = serialize(&tx);
+        assert_eq!(&bytes[2..4], &tx_type.to_le_bytes());
+
+        let decoded: Transaction = deserialize(&bytes).unwrap();
+        assert_eq!(decoded, tx);
+        assert_eq!(decoded.tx_type().to_u16(), tx_type);
+        assert_eq!(decoded.size(), bytes.len());
     }
 
     #[test]
