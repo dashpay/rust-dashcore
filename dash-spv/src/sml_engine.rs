@@ -958,6 +958,10 @@ pub(crate) mod test_support {
             Self::new(network, Arc::new(RwLock::new(MockHeaderStorage(heights))))
         }
 
+        pub(crate) fn headers(&self) -> Arc<RwLock<MockHeaderStorage>> {
+            self.headers.clone()
+        }
+
         pub(crate) fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
             self.headers.try_write().expect("unlocked").0.insert(block_hash, height);
         }
