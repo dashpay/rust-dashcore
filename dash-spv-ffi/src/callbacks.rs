@@ -1213,7 +1213,8 @@ impl FFIWalletEventCallbacks {
                 account_balances,
             } => {
                 if let Some(cb) = self.on_chain_truncated {
-                    let c_wallet_id = CString::new(hex::encode(wallet_id)).unwrap_or_default();
+                    let c_wallet_id =
+                        CString::new(wallet_id.to_lower_hex_string()).unwrap_or_default();
                     let raw_txids: Vec<[u8; 32]> =
                         txids.iter().map(|t| t.to_byte_array()).collect();
                     let txids_ptr = if raw_txids.is_empty() {
@@ -1258,7 +1259,7 @@ impl FFIWalletEventCallbacks {
                     );
                 } else {
                     tracing::warn!(
-                        wallet_id = %hex::encode(wallet_id),
+                        wallet_id = %wallet_id.to_lower_hex_string(),
                         height,
                         "no on_chain_truncated callback set; the consumer will keep \
                          mirroring transactions the wallet dropped after a fork"
