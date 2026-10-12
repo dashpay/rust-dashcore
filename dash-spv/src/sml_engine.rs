@@ -1958,9 +1958,6 @@ mod tests {
         tip: CoreBlockHeight,
         extra_blocks: &[CoreBlockHeight],
     ) -> TestEngine {
-        use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
-        use std::sync::Arc;
-
         let mut heights = vec![older_list, tip];
         heights.extend_from_slice(extra_blocks);
         for (_, mined, _) in quorums {
@@ -2012,8 +2009,6 @@ mod tests {
     /// newest first.
     #[tokio::test]
     async fn missing_work_block_list_requests_for_are_capped_per_update() {
-        use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
-
         let work = |mined: CoreBlockHeight| mined - QUORUM_MEMBER_LIST_OFFSET;
         let tip = 2_000_000;
         let older_list = 1_000_000;

@@ -567,6 +567,7 @@ mod tests {
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
     use crate::network::{Message, NetworkRequest, RequestSender};
+    use crate::sml_engine::test_support::quorum_entry;
     use crate::sml_engine::MasternodeListEngine;
     use crate::storage::{
         BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, StorageManager,
@@ -575,15 +576,19 @@ mod tests {
     use crate::types::HashedBlockHeader;
     use crate::{ClientConfig, SyncError};
     use dashcore::block::Header;
+    use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_qrinfo::QRInfo;
-    use dashcore::network::message_sml::MnListDiff;
+    use dashcore::network::message_sml::{GetMnListDiff, MnListDiff, QuorumCLSigObject};
     use dashcore::sml::llmq_entry_verification::{
         LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
     };
     use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
+    use dashcore::sml::masternode_list::MasternodeList;
+    use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::{BlockHash, Network, QuorumHash};
     use dashcore_hashes::Hash;
+    use std::collections::BTreeMap;
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
@@ -757,16 +762,47 @@ mod tests {
     #[test_case(SyncState::Synced, false; "once synced")]
     #[tokio::test]
     async fn a_diff_is_stored_only_until_the_sync_reaches_the_tip(state: SyncState, stored: bool) {
-        use dashcore::sml::masternode_list::MasternodeList;
-
-        let tip = 100;
-        let target = tip + 1;
         let dir = tempfile::TempDir::new().unwrap();
         let storage =
             DiskStorageManager::new(&ClientConfig::testnet().with_storage_path(dir.path()))
                 .await
                 .unwrap();
-        let headers = Header::dummy_batch(0..target + 1);
+        let (mut manager, engine, requests, _rx, hashes) =
+            manager_after_a_tip_update_request(&storage, true, |hashes| {
+                vec![MasternodeList::empty(hashes[TIP as usize], TIP)]
+            })
+            .await;
+        manager.set_state(state);
+
+        let diff = MnListDiff {
+            base_block_hash: hashes[TIP as usize],
+            block_hash: hashes[TIP as usize + 1],
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        deliver(&mut manager, &requests, diff).await;
+
+        assert!(engine.read().await.masternode_lists.contains_key(&(TIP + 1)));
+        let file = dir.path().join("masternodes").join(format!("diff_{}.dat", TIP + 1));
+        assert_eq!(file.exists(), stored);
+    }
+
+    /// A synced manager over `storage`, whose header chain runs to `TIP + 1`
+    /// and whose engine holds the lists `lists` builds from the block hashes,
+    /// once it sent the tip update from `TIP` to `TIP + 1`. With
+    /// `store_diffs`, it stores diffs in `storage`. Returns the manager, its
+    /// engine, the request channel, and the block hash at each height.
+    async fn manager_after_a_tip_update_request(
+        storage: &DiskStorageManager,
+        store_diffs: bool,
+        lists: impl FnOnce(&[BlockHash]) -> Vec<MasternodeList>,
+    ) -> (
+        MasternodesManager<PersistentBlockHeaderStorage>,
+        Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>,
+        RequestSender,
+        mpsc::UnboundedReceiver<NetworkRequest>,
+        Vec<BlockHash>,
+    ) {
+        let headers = Header::dummy_batch(0..TIP + 2);
         let block_headers = storage.block_headers();
         block_headers
             .write()
@@ -774,42 +810,26 @@ mod tests {
             .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
             .await
             .unwrap();
-        let tip_hash = headers[tip as usize].block_hash();
-        let target_hash = headers[target as usize].block_hash();
+        let hashes: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
         let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
-        engine.masternode_lists.insert(tip, MasternodeList::empty(tip_hash, tip));
+        for list in lists(&hashes) {
+            engine.masternode_lists.insert(list.known_height, list);
+        }
         let engine = Arc::new(RwLock::new(engine));
         let mut manager = MasternodesManager::new(
             block_headers,
             Arc::clone(&engine),
             Network::Regtest,
-            Some(storage.masternodes()),
+            store_diffs.then(|| storage.masternodes()),
         )
         .await;
         manager.set_state(SyncState::Synced);
-        manager.progress.update_block_header_tip_height(target);
-        let (tx, _rx) = mpsc::unbounded_channel();
+        manager.progress.update_block_header_tip_height(TIP + 1);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let requests = RequestSender::new(tx);
         manager.send_tip_mnlistdiff_update(&requests).await.unwrap();
-        manager.set_state(state);
-
-        let diff = MnListDiff {
-            base_block_hash: tip_hash,
-            block_hash: target_hash,
-            ..MnListDiff::dummy_between(0, 0)
-        };
-        let peer = "127.0.0.1:19999".parse().unwrap();
-        manager
-            .handle_message(
-                Message::new(peer, NetworkMessage::MnListDiff(Box::new(diff))),
-                &requests,
-            )
-            .await
-            .unwrap();
-
-        assert!(engine.read().await.masternode_lists.contains_key(&target));
-        let file = dir.path().join("masternodes").join(format!("diff_{target}.dat"));
-        assert_eq!(file.exists(), stored);
+        rx.try_recv().expect("the tip update is sent");
+        (manager, engine, requests, rx, hashes)
     }
 
     /// A synced manager that sent a tip update from `TIP` to `TIP + 1`, whose
@@ -826,43 +846,21 @@ mod tests {
         MnListDiff,
         Vec<BlockHash>,
     ) {
-        use dashcore::bls_sig_utils::BLSSignature;
-        use dashcore::network::message_sml::QuorumCLSigObject;
-        use dashcore::sml::masternode_list::MasternodeList;
-        use std::collections::BTreeMap;
-
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        let headers = Header::dummy_batch(0..TIP + 2);
-        let block_headers = storage.block_headers();
-        block_headers
-            .write()
-            .await
-            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
-            .await
-            .unwrap();
-        let hashes: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
-
-        let old = Arc::new(test_quorum(hashes[OLD_MINED as usize]).into());
-        let quorums = BTreeMap::from([(
-            LLMQType::LlmqtypeTest,
-            BTreeMap::from([(quorum_hash_at(&hashes, OLD_MINED), old)]),
-        )]);
-        let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
-        engine.masternode_lists.insert(OLDER, MasternodeList::empty(hashes[OLDER as usize], OLDER));
-        engine.masternode_lists.insert(
-            TIP,
-            MasternodeList::build(BTreeMap::new(), quorums, hashes[TIP as usize], TIP).build(),
-        );
-        let engine = Arc::new(RwLock::new(engine));
-        let mut manager =
-            MasternodesManager::new(block_headers, Arc::clone(&engine), Network::Regtest, None)
-                .await;
-        manager.set_state(SyncState::Synced);
-        manager.progress.update_block_header_tip_height(TIP + 1);
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let requests = RequestSender::new(tx);
-        manager.send_tip_mnlistdiff_update(&requests).await.unwrap();
-        rx.try_recv().expect("the tip update is sent");
+        let (manager, engine, requests, rx, hashes) =
+            manager_after_a_tip_update_request(&storage, false, |hashes| {
+                let old = Arc::new(test_quorum(hashes[OLD_MINED as usize]).into());
+                let quorums = BTreeMap::from([(
+                    LLMQType::LlmqtypeTest,
+                    BTreeMap::from([(quorum_hash_at(hashes, OLD_MINED), old)]),
+                )]);
+                vec![
+                    MasternodeList::empty(hashes[OLDER as usize], OLDER),
+                    MasternodeList::build(BTreeMap::new(), quorums, hashes[TIP as usize], TIP)
+                        .build(),
+                ]
+            })
+            .await;
 
         let tip_update = MnListDiff {
             base_block_hash: hashes[TIP as usize],
@@ -882,23 +880,19 @@ mod tests {
     const MINED: u32 = 96;
     const TIP: u32 = 100;
 
-    fn test_quorum(
-        mined_in: BlockHash,
-    ) -> dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry {
-        use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
-        use dashcore::hash_types::QuorumVVecHash;
-
-        dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry {
+    fn test_quorum(mined_in: BlockHash) -> QuorumEntry {
+        QuorumEntry {
             version: 1,
-            llmq_type: LLMQType::LlmqtypeTest,
-            quorum_hash: QuorumHash::from_byte_array(mined_in.to_byte_array()),
-            quorum_index: None,
             signers: vec![true; 3],
             valid_members: vec![true; 3],
             quorum_public_key: BLSPublicKey::from([1; 48]),
-            quorum_vvec_hash: QuorumVVecHash::all_zeros(),
             threshold_sig: BLSSignature::from([1; 96]),
             all_commitment_aggregated_signature: BLSSignature::from([1; 96]),
+            ..quorum_entry(
+                LLMQType::LlmqtypeTest,
+                QuorumHash::from_byte_array(mined_in.to_byte_array()),
+                None,
+            )
         }
     }
 
@@ -910,8 +904,6 @@ mod tests {
     fn next_diff_request(
         rx: &mut mpsc::UnboundedReceiver<NetworkRequest>,
     ) -> Option<(BlockHash, BlockHash)> {
-        use dashcore::network::message_sml::GetMnListDiff;
-
         match rx.try_recv() {
             Ok(NetworkRequest::SendMessage(NetworkMessage::GetMnListD(GetMnListDiff {
                 base_block_hash,
