@@ -1215,24 +1215,39 @@ mod tests {
         })
     }
 
-    fn revocation_tx(payload: Vec<u8>) -> Transaction {
-        let revocation = TransactionType::ProviderUpdateRevocation.to_u16();
+    /// The bytes of a quorum commitment payload without signers, whose LLMQ type is `llmq_type`.
+    fn quorum_commitment_bytes(llmq_type: u8) -> Vec<u8> {
+        let mut bytes = vec![1, 0, 0, 0, 0, 0, 1, 0, llmq_type];
+        bytes.extend([0; 32]); // quorum hash
+        bytes.extend([0, 0]); // no signers, no valid members
+        bytes.extend([0; 48 + 32 + 96 + 96]); // public key, vvec hash and signatures
+        bytes
+    }
+
+    fn raw_tx(tx_type: TransactionType, payload: Vec<u8>) -> Transaction {
         Transaction {
             special_transaction_payload: Some(TransactionPayload::RawPayloadType(
-                revocation, payload,
+                tx_type.to_u16(),
+                payload,
             )),
             ..unknown_special_tx(vec![TxIn::default()])
         }
     }
 
-    #[test_case::test_case(revocation_bytes(), false ; "known layout")]
-    #[test_case::test_case([revocation_bytes(), vec![0]].concat(), true ; "trailing byte")]
-    #[test_case::test_case(revocation_bytes()[..100].to_vec(), true ; "truncated")]
-    fn known_type_payload_decodes_typed_or_stays_raw(payload: Vec<u8>, raw: bool) {
-        let bytes = serialize(&revocation_tx(payload));
+    #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes(), false ; "known layout")]
+    #[test_case(TransactionType::ProviderUpdateRevocation, [revocation_bytes(), vec![0]].concat(), true ; "trailing byte")]
+    #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes()[..100].to_vec(), true ; "truncated")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(1), false ; "known llmq type")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), true ; "unknown llmq type re-encodes differently")]
+    fn known_type_payload_decodes_typed_or_stays_raw(
+        tx_type: TransactionType,
+        payload: Vec<u8>,
+        raw: bool,
+    ) {
+        let bytes = serialize(&raw_tx(tx_type, payload));
         // Fails unless the transaction consumes all the bytes.
         let decoded: Transaction = deserialize(&bytes).unwrap();
-        assert_eq!(decoded.tx_type(), TransactionType::ProviderUpdateRevocation);
+        assert_eq!(decoded.tx_type(), tx_type);
         assert_eq!(
             matches!(
                 decoded.special_transaction_payload,
@@ -1254,7 +1269,8 @@ mod tests {
     fn raw_payload_of_a_known_layout_deserializes_typed(
         round_trip: fn(&Transaction) -> Transaction,
     ) {
-        let decoded = round_trip(&revocation_tx(revocation_bytes()));
+        let decoded =
+            round_trip(&raw_tx(TransactionType::ProviderUpdateRevocation, revocation_bytes()));
         assert!(matches!(
             decoded.special_transaction_payload,
             Some(TransactionPayload::ProviderUpdateRevocationPayloadType(_))
