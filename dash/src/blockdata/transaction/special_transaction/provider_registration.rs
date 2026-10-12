@@ -1375,7 +1375,7 @@ mod tests {
 
         let decoded: ProviderRegistrationPayload =
             deserialize(&encoded).expect("deserialize zero-filled payload");
-        assert_eq!(decoded.platform_node_id, Some(crate::PlatformNodeId::from_bytes([0; 20])));
+        assert_eq!(decoded.platform_node_id, Some(crate::PlatformNodeId::from_byte_array([0; 20])));
         assert_eq!(decoded.platform_p2p_port, Some(0));
         assert_eq!(decoded.platform_http_port, Some(0));
     }
@@ -1459,7 +1459,7 @@ mod tests {
             script_payout: ScriptBuf::from(vec![5; 25]),
             inputs_hash: InputsHash::from_byte_array([6; 32]),
             signature: vec![7; 65],
-            platform_node_id: evo.then(|| PlatformNodeId::from_bytes([8; 20])),
+            platform_node_id: evo.then(|| PlatformNodeId::from_byte_array([8; 20])),
             platform_p2p_port: evo.then_some(26656),
             platform_http_port: evo.then_some(443),
             payouts: None,

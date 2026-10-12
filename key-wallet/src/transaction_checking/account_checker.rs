@@ -1073,7 +1073,7 @@ impl ManagedCoreFundsAccount {
 
                 for (address, &addr_index) in &addresses.address_index {
                     if let Payload::PubkeyHash(addr_hash) = address.payload() {
-                        if *addr_hash.as_byte_array() == platform_node_id.to_canonical_bytes() {
+                        if *addr_hash.as_byte_array() == platform_node_id.to_byte_array() {
                             // Get the address info
                             if let Some(address_info) = addresses.addresses.get(&addr_index) {
                                 return Some(AccountMatch {
@@ -1543,7 +1543,7 @@ impl crate::managed_account::ManagedCoreKeysAccount {
 
                 for (address, &addr_index) in &addresses.address_index {
                     if let Payload::PubkeyHash(addr_hash) = address.payload() {
-                        if *addr_hash.as_byte_array() == platform_node_id.to_canonical_bytes() {
+                        if *addr_hash.as_byte_array() == platform_node_id.to_byte_array() {
                             if let Some(address_info) = addresses.addresses.get(&addr_index) {
                                 return Some(AccountMatch {
                                     account_type_match:

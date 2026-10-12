@@ -430,6 +430,7 @@ pub trait ManagedAccountTrait {
                     .map_err(|_| "BLS public key was not 48 bytes")?
                     .as_scheme(BlsScheme::Modern)
                     .canonicalize()
+                    .map(BLSPublicKey::from)
                     .map_err(|_| "Failed to deserialize BLS public key")
             }
             _ => Err("This method only works for ProviderOperatorKeys accounts"),

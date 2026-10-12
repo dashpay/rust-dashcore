@@ -31,7 +31,6 @@ use crate::io::{Error, ErrorKind};
 /// The Coinbase payload is described in DIP4.
 ///
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CoinbasePayload {
     pub version: u16,
     pub height: u32,
@@ -43,6 +42,141 @@ pub struct CoinbasePayload {
     /// Merkle root over the instance hashes of the block's version 2 asset unlocks, all-zero
     /// when there are none. Present from version 4.
     pub merkle_root_asset_unlocks: Option<MerkleRootAssetUnlocks>,
+}
+
+// Same shape as the earlier derived impl, with `merkle_root_asset_unlocks` only from version 4,
+// so payloads persisted through binary serde before the field existed keep decoding.
+#[cfg(feature = "serde")]
+impl serde::Serialize for CoinbasePayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let has_asset_unlocks_root = self.version >= 4;
+        let len = if has_asset_unlocks_root {
+            8
+        } else {
+            7
+        };
+        let mut state = serializer.serialize_struct("CoinbasePayload", len)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field("height", &self.height)?;
+        state.serialize_field("merkle_root_masternode_list", &self.merkle_root_masternode_list)?;
+        state.serialize_field("merkle_root_quorums", &self.merkle_root_quorums)?;
+        state.serialize_field("best_cl_height", &self.best_cl_height)?;
+        state.serialize_field("best_cl_signature", &self.best_cl_signature)?;
+        state.serialize_field("asset_locked_amount", &self.asset_locked_amount)?;
+        if has_asset_unlocks_root {
+            state.serialize_field("merkle_root_asset_unlocks", &self.merkle_root_asset_unlocks)?;
+        }
+        state.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for CoinbasePayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use core::fmt;
+
+        use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+        const FIELDS: &[&str] = &[
+            "version",
+            "height",
+            "merkle_root_masternode_list",
+            "merkle_root_quorums",
+            "best_cl_height",
+            "best_cl_signature",
+            "asset_locked_amount",
+            "merkle_root_asset_unlocks",
+        ];
+
+        struct CoinbasePayloadVisitor;
+
+        impl<'de> Visitor<'de> for CoinbasePayloadVisitor {
+            type Value = CoinbasePayload;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a coinbase payload")
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                macro_rules! next {
+                    ($index:expr) => {
+                        seq.next_element()?
+                            .ok_or_else(|| de::Error::invalid_length($index, &self))?
+                    };
+                }
+                let version: u16 = next!(0);
+                Ok(CoinbasePayload {
+                    version,
+                    height: next!(1),
+                    merkle_root_masternode_list: next!(2),
+                    merkle_root_quorums: next!(3),
+                    best_cl_height: next!(4),
+                    best_cl_signature: next!(5),
+                    asset_locked_amount: next!(6),
+                    // Read only from version 4: earlier payloads were written without it.
+                    merkle_root_asset_unlocks: if version >= 4 {
+                        next!(7)
+                    } else {
+                        None
+                    },
+                })
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut version = None;
+                let mut height = None;
+                let mut merkle_root_masternode_list = None;
+                let mut merkle_root_quorums = None;
+                let mut best_cl_height = None;
+                let mut best_cl_signature = None;
+                let mut asset_locked_amount = None;
+                let mut merkle_root_asset_unlocks = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "version" => version = Some(map.next_value()?),
+                        "height" => height = Some(map.next_value()?),
+                        "merkle_root_masternode_list" => {
+                            merkle_root_masternode_list = Some(map.next_value()?)
+                        }
+                        "merkle_root_quorums" => merkle_root_quorums = Some(map.next_value()?),
+                        "best_cl_height" => best_cl_height = map.next_value()?,
+                        "best_cl_signature" => best_cl_signature = map.next_value()?,
+                        "asset_locked_amount" => asset_locked_amount = map.next_value()?,
+                        "merkle_root_asset_unlocks" => {
+                            merkle_root_asset_unlocks = map.next_value()?
+                        }
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                // `merkle_root_asset_unlocks` only exists from version 4, as in `visit_seq`;
+                // reject it rather than drop it silently on the next encode.
+                let version: u16 = version.ok_or_else(|| de::Error::missing_field("version"))?;
+                if version < 4 && merkle_root_asset_unlocks.is_some() {
+                    return Err(de::Error::custom(
+                        "merkle_root_asset_unlocks only exists from version 4",
+                    ));
+                }
+                Ok(CoinbasePayload {
+                    version,
+                    height: height.ok_or_else(|| de::Error::missing_field("height"))?,
+                    merkle_root_masternode_list: merkle_root_masternode_list
+                        .ok_or_else(|| de::Error::missing_field("merkle_root_masternode_list"))?,
+                    merkle_root_quorums: merkle_root_quorums
+                        .ok_or_else(|| de::Error::missing_field("merkle_root_quorums"))?,
+                    best_cl_height,
+                    best_cl_signature,
+                    asset_locked_amount,
+                    merkle_root_asset_unlocks,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("CoinbasePayload", FIELDS, CoinbasePayloadVisitor)
+    }
 }
 
 impl CoinbasePayload {
@@ -402,5 +536,95 @@ mod tests {
             merkle_root_asset_unlocks: None,
         };
         assert!(payload.consensus_encode(&mut Vec::new()).is_err());
+    }
+
+    /// The shape `CoinbasePayload` had with derived serde before version 4 existed.
+    #[cfg(feature = "serde")]
+    #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+    struct PreV4CoinbasePayload {
+        version: u16,
+        height: u32,
+        merkle_root_masternode_list: MerkleRootMasternodeList,
+        merkle_root_quorums: MerkleRootQuorums,
+        best_cl_height: Option<u32>,
+        best_cl_signature: Option<BLSSignature>,
+        asset_locked_amount: Option<u64>,
+    }
+
+    #[cfg(feature = "serde")]
+    fn v3_payloads() -> (CoinbasePayload, PreV4CoinbasePayload) {
+        let payload = CoinbasePayload {
+            version: 3,
+            height: 1000,
+            merkle_root_masternode_list: MerkleRootMasternodeList::from_byte_array([1; 32]),
+            merkle_root_quorums: MerkleRootQuorums::from_byte_array([2; 32]),
+            best_cl_height: Some(900),
+            best_cl_signature: Some(BLSSignature::from([3; 96])),
+            asset_locked_amount: Some(10000),
+            merkle_root_asset_unlocks: None,
+        };
+        let pre_v4 = PreV4CoinbasePayload {
+            version: 3,
+            height: 1000,
+            merkle_root_masternode_list: payload.merkle_root_masternode_list,
+            merkle_root_quorums: payload.merkle_root_quorums,
+            best_cl_height: Some(900),
+            best_cl_signature: Some(BLSSignature::from([3; 96])),
+            asset_locked_amount: Some(10000),
+        };
+        (payload, pre_v4)
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn binary_serde_keeps_the_pre_v4_shape_before_version_4() {
+        let (payload, pre_v4) = v3_payloads();
+        let config = bincode::config::standard();
+        let old_bytes = bincode::serde::encode_to_vec(&pre_v4, config).unwrap();
+        assert_eq!(bincode::serde::encode_to_vec(&payload, config).unwrap(), old_bytes);
+        let (decoded, read): (CoinbasePayload, usize) =
+            bincode::serde::decode_from_slice(&old_bytes, config).unwrap();
+        assert_eq!((decoded, read), (payload, old_bytes.len()));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn json_keeps_the_pre_v4_shape_before_version_4() {
+        let (payload, pre_v4) = v3_payloads();
+        let old_json = serde_json::to_value(&pre_v4).unwrap();
+        assert_eq!(serde_json::to_value(&payload).unwrap(), old_json);
+        assert_eq!(serde_json::from_value::<CoinbasePayload>(old_json).unwrap(), payload);
+    }
+
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn serde_round_trips_the_asset_unlocks_root_at_version_4() {
+        let payload = CoinbasePayload {
+            version: 4,
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::from_byte_array([0xab; 32])),
+            ..v3_payloads().0
+        };
+        let config = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(&payload, config).unwrap();
+        let (decoded, read): (CoinbasePayload, usize) =
+            bincode::serde::decode_from_slice(&bytes, config).unwrap();
+        assert_eq!((decoded, read), (payload.clone(), bytes.len()));
+
+        let json = serde_json::to_value(&payload).unwrap();
+        assert!(json.get("merkle_root_asset_unlocks").is_some());
+        assert_eq!(serde_json::from_value::<CoinbasePayload>(json).unwrap(), payload);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn json_rejects_the_asset_unlocks_root_before_version_4() {
+        let payload = CoinbasePayload {
+            version: 4,
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::from_byte_array([0xab; 32])),
+            ..v3_payloads().0
+        };
+        let mut json = serde_json::to_value(&payload).unwrap();
+        json["version"] = 3.into();
+        assert!(serde_json::from_value::<CoinbasePayload>(json).is_err());
     }
 }
