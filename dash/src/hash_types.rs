@@ -70,17 +70,47 @@ mod newtypes {
     pub use dashcore_crypto::eddsa::EddsaPkHash;
     pub use dashcore_crypto::key::{PubkeyHash, WPubkeyHash};
 
-    use core::str::FromStr;
     use std::cmp::Ordering;
 
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
-    use hashes::hex::HexToArrayError as Error;
     use hashes::{Hash, hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
+    use hex_conservative::DecodeFixedLengthBytesError as Error;
 
     use crate::alloc::string::ToString;
     use crate::prelude::String;
     use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+
+    /// Parses hex in the inner hash's display order.
+    ///
+    /// The `from_hex`/`to_hex` pairs below follow the wrapped hash, which is
+    /// not always the newtype's own `FromStr` order (see `ProTxHash`). The
+    /// inner hash's `FromStr` would report a `hex-conservative` 0.2 error, so
+    /// decode here and flip the bytes the way it would.
+    fn from_inner_hex<H: Hash<Bytes = [u8; 32]>>(s: &str) -> Result<H, Error> {
+        let mut bytes: [u8; 32] = hex_conservative::decode_to_array(s)?;
+        if H::DISPLAY_BACKWARD {
+            bytes.reverse();
+        }
+        Ok(H::from_byte_array(bytes))
+    }
+
+    /// Adds `from_hex`/`to_hex`, both in the wrapped hash's display order.
+    macro_rules! impl_inner_hex {
+        ($($newtype:ident($inner:ty)),* $(,)?) => {$(
+            impl $newtype {
+                /// Parses hex in the wrapped hash's display order.
+                pub fn from_hex(s: &str) -> Result<Self, Error> {
+                    from_inner_hex::<$inner>(s).map(Self)
+                }
+
+                /// Formats as hex in the wrapped hash's display order.
+                pub fn to_hex(&self) -> String {
+                    self.0.to_string()
+                }
+            }
+        )*};
+    }
 
     #[cfg(feature = "core-block-hash-use-x11")]
     hash_newtype! {
@@ -237,41 +267,7 @@ mod newtypes {
         }
     }
 
-    impl Txid {
-        /// Create a Txid from a string
-        pub fn from_hex(s: &str) -> Result<Txid, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a Txid to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
-
-    impl ProTxHash {
-        /// Create a ProTxHash from a string
-        pub fn from_hex(s: &str) -> Result<ProTxHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a ProTxHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
-
     impl ScoreHash {
-        /// Create a ScoreHash from a string
-        pub fn from_hex(s: &str) -> Result<ScoreHash, Error> {
-            Ok(Self(sha256::Hash::from_str(s)?))
-        }
-
-        /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-
         /// Creates a score based on the optional confirmed hash and the quorum modifier.
         ///
         /// # Arguments
@@ -296,16 +292,6 @@ mod newtypes {
     }
 
     impl QuorumOrderingHash {
-        /// Create a ScoreHash from a string
-        pub fn from_hex(s: &str) -> Result<QuorumOrderingHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-
         /// Creates an ordering hash based on the quorum and request id.
         ///
         /// # Arguments
@@ -328,29 +314,7 @@ mod newtypes {
         }
     }
 
-    impl ConfirmedHash {
-        /// Create a ConfirmedHash from a string
-        pub fn from_hex(s: &str) -> Result<ConfirmedHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
-
     impl ConfirmedHashHashedWithProRegTx {
-        /// Create a ConfirmedHash from a string
-        pub fn from_hex(s: &str) -> Result<ConfirmedHashHashedWithProRegTx, Error> {
-            Ok(Self(sha256::Hash::from_str(s)?))
-        }
-
-        /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-
         /// Hashes the members
         pub fn hash_members(pro_tx_hash: &ProTxHash, confirmed_hash: &ConfirmedHash) -> Self {
             Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
@@ -366,29 +330,16 @@ mod newtypes {
         }
     }
 
-    impl Sha256dHash {
-        /// Create a Sha256dHash from a string
-        pub fn from_hex(s: &str) -> Result<Sha256dHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
-
-    impl InputsHash {
-        /// Create an InputsHash from a string
-        pub fn from_hex(s: &str) -> Result<InputsHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert an InputsHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
+    impl_inner_hex!(
+        Txid(sha256d::Hash),
+        ProTxHash(sha256d::Hash),
+        ScoreHash(sha256::Hash),
+        QuorumOrderingHash(sha256d::Hash),
+        ConfirmedHash(sha256d::Hash),
+        ConfirmedHashHashedWithProRegTx(sha256::Hash),
+        Sha256dHash(sha256d::Hash),
+        InputsHash(sha256d::Hash),
+    );
 
     impl SpecialTransactionPayloadHash {
         /// Create a SpecialTransactionPayloadHash from a string
@@ -405,8 +356,28 @@ mod tests {
     use super::*;
     use crate::consensus::{deserialize, serialize};
     use dashcore_crypto::eddsa::EddsaPkBytes;
+    use hashes::{sha256, sha256d};
 
     use serde_derive::{Deserialize, Serialize};
+
+    #[test]
+    fn from_hex_follows_the_inner_hash() {
+        let s = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let d = sha256d::Hash::from_str(s).unwrap();
+        let single = sha256::Hash::from_str(s).unwrap();
+
+        assert_eq!(Txid::from_hex(s).unwrap(), Txid::from_raw_hash(d));
+        assert_eq!(ProTxHash::from_hex(s).unwrap(), ProTxHash::from_raw_hash(d));
+        assert_eq!(ScoreHash::from_hex(s).unwrap(), ScoreHash::from_raw_hash(single));
+
+        // `ProTxHash` displays forward, so its `FromStr` reads the other way
+        // round.
+        assert_ne!(ProTxHash::from_hex(s).unwrap(), ProTxHash::from_str(s).unwrap());
+        assert_eq!(ProTxHash::from_hex(s).unwrap().to_hex(), s);
+
+        assert!(Txid::from_hex(&s[2..]).is_err());
+        assert!(Txid::from_hex(&s.replace('1', "g")).is_err());
+    }
 
     #[test]
     fn consensus_round_trip() {

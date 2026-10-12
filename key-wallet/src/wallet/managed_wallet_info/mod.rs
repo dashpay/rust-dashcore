@@ -74,17 +74,17 @@ pub struct ManagedWalletInfo {
     ///
     /// Membership is bounded-permanent: an entry is retained until its spend
     /// height is provably final, then evicted by
-    /// [`Self::prune_finalized_observed_spends`]. Until then it is only ever
-    /// added, never removed, and reorg rollback does NOT retract it — treating a
-    /// coin as spendable again after a spend was observed is the failure this
-    /// set exists to prevent. Only spends seen in a block (`InBlock` /
-    /// `InChainLockedBlock`) are recorded; mempool-context spends are never
-    /// recorded, so an unconfirmed spend can never wrongly invalidate a coin.
+    /// [`Self::prune_finalized_observed_spends`], or dropped by `truncate_above`
+    /// when a fork replaces the block that spent it: the wallet then scans the
+    /// new branch from the fork and observes again any spend it still contains.
+    /// Only spends seen in a block (`InBlock` / `InChainLockedBlock`) are
+    /// recorded; mempool-context spends are never recorded, so an unconfirmed
+    /// spend can never wrongly invalidate a coin.
     ///
     /// # Bounded permanence
     ///
-    /// An entry `(outpoint, height)` is removed only when `height` is at or
-    /// below both `synced_height` and the highest chainlock applied or noted
+    /// An entry `(outpoint, height)` is pruned as final only when `height` is at
+    /// or below both `synced_height` and the highest chainlock applied or noted
     /// (`note_chain_lock_height`) — the finality boundary. At that boundary the
     /// spend is chain-locked (it can never be reorged out) and any funding
     /// transaction for the outpoint has been delivered (BIP158 filters have no

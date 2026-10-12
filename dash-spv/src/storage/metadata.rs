@@ -7,6 +7,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use dashcore::prelude::CoreBlockHeight;
+use serde::de::DeserializeOwned;
 
 /// Metadata key for persisting the best known peer height.
 const LAST_TARGET_HEIGHT_KEY: &str = "last_target_height";
@@ -15,7 +16,11 @@ const LAST_TARGET_HEIGHT_KEY: &str = "last_target_height";
 pub trait MetadataStorage: Send + Sync + 'static {
     async fn store_metadata(&mut self, key: &str, value: &[u8]) -> StorageResult<()>;
 
-    async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>>;
+    /// The JSON value stored under `key`, `None` when nothing is.
+    async fn load_metadata<T: DeserializeOwned + Send>(
+        &self,
+        key: &str,
+    ) -> StorageResult<Option<T>>;
     /// Persist the last target height to metadata storage.
     async fn store_last_target_height(&mut self, height: CoreBlockHeight) -> StorageResult<()>;
     /// Load the last target height from metadata storage.
@@ -57,7 +62,10 @@ impl MetadataStorage for PersistentMetadataStorage {
         Ok(())
     }
 
-    async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
+    async fn load_metadata<T: DeserializeOwned + Send>(
+        &self,
+        key: &str,
+    ) -> StorageResult<Option<T>> {
         let path = self.storage_path.join(Self::FOLDER_NAME).join(format!("{key}.dat"));
 
         if !path.exists() {
@@ -65,7 +73,9 @@ impl MetadataStorage for PersistentMetadataStorage {
         }
 
         let data = tokio::fs::read(path).await?;
-        Ok(Some(data))
+        serde_json::from_slice(&data).map(Some).map_err(|e| {
+            StorageError::Serialization(format!("Failed to deserialize metadata {key}: {e}"))
+        })
     }
 
     /// Persist the last target height to metadata storage.
@@ -83,27 +93,19 @@ impl MetadataStorage for PersistentMetadataStorage {
     /// Load the last target height from metadata storage. Used by the block headers manager to
     /// restore progress after restart.
     async fn load_last_target_height(&self) -> StorageResult<CoreBlockHeight> {
-        match self.load_metadata(LAST_TARGET_HEIGHT_KEY).await {
-            Ok(Some(bytes)) => match serde_json::from_slice::<CoreBlockHeight>(&bytes) {
-                Ok(last_target_height) => {
-                    tracing::debug!("Restored last target height {}", last_target_height);
-                    Ok(last_target_height)
-                }
-                Err(e) => {
-                    let error = format!("Failed to deserialize last target height: {}", e);
-                    tracing::warn!(error);
-                    Err(StorageError::Serialization(error))
-                }
-            },
+        match self.load_metadata::<CoreBlockHeight>(LAST_TARGET_HEIGHT_KEY).await {
+            Ok(Some(last_target_height)) => {
+                tracing::debug!("Restored last target height {}", last_target_height);
+                Ok(last_target_height)
+            }
             Ok(None) => {
                 let error = "No last target height found (fresh start)".to_string();
                 tracing::debug!(error);
                 Err(StorageError::NotFound(error))
             }
             Err(e) => {
-                let error = format!("Failed to load last target height: {}", e);
-                tracing::warn!(error);
-                Err(StorageError::Corruption(error))
+                tracing::warn!("Failed to load last target height: {}", e);
+                Err(e)
             }
         }
     }

@@ -15,7 +15,7 @@ use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
-use crate::{Network, Utxo, Wallet, WalletCoreBalance};
+use crate::{Error, Network, Utxo, Wallet, WalletCoreBalance};
 use dashcore::address::Payload;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -43,6 +43,19 @@ pub struct ApplyChainLockOutcome {
     /// call. `false` when the incoming chainlock's height did not
     /// exceed the already-stored chainlock's height.
     pub metadata_advanced: bool,
+}
+
+/// What [`WalletInfoInterface::truncate_above`] changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Truncation {
+    /// Transactions removed: they were recorded in blocks above the height.
+    pub txids: Vec<Txid>,
+    /// InstantSend-locked transactions recorded in blocks above the height,
+    /// kept as unconfirmed: the network mines them again, so the coins they
+    /// spent stay spent.
+    pub unconfirmed_txids: Vec<Txid>,
+    /// Coins the removed transactions spent, unspent again.
+    pub restored_outpoints: Vec<OutPoint>,
 }
 
 /// Trait that wallet info types must implement to work with WalletManager
@@ -254,6 +267,16 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Record that the durable wallet sync checkpoint has advanced to `current_height`.
     fn update_synced_height(&mut self, current_height: u32);
+
+    /// Drop what the wallet recorded from blocks above `height`, as if they were
+    /// never processed: their transactions, the UTXOs they created, the spends
+    /// observed in them, and the sync heights past `height`. The coins those
+    /// transactions spent are unspent again. Used when a fork replaces the chain
+    /// above `height`.
+    ///
+    /// Fails with [`Error::TruncateBelowChainLock`] and changes nothing when
+    /// `height` is below the applied ChainLock, whose blocks are final.
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<Truncation, Error>;
 
     /// Records whose coinbase maturity threshold lies in
     /// `(old_height, new_height]`, i.e. coinbase records that just matured
@@ -543,6 +566,65 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // A newly committed checkpoint can lift the finality boundary when the
         // chainlock was already ahead of the old synced_height.
         self.prune_finalized_observed_spends();
+    }
+
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<Truncation, Error> {
+        if let Some(chain_lock) =
+            self.last_applied_chain_lock().filter(|chain_lock| height < chain_lock.block_height)
+        {
+            return Err(Error::TruncateBelowChainLock {
+                height,
+                chain_locked: chain_lock.block_height,
+            });
+        }
+
+        let dropped_spends: BTreeSet<OutPoint> = self
+            .observed_spent_outpoints
+            .iter()
+            .filter(|(_, spent_at)| **spent_at > height)
+            .map(|(outpoint, _)| *outpoint)
+            .collect();
+        self.observed_spent_outpoints.retain(|outpoint, _| !dropped_spends.contains(outpoint));
+
+        let mut txids = BTreeSet::new();
+        let mut unconfirmed_txids = BTreeSet::new();
+        let mut restored_outpoints = Vec::new();
+        for account in self.accounts.all_accounts_mut() {
+            match account {
+                ManagedAccountRefMut::Funds(funds) => {
+                    let truncation =
+                        funds.truncate_above(height, &dropped_spends, &self.instant_send_locks);
+                    txids.extend(truncation.txids);
+                    unconfirmed_txids.extend(truncation.unconfirmed_txids);
+                    restored_outpoints.extend(truncation.restored_outpoints);
+                }
+                ManagedAccountRefMut::Keys(keys) => {
+                    keys.transactions_mut().retain(|txid, record| {
+                        if record.height().is_none_or(|block| block <= height) {
+                            return true;
+                        }
+                        if self.instant_send_locks.contains(txid) {
+                            record.update_context(TransactionContext::Mempool);
+                            unconfirmed_txids.insert(*txid);
+                            return true;
+                        }
+                        txids.insert(*txid);
+                        false
+                    });
+                }
+            }
+        }
+
+        self.metadata.synced_height = self.metadata.synced_height.min(height);
+        self.metadata.last_processed_height = self.metadata.last_processed_height.min(height);
+        self.update_balance();
+
+        restored_outpoints.sort_unstable();
+        Ok(Truncation {
+            txids: txids.into_iter().collect(),
+            unconfirmed_txids: unconfirmed_txids.into_iter().collect(),
+            restored_outpoints,
+        })
     }
 
     fn matured_coinbase_records(

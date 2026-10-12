@@ -3,12 +3,13 @@
 use core::convert::TryInto;
 
 use anyhow::{anyhow, bail};
-use hashes::{Hash, ripemd160, sha256, sha256d};
+use hashes::{Hash, hash160, sha256d};
 
 use crate::PublicKey as ECDSAPublicKey;
 use crate::prelude::Vec;
-use crate::secp256k1::ecdsa::{RecoverableSignature, RecoveryId};
+use crate::secp256k1::ecdsa::RecoverableSignature;
 use crate::secp256k1::{Message, SecretKey};
+use crate::sign_message::MessageSignature;
 
 /// verifies the ECDSA signature
 /// The provided signature must be recoverable. Which means: it must contain the recovery byte as a prefix
@@ -21,7 +22,7 @@ pub fn verify_data_signature(
 
     let msg =
         Message::from_digest(data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?);
-    let sig: RecoverableSignature = RecoverableSignature::from_compact_signature(signature)?;
+    let sig = MessageSignature::from_slice(signature)?.signature;
 
     let pub_key = ECDSAPublicKey::from_slice(public_key).map_err(anyhow::Error::msg)?;
 
@@ -36,16 +37,14 @@ pub fn verify_hash_signature(
     data_signature: &[u8],
     public_key_id: &[u8],
 ) -> Result<(), anyhow::Error> {
-    let signature: RecoverableSignature =
-        RecoverableSignature::from_compact_signature(data_signature)?;
+    let signature = MessageSignature::from_slice(data_signature)?.signature;
 
     let msg =
         Message::from_digest(data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?);
     let recovered_public_key = signature.recover(msg).map_err(anyhow::Error::msg)?;
 
-    let recovered_compressed_public_key = recovered_public_key.serialize();
-    let hash_recovered_key = ripemd160_sha256(&recovered_compressed_public_key);
-    let are_equal = public_key_id == hash_recovered_key;
+    let hash_recovered_key = ECDSAPublicKey::new(recovered_public_key).pubkey_hash();
+    let are_equal = public_key_id == hash_recovered_key.as_byte_array();
 
     if are_equal {
         Ok(())
@@ -71,58 +70,9 @@ pub fn sign_hash(data_hash: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyho
     let msg =
         Message::from_digest(data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?);
 
-    let signature = RecoverableSignature::sign_ecdsa_recoverable(msg, &pk)
-        // TODO the compression flag should be obtained from the private key type
-        .to_compact_signature(true);
-    Ok(signature)
-}
-
-/// converts the signature from/to compact format. Compact format is when the signature
-/// is prefixed by the recovery byte
-pub trait CompactSignature
-where
-    Self: Sized,
-{
-    /// Converts the Signature with Recovery byte to the compact format where
-    /// the first byte of signature is occupied by the recovery byte
-    fn to_compact_signature(&self, is_compressed: bool) -> [u8; 65];
-    /// Creates the Self from compacted version of signature
-    fn from_compact_signature(signature: impl AsRef<[u8]>) -> Result<Self, anyhow::Error>;
-}
-
-impl CompactSignature for RecoverableSignature {
-    fn from_compact_signature(signature: impl AsRef<[u8]>) -> Result<Self, anyhow::Error> {
-        if signature.as_ref().len() != 65 {
-            bail!("the signature must be 65 bytes long")
-        }
-
-        let recovery_byte = signature.as_ref()[0];
-        let number = u8::from_be(recovery_byte) as i32;
-        let mut i = number - 27 - 4;
-        if i < 0 {
-            i += 4;
-        }
-        if !((i == 0) || (i == 1) || (i == 2) || (i == 3)) {
-            bail!("the recovery number must be between 0..4, got: '{}'", i);
-        }
-
-        RecoverableSignature::from_compact(
-            &signature.as_ref()[1..],
-            RecoveryId::try_from(i).unwrap(),
-        )
-        .map_err(anyhow::Error::msg)
-    }
-
-    fn to_compact_signature(&self, is_compressed: bool) -> [u8; 65] {
-        let (recovery_byte, signature) = self.serialize_compact();
-        let mut val = i32::from(recovery_byte.to_u8()) + 27 + 4;
-        if !is_compressed {
-            val -= 4;
-        }
-        let prefix = val.to_le_bytes()[0];
-        let compact_signature = [&[prefix], signature.as_slice()].concat();
-        compact_signature.try_into().unwrap()
-    }
+    let signature = RecoverableSignature::sign_ecdsa_recoverable(msg, &pk);
+    // TODO the compression flag should be obtained from the private key type
+    Ok(MessageSignature::new(signature, true).serialize())
 }
 
 /// calculates double sha256 on data
@@ -132,8 +82,7 @@ pub fn double_sha(payload: impl AsRef<[u8]>) -> Vec<u8> {
 
 /// calculates the RIPEMD169(SHA256(data))
 pub fn ripemd160_sha256(data: &[u8]) -> Vec<u8> {
-    let hash = sha256::Hash::hash(data).to_byte_array();
-    ripemd160::Hash::hash(&hash).to_byte_array().to_vec()
+    hash160::Hash::hash(data).to_byte_array().to_vec()
 }
 
 #[cfg(test)]
@@ -276,6 +225,6 @@ mod test {
         let validation_result =
             verify_data_signature(&data, &unrecoverable_signature_bytes, &k.public_key_compressed);
 
-        assert_error_contains!(validation_result, "the signature must be 65 bytes long")
+        assert_error_contains!(validation_result, "length not 65 bytes")
     }
 }

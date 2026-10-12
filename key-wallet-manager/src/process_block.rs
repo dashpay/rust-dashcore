@@ -1,12 +1,12 @@
 use crate::events::{diff_account_balances, project_derived_addresses, DerivedAddress};
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
-use crate::{WalletEvent, WalletId, WalletManager};
+use crate::{WalletError, WalletEvent, WalletId, WalletManager};
 use async_trait::async_trait;
-use core::fmt::Write as _;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, BlockHash, ScriptBuf, Transaction};
+use hex_conservative::DisplayHex;
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
@@ -388,6 +388,44 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         }
     }
 
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<(), WalletError> {
+        // Every wallet is checked first, so a refused truncation changes none.
+        for (wallet_id, info) in &self.wallet_infos {
+            if let Some(chain_lock) =
+                info.last_applied_chain_lock().filter(|chain_lock| height < chain_lock.block_height)
+            {
+                return Err(WalletError::TruncateBelowChainLock {
+                    wallet_id: *wallet_id,
+                    height,
+                    chain_locked: chain_lock.block_height,
+                });
+            }
+        }
+
+        let mut events = Vec::new();
+        for (wallet_id, info) in self.wallet_infos.iter_mut() {
+            // A wallet that processed no block above `height` has nothing to drop.
+            if info.last_processed_height() <= height {
+                continue;
+            }
+            let prior = info.account_balances();
+            let truncation = info.truncate_above(height)?;
+            events.push(WalletEvent::ChainTruncated {
+                wallet_id: *wallet_id,
+                height,
+                txids: truncation.txids,
+                unconfirmed_txids: truncation.unconfirmed_txids,
+                restored_outpoints: truncation.restored_outpoints,
+                balance: info.balance(),
+                account_balances: diff_account_balances(&prior, &info.account_balances()),
+            });
+        }
+        for event in events {
+            self.emit_event(event);
+        }
+        Ok(())
+    }
+
     fn update_wallet_last_processed_height(
         &mut self,
         wallet_id: &WalletId,
@@ -494,10 +532,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         for (wallet_id, info) in &self.wallet_infos {
             let name = info.name().unwrap_or("unnamed");
 
-            let mut wallet_id_hex = String::with_capacity(wallet_id.len() * 2);
-            for byte in wallet_id {
-                let _ = write!(&mut wallet_id_hex, "{:02x}", byte);
-            }
+            let wallet_id_hex = wallet_id.to_lower_hex_string();
 
             let script_count = info.monitored_addresses().len();
             let summary = format!("{} scripts", script_count);
