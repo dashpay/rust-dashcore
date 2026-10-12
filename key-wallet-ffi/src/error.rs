@@ -256,6 +256,9 @@ impl From<key_wallet::Error> for FFIError {
             | Error::NoKeySource
             | Error::KeylessWalletRequiresAccountKey {
                 ..
+            }
+            | Error::TruncateBelowChainLock {
+                ..
             } => FFIErrorCode::InvalidState,
             Error::Bip32(_)
             | Error::Slip10(_)
@@ -305,7 +308,10 @@ impl From<key_wallet_manager::WalletError> for FFIError {
             WalletError::InvalidNetwork => FFIErrorCode::InvalidNetwork,
             WalletError::InvalidParameter(_) => FFIErrorCode::InvalidInput,
             WalletError::TransactionBuild(_) => FFIErrorCode::InvalidTransaction,
-            WalletError::InsufficientFunds => FFIErrorCode::InvalidState,
+            WalletError::InsufficientFunds
+            | WalletError::TruncateBelowChainLock {
+                ..
+            } => FFIErrorCode::InvalidState,
         };
 
         FFIError {

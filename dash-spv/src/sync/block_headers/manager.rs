@@ -16,11 +16,15 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip, MetadataStorage};
 use crate::sync::block_headers::HeadersPipeline;
-use crate::sync::{BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState};
+use crate::sync::{
+    BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState,
+    BEST_CHAINLOCK_METADATA_STORAGE_KEY,
+};
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
 #[cfg(test)]
 use dashcore::block::Header;
+use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::BlockHash;
 use tokio::sync::RwLock;
@@ -181,7 +185,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         Ok(events)
     }
 
-    /// Height where `headers` branch off the stored chain below its tip, if they do.
+    /// Height where `headers` branch off the stored chain below its tip, if they
+    /// do. A branch off below the best ChainLock is not followed: the blocks it
+    /// locks are final.
     async fn fork_height(&self, headers: &[HashedBlockHeader]) -> SyncResult<Option<u32>> {
         let storage = self.header_storage.read().await;
 
@@ -193,8 +199,27 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 
             let parent = storage.get_header_height_by_hash(&header.header().prev_blockhash).await?;
             let tip = storage.get_tip_height().await;
+            let Some(fork_height) = parent.filter(|&parent| tip.is_some_and(|tip| parent < tip))
+            else {
+                return Ok(None);
+            };
 
-            return Ok(parent.filter(|&parent| tip.is_some_and(|tip| parent < tip)));
+            let chain_lock = self
+                .metadata_storage
+                .read()
+                .await
+                .load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY)
+                .await?;
+            if let Some(chain_lock) = chain_lock.filter(|cl| fork_height < cl.block_height) {
+                tracing::warn!(
+                    "Ignoring a fork at height {}, below the ChainLock at {}",
+                    fork_height,
+                    chain_lock.block_height
+                );
+                return Ok(None);
+            }
+
+            return Ok(Some(fork_height));
         }
 
         Ok(None)
@@ -335,6 +360,7 @@ mod tests {
     use crate::sync::block_headers::segment_state::SegmentState;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
     use dashcore::network::message::NetworkMessage;
+    use test_case::test_case;
     use tokio::sync::mpsc::unbounded_channel;
 
     type TestBlockHeadersManager =
@@ -358,6 +384,45 @@ mod tests {
         BlockHeadersManager::new(storage.block_headers(), storage.metadata(), checkpoint_manager)
             .await
             .expect("Failed to create BlockHeadersManager")
+    }
+
+    #[test_case(None, 5, Some(5); "no ChainLock")]
+    #[test_case(Some(6), 5, None; "below the ChainLock")]
+    #[test_case(Some(5), 5, Some(5); "at the ChainLock")]
+    #[test_case(Some(3), 5, Some(5); "above the ChainLock")]
+    #[tokio::test]
+    async fn a_branch_off_below_the_best_chain_lock_is_no_fork(
+        chain_locked: Option<u32>,
+        branch_off: u32,
+        expected: Option<u32>,
+    ) {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let stored = Header::dummy_batch(0..10);
+        storage
+            .store_headers(&stored.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        if let Some(height) = chain_locked {
+            let bytes = serde_json::to_vec(&ChainLock::dummy(height)).unwrap();
+            storage.store_metadata(BEST_CHAINLOCK_METADATA_STORAGE_KEY, &bytes).await.unwrap();
+        }
+        let manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+        )
+        .await
+        .unwrap();
+
+        let branch = Header {
+            prev_blockhash: stored[branch_off as usize].block_hash(),
+            ..Header::dummy(1_000)
+        };
+
+        assert_eq!(
+            manager.fork_height(&[HashedBlockHeader::from(&branch)]).await.unwrap(),
+            expected
+        );
     }
 
     /// Create a manager in synced state with an initialized pipeline.
