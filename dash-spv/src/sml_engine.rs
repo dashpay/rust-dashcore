@@ -237,11 +237,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// A retired quorum type is never validated, so it needs none.
     pub async fn missing_work_block_list_requests(&self) -> Vec<(BlockHash, BlockHash)> {
         let work_heights = self.work_heights_awaiting_validation(|_, _| true).await;
-        self.work_block_list_requests(work_heights.into_keys())
-            .await
-            .into_iter()
-            .map(|(_, base, target)| (base, target))
-            .collect()
+        self.work_block_list_requests(work_heights.into_keys()).await
     }
 
     /// [`Self::missing_work_block_list_requests`] for only the quorums `diff`
@@ -289,11 +285,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
         work_heights.retain(|_, quorums| !quorums.is_empty());
 
-        self.work_block_list_requests(work_heights.into_keys())
-            .await
-            .into_iter()
-            .map(|(_, base, target)| (base, target))
-            .collect()
+        self.work_block_list_requests(work_heights.into_keys()).await
     }
 
     /// The work heights of the newest list's non-rotating quorums still to
@@ -334,13 +326,13 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         work_heights
     }
 
-    /// The `(height, base, target)` diffs that bring the lists at
+    /// The `(base, target)` diffs that bring the lists at
     /// `work_heights` the engine lacks, each from the nearest lower list it
     /// holds.
     async fn work_block_list_requests(
         &self,
         work_heights: impl IntoIterator<Item = CoreBlockHeight>,
-    ) -> Vec<(CoreBlockHeight, BlockHash, BlockHash)> {
+    ) -> Vec<(BlockHash, BlockHash)> {
         let mut requests = Vec::new();
         for height in work_heights {
             if self.masternode_lists.contains_key(&height) {
@@ -355,7 +347,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 .range(..height)
                 .next_back()
                 .map_or(BlockHash::all_zeros(), |(_, list)| list.block_hash);
-            requests.push((height, base, target));
+            requests.push((base, target));
         }
         requests
     }
