@@ -13,7 +13,7 @@ use dashcore::hash_types::ChainLockHash;
 use std::collections::HashSet;
 use tokio::sync::RwLock;
 
-use crate::error::SyncResult;
+use crate::error::{SyncResult, ValidationResult};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::{ChainLockProgress, SyncEvent, BEST_CHAINLOCK_METADATA_STORAGE_KEY};
 use crate::validation::{ChainLockValidator, Validator};
@@ -47,6 +47,8 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// not been stored yet. Re-validated on every masternode state update and
     /// every header batch (see [`Self::revalidate_pending`]).
     pending_validation: Option<ChainLock>,
+    /// Whether the signature of `pending_validation` verified.
+    pending_verified: bool,
 }
 
 /// How a ChainLock's block hash compares with the stored header at its height.
@@ -74,6 +76,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             requested_chainlocks: HashSet::new(),
             masternode_ready: false,
             pending_validation: None,
+            pending_verified: false,
         };
 
         // TODO: Move load_best_chainlock() and save_best_chainlock() to MetadataStorage trait.
@@ -126,14 +129,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             return None;
         }
 
-        let engine = self.masternode_engine.read().await;
-        let (before, after) = engine.masternode_lists_around_height(pending.signing_height());
-        let validated = ChainLockValidator::new(engine.network().chain_locks_type(), before, after)
-            .validate(&pending)
-            .is_ok();
-        drop(engine);
+        let validated = self.verify_signature(&pending).await.is_ok();
         if validated && header == HeaderMatch::Unknown {
-            self.pending_validation = Some(pending);
+            self.defer(&pending, true);
             return None;
         }
         if validated {
@@ -145,11 +143,34 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         }
 
         if self.masternode_lists_lag(&pending).await {
-            self.pending_validation = Some(pending);
+            self.defer(&pending, false);
         } else {
             self.progress.add_invalid(1);
         }
         None
+    }
+
+    /// Caches `chainlock` for a later retry in place of a lower one. One whose signature
+    /// verified always takes the place of one whose signature did not, and never the reverse,
+    /// so an unverified ChainLock can't evict a genuine one waiting for its header.
+    fn defer(&mut self, chainlock: &ChainLock, verified: bool) {
+        let replace = match &self.pending_validation {
+            None => true,
+            Some(_) if verified != self.pending_verified => verified,
+            Some(existing) => chainlock.block_height > existing.block_height,
+        };
+        if replace {
+            self.pending_validation = Some(chainlock.clone());
+            self.pending_verified = verified;
+        }
+    }
+
+    /// Verifies the signature of `chainlock` against the masternode lists around its height.
+    async fn verify_signature(&self, chainlock: &ChainLock) -> ValidationResult<()> {
+        let engine = self.masternode_engine.read().await;
+        let (before, after) = engine.masternode_lists_around_height(chainlock.signing_height());
+        ChainLockValidator::new(engine.network().chain_locks_type(), before, after)
+            .validate(chainlock)
     }
 
     /// Whether the engine's newest masternode list is below the chainlock's
@@ -192,82 +213,52 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             return Ok(vec![]);
         }
 
-        // Only validate if masternode sync is complete. Cache the
-        // highest pre-ready chainlock so the masternode-ready
-        // transition can retry validation rather than discarding it
-        // (`on_masternode_ready`).
-        if !self.masternode_ready {
-            tracing::debug!(
-                "Caching ChainLock at height {} for validation once masternode sync completes",
-                height
-            );
-            let replace = self
-                .pending_validation
-                .as_ref()
-                .is_none_or(|existing| height > existing.block_height);
-            if replace {
-                self.pending_validation = Some(chainlock.clone());
-            }
-            return Ok(vec![SyncEvent::ChainLockReceived {
-                chain_lock: chainlock.clone(),
-                validated: false,
-            }]);
-        }
+        // Only validate once masternode sync is complete; until then the
+        // chainlock is cached for the retry `on_masternode_ready` makes.
+        let validated = self.masternode_ready
+            && match self.verify_signature(chainlock).await {
+                Ok(()) => {
+                    tracing::info!("ChainLock signature verified for height {}", height);
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("{}", e);
+                    false
+                }
+            };
+        let accepted = validated && header == HeaderMatch::Matches;
 
-        // Validate with masternode engine
-        let engine = self.masternode_engine.read().await;
-        let (before, after) = engine.masternode_lists_around_height(chainlock.signing_height());
-        let result = ChainLockValidator::new(engine.network().chain_locks_type(), before, after)
-            .validate(chainlock);
-        drop(engine);
-        let validated = match result {
-            Ok(()) => {
-                tracing::info!("ChainLock signature verified for height {}", height);
-                true
-            }
-            Err(e) => {
-                tracing::warn!("{}", e);
-                false
-            }
-        };
-
-        if validated && header == HeaderMatch::Unknown {
-            // A genuine signature does not make it ours: keep it pending until
-            // the header arrives and its hash can be checked.
-            tracing::debug!("Deferring ChainLock at height {} until its header is stored", height);
-            let replace = self
-                .pending_validation
-                .as_ref()
-                .is_none_or(|existing| height > existing.block_height);
-            if replace {
-                self.pending_validation = Some(chainlock.clone());
-            }
-            return Ok(vec![SyncEvent::ChainLockReceived {
-                chain_lock: chainlock.clone(),
-                validated: false,
-            }]);
-        }
-
-        if validated {
+        if accepted {
             self.progress.add_valid(1);
             self.progress.update_best_validated_height(height);
 
             // Update best ChainLock and persist to storage
             self.best_chainlock = Some(chainlock.clone());
             self.save_best_chainlock().await;
+        } else if validated {
+            // A genuine signature does not make it ours: keep it pending until
+            // the header arrives and its hash can be checked.
+            tracing::debug!("Deferring ChainLock at height {} until its header is stored", height);
+            self.defer(chainlock, true);
+        } else if !self.masternode_ready {
+            tracing::debug!(
+                "Caching ChainLock at height {} for validation once masternode sync completes",
+                height
+            );
+            self.defer(chainlock, false);
         } else if self.masternode_lists_lag(chainlock).await {
             tracing::debug!(
                 "Deferring ChainLock at height {} until masternode lists reach it",
                 height
             );
-            self.pending_validation = Some(chainlock.clone());
+            self.defer(chainlock, false);
         } else {
             self.progress.add_invalid(1);
         }
 
         Ok(vec![SyncEvent::ChainLockReceived {
             chain_lock: chainlock.clone(),
-            validated,
+            validated: accepted,
         }])
     }
 
@@ -353,7 +344,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for ChainLockMan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::MessageType;
+    use crate::network::{MessageType, RequestSender};
+    use crate::sml_engine::test_support::TestEngine;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
@@ -364,6 +356,7 @@ mod tests {
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::BlockHash;
     use test_case::test_case;
+    use tokio::sync::mpsc::unbounded_channel;
 
     type TestChainLockManager =
         ChainLockManager<PersistentBlockHeaderStorage, PersistentMetadataStorage>;
@@ -409,10 +402,6 @@ mod tests {
     /// sync cycle after reconnect, so dropping it here is safe.
     #[tokio::test]
     async fn test_handle_sync_event_drops_masternode_state_updated_in_waiting_for_connections() {
-        use crate::network::RequestSender;
-        use crate::sync::SyncEvent;
-        use tokio::sync::mpsc::unbounded_channel;
-
         let mut manager = create_test_manager().await;
         manager.set_state(SyncState::WaitingForConnections);
 
@@ -548,9 +537,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_deferred_chainlock_is_rejected_once_lists_reach_it() {
-        use crate::network::RequestSender;
-        use tokio::sync::mpsc::unbounded_channel;
-
         let mut manager = create_test_manager().await;
         manager
             .masternode_engine
@@ -604,15 +590,13 @@ mod tests {
         assert!(manager.pending_validation.is_none());
     }
 
-    /// A genuine ChainLock is only accepted once its header is stored and matches.
-    #[test_case(true; "header matches")]
-    #[test_case(false; "header mismatches")]
+    /// A genuine ChainLock is only accepted once its header is stored and matches, and a
+    /// forged one received meanwhile does not evict it.
+    #[test_case(true, false; "header matches")]
+    #[test_case(false, false; "header mismatches")]
+    #[test_case(true, true; "forged chainlock in between")]
     #[tokio::test]
-    async fn test_genuine_chainlock_waits_for_its_header(header_matches: bool) {
-        use crate::network::RequestSender;
-        use crate::sml_engine::test_support::TestEngine;
-        use tokio::sync::mpsc::unbounded_channel;
-
+    async fn test_genuine_chainlock_waits_for_its_header(header_matches: bool, forged: bool) {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let engine = TestEngine::mainnet_fixture();
         let headers = engine.headers();
@@ -631,6 +615,13 @@ mod tests {
         ));
         assert!(manager.best_chainlock().is_none());
         assert!(manager.pending_validation.is_some());
+
+        if forged {
+            // Signed by no quorum, above the newest masternode list.
+            let forged = create_test_chainlock(chain_lock.block_height + 10_000);
+            let _ = manager.process_chainlock(&forged).await.unwrap();
+            assert_eq!(manager.pending_validation, Some(chain_lock.clone()));
+        }
 
         let block_hash = if header_matches {
             chain_lock.block_hash
