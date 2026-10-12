@@ -173,6 +173,17 @@ impl ManagedWalletInfo {
             }
         }
         if !result.txids.is_empty() {
+            // Keys-only accounts hold no UTXOs, but they do hold records — an
+            // asset lock is recorded in its funding account and in the identity
+            // account it pays. Left behind, such a record keeps claiming the
+            // loser's inputs in `retain_unclaimed` below.
+            for account in self.accounts.all_accounts_mut() {
+                if let ManagedAccountRefMut::Keys(keys) = account {
+                    for txid in &result.txids {
+                        keys.transactions_mut().remove(txid);
+                    }
+                }
+            }
             self.update_balance();
             // One transaction can be recorded in several accounts, so the
             // per-account results overlap.
