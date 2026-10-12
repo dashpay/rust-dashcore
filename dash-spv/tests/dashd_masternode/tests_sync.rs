@@ -3,7 +3,10 @@
 //! These tests verify SPV masternode list synchronization against a pre-generated
 //! regtest masternode network (1 controller + 4 masternodes with DKG cycles).
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncState};
 use dashcore::hashes::Hash;
@@ -684,8 +687,10 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
     let mut events = client_handle.sync_event_receiver.resubscribe();
     let engine = Arc::clone(&client_handle.engine);
     let published = Arc::new(Mutex::new(Vec::new()));
+    let newest_published = Arc::new(AtomicU32::new(0));
     let observer = tokio::spawn({
         let published = Arc::clone(&published);
+        let newest_published = Arc::clone(&newest_published);
         async move {
             while let Ok(event) = events.recv().await {
                 let SyncEvent::MasternodeStateUpdated {
@@ -695,6 +700,7 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
                 else {
                     continue;
                 };
+                newest_published.fetch_max(height, Ordering::SeqCst);
                 let engine = engine.read().await;
                 let Some(list) = engine.masternode_lists.get(&height) else {
                     continue;
@@ -711,7 +717,31 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
         }
     });
 
-    let quorum_hash = ctx.mn_ctx.mine_dkg_cycle().expect("DKG cycle should succeed");
+    // The cycle's llmq_test commitment goes into its first phase-6 block
+    // (`mine_dkg_cycle` waits until the controller would mine it), the last
+    // block before the DIP24 mining window opens and the client asks for a
+    // QRInfo. Mining the next block only once the client published that one
+    // keeps the two out of one header batch.
+    let llmq_test_window = LLMQType::LlmqtypeTest.params().dkg_params.mining_window_start;
+    let dip24_window = LLMQType::LlmqtypeTestDIP0024.params().dkg_params.mining_window_start;
+    assert!(llmq_test_window < dip24_window, "the llmq_test window must open first");
+    let before_dip24_window = next_quorum_height + dip24_window - 1;
+    let quorum_hash = ctx
+        .mn_ctx
+        .mine_dkg_cycle_with_hook(|_, height| {
+            if height != before_dip24_window {
+                return;
+            }
+            let start = Instant::now();
+            while newest_published.load(Ordering::SeqCst) < height {
+                assert!(
+                    start.elapsed() < Duration::from_secs(SYNC_TIMEOUT),
+                    "the client published no list at {height} within {SYNC_TIMEOUT}s"
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
+        })
+        .expect("DKG cycle should succeed");
     let tip = ctx
         .mn_ctx
         .controller
