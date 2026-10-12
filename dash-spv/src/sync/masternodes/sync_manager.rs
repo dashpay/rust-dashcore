@@ -986,8 +986,8 @@ mod tests {
             "the quorum is checked again against its work-block list, got {status:?}"
         );
         assert!(
-            !engine.masternode_lists.contains_key(&work),
-            "the work-block list is dropped once its quorum is validated"
+            engine.masternode_lists.contains_key(&work),
+            "the work-block list is kept until it ages out, whatever the verdict"
         );
         assert!(
             matches!(

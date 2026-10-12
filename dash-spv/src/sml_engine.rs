@@ -59,10 +59,6 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     rotated_quorums_per_cycle: BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
     network: Network,
-    /// The work-block lists tip updates asked for, by height, with the quorums
-    /// waiting on each. See
-    /// [`MasternodeListEngine::missing_work_block_list_requests_for`].
-    requested_work_lists: BTreeMap<CoreBlockHeight, BTreeSet<(LLMQType, QuorumHash)>>,
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
@@ -170,7 +166,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             masternode_lists: BTreeMap::new(),
             rotated_quorums_per_cycle: BTreeMap::new(),
             network,
-            requested_work_lists: BTreeMap::new(),
         }
     }
 
@@ -252,11 +247,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// [`Self::missing_work_block_list_requests`] for only the quorums `diff`
     /// adds, so that a tip update asks once for each quorum it brings rather
     /// than again for every quorum still unverified. Requests are capped per
-    /// update at the quorums of each type its blocks can bring, newest first,
-    /// and the lists they fetch are kept only until those quorums are
-    /// validated.
-    pub async fn missing_work_block_list_requests_for(
-        &mut self,
+    /// update at the quorums of each type its blocks can bring, newest first.
+    /// The lists they fetch age out like any other, see
+    /// [`Self::prune_after_extending`].
+    pub(crate) async fn missing_work_block_list_requests_for(
+        &self,
         diff: &MnListDiff,
     ) -> Vec<(BlockHash, BlockHash)> {
         let added: BTreeSet<(LLMQType, QuorumHash)> =
@@ -294,13 +289,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
         work_heights.retain(|_, quorums| !quorums.is_empty());
 
-        let requests = self.work_block_list_requests(work_heights.keys().copied()).await;
-        for (height, _, _) in &requests {
-            if let Some(quorums) = work_heights.remove(height) {
-                self.requested_work_lists.entry(*height).or_default().extend(quorums);
-            }
-        }
-        requests.into_iter().map(|(_, base, target)| (base, target)).collect()
+        self.work_block_list_requests(work_heights.into_keys())
+            .await
+            .into_iter()
+            .map(|(_, base, target)| (base, target))
+            .collect()
     }
 
     /// The work heights of the newest list's non-rotating quorums still to
@@ -365,38 +358,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             requests.push((height, base, target));
         }
         requests
-    }
-
-    /// Drops the lists a tip update asked for once no quorum of the newest
-    /// list still waits on them: each quorum is gone, or was validated with
-    /// the list, whatever the outcome.
-    fn drop_requested_work_lists_once_validated(&mut self) {
-        let Some((&newest_height, newest)) = self.masternode_lists.last_key_value() else {
-            return;
-        };
-        let mut validated = Vec::new();
-        self.requested_work_lists.retain(|&height, quorums| {
-            quorums.retain(|(llmq_type, quorum_hash)| {
-                newest
-                    .quorums
-                    .get(llmq_type)
-                    .and_then(|quorums| quorums.get(quorum_hash))
-                    .is_some_and(|quorum| match &quorum.verified {
-                        LLMQEntryVerificationStatus::Unknown => true,
-                        LLMQEntryVerificationStatus::Skipped(
-                            LLMQEntryVerificationSkipStatus::MissedList(missed),
-                        ) => *missed == height,
-                        _ => false,
-                    })
-            });
-            if quorums.is_empty() {
-                validated.push(height);
-            }
-            !quorums.is_empty()
-        });
-        for height in validated.into_iter().filter(|height| *height != newest_height) {
-            self.masternode_lists.remove(&height);
-        }
     }
 
     /// The stored rotated quorum `quorum_entry` commits to, if any.
@@ -706,9 +667,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         &mut self,
         qr_info: QRInfo,
     ) -> Result<QRInfoFeedResult, QuorumValidationError> {
-        // The QRInfo path asks for, and keeps, the work-block list of every
-        // unverified quorum, those a tip update asked for among them.
-        self.requested_work_lists.clear();
         let (rotation_sigs_by_work_height, inferred_work_heights) =
             self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info)).await;
 
@@ -831,13 +789,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     }
 
     /// Applies a diff, then verifies the newest list's non-rotating quorums: the
-    /// diff may have brought one, or the work-block list one needs. A list a
-    /// tip update asked for is dropped once its quorums are validated, see
-    /// [`Self::missing_work_block_list_requests_for`].
+    /// diff may have brought one, or the work-block list one needs.
     pub async fn apply_diff(&mut self, masternode_list_diff: MnListDiff) -> Result<(), SmlError> {
         self.apply_and_prune(masternode_list_diff).await?;
         self.verify_newest_quorums().await;
-        self.drop_requested_work_lists_once_validated();
         Ok(())
     }
 
@@ -1074,7 +1029,7 @@ mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
     use super::{build_cycle_quorum_map, WORK_DIFF_DEPTH};
     use bincode::{config, decode_from_slice, Decode};
-    use dashcore::bls_sig_utils::BLSSignature;
+    use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
     use dashcore::hashes::Hash;
     use dashcore::network::message_qrinfo::QRInfo;
@@ -1085,13 +1040,16 @@ mod tests {
     };
     use dashcore::sml::llmq_type::devnet_isd_type_override;
     use dashcore::sml::llmq_type::network::NetworkLLMQExt;
-    use dashcore::sml::llmq_type::LLMQType;
+    use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
     use dashcore::sml::masternode_list::MasternodeList;
-    use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+    use dashcore::sml::quorum_entry::qualified_quorum_entry::{
+        QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
+    };
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::{BlockHash, Network, QuorumHash};
     use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::Arc;
 
     fn make_qualified_quorum_entry(
         llmq_type: LLMQType,
@@ -2051,7 +2009,7 @@ mod tests {
 
     /// A tip update asks for at most the quorums of each type its blocks can
     /// bring, one per mining window they overlap and no more than are active,
-    /// newest first, and records only what it asked for.
+    /// newest first.
     #[tokio::test]
     async fn missing_work_block_list_requests_for_are_capped_per_update() {
         use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
@@ -2096,12 +2054,6 @@ mod tests {
             "one block brings at most one quorum of each type, the newest; an invalid one needs \
              no list"
         );
-        assert_eq!(
-            engine.requested_work_lists.keys().copied().collect::<Vec<_>>(),
-            vec![work(mined[0]), work(other_type)]
-        );
-
-        engine.requested_work_lists.clear();
         engine.masternode_lists.insert(held, MasternodeList::empty(BlockHash::dummy(held), held));
         assert_eq!(
             engine
@@ -2114,11 +2066,6 @@ mod tests {
             ],
             "two intervals overlap three mining windows; a list the engine holds is not asked for"
         );
-        assert!(
-            !engine.requested_work_lists.contains_key(&held),
-            "a list the engine already held is not the tip update's to drop"
-        );
-
         let requests = engine
             .missing_work_block_list_requests_for(&tip_update(ten_intervals, tip, &added))
             .await;
@@ -2149,69 +2096,77 @@ mod tests {
         );
     }
 
-    /// A list a tip update asked for is kept while a quorum of the newest list
-    /// still waits on it, and dropped once each was validated with it or is
-    /// gone. A QRInfo takes the records over.
+    /// A quorum the work-block list a tip update asked for shows `Invalid`
+    /// stays `Invalid` on later tip updates: it is never served, and never
+    /// degrades to a missed list.
     #[tokio::test]
-    async fn requested_work_lists_are_dropped_once_their_quorums_are_validated() {
-        use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
-
-        let tip = 2_000_000;
-        let older_list = 1_500_000;
-        let mined = 1_999_872;
+    async fn a_quorum_validated_invalid_stays_invalid_on_later_tip_updates() {
+        let llmq_type = LLMQType::Llmqtype100_67;
+        let (older_list, tip, mined) = (1_999_000, 2_000_000, 1_999_992);
         let work = mined - QUORUM_MEMBER_LIST_OFFSET;
-        let first = (LLMQType::Llmqtype400_60, BlockHash::dummy(mined));
-        // Mined in the same block, so it waits on the same list.
-        let second = (LLMQType::Llmqtype100_67, BlockHash::dummy(mined));
-        let gone = (LLMQType::Llmqtype400_85, BlockHash::dummy(mined));
-        let missed =
-            LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(work));
+        let quorum_hash = BlockHash::dummy(mined);
+        let next_tips = [tip + 1, tip + 2];
         let mut engine = engine_with_tip_quorums(
-            &[(first.0, mined, missed.clone()), (second.0, mined, missed)],
+            &[(llmq_type, mined, LLMQEntryVerificationStatus::Unknown)],
             older_list,
             tip,
-            &[],
+            &[tip - 1, next_tips[0], next_tips[1]],
         );
-        engine.masternode_lists.insert(work, MasternodeList::empty(BlockHash::dummy(work), work));
-        engine.requested_work_lists.insert(work, BTreeSet::from([first, second, gone]));
-        engine.requested_work_lists.insert(tip, BTreeSet::from([gone]));
+        // Well formed and ChainLock-signed, so only its signers decide: the
+        // work-block list has no members, so its signature cannot verify.
+        let list = engine.masternode_lists.get_mut(&tip).expect("tip list");
+        let quorum = Arc::make_mut(
+            Arc::make_mut(&mut list.quorums)
+                .get_mut(&llmq_type)
+                .and_then(|quorums| quorums.get_mut(&quorum_hash))
+                .expect("the quorum"),
+        );
+        let size = llmq_type.size() as usize;
+        quorum.quorum_entry.signers = vec![true; size];
+        quorum.quorum_entry.valid_members = vec![true; size];
+        quorum.quorum_entry.quorum_public_key = BLSPublicKey::from([1; 48]);
+        quorum.quorum_entry.threshold_sig = BLSSignature::from([1; 96]);
+        quorum.quorum_entry.all_commitment_aggregated_signature = BLSSignature::from([1; 96]);
+        quorum.verifying_chain_lock_signature =
+            Some(VerifyingChainLockSignaturesType::NonRotating(BLSSignature::from([1; 96])));
 
-        engine.drop_requested_work_lists_once_validated();
-        assert!(engine.masternode_lists.contains_key(&tip), "the newest list is never dropped");
+        let status = |engine: &TestEngine| {
+            engine.masternode_lists.values().next_back().and_then(|list| {
+                Some(list.quorums.get(&llmq_type)?.get(&quorum_hash)?.verified.clone())
+            })
+        };
         assert_eq!(
-            engine.requested_work_lists,
-            BTreeMap::from([(work, BTreeSet::from([first, second]))]),
-            "a quorum gone from the newest list waits on nothing"
+            engine
+                .missing_work_block_list_requests_for(&tip_update(
+                    tip - 1,
+                    tip,
+                    &[(llmq_type, mined)]
+                ))
+                .await,
+            vec![(BlockHash::dummy(older_list), BlockHash::dummy(work))]
         );
-        assert!(engine.masternode_lists.contains_key(&work), "both quorums still wait on it");
-
-        engine.set_quorum_status(first.0, first.1, &LLMQEntryVerificationStatus::Verified);
-        engine.drop_requested_work_lists_once_validated();
-        assert!(engine.masternode_lists.contains_key(&work), "the second quorum still waits on it");
-
-        engine.set_quorum_status(
-            second.0,
-            second.1,
-            &LLMQEntryVerificationStatus::Skipped(
-                LLMQEntryVerificationSkipStatus::MissingChainLock(work, BlockHash::dummy(work)),
-            ),
+        engine.apply_diff(MnListDiff::dummy_between(older_list, work)).await.expect("work list");
+        assert!(
+            matches!(status(&engine), Some(LLMQEntryVerificationStatus::Invalid(_))),
+            "{:?}",
+            status(&engine)
         );
-        engine.drop_requested_work_lists_once_validated();
-        assert!(!engine.masternode_lists.contains_key(&work), "both were validated with it");
-        assert!(engine.requested_work_lists.is_empty());
-        assert!(engine.masternode_lists.contains_key(&older_list), "other lists stay");
-        assert!(engine.masternode_lists.contains_key(&tip));
-    }
 
-    /// A QRInfo asks for, and keeps, the lists of every quorum still to
-    /// validate, so it takes over the lists tip updates asked for.
-    #[tokio::test]
-    async fn feed_qr_info_takes_over_the_requested_work_lists() {
-        let (mut engine, qr_info) = load_qrinfo_2240504_fixture().await;
-        engine.requested_work_lists.insert(1, BTreeSet::new());
-
-        let _ = engine.feed_qr_info(qr_info).await;
-
-        assert!(engine.requested_work_lists.is_empty());
+        let mut base = tip;
+        for next in next_tips {
+            engine.apply_diff(MnListDiff::dummy_between(base, next)).await.expect("tip update");
+            base = next;
+            assert!(
+                matches!(status(&engine), Some(LLMQEntryVerificationStatus::Invalid(_))),
+                "at {next}: {:?}",
+                status(&engine)
+            );
+            assert!(
+                engine
+                    .quorum_entry_for_hash_at_or_before_height(llmq_type, quorum_hash, next)
+                    .is_none(),
+                "at {next}: an invalid quorum is never served"
+            );
+        }
     }
 }
