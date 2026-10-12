@@ -537,9 +537,16 @@ impl TransactionType {
             _ => return Ok(Some(RawPayloadType(self.to_u16(), bytes))),
         };
         // Typed only if it decodes from all the bytes and re-encodes to them, as a newer
-        // version of a known type may not.
+        // version of a known type may not. An encoder error keeps it raw too.
+        let mut encoded = Vec::with_capacity(bytes.len());
         Ok(Some(match typed {
-            Ok(payload) if r.is_empty() && encode::serialize(&payload) == bytes => payload,
+            Ok(payload)
+                if r.is_empty()
+                    && payload.consensus_encode(&mut encoded).is_ok()
+                    && encoded == bytes =>
+            {
+                payload
+            }
             _ => RawPayloadType(self.to_u16(), bytes),
         }))
     }
