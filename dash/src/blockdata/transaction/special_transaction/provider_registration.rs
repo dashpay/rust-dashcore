@@ -130,24 +130,46 @@ impl Decodable for ProviderMasternodeType {
 /// A compact recoverable ECDSA signature of 65 bytes, written without a length prefix.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct JoinSignature([u8; 65]);
+pub struct CompactSignature([u8; 65]);
 
-impl_array_newtype!(JoinSignature, u8, 65);
-impl_bytes_newtype!(JoinSignature, 65);
+impl_array_newtype!(CompactSignature, u8, 65);
+impl_bytes_newtype!(CompactSignature, 65);
 
-impl Encodable for JoinSignature {
+impl Encodable for CompactSignature {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         w.write_all(&self.0)?;
         Ok(self.0.len())
     }
 }
 
-impl Decodable for JoinSignature {
+impl Decodable for CompactSignature {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let mut bytes = [0; 65];
         r.read_exact(&mut bytes).map_err(encode::Error::Io)?;
-        Ok(JoinSignature(bytes))
+        Ok(CompactSignature(bytes))
     }
+}
+
+/// Encodes signatures as Core does: a `u8` count followed by the signatures.
+pub(crate) fn encode_compact_signatures<W: io::Write + ?Sized>(
+    signatures: &[CompactSignature],
+    w: &mut W,
+) -> Result<usize, io::Error> {
+    let count = u8::try_from(signatures.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "more than 255 signatures"))?;
+    let mut len = count.consensus_encode(w)?;
+    for signature in signatures {
+        len += signature.consensus_encode(w)?;
+    }
+    Ok(len)
+}
+
+/// Decodes signatures written by [`encode_compact_signatures`].
+pub(crate) fn decode_compact_signatures<R: io::Read + ?Sized>(
+    r: &mut R,
+) -> Result<Vec<CompactSignature>, encode::Error> {
+    let count = u8::consensus_decode(r)?;
+    (0..count).map(|_| CompactSignature::consensus_decode(r)).collect()
 }
 
 /// One participant's contribution to the collateral of a shared masternode.
@@ -184,7 +206,7 @@ impl CollateralShare {
 pub struct SharedCollateral {
     pub shares: Vec<CollateralShare>,
     /// One consent signature per share, in share order.
-    pub join_sigs: Vec<JoinSignature>,
+    pub join_sigs: Vec<CompactSignature>,
     pub early_period_blocks: u32,
     /// Penalty in duffs for leaving within `early_period_blocks`.
     pub early_penalty: i64,
@@ -231,7 +253,7 @@ impl Decodable for SharedCollateral {
         let shares =
             (0..count).map(|_| CollateralShare::consensus_decode(r)).collect::<Result<_, _>>()?;
         let join_sigs =
-            (0..count).map(|_| JoinSignature::consensus_decode(r)).collect::<Result<_, _>>()?;
+            (0..count).map(|_| CompactSignature::consensus_decode(r)).collect::<Result<_, _>>()?;
         Ok(SharedCollateral {
             shares,
             join_sigs,
@@ -1375,7 +1397,7 @@ mod tests {
 
         let decoded: ProviderRegistrationPayload =
             deserialize(&encoded).expect("deserialize zero-filled payload");
-        assert_eq!(decoded.platform_node_id, Some(crate::PlatformNodeId::from_bytes([0; 20])));
+        assert_eq!(decoded.platform_node_id, Some(crate::PlatformNodeId::from_byte_array([0; 20])));
         assert_eq!(decoded.platform_p2p_port, Some(0));
         assert_eq!(decoded.platform_http_port, Some(0));
     }
@@ -1459,7 +1481,7 @@ mod tests {
             script_payout: ScriptBuf::from(vec![5; 25]),
             inputs_hash: InputsHash::from_byte_array([6; 32]),
             signature: vec![7; 65],
-            platform_node_id: evo.then(|| PlatformNodeId::from_bytes([8; 20])),
+            platform_node_id: evo.then(|| PlatformNodeId::from_byte_array([8; 20])),
             platform_p2p_port: evo.then_some(26656),
             platform_http_port: evo.then_some(443),
             payouts: None,
@@ -1481,7 +1503,7 @@ mod tests {
             }]),
             shared_collateral: Some(SharedCollateral {
                 shares: (0..shares).map(share).collect(),
-                join_sigs: (0..shares).map(|i| JoinSignature::from([i; 65])).collect(),
+                join_sigs: (0..shares).map(|i| CompactSignature::from([i; 65])).collect(),
                 early_period_blocks: 1000,
                 early_penalty: 100_000_000,
             }),

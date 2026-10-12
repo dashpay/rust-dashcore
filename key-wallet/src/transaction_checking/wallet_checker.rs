@@ -2906,8 +2906,14 @@ mod tests {
     /// coins from the spent set, but their `Utxo` values were discarded when
     /// the loser was recorded — so the sweep alone cannot put them back, and
     /// the coins must be recoverable by the rescan the release enables.
+    ///
+    /// The loser is an asset lock, so the identity account it pays records it
+    /// too: a record left there would keep claiming B and withhold its release.
     #[tokio::test]
     async fn test_a_swept_losers_extra_input_is_recoverable_by_rescan() {
+        use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+        use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+
         let mut ctx = TestWalletContext::new_random();
         let external_address = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
@@ -2965,8 +2971,37 @@ mod tests {
             .expect("account")
             .next_change_address(Some(&ctx.xpub), true)
             .expect("change address");
-        let loser = spend(vec![coin_a, coin_b], &loser_change, 99_000, 800_000);
+        let identity_xpub = ctx
+            .wallet
+            .accounts
+            .identity_registration
+            .as_ref()
+            .expect("identity account")
+            .account_xpub;
+        let identity_address = ctx
+            .managed_wallet
+            .identity_registration_managed_account_mut()
+            .expect("managed identity account")
+            .next_address(Some(&identity_xpub), true)
+            .expect("identity address");
+        let mut loser = spend(vec![coin_a, coin_b], &loser_change, 99_000, 800_000);
+        loser.version = 3;
+        loser.special_transaction_payload =
+            Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload {
+                version: 1,
+                credit_outputs: vec![TxOut {
+                    value: 100_000,
+                    script_pubkey: identity_address.script_pubkey(),
+                }],
+            }));
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+        assert!(
+            ctx.managed_wallet
+                .identity_registration_managed_account()
+                .expect("managed identity account")
+                .has_transaction(&loser.txid()),
+            "the identity account records the asset lock it is paid by"
+        );
 
         let winner_change = ctx
             .managed_wallet
@@ -2986,9 +3021,17 @@ mod tests {
             )
             .await;
 
-        // The loser is gone, and B is not credited — its `Utxo` was
-        // discarded when the loser was recorded and cannot be invented.
-        assert!(!ctx.bip44_account().transactions().contains_key(&loser.txid()));
+        // The loser is gone from every account that recorded it, and B is not
+        // credited — its `Utxo` was discarded when the loser was recorded and
+        // cannot be invented.
+        assert!(
+            !ctx.managed_wallet
+                .accounts
+                .all_accounts()
+                .into_iter()
+                .any(|account| account.has_transaction(&loser.txid())),
+            "a swept loser must not stay recorded in any account"
+        );
         assert!(!ctx.bip44_account().utxos.contains_key(&coin_b));
 
         // The event carries exactly what was released: B, and not A — A is
