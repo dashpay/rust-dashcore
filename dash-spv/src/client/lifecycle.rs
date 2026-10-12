@@ -249,9 +249,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     }
 
     /// Recover from a fork at `fork_height`: stop the client, drop the stored
-    /// chain above the fork and run again, so the client syncs onto the branch
-    /// the network follows. A loop that was stopped or replaced in the meantime
-    /// is left alone.
+    /// chain and what the wallets recorded above the fork, and run again, so
+    /// the client syncs onto the branch the network follows. A loop that was
+    /// stopped or replaced in the meantime is left alone.
     ///
     /// Boxed because the client it runs again can recover from a fork too.
     pub(super) fn handle_fork(
@@ -266,12 +266,22 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             self.stop_locked(forked).await;
 
             tracing::warn!("Fork at height {}, dropping the stored chain above it", fork_height);
-            {
+            // The wallets go first: a wallet refusing the fork leaves storage as
+            // it is, and storage failing after them keeps the fork unstored, so
+            // it is detected and retried.
+            let truncated = async {
+                self.wallet.write().await.truncate_above(fork_height)?;
                 let mut storage = self.storage.lock().await;
                 BlockHeaderStorage::truncate_above(&mut *storage, fork_height).await?;
                 FilterHeaderStorage::truncate_above(&mut *storage, fork_height).await?;
                 FilterStorage::truncate_above(&mut *storage, fork_height).await?;
                 BlockStorage::truncate_above(&mut *storage, fork_height).await?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+            }
+            .await;
+
+            if let Err(e) = truncated {
+                tracing::warn!("Fork at height {} not followed: {}", fork_height, e);
             }
 
             self.run_locked(&mut sync_loop).await

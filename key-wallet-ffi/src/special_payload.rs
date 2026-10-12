@@ -72,17 +72,6 @@ fn bls_public_key_bytes(key: &BLSPublicKey) -> [u8; 48] {
     *AsRef::<[u8; 48]>::as_ref(key)
 }
 
-/// Reassemble a `SocketAddr` from 16 IPv6 octets + port, un-mapping
-/// v4-mapped addresses so the display string reads `54.148.58.128:9999`
-/// rather than `[::ffff:54.148.58.128]:9999`.
-fn socket_addr_from_ipv6_octets(octets: [u8; 16], port: u16) -> SocketAddr {
-    let v6 = Ipv6Addr::from(octets);
-    match v6.to_ipv4_mapped() {
-        Some(v4) => SocketAddr::new(IpAddr::V4(v4), port),
-        None => SocketAddr::new(IpAddr::V6(v6), port),
-    }
-}
-
 /// Typed view of a DIP-3 `ProRegTx` (provider registration) payload.
 ///
 /// Byte-order notes: `collateral_txid` and hash fields use the same byte
@@ -136,6 +125,10 @@ pub struct FFIProviderRegistrationPayload {
 
 impl From<&ProviderRegistrationPayload> for FFIProviderRegistrationPayload {
     fn from(p: &ProviderRegistrationPayload) -> Self {
+        let service = p
+            .service_address
+            .primary_service_address()
+            .unwrap_or_else(|| SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0));
         let (script_payout, script_payout_len) = script_to_raw(&p.script_payout);
         FFIProviderRegistrationPayload {
             version: p.version,
@@ -143,9 +136,9 @@ impl From<&ProviderRegistrationPayload> for FFIProviderRegistrationPayload {
             masternode_mode: p.masternode_mode,
             collateral_txid: p.collateral_outpoint.txid.to_byte_array(),
             collateral_vout: p.collateral_outpoint.vout,
-            service_address: socket_addr_to_cstring(&p.service_address),
-            service_ip: socket_addr_to_ipv6_octets(&p.service_address),
-            service_port: p.service_address.port(),
+            service_address: socket_addr_to_cstring(&service),
+            service_ip: socket_addr_to_ipv6_octets(&service),
+            service_port: service.port(),
             owner_key_hash: p.owner_key_hash.to_byte_array(),
             voting_key_hash: p.voting_key_hash.to_byte_array(),
             operator_public_key: bls_public_key_bytes(&p.operator_public_key),
@@ -184,7 +177,8 @@ pub struct FFIProviderUpdateServicePayload {
     /// `to_byte_array` order).
     pub pro_tx_hash: [u8; 32],
     /// New masternode service endpoint as a display string. Owned by
-    /// this struct.
+    /// this struct. For a version 3 payload, the primary Core P2P address of
+    /// its extended addresses, `[::]:0` when it has no IPv4/IPv6 one.
     pub service_address: *mut c_char,
     /// Raw new service IP: 16 IPv6 octets, IPv4 addresses v4-mapped.
     pub service_ip: [u8; 16],
@@ -207,19 +201,18 @@ pub struct FFIProviderUpdateServicePayload {
 
 impl From<&ProviderUpdateServicePayload> for FFIProviderUpdateServicePayload {
     fn from(p: &ProviderUpdateServicePayload) -> Self {
-        // The wire format stores the IP as a u128 whose little-endian
-        // byte view is the 16 IPv6 octets in network order (see the
-        // `ProviderUpdateServicePayload` consensus round-trip tests).
-        let service_ip = p.ip_address.to_le_bytes();
-        let service = socket_addr_from_ipv6_octets(service_ip, p.port);
+        let service = p
+            .service_address
+            .primary_service_address()
+            .unwrap_or_else(|| SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0));
         let (script_payout, script_payout_len) = script_to_raw(&p.script_payout);
         FFIProviderUpdateServicePayload {
             version: p.version,
             masternode_type: p.mn_type.map_or(-1, i32::from),
             pro_tx_hash: p.pro_tx_hash.to_byte_array(),
             service_address: socket_addr_to_cstring(&service),
-            service_ip,
-            service_port: p.port,
+            service_ip: socket_addr_to_ipv6_octets(&service),
+            service_port: service.port(),
             script_payout,
             script_payout_len,
             has_platform_fields: p.platform_node_id.is_some(),
@@ -384,6 +377,7 @@ impl Drop for FFISpecialTransactionPayload {
 #[cfg(test)]
 pub(crate) fn mainnet_shape_proreg_payload() -> ProviderRegistrationPayload {
     use dashcore::blockdata::transaction::special_transaction::provider_registration::ProviderMasternodeType;
+    use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use std::str::FromStr;
 
     let key_hash = dashcore::PubkeyHash::from_str("70993555a01f7e8d6179d6135b5c56809d2d1d36")
@@ -399,7 +393,9 @@ pub(crate) fn mainnet_shape_proreg_payload() -> ProviderRegistrationPayload {
             .expect("txid"),
             vout: 1,
         },
-        service_address: SocketAddr::from_str("54.148.58.128:9999").expect("socket addr"),
+        service_address: MasternodeNetInfo::Legacy(
+            SocketAddr::from_str("54.148.58.128:9999").expect("socket addr"),
+        ),
         owner_key_hash: key_hash,
         operator_public_key: BLSPublicKey::from([0x11; 48]),
         voting_key_hash: key_hash,
@@ -412,6 +408,8 @@ pub(crate) fn mainnet_shape_proreg_payload() -> ProviderRegistrationPayload {
         platform_node_id: None,
         platform_p2p_port: None,
         platform_http_port: None,
+        payouts: None,
+        shared_collateral: None,
     }
 }
 
@@ -420,6 +418,7 @@ mod tests {
     use super::*;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::InputsHash;
+    use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use dashcore::Txid;
     use std::ffi::CStr;
 
@@ -479,8 +478,9 @@ mod tests {
                 version: 1,
                 mn_type: None,
                 pro_tx_hash: Txid::from_slice(&[0x44; 32]).expect("txid"),
-                ip_address: u128::from_le_bytes(octets),
-                port: 19999,
+                service_address: MasternodeNetInfo::Legacy(
+                    "54.148.58.128:19999".parse().expect("socket address"),
+                ),
                 script_payout: dashcore::ScriptBuf::new(),
                 inputs_hash: InputsHash::from_slice(&[0x55; 32]).expect("inputs hash"),
                 platform_node_id: None,

@@ -6,12 +6,11 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use super::helpers::{
-    count_wallet_transactions, get_spendable_balance, wait_for_mempool_tx, wait_for_sync,
-    wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
+    build_and_sign, count_wallet_transactions, get_spendable_balance, wait_for_mempool_tx,
+    wait_for_sync, wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
 use super::setup::{create_and_start_client, ClientHandle, TestContext};
 use dash_spv::test_utils::{create_test_wallet, TestChain};
-use dashcore::address::NetworkUnchecked;
 use dashcore::PublicKey;
 use key_wallet::account::ManagedAccountTrait;
 use key_wallet::bip32::{ChildNumber, ExtendedPrivKey};
@@ -21,14 +20,11 @@ use key_wallet::wallet::balance::WalletCoreBalance;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
-use key_wallet::wallet::managed_wallet_info::transaction_builder::{
-    BuilderError, TransactionBuilder,
-};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::ManagedWalletInfo;
 use key_wallet::ManagedAccountType;
-use key_wallet_manager::{WalletId, WalletManager};
+use key_wallet_manager::WalletManager;
 use std::collections::BTreeSet;
 
 /// Verify incremental sync works by generating blocks after initial sync.
@@ -347,32 +343,6 @@ async fn reserve_first_address(mnemonic: &str) -> Address {
     };
 
     external_addresses.unused_addresses().into_iter().next().expect("unused address")
-}
-
-async fn build_and_sign(
-    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
-    wallet_id: &WalletId,
-    destination: &Address,
-    amount: u64,
-) -> Result<(dashcore::Transaction, u64), BuilderError> {
-    let dest_unchecked: Address<NetworkUnchecked> =
-        destination.to_string().parse().expect("destination address");
-
-    let mut wallet_lock = wallet.write().await;
-    let (w, info) = wallet_lock.get_wallet_and_info_mut(wallet_id).expect("wallet present");
-
-    let height = info.last_processed_height();
-    let network = w.network;
-    let account = w.get_bip44_account(0).expect("account 0").clone();
-    let funds_account = info.accounts.standard_bip44_accounts.get_mut(&0).expect("account 0");
-    let dest = dest_unchecked.require_network(network).expect("destination network");
-
-    TransactionBuilder::new()
-        .set_current_height(height)
-        .add_funding(funds_account, &account)
-        .add_output(&dest, amount)
-        .build_signed(w, |a| funds_account.address_derivation_path(&a))
-        .await
 }
 
 /// Build, sign and broadcast a tx via `TransactionBuilder`, then re-spend

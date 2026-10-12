@@ -9,7 +9,6 @@ use crate::{Error, Network, Wallet};
 use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]
 use dashcore::bls_sig_utils::BlsSkBytes;
-use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
@@ -45,34 +44,9 @@ impl RootExtendedPrivKey {
 
     /// Create a new master key from seed
     pub fn new_master(seed: &[u8]) -> Result<Self, crate::error::Error> {
-        // Seed should be between 128 and 512 bits (16 to 64 bytes)
-        if seed.len() < 16 || seed.len() > 64 {
-            return Err(crate::error::Error::InvalidParameter(format!(
-                "Invalid seed length: {} bytes",
-                seed.len()
-            )));
-        }
-
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"Bitcoin seed");
-        hmac_engine.input(seed);
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
-
-        // Split the result into private key (first 32 bytes) and chain code (last 32 bytes)
-        let mut private_key_bytes = [0u8; 32];
-        private_key_bytes.copy_from_slice(&hmac_result[..32]);
-        let private_key =
-            secp256k1::SecretKey::from_secret_bytes(private_key_bytes).map_err(|e| {
-                crate::error::Error::InvalidParameter(format!("Invalid private key: {}", e))
-            })?;
-
-        let mut chain_code_bytes = [0u8; 32];
-        chain_code_bytes.copy_from_slice(&hmac_result[32..64]);
-        let chain_code = ChainCode::from(chain_code_bytes);
-
-        Ok(Self {
-            root_private_key: private_key,
-            root_chain_code: chain_code,
-        })
+        // The network only picks the serialization version, which is dropped.
+        let master = ExtendedPrivKey::new_master(Network::Mainnet, seed)?;
+        Ok(Self::from_extended_priv_key(&master))
     }
 
     /// Create from an ExtendedPrivKey (must be depth 0)

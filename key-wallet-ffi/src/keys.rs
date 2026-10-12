@@ -277,12 +277,7 @@ pub unsafe extern "C" fn private_key_to_wif(
     let network_rust: key_wallet::Network = network.into();
 
     // Convert to WIF format
-    use dashcore::PrivateKey as DashPrivateKey;
-    let dash_key = DashPrivateKey {
-        compressed: true,
-        network: network_rust,
-        inner: key.inner,
-    };
+    let dash_key = dashcore::PrivateKey::new(key.inner, network_rust);
 
     let wif = dash_key.to_wif();
     unwrap_or_return!(CString::new(wif), error).into_raw()

@@ -265,6 +265,33 @@ extern "C" fn on_transactions_swept(
     );
 }
 
+extern "C" fn on_chain_truncated(
+    wallet_id: *const c_char,
+    height: u32,
+    _txids: *const [u8; 32],
+    txids_count: usize,
+    _unconfirmed_txids: *const [u8; 32],
+    unconfirmed_txids_count: usize,
+    _restored_outpoints: *const dash_spv_ffi::FFIOutPoint,
+    restored_outpoints_count: usize,
+    balance: *const FFIBalance,
+    _account_balances: *const dash_spv_ffi::FFIAccountBalance,
+    _account_balances_count: u32,
+    _user_data: *mut c_void,
+) {
+    let b = read_balance(balance);
+    println!(
+        "[Wallet] Chain truncated: wallet={}..., height={}, removed={}, unconfirmed={}, restored={}, balance[confirmed={}, unconfirmed={}]",
+        short_wallet(wallet_id),
+        height,
+        txids_count,
+        unconfirmed_txids_count,
+        restored_outpoints_count,
+        b.confirmed,
+        b.unconfirmed,
+    );
+}
+
 extern "C" fn on_transaction_instant_locked(
     wallet_id: *const c_char,
     txid: *const [u8; 32],
@@ -591,6 +618,7 @@ fn main() {
                 on_block_processed: Some(on_wallet_block_processed),
                 on_sync_height_advanced: Some(on_sync_height_advanced),
                 on_chain_lock_processed: Some(on_wallet_chain_lock_processed),
+                on_chain_truncated: Some(on_chain_truncated),
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {

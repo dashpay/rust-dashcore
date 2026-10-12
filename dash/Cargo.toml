@@ -44,6 +44,7 @@ bech32 = { version = "0.9.1" }
 dashcore_hashes = { path = "../hashes" }
 dashcore-crypto = { path = "../crypto" }
 dash-network = { path = "../dash-network" }
+dash-num = { workspace = true }
 dash-types = { workspace = true, features = ["codec"] }
 secp256k1 = { workspace = true }
 serde = { workspace = true, features = ["derive", "alloc", "rc"], optional = true }

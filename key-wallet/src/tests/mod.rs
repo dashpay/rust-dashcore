@@ -36,6 +36,8 @@ mod special_transaction_tests;
 
 mod transaction_tests;
 
+mod truncate_above_tests;
+
 mod spent_outpoints_tests;
 
 mod unit_variant_wallet_tests;

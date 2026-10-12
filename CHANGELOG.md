@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- Make `PublicKey::with_serialized` public
+
 ### Changed
 
 - **Breaking:** the `bincode` feature and binary serialization dependencies now use
@@ -47,6 +51,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `dashcore::base58` is `base58ck` 0.5.0, so `Base58CkString`
   replaces the `encode_*` functions and the `Base58` error variants carry
   `base58::DecodeCheckError`
+- **Breaking:** `Work` and `Target` display as 64-digit hex instead of decimal,
+  and their hex formatting ignores width and fill
+- **Breaking:** `Target::difficulty` returns 0 for a zero target instead of
+  panicking, and `Work` addition and subtraction wrap instead of panicking on
+  overflow in debug builds
+- **Breaking:** `ExtendedPrivKey::new_master` rejects seeds outside 16 to 64
+  bytes with `bip32::Error::InvalidSeedLength`, which
+  `RootExtendedPrivKey::new_master` returns instead of `InvalidParameter`
+- **Breaking:** `MessageSignature::from_slice` rejects headers above 34
 - Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
   `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
 - All workspace crates declare a MSRV of 1.89
@@ -58,6 +71,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
   and rejects flags above `0xff`
 - Reject 256-bit child numbers in `key-wallet` with an odd number of hex digits
+- **Breaking:** a header whose nBits is negative or overflows now has zero
+  work. Previously it decoded to `Target::ZERO`, whose `to_work()` returned the
+  maximum work, so it outweighed any valid chain in chainwork comparisons
+- **Breaking:** `Target::from_compact` returns `Target::ZERO` for overflowing
+  nBits instead of a wrapped value
+- Reject WIF keys whose compression flag is not `0x01`, with
+  `key::Error::InvalidWifCompressionFlag`
+- Accept an IL of zero in `key-wallet` private child derivation
+- `transaction_sign_input` in `key-wallet-ffi` rejects flags above `0xff`
 
 ### Removed
 
@@ -74,6 +96,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** remove the `hex` module from `dashcore-private`, and the
   `btreemap_byte_values`, `btreemap_as_seq`, `btreemap_as_seq_byte_values` and
   `hex_bytes` serde helpers from `dashcore::serde_utils`
+- **Breaking:** remove ordering from `PublicKey`, `ExtendedPubKey` and
+  `PubKeyOrAddress`, and `PublicKey::to_sort_key` and `SortKey` with it
+- **Breaking:** remove `PublicKey::read_from` and
+  `Witness::push_bitcoin_signature`
+- **Breaking:** remove `key::Error::NotSupported`,
+  `bip32::Error::NotSupported` and `dashcore_rpc::Error::Secp256k1`
+- **Breaking:** remove `signer::CompactSignature`. Use `MessageSignature`
+  instead
 
 ## 0.44.0 - 2026-07-01
 

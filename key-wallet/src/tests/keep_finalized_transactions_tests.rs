@@ -251,7 +251,9 @@ fn proreg_tx_and_owner_match() -> (Transaction, AccountMatch) {
             txid: Txid::from_slice(&[0x19; 32]).expect("txid"),
             vout: 1,
         },
-        service_address: SocketAddr::from_str("54.148.58.128:9999").expect("socket addr"),
+        service_address: MasternodeNetInfo::Legacy(
+            SocketAddr::from_str("54.148.58.128:9999").expect("socket addr"),
+        ),
         owner_key_hash: key_hash,
         operator_public_key: BLSPublicKey::from([0x11; 48]),
         voting_key_hash: key_hash,
@@ -262,6 +264,8 @@ fn proreg_tx_and_owner_match() -> (Transaction, AccountMatch) {
         platform_node_id: None,
         platform_p2p_port: None,
         platform_http_port: None,
+        payouts: None,
+        shared_collateral: None,
     };
     let tx = Transaction {
         version: 3,
