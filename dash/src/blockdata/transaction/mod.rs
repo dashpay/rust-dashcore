@@ -41,6 +41,7 @@ use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
 use crate::blockdata::script;
 use crate::blockdata::script::Script;
+use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
 pub use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
@@ -237,13 +238,51 @@ impl Transaction {
     /// to the output of `wtxid()`, but for segwit transactions,
     /// this will give the correct txid (not including witnesses) while `wtxid`
     /// will also hash witnesses.
+    ///
+    /// For an asset unlock with payload version 2 or higher the quorum signing info is zeroed
+    /// before hashing, as Core does, so every re-signed instance of one withdrawal shares one
+    /// txid. [`Self::instance_hash`] tells those instances apart, and so does `wtxid()`, which
+    /// hashes them in full.
     pub fn txid(&self) -> Txid {
+        if !self.has_stable_txid() {
+            return self.instance_hash();
+        }
+        let mut bytes = Vec::new();
+        self.encode_txid_data(&mut bytes).expect("vecs don't error");
+        let quorum_info_start = bytes.len() - AssetUnlockPayload::QUORUM_INFO_SIZE;
+        bytes[quorum_info_start..].fill(0);
+        Txid::hash(&bytes)
+    }
+
+    /// The hash of the full serialization, without witnesses. It equals [`Self::txid`] except
+    /// for asset unlocks with payload version 2 or higher, which are relayed by this hash.
+    pub fn instance_hash(&self) -> Txid {
         let mut enc = Txid::engine();
-        self.version.consensus_encode(&mut enc).expect("engines don't error");
-        self.tx_type().to_u16().consensus_encode(&mut enc).expect("engines don't error");
-        self.input.consensus_encode(&mut enc).expect("engines don't error");
-        self.output.consensus_encode(&mut enc).expect("engines don't error");
-        self.lock_time.consensus_encode(&mut enc).expect("engines don't error");
+        self.encode_txid_data(&mut enc).expect("engines don't error");
+        Txid::from_engine(enc)
+    }
+
+    /// Whether the txid excludes the quorum signing info of an asset unlock payload.
+    ///
+    /// Judged from the payload bytes, as Core does, so a payload kept raw counts too.
+    fn has_stable_txid(&self) -> bool {
+        let Some(payload) = &self.special_transaction_payload else {
+            return false;
+        };
+        if (self.version as i16) < 3 || payload.get_type() != TransactionType::AssetUnlock {
+            return false;
+        }
+        let bytes = encode::serialize(payload);
+        bytes.len() == AssetUnlockPayload::SIZE
+            && bytes[0] >= AssetUnlockPayload::STABLE_TXID_VERSION
+    }
+
+    fn encode_txid_data<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+        self.version.consensus_encode(w)?;
+        self.tx_type().to_u16().consensus_encode(w)?;
+        self.input.consensus_encode(w)?;
+        self.output.consensus_encode(w)?;
+        self.lock_time.consensus_encode(w)?;
         if let Some(payload) = &self.special_transaction_payload {
             // Pre-DIP-0002 transactions have no payload section on the wire — keep
             // the txid bit-identical to the on-chain bytes by skipping the section.
@@ -252,13 +291,12 @@ impl Transaction {
                 TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)
             ) {
                 let mut buf = Vec::new();
-                payload.consensus_encode(&mut buf).expect("engines don't error");
+                payload.consensus_encode(&mut buf)?;
                 // this is so we get the size of the payload
-                buf.consensus_encode(&mut enc).expect("engines don't error");
+                buf.consensus_encode(w)?;
             }
         }
-
-        Txid::from_engine(enc)
+        Ok(())
     }
 
     /// Get the transaction type. If a classical transaction this would be 0.
@@ -268,8 +306,9 @@ impl Transaction {
     }
 
     /// Computes SegWit-version of the transaction id (wtxid). For transaction with the witness
-    /// data this hash includes witness, for pre-witness transaction it is equal to the normal
-    /// value returned by txid() function.
+    /// data this hash includes witness, for pre-witness transaction it is equal to `txid()`,
+    /// except for asset unlocks with payload version 2 or higher, where it equals
+    /// [`Self::instance_hash`].
     pub fn wtxid(&self) -> Wtxid {
         let mut enc = Wtxid::engine();
         self.consensus_encode(&mut enc).expect("engines don't error");
