@@ -85,9 +85,21 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
         // `start_sync`, otherwise the one-shot would force `Synced` while
         // peerless. `MasternodeStateUpdated` re-fires once `MasternodesManager`
         // completes a sync cycle after reconnect.
-        if !matches!(event, SyncEvent::MasternodeStateUpdated { .. })
-            || self.state() == SyncState::WaitingForConnections
-        {
+        if self.state() == SyncState::WaitingForConnections {
+            return Ok(vec![]);
+        }
+
+        // A chainlock waiting for its header is retried as headers are stored.
+        let retry = match event {
+            SyncEvent::MasternodeStateUpdated {
+                ..
+            } => true,
+            SyncEvent::BlockHeadersStored {
+                ..
+            } => self.masternode_ready,
+            _ => false,
+        };
+        if !retry {
             return Ok(vec![]);
         }
 
