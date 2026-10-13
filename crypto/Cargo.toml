@@ -14,7 +14,7 @@ version.workspace = true
 default = []
 
 bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode"]
-bls = ["dash-pkc/bls", "dep:tracing"]
+bls = ["dash-pkc/bls", "dash-pkc/portable", "dep:tracing"]
 eddsa = ["dash-pkc/eddsa"]
 rand = ["bitcoin-crypto/rand"]
 serde = ["dep:serde", "bitcoin-crypto/serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "dash-pkc/serde", "secp256k1/serde"]
@@ -26,7 +26,7 @@ bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 dash-network = { path = "../dash-network" }
 dash-pkc = { workspace = true, features = ["std"] }
-dash-types = { workspace = true, features = ["codec"] }
+dash-types = { workspace = true }
 dashcore_hashes = { path = "../hashes" }
 hex-conservative = { workspace = true }
 internals = { path = "../internals", package = "dashcore-private" }
