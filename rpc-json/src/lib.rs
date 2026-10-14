@@ -5363,6 +5363,51 @@ mod tests {
         assert_eq!(bip9.timeout, i64::MAX as u64);
     }
 
+    /// A version bits deployment of Core v24 while it is signalled, from regtest run with
+    /// `-vbparams=testdummy:0:9999999999:0:100:80`, at heights 150 and 250. These states carry
+    /// the optional fields: `bit`, `statistics`, `activation_height` and `signalling`.
+    #[test]
+    fn deserialize_signalled_deployments_from_core_v24() {
+        let signalling = "#".repeat(51);
+        let started: SoftforkInfo = serde_json::from_value(json!({
+            "type": "bip9", "active": false,
+            "bip9": {
+                "bit": 28, "start_time": 0, "timeout": 9999999999u64, "ehf": false,
+                "min_activation_height": 0, "status": "started", "since": 100,
+                "status_next": "started",
+                "statistics": {
+                    "period": 100, "elapsed": 51, "count": 51, "threshold": 80, "possible": true
+                },
+                "signalling": signalling
+            }
+        }))
+        .expect("expected to deserialize json");
+        let bip9 = started.bip9.expect("a bip9 deployment reports its state");
+        assert_eq!(bip9.status, Bip9SoftforkStatus::Started);
+        assert_eq!(bip9.bit, Some(28));
+        let statistics = bip9.statistics.expect("a started deployment reports statistics");
+        assert_eq!(statistics.threshold, Some(80));
+        assert_eq!(statistics.possible, Some(true));
+
+        let locked_in: SoftforkInfo = serde_json::from_value(json!({
+            "type": "bip9", "active": false,
+            "bip9": {
+                "bit": 28, "start_time": 0, "timeout": 9999999999u64, "ehf": false,
+                "activation_height": 300, "min_activation_height": 0, "status": "locked_in",
+                "since": 200, "status_next": "locked_in",
+                "statistics": { "period": 100, "elapsed": 51, "count": 51 },
+                "signalling": signalling
+            }
+        }))
+        .expect("expected to deserialize json");
+        let bip9 = locked_in.bip9.expect("a bip9 deployment reports its state");
+        assert_eq!(bip9.status, Bip9SoftforkStatus::LockedIn);
+        assert_eq!(bip9.since, 200);
+        let statistics = bip9.statistics.expect("a locked in deployment reports statistics");
+        assert_eq!(statistics.threshold, None);
+        assert_eq!(statistics.count, Some(51));
+    }
+
     #[test]
     fn deserialize_getblockchaininfo_with_softforks_from_core_v23() {
         let info: GetBlockchainInfoResult =
