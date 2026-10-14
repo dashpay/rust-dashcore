@@ -6,6 +6,7 @@ use crate::sync::{
     BlocksManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
 use crate::types::HashedBlock;
+use crate::validation::{BlockValidator, Validator};
 use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
@@ -76,6 +77,8 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         };
 
         let hashed_block = HashedBlock::from(block);
+
+        BlockValidator::new().validate(&hashed_block)?;
 
         // Check if this is a block we requested (pipeline handles buffering with height)
         if !self.pipeline.receive_block(&hashed_block) {
