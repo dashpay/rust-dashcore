@@ -26,6 +26,7 @@
 //! This module provides the structures and functions needed to support transactions.
 //!
 
+mod legacy_asset_lock;
 pub mod outpoint;
 pub mod special_transaction;
 pub mod txin;
