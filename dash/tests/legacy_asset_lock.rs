@@ -1,4 +1,4 @@
-//! `Transaction::deserialize_ignoring_asset_lock_payload_length` reads an asset lock's payload
+//! `Transaction::deserialize_with_legacy_asset_lock_framing` reads an asset lock's payload
 //! whatever length its prefix announces, and must keep reading asset locks the same way whatever
 //! else changes in the crate.
 //!
@@ -55,7 +55,7 @@ fn core_asset_lock(prefix: &str) -> Vec<u8> {
 }
 
 fn decode(bytes: &[u8]) -> Result<Transaction, Error> {
-    Transaction::deserialize_ignoring_asset_lock_payload_length(bytes)
+    Transaction::deserialize_with_legacy_asset_lock_framing(bytes)
 }
 
 fn credit_output() -> TxOut {
