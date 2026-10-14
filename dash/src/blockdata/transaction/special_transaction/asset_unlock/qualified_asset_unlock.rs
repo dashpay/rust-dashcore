@@ -62,6 +62,17 @@ pub struct AssetUnlockPayload {
 }
 
 impl AssetUnlockPayload {
+    /// First payload version whose txid excludes the quorum signing info, so every re-signed
+    /// instance of one withdrawal shares one txid.
+    pub const STABLE_TXID_VERSION: u8 = 2;
+
+    /// Size of the trailing quorum signing info (`request_info` and `quorum_sig`), the only
+    /// fields Platform changes when it re-signs a withdrawal.
+    pub const QUORUM_INFO_SIZE: usize = AssetUnlockRequestInfo::SIZE + 96;
+
+    /// Size of the payload: version, index and fee, then the quorum signing info.
+    pub const SIZE: usize = 1 + 8 + 4 + Self::QUORUM_INFO_SIZE;
+
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         self.base.size() + self.request_info.size() + 96
@@ -152,7 +163,8 @@ mod tests {
     };
     use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
     use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
-    use crate::{ScriptBuf, Transaction, TxOut, consensus};
+    use crate::{PubkeyHash, ScriptBuf, Transaction, TxOut, Txid, consensus};
+    use test_case::test_case;
 
     #[test]
     fn size() {
@@ -258,5 +270,71 @@ mod tests {
         };
 
         assert_eq!(tx.size(), ASSET_UNLOCK_TX_SIZE);
+    }
+
+    /// The DIP-0027 example unlock: one 1 DASH output to a P2PKH of `0x11` bytes.
+    fn unlock_tx(version: u8, index: u64, request_height: u32, quorum_sig: u8) -> Transaction {
+        let mut quorum_hash = [0; 32];
+        quorum_hash[0] = 1;
+        Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![],
+            output: vec![TxOut {
+                value: 100_000_000,
+                script_pubkey: ScriptBuf::new_p2pkh(&PubkeyHash::from_byte_array([0x11; 20])),
+            }],
+            special_transaction_payload: Some(TransactionPayload::AssetUnlockPayloadType(
+                AssetUnlockPayload {
+                    base: AssetUnlockBasePayload {
+                        version,
+                        index,
+                        fee: 70_000,
+                    },
+                    request_info: AssetUnlockRequestInfo {
+                        request_height,
+                        quorum_hash: QuorumHash::from_byte_array(quorum_hash),
+                    },
+                    quorum_sig: BLSSignature::from([quorum_sig; 96]),
+                },
+            )),
+        }
+    }
+
+    // Core's `evo_assetunlock` test, from dip-0027/dip-0027-txid-calc.py.
+    #[test_case(101, "3c4db73c8356407a5d7c78df5045bd280f2dc4fd644b06c4bfbdead3d5ae41cf")]
+    #[test_case(123456789, "a67e1107ae6e04b813bc8e81348266f5206d1ca93d305dc4323940e18cdbaf34")]
+    fn version_2_txid_matches_dip_0027(index: u64, txid: &str) {
+        assert_eq!(unlock_tx(2, index, 500, 0).txid(), Txid::from_str(txid).unwrap());
+    }
+
+    // Core tells a stable txid from the payload bytes, so a payload kept raw hashes the same.
+    #[test_case(1; "version 1")]
+    #[test_case(2; "version 2")]
+    fn raw_payload_has_the_typed_txid(version: u8) {
+        let typed = unlock_tx(version, 101, 500, 0);
+        let payload = typed.special_transaction_payload.as_ref().unwrap();
+        let raw = Transaction {
+            special_transaction_payload: Some(TransactionPayload::RawPayloadType(
+                9,
+                consensus::serialize(payload),
+            )),
+            ..typed.clone()
+        };
+        assert_eq!(raw.txid(), typed.txid());
+        assert_eq!(raw.instance_hash(), typed.instance_hash());
+    }
+
+    #[test]
+    fn version_2_txid_excludes_the_quorum_signing_info() {
+        let tx = unlock_tx(2, 101, 500, 0);
+        let resigned = unlock_tx(2, 101, 700, 1);
+        assert_eq!(resigned.txid(), tx.txid());
+        assert_ne!(resigned.instance_hash(), tx.instance_hash());
+        assert_eq!(tx.instance_hash(), Txid::hash(&consensus::serialize(&tx)));
+
+        let v1 = unlock_tx(1, 101, 500, 0);
+        assert_eq!(v1.txid(), v1.instance_hash());
+        assert_ne!(unlock_tx(1, 101, 700, 1).txid(), v1.txid());
     }
 }

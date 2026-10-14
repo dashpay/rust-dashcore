@@ -254,6 +254,24 @@ impl FilterHeadersPipeline {
         ready
     }
 
+    /// Re-request a received batch that was rejected instead of stored.
+    ///
+    /// Buffered batches above it chain from it, so they are dropped and re-requested
+    /// too. `next_expected` is unchanged.
+    pub(super) fn requeue_rejected(&mut self, start_height: u32, stop_hash: BlockHash) {
+        let mut dropped: Vec<(u32, BlockHash)> = self
+            .buffered
+            .extract_if(|&height, _| height > start_height)
+            .map(|(height, data)| (height, data.stop_hash))
+            .collect();
+        // `enqueue_retry` pushes to the front, so queue the highest batch first.
+        dropped.sort_unstable_by_key(|&(height, _)| std::cmp::Reverse(height));
+        for (height, hash) in dropped.into_iter().chain([(start_height, stop_hash)]) {
+            self.coordinator.enqueue_retry(hash);
+            self.batch_starts.insert(hash, height);
+        }
+    }
+
     /// Move in-flight `getcfheaders` requests back to pending after a peer
     /// disconnect so the next `send_pending` reissues them.
     ///
@@ -482,6 +500,48 @@ mod tests {
         assert_eq!(pipeline.next_expected(), 1);
         assert_eq!(pipeline.buffered.len(), 1);
         assert_eq!(pipeline.target_height, 6000);
+    }
+
+    /// A rejected batch is requested again with its start height, along with every
+    /// buffered batch above it, lowest first; batches below it are not touched.
+    #[test]
+    fn test_requeue_rejected_reissues_batch_and_drops_buffered_above() {
+        let mut pipeline = FilterHeadersPipeline::new();
+        pipeline.next_expected = 2001;
+        pipeline.target_height = 8000;
+
+        let rejected = BlockHash::from_byte_array([0x02; 32]);
+        for (height, byte) in [(6001, 0x04), (4001, 0x03)] {
+            pipeline.buffered.insert(
+                height,
+                CFHeaders {
+                    filter_type: 0,
+                    stop_hash: BlockHash::from_byte_array([byte; 32]),
+                    previous_filter_header: FilterHeader::all_zeros(),
+                    filter_hashes: vec![FilterHash::all_zeros()],
+                },
+            );
+        }
+
+        pipeline.requeue_rejected(2001, rejected);
+        assert!(pipeline.buffered.is_empty());
+        assert_eq!(pipeline.next_expected(), 2001);
+
+        let (tx, mut rx) = unbounded_channel();
+        assert_eq!(pipeline.send_pending(&RequestSender::new(tx)).unwrap(), 3);
+        let mut reissued = Vec::new();
+        while let Ok(NetworkRequest::SendMessage(NetworkMessage::GetCFHeaders(get))) = rx.try_recv()
+        {
+            reissued.push((get.start_height, get.stop_hash));
+        }
+        assert_eq!(
+            reissued,
+            vec![
+                (2001, rejected),
+                (4001, BlockHash::from_byte_array([0x03; 32])),
+                (6001, BlockHash::from_byte_array([0x04; 32])),
+            ]
+        );
     }
 
     #[test]

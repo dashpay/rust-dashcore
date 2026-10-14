@@ -304,19 +304,20 @@ impl From<&ProviderUpdateRevocationPayload> for FFIProviderUpdateRevocationPaylo
 /// `7` MnHfTx, `8` AssetLockTx, `9` AssetUnlockTx; pre-DIP-0002
 /// transactions with non-standard type bytes surface their raw value).
 /// For the four provider payload kinds the matching struct pointer is
-/// non-null; exactly one pointer is ever non-null. All pointers are owned
-/// by this struct and freed with it.
+/// non-null, unless the payload was kept raw because its layout is unknown;
+/// at most one pointer is ever non-null. All pointers are owned by this
+/// struct and freed with it.
 #[repr(C)]
 pub struct FFISpecialTransactionPayload {
     /// On-wire DIP-2 transaction type discriminant.
     pub payload_type: u16,
-    /// Non-null iff `payload_type == 1` (ProRegTx).
+    /// Non-null only if `payload_type == 1` (ProRegTx) and the payload decoded.
     pub provider_registration: *mut FFIProviderRegistrationPayload,
-    /// Non-null iff `payload_type == 2` (ProUpServTx).
+    /// Non-null only if `payload_type == 2` (ProUpServTx) and the payload decoded.
     pub provider_update_service: *mut FFIProviderUpdateServicePayload,
-    /// Non-null iff `payload_type == 3` (ProUpRegTx).
+    /// Non-null only if `payload_type == 3` (ProUpRegTx) and the payload decoded.
     pub provider_update_registrar: *mut FFIProviderUpdateRegistrarPayload,
-    /// Non-null iff `payload_type == 4` (ProUpRevTx).
+    /// Non-null only if `payload_type == 4` (ProUpRevTx) and the payload decoded.
     pub provider_update_revocation: *mut FFIProviderUpdateRevocationPayload,
 }
 

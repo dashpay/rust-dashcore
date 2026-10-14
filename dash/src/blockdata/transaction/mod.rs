@@ -26,6 +26,7 @@
 //! This module provides the structures and functions needed to support transactions.
 //!
 
+mod legacy_asset_lock;
 pub mod outpoint;
 pub mod special_transaction;
 pub mod txin;
@@ -41,6 +42,7 @@ use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 #[cfg(feature = "bitcoinconsensus")]
 use crate::blockdata::script;
 use crate::blockdata::script::Script;
+use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
 pub use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
@@ -151,7 +153,7 @@ impl<E> EncodeSigningDataResult<E> {
 /// We therefore deviate from the spec by always using the Segwit witness encoding
 /// for 0-input transactions, which results in unambiguously parseable transactions.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[cfg_attr(feature = "bincode", derive(Encode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Transaction {
     /// The protocol version, is currently expected to be 1 or 2 (BIP 68).
@@ -163,8 +165,52 @@ pub struct Transaction {
     /// List of transaction outputs.
     pub output: Vec<TxOut>,
     /// Special Transaction Payload
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_payload"))]
     pub special_transaction_payload: Option<TransactionPayload>,
 }
+
+/// A payload kept raw by an earlier version, for a layout it didn't know, goes back through
+/// [`TransactionType::consensus_decode`], which decodes it typed once this version knows it.
+#[cfg(any(feature = "serde", feature = "bincode"))]
+fn decode_raw_payload(
+    payload: Option<TransactionPayload>,
+) -> Result<Option<TransactionPayload>, encode::Error> {
+    match &payload {
+        Some(raw @ TransactionPayload::RawPayloadType(_, bytes)) => {
+            raw.get_type().consensus_decode(&mut encode::serialize(bytes).as_slice())
+        }
+        _ => Ok(payload),
+    }
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_payload<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<TransactionPayload>, D::Error> {
+    let payload = <Option<TransactionPayload> as serde::Deserialize>::deserialize(deserializer)?;
+    decode_raw_payload(payload).map_err(serde::de::Error::custom)
+}
+
+// As derived, with the payload going through `decode_raw_payload` like in
+// `deserialize_payload`.
+#[cfg(feature = "bincode")]
+impl<C> bincode::Decode<C> for Transaction {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Transaction {
+            version: Decode::decode(decoder)?,
+            lock_time: Decode::decode(decoder)?,
+            input: Decode::decode(decoder)?,
+            output: Decode::decode(decoder)?,
+            special_transaction_payload: decode_raw_payload(Decode::decode(decoder)?)
+                .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))?,
+        })
+    }
+}
+
+#[cfg(feature = "bincode")]
+bincode::impl_borrow_decode!(Transaction);
 
 impl Transaction {
     /// Computes a "normalized TXID" which does not include any signatures.
@@ -193,13 +239,51 @@ impl Transaction {
     /// to the output of `wtxid()`, but for segwit transactions,
     /// this will give the correct txid (not including witnesses) while `wtxid`
     /// will also hash witnesses.
+    ///
+    /// For an asset unlock with payload version 2 or higher the quorum signing info is zeroed
+    /// before hashing, as Core does, so every re-signed instance of one withdrawal shares one
+    /// txid. [`Self::instance_hash`] tells those instances apart, and so does `wtxid()`, which
+    /// hashes them in full.
     pub fn txid(&self) -> Txid {
+        if !self.has_stable_txid() {
+            return self.instance_hash();
+        }
+        let mut bytes = Vec::new();
+        self.encode_txid_data(&mut bytes).expect("vecs don't error");
+        let quorum_info_start = bytes.len() - AssetUnlockPayload::QUORUM_INFO_SIZE;
+        bytes[quorum_info_start..].fill(0);
+        Txid::hash(&bytes)
+    }
+
+    /// The hash of the full serialization, without witnesses. It equals [`Self::txid`] except
+    /// for asset unlocks with payload version 2 or higher, which are relayed by this hash.
+    pub fn instance_hash(&self) -> Txid {
         let mut enc = Txid::engine();
-        self.version.consensus_encode(&mut enc).expect("engines don't error");
-        self.tx_type().to_u16().consensus_encode(&mut enc).expect("engines don't error");
-        self.input.consensus_encode(&mut enc).expect("engines don't error");
-        self.output.consensus_encode(&mut enc).expect("engines don't error");
-        self.lock_time.consensus_encode(&mut enc).expect("engines don't error");
+        self.encode_txid_data(&mut enc).expect("engines don't error");
+        Txid::from_engine(enc)
+    }
+
+    /// Whether the txid excludes the quorum signing info of an asset unlock payload.
+    ///
+    /// Judged from the payload bytes, as Core does, so a payload kept raw counts too.
+    fn has_stable_txid(&self) -> bool {
+        let Some(payload) = &self.special_transaction_payload else {
+            return false;
+        };
+        if (self.version as i16) < 3 || payload.get_type() != TransactionType::AssetUnlock {
+            return false;
+        }
+        let bytes = encode::serialize(payload);
+        bytes.len() == AssetUnlockPayload::SIZE
+            && bytes[0] >= AssetUnlockPayload::STABLE_TXID_VERSION
+    }
+
+    fn encode_txid_data<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+        self.version.consensus_encode(w)?;
+        self.tx_type().to_u16().consensus_encode(w)?;
+        self.input.consensus_encode(w)?;
+        self.output.consensus_encode(w)?;
+        self.lock_time.consensus_encode(w)?;
         if let Some(payload) = &self.special_transaction_payload {
             // Pre-DIP-0002 transactions have no payload section on the wire — keep
             // the txid bit-identical to the on-chain bytes by skipping the section.
@@ -208,13 +292,12 @@ impl Transaction {
                 TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)
             ) {
                 let mut buf = Vec::new();
-                payload.consensus_encode(&mut buf).expect("engines don't error");
+                payload.consensus_encode(&mut buf)?;
                 // this is so we get the size of the payload
-                buf.consensus_encode(&mut enc).expect("engines don't error");
+                buf.consensus_encode(w)?;
             }
         }
-
-        Txid::from_engine(enc)
+        Ok(())
     }
 
     /// Get the transaction type. If a classical transaction this would be 0.
@@ -224,8 +307,9 @@ impl Transaction {
     }
 
     /// Computes SegWit-version of the transaction id (wtxid). For transaction with the witness
-    /// data this hash includes witness, for pre-witness transaction it is equal to the normal
-    /// value returned by txid() function.
+    /// data this hash includes witness, for pre-witness transaction it is equal to `txid()`,
+    /// except for asset unlocks with payload version 2 or higher, where it equals
+    /// [`Self::instance_hash`].
     pub fn wtxid(&self) -> Wtxid {
         let mut enc = Wtxid::engine();
         self.consensus_encode(&mut enc).expect("engines don't error");
@@ -919,7 +1003,13 @@ mod tests {
 
     use super::*;
     use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
+    use crate::blockdata::transaction::special_transaction::provider_dissolve::ProviderDissolvePayload;
+    use crate::blockdata::transaction::special_transaction::provider_registration::CompactSignature;
+    use crate::blockdata::transaction::special_transaction::provider_update_share::ProviderUpdateSharePayload;
+    use crate::blockdata::transaction::special_transaction::provider_update_shared_registrar::ProviderUpdateSharedRegistrarPayload;
+    use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::encode::{deserialize, serialize};
+    use crate::hash_types::PubkeyHash;
     use crate::internal_macros::hex;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::test_utils::UNASSIGNED_SPECIAL_TX_TYPE;
@@ -1106,7 +1196,7 @@ mod tests {
                 value: 1_000,
                 script_pubkey: ScriptBuf::new_op_return(&[0xab; 4]),
             }],
-            special_transaction_payload: Some(TransactionPayload::UnknownPayloadType(
+            special_transaction_payload: Some(TransactionPayload::RawPayloadType(
                 UNASSIGNED_SPECIAL_TX_TYPE,
                 vec![0x01, 0x00, 0xde, 0xad, 0xbe, 0xef],
             )),
@@ -1148,6 +1238,89 @@ mod tests {
         assert_eq!(cursor.position() as usize, bytes.len());
     }
 
+    /// The bytes of a ProUpRevTx payload, a known type.
+    fn revocation_bytes() -> Vec<u8> {
+        use crate::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
+        use crate::bls_sig_utils::BLSSignature;
+        use crate::hash_types::InputsHash;
+
+        serialize(&ProviderUpdateRevocationPayload {
+            version: 1,
+            pro_tx_hash: Txid::from_byte_array([1; 32]),
+            reason: 0,
+            inputs_hash: InputsHash::from_byte_array([2; 32]),
+            payload_sig: BLSSignature::from([3; 96]),
+        })
+    }
+
+    /// The bytes of a quorum commitment payload without signers, whose LLMQ type is `llmq_type`.
+    fn quorum_commitment_bytes(llmq_type: u8) -> Vec<u8> {
+        let mut bytes = vec![1, 0, 0, 0, 0, 0, 1, 0, llmq_type];
+        bytes.extend([0; 32]); // quorum hash
+        bytes.extend([0, 0]); // no signers, no valid members
+        bytes.extend([0; 48 + 32 + 96 + 96]); // public key, vvec hash and signatures
+        bytes
+    }
+
+    fn raw_tx(tx_type: TransactionType, payload: Vec<u8>) -> Transaction {
+        Transaction {
+            special_transaction_payload: Some(TransactionPayload::RawPayloadType(
+                tx_type.to_u16(),
+                payload,
+            )),
+            ..unknown_special_tx(vec![TxIn::default()])
+        }
+    }
+
+    #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes(), false ; "known layout")]
+    #[test_case(TransactionType::ProviderUpdateRevocation, [revocation_bytes(), vec![0]].concat(), true ; "trailing byte")]
+    #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes()[..100].to_vec(), true ; "truncated")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(1), false ; "known llmq type")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), true ; "unknown llmq type re-encodes differently")]
+    fn known_type_payload_decodes_typed_or_stays_raw(
+        tx_type: TransactionType,
+        payload: Vec<u8>,
+        raw: bool,
+    ) {
+        let bytes = serialize(&raw_tx(tx_type, payload));
+        // Fails unless the transaction consumes all the bytes.
+        let decoded: Transaction = deserialize(&bytes).unwrap();
+        assert_eq!(decoded.tx_type(), tx_type);
+        assert_eq!(
+            matches!(
+                decoded.special_transaction_payload,
+                Some(TransactionPayload::RawPayloadType(..))
+            ),
+            raw
+        );
+        assert_eq!(serialize(&decoded), bytes);
+    }
+
+    #[test]
+    fn raw_payload_of_type_0_is_not_classic() {
+        let payload = TransactionPayload::RawPayloadType(0, vec![1]);
+        assert_eq!(payload.get_type(), TransactionType::Unknown(0));
+    }
+
+    #[cfg(feature = "bincode")]
+    const CONFIG: bincode::config::Configuration = bincode::config::standard();
+
+    /// A raw payload persisted by an earlier version decodes typed once its layout is known.
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test_case::test_case(|tx| serde_json::from_str(&serde_json::to_string(tx).unwrap()).unwrap() ; "json")]
+    #[test_case::test_case(|tx| bincode::serde::decode_from_slice(&bincode::serde::encode_to_vec(tx, CONFIG).unwrap(), CONFIG).unwrap().0 ; "binary serde")]
+    #[test_case::test_case(|tx| bincode::decode_from_slice(&bincode::encode_to_vec(tx, CONFIG).unwrap(), CONFIG).unwrap().0 ; "bincode")]
+    fn raw_payload_of_a_known_layout_deserializes_typed(
+        round_trip: fn(&Transaction) -> Transaction,
+    ) {
+        let decoded =
+            round_trip(&raw_tx(TransactionType::ProviderUpdateRevocation, revocation_bytes()));
+        assert!(matches!(
+            decoded.special_transaction_payload,
+            Some(TransactionPayload::ProviderUpdateRevocationPayloadType(_))
+        ));
+    }
+
     #[test]
     fn unknown_special_transaction_type_without_inputs_is_not_segwit() {
         let tx = unknown_special_tx(vec![]);
@@ -1161,6 +1334,44 @@ mod tests {
         let decoded: Transaction = deserialize(&bytes).expect("input-less unknown type decodes");
         assert_eq!(decoded, tx);
         assert_eq!(serialize(&decoded), bytes);
+    }
+
+    #[test_case(10, TransactionPayload::ProviderDissolvePayloadType(ProviderDissolvePayload {
+        version: 1,
+        pro_tx_hash: Txid::all_zeros(),
+        actor_index: 0,
+        signatures: vec![CompactSignature::from([1; 65])],
+    }); "ProDisTx")]
+    #[test_case(11, TransactionPayload::ProviderUpdateSharePayloadType(ProviderUpdateSharePayload {
+        version: 1,
+        pro_tx_hash: Txid::all_zeros(),
+        share_index: 0,
+        script_reward: ScriptBuf::new(),
+        inputs_hash: InputsHash::all_zeros(),
+        payload_sig: vec![1; 65],
+    }); "ProUpShareTx")]
+    #[test_case(12, TransactionPayload::ProviderUpdateSharedRegistrarPayloadType(
+        ProviderUpdateSharedRegistrarPayload {
+            version: 1,
+            pro_tx_hash: Txid::all_zeros(),
+            operator_public_key: BLSPublicKey::from([1; 48]),
+            voting_key_hash: PubkeyHash::all_zeros(),
+            inputs_hash: InputsHash::all_zeros(),
+            signatures: vec![CompactSignature::from([1; 65])],
+        }
+    ); "ProUpSharedRegTx")]
+    fn shared_masternode_types_decode_typed(tx_type: u16, payload: TransactionPayload) {
+        let tx = Transaction {
+            special_transaction_payload: Some(payload),
+            ..unknown_special_tx(vec![TxIn::default()])
+        };
+        let bytes = serialize(&tx);
+        assert_eq!(&bytes[2..4], &tx_type.to_le_bytes());
+
+        let decoded: Transaction = deserialize(&bytes).unwrap();
+        assert_eq!(decoded, tx);
+        assert_eq!(decoded.tx_type().to_u16(), tx_type);
+        assert_eq!(decoded.size(), bytes.len());
     }
 
     #[test]
