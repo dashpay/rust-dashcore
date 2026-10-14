@@ -377,6 +377,17 @@ pub trait RpcApi: Sized {
         self.call("getblockchaininfo", &[])
     }
 
+    /// Returns the state of the consensus deployments at `block_hash`, or at the chain tip when
+    /// it is `None`. Core before v24 answers method not found (`-32601`) and reports them at the
+    /// tip as `softforks` in `getblockchaininfo`.
+    fn get_deployment_info(
+        &self,
+        block_hash: Option<&BlockHash>,
+    ) -> Result<json::GetDeploymentInfoResult> {
+        let mut args = [opt_into_json(block_hash)?];
+        self.call("getdeploymentinfo", handle_defaults(&mut args, &[null()]))
+    }
+
     /// Returns the numbers of block in the longest chain.
     fn get_block_count(&self) -> Result<u32> {
         self.call("getblockcount", &[])
@@ -1805,5 +1816,47 @@ mod tests {
     #[test]
     fn test_handle_defaults() {
         test_handle_defaults_inner().unwrap();
+    }
+
+    /// Answers `getdeploymentinfo` as Core v24 does, after checking its arguments.
+    struct DeploymentInfoCore {
+        expected_args: Vec<serde_json::Value>,
+    }
+
+    impl RpcApi for DeploymentInfoCore {
+        fn call<T: for<'a> serde::de::Deserialize<'a>>(
+            &self,
+            cmd: &str,
+            args: &[serde_json::Value],
+        ) -> Result<T> {
+            assert_eq!(cmd, "getdeploymentinfo");
+            assert_eq!(args, self.expected_args.as_slice());
+            Ok(serde_json::from_str(
+                r#"{
+                  "hash": "74b4fb2caeeebbc7cd5dcc50b58532d983f0e5c87f3ac729c6d47f0ace76b97d",
+                  "height": 440,
+                  "deployments": {"mn_rr": {"type": "buried", "active": true, "height": 432}}
+                }"#,
+            )?)
+        }
+    }
+
+    #[test]
+    fn get_deployment_info_asks_for_the_chain_tip_without_a_block_hash() {
+        let core = DeploymentInfoCore {
+            expected_args: vec![],
+        };
+        let info = core.get_deployment_info(None).unwrap();
+        assert_eq!(info.height, 440);
+        assert_eq!(info.deployments["mn_rr"].height, Some(432));
+    }
+
+    #[test]
+    fn get_deployment_info_asks_for_the_given_block() {
+        let hash = "74b4fb2caeeebbc7cd5dcc50b58532d983f0e5c87f3ac729c6d47f0ace76b97d";
+        let core = DeploymentInfoCore {
+            expected_args: vec![serde_json::Value::String(hash.to_string())],
+        };
+        core.get_deployment_info(Some(&hash.parse().unwrap())).unwrap();
     }
 }
