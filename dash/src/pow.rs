@@ -13,8 +13,6 @@ use core::ops::{Add, Sub};
 use dash_num::Arith256;
 use dash_types::Numeric;
 
-#[cfg(doc)]
-use crate::consensus::Params;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::BlockHash;
 use crate::io::{self, Read, Write};
@@ -212,22 +210,6 @@ fn split_in_half(a: [u8; 32]) -> ([u8; 16], [u8; 16]) {
 pub struct Work(Arith256);
 
 impl Work {
-    /// Lowest possible work value for Mainnet. See comment on [`Params::pow_limit`] for more info.
-    pub const MAINNET_MIN: Work =
-        Work(from_high_u128(0x0000_0000_ffff_0000_0000_0000_0000_0000_u128));
-
-    /// Lowest possible work value for Testnet. See comment on [`Params::pow_limit`] for more info.
-    pub const TESTNET_MIN: Work =
-        Work(from_high_u128(0x0000_0000_ffff_0000_0000_0000_0000_0000_u128));
-
-    /// Lowest possible work value for Devnet. See comment on [`Params::pow_limit`] for more info.
-    pub const DEVNET_MIN: Work =
-        Work(from_high_u128(0x0000_0377_ae00_0000_0000_0000_0000_0000_u128));
-
-    /// Lowest possible work value for Regtest. See comment on [`Params::pow_limit`] for more info.
-    pub const REGTEST_MIN: Work =
-        Work(from_high_u128(0x7fff_ff00_0000_0000_0000_0000_0000_0000_u128));
-
     /// Converts this [`Work`] to [`Target`].
     pub fn to_target(self) -> Target {
         Target(self.0.block_proof())
@@ -287,6 +269,22 @@ impl Target {
     /// This is provided for consistency with Rust 1.41.1, newer code should use [`Target::MAX`].
     pub const fn max_value() -> Self {
         Target::MAX
+    }
+
+    /// `~uint256(0) >> bits`, as Dash Core writes its `powLimit`s.
+    pub(crate) const fn max_shr(bits: u32) -> Target {
+        let mut be = [0xff; 32];
+        let mut i = 0;
+        while i < 32 {
+            let first_bit = i as u32 * 8;
+            if first_bit + 8 <= bits {
+                be[i] = 0;
+            } else if first_bit < bits {
+                be[i] = 0xff >> (bits - first_bit);
+            }
+            i += 1;
+        }
+        Target(Arith256::from_bendian(be))
     }
 
     /// Computes the [`Target`] value from a compact representation.
