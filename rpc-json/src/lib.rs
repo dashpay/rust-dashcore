@@ -980,10 +980,23 @@ pub struct GetBlockchainInfoResult {
     pub automatic_pruning: Option<bool>,
     /// The target size used by pruning (only present if automatic pruning is enabled)
     pub prune_target_size: Option<u64>,
-    /// Status of softforks in progress
+    /// Status of softforks in progress. Empty from Core v24 on, which reports them only with
+    /// `-deprecatedrpc=softforks`; read them with `getdeploymentinfo` instead.
+    #[serde(default)]
     pub softforks: HashMap<String, SoftforkInfo>,
     /// Any network and blockchain warnings.
     pub warnings: String,
+}
+
+/// Models the result of "getdeploymentinfo", added in Core v24
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct GetDeploymentInfoResult {
+    /// The block the deployment state is reported at
+    pub hash: BlockHash,
+    /// The height of that block
+    pub height: u32,
+    /// The state of each deployment, by name
+    pub deployments: HashMap<String, SoftforkInfo>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -3649,9 +3662,10 @@ mod tests {
     use serde_json::json;
 
     use crate::{
-        DMNPayout, DMNState, DMNStateDiff, ExtendedQuorumListResult, Masternode,
-        MasternodeAddresses, MasternodeListDiff, MasternodeStatus, MnSyncStatus, ProTxInfo,
-        QuorumMasternodeListItem, QuorumType, deserialize_u32_opt, parse_host_port,
+        Bip9SoftforkStatus, DMNPayout, DMNState, DMNStateDiff, ExtendedQuorumListResult,
+        GetBlockchainInfoResult, GetDeploymentInfoResult, Masternode, MasternodeAddresses,
+        MasternodeListDiff, MasternodeStatus, MnSyncStatus, ProTxInfo, QuorumMasternodeListItem,
+        QuorumType, SoftforkInfo, SoftforkType, deserialize_u32_opt, parse_host_port,
     };
     use hex_conservative::DisplayHex;
 
@@ -5217,5 +5231,165 @@ mod tests {
             serde_json::from_value(json_value).expect("expected to deserialize json");
 
         println!("{:#?}", result);
+    }
+
+    /// `getblockchaininfo` of Dash Core v24.0.0-rc.3 on regtest at height 440. Core v24 reports
+    /// deployments through `getdeploymentinfo` and leaves `softforks` out of this answer unless
+    /// it runs with `-deprecatedrpc=softforks`.
+    const CORE_V24_GETBLOCKCHAININFO: &str = r#"{
+      "chain": "regtest",
+      "blocks": 440,
+      "headers": 440,
+      "bestblockhash": "74b4fb2caeeebbc7cd5dcc50b58532d983f0e5c87f3ac729c6d47f0ace76b97d",
+      "difficulty": 4.656542373906925e-10,
+      "time": 1791945745,
+      "mediantime": 1791945744,
+      "verificationprogress": 1,
+      "initialblockdownload": false,
+      "chainwork": "0000000000000000000000000000000000000000000000000000000000000372",
+      "size_on_disk": 98178,
+      "pruned": false,
+      "warnings": "Make sure to encrypt your wallet and delete all non-encrypted backups after you have verified that the wallet works!"
+    }"#;
+
+    #[test]
+    fn deserialize_getblockchaininfo_without_softforks_from_core_v24() {
+        let info: GetBlockchainInfoResult =
+            serde_json::from_str(CORE_V24_GETBLOCKCHAININFO).expect("expected to deserialize json");
+
+        assert_eq!(info.blocks, 440);
+        assert_eq!(
+            info.best_block_hash.to_string(),
+            "74b4fb2caeeebbc7cd5dcc50b58532d983f0e5c87f3ac729c6d47f0ace76b97d"
+        );
+        assert!(info.softforks.is_empty());
+    }
+
+    /// `getdeploymentinfo` of the same Core v24 node, at the same tip.
+    const CORE_V24_GETDEPLOYMENTINFO: &str = r#"{
+      "hash": "74b4fb2caeeebbc7cd5dcc50b58532d983f0e5c87f3ac729c6d47f0ace76b97d",
+      "height": 440,
+      "deployments": {
+        "bip34": {"type": "buried", "active": true, "height": 1},
+        "bip66": {"type": "buried", "active": true, "height": 1},
+        "bip65": {"type": "buried", "active": true, "height": 1},
+        "bip147": {"type": "buried", "active": true, "height": 0},
+        "csv": {"type": "buried", "active": true, "height": 1},
+        "dip0001": {"type": "buried", "active": true, "height": 1},
+        "dip0003": {"type": "buried", "active": true, "height": 432},
+        "dip0008": {"type": "buried", "active": true, "height": 1},
+        "dip0020": {"type": "buried", "active": true, "height": 1},
+        "dip0024": {"type": "buried", "active": true, "height": 1},
+        "realloc": {"type": "buried", "active": true, "height": 1},
+        "v19": {"type": "buried", "active": true, "height": 1},
+        "v20": {"type": "buried", "active": true, "height": 432},
+        "mn_rr": {"type": "buried", "active": true, "height": 432},
+        "withdrawals": {"type": "buried", "active": false, "height": 600},
+        "v24": {"type": "bip9", "active": false, "bip9": {"start_time": 0, "timeout": 9223372036854775807, "ehf": true, "min_activation_height": 0, "status": "defined", "since": 0, "status_next": "defined"}},
+        "evo_shares": {"type": "bip9", "active": false, "bip9": {"start_time": 0, "timeout": 9223372036854775807, "ehf": true, "min_activation_height": 0, "status": "defined", "since": 0, "status_next": "defined"}},
+        "testdummy": {"type": "bip9", "height": 432, "active": true, "bip9": {"start_time": 0, "timeout": 9223372036854775807, "ehf": false, "min_activation_height": 0, "status": "active", "since": 432, "status_next": "active"}}
+      }
+    }"#;
+
+    /// `getblockchaininfo` of Dash Core v23.1.8 on regtest at height 440, which still reports
+    /// deployments as `softforks`.
+    const CORE_V23_GETBLOCKCHAININFO: &str = r#"{
+      "chain": "regtest",
+      "blocks": 440,
+      "headers": 440,
+      "bestblockhash": "609b799530c36b8ad9d40b6c4dc182e9d64679bfe6c9252ed60822bbd8c8e748",
+      "difficulty": 4.656542373906925e-10,
+      "time": 1791945759,
+      "mediantime": 1791945758,
+      "verificationprogress": 1,
+      "initialblockdownload": false,
+      "chainwork": "0000000000000000000000000000000000000000000000000000000000000372",
+      "size_on_disk": 98178,
+      "pruned": false,
+      "softforks": {
+        "bip34": {"type": "buried", "active": true, "height": 1},
+        "bip66": {"type": "buried", "active": true, "height": 1},
+        "bip65": {"type": "buried", "active": true, "height": 1},
+        "bip147": {"type": "buried", "active": true, "height": 0},
+        "csv": {"type": "buried", "active": true, "height": 1},
+        "dip0001": {"type": "buried", "active": true, "height": 1},
+        "dip0003": {"type": "buried", "active": true, "height": 432},
+        "dip0008": {"type": "buried", "active": true, "height": 1},
+        "dip0020": {"type": "buried", "active": true, "height": 1},
+        "dip0024": {"type": "buried", "active": true, "height": 1},
+        "realloc": {"type": "buried", "active": true, "height": 1},
+        "v19": {"type": "buried", "active": true, "height": 1},
+        "v20": {"type": "buried", "active": true, "height": 432},
+        "mn_rr": {"type": "buried", "active": true, "height": 432},
+        "withdrawals": {"type": "buried", "active": false, "height": 600},
+        "v24": {"type": "bip9", "bip9": {"status": "defined", "start_time": 0, "timeout": 9223372036854775807, "min_activation_height": 0, "ehf": true, "since": 0}, "active": false},
+        "testdummy": {"type": "bip9", "bip9": {"status": "active", "start_time": 0, "timeout": 9223372036854775807, "min_activation_height": 0, "ehf": false, "since": 432}, "height": 432, "active": true}
+      },
+      "warnings": "Make sure to encrypt your wallet and delete all non-encrypted backups after you have verified that the wallet works!"
+    }"#;
+
+    fn buried(active: bool, height: u32) -> SoftforkInfo {
+        SoftforkInfo {
+            softfork_type: SoftforkType::Buried,
+            active,
+            height: Some(height),
+            bip9: None,
+        }
+    }
+
+    #[test]
+    fn deserialize_getdeploymentinfo_from_core_v24() {
+        let info: GetDeploymentInfoResult =
+            serde_json::from_str(CORE_V24_GETDEPLOYMENTINFO).expect("expected to deserialize json");
+
+        assert_eq!(
+            info.hash.to_string(),
+            "74b4fb2caeeebbc7cd5dcc50b58532d983f0e5c87f3ac729c6d47f0ace76b97d"
+        );
+        assert_eq!(info.height, 440);
+        assert_eq!(info.deployments.len(), 18);
+        assert_eq!(info.deployments.get("mn_rr"), Some(&buried(true, 432)));
+        assert_eq!(info.deployments.get("withdrawals"), Some(&buried(false, 600)));
+
+        // Core v24 adds fields to a version bits deployment (`status_next` among them) that
+        // decoding ignores.
+        let testdummy = info.deployments.get("testdummy").expect("testdummy is reported");
+        assert_eq!(testdummy.softfork_type, SoftforkType::Bip9);
+        assert!(testdummy.active);
+        assert_eq!(testdummy.height, Some(432));
+        let bip9 = testdummy.bip9.as_ref().expect("a bip9 deployment reports its state");
+        assert_eq!(bip9.status, Bip9SoftforkStatus::Active);
+        assert_eq!(bip9.since, 432);
+        assert_eq!(bip9.timeout, i64::MAX as u64);
+    }
+
+    #[test]
+    fn deserialize_getblockchaininfo_with_softforks_from_core_v23() {
+        let info: GetBlockchainInfoResult =
+            serde_json::from_str(CORE_V23_GETBLOCKCHAININFO).expect("expected to deserialize json");
+
+        assert_eq!(info.blocks, 440);
+        assert_eq!(info.softforks.len(), 17);
+        assert_eq!(info.softforks.get("mn_rr"), Some(&buried(true, 432)));
+    }
+
+    /// Core builds `getdeploymentinfo`'s deployments with the function that built
+    /// `getblockchaininfo`'s `softforks`, so a reader can take a buried deployment from either.
+    #[test]
+    fn getdeploymentinfo_reports_buried_deployments_as_softforks_did() {
+        let v23: GetBlockchainInfoResult =
+            serde_json::from_str(CORE_V23_GETBLOCKCHAININFO).expect("expected to deserialize json");
+        let v24: GetDeploymentInfoResult =
+            serde_json::from_str(CORE_V24_GETDEPLOYMENTINFO).expect("expected to deserialize json");
+
+        let buried: Vec<_> = v23
+            .softforks
+            .iter()
+            .filter(|(_, fork)| fork.softfork_type == SoftforkType::Buried)
+            .collect();
+        assert_eq!(buried.len(), 15);
+        for (name, fork) in buried {
+            assert_eq!(v24.deployments.get(name), Some(fork), "{name}");
+        }
     }
 }
