@@ -10,6 +10,7 @@
 //!
 
 use core::fmt;
+use std::collections::HashSet;
 
 use hashes::{Hash, HashEngine};
 
@@ -213,11 +214,23 @@ impl Block {
     }
 
     /// Checks if merkle root of header matches merkle root of the transaction list.
+    ///
+    /// Returns `false` if any txid appears more than once: repeating the trailing
+    /// transactions keeps the merkle root unchanged (CVE-2012-2459).
     pub fn check_merkle_root(&self) -> bool {
-        match self.compute_merkle_root() {
-            Some(merkle_root) => self.header.merkle_root == merkle_root,
-            None => false,
+        let mut seen = HashSet::with_capacity(self.txdata.len());
+        let mut hashes = Vec::with_capacity(self.txdata.len());
+
+        for tx in &self.txdata {
+            let txid = tx.txid();
+            if !seen.insert(txid) {
+                return false;
+            }
+            hashes.push(txid.to_raw_hash());
         }
+
+        merkle_tree::calculate_root(hashes.into_iter()).map(TxMerkleNode::from_raw_hash)
+            == Some(self.header.merkle_root)
     }
 
     /// Checks if witness commitment in coinbase matches the transaction list.
@@ -662,6 +675,22 @@ mod tests {
         assert!(!segwit_signal.is_signalling_soft_fork(0));
         assert!(segwit_signal.is_signalling_soft_fork(1));
         assert!(!segwit_signal.is_signalling_soft_fork(2));
+    }
+
+    /// Repeating the trailing transaction keeps the merkle root, so only the
+    /// repeated txid shows that the block is not the one the header commits to.
+    #[test]
+    fn check_merkle_root_rejects_repeated_txid() {
+        let address = crate::Address::dummy(crate::Network::Testnet, 0);
+        let mut txdata = vec![Transaction::dummy_coinbase(&address, 50)];
+        txdata.extend((0..2).map(|i| Transaction::dummy(&address, i..i + 1, &[10])));
+        let mut block = Block::dummy(100, txdata);
+        block.header.merkle_root = block.compute_merkle_root().unwrap();
+        assert!(block.check_merkle_root());
+
+        block.txdata.push(block.txdata[2].clone());
+        assert_eq!(block.compute_merkle_root(), Some(block.header.merkle_root));
+        assert!(!block.check_merkle_root());
     }
 }
 

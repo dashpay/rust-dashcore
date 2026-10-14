@@ -110,6 +110,9 @@ pub enum ValidationError {
 
     #[error("Invalid filter header chain: {0}")]
     InvalidFilterHeaderChain(String),
+
+    #[error("Invalid merkle root: {0}")]
+    InvalidMerkleRoot(String),
 }
 
 /// Synchronization-related errors.
