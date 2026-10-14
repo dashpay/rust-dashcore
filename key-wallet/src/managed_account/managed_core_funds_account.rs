@@ -631,7 +631,8 @@ impl ManagedCoreFundsAccount {
     /// again, so it is kept as unconfirmed instead: its outputs stay, and the
     /// coins it spent stay spent.
     ///
-    /// A coin named in `spent_claims`, the wallet-level claims, is not put back.
+    /// A coin named in `spent_claims`, the wallet-level claims, is not put back
+    /// but kept aside for input matching, as at restore.
     pub(crate) fn truncate_above(
         &mut self,
         height: CoreBlockHeight,
@@ -688,6 +689,11 @@ impl ManagedCoreFundsAccount {
             }
             self.utxos.insert(outpoint, utxo);
             restored.push(outpoint);
+        }
+        // A claimed coin whose spender the fork dropped is kept aside again,
+        // so the spend is still matched when it is mined again.
+        for outpoint in spent_claims.keys() {
+            self.keep_recorded_output_for_claim(outpoint);
         }
         if !restored.is_empty() {
             self.keys.bump_monitor_revision();

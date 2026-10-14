@@ -683,6 +683,13 @@ async fn fork_dropping_the_spender_of_a_claimed_coin_keeps_it_guarded(spender_fi
     assert!(truncation.restored_outpoints.is_empty());
     assert!(!second_account(&ctx).utxos.contains_key(&coin));
     assert!(claim_on(&ctx, &coin).is_some());
+
+    // Mined again on the new branch, the spender is still matched as a spend.
+    let result = ctx.check_transaction(&spender, in_block(101)).await;
+    assert_eq!(
+        recorded(&result),
+        vec![(TransactionDirection::Outgoing, -150_000, vec![(0, 150_000)])]
+    );
     ctx.check_transaction(&funding, in_block(100)).await;
     assert!(!second_account(&ctx).utxos.contains_key(&coin));
     assert_eq!(ctx.managed_wallet.balance.total(), 0);
