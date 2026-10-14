@@ -630,11 +630,14 @@ impl ManagedCoreFundsAccount {
     /// A transaction in `instant_locked` is final for its txid and is mined
     /// again, so it is kept as unconfirmed instead: its outputs stay, and the
     /// coins it spent stay spent.
+    ///
+    /// A coin named in `spent_claims`, the wallet-level claims, is not put back.
     pub(crate) fn truncate_above(
         &mut self,
         height: CoreBlockHeight,
         dropped_spends: &BTreeSet<OutPoint>,
         instant_locked: &HashSet<Txid>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
     ) -> Truncation {
         let (unconfirmed, dropped): (BTreeSet<Txid>, BTreeSet<Txid>) = self
             .keys
@@ -665,7 +668,11 @@ impl ManagedCoreFundsAccount {
         let mut restored = Vec::new();
         for mut utxo in spent {
             let outpoint = utxo.outpoint;
-            if dropped.contains(&outpoint.txid) || self.spent_outpoints.contains(&outpoint) {
+            // A fork changes no claim, so a claimed coin is not given back.
+            if dropped.contains(&outpoint.txid)
+                || self.spent_outpoints.contains(&outpoint)
+                || spent_claims.contains_key(&outpoint)
+            {
                 continue;
             }
             if unconfirmed.contains(&outpoint.txid) {

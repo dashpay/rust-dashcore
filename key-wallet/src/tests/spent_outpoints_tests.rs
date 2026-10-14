@@ -654,20 +654,34 @@ async fn permanent_claim_outlives_a_recorded_then_abandoned_spender() {
 /// A fork that drops the block spending a claimed coin releases nothing: the
 /// coin is not handed back, and stays guarded when its funding is delivered
 /// again.
+#[test_case::test_case(false; "funding first")]
+#[test_case::test_case(true; "spender first")]
 #[tokio::test]
-async fn fork_dropping_the_spender_of_a_claimed_coin_keeps_it_guarded() {
+async fn fork_dropping_the_spender_of_a_claimed_coin_keeps_it_guarded(spender_first: bool) {
     let (mut ctx, address) = restore_context();
     let funding = Transaction::dummy(&address, 20..21, &[150_000]);
     let coin = OutPoint::new(funding.txid(), 0);
     let spender = spending_tx(&[coin]);
     ctx.managed_wallet.restore_spent_outpoints(&[(coin, Some(spender.txid()))]);
-    ctx.check_transaction(&funding, in_block(100)).await;
-    ctx.check_transaction(&spender, in_block(101)).await;
+    if spender_first {
+        ctx.check_transaction(&spender, in_block(101)).await;
+        ctx.check_transaction(&funding, in_block(100)).await;
+    } else {
+        ctx.check_transaction(&funding, in_block(100)).await;
+        ctx.check_transaction(&spender, in_block(101)).await;
+    }
 
     let truncation = ctx.managed_wallet.truncate_above(100).expect("truncates");
 
-    assert_eq!(truncation.txids, vec![spender.txid()]);
+    // A spender seen before its funding left only an observed spend, no record.
+    let dropped = if spender_first {
+        vec![]
+    } else {
+        vec![spender.txid()]
+    };
+    assert_eq!(truncation.txids, dropped);
     assert!(truncation.restored_outpoints.is_empty());
+    assert!(!second_account(&ctx).utxos.contains_key(&coin));
     assert!(claim_on(&ctx, &coin).is_some());
     ctx.check_transaction(&funding, in_block(100)).await;
     assert!(!second_account(&ctx).utxos.contains_key(&coin));
