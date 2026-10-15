@@ -2475,10 +2475,10 @@ impl DMNState {
     /// when they match.
     ///
     /// A field that goes from `Some` to `None` with nothing replacing it (the legacy platform
-    /// ports, `owner_address`, `platform_node_id`, or both payout fields at once) cannot be
-    /// expressed: the diff leaves it out and applying it keeps the old value. Core makes none of
-    /// those transitions except on revoking an extended-address Evo, whose printed ports turn
-    /// to `-1`, and Core's own diff does not print that change either.
+    /// ports, `owner_address`, `platform_node_id`, `pose_revived_height`, or both payout fields
+    /// at once) cannot be expressed: the diff leaves it out and applying it keeps the old value.
+    /// Core makes none of those transitions except on revoking an extended-address Evo, whose
+    /// printed ports turn to `-1`, and Core's own diff does not print that change either.
     pub fn compare_to_newer_dmn_state(&self, newer: &DMNState) -> Option<DMNStateDiff> {
         let mut has_diff = false;
         let diff = DMNStateDiff {
@@ -2627,7 +2627,9 @@ impl DMNState {
             addresses,
             ..
         } = diff;
-        self.pose_revived_height = pose_revived_height;
+        if let Some(pose_revived_height) = pose_revived_height {
+            self.pose_revived_height = Some(pose_revived_height);
+        }
         if let Some(pose_ban_height) = pose_ban_height {
             self.pose_ban_height = pose_ban_height;
         }
@@ -5043,6 +5045,16 @@ mod tests {
         });
         newer.legacy_platform_p2p_port = Some(36656);
         newer.legacy_platform_http_port = Some(1443);
+        assert_compare_then_apply_round_trips(&older, &newer);
+    }
+
+    #[test]
+    fn compare_then_apply_round_trips_an_unchanged_pose_revived_height() {
+        // A ProUpRegTx changing the voting key of a masternode revived earlier.
+        let mut older = core_v24_listdiff().added_mns[1].state.clone();
+        older.pose_revived_height = Some(1200);
+        let mut newer = older.clone();
+        newer.voting_address = [0xee; 20];
         assert_compare_then_apply_round_trips(&older, &newer);
     }
 

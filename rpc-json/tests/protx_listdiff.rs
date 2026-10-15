@@ -256,19 +256,20 @@ fn a_revive_diff_carries_the_new_operators_payout_with_the_revived_height() {
     }
 }
 
+/// Core prints a diff field only when it changed, so a list followed through diffs must keep
+/// every field a diff leaves out: it equals Core's full list at every height, except for the
+/// operator payout resets no diff prints. Core prints `PoSeRevivedHeight` only in a diff that
+/// spans the revive, so MN1's payment after its revive is where a cleared revived height shows.
 #[test]
-fn following_the_block_diffs_keeps_cores_operator_payouts_but_not_their_resets() {
+fn following_the_block_diffs_reproduces_cores_full_lists_but_the_operator_payout_resets() {
     for recording in recordings() {
         for height in FIRST_HEIGHT..=LAST_HEIGHT {
-            let followed = recording.followed_list(height);
-            for (pro_tx_hash, core_state) in recording.full_list_without_payout_resets(height) {
-                let context = format!("{} {pro_tx_hash} at {height}", recording.version);
-                assert_eq!(
-                    masternode_state(&followed, &pro_tx_hash, &context).operator_payout_address,
-                    core_state.operator_payout_address,
-                    "{context}"
-                );
-            }
+            assert_eq!(
+                recording.followed_list(height),
+                recording.full_list_without_payout_resets(height),
+                "{} at {height}",
+                recording.version
+            );
         }
     }
 }
