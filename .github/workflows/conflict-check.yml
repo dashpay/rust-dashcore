@@ -10,7 +10,7 @@ on:
 
 jobs:
   conflict-check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'dash-x64-light' }}
     permissions:
       pull-requests: write
     steps:
