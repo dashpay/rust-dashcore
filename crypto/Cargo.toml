@@ -17,7 +17,7 @@ bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash
 bls = ["dash-pkc/bls", "dash-pkc/portable", "dep:tracing"]
 eddsa = ["dash-pkc/eddsa"]
 rand = ["bitcoin-crypto/rand"]
-serde = ["dep:serde", "bitcoin-crypto/serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "dash-pkc/serde", "secp256k1/serde"]
+serde = ["dep:serde", "bitcoin-crypto/serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "dash-pkc/serde"]
 
 [dependencies]
 base58ck = { workspace = true }
@@ -31,7 +31,6 @@ delegate = "0.13"
 dashcore_hashes = { path = "../hashes" }
 hex-conservative = { workspace = true }
 internals = { path = "../internals", package = "dashcore-private" }
-secp256k1 = { workspace = true, features = ["recovery"] }
 serde = { workspace = true, features = ["derive", "alloc"], optional = true }
 thiserror = "2"
 tracing = { version = "0.1", optional = true }

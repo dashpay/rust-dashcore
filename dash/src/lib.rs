@@ -30,14 +30,12 @@
 //!
 //! ## Available feature flags
 //!
-//! * `secp-recovery` - enables calculating public key from a signature and message.
 //! * `signer` - enables singing and validation ECDSA helpers.
 //! * `base64` - (dependency), enables encoding of message signatures.
 //! * `unstable` - enables unstable features for testing.
 //! * `rand` - (dependency), makes it more convenient to generate random values.
 //! * `bincode` - (dependency), implements bincode serialization and deserialization.
 //! * `serde` - (dependency), implements `serde`-based serialization and deserialization.
-//! * `secp-lowmemory` - optimizations for low-memory devices.
 //!
 
 // Experimental features we need.
@@ -67,7 +65,6 @@ pub extern crate bech32;
 #[cfg(feature = "bitcoinconsensus")]
 pub extern crate bitcoinconsensus;
 pub extern crate dashcore_hashes as hashes;
-pub extern crate secp256k1;
 
 #[cfg(feature = "eddsa")]
 pub use dashcore_crypto::eddsa;

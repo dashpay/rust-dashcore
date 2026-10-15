@@ -1268,8 +1268,7 @@ mod tests {
         }
 
         use crate::consensus::serde as con_serde;
-        use secp256k1::SecretKey;
-
+        use crate::crypto::ecdsa::EcdsaSecretKey;
         use crate::crypto::key::{Keypair, XOnlyPublicKey};
         use crate::taproot::{TapNodeHash, TapTweak, TapTweakHash};
 
@@ -1304,7 +1303,7 @@ mod tests {
         #[serde(rename_all = "camelCase")]
         struct KpsInputSpendingGiven {
             txin_index: usize,
-            internal_privkey: SecretKey,
+            internal_privkey: EcdsaSecretKey,
             merkle_root: Option<TapNodeHash>,
             #[serde(deserialize_with = "sighash_deser_numeric")]
             hash_type: TapSighashType,
@@ -1315,7 +1314,7 @@ mod tests {
         struct KpsInputSpendingIntermediary {
             internal_pubkey: XOnlyPublicKey,
             tweak: TapTweakHash,
-            tweaked_privkey: SecretKey,
+            tweaked_privkey: EcdsaSecretKey,
             sig_msg: String,
             //precomputed_used: Vec<String>, // unused
             sig_hash: TapSighash,
@@ -1397,7 +1396,7 @@ mod tests {
             };
 
             // tests
-            let keypair = Keypair::from(secp256k1::Keypair::from_secret_key(&internal_priv_key));
+            let keypair = Keypair::from(internal_priv_key);
             let internal_key = XOnlyPublicKey::from_keypair(&keypair);
             let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
             let tweaked_keypair = keypair.tap_tweak(merkle_root);
@@ -1428,7 +1427,7 @@ mod tests {
             assert_eq!(sig_str[..128], key_spend_sig.to_string());
 
             let tweaked_priv_key = tweaked_keypair.as_keypair().to_secret_bytes();
-            assert_eq!(expected.tweaked_privkey.to_secret_bytes(), tweaked_priv_key);
+            assert_eq!(*expected.tweaked_privkey.to_bytes(), tweaked_priv_key);
         }
     }
 

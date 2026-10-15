@@ -14,7 +14,8 @@ use core::str::FromStr;
 
 #[cfg(feature = "rand")]
 use bitcoin_crypto::key::rand;
-use bitcoin_crypto::key::Keypair;
+use bitcoin_crypto::key::{Keypair, XOnlyPublicKey};
+use dash_pkc::__deps::secp256k1;
 use dash_pkc::ecdsa::{
     Compression, EcdsaPublicKey as PkcPublicKey, EcdsaRecSigBytes as PkcRecSigBytes,
     EcdsaRecSignature as PkcRecSignature, EcdsaSecretKey as PkcSecretKey,
@@ -120,8 +121,11 @@ impl FromStr for EcdsaPublicKey {
     }
 }
 
-type_cvrt!(From<secp256k1::PublicKey> for EcdsaPublicKey, |pk| Self(PkcPublicKey::from(*pk)));
-type_cvrt!(From<EcdsaPublicKey> for secp256k1::PublicKey, |pk| Self::from(pk.0));
+type_cvrt!(From<secp256k1::PublicKey> for EcdsaPublicKey, |pk| Self(pk.into()));
+type_cvrt!(From<EcdsaPublicKey> for secp256k1::PublicKey, |pk| pk.0.into());
+type_cvrt!(From<EcdsaPublicKey> for XOnlyPublicKey, |pk| {
+    Self::from(secp256k1::PublicKey::from(pk))
+});
 
 /// A secp256k1 secret key.
 #[derive(Clone, Eq, PartialEq, Zeroize)]
@@ -172,8 +176,6 @@ impl fmt::Debug for EcdsaSecretKey {
     }
 }
 
-type_cvrt!(From<secp256k1::SecretKey> for EcdsaSecretKey, |sk| Self(PkcSecretKey::from(*sk)));
-type_cvrt!(From<EcdsaSecretKey> for secp256k1::SecretKey, |sk| Self::from(&sk.0));
 type_cvrt!(From<EcdsaSecretKey> for Keypair, |sk| {
     Self::from(secp256k1::Keypair::from_secret_key(&(&sk.0).into()))
 });
@@ -293,8 +295,6 @@ impl EcdsaRecSignature {
 
 #[cfg(test)]
 mod tests {
-    use core::str::FromStr;
-
     use super::*;
 
     // A DER signature with `SIGHASH_ALL` appended.

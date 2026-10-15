@@ -13,6 +13,7 @@ use core::iter::FusedIterator;
 use hashes::{Hash, HashEngine, sha256t_hash_newtype};
 
 use crate::consensus::Encodable;
+use crate::crypto::ecdsa::EcdsaSecretKey;
 use crate::crypto::key::{
     Keypair, Parity, Scalar, TweakedKeypair, TweakedPublicKey, UntweakedKeypair,
     UntweakedPublicKey, XOnlyPublicKey, constants,
@@ -1752,10 +1753,9 @@ impl TapTweak for UntweakedKeypair {
         if pubkey.parity() == Parity::Odd {
             sk = sk.negate();
         }
-        let tweaked = secp256k1::SecretKey::from_secret_bytes(sk.to_secret_bytes())
-            .and_then(|sk| sk.add_tweak(&tweak.to_scalar()))
+        let tweaked = EcdsaSecretKey::from_bytes(&sk.to_secret_bytes())
+            .and_then(|sk| sk.add_tweak(&tweak.to_byte_array()))
             .expect("Tap tweak failed");
-        let tweaked = secp256k1::Keypair::from_secret_key(&tweaked);
         TweakedKeypair::dangerous_assume_tweaked(Keypair::from(tweaked))
     }
 

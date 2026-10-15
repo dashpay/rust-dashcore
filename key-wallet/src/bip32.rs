@@ -28,7 +28,6 @@ use core::str::FromStr;
 use std::error;
 
 use dashcore::key::XOnlyPublicKey;
-use dashcore::secp256k1;
 use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde;
@@ -1562,7 +1561,7 @@ impl ExtendedPubKey {
     /// Constructs BIP340 x-only public key for BIP-340 signatures and Taproot use matching
     /// the internal public key representation.
     pub fn to_x_only_pub(&self) -> XOnlyPublicKey {
-        XOnlyPublicKey::from(secp256k1::PublicKey::from(self.public_key))
+        XOnlyPublicKey::from(self.public_key)
     }
 
     /// Attempts to derive an extended public key from a path.
