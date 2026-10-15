@@ -33,6 +33,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinSet;
 
 impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
@@ -81,6 +82,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             masternode_engine,
             sync_coordinator: Arc::new(Mutex::new(SyncCoordinator::new(initial_progress.clone()))),
             sync_loop: Arc::new(Mutex::new(None)),
+            detached_tasks: Arc::new(Mutex::new(JoinSet::new())),
             event_handlers: Arc::new(event_handlers),
         };
 
@@ -231,11 +233,34 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         Ok(())
     }
 
-    /// Stop the SPV client.
+    /// Stop the SPV client. Returns once nothing the client started holds its
+    /// storage any more.
     pub async fn stop(&self) {
         let mut sync_loop = self.sync_loop.lock().await;
         if let Some(running) = sync_loop.take() {
             self.stop_locked(running).await;
+        }
+        drop(sync_loop);
+
+        self.join_detached_tasks().await;
+    }
+
+    /// Wait for the tasks the sync loop detached, including any they start in
+    /// turn. The set is taken out of its lock while joining, so a sync loop
+    /// stopping meanwhile can still add to it.
+    async fn join_detached_tasks(&self) {
+        loop {
+            let mut tasks = self.detached_tasks.lock().await;
+
+            if tasks.is_empty() {
+                return;
+            }
+
+            while let Some(result) = tasks.join_next().await {
+                if let Err(e) = result {
+                    tracing::warn!("Detached client task failed: {}", e);
+                }
+            }
         }
     }
 

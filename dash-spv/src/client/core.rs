@@ -11,7 +11,7 @@
 use crate::sml_engine::MasternodeListEngine;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
 use super::ClientConfig;
@@ -118,6 +118,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     /// cancelled has failed and waits to be torn down. `run` and `stop` hold
     /// the lock throughout, so they never overlap.
     pub(super) sync_loop: Arc<Mutex<Option<SyncLoop>>>,
+    pub(super) detached_tasks: Arc<Mutex<JoinSet<()>>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
@@ -138,6 +139,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpv
             masternode_engine: self.masternode_engine.clone(),
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             sync_loop: Arc::clone(&self.sync_loop),
+            detached_tasks: Arc::clone(&self.detached_tasks),
             event_handlers: Arc::clone(&self.event_handlers),
         }
     }
