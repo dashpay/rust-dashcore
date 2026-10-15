@@ -250,13 +250,14 @@ mod tests {
 
         use secp256k1;
 
+        use crate::crypto::ecdsa::generate;
         use crate::{Address, AddressType, Network};
 
         let message = "rust-dash MessageSignature test";
         let msg_hash = signed_msg_hash(message);
         let msg = secp256k1::Message::from_digest(msg_hash.to_byte_array());
 
-        let privkey = secp256k1::SecretKey::new(&mut secp256k1::rand::rng());
+        let privkey = generate();
         let secp_sig =
             secp256k1::ecdsa::RecoverableSignature::sign_ecdsa_recoverable(msg, &privkey);
         let signature = MessageSignature {

@@ -20,8 +20,8 @@ version.workspace = true
 [features]
 default = ["secp-recovery", "bincode" ]
 base64 = [ "dep:base64" ]
-rand-std = ["secp256k1/rand"]
-rand = ["secp256k1/rand"]
+rand-std = ["secp256k1/rand", "dashcore-crypto/rand"]
+rand = ["secp256k1/rand", "dashcore-crypto/rand"]
 serde = ["dep:serde", "dashcore-crypto/serde", "dashcore_hashes/serde", "secp256k1/serde", "dash-network/serde"]
 secp-lowmemory = ["secp256k1/lowmemory"]
 secp-recovery = ["secp256k1/recovery"]
@@ -65,6 +65,7 @@ serde_json = "1.0.140"
 serde_test = "1.0.177"
 serde_derive = "1.0.219"
 secp256k1 = { workspace = true, features = ["recovery", "rand"] }
+dashcore-crypto = { path = "../crypto", features = ["rand"] }
 bincode = { workspace = true, features = ["serde"] }
 assert_matches = "1.5.0"
 test-case = "3.3"

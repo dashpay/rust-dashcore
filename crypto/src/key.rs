@@ -15,13 +15,17 @@ use core::ops;
 use core::str::FromStr;
 use std::io;
 
+#[cfg(feature = "rand")]
+pub use bitcoin_crypto::key::rand;
+pub use bitcoin_crypto::key::{
+    constants, Keypair, Parity, ParseXOnlyPublicKeyError, TweakXOnlyPublicKeyError, TweakedKeypair,
+    TweakedPublicKey, UntweakedKeypair, UntweakedPublicKey, XOnlyPublicKey,
+};
+pub use bitcoin_crypto::secp256k1::Scalar;
 use dash_network::Network;
 use hashes::{hash160, hash_newtype, Hash as _};
 use hex_conservative::DisplayHex;
 use internals::write_err;
-pub use secp256k1::{self, constants, Keypair, Parity, Secp256k1, Verification, XOnlyPublicKey};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::base58;
 
@@ -482,126 +486,5 @@ impl<'de> serde::Deserialize<'de> for PublicKey {
 
             d.deserialize_bytes(BytesVisitor)
         }
-    }
-}
-
-/// Untweaked BIP-340 X-coord-only public key
-pub type UntweakedPublicKey = XOnlyPublicKey;
-
-/// Tweaked BIP-340 X-coord-only public key
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-pub struct TweakedPublicKey(XOnlyPublicKey);
-
-impl fmt::LowerHex for TweakedPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Display for TweakedPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-/// Untweaked BIP-340 key pair
-pub type UntweakedKeyPair = Keypair;
-
-/// Tweaked BIP-340 key pair
-///
-/// # Examples
-/// ```
-/// # #[cfg(feature = "rand-std")] {
-/// # use dashcore::key::{Keypair, TweakedKeyPair, TweakedPublicKey};
-/// # use dashcore::secp256k1::rand;
-/// # let keypair = TweakedKeyPair::dangerous_assume_tweaked(Keypair::new(&mut rand::rng()));
-/// // There are various conversion methods available to get a tweaked pubkey from a tweaked keypair.
-/// let (_pk, _parity) = keypair.public_parts();
-/// let _pk  = TweakedPublicKey::from_keypair(keypair);
-/// let _pk = TweakedPublicKey::from(keypair);
-/// # }
-/// ```
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(transparent))]
-pub struct TweakedKeyPair(Keypair);
-
-impl TweakedPublicKey {
-    /// Returns the [`TweakedPublicKey`] for `keypair`.
-    #[inline]
-    pub fn from_keypair(keypair: TweakedKeyPair) -> Self {
-        let (xonly, _parity) = keypair.0.x_only_public_key();
-        TweakedPublicKey(xonly)
-    }
-
-    /// Creates a new [`TweakedPublicKey`] from a [`XOnlyPublicKey`]. No tweak is applied, consider
-    /// calling `tap_tweak` on an [`UntweakedPublicKey`] instead of using this constructor.
-    ///
-    /// This method is dangerous and can lead to loss of funds if used incorrectly.
-    /// Specifically, in multi-party protocols a peer can provide a value that allows them to steal.
-    #[inline]
-    pub fn dangerous_assume_tweaked(key: XOnlyPublicKey) -> TweakedPublicKey {
-        TweakedPublicKey(key)
-    }
-
-    /// Returns the underlying public key.
-    pub fn to_inner(self) -> XOnlyPublicKey {
-        self.0
-    }
-
-    /// Serialize the key as a byte-encoded pair of values. In compressed form
-    /// the y-coordinate is represented by only a single bit, as x determines
-    /// it up to one bit.
-    #[inline]
-    pub fn serialize(&self) -> [u8; constants::SCHNORR_PUBLIC_KEY_SIZE] {
-        self.0.to_byte_array()
-    }
-}
-
-impl TweakedKeyPair {
-    /// Creates a new [`TweakedKeyPair`] from a `KeyPair`. No tweak is applied, consider
-    /// calling `tap_tweak` on an [`UntweakedKeyPair`] instead of using this constructor.
-    ///
-    /// This method is dangerous and can lead to loss of funds if used incorrectly.
-    /// Specifically, in multi-party protocols a peer can provide a value that allows them to steal.
-    #[inline]
-    pub fn dangerous_assume_tweaked(pair: Keypair) -> TweakedKeyPair {
-        TweakedKeyPair(pair)
-    }
-
-    /// Returns the underlying key pair.
-    #[inline]
-    pub fn to_inner(self) -> Keypair {
-        self.0
-    }
-
-    /// Returns the [`TweakedPublicKey`] and its [`Parity`] for this [`TweakedKeyPair`].
-    #[inline]
-    pub fn public_parts(&self) -> (TweakedPublicKey, Parity) {
-        let (xonly, parity) = self.0.x_only_public_key();
-        (TweakedPublicKey(xonly), parity)
-    }
-}
-
-impl From<TweakedPublicKey> for XOnlyPublicKey {
-    #[inline]
-    fn from(pair: TweakedPublicKey) -> Self {
-        pair.0
-    }
-}
-
-impl From<TweakedKeyPair> for Keypair {
-    #[inline]
-    fn from(pair: TweakedKeyPair) -> Self {
-        pair.0
-    }
-}
-
-impl From<TweakedKeyPair> for TweakedPublicKey {
-    #[inline]
-    fn from(pair: TweakedKeyPair) -> Self {
-        TweakedPublicKey::from_keypair(pair)
     }
 }

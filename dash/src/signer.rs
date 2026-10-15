@@ -89,6 +89,7 @@ pub fn ripemd160_sha256(data: &[u8]) -> Vec<u8> {
 mod test {
     use super::*;
     use crate::PublicKey;
+    use crate::crypto::ecdsa::generate;
     use crate::internal_macros::hex;
 
     struct Keys {
@@ -141,8 +142,7 @@ mod test {
     #[test]
     fn signature_not_verified_with_different_public_key() {
         let k = get_keys();
-        let mut rng = crate::secp256k1::rand::rng();
-        let (_, different_public_key) = secp256k1::generate_keypair(&mut rng);
+        let different_public_key = generate().public_key();
         let data = hex!("fafafa");
 
         let signature = sign(&data, &k.private_key).expect("signing shouldn't fail");
@@ -195,8 +195,7 @@ mod test {
     #[test]
     fn should_fail_validation_with_incorrect_public_key() {
         let k = get_keys();
-        let mut rng = crate::secp256k1::rand::rng();
-        let (_, different_public_key) = secp256k1::generate_keypair(&mut rng);
+        let different_public_key = generate().public_key();
         let data = hex!("fafafa");
         let signature = sign(&data, &k.private_key).expect("signing shouldn't fail");
 

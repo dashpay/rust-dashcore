@@ -7,6 +7,8 @@
 //!
 
 pub mod ecdsa {
+    #[cfg(feature = "rand")]
+    pub use dashcore_crypto::ecdsa::generate;
     pub use dashcore_crypto::ecdsa::{
         DecodeError, ParseSignatureError, SerializedSignature, Signature,
     };

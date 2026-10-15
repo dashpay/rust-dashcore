@@ -9,7 +9,18 @@
 //!
 //! This module provides ECDSA signatures used Bitcoin that can be roundtrip (de)serialized.
 
+#[cfg(feature = "rand")]
+use bitcoin_crypto::key::rand;
+#[cfg(feature = "rand")]
+use bitcoin_crypto::secp256k1::SecretKey;
+
 pub use bitcoin_crypto::ecdsa::{DecodeError, ParseSignatureError, SerializedSignature, Signature};
+
+/// Draws a random secret key from the thread RNG.
+#[cfg(feature = "rand")]
+pub fn generate() -> SecretKey {
+    SecretKey::new(&mut rand::rng())
+}
 
 #[cfg(test)]
 mod tests {

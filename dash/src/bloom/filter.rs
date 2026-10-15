@@ -209,7 +209,7 @@ impl Decodable for BloomFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::key::{PrivateKey, secp256k1};
+    use crate::crypto::key::PrivateKey;
 
     #[test]
     fn test_bloom_filter_basic() {

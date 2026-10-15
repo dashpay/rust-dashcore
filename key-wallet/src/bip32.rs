@@ -27,8 +27,8 @@ use core::ops::Index;
 use core::str::FromStr;
 use std::error;
 
+use dashcore::key::XOnlyPublicKey;
 use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
-use secp256k1::{self, XOnlyPublicKey};
 #[cfg(feature = "serde")]
 use serde;
 
@@ -42,7 +42,7 @@ use zeroize::Zeroize;
 type XpubIdentifier = hash160::Hash;
 
 pub use crate::dip9::{ApplicationKeyPurpose, KeyDerivationType};
-pub use secp256k1::Keypair;
+pub use dashcore::key::Keypair;
 pub use secp256k1::PublicKey;
 /// Re-export key types from secp256k1
 pub use secp256k1::SecretKey as PrivateKey;
@@ -1342,7 +1342,7 @@ impl ExtendedPrivKey {
     /// Constructs BIP340 keypair for Schnorr signatures and Taproot use matching the internal
     /// secret key representation.
     pub fn to_keypair(&self) -> Keypair {
-        Keypair::from_secret_key(&self.private_key)
+        Keypair::from(secp256k1::Keypair::from_secret_key(&self.private_key))
     }
 
     /// Attempts to derive an extended private key from a path.
@@ -2305,7 +2305,7 @@ mod tests {
     #[should_panic(expected = "Secp256k1(InvalidSecretKey)")]
     fn schnorr_broken_privkey_zeros() {
         /* this is how we generate key:
-        let mut sk = secp256k1::key::ONE_KEY;
+        let mut sk = ONE_KEY;
 
         let zeros = [0u8; 32];
         unsafe {
