@@ -30,7 +30,7 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::network::message_headers2::CompressionState;
 use dashcore::{BlockHash, Header, Network};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, Receiver, UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -92,6 +92,15 @@ struct HeaderDispatchContext {
 }
 
 impl HeaderDispatchContext {
+    /// Dispatches `message` unless the session ends first. Returns false if it ended.
+    async fn dispatch(&self, message: &Message) -> bool {
+        tokio::select! {
+            biased;
+            _ = self.session_token.cancelled() => false,
+            _ = async { self.message_dispatcher.lock().await.dispatch(message).await } => true,
+        }
+    }
+
     async fn complete(
         &self,
         sequence: u64,
@@ -121,19 +130,15 @@ impl HeaderDispatchContext {
                         self.addr
                     );
                     let message = Message::new_headers(self.addr, headers_with_hashes);
-                    let mut message_dispatcher = self.message_dispatcher.lock().await;
-                    if self.session_token.is_cancelled() {
+                    if !self.dispatch(&message).await {
                         return;
                     }
-                    message_dispatcher.dispatch(&message);
                 }
                 HeaderDispatchOutcome::Regular(headers) => {
                     let message = Message::new(self.addr, NetworkMessage::Headers(headers));
-                    let mut message_dispatcher = self.message_dispatcher.lock().await;
-                    if self.session_token.is_cancelled() {
+                    if !self.dispatch(&message).await {
                         return;
                     }
-                    message_dispatcher.dispatch(&message);
                 }
                 HeaderDispatchOutcome::Invalid(e) => {
                     tracing::error!(
@@ -192,7 +197,7 @@ pub struct PeerNetworkManager {
     headers2_disabled: Arc<Mutex<HashSet<SocketAddr>>>,
     /// Global bound for CPU-heavy headers2 decompression work.
     headers2_decompression_semaphore: Arc<Semaphore>,
-    /// Dispatcher for unbounded and message-type filtered message distribution.
+    /// Dispatcher for bounded and message-type filtered message distribution.
     message_dispatcher: Arc<Mutex<MessageDispatcher>>,
     /// Request queue sender, cloneable handle for sending requests to the network manager.
     request_tx: UnboundedSender<NetworkRequest>,
@@ -333,10 +338,7 @@ impl PeerNetworkManager {
     }
 
     /// Creates and returns a receiver that yields only messages of the matching the provided message types.
-    pub async fn message_receiver(
-        &mut self,
-        message_types: &[MessageType],
-    ) -> UnboundedReceiver<Message> {
+    pub async fn message_receiver(&mut self, message_types: &[MessageType]) -> Receiver<Message> {
         self.message_dispatcher.lock().await.message_receiver(message_types)
     }
 
@@ -855,7 +857,11 @@ impl PeerNetworkManager {
                             }
                         }
 
-                        message_dispatcher.lock().await.dispatch(&msg);
+                        // Waits while a consumer's queue is full, which stops reading from the peer.
+                        tokio::select! {
+                            _ = async { message_dispatcher.lock().await.dispatch(&msg).await } => {}
+                            _ = session_token.cancelled() => break,
+                        }
                     }
                     Ok(None) => {
                         // No message available, continue immediately
@@ -1806,7 +1812,7 @@ impl Clone for PeerNetworkManager {
 // Implement NetworkManager trait
 #[async_trait]
 impl NetworkManager for PeerNetworkManager {
-    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+    async fn message_receiver(&mut self, types: &[MessageType]) -> Receiver<Message> {
         self.message_dispatcher.lock().await.message_receiver(types)
     }
 
@@ -1965,7 +1971,7 @@ impl NetworkManager for PeerNetworkManager {
     async fn dispatch_local(&self, message: NetworkMessage) {
         let local_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
         let msg = Message::new(local_addr, message);
-        self.message_dispatcher.lock().await.dispatch(&msg);
+        self.message_dispatcher.lock().await.dispatch(&msg).await;
     }
 
     async fn disconnect_peer(&self, addr: &SocketAddr, reason: &str) -> NetworkResult<()> {
@@ -2192,9 +2198,7 @@ mod header_ordering_tests {
     use super::*;
     use crate::test_utils::test_socket_address;
 
-    fn context(
-        session_token: CancellationToken,
-    ) -> (HeaderDispatchContext, UnboundedReceiver<Message>) {
+    fn context(session_token: CancellationToken) -> (HeaderDispatchContext, Receiver<Message>) {
         let mut dispatcher = MessageDispatcher::default();
         let receiver = dispatcher.message_receiver(&[MessageType::Headers]);
         (

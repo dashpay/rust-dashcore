@@ -13,7 +13,7 @@ use dashcore_hashes::Hash;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, Receiver, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 
 pub fn test_socket_address(id: u8) -> SocketAddr {
@@ -123,7 +123,7 @@ impl Default for MockNetworkManager {
 
 #[async_trait]
 impl NetworkManager for MockNetworkManager {
-    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message> {
+    async fn message_receiver(&mut self, types: &[MessageType]) -> Receiver<Message> {
         self.message_dispatcher.lock().await.message_receiver(types)
     }
 
@@ -150,7 +150,7 @@ impl NetworkManager for MockNetworkManager {
             let headers = self.process_getheaders(getheaders);
             if !headers.is_empty() {
                 let msg = Message::new(self.connected_peer, NetworkMessage::Headers(headers));
-                self.message_dispatcher.lock().await.dispatch(&msg);
+                self.message_dispatcher.lock().await.dispatch(&msg).await;
             }
         }
 
@@ -173,7 +173,7 @@ impl NetworkManager for MockNetworkManager {
     async fn dispatch_local(&self, message: NetworkMessage) {
         let local_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
         let msg = Message::new(local_addr, message);
-        self.message_dispatcher.lock().await.dispatch(&msg);
+        self.message_dispatcher.lock().await.dispatch(&msg).await;
     }
 
     async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()> {
