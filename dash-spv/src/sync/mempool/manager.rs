@@ -541,6 +541,23 @@ impl<W: WalletInterface> MempoolManager<W> {
                     txid,
                     timeout
                 );
+                // 32500 diagnostic build: the raw transaction, so the reason the
+                // network refused it can be read back with `testmempoolaccept`.
+                // Chunked so no log sink truncates one huge line.
+                let raw = dashcore::consensus::encode::serialize_hex(&state.transaction);
+                let chunks = raw.len().div_ceil(4000);
+                for (part, chunk) in raw.as_bytes().chunks(4000).enumerate() {
+                    tracing::info!(
+                        "32500-diag uncertain tx {} hex part {}/{} (sent_to={} holdout={} announced_by={}): {}",
+                        txid,
+                        part + 1,
+                        chunks,
+                        state.sent_to.len(),
+                        state.holdout.len(),
+                        state.announced_by.len(),
+                        String::from_utf8_lossy(chunk)
+                    );
+                }
                 events.push(SyncEvent::TransactionBroadcastResult {
                     txid: *txid,
                     result: BroadcastResult::Uncertain,
