@@ -1,0 +1,17 @@
+{
+  "baseHeight": 309,
+  "blockHeight": 310,
+  "addedMNs": [],
+  "removedMNs": [],
+  "updatedMNs": [
+    {
+      "06b9004fc63be0fd7a1a552b2f794335883452feafa38f3b93733d10ad326570": {
+        "version": 1,
+        "service": "[::]:0",
+        "lastPaidHeight": 310,
+        "PoSeBanHeight": 310,
+        "pubKeyOperator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ]
+}
