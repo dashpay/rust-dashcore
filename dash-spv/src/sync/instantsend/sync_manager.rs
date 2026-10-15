@@ -1,3 +1,4 @@
+use super::manager::MAX_REQUESTED_INSTANTLOCKS;
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::BlockHeaderStorage;
@@ -36,6 +37,7 @@ impl<H: BlockHeaderStorage> SyncManager for InstantSendManager<H> {
         // Nothing is queued anymore, so the height at which we last validated is
         // meaningless; reset it so re-validation runs again after reconnect.
         self.last_validated_engine_height = None;
+        self.requested_instantlocks.clear();
     }
 
     async fn handle_message(
@@ -46,12 +48,21 @@ impl<H: BlockHeaderStorage> SyncManager for InstantSendManager<H> {
         match msg.inner() {
             NetworkMessage::ISLock(instantlock) => self.process_instantlock(instantlock).await,
             NetworkMessage::Inv(inv) => {
-                // Check for InstantSendLock inventory items
-                let islocks_to_request: Vec<Inventory> = inv
-                    .iter()
-                    .filter(|item| matches!(item, Inventory::InstantSendLock(_)))
-                    .cloned()
-                    .collect();
+                // Request announced InstantLocks not already in flight, up to the cap
+                let mut islocks_to_request = Vec::new();
+                for item in inv {
+                    let Inventory::InstantSendLock(hash) = item else {
+                        continue;
+                    };
+                    if self.requested_instantlocks.is_in_flight(hash) {
+                        continue;
+                    }
+                    if self.requested_instantlocks.active_count() >= MAX_REQUESTED_INSTANTLOCKS {
+                        break;
+                    }
+                    self.requested_instantlocks.mark_sent(&[*hash]);
+                    islocks_to_request.push(*item);
+                }
 
                 if !islocks_to_request.is_empty() {
                     tracing::info!(
@@ -125,6 +136,8 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
     ) -> SyncResult<Vec<SyncEvent>> {
         // Prune old entries periodically
         self.prune_old_entries();
+        // Drop unanswered requests so a later announcement can request them again
+        self.requested_instantlocks.check_timeouts();
 
         // Whether there was work to resolve at the start of this tick. Guards the
         // synced-state transition below so a freshly created manager sitting idle

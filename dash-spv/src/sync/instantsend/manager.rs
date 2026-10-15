@@ -9,7 +9,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
+use crate::sync::download_coordinator::DownloadCoordinator;
+use dashcore::consensus::serialize;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::hash_types::InstantSendLockHash;
+use dashcore::hashes::Hash;
 use dashcore::Txid;
 use tokio::sync::RwLock;
 
@@ -19,6 +23,9 @@ use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Val
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
+
+/// Maximum number of InstantLocks requested via getdata and not yet received.
+pub(super) const MAX_REQUESTED_INSTANTLOCKS: usize = 100;
 
 /// Maximum number of InstantLocks to cache.
 const MAX_CACHE_SIZE: usize = 5000;
@@ -118,6 +125,9 @@ pub struct InstantSendManager<H: BlockHeaderStorage> {
     /// next `MasternodeStateUpdated` event, which for a freshly broadcast
     /// transaction may not arrive until the block that mines it.
     pub(super) last_validated_engine_height: Option<u32>,
+    /// InstantLocks requested via getdata, so repeated announcements are not
+    /// requested again while in flight.
+    pub(super) requested_instantlocks: DownloadCoordinator<InstantSendLockHash>,
 }
 
 impl<H: BlockHeaderStorage> InstantSendManager<H> {
@@ -129,6 +139,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             instantlocks: HashMap::new(),
             pending_instantlocks: Vec::new(),
             last_validated_engine_height: None,
+            requested_instantlocks: DownloadCoordinator::default(),
         }
     }
 
@@ -140,6 +151,8 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         let txid = instantlock.txid;
 
         tracing::info!("Processing InstantLock for txid {}", txid);
+
+        self.requested_instantlocks.receive(&InstantSendLockHash::hash(&serialize(instantlock)));
 
         // Check for duplicates
         if self.instantlocks.contains_key(&txid) {
@@ -382,13 +395,14 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for InstantSendManager<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, RequestSender};
+    use crate::network::{Message, MessageType, NetworkRequest, RequestSender};
     use crate::sml_engine::test_support::TestEngine;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
-    use crate::test_utils::MockHeaderStorage;
+    use crate::test_utils::{test_socket_address, MockHeaderStorage};
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::CycleHash;
-    use dashcore::hashes::Hash;
+    use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_blockdata::Inventory;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::{BlockHash, OutPoint};
     use test_case::test_case;
@@ -499,6 +513,51 @@ mod tests {
         // Second should be ignored as duplicate
         let events2 = manager.process_instantlock(&islock2).await.unwrap();
         assert_eq!(events2.len(), 0);
+    }
+
+    /// Announced InstantLocks are requested once while in flight, at most
+    /// [`MAX_REQUESTED_INSTANTLOCKS`] at a time, and a received lock frees its slot.
+    #[tokio::test]
+    async fn test_islock_announcements_are_deduped_and_capped() {
+        let mut manager = create_test_manager();
+        let (tx, mut rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        let lock = create_test_instantlock(Txid::from_byte_array([1u8; 32]));
+        let lock_hash = InstantSendLockHash::hash(&serialize(&lock));
+        let inv: Vec<Inventory> = std::iter::once(lock_hash)
+            .chain((0..MAX_REQUESTED_INSTANTLOCKS as u32).map(|i| {
+                let mut bytes = [0u8; 32];
+                bytes[..4].copy_from_slice(&i.to_le_bytes());
+                InstantSendLockHash::from_byte_array(bytes)
+            }))
+            .map(Inventory::InstantSendLock)
+            .collect();
+        let announce = |inv: &[Inventory]| {
+            Message::new(test_socket_address(1), NetworkMessage::Inv(inv.to_vec()))
+        };
+
+        // A duplicated and over-cap announcement requests only the cap, each once.
+        manager.handle_message(announce(&[&inv[..1], &inv].concat()), &requests).await.unwrap();
+        let Ok(NetworkRequest::SendMessageToPeer(NetworkMessage::GetData(requested), _)) =
+            rx.try_recv()
+        else {
+            panic!("Expected a getdata");
+        };
+        assert_eq!(requested, inv[..MAX_REQUESTED_INSTANTLOCKS]);
+
+        // Re-announcing in-flight locks requests nothing.
+        manager.handle_message(announce(&inv), &requests).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Receiving a requested lock frees a slot for the next announcement.
+        manager.process_instantlock(&lock).await.unwrap();
+        manager.handle_message(announce(&inv[1..]), &requests).await.unwrap();
+        let Ok(NetworkRequest::SendMessageToPeer(NetworkMessage::GetData(requested), _)) =
+            rx.try_recv()
+        else {
+            panic!("Expected a getdata");
+        };
+        assert_eq!(requested, inv[MAX_REQUESTED_INSTANTLOCKS..]);
     }
 
     #[test_case(|lock| lock.txid = Txid::all_zeros(); "null txid")]
