@@ -17,10 +17,11 @@ use hashes::Hash;
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::provider_registration::{
-    CompactSignature, decode_compact_signatures, encode_compact_signatures,
+    decode_compact_signatures, encode_compact_signatures,
 };
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable, encode};
+use crate::crypto::ecdsa::EcdsaRecSignature;
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash, Txid};
 use crate::io;
 use crate::prelude::*;
@@ -38,7 +39,7 @@ pub struct ProviderUpdateSharedRegistrarPayload {
     pub voting_key_hash: PubkeyHash,
     pub inputs_hash: InputsHash,
     /// One signature per share, in share order.
-    pub signatures: Vec<CompactSignature>,
+    pub signatures: Vec<EcdsaRecSignature>,
 }
 
 impl ProviderUpdateSharedRegistrarPayload {
@@ -104,7 +105,7 @@ mod tests {
             operator_public_key: BLSPublicKey::from([0x22; 48]),
             voting_key_hash: PubkeyHash::from_byte_array([0x33; 20]),
             inputs_hash: InputsHash::from_byte_array([0x44; 32]),
-            signatures: vec![CompactSignature::from([0x55; 65])],
+            signatures: vec![EcdsaRecSignature::from([0x55; 65])],
         };
         let mut want = vec![0x01, 0x00];
         want.extend([0x11; 32]);
