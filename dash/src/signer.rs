@@ -6,9 +6,9 @@ use anyhow::{anyhow, ensure};
 use hashes::{Hash, hash160, sha256d};
 
 use crate::PublicKey as ECDSAPublicKey;
-use crate::crypto::ecdsa::{EcdsaPublicKey, EcdsaSecretKey};
+use crate::crypto::ecdsa::{ECDSA_REC_SIG_LEN, EcdsaPublicKey, EcdsaSecretKey};
 use crate::prelude::Vec;
-use crate::sign_message::MessageSignature;
+use crate::sign_message;
 
 /// verifies the ECDSA signature
 /// The provided signature must be recoverable. Which means: it must contain the recovery byte as a prefix
@@ -19,7 +19,7 @@ pub fn verify_data_signature(
 ) -> Result<(), anyhow::Error> {
     let data_hash: [u8; 32] =
         double_sha(data).try_into().map_err(|_| anyhow!("Invalid hash length"))?;
-    let sig = MessageSignature::from_slice(signature)?.signature;
+    let sig = sign_message::from_slice(signature)?;
 
     let pub_key = ECDSAPublicKey::from_slice(public_key).map_err(anyhow::Error::msg)?;
 
@@ -34,7 +34,7 @@ pub fn verify_hash_signature(
     data_signature: &[u8],
     public_key_id: &[u8],
 ) -> Result<(), anyhow::Error> {
-    let signature = MessageSignature::from_slice(data_signature)?.signature;
+    let signature = sign_message::from_slice(data_signature)?;
 
     let data_hash: &[u8; 32] = data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?;
     let recovered_public_key =
@@ -46,13 +46,16 @@ pub fn verify_hash_signature(
 }
 
 /// sign and get the ECDSA signature
-pub fn sign(data: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyhow::Error> {
+pub fn sign(data: &[u8], private_key: &[u8]) -> Result<[u8; ECDSA_REC_SIG_LEN], anyhow::Error> {
     let data_hash = double_sha(data);
     sign_hash(&data_hash, private_key)
 }
 
 /// signs the hash of data and get the ECDSA signature
-pub fn sign_hash(data_hash: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyhow::Error> {
+pub fn sign_hash(
+    data_hash: &[u8],
+    private_key: &[u8],
+) -> Result<[u8; ECDSA_REC_SIG_LEN], anyhow::Error> {
     let private_key: [u8; 32] = private_key
         .try_into()
         .map_err(|_| anyhow!("Invalid ECDSA private key: must be 32 bytes"))?;
@@ -61,9 +64,7 @@ pub fn sign_hash(data_hash: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyho
 
     let data_hash: &[u8; 32] = data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?;
 
-    let signature = pk.sign_recoverable(data_hash);
-    // TODO the compression flag should be obtained from the private key type
-    Ok(MessageSignature::new(signature, true).serialize())
+    Ok(pk.sign_recoverable(data_hash).to_bytes())
 }
 
 /// calculates double sha256 on data
