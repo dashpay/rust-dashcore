@@ -64,16 +64,16 @@ subprocess.run(
     ],
     check=True,
 )
-for _ in range(60):
-    try:
-        cli("getblockcount", wallet=False)
-        break
-    except RuntimeError:
-        time.sleep(1)
-else:
-    raise SystemExit("dashd did not start")
-
 try:
+    for _ in range(60):
+        try:
+            cli("getblockcount", wallet=False)
+            break
+        except RuntimeError:
+            time.sleep(1)
+    else:
+        raise RuntimeError("dashd did not answer RPC within 60 seconds")
+
     meta = {"subversion": cli("getnetworkinfo", wallet=False)["subversion"]}
     cli("createwallet", "w", wallet=False)
     MINER = cli("getnewaddress")
