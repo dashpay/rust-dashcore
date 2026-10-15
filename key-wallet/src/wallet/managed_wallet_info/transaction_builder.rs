@@ -930,9 +930,37 @@ pub trait TransactionSigner {
             tasks
         };
 
+        // 32500 diagnostic build: check every signature against the coin it
+        // spends before the transaction leaves the wallet. A key whose hash
+        // does not match the prevout script, or a signature that does not
+        // verify, is exactly what the network refuses without a word.
+        let diag_secp = Secp256k1::verification_only();
+        let mut diag_mismatches = 0usize;
         let mut signatures = Vec::with_capacity(tasks.len());
-        for (sighash, path) in tasks {
+        for (index, (sighash, path)) in tasks.into_iter().enumerate() {
+            let diag_path = path.clone();
             let (sig, pubkey) = self.sig_and_pubkey(sighash, path).await?;
+            {
+                let utxo = &inputs[index];
+                let expected_spk = ScriptBuf::new_p2pkh(&dashcore::PublicKey::new(pubkey).pubkey_hash());
+                let key_matches = expected_spk == utxo.txout.script_pubkey;
+                let sig_verifies = diag_secp
+                    .verify_ecdsa(&Message::from_digest(*sighash.as_byte_array()), &sig, &pubkey)
+                    .is_ok();
+                if !key_matches || !sig_verifies {
+                    diag_mismatches += 1;
+                    tracing::warn!(
+                        "32500-diag sign check FAILED input #{} outpoint={} address={} path={} key_matches_prevout_script={} signature_verifies={} prevout_script={}",
+                        index,
+                        utxo.outpoint,
+                        utxo.address,
+                        diag_path,
+                        key_matches,
+                        sig_verifies,
+                        utxo.txout.script_pubkey.to_hex_string()
+                    );
+                }
+            }
 
             let mut sig_bytes = sig.serialize_der().to_vec();
             sig_bytes.push(EcdsaSighashType::All.to_u32() as u8);
@@ -951,6 +979,13 @@ pub trait TransactionSigner {
         for (index, script_sig) in signatures.into_iter().enumerate() {
             tx.input[index].script_sig = script_sig;
         }
+
+        tracing::info!(
+            "32500-diag sign check txid={} inputs={} failed={}",
+            tx.txid(),
+            inputs.len(),
+            diag_mismatches
+        );
 
         Ok(tx)
     }

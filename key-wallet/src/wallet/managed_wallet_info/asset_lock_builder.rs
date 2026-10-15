@@ -414,8 +414,67 @@ impl ManagedWalletInfo {
             .map(|account| account.reservations().clone())
             .collect();
 
+        let diag_paths = paths.clone();
         let (transaction, fee, token) =
             builder.build_signed_reserved(signer, move |addr| paths.get(&addr).cloned()).await?;
+
+        // 32500 diagnostic build: the whole shape of the asset lock, so a
+        // transaction the network silently refuses can be explained from the
+        // exported logs alone.
+        {
+            let size = dashcore::consensus::serialize(&transaction).len();
+            let utxos = self.utxos();
+            let mut total_in: u64 = 0;
+            for (index, input) in transaction.input.iter().enumerate() {
+                match utxos.iter().find(|utxo| utxo.outpoint == input.previous_output) {
+                    Some(utxo) => {
+                        total_in += utxo.txout.value;
+                        tracing::info!(
+                            "32500-diag asset lock input #{} outpoint={} value={} address={} path={:?} height={} confirmed={} instantlocked={} locked={} coinbase={} script_sig_len={} sequence={}",
+                            index,
+                            input.previous_output,
+                            utxo.txout.value,
+                            utxo.address,
+                            diag_paths.get(&utxo.address).map(|path| path.to_string()),
+                            utxo.height,
+                            utxo.is_confirmed,
+                            utxo.is_instantlocked,
+                            utxo.is_locked,
+                            utxo.is_coinbase,
+                            input.script_sig.len(),
+                            input.sequence
+                        );
+                    }
+                    None => tracing::warn!(
+                        "32500-diag asset lock input #{} outpoint={} is not in the wallet's UTXO set",
+                        index,
+                        input.previous_output
+                    ),
+                }
+            }
+            let outputs: Vec<String> = transaction
+                .output
+                .iter()
+                .map(|output| format!("{}:{}", output.value, output.script_pubkey.to_hex_string()))
+                .collect();
+            tracing::info!(
+                "32500-diag asset lock built txid={} version={} type={:?} lock_time={} inputs={} outputs={:?} size={} fee={} total_in={} fee_per_kb_requested={} effective_duffs_per_kb={} drain={} sources={:?} payload_len={}",
+                transaction.txid(),
+                transaction.version,
+                transaction.tx_type(),
+                transaction.lock_time,
+                transaction.input.len(),
+                outputs,
+                size,
+                fee,
+                total_in,
+                fee_per_kb,
+                if size > 0 { fee.saturating_mul(1000) / size as u64 } else { 0 },
+                drain,
+                funding_sources,
+                transaction.special_transaction_payload.as_ref().map(|payload| payload.size()).unwrap_or(0)
+            );
+        }
 
         let reserved: Vec<OutPoint> =
             transaction.input.iter().map(|input| input.previous_output).collect();
