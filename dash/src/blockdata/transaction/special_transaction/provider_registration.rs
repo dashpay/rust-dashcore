@@ -40,7 +40,7 @@ use std::net::SocketAddr;
 use bincode::{Decode, Encode};
 use hashes::Hash;
 use hex_conservative::Case::Lower;
-use internals::impl_array_newtype;
+use internals::{impl_array_newtype, impl_bytes_newtype};
 
 use crate::address::Payload;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
@@ -48,7 +48,7 @@ use crate::blockdata::transaction::special_transaction::provider_update_service:
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash};
-use crate::internal_macros::{impl_bytes_newtype, impl_consensus_encoding};
+use crate::internal_macros::impl_consensus_encoding;
 use crate::platform_node_id::PlatformNodeId;
 use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeNetInfo;
