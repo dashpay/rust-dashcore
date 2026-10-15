@@ -9,6 +9,7 @@
 //! - Terminal UI accessors
 
 use crate::sml_engine::MasternodeListEngine;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -118,6 +119,9 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManage
     /// cancelled has failed and waits to be torn down. `run` and `stop` hold
     /// the lock throughout, so they never overlap.
     pub(super) sync_loop: Arc<Mutex<Option<SyncLoop>>>,
+    /// Whether the sync loop is running, readable without locking `sync_loop`.
+    /// Set once `run` started it, cleared as soon as it stops or fails.
+    pub(super) running: Arc<AtomicBool>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
@@ -138,6 +142,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpv
             masternode_engine: self.masternode_engine.clone(),
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             sync_loop: Arc::clone(&self.sync_loop),
+            running: Arc::clone(&self.running),
             event_handlers: Arc::clone(&self.event_handlers),
         }
     }
@@ -163,9 +168,9 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
 
     // ============ State Queries ============
 
-    /// Check if the client is running. Waits for an ongoing `run` or `stop` to finish.
-    pub async fn is_running(&self) -> bool {
-        self.sync_loop.lock().await.as_ref().is_some_and(|running| !running.shutdown.is_cancelled())
+    /// Check if the client is running. Does not wait for an ongoing `run` or `stop`.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::Acquire)
     }
 
     /// Returns the current chain tip hash if available.
