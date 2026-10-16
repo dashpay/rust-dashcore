@@ -12,7 +12,7 @@
 //! Rescanning the wallet as it stands cannot fix that either: every old mix is
 //! chainlocked by now, and a finalized transaction is never revisited, so a
 //! coin found later in it is never credited. Recovery therefore starts from
-//! fresh wallet state. [`ManagedWalletInfo::begin_coinjoin_recovery`] forgets
+//! fresh wallet state. [`WalletInfoInterface::begin_coinjoin_recovery`] forgets
 //! everything the wallet learned from the chain, rewinds its sync checkpoint to
 //! just below its birth height, and turns the probe on for the replay that
 //! follows; the sync layer sees the wallet behind and replays it from birth.
