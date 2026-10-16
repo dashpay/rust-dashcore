@@ -264,7 +264,7 @@ impl ManagedWalletInfo {
     /// set and the live record have to be consulted. Keys-only accounts are
     /// included: they hold records too, and a settled record there is just as
     /// authoritative.
-    fn transaction_is_settled(&self, txid: &Txid) -> bool {
+    pub fn transaction_is_settled(&self, txid: &Txid) -> bool {
         self.accounts.all_accounts().into_iter().any(|account| {
             account.transaction_is_finalized(txid)
                 || account
