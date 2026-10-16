@@ -37,18 +37,11 @@ const MAX_STANDARD_TX_INPUTS: usize = 500;
 /// rejecting it. Platform enforces the same bound in consensus
 /// (`max_asset_lock_transaction_inputs`).
 ///
-/// Every build carrying an asset-lock payload is held to it: an exact-amount
-/// build that cannot be funded within it, and a drain over more candidates,
-/// fail with [`BuilderError::TooManyInputs`]. Only the asset-lock builders'
-/// drains (`ManagedWalletInfo::build_asset_lock` and
-/// `ManagedWalletInfo::build_asset_lock_with_signer`) spend just the largest
-/// UTXOs instead, and report the rest in `AssetLockResult::remaining_*`. That makes the
-/// lock relayable by Core and within Platform's input cap. It does not make
-/// every *state transition* built on it fit Platform's size limit: an
-/// InstantSend asset-lock proof embeds the whole transaction plus an IS lock
-/// listing every spent outpoint, so a lock near this cap can still yield an
-/// oversized transition. Sizing the transition is the consumer's concern (a
-/// ChainLock proof, which carries no transaction, avoids it).
+/// Every build carrying an asset-lock payload is held to it; over the cap it
+/// fails with [`BuilderError::TooManyInputs`], except the asset-lock builders'
+/// bounded drain. How the cap, the size limit, the bounded drain and its
+/// `remaining_*` report fit together is documented once, on
+/// `ManagedWalletInfo::build_asset_lock`.
 ///
 /// Re-exported from `asset_lock_builder`.
 pub const MAX_ASSET_LOCK_INPUTS: usize = 100;
@@ -56,10 +49,8 @@ pub const MAX_ASSET_LOCK_INPUTS: usize = 100;
 /// Maximum serialized size, in bytes, of an asset-lock transaction.
 ///
 /// Mirrors Dash Core's standardness limit on asset locks (`assetlocktx-too-big`
-/// in `IsStandardSpecialTx`). The builder checks its signed-size upper bound
-/// against it before reserving or signing anything, and fails with
-/// [`BuilderError::AssetLockTooLarge`]. At [`MAX_ASSET_LOCK_INPUTS`] P2PKH
-/// inputs a built asset lock stays well below it.
+/// in `IsStandardSpecialTx`); exceeding it fails with
+/// [`BuilderError::AssetLockTooLarge`]. See `ManagedWalletInfo::build_asset_lock`.
 ///
 /// Re-exported from `asset_lock_builder`.
 pub const MAX_ASSET_LOCK_TX_SIZE: usize = 20_480;
@@ -214,20 +205,16 @@ impl TransactionBuilder {
         }
     }
 
-    /// Let an asset-lock drain ([`SelectionStrategy::All`] with an asset-lock
-    /// payload) over more than [`MAX_ASSET_LOCK_INPUTS`] candidates spend the
-    /// largest ones — as many as fit both the input cap and
-    /// [`MAX_ASSET_LOCK_TX_SIZE`] — and leave the rest, instead of failing with
-    /// [`BuilderError::TooManyInputs`].
+    /// Let an asset-lock drain spend only its largest candidates — as many as
+    /// fit [`MAX_ASSET_LOCK_INPUTS`] and [`MAX_ASSET_LOCK_TX_SIZE`] — instead of
+    /// failing with [`BuilderError::TooManyInputs`]. No effect on any other
+    /// build. Semantics: `ManagedWalletInfo::build_asset_lock`.
     ///
-    /// Crate-private because a partial drain must be reported: the asset-lock
-    /// builders (`ManagedWalletInfo::build_asset_lock` and
-    /// `ManagedWalletInfo::build_asset_lock_with_signer`, in drain mode) set it
-    /// and surface what was left behind (through
-    /// [`Self::build_signed_reserved_reporting`]) as
-    /// `AssetLockResult::remaining_utxo_count` / `remaining_duffs`. Through the
-    /// public builder an over-cap asset-lock drain fails rather than silently
-    /// leaving coins behind. No effect on any other build.
+    /// Crate-private because a partial drain must be reported. Use it only
+    /// with [`Self::build_signed_reserved_reporting`], the one path that
+    /// returns what was left behind; [`Self::build_unsigned_reserved`] and the
+    /// other build methods drop that report. Its only caller is the asset-lock
+    /// builders' drain mode (`build_asset_lock` / `build_asset_lock_with_signer`).
     pub(crate) fn bounded_drain(mut self) -> Self {
         self.bounded_drain = true;
         self
@@ -282,9 +269,8 @@ impl TransactionBuilder {
     /// at most `MAX_STANDARD_TX_INPUTS` still has every batch see the whole
     /// account and fail with [`BuilderError::TooManyInputs`], and a regular
     /// drain of an account above that cap cannot be built in one go. That is
-    /// what a chunked CoinJoin sweep does. (A build carrying an asset-lock
-    /// payload is capped at [`MAX_ASSET_LOCK_INPUTS`] instead; only the
-    /// asset-lock builder's drain may then spend just the largest UTXOs.)
+    /// what a chunked CoinJoin sweep does. (An asset-lock build is capped at
+    /// [`MAX_ASSET_LOCK_INPUTS`] instead; see `ManagedWalletInfo::build_asset_lock`.)
     ///
     /// Reservation bookkeeping is unchanged: `owned` still covers every
     /// unreserved UTXO of the account, so whichever seeded outpoints selection
@@ -550,15 +536,19 @@ impl TransactionBuilder {
 
     /// Turn one selection into the unsigned transaction: BIP-69 input order,
     /// the drain carrier or change output, and the (possibly drain-rewritten)
-    /// special payload. Leaves `self` untouched so a selection can be retried.
+    /// special payload. `outputs` and `special_payload` are moved in, so the
+    /// single-pass build clones nothing; a retry takes the payload back out of
+    /// the transaction it rejects.
+    #[allow(clippy::too_many_arguments)]
     fn unsigned_from_selection(
         &self,
         mut selected_inputs: Vec<Utxo>,
         total_output: u64,
         estimated_fee: u64,
         is_asset_lock: bool,
+        outputs: Vec<TxOut>,
+        mut special_payload: Option<TransactionPayload>,
     ) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
-        let mut special_payload = self.special_payload.clone();
         let total_input: u64 = selected_inputs.iter().map(|u| u.value()).sum();
 
         if total_input < total_output + estimated_fee {
@@ -572,12 +562,13 @@ impl TransactionBuilder {
 
         let change_amount = total_input.saturating_sub(total_output).saturating_sub(estimated_fee);
         let change_dust_threshold = Self::dust_threshold(self.estimated_change_output_size());
-        let mut tx_outputs = match &self.special_payload {
-            Some(TransactionPayload::AssetLockPayloadType(_)) => vec![TxOut {
+        let mut tx_outputs = if is_asset_lock {
+            vec![TxOut {
                 value: total_output,
                 script_pubkey: ScriptBuf::new_op_return(&[]),
-            }],
-            _ => self.outputs.clone(),
+            }]
+        } else {
+            outputs
         };
 
         if self.selection_strategy == SelectionStrategy::All {
@@ -759,15 +750,11 @@ impl TransactionBuilder {
             self.inputs.retain(|utxo| !reserved.contains(&utxo.outpoint));
         }
 
-        // The asset-lock size bound prices every input as a P2PKH spend; refuse
-        // anything else before selection, so nothing is reserved.
+        // The asset-lock size bound prices every input as a P2PKH spend (and
+        // the signer only produces P2PKH scriptSigs), so other outputs are
+        // simply not offered to an asset lock's selection.
         if is_asset_lock {
-            if let Some(utxo) = self.inputs.iter().find(|utxo| !utxo.txout.script_pubkey.is_p2pkh())
-            {
-                return Err(BuilderError::AssetLockNonP2pkhInput {
-                    outpoint: utxo.outpoint,
-                });
-            }
+            self.inputs.retain(|utxo| utxo.txout.script_pubkey.is_p2pkh());
         }
 
         // Must match `calculate_base_size`, including the conservative VIN0 routing-script size.
@@ -790,6 +777,10 @@ impl TransactionBuilder {
         let bounded_drain = is_asset_lock && is_drain && self.bounded_drain;
         let bound_selection = is_asset_lock && (!is_drain || self.bounded_drain);
         let base_size = self.calculate_base_size();
+        // Moved, not cloned: the single-pass build hands them straight to the
+        // transaction. Selection and sizing above already read them.
+        let outputs = std::mem::take(&mut self.outputs);
+        let special_payload = self.special_payload.take();
         let select = |strategy: SelectionStrategy, max: Option<usize>| {
             let selector = CoinSelector::new(strategy);
             let selector = match max {
@@ -797,7 +788,7 @@ impl TransactionBuilder {
                 None => selector,
             };
             selector
-                .select_coins_reporting(
+                .select_coins_with_size(
                     self.inputs.iter(),
                     total_output,
                     self.fee_rate,
@@ -807,16 +798,20 @@ impl TransactionBuilder {
                 )
                 .map_err(BuilderError::CoinSelection)
         };
-        let assemble = |selection: SelectionResult| {
+        let assemble = |selection: SelectionResult,
+                        outputs: Vec<TxOut>,
+                        special_payload: Option<TransactionPayload>| {
             self.unsigned_from_selection(
                 selection.selected,
                 total_output,
                 selection.estimated_fee,
                 is_asset_lock,
+                outputs,
+                special_payload,
             )
         };
 
-        let (selection, produced_by) = select(strategy, bound_selection.then_some(max_inputs))?;
+        let selection = select(strategy, bound_selection.then_some(max_inputs))?;
 
         // A bounded selector only exceeds its bound when no selection within it
         // funds the target; an unbounded one is checked against the cap here.
@@ -827,41 +822,56 @@ impl TransactionBuilder {
             });
         }
 
-        let (mut transaction, mut selected_inputs) = assemble(selection)?;
+        let (mut transaction, mut selected_inputs) = assemble(selection, outputs, special_payload)?;
 
         // Core refuses an oversized asset lock as non-standard and peers drop it
         // silently. Hold it to the signed-size upper bound now, before anything
         // is reserved or signed (signing may be a hardware round-trip per input).
-        if is_asset_lock && signed_size_upper_bound(&transaction) > MAX_ASSET_LOCK_TX_SIZE {
-            if bounded_drain {
+        let first_size = if is_asset_lock {
+            signed_size_upper_bound(&transaction)
+        } else {
+            0
+        };
+        if first_size > MAX_ASSET_LOCK_TX_SIZE {
+            // A retry reassembles from the rejected transaction's payload (a
+            // drain rewrites its credit value again); an asset lock's on-chain
+            // output is the burn, rebuilt from the payload, so no outputs carry over.
+            let retry = if bounded_drain {
                 // A bounded drain drops its smallest inputs instead. Each one
                 // lowers the bound by exactly TX_INPUT_SIZE (the input-count
                 // varint stays one byte below 253 inputs), so one reselection
                 // at the right count fits.
-                let excess = signed_size_upper_bound(&transaction) - MAX_ASSET_LOCK_TX_SIZE;
+                let excess = first_size - MAX_ASSET_LOCK_TX_SIZE;
                 let keep = selected_inputs.len().saturating_sub(excess.div_ceil(TX_INPUT_SIZE));
-                if keep > 0 {
-                    if let Ok((smaller, _)) = select(SelectionStrategy::All, Some(keep)) {
-                        (transaction, selected_inputs) = assemble(smaller)?;
-                    }
+                (keep > 0).then_some((SelectionStrategy::All, keep))
+            } else if !is_drain && strategy != SelectionStrategy::LargestFirst {
+                // An exact-amount pick may fit with fewer, larger inputs:
+                // largest-first is the fewest-inputs pick.
+                Some((SelectionStrategy::LargestFirst, max_inputs))
+            } else {
+                None
+            };
+            // The smallest transaction actually checked: the retry when it ran
+            // and came out smaller, otherwise the first pick.
+            let mut size = first_size;
+            if let Some((retry_strategy, retry_max)) = retry {
+                // A failed reselection (e.g. the kept inputs no longer cover
+                // the fee) is the real reason; surface it.
+                let smaller = select(retry_strategy, Some(retry_max))?;
+                if smaller.selected.len() > max_inputs {
+                    return Err(BuilderError::TooManyInputs {
+                        count: smaller.selected.len(),
+                        max: max_inputs,
+                    });
                 }
-            } else if !is_drain && produced_by != SelectionStrategy::LargestFirst {
-                // An exact-amount pick may fit with fewer, larger inputs.
-                // Largest-first is already the fewest-inputs pick, so skip it
-                // when selection already ran or fell back to it.
-                if let Ok((largest_first, _)) =
-                    select(SelectionStrategy::LargestFirst, Some(max_inputs))
-                {
-                    if largest_first.selected.len() <= max_inputs {
-                        if let Ok((tx, inputs)) = assemble(largest_first) {
-                            if signed_size_upper_bound(&tx) <= MAX_ASSET_LOCK_TX_SIZE {
-                                (transaction, selected_inputs) = (tx, inputs);
-                            }
-                        }
-                    }
+                let payload = transaction.special_transaction_payload.take();
+                let (tx, inputs) = assemble(smaller, Vec::new(), payload)?;
+                let retry_size = signed_size_upper_bound(&tx);
+                if retry_size < size {
+                    size = retry_size;
+                    (transaction, selected_inputs) = (tx, inputs);
                 }
             }
-            let size = signed_size_upper_bound(&transaction);
             if size > MAX_ASSET_LOCK_TX_SIZE {
                 return Err(BuilderError::AssetLockTooLarge {
                     size,
@@ -1311,12 +1321,6 @@ pub enum BuilderError {
         size: usize,
         max: usize,
     },
-    /// An asset-lock candidate input is not a P2PKH output. The asset-lock
-    /// size limit is enforced on a bound that prices every input as a P2PKH
-    /// spend, so other scripts are refused before anything is selected.
-    AssetLockNonP2pkhInput {
-        outpoint: OutPoint,
-    },
 }
 
 impl fmt::Display for BuilderError {
@@ -1355,11 +1359,6 @@ impl fmt::Display for BuilderError {
             } => {
                 write!(f, "Asset lock transaction too large: {size} bytes (max {max})")
             }
-            Self::AssetLockNonP2pkhInput {
-                outpoint,
-            } => {
-                write!(f, "Asset lock input {outpoint} is not a P2PKH output")
-            }
         }
     }
 }
@@ -1370,6 +1369,7 @@ impl std::error::Error for BuilderError {}
 mod tests {
     use super::*;
     use crate::test_utils::TestWalletContext;
+    use crate::wallet::managed_wallet_info::coin_selection::SelectionError;
     use crate::Network;
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore::consensus::serialize;
@@ -1791,24 +1791,46 @@ mod tests {
         assert_eq!(tx.input.len(), MAX_ASSET_LOCK_INPUTS);
     }
 
-    /// The generic builder refuses a non-P2PKH input for an asset lock too,
-    /// whether the caller signs here or externally.
+    /// The generic builder drops a non-P2PKH input from an asset lock's
+    /// candidates too, seeded or not.
     #[test]
-    fn test_asset_lock_refuses_non_p2pkh_inputs() {
-        let mut odd = Utxo::dummy(1, 1_000_000, 100, false, true);
+    fn test_asset_lock_ignores_non_p2pkh_inputs() {
+        let good = Utxo::dummy(0, 1_000_000, 100, false, true);
+        let mut odd = Utxo::dummy(1, 5_000_000, 100, false, true);
         odd.txout.script_pubkey = ScriptBuf::from(vec![0x51]);
-        let result = TransactionBuilder::new()
+        let (tx, _, _) = TransactionBuilder::new()
             .set_current_height(200)
             .set_fee_rate(FeeRate::new(1000))
             .set_selection_strategy(SelectionStrategy::All)
             .set_special_payload(asset_lock_payload(25))
-            .add_inputs([Utxo::dummy(0, 1_000_000, 100, false, true), odd.clone()])
+            .add_inputs([good.clone(), odd])
+            .build_unsigned_reserved()
+            .expect("the P2PKH input funds the drain");
+        assert_eq!(tx.input.len(), 1);
+        assert_eq!(tx.input[0].previous_output, good.outpoint);
+    }
+
+    /// When the shrink's reselection itself fails — the few inputs that would
+    /// fit no longer cover the fee — that is the error reported, not a
+    /// misleading size refusal.
+    #[test]
+    fn test_bounded_drain_shrink_surfaces_the_reselection_error() {
+        let utxos: Vec<Utxo> = (0..100).map(|i| Utxo::dummy(i, 2_000, 100, false, true)).collect();
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::new(1000))
+            .set_selection_strategy(SelectionStrategy::All)
+            .set_special_payload(asset_lock_payload(20_000))
+            .add_inputs(utxos)
+            .bounded_drain()
             .build_unsigned_reserved();
-        assert_eq!(
-            result.err(),
-            Some(BuilderError::AssetLockNonP2pkhInput {
-                outpoint: odd.outpoint
-            })
+        assert!(
+            matches!(
+                result,
+                Err(BuilderError::CoinSelection(SelectionError::InsufficientFunds { .. }))
+            ),
+            "got {:?}",
+            result.err()
         );
     }
 

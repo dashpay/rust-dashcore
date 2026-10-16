@@ -172,15 +172,15 @@ pub struct AssetLockResult {
     /// bookkeeping scale with the address book while claiming contributions
     /// that never happened.
     pub funding_accounts: Vec<AccountType>,
-    /// How many spendable UTXOs of the funding source(s) a **drain** left
-    /// unspent — dropped by the [`MAX_ASSET_LOCK_INPUTS`] cap or by the shrink
-    /// to [`MAX_ASSET_LOCK_TX_SIZE`]; `0` when the drain took everything, and
-    /// always `0` for an exact-amount build.
+    /// How many of a **drain**'s candidates it left unspent — dropped by the
+    /// [`MAX_ASSET_LOCK_INPUTS`] cap or by the shrink to
+    /// [`MAX_ASSET_LOCK_TX_SIZE`]. Always `0` for an exact-amount build.
     ///
-    /// A bounded drain keeps the largest UTXOs, so what remains is the
-    /// *smallest*: a follow-up drain of the rest may fall below the minimum
-    /// amount the target state transition accepts. Surface it to the user
-    /// rather than assuming the account was emptied.
+    /// Candidates are the funding accounts' final (confirmed or
+    /// InstantSend-locked), unreserved, spendable P2PKH UTXOs. `0` means the
+    /// drain spent all of *those*, not that the accounts are empty:
+    /// unconfirmed, reserved, immature or non-P2PKH coins are never counted.
+    /// See [`ManagedWalletInfo::build_asset_lock`].
     pub remaining_utxo_count: usize,
     /// Total value, in duffs, of the UTXOs counted by
     /// [`Self::remaining_utxo_count`].
@@ -480,42 +480,44 @@ impl ManagedWalletInfo {
     /// source-list semantics.
     ///
     /// `drain` locks the sourced accounts' spendable balance: every final UTXO
-    /// is consumed — or, when there are more than [`MAX_ASSET_LOCK_INPUTS`], the
-    /// [`MAX_ASSET_LOCK_INPUTS`] largest (fewer still, dropping the smallest,
-    /// if those would exceed [`MAX_ASSET_LOCK_TX_SIZE`]), leaving the rest in
-    /// the account for a later lock — and the single credit output's value is
-    /// rewritten to
+    /// is consumed (up to the limits below; the rest stays for a later lock)
+    /// and the single credit output's value is rewritten to
     /// `Σ inputs − fee` (the caller's credit-output value is ignored; exactly
     /// one credit output is required). CoinJoin funding is drain-only and must
     /// be the sole source: pooling mixed outputs with transparent ones in one
     /// transaction links them and undoes the mixing.
     ///
-    /// This and [`Self::build_asset_lock_with_signer`] are the only entry
-    /// points that drain partially: a drain through the generic
-    /// [`TransactionBuilder`] with an asset-lock payload fails with
-    /// [`BuilderError::TooManyInputs`] over the cap instead, because only these
-    /// report what was left behind.
+    /// # Asset-lock limits and the bounded drain
     ///
-    /// A bounded drain leaves the smallest UTXOs behind; the result reports
-    /// them in [`AssetLockResult::remaining_utxo_count`] and
-    /// [`AssetLockResult::remaining_duffs`]. A follow-up drain of those may
-    /// fall below the target transition's minimum lock amount.
+    /// This is the canonical description; the constants, the builder flag and
+    /// [`AssetLockResult`] link here.
     ///
-    /// A drain may therefore be partial, and nothing but those two fields says
-    /// so: callers must read `remaining_utxo_count` / `remaining_duffs` to learn
-    /// that UTXOs were left behind (dropped by the input cap or by the shrink
-    /// to [`MAX_ASSET_LOCK_TX_SIZE`]).
-    ///
-    /// The input cap makes the lock relayable by Core and within Platform's
-    /// input cap; it does not bound the size of a state transition that embeds
-    /// it. An InstantSend asset-lock proof carries the whole transaction and an
-    /// IS lock listing every spent outpoint, so for a lock near the cap the
-    /// transition can exceed Platform's size limit — the consumer should use a
-    /// ChainLock proof then (cf. `dashpay/platform#5460`). An asset lock whose
-    /// signed-size bound exceeds [`MAX_ASSET_LOCK_TX_SIZE`] (a drain shrinks to
-    /// fit first) fails with [`BuilderError::AssetLockTooLarge`] before
-    /// anything is reserved or signed; every input must be P2PKH
-    /// ([`BuilderError::AssetLockNonP2pkhInput`] otherwise).
+    /// * **Input cap.** Dash Core relays an asset lock with at most
+    ///   [`MAX_ASSET_LOCK_INPUTS`] inputs, and Platform accepts no more. Over
+    ///   it, peers drop the transaction silently, so it is never built.
+    /// * **Size limit.** Core also refuses an asset lock larger than
+    ///   [`MAX_ASSET_LOCK_TX_SIZE`]. It is checked on an upper bound of the
+    ///   signed size (P2PKH inputs with compressed keys and low-S signatures)
+    ///   before anything is reserved or signed, and again on the signed bytes;
+    ///   either failure is [`BuilderError::AssetLockTooLarge`]. Only P2PKH
+    ///   UTXOs are offered as inputs.
+    /// * **Bounded drain.** Over either limit, a drain spends the largest
+    ///   candidates that fit and leaves the smallest. A drain may therefore be
+    ///   partial, and only [`AssetLockResult::remaining_utxo_count`] /
+    ///   [`AssetLockResult::remaining_duffs`] say so: callers must read them.
+    ///   A follow-up drain of what remains may fall below the target
+    ///   transition's minimum lock amount. This and
+    ///   [`Self::build_asset_lock_with_signer`] are the only bounded-drain
+    ///   paths; a drain through the generic [`TransactionBuilder`] fails with
+    ///   [`BuilderError::TooManyInputs`] over the cap instead.
+    /// * **Exact amount.** A non-drain build stays within the cap and, if
+    ///   needed, retries with fewer, larger inputs to fit the size limit.
+    /// * **Transition size.** The limits make the lock relayable by Core and
+    ///   within Platform's input cap; they do not bound a state transition that
+    ///   embeds it. An InstantSend asset-lock proof carries the whole
+    ///   transaction and an IS lock listing every spent outpoint, so for a lock
+    ///   near the cap the transition can exceed Platform's size limit. Use a
+    ///   ChainLock proof then (cf. `dashpay/platform#5460`).
     ///
     /// A non-drain build spends at most [`MAX_ASSET_LOCK_INPUTS`] inputs; when
     /// the amount cannot be funded within that many it fails with
@@ -610,8 +612,8 @@ impl ManagedWalletInfo {
     /// request signatures from the same signer when later consuming the
     /// credits on Platform.
     ///
-    /// The bounded drain, the `remaining_*` fields that report it, and the
-    /// asset-lock size and input limits all apply here exactly as there.
+    /// The asset-lock limits and the bounded drain apply exactly as described
+    /// there.
     ///
     /// `funding_sources` / `source_index` / `drain` — see
     /// [`Self::build_asset_lock`].
@@ -1238,13 +1240,14 @@ mod tests {
         assert!(coinjoin_reserved(&info).is_empty(), "the reservation must be released");
     }
 
-    /// A non-P2PKH funding UTXO is refused before selection, because the size
-    /// limit is enforced on a bound that prices every input as P2PKH.
+    /// A non-P2PKH funding UTXO is simply not offered to an asset lock (the
+    /// size bound prices every input as P2PKH): one odd coin must not block
+    /// asset locks from the whole account, nor count as left behind.
     #[tokio::test]
-    async fn non_p2pkh_funding_is_refused_before_anything_is_reserved() {
+    async fn non_p2pkh_funding_is_not_offered() {
         let (wallet, mut info) = test_wallet_and_info();
-        insert_funded_utxo(&mut info, &wallet, 0x11, 1_000_000, true);
-        let odd = insert_funded_utxo(&mut info, &wallet, 0x22, 1_000_000, true);
+        let good = insert_funded_utxo(&mut info, &wallet, 0x11, 1_000_000, true);
+        let odd = insert_funded_utxo(&mut info, &wallet, 0x22, 5_000_000, true);
         info.accounts
             .standard_bip44_accounts
             .get_mut(&0)
@@ -1261,21 +1264,17 @@ mod tests {
                 &wallet,
                 &[AccountTypePreference::BIP44],
                 0,
-                test_credit_outputs(&[200_000]),
+                test_credit_outputs(&[0]),
                 1000,
-                false,
+                true,
             )
-            .await;
-        assert!(
-            matches!(
-                result,
-                Err(AssetLockError::Builder(BuilderError::AssetLockNonP2pkhInput { outpoint }))
-                    if outpoint == odd
-            ),
-            "expected AssetLockNonP2pkhInput, got {:?}",
-            result.err()
-        );
-        assert!(reserved_outpoints(&info).is_empty(), "a refused build must reserve nothing");
+            .await
+            .expect("the P2PKH coin alone funds the drain");
+        let spent: Vec<OutPoint> =
+            result.transaction.input.iter().map(|txin| txin.previous_output).collect();
+        assert_eq!(spent, vec![good]);
+        assert_eq!((result.remaining_utxo_count, result.remaining_duffs), (0, 0));
+        assert_eq!(reserved_outpoints(&info), HashSet::from([good]));
     }
 
     /// An exact-amount build never reports anything left behind, even when the
