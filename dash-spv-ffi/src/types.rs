@@ -1,5 +1,5 @@
 use dash_spv::client::config::MempoolStrategy;
-use dash_spv::sync::{
+use dash_spv::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
     FiltersProgress, InstantSendProgress, MasternodesProgress, MempoolProgress, ProgressPercentage,
     SyncProgress, SyncState,

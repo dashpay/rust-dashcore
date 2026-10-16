@@ -62,6 +62,7 @@
 
 mod sml_engine;
 mod storage;
+mod sync;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -71,7 +72,6 @@ pub mod client;
 pub mod error;
 pub mod logging;
 pub mod network;
-pub mod sync;
 pub mod types;
 pub mod validation;
 

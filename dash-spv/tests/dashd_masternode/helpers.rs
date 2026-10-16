@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use dash_spv::sync::{MasternodesProgress, SyncEvent, SyncProgress, SyncState};
 use dash_spv::test_utils::{BlockHeaderStorage, MasternodeListEngine};
+use dash_spv::{MasternodesProgress, SyncEvent, SyncProgress, SyncState};
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::Txid;
