@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 259
+**Total Functions**: 262
 
 ## Table of Contents
 
@@ -43,13 +43,16 @@ Functions: 4
 
 ### Wallet Manager
 
-Functions: 20
+Functions: 23
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `wallet_manager_add_wallet_from_mnemonic` | Add a wallet from mnemonic to the manager (backward compatibility)  # Safety... | wallet_manager |
 | `wallet_manager_add_wallet_from_mnemonic_return_serialized_bytes` | No description | wallet_manager |
 | `wallet_manager_add_wallet_from_mnemonic_with_options` | Add a wallet from mnemonic to the manager with options  # Safety  -... | wallet_manager |
+| `wallet_manager_begin_coinjoin_recovery` | Start a CoinJoin recovery on one wallet  Finds mixed coins that landed past... | wallet_manager |
+| `wallet_manager_cancel_coinjoin_recovery` | Stop the CoinJoin recovery running on one wallet  The wallet keeps what the... | wallet_manager |
+| `wallet_manager_coinjoin_recovery_progress` | Report whether a CoinJoin recovery is running on one wallet  Returns true... | wallet_manager |
 | `wallet_manager_create` | Create a new wallet manager  # Safety  `error` must be a valid pointer to an... | wallet_manager |
 | `wallet_manager_current_height` | Get current height for a network  # Safety  - `manager` must be a valid... | wallet_manager |
 | `wallet_manager_describe` | Describe the wallet manager for a given network and return a newly allocated... | wallet_manager |
@@ -485,6 +488,54 @@ Add a wallet from mnemonic to the manager with options  # Safety  - `manager` mu
 
 **Safety:**
 - `manager` must be a valid pointer to an FFIWalletManager instance - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+
+**Module:** `wallet_manager`
+
+---
+
+#### `wallet_manager_begin_coinjoin_recovery`
+
+```c
+wallet_manager_begin_coinjoin_recovery(manager: *mut FFIWalletManager, wallet_id: *const u8, lowest_replayable_height: u32, until_height_out: *mut u32, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Start a CoinJoin recovery on one wallet  Finds mixed coins that landed past the CoinJoin pools' gap limit, which a normal sync never discovers. The wallet's chain-derived state is dropped and it is replayed from its birth height by the running SPV client; see `WalletManager::begin_coinjoin_recovery`. The reset is announced by the wallet-reset event and the end of the replay by the CoinJoin recovery-finished event.  `lowest_replayable_height` is the lowest height the SPV client can replay, where its header storage starts (`0` when it syncs from genesis); a wallet born below it is refused with `InvalidState`.  On success writes the committed sync height at which the recovery ends to `until_height_out` (when non-null) and returns true. Fails with `NotFound` when the wallet is unknown, and with `InvalidState` when a recovery is already running on any wallet of this manager, the wallet has no CoinJoin account, unconfirmed transactions or coins reserved by a transaction build, or nothing is known of the chain past the wallet's birth yet (sync it first). The error message says which. The recovery lives in memory only: after a restart it is gone and has to be started again (see `wallet_manager_coinjoin_recovery_progress`).  Start it while the SPV client is stopped, or idle at the tip: a block the client already had in flight for this wallet can otherwise be applied to the reset wallet ahead of the replay, out of order. Until the replay is back at the returned height, transaction builds from this wallet fail.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `until_height_out` must be null or a valid pointer to a `u32` - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+
+**Safety:**
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `until_height_out` must be null or a valid pointer to a `u32` - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+
+**Module:** `wallet_manager`
+
+---
+
+#### `wallet_manager_cancel_coinjoin_recovery`
+
+```c
+wallet_manager_cancel_coinjoin_recovery(manager: *mut FFIWalletManager, wallet_id: *const u8, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Stop the CoinJoin recovery running on one wallet  The wallet keeps what the replay has found and goes on syncing normally; see `WalletManager::cancel_coinjoin_recovery`. Builds from the wallet stay refused until the replay completes, which the CoinJoin recovery-finished event (with `cancelled` set) reports. Returns false when no recovery probe runs on that wallet, and false with `NotFound` when the wallet is unknown.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+
+**Safety:**
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+
+**Module:** `wallet_manager`
+
+---
+
+#### `wallet_manager_coinjoin_recovery_progress`
+
+```c
+wallet_manager_coinjoin_recovery_progress(manager: *const FFIWalletManager, wallet_id: *const u8, until_height_out: *mut u32, found_out: *mut u32, probing_out: *mut bool, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Report whether a CoinJoin recovery is running on one wallet  Returns true while one runs, a cancelled one whose replay goes on included, writing the committed sync height at which it ends to `until_height_out`, the number of CoinJoin addresses past the gap limit found so far to `found_out`, and whether its probe still runs to `probing_out` (each when non-null). Returns false when none runs, including after a restart interrupted one, and false with `NotFound` when the wallet is unknown.  # Safety  - `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `until_height_out` and `found_out` must each be null or a valid pointer to a `u32` - `probing_out` must be null or a valid pointer to a `bool` - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
+
+**Safety:**
+- `manager` must be a valid pointer to an FFIWalletManager instance - `wallet_id` must be a valid pointer to a 32-byte wallet ID - `until_height_out` and `found_out` must each be null or a valid pointer to a `u32` - `probing_out` must be null or a valid pointer to a `bool` - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call
 
 **Module:** `wallet_manager`
 

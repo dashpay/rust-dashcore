@@ -228,19 +228,23 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // Get relevant account types for this transaction type
         let relevant_types = TransactionRouter::get_relevant_account_types(&tx_type);
 
-        // A CoinJoin coin of ours that came back past the pool's gap limit is
-        // found here, before the check, so the check below credits it (32008).
-        let recovered = if update_state && relevant_types.contains(&AccountTypeToCheck::CoinJoin) {
-            self.recover_coinjoin_outputs(tx, wallet)
-        } else {
-            Vec::new()
-        };
-
         // Check only relevant account types
         let mut result = self.accounts.check_transaction(tx, &relevant_types);
-        if !recovered.is_empty() {
-            result.new_addresses.extend(recovered);
-            result.state_modified = true;
+
+        // During a CoinJoin recovery replay, a relevant transaction may also pay
+        // CoinJoin addresses of ours past the pools' gap limit (32008). They are
+        // added to the pools before any state is touched, and the check is
+        // repeated so the update below credits them.
+        if update_state
+            && result.is_relevant
+            && relevant_types.contains(&AccountTypeToCheck::CoinJoin)
+        {
+            let recovered = self.recover_coinjoin_outputs(tx, wallet);
+            if !recovered.is_empty() {
+                result = self.accounts.check_transaction(tx, &relevant_types);
+                result.new_addresses.extend(recovered);
+                result.state_modified = true;
+            }
         }
 
         // #649: remember every spend seen in a block, independent of the

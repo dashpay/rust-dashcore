@@ -788,8 +788,9 @@ impl FFIOutPoint {
 /// provably beat to one of their inputs: they can never confirm, so their
 /// outputs are gone from the UTXO set and their records deleted.
 ///
-/// **The only removal-shaped wallet callback.** Every other one is additive,
-/// so a consumer mirroring wallet state to disk must act on this — delete the
+/// **A removal-shaped wallet callback**, like `on_chain_truncated` and
+/// `on_wallet_reset`; every other one is additive. A consumer mirroring
+/// wallet state to disk must act on this — delete the
 /// named transactions and any UTXO they created. Ignoring it leaves the dead
 /// rows in the mirror, which replays them on the next load and re-creates a
 /// balance the wallet has already corrected.
@@ -861,6 +862,50 @@ pub type OnChainTruncatedCallback = Option<
         balance: *const FFIBalance,
         account_balances: *const FFIAccountBalance,
         account_balances_count: u32,
+        user_data: *mut c_void,
+    ),
+>;
+
+/// Callback for `WalletEvent::WalletReset`.
+///
+/// Fires once for the one wallet a CoinJoin recovery was started on: it dropped
+/// everything it learned from the chain and rewound its sync checkpoint to
+/// `synced_height`, just below its birth height, to be replayed from birth. A
+/// consumer mirroring wallet state to disk must delete every transaction and
+/// UTXO it holds for this wallet, replace its CoinJoin address rows with the
+/// `coinjoin_addresses_count`
+/// entries at `coinjoin_addresses`, and lower its synced height to
+/// `synced_height`. Other address rows stay, and annotations such as labels
+/// should be kept keyed by txid or address. The replay then delivers the
+/// history again through the usual callbacks. Other wallets are not affected.
+///
+/// All pointer parameters are borrowed and only valid for the duration of the
+/// callback. `balance` is the wallet's balance *after* the reset.
+/// `coinjoin_addresses` is null when its count is 0.
+pub type OnWalletResetCallback = Option<
+    extern "C" fn(
+        wallet_id: *const c_char,
+        synced_height: u32,
+        balance: *const FFIBalance,
+        coinjoin_addresses: *const FFIDerivedAddress,
+        coinjoin_addresses_count: u32,
+        user_data: *mut c_void,
+    ),
+>;
+
+/// Callback for `WalletEvent::CoinJoinRecoveryFinished`.
+///
+/// Fires when a CoinJoin recovery ended: its replay reached the committed sync
+/// height `height` it was to run to, the wallet's coins are current again and
+/// builds from it are allowed. `found` is the number of CoinJoin addresses past
+/// the gap limit the replay found coins on; `cancelled` says its probe had been
+/// stopped before the replay completed.
+pub type OnCoinJoinRecoveryFinishedCallback = Option<
+    extern "C" fn(
+        wallet_id: *const c_char,
+        height: u32,
+        found: u32,
+        cancelled: bool,
         user_data: *mut c_void,
     ),
 >;
@@ -1027,6 +1072,8 @@ pub struct FFIWalletEventCallbacks {
     pub on_sync_height_advanced: OnSyncHeightAdvancedCallback,
     pub on_chain_lock_processed: OnWalletChainLockProcessedCallback,
     pub on_chain_truncated: OnChainTruncatedCallback,
+    pub on_wallet_reset: OnWalletResetCallback,
+    pub on_coinjoin_recovery_finished: OnCoinJoinRecoveryFinishedCallback,
     pub user_data: *mut c_void,
 }
 
@@ -1044,6 +1091,8 @@ impl Default for FFIWalletEventCallbacks {
             on_sync_height_advanced: None,
             on_chain_lock_processed: None,
             on_chain_truncated: None,
+            on_wallet_reset: None,
+            on_coinjoin_recovery_finished: None,
             user_data: std::ptr::null_mut(),
         }
     }
@@ -1442,6 +1491,53 @@ impl FFIWalletEventCallbacks {
                     cb(c_wallet_id.as_ptr(), *height, self.user_data);
                 }
             }
+            WalletEvent::WalletReset {
+                wallet_id,
+                synced_height,
+                balance,
+                coinjoin_addresses,
+            } => {
+                if let Some(cb) = self.on_wallet_reset {
+                    let wallet_id_hex = wallet_id.to_lower_hex_string();
+                    let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
+                    let ffi_balance = FFIBalance::from(*balance);
+                    let ffi_addresses = FFIDerivedAddress::from_slice(coinjoin_addresses);
+                    let addresses_ptr = if ffi_addresses.is_empty() {
+                        ptr::null()
+                    } else {
+                        ffi_addresses.as_ptr()
+                    };
+                    cb(
+                        c_wallet_id.as_ptr(),
+                        *synced_height,
+                        &ffi_balance,
+                        addresses_ptr,
+                        ffi_addresses.len() as u32,
+                        self.user_data,
+                    );
+                    drop(ffi_addresses);
+                } else {
+                    // Like the sweep callback: a consumer that leaves this one
+                    // unset keeps every row of a wallet that dropped them all.
+                    tracing::warn!(
+                        wallet_id = %wallet_id.to_lower_hex_string(),
+                        "no on_wallet_reset callback set; the consumer will keep mirroring \
+                         state the wallet dropped for its CoinJoin recovery"
+                    );
+                }
+            }
+            WalletEvent::CoinJoinRecoveryFinished {
+                wallet_id,
+                height,
+                found,
+                cancelled,
+            } => {
+                if let Some(cb) = self.on_coinjoin_recovery_finished {
+                    let wallet_id_hex = wallet_id.to_lower_hex_string();
+                    let c_wallet_id = CString::new(wallet_id_hex).unwrap_or_default();
+                    cb(c_wallet_id.as_ptr(), *height, *found, *cancelled, self.user_data);
+                }
+            }
             WalletEvent::ChainLockProcessed {
                 wallet_id,
                 chain_lock,
@@ -1592,6 +1688,84 @@ mod tests {
             123_456,
             "the balance parameter must not be shifted by the released-outpoint insertion"
         );
+    }
+
+    /// The reset reaches the consumer with its wallet, rewound height and
+    /// balance in their places, so it deletes the right wallet's rows.
+    #[test]
+    fn test_wallet_reset_dispatch_marshals_its_fields() {
+        static WALLET_ID: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+        static SYNCED_HEIGHT: AtomicU32 = AtomicU32::new(u32::MAX);
+        static CONFIRMED: AtomicU32 = AtomicU32::new(u32::MAX);
+        static ADDRESSES_NULL: AtomicU32 = AtomicU32::new(u32::MAX);
+        static ADDRESSES_COUNT: AtomicU32 = AtomicU32::new(u32::MAX);
+
+        extern "C" fn cb(
+            wallet_id: *const c_char,
+            synced_height: u32,
+            balance: *const FFIBalance,
+            addresses: *const FFIDerivedAddress,
+            addresses_count: u32,
+            _user: *mut c_void,
+        ) {
+            ADDRESSES_NULL.store(u32::from(addresses.is_null()), Ordering::SeqCst);
+            ADDRESSES_COUNT.store(addresses_count, Ordering::SeqCst);
+            let id = unsafe { std::ffi::CStr::from_ptr(wallet_id) };
+            *WALLET_ID.lock().expect("id") = id.to_string_lossy().into_owned();
+            SYNCED_HEIGHT.store(synced_height, Ordering::SeqCst);
+            CONFIRMED.store(unsafe { (*balance).confirmed } as u32, Ordering::SeqCst);
+        }
+
+        let callbacks = FFIWalletEventCallbacks {
+            on_wallet_reset: Some(cb),
+            ..FFIWalletEventCallbacks::default()
+        };
+        callbacks.dispatch(&WalletEvent::WalletReset {
+            wallet_id: [7u8; 32],
+            synced_height: 1_999,
+            balance: WalletCoreBalance::new(42, 0, 0, 0),
+            coinjoin_addresses: Vec::new(),
+        });
+
+        assert_eq!(*WALLET_ID.lock().expect("id"), "07".repeat(32));
+        assert_eq!(SYNCED_HEIGHT.load(Ordering::SeqCst), 1_999);
+        assert_eq!(CONFIRMED.load(Ordering::SeqCst), 42);
+        assert_eq!(ADDRESSES_NULL.load(Ordering::SeqCst), 1, "no addresses: a null pointer");
+        assert_eq!(ADDRESSES_COUNT.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_coinjoin_recovery_finished_dispatch_marshals_its_fields() {
+        static HEIGHT: AtomicU32 = AtomicU32::new(u32::MAX);
+        static FOUND: AtomicU32 = AtomicU32::new(u32::MAX);
+        static CANCELLED: AtomicU32 = AtomicU32::new(u32::MAX);
+
+        extern "C" fn cb(
+            _wallet_id: *const c_char,
+            height: u32,
+            found: u32,
+            cancelled: bool,
+            _user: *mut c_void,
+        ) {
+            HEIGHT.store(height, Ordering::SeqCst);
+            FOUND.store(found, Ordering::SeqCst);
+            CANCELLED.store(u32::from(cancelled), Ordering::SeqCst);
+        }
+
+        let callbacks = FFIWalletEventCallbacks {
+            on_coinjoin_recovery_finished: Some(cb),
+            ..FFIWalletEventCallbacks::default()
+        };
+        callbacks.dispatch(&WalletEvent::CoinJoinRecoveryFinished {
+            wallet_id: [7u8; 32],
+            height: 2_400_000,
+            found: 3,
+            cancelled: true,
+        });
+
+        assert_eq!(HEIGHT.load(Ordering::SeqCst), 2_400_000);
+        assert_eq!(FOUND.load(Ordering::SeqCst), 3);
+        assert_eq!(CANCELLED.load(Ordering::SeqCst), 1);
     }
 
     /// `BlocksNeeded` dispatch must pass exactly one entry per

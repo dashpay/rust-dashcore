@@ -384,6 +384,9 @@ impl ManagedWalletInfo {
         drain: bool,
         signer: &T,
     ) -> Result<SignedAssetLock, AssetLockError> {
+        if self.is_replaying() {
+            return Err(BuilderError::RecoveryInProgress.into());
+        }
         validate_funding_sources(funding_sources, credit_outputs.len(), drain)?;
 
         // Build first, derive credit keys after — a build failure must not
