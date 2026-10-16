@@ -37,6 +37,25 @@ impl Header {
         }
     }
 
+    /// Mainnet headers 1999976 to 2000005: 24 headers of history for Dark Gravity Wave,
+    /// then six whose `bits` it reproduces.
+    pub fn mainnet_fixture() -> Vec<Self> {
+        include_str!("../../tests/data/mainnet_headers_1999976.txt")
+            .lines()
+            .map(|line| {
+                let [_, hash, header] = line.split(' ').collect::<Vec<_>>()[..] else {
+                    panic!("height, hash and header");
+                };
+                let header: Header = crate::consensus::deserialize(
+                    &hex_conservative::decode_to_vec(header).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(header.block_hash().to_string(), hash);
+                header
+            })
+            .collect()
+    }
+
     pub fn dummy_batch(height_range: Range<u32>) -> Vec<Self> {
         height_range.map(Self::dummy).collect()
     }

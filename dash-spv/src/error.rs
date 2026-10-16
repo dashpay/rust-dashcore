@@ -101,6 +101,15 @@ pub enum ValidationError {
     #[error("Invalid proof of work")]
     InvalidProofOfWork,
 
+    #[error(
+        "Invalid difficulty at height {height}: bits {actual:#010x}, required {required:#010x}"
+    )]
+    InvalidDifficulty {
+        height: u32,
+        actual: u32,
+        required: u32,
+    },
+
     #[error("Invalid header chain: {0}")]
     InvalidHeaderChain(String),
 
