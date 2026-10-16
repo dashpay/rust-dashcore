@@ -811,28 +811,31 @@ impl TransactionBuilder {
             )
         };
 
-        let selection = select(strategy, bound_selection.then_some(max_inputs))?;
-
         // A bounded selector only exceeds its bound when no selection within it
-        // funds the target; an unbounded one is checked against the cap here.
-        if selection.selected.len() > max_inputs {
-            return Err(BuilderError::TooManyInputs {
-                count: selection.selected.len(),
-                max: max_inputs,
-            });
-        }
+        // funds the target (its length is then the inputs needed); an
+        // unbounded one is checked against the cap here too.
+        let select_within_cap = |strategy: SelectionStrategy, max: Option<usize>| {
+            let selection = select(strategy, max)?;
+            if selection.selected.len() > max_inputs {
+                return Err(BuilderError::TooManyInputs {
+                    count: selection.selected.len(),
+                    max: max_inputs,
+                });
+            }
+            Ok(selection)
+        };
+
+        let selection = select_within_cap(strategy, bound_selection.then_some(max_inputs))?;
 
         let (mut transaction, mut selected_inputs) = assemble(selection, outputs, special_payload)?;
 
         // Core refuses an oversized asset lock as non-standard and peers drop it
         // silently. Hold it to the signed-size upper bound now, before anything
         // is reserved or signed (signing may be a hardware round-trip per input).
-        let first_size = if is_asset_lock {
-            signed_size_upper_bound(&transaction)
-        } else {
-            0
-        };
-        if first_size > MAX_ASSET_LOCK_TX_SIZE {
+        let oversized = is_asset_lock
+            .then(|| signed_size_upper_bound(&transaction))
+            .filter(|size| *size > MAX_ASSET_LOCK_TX_SIZE);
+        if let Some(first_size) = oversized {
             // A retry reassembles from the rejected transaction's payload (a
             // drain rewrites its credit value again); an asset lock's on-chain
             // output is the burn, rebuilt from the payload, so no outputs carry over.
@@ -846,7 +849,9 @@ impl TransactionBuilder {
                 (keep > 0).then_some((SelectionStrategy::All, keep))
             } else if !is_drain && strategy != SelectionStrategy::LargestFirst {
                 // An exact-amount pick may fit with fewer, larger inputs:
-                // largest-first is the fewest-inputs pick.
+                // largest-first is the fewest-inputs pick. There is no
+                // no-change retry: change is only emitted above the dust
+                // threshold, so dropping it would burn real value as fee.
                 Some((SelectionStrategy::LargestFirst, max_inputs))
             } else {
                 None
@@ -857,13 +862,7 @@ impl TransactionBuilder {
             if let Some((retry_strategy, retry_max)) = retry {
                 // A failed reselection (e.g. the kept inputs no longer cover
                 // the fee) is the real reason; surface it.
-                let smaller = select(retry_strategy, Some(retry_max))?;
-                if smaller.selected.len() > max_inputs {
-                    return Err(BuilderError::TooManyInputs {
-                        count: smaller.selected.len(),
-                        max: max_inputs,
-                    });
-                }
+                let smaller = select_within_cap(retry_strategy, Some(retry_max))?;
                 let payload = transaction.special_transaction_payload.take();
                 let (tx, inputs) = assemble(smaller, Vec::new(), payload)?;
                 let retry_size = signed_size_upper_bound(&tx);
