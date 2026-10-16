@@ -27,7 +27,7 @@ permissions:
 jobs:
   # Ensure all pull_request-triggered workflows are monitored by workflow_run
   validate-triggers:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,7 +75,7 @@ jobs:
           echo "All pull_request workflows are covered by workflow_run triggers."
 
   evaluate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
