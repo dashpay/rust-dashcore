@@ -111,7 +111,10 @@ pub enum SelectionStrategy {
     /// Random selection for privacy
     Random,
     /// Select EVERY spendable UTXO (drain / sweep an account empty). There is no change: the
-    /// single deliverable output is worth the total minus the fee to spend them all
+    /// single deliverable output is worth the total minus the fee to spend them all.
+    ///
+    /// Under [`CoinSelector::with_max_inputs`] this is a *bounded* drain: only the `max`
+    /// largest spendable UTXOs are selected and the rest stay unspent.
     All,
 }
 
@@ -157,6 +160,9 @@ pub struct SelectionResult {
 pub struct CoinSelector {
     strategy: SelectionStrategy,
     dust_threshold: u64,
+    /// Upper bound on the number of inputs a selection may use. See
+    /// [`Self::with_max_inputs`].
+    max_inputs: Option<usize>,
 }
 
 impl CoinSelector {
@@ -164,7 +170,32 @@ impl CoinSelector {
         Self {
             strategy,
             dust_threshold: 546, // Standard dust threshold
+            max_inputs: None,
         }
+    }
+
+    /// Bound the number of inputs a selection may use.
+    ///
+    /// * [`SelectionStrategy::All`] becomes a *bounded drain*: when more than
+    ///   `max` spendable UTXOs are offered it keeps the `max` largest by value
+    ///   (ties broken by outpoint, so the pick is deterministic) and drains
+    ///   only those; the rest are left unspent. With `max` or fewer it drains
+    ///   everything, exactly as without a bound.
+    /// * Every other strategy runs unchanged first. If its pick exceeds `max`,
+    ///   or it reports insufficient funds (a strategy that spends small UTXOs
+    ///   first can pay more in fees than they add, where largest-first would
+    ///   fund the target), selection falls back to largest-first accumulation,
+    ///   which reaches any reachable target with the fewest inputs possible.
+    ///   When even that needs more than `max` inputs, the minimum-count
+    ///   selection is returned as is — its length is how many inputs the
+    ///   target really needs — and the caller must reject it (the transaction
+    ///   builder does, with `BuilderError::TooManyInputs`).
+    ///
+    /// A `max` of `0` is treated as `1`: no strategy can fund anything with
+    /// zero inputs, and a drain must not report "no UTXOs" while some exist.
+    pub fn with_max_inputs(mut self, max: usize) -> Self {
+        self.max_inputs = Some(max.max(1));
+        self
     }
 
     /// Set dust threshold
@@ -213,9 +244,114 @@ impl CoinSelector {
     where
         I: IntoIterator<Item = &'a Utxo>,
     {
+        let Some(max_inputs) = self.max_inputs else {
+            return self.select_with_strategy(
+                self.strategy,
+                utxos,
+                target_amount,
+                fee_rate,
+                current_height,
+                base_size,
+                change_output_size,
+            );
+        };
+
+        match self.strategy {
+            SelectionStrategy::All => {
+                let mut spendable: Vec<&'a Utxo> =
+                    utxos.into_iter().filter(|u| u.is_spendable(current_height)).collect();
+                if spendable.len() > max_inputs {
+                    // Bounded drain: the `max_inputs` largest carry the most
+                    // value for the same input count, hence the same fee.
+                    // Partition rather than sort; the outpoint tie-break makes
+                    // the order total, so the kept set does not depend on input
+                    // order. The order within it does not matter: the builder
+                    // re-sorts inputs (BIP-69).
+                    // `with_max_inputs` keeps `max_inputs >= 1`.
+                    spendable.select_nth_unstable_by(max_inputs - 1, |a, b| {
+                        b.value().cmp(&a.value()).then_with(|| a.outpoint.cmp(&b.outpoint))
+                    });
+                    spendable.truncate(max_inputs);
+                }
+                self.select_with_strategy(
+                    SelectionStrategy::All,
+                    spendable,
+                    target_amount,
+                    fee_rate,
+                    current_height,
+                    base_size,
+                    change_output_size,
+                )
+            }
+            strategy => {
+                // References only, collected once so the fallback can reuse
+                // them; no UTXO is cloned unless selected.
+                let pool: Vec<&'a Utxo> = utxos.into_iter().collect();
+                let first = self.select_with_strategy(
+                    strategy,
+                    pool.iter().copied(),
+                    target_amount,
+                    fee_rate,
+                    current_height,
+                    base_size,
+                    change_output_size,
+                );
+                if strategy == SelectionStrategy::LargestFirst {
+                    // Already the fewest-inputs pick; nothing to fall back to.
+                    return first;
+                }
+                // The cheapest any selection can be: one input, no change.
+                let floor =
+                    target_amount.saturating_add(fee_rate.calculate_fee(
+                        base_size.saturating_sub(change_output_size) + TX_INPUT_SIZE,
+                    ));
+                match first {
+                    Ok(result) if result.selected.len() <= max_inputs => return Ok(result),
+                    // Over the bound: largest-first may fit within it.
+                    Ok(_) => {}
+                    // Short because small inputs cost more than they add, where
+                    // largest-first would fund it. Not worth retrying when the
+                    // whole spendable pool is below even a one-input spend.
+                    Err(SelectionError::InsufficientFunds {
+                        available,
+                        ..
+                    }) if available >= floor => {}
+                    Err(other) => return Err(other),
+                }
+                // The k largest UTXOs out-value every other k-subset, and the
+                // fee depends only on k, so largest-first funds the target with
+                // the fewest inputs any selection can.
+                self.select_with_strategy(
+                    SelectionStrategy::LargestFirst,
+                    pool,
+                    target_amount,
+                    fee_rate,
+                    current_height,
+                    base_size,
+                    change_output_size,
+                )
+            }
+        }
+    }
+
+    /// [`Self::select_coins_with_size`] for one strategy, ignoring `max_inputs`.
+    #[allow(clippy::too_many_arguments)]
+    fn select_with_strategy<'a, I>(
+        &self,
+        strategy: SelectionStrategy,
+        utxos: I,
+        target_amount: u64,
+        fee_rate: FeeRate,
+        current_height: u32,
+        base_size: usize,
+        change_output_size: usize,
+    ) -> Result<SelectionResult, SelectionError>
+    where
+        I: IntoIterator<Item = &'a Utxo>,
+    {
         // For strategies that need sorting, we must collect
         // For others, we can work with iterators directly
-        match self.strategy {
+        match strategy {
             SelectionStrategy::SmallestFirst
             | SelectionStrategy::LargestFirst
             | SelectionStrategy::SmallestFirstTill(_)
@@ -238,7 +374,7 @@ impl CoinSelector {
                     });
                 }
 
-                match self.strategy {
+                match strategy {
                     SelectionStrategy::SmallestFirst => {
                         available.sort_by_key(|u| u.value());
                         self.accumulate_coins_with_size(
@@ -800,7 +936,170 @@ impl std::error::Error for SelectionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dashcore::OutPoint;
     use test_case::test_case;
+
+    /// `n` confirmed UTXOs with distinct outpoints, valued `base + i * step`.
+    fn ladder(n: u8, base: u64, step: u64) -> Vec<Utxo> {
+        (0..n).map(|i| Utxo::dummy(i, base + u64::from(i) * step, 100, false, true)).collect()
+    }
+
+    /// A bounded drain over more UTXOs than the bound keeps exactly the `max`
+    /// largest and prices the fee for those alone.
+    #[test]
+    fn test_select_all_bounded_keeps_the_largest() {
+        let utxos = ladder(8, 10_000, 1_000);
+        let selector = CoinSelector::new(SelectionStrategy::All).with_max_inputs(5);
+        let result = selector.select_coins(&utxos, 0, FeeRate::new(1000), 200).unwrap();
+
+        let mut values: Vec<u64> = result.selected.iter().map(|u| u.value()).collect();
+        values.sort_unstable();
+        assert_eq!(values, vec![13_000, 14_000, 15_000, 16_000, 17_000]);
+        assert_eq!(result.total_value, 75_000);
+        let default_base_size = 10 + TX_OUTPUT_SIZE + CHANGE_OUTPUT_SIZE;
+        assert_eq!(result.estimated_size, default_base_size + 5 * TX_INPUT_SIZE);
+        assert_eq!(result.target_amount, 75_000 - result.estimated_fee);
+    }
+
+    /// At or under the bound a bounded drain is an ordinary drain.
+    #[test]
+    fn test_select_all_bounded_under_the_bound_drains_everything() {
+        let utxos = ladder(5, 10_000, 1_000);
+        let bounded = CoinSelector::new(SelectionStrategy::All)
+            .with_max_inputs(5)
+            .select_coins(&utxos, 0, FeeRate::new(1000), 200)
+            .unwrap();
+        let unbounded = CoinSelector::new(SelectionStrategy::All)
+            .select_coins(&utxos, 0, FeeRate::new(1000), 200)
+            .unwrap();
+        assert_eq!(bounded.selected.len(), 5);
+        assert_eq!(bounded.estimated_fee, unbounded.estimated_fee);
+        assert_eq!(bounded.target_amount, unbounded.target_amount);
+    }
+
+    /// Equal values must not make the bounded pick depend on input order.
+    #[test]
+    fn test_select_all_bounded_is_deterministic_on_ties() {
+        let utxos = ladder(6, 10_000, 0);
+        let mut reversed = utxos.clone();
+        reversed.reverse();
+        let selector = CoinSelector::new(SelectionStrategy::All).with_max_inputs(3);
+        let pick = |set: &[Utxo]| -> Vec<OutPoint> {
+            let mut outpoints: Vec<OutPoint> = selector
+                .select_coins(set, 0, FeeRate::new(1000), 200)
+                .unwrap()
+                .selected
+                .iter()
+                .map(|u| u.outpoint)
+                .collect();
+            outpoints.sort();
+            outpoints
+        };
+        assert_eq!(pick(&utxos), pick(&reversed));
+    }
+
+    /// A bounded drain only counts spendable UTXOs against the bound: an
+    /// immature coinbase must not displace a spendable coin.
+    #[test]
+    fn test_select_all_bounded_ignores_unspendable() {
+        let mut utxos = ladder(3, 10_000, 1_000);
+        // Immature coinbase, far larger than anything spendable.
+        utxos.push(Utxo::dummy(200, 1_000_000, 190, true, true));
+        let result = CoinSelector::new(SelectionStrategy::All)
+            .with_max_inputs(3)
+            .select_coins(&utxos, 0, FeeRate::new(1000), 200)
+            .unwrap();
+        assert_eq!(result.total_value, 33_000);
+    }
+
+    /// A strategy whose pick exceeds the bound falls back to largest-first,
+    /// which funds the target with the fewest inputs.
+    #[test]
+    fn test_bounded_selection_falls_back_to_largest_first() {
+        let utxos = ladder(20, 10_000, 1_000);
+        let selector = CoinSelector::new(SelectionStrategy::SmallestFirst).with_max_inputs(4);
+        let result = selector.select_coins(&utxos, 80_000, FeeRate::new(1000), 200).unwrap();
+        assert!(result.selected.len() <= 4, "picked {} inputs", result.selected.len());
+        assert!(result.total_value >= 80_000 + result.estimated_fee);
+
+        // Unbounded, the same strategy really does need more than the bound.
+        let unbounded = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .select_coins(&utxos, 80_000, FeeRate::new(1000), 200)
+            .unwrap();
+        assert!(unbounded.selected.len() > 4);
+    }
+
+    /// A strategy that fails outright — smallest-first burns more in fees on
+    /// dust inputs than they add — still gets the largest-first fallback.
+    #[test]
+    fn test_bounded_selection_falls_back_when_the_strategy_runs_short() {
+        let mut utxos: Vec<Utxo> = (0..50).map(|i| Utxo::dummy(i, 100, 100, false, true)).collect();
+        utxos.push(Utxo::dummy(50, 50_000, 100, false, true));
+        utxos.push(Utxo::dummy(51, 50_000, 100, false, true));
+
+        let unbounded = CoinSelector::new(SelectionStrategy::SmallestFirst).select_coins(
+            &utxos,
+            99_000,
+            FeeRate::new(1000),
+            200,
+        );
+        assert!(matches!(unbounded, Err(SelectionError::InsufficientFunds { .. })));
+
+        let bounded = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .with_max_inputs(10)
+            .select_coins(&utxos, 99_000, FeeRate::new(1000), 200)
+            .expect("largest-first funds it with the two 50k inputs");
+        assert_eq!(bounded.selected.len(), 2);
+        assert_eq!(bounded.total_value, 100_000);
+    }
+
+    /// A bound of zero is treated as one, for every strategy: a drain must not
+    /// report "no UTXOs" while spendable ones exist.
+    #[test]
+    fn test_zero_bound_is_treated_as_one() {
+        let utxos = ladder(3, 10_000, 1_000);
+        let drain = CoinSelector::new(SelectionStrategy::All)
+            .with_max_inputs(0)
+            .select_coins(&utxos, 0, FeeRate::new(1000), 200)
+            .expect("a zero-bounded drain takes the single largest UTXO");
+        assert_eq!(drain.selected.len(), 1);
+        assert_eq!(drain.total_value, 12_000);
+
+        let exact = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .with_max_inputs(0)
+            .select_coins(&utxos, 5_000, FeeRate::new(1000), 200)
+            .expect("one input funds 5k");
+        assert_eq!(exact.selected.len(), 1);
+    }
+
+    /// A pool that cannot fund even a one-input spend fails with the first
+    /// strategy's error; the bounded fallback changes nothing there.
+    #[test]
+    fn test_bounded_selection_short_pool_reports_insufficient_funds() {
+        let utxos = ladder(5, 10_000, 0);
+        let result = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .with_max_inputs(3)
+            .select_coins(&utxos, 60_000, FeeRate::new(1000), 200);
+        assert!(matches!(
+            result,
+            Err(SelectionError::InsufficientFunds {
+                available: 50_000,
+                ..
+            })
+        ));
+    }
+
+    /// When no selection within the bound funds the target, the minimum-count
+    /// selection comes back so the caller can report how many inputs it needs.
+    #[test]
+    fn test_bounded_selection_reports_the_inputs_needed() {
+        let utxos = ladder(20, 10_000, 0);
+        let result = CoinSelector::new(SelectionStrategy::BranchAndBound)
+            .with_max_inputs(4)
+            .select_coins(&utxos, 100_000, FeeRate::new(1000), 200)
+            .unwrap();
+        assert_eq!(result.selected.len(), 11, "100k + fee needs eleven 10k inputs");
+    }
 
     #[test]
     fn test_select_all_drains_everything() {
