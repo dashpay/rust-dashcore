@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use dashcore::{Address, Network, OutPoint, ScriptBuf, TxOut, Txid};
+use dashcore::{Address, Network, OutPoint, TxOut, Txid};
 
 use crate::Utxo;
 
@@ -21,18 +21,15 @@ impl Utxo {
             .map(|(i, id)| {
                 let outpoint = OutPoint::new(Txid::from([id; 32]), i as u32);
 
+                let address = Address::dummy(Network::Testnet, id as usize);
+                // The script the address pays to, so a dummy is a real P2PKH
+                // output (asset-lock builds refuse anything else).
                 let txout = TxOut {
                     value,
-                    script_pubkey: ScriptBuf::new(),
+                    script_pubkey: address.script_pubkey(),
                 };
 
-                let mut utxo = Utxo::new(
-                    outpoint,
-                    txout,
-                    Address::dummy(Network::Testnet, id as usize),
-                    height,
-                    coinbase,
-                );
+                let mut utxo = Utxo::new(outpoint, txout, address, height, coinbase);
                 utxo.is_confirmed = confirmed;
                 utxo
             })
