@@ -512,6 +512,11 @@ impl ManagedWalletInfo {
     ///   [`BuilderError::TooManyInputs`] over the cap instead.
     /// * **Exact amount.** A non-drain build stays within the cap and, if
     ///   needed, retries with fewer, larger inputs to fit the size limit.
+    ///   It never drops a change output to fit: change is only emitted above
+    ///   the dust threshold, so dropping it would burn that value as fee. A
+    ///   lock that exceeds the limit only by its change output (34 bytes)
+    ///   fails with [`BuilderError::AssetLockTooLarge`]; lower the amount so
+    ///   no change is needed, or use a drain.
     /// * **Transition size.** The limits make the lock relayable by Core and
     ///   within Platform's input cap; they do not bound a state transition that
     ///   embeds it. An InstantSend asset-lock proof carries the whole
