@@ -91,6 +91,8 @@ macro_rules! fmt_hex_exact {
 /// - core::fmt::UpperHex
 /// - core::fmt::Display
 /// - core::str::FromStr
+///
+/// The serde impls need `dash_types` and `TryFrom<&[u8]>` on the type.
 #[macro_export]
 macro_rules! impl_bytes_newtype {
     ($t:ident, $len:expr) => {
@@ -147,75 +149,14 @@ macro_rules! impl_bytes_newtype {
         #[cfg(feature = "serde")]
         impl ::serde::Serialize for $t {
             fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-                if s.is_human_readable() {
-                    s.collect_str(self)
-                } else {
-                    s.serialize_bytes(&self[..])
-                }
+                ::dash_types::serialize::hex::serialize_as(&self.0, self, s)
             }
         }
 
         #[cfg(feature = "serde")]
         impl<'de> ::serde::Deserialize<'de> for $t {
             fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<$t, D::Error> {
-                if d.is_human_readable() {
-                    struct HexVisitor;
-
-                    impl<'de> ::serde::de::Visitor<'de> for HexVisitor {
-                        type Value = $t;
-
-                        fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                            f.write_str("an ASCII hex string")
-                        }
-
-                        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-                        where
-                            E: ::serde::de::Error,
-                        {
-                            use ::serde::de::Unexpected;
-
-                            if let Ok(hex) = core::str::from_utf8(v) {
-                                hex.parse().map_err(E::custom)
-                            } else {
-                                return Err(E::invalid_value(Unexpected::Bytes(v), &self));
-                            }
-                        }
-
-                        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-                        where
-                            E: ::serde::de::Error,
-                        {
-                            v.parse().map_err(E::custom)
-                        }
-                    }
-
-                    d.deserialize_str(HexVisitor)
-                } else {
-                    struct BytesVisitor;
-
-                    impl<'de> ::serde::de::Visitor<'de> for BytesVisitor {
-                        type Value = $t;
-
-                        fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-                            f.write_str("a bytestring")
-                        }
-
-                        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-                        where
-                            E: ::serde::de::Error,
-                        {
-                            if v.len() != $len {
-                                Err(E::invalid_length(v.len(), &stringify!($len)))
-                            } else {
-                                let mut ret = [0; $len];
-                                ret.copy_from_slice(v);
-                                Ok($t(ret))
-                            }
-                        }
-                    }
-
-                    d.deserialize_bytes(BytesVisitor)
-                }
+                ::dash_types::serialize::hex::deserialize_as(d, str::parse::<$t>)
             }
         }
     };
