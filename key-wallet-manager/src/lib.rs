@@ -28,6 +28,7 @@ use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
 use key_wallet::account::AccountCollection;
+use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
@@ -218,6 +219,144 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             persistence_consumer_lost: std::sync::atomic::AtomicBool::new(false),
             events_emitted: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Start a CoinJoin recovery on one wallet: find mixed coins that landed
+    /// past the CoinJoin pools' gap limit, which a normal sync never discovers
+    /// (ticket 32008).
+    ///
+    /// The wallet's chain-derived state is dropped and its sync checkpoint is
+    /// rewound to just below its birth height, announced by one
+    /// [`WalletEvent::WalletReset`] for this wallet only. The sync layer then
+    /// sees the wallet behind and replays it from birth, from the filters and
+    /// blocks it already holds where it can, while the wallet looks for its
+    /// CoinJoin addresses past the gap in every transaction it finds relevant.
+    /// Once its committed sync height reaches the returned height, it ends
+    /// with a [`WalletEvent::CoinJoinRecoveryFinished`]. Nothing about it is
+    /// persisted: a restart ends it without that event, and
+    /// [`Self::coinjoin_recovery_progress`] then reports nothing either, so a
+    /// caller that must see it through keeps its own "pending" flag until the
+    /// event arrives and starts the recovery again after a restart.
+    ///
+    /// While it runs the wallet's coins are those of a past height, so building
+    /// a transaction funded from its accounts fails with
+    /// `BuilderError::RecoveryInProgress`.
+    ///
+    /// A block the sync layer already had in flight for this wallet when it
+    /// is reset can still be applied to the reset wallet ahead of the replay,
+    /// out of order. Start a recovery while the SPV client is stopped, or idle
+    /// at the tip, to rule that out.
+    ///
+    /// Wallets not being recovered keep their state, but the scan pipeline is
+    /// shared: the replay restarts in-flight scan work, and confirmations for
+    /// the other wallets can wait until it catches up. Recoveries therefore run
+    /// one at a time, ideally right after the first sync.
+    ///
+    /// `lowest_replayable_height` is the lowest height the sync layer can
+    /// replay, where its header storage starts (`0` for a sync from genesis);
+    /// a wallet born below it is refused, since the reset would drop history
+    /// the replay cannot bring back.
+    ///
+    /// Returns the committed sync height at which the recovery will end: the
+    /// highest of the wallet's own synced height and chainlocks seen, and of
+    /// any other wallet's synced height or applied chainlock. Fails when the wallet is unknown, a recovery is
+    /// already running on any wallet of this manager, the wallet has no
+    /// CoinJoin account, unconfirmed transactions or coins reserved by a
+    /// transaction build, was born below `lowest_replayable_height`, or
+    /// nothing is known of the chain past the wallet's birth yet.
+    pub fn begin_coinjoin_recovery(
+        &mut self,
+        wallet_id: &WalletId,
+        lowest_replayable_height: CoreBlockHeight,
+    ) -> Result<CoreBlockHeight, WalletError> {
+        let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        // The reset drops the history down to the wallet's birth, and the sync
+        // layer replays only from where its headers start: anything between
+        // would be lost for good.
+        let birth_height = self
+            .wallet_infos
+            .get(wallet_id)
+            .ok_or(WalletError::WalletNotFound(*wallet_id))?
+            .birth_height();
+        if birth_height < lowest_replayable_height {
+            return Err(WalletError::InvalidState(format!(
+                "CoinJoin recovery: the wallet was born at {birth_height}, below {lowest_replayable_height}, \
+                 the lowest height the sync can replay; its history there would be lost"
+            )));
+        }
+        // One replay at a time, a cancelled one included: it still holds the
+        // scan pipeline. Only a cancelled replay of this very wallet may be
+        // started over.
+        if let Some((running, _)) = self.wallet_infos.iter().find(|(id, info)| {
+            info.coinjoin_recovery_progress()
+                .is_some_and(|progress| *id != wallet_id || progress.probing)
+        }) {
+            return Err(WalletError::CoinJoinRecoveryInProgress(*running));
+        }
+        // What the other wallets know of the chain: a wallet imported moments
+        // ago may know nothing itself yet. Its own heights are its own call.
+        let known_height = self
+            .wallet_infos
+            .iter()
+            .filter(|(id, _)| *id != wallet_id)
+            .map(|(_, info)| {
+                info.synced_height()
+                    .max(info.last_applied_chain_lock().map_or(0, |cl| cl.block_height))
+            })
+            .max()
+            .unwrap_or(0);
+        let info =
+            self.wallet_infos.get_mut(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        let until_height =
+            info.begin_coinjoin_recovery(wallet, known_height).map_err(|err| match err {
+                key_wallet::Error::InvalidState(msg) => WalletError::InvalidState(msg),
+                err => err.into(),
+            })?;
+        let coinjoin_addresses = events::project_derived_addresses(
+            info.accounts().coinjoin_accounts.values().flat_map(|account| {
+                let account_type = account.managed_account_type().to_account_type();
+                account.managed_account_type().address_pools().into_iter().flat_map(move |pool| {
+                    pool.addresses.values().map(move |info| DerivedAddressInfo {
+                        account_type,
+                        pool_type: pool.pool_type,
+                        info: info.clone(),
+                    })
+                })
+            }),
+        );
+        let event = WalletEvent::WalletReset {
+            wallet_id: *wallet_id,
+            synced_height: info.synced_height(),
+            balance: info.balance(),
+            coinjoin_addresses,
+        };
+        self.emit_event(event);
+        Ok(until_height)
+    }
+
+    /// Where the CoinJoin recovery running on `wallet_id` stands, including a
+    /// cancelled one whose replay goes on; `None` when none runs. The state is in memory only, so after a restart this is
+    /// `None` and an interrupted recovery has to be started again.
+    pub fn coinjoin_recovery_progress(
+        &self,
+        wallet_id: &WalletId,
+    ) -> Option<key_wallet::transaction_checking::coinjoin_recovery::CoinJoinRecoveryProgress> {
+        self.wallet_infos.get(wallet_id)?.coinjoin_recovery_progress()
+    }
+
+    /// Stop the probe of the CoinJoin recovery running on `wallet_id` before
+    /// its replay is complete. The wallet keeps what the probe has found and
+    /// the replay goes on as a normal sync; coins past the gap limit in the
+    /// rest of its history stay missing until a recovery runs again. Builds
+    /// stay refused until the replay is back at the height the recovery was
+    /// to run to, since until then the coins are those of a past height; the
+    /// [`WalletEvent::CoinJoinRecoveryFinished`] at that point, with
+    /// `cancelled` set, says when they are allowed again. Returns `false` when
+    /// no probe runs on that wallet.
+    pub fn cancel_coinjoin_recovery(&mut self, wallet_id: &WalletId) -> bool {
+        self.wallet_infos
+            .get_mut(wallet_id)
+            .is_some_and(|info| info.cancel_coinjoin_recovery().is_some())
     }
 
     /// Emit a wallet event to BOTH the incidental broadcast fan-out and the
@@ -795,6 +934,8 @@ fn current_timestamp() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
+#[cfg(test)]
+mod coinjoin_recovery_tests;
 #[cfg(test)]
 mod event_tests;
 #[cfg(test)]

@@ -197,6 +197,11 @@ impl ManagedWalletInfo {
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
     ) -> Result<(TransactionBuilder, HashMap<Address, DerivationPath>), BuilderError> {
+        // Up front, whichever sources were asked for; the builder refuses on
+        // its own as well, for callers that fund it directly.
+        if self.is_replaying() {
+            return Err(BuilderError::RecoveryInProgress);
+        }
         let outputs = outputs
             .into_iter()
             .map(|(address, value)| {

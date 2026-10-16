@@ -29,6 +29,11 @@ pub enum WalletError {
     TransactionBuild(String),
     /// Insufficient funds
     InsufficientFunds,
+    /// The wallet's state does not allow the operation
+    InvalidState(String),
+    /// A CoinJoin recovery is already running on a wallet of this manager;
+    /// recoveries run one at a time
+    CoinJoinRecoveryInProgress(WalletId),
     /// A truncation below a wallet's applied ChainLock, whose blocks are final
     TruncateBelowChainLock {
         /// The wallet that refused the truncation
@@ -54,6 +59,10 @@ impl core::fmt::Display for WalletError {
             WalletError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
             WalletError::TransactionBuild(err) => write!(f, "Transaction build failed: {}", err),
             WalletError::InsufficientFunds => write!(f, "Insufficient funds"),
+            WalletError::InvalidState(msg) => write!(f, "Invalid state: {}", msg),
+            WalletError::CoinJoinRecoveryInProgress(id) => {
+                write!(f, "A CoinJoin recovery is already running on wallet {:x}", id.as_hex())
+            }
             WalletError::TruncateBelowChainLock {
                 wallet_id,
                 height,

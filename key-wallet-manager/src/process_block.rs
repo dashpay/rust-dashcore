@@ -384,10 +384,19 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
             if height > info.synced_height() {
                 info.update_synced_height(height);
+                let recovery_found = info.take_finished_coinjoin_recovery();
                 self.emit_event(WalletEvent::SyncHeightAdvanced {
                     wallet_id: *wallet_id,
                     height,
                 });
+                if let Some(outcome) = recovery_found {
+                    self.emit_event(WalletEvent::CoinJoinRecoveryFinished {
+                        wallet_id: *wallet_id,
+                        height,
+                        found: outcome.found,
+                        cancelled: !outcome.probing,
+                    });
+                }
             }
         }
     }

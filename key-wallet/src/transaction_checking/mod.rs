@@ -5,6 +5,7 @@
 //! transaction types.
 
 pub mod account_checker;
+pub mod coinjoin_recovery;
 pub mod platform_checker;
 pub mod transaction_context;
 pub mod transaction_router;
