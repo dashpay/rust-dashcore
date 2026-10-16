@@ -312,19 +312,6 @@ fn validate_funding_sources(
     Ok(())
 }
 
-/// Reject a signed asset lock larger than Core's standard limit
-/// ([`MAX_ASSET_LOCK_TX_SIZE`]).
-fn check_signed_asset_lock_size(transaction: &Transaction) -> Result<(), AssetLockError> {
-    let size = transaction.size();
-    if size > MAX_ASSET_LOCK_TX_SIZE {
-        return Err(AssetLockError::Builder(BuilderError::AssetLockTooLarge {
-            size,
-            max: MAX_ASSET_LOCK_TX_SIZE,
-        }));
-    }
-    Ok(())
-}
-
 /// The accounts among `offered` that contributed an input to `transaction`.
 ///
 /// Only these hold a share of the build's reservation, so this is what the
@@ -393,7 +380,7 @@ struct SignedAssetLock {
     /// order; the first supplied the change address.
     offered: Vec<AccountType>,
     reservations: BuildReservations,
-    /// What a bounded drain left behind; zero for an exact-amount build. See
+    /// What a bounded drain left behind; zero otherwise. See
     /// [`AssetLockResult::remaining_utxo_count`].
     left_behind: Unselected,
 }
@@ -432,7 +419,9 @@ impl ManagedWalletInfo {
             // and the signed size at MAX_ASSET_LOCK_TX_SIZE inside the builder.
             .require_final_inputs();
         if drain {
-            builder = builder.set_selection_strategy(SelectionStrategy::All);
+            // This is the one path that reports what a bounded drain leaves
+            // behind, so it is the one that may do one.
+            builder = builder.set_selection_strategy(SelectionStrategy::All).bounded_drain();
         }
         let PooledFunding {
             builder,
@@ -456,36 +445,18 @@ impl ManagedWalletInfo {
 
         let reserved: Vec<OutPoint> =
             transaction.input.iter().map(|input| input.previous_output).collect();
-        let reservations = BuildReservations {
-            sets,
-            reserved,
-            token,
-        };
-
-        // The builder checked a signed-size upper bound before signing, but it
-        // assumes compressed keys and low-S signatures; an external signer
-        // could return larger scriptSigs. Check what was actually signed, and
-        // give the inputs back rather than hand out a lock Core drops.
-        if let Err(e) = check_signed_asset_lock_size(&transaction) {
-            reservations.release();
-            return Err(e);
-        }
-
-        // Selection drew from every final, unreserved, spendable UTXO of the
-        // offered accounts; what it left out is what the cap left behind. An
-        // exact-amount build leaves UTXOs out by design, so it reports none.
-        let left_behind = if drain {
-            unselected
-        } else {
-            Unselected::default()
-        };
-
+        // The builder already refused (and released) an oversized signed lock;
+        // `unselected` is non-zero only for the bounded drain set above.
         Ok(SignedAssetLock {
             transaction,
             fee,
             offered,
-            reservations,
-            left_behind,
+            reservations: BuildReservations {
+                sets,
+                reserved,
+                token,
+            },
+            left_behind: unselected,
         })
     }
 
@@ -509,12 +480,19 @@ impl ManagedWalletInfo {
     ///
     /// `drain` locks the sourced accounts' spendable balance: every final UTXO
     /// is consumed — or, when there are more than [`MAX_ASSET_LOCK_INPUTS`], the
-    /// [`MAX_ASSET_LOCK_INPUTS`] largest, leaving the rest in the account for a
-    /// later lock — and the single credit output's value is rewritten to
+    /// [`MAX_ASSET_LOCK_INPUTS`] largest (fewer still, dropping the smallest,
+    /// if those would exceed [`MAX_ASSET_LOCK_TX_SIZE`]), leaving the rest in
+    /// the account for a later lock — and the single credit output's value is
+    /// rewritten to
     /// `Σ inputs − fee` (the caller's credit-output value is ignored; exactly
     /// one credit output is required). CoinJoin funding is drain-only and must
     /// be the sole source: pooling mixed outputs with transparent ones in one
     /// transaction links them and undoes the mixing.
+    ///
+    /// This is the only entry point that drains partially: a drain through the
+    /// generic [`TransactionBuilder`] with an asset-lock payload fails with
+    /// [`BuilderError::TooManyInputs`] over the cap instead, because only here
+    /// is what was left behind reported.
     ///
     /// A bounded drain leaves the smallest UTXOs behind; the result reports
     /// them in [`AssetLockResult::remaining_utxo_count`] and
@@ -1003,6 +981,39 @@ mod tests {
         assert_eq!(result.remaining_duffs, left_out_sum);
         let account = info.accounts.coinjoin_accounts.get(&0).unwrap();
         assert!(left_out.iter().all(|op| account.utxos.contains_key(op)));
+    }
+
+    /// A bounded drain whose 100 largest would exceed Core's size limit (here a
+    /// large credit-output script) drops its smallest inputs until it fits,
+    /// and reports them as left behind.
+    #[tokio::test]
+    async fn drain_shrinks_to_the_size_limit_and_reports_the_rest() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let funded = fund_coinjoin_ladder(&mut info, &wallet, 100, 100_000, 1_000);
+        info.update_last_processed_height(1100);
+        let mut fundings = test_credit_outputs(&[0]);
+        fundings[0].output.script_pubkey = ScriptBuf::from(vec![0x51; 8_000]);
+
+        let result = info
+            .build_asset_lock(&wallet, &[AccountTypePreference::CoinJoin], 0, fundings, 1000, true)
+            .await
+            .expect("a bounded drain shrinks rather than failing on size");
+
+        let spent = result.transaction.input.len();
+        assert!(spent < MAX_ASSET_LOCK_INPUTS);
+        assert!(result.transaction.size() <= MAX_ASSET_LOCK_TX_SIZE);
+        // Ladder index = value rank, so the dropped ones are the lowest vouts.
+        let dropped = MAX_ASSET_LOCK_INPUTS - spent;
+        assert!(result
+            .transaction
+            .input
+            .iter()
+            .all(|txin| txin.previous_output.vout as usize >= dropped));
+        assert_eq!(result.remaining_utxo_count, dropped);
+        assert_eq!(
+            result.remaining_duffs,
+            funded.iter().take(dropped).map(|(_, v)| v).sum::<u64>()
+        );
     }
 
     /// At exactly the cap a drain is unchanged: every UTXO is spent.

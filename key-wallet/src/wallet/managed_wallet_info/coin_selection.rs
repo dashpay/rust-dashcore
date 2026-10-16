@@ -191,10 +191,10 @@ impl CoinSelector {
     ///   target really needs — and the caller must reject it (the transaction
     ///   builder does, with `BuilderError::TooManyInputs`).
     ///
-    /// `max` is taken as given; a drain bounded at `0` selects nothing. The
-    /// transaction builder clamps its bound to `1..=500` before passing it here.
+    /// A `max` of `0` is treated as `1`: no strategy can fund anything with
+    /// zero inputs, and a drain must not report "no UTXOs" while some exist.
     pub fn with_max_inputs(mut self, max: usize) -> Self {
-        self.max_inputs = Some(max);
+        self.max_inputs = Some(max.max(1));
         self
     }
 
@@ -244,16 +244,47 @@ impl CoinSelector {
     where
         I: IntoIterator<Item = &'a Utxo>,
     {
+        self.select_coins_reporting(
+            utxos,
+            target_amount,
+            fee_rate,
+            current_height,
+            base_size,
+            change_output_size,
+        )
+        .map(|(result, _)| result)
+    }
+
+    /// [`Self::select_coins_with_size`], also reporting the strategy that
+    /// produced the result: the configured one, or
+    /// [`SelectionStrategy::LargestFirst`] when a bounded selection fell back
+    /// to it.
+    pub(crate) fn select_coins_reporting<'a, I>(
+        &self,
+        utxos: I,
+        target_amount: u64,
+        fee_rate: FeeRate,
+        current_height: u32,
+        base_size: usize,
+        change_output_size: usize,
+    ) -> Result<(SelectionResult, SelectionStrategy), SelectionError>
+    where
+        I: IntoIterator<Item = &'a Utxo>,
+    {
+        let strategy = self.strategy;
+        let tag = |result: SelectionResult| (result, strategy);
         let Some(max_inputs) = self.max_inputs else {
-            return self.select_with_strategy(
-                self.strategy,
-                utxos,
-                target_amount,
-                fee_rate,
-                current_height,
-                base_size,
-                change_output_size,
-            );
+            return self
+                .select_with_strategy(
+                    self.strategy,
+                    utxos,
+                    target_amount,
+                    fee_rate,
+                    current_height,
+                    base_size,
+                    change_output_size,
+                )
+                .map(tag);
         };
 
         match self.strategy {
@@ -267,11 +298,10 @@ impl CoinSelector {
                     // the order total, so the kept set does not depend on input
                     // order. The order within it does not matter: the builder
                     // re-sorts inputs (BIP-69).
-                    if max_inputs > 0 {
-                        spendable.select_nth_unstable_by(max_inputs - 1, |a, b| {
-                            b.value().cmp(&a.value()).then_with(|| a.outpoint.cmp(&b.outpoint))
-                        });
-                    }
+                    // `with_max_inputs` keeps `max_inputs >= 1`.
+                    spendable.select_nth_unstable_by(max_inputs - 1, |a, b| {
+                        b.value().cmp(&a.value()).then_with(|| a.outpoint.cmp(&b.outpoint))
+                    });
                     spendable.truncate(max_inputs);
                 }
                 self.select_with_strategy(
@@ -283,6 +313,7 @@ impl CoinSelector {
                     base_size,
                     change_output_size,
                 )
+                .map(tag)
             }
             strategy => {
                 // References only, collected once so the fallback can reuse
@@ -299,7 +330,7 @@ impl CoinSelector {
                 );
                 if strategy == SelectionStrategy::LargestFirst {
                     // Already the fewest-inputs pick; nothing to fall back to.
-                    return first;
+                    return first.map(tag);
                 }
                 // The cheapest any selection can be: one input, no change.
                 let floor =
@@ -307,7 +338,7 @@ impl CoinSelector {
                         base_size.saturating_sub(change_output_size) + TX_INPUT_SIZE,
                     ));
                 match first {
-                    Ok(result) if result.selected.len() <= max_inputs => return Ok(result),
+                    Ok(result) if result.selected.len() <= max_inputs => return Ok(tag(result)),
                     // Over the bound: largest-first may fit within it.
                     Ok(_) => {}
                     // Short because small inputs cost more than they add, where
@@ -331,6 +362,7 @@ impl CoinSelector {
                     base_size,
                     change_output_size,
                 )
+                .map(|result| (result, SelectionStrategy::LargestFirst))
             }
         }
     }
@@ -1052,6 +1084,41 @@ mod tests {
             .expect("largest-first funds it with the two 50k inputs");
         assert_eq!(bounded.selected.len(), 2);
         assert_eq!(bounded.total_value, 100_000);
+    }
+
+    /// A bound of zero is treated as one, for every strategy: a drain must not
+    /// report "no UTXOs" while spendable ones exist.
+    #[test]
+    fn test_zero_bound_is_treated_as_one() {
+        let utxos = ladder(3, 10_000, 1_000);
+        let drain = CoinSelector::new(SelectionStrategy::All)
+            .with_max_inputs(0)
+            .select_coins(&utxos, 0, FeeRate::new(1000), 200)
+            .expect("a zero-bounded drain takes the single largest UTXO");
+        assert_eq!(drain.selected.len(), 1);
+        assert_eq!(drain.total_value, 12_000);
+
+        let exact = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .with_max_inputs(0)
+            .select_coins(&utxos, 5_000, FeeRate::new(1000), 200)
+            .expect("one input funds 5k");
+        assert_eq!(exact.selected.len(), 1);
+    }
+
+    /// The reporting entry point names the strategy that produced the result.
+    #[test]
+    fn test_selection_reports_the_strategy_used() {
+        let utxos = ladder(20, 10_000, 1_000);
+        let selector = CoinSelector::new(SelectionStrategy::SmallestFirst);
+        let (_, used) = selector
+            .select_coins_reporting(&utxos, 20_000, FeeRate::new(1000), 200, 78, 34)
+            .unwrap();
+        assert_eq!(used, SelectionStrategy::SmallestFirst);
+        let (_, used) = selector
+            .with_max_inputs(4)
+            .select_coins_reporting(&utxos, 80_000, FeeRate::new(1000), 200, 78, 34)
+            .unwrap();
+        assert_eq!(used, SelectionStrategy::LargestFirst, "the bounded fallback ran");
     }
 
     /// A pool that cannot fund even a one-input spend fails with the first
