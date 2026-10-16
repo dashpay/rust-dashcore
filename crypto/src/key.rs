@@ -23,6 +23,8 @@ pub use bitcoin_crypto::key::{
 };
 pub use bitcoin_crypto::secp256k1::Scalar;
 use dash_network::Network;
+#[cfg(feature = "serde")]
+use dash_types::serialize::hex as serde_hex;
 use hashes::{hash160, hash_newtype, Hash as _};
 use hex_conservative::DisplayHex;
 use internals::write_err;
@@ -243,6 +245,14 @@ impl FromStr for PublicKey {
     }
 }
 
+impl TryFrom<&[u8]> for PublicKey {
+    type Error = Error;
+
+    fn try_from(data: &[u8]) -> Result<PublicKey, Error> {
+        PublicKey::from_slice(data)
+    }
+}
+
 /// A Dash ECDSA private key
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PrivateKey {
@@ -426,65 +436,13 @@ impl<'de> serde::Deserialize<'de> for PrivateKey {
 #[allow(clippy::collapsible_else_if)] // Aids readability.
 impl serde::Serialize for PublicKey {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        if s.is_human_readable() {
-            s.collect_str(self)
-        } else {
-            self.with_serialized(|bytes| s.serialize_bytes(bytes))
-        }
+        self.with_serialized(|bytes| serde_hex::serialize_as(bytes, self, s))
     }
 }
 
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for PublicKey {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<PublicKey, D::Error> {
-        if d.is_human_readable() {
-            struct HexVisitor;
-
-            impl<'de> serde::de::Visitor<'de> for HexVisitor {
-                type Value = PublicKey;
-
-                fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                    formatter.write_str("an ASCII hex string")
-                }
-
-                fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-                {
-                    PublicKey::from_str(v).map_err(E::custom)
-                }
-
-                fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-                {
-                    if let Ok(hex) = core::str::from_utf8(v) {
-                        PublicKey::from_str(hex).map_err(E::custom)
-                    } else {
-                        Err(E::invalid_value(serde::de::Unexpected::Bytes(v), &self))
-                    }
-                }
-            }
-            d.deserialize_str(HexVisitor)
-        } else {
-            struct BytesVisitor;
-
-            impl<'de> serde::de::Visitor<'de> for BytesVisitor {
-                type Value = PublicKey;
-
-                fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                    formatter.write_str("a bytestring")
-                }
-
-                fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-                {
-                    PublicKey::from_slice(v).map_err(E::custom)
-                }
-            }
-
-            d.deserialize_bytes(BytesVisitor)
-        }
+        serde_hex::deserialize_as(d, PublicKey::from_str)
     }
 }
