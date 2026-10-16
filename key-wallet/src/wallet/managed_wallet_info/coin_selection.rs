@@ -244,47 +244,16 @@ impl CoinSelector {
     where
         I: IntoIterator<Item = &'a Utxo>,
     {
-        self.select_coins_reporting(
-            utxos,
-            target_amount,
-            fee_rate,
-            current_height,
-            base_size,
-            change_output_size,
-        )
-        .map(|(result, _)| result)
-    }
-
-    /// [`Self::select_coins_with_size`], also reporting the strategy that
-    /// produced the result: the configured one, or
-    /// [`SelectionStrategy::LargestFirst`] when a bounded selection fell back
-    /// to it.
-    pub(crate) fn select_coins_reporting<'a, I>(
-        &self,
-        utxos: I,
-        target_amount: u64,
-        fee_rate: FeeRate,
-        current_height: u32,
-        base_size: usize,
-        change_output_size: usize,
-    ) -> Result<(SelectionResult, SelectionStrategy), SelectionError>
-    where
-        I: IntoIterator<Item = &'a Utxo>,
-    {
-        let strategy = self.strategy;
-        let tag = |result: SelectionResult| (result, strategy);
         let Some(max_inputs) = self.max_inputs else {
-            return self
-                .select_with_strategy(
-                    self.strategy,
-                    utxos,
-                    target_amount,
-                    fee_rate,
-                    current_height,
-                    base_size,
-                    change_output_size,
-                )
-                .map(tag);
+            return self.select_with_strategy(
+                self.strategy,
+                utxos,
+                target_amount,
+                fee_rate,
+                current_height,
+                base_size,
+                change_output_size,
+            );
         };
 
         match self.strategy {
@@ -313,7 +282,6 @@ impl CoinSelector {
                     base_size,
                     change_output_size,
                 )
-                .map(tag)
             }
             strategy => {
                 // References only, collected once so the fallback can reuse
@@ -330,7 +298,7 @@ impl CoinSelector {
                 );
                 if strategy == SelectionStrategy::LargestFirst {
                     // Already the fewest-inputs pick; nothing to fall back to.
-                    return first.map(tag);
+                    return first;
                 }
                 // The cheapest any selection can be: one input, no change.
                 let floor =
@@ -338,7 +306,7 @@ impl CoinSelector {
                         base_size.saturating_sub(change_output_size) + TX_INPUT_SIZE,
                     ));
                 match first {
-                    Ok(result) if result.selected.len() <= max_inputs => return Ok(tag(result)),
+                    Ok(result) if result.selected.len() <= max_inputs => return Ok(result),
                     // Over the bound: largest-first may fit within it.
                     Ok(_) => {}
                     // Short because small inputs cost more than they add, where
@@ -362,7 +330,6 @@ impl CoinSelector {
                     base_size,
                     change_output_size,
                 )
-                .map(|result| (result, SelectionStrategy::LargestFirst))
             }
         }
     }
@@ -1103,22 +1070,6 @@ mod tests {
             .select_coins(&utxos, 5_000, FeeRate::new(1000), 200)
             .expect("one input funds 5k");
         assert_eq!(exact.selected.len(), 1);
-    }
-
-    /// The reporting entry point names the strategy that produced the result.
-    #[test]
-    fn test_selection_reports_the_strategy_used() {
-        let utxos = ladder(20, 10_000, 1_000);
-        let selector = CoinSelector::new(SelectionStrategy::SmallestFirst);
-        let (_, used) = selector
-            .select_coins_reporting(&utxos, 20_000, FeeRate::new(1000), 200, 78, 34)
-            .unwrap();
-        assert_eq!(used, SelectionStrategy::SmallestFirst);
-        let (_, used) = selector
-            .with_max_inputs(4)
-            .select_coins_reporting(&utxos, 80_000, FeeRate::new(1000), 200, 78, 34)
-            .unwrap();
-        assert_eq!(used, SelectionStrategy::LargestFirst, "the bounded fallback ran");
     }
 
     /// A pool that cannot fund even a one-input spend fails with the first
