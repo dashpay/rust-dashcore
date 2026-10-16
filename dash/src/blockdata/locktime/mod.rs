@@ -4,12 +4,32 @@
 //! Provides absolute and relative locktimes.
 //!
 
-pub mod absolute;
+pub mod absolute {
+    pub use bitcoin_units::locktime::absolute::*;
+}
 pub mod relative;
+
+use self::absolute::LockTime;
+use crate::consensus::encode::{self, Decodable, Encodable};
+use crate::io::{self, Read, Write};
+
+impl Encodable for LockTime {
+    #[inline]
+    fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        self.to_consensus_u32().consensus_encode(w)
+    }
+}
+
+impl Decodable for LockTime {
+    #[inline]
+    fn consensus_decode<R: Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
+        u32::consensus_decode(r).map(LockTime::from_consensus)
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use super::absolute::{Height, LockTime, Time};
+    use super::absolute::{Height, LockTime, MedianTimePast};
     use crate::consensus::encode::{deserialize, serialize};
     use hex_conservative::hex;
 
@@ -17,8 +37,8 @@ mod tests {
     fn absolute_lock_time_layout() {
         let blocks = LockTime::from_consensus(840_000);
         let seconds = LockTime::from_consensus(1_700_000_000);
-        let height = Height::from_consensus(840_000).unwrap();
-        let time = Time::from_consensus(1_700_000_000).unwrap();
+        let height = Height::from_u32(840_000).unwrap();
+        let time = MedianTimePast::from_u32(1_700_000_000).unwrap();
         assert_eq!(LockTime::from(height), blocks);
         assert_eq!(LockTime::from(time), seconds);
         assert_eq!(height.to_string(), "840000");
@@ -38,15 +58,15 @@ mod tests {
     fn absolute_lock_time_serde() {
         let config = bincode::config::standard();
         let blocks = LockTime::from_consensus(840_000);
-        let height = Height::from_consensus(840_000).unwrap();
-        let time = Time::from_consensus(1_700_000_000).unwrap();
+        let height = Height::from_u32(840_000).unwrap();
+        let time = MedianTimePast::from_u32(1_700_000_000).unwrap();
 
         assert_eq!(serde_json::to_string(&blocks).unwrap(), "840000");
         assert_eq!(serde_json::from_str::<LockTime>("840000").unwrap(), blocks);
         assert_eq!(serde_json::to_string(&height).unwrap(), "840000");
         assert_eq!(serde_json::from_str::<Height>("840000").unwrap(), height);
         assert_eq!(serde_json::to_string(&time).unwrap(), "1700000000");
-        assert_eq!(serde_json::from_str::<Time>("1700000000").unwrap(), time);
+        assert_eq!(serde_json::from_str::<MedianTimePast>("1700000000").unwrap(), time);
 
         assert_eq!(bincode::serde::encode_to_vec(blocks, config).unwrap(), hex!("fc40d10c00"));
         assert_eq!(bincode::serde::encode_to_vec(height, config).unwrap(), hex!("fc40d10c00"));
@@ -62,7 +82,9 @@ mod tests {
             height
         );
         assert_eq!(
-            bincode::serde::decode_from_slice::<Time, _>(&hex!("fc00f15365"), config).unwrap().0,
+            bincode::serde::decode_from_slice::<MedianTimePast, _>(&hex!("fc00f15365"), config)
+                .unwrap()
+                .0,
             time
         );
     }
