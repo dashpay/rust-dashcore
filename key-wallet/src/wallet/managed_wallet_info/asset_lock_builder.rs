@@ -751,13 +751,25 @@ mod tests {
         value: u64,
         is_confirmed: bool,
     ) -> OutPoint {
-        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
-        let account = info.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
-        let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
         let outpoint = OutPoint {
             txid: Txid::from_byte_array([txid_byte; 32]),
             vout: 0,
         };
+        insert_funded_utxo_at(info, wallet, outpoint, value, is_confirmed)
+    }
+
+    /// [`insert_funded_utxo`] at a caller-chosen outpoint, for fixtures that
+    /// need more UTXOs than a one-byte txid can tell apart.
+    fn insert_funded_utxo_at(
+        info: &mut ManagedWalletInfo,
+        wallet: &Wallet,
+        outpoint: OutPoint,
+        value: u64,
+        is_confirmed: bool,
+    ) -> OutPoint {
+        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let account = info.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
+        let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
         let utxo = Utxo {
             outpoint,
             txout: TxOut {
@@ -785,6 +797,21 @@ mod tests {
         value: u64,
         is_confirmed: bool,
     ) -> OutPoint {
+        let outpoint = OutPoint {
+            txid: Txid::from_byte_array([txid_byte; 32]),
+            vout: 0,
+        };
+        insert_funded_coinjoin_utxo_at(info, wallet, outpoint, value, is_confirmed)
+    }
+
+    /// [`insert_funded_coinjoin_utxo`] at a caller-chosen outpoint.
+    fn insert_funded_coinjoin_utxo_at(
+        info: &mut ManagedWalletInfo,
+        wallet: &Wallet,
+        outpoint: OutPoint,
+        value: u64,
+        is_confirmed: bool,
+    ) -> OutPoint {
         let account_xpub = wallet.get_coinjoin_account(0).unwrap().account_xpub;
         let account = info.accounts.coinjoin_accounts.get_mut(&0).unwrap();
         // CoinJoin accounts have no `next_receive_address` wrapper (that is
@@ -797,10 +824,6 @@ mod tests {
                 .next_unused(&crate::KeySource::Public(account_xpub), true)
                 .unwrap(),
             _ => unreachable!("coinjoin account must carry the CoinJoin managed type"),
-        };
-        let outpoint = OutPoint {
-            txid: Txid::from_byte_array([txid_byte; 32]),
-            vout: 0,
         };
         let utxo = Utxo {
             outpoint,
@@ -820,7 +843,7 @@ mod tests {
         outpoint
     }
 
-    /// Drain from the CoinJoin account: every CoinJoin UTXO is consumed, the
+    /// Drain from the CoinJoin account (under the input cap): every CoinJoin UTXO is consumed, the
     /// single credit output's value is rewritten to `Σ inputs − fee`, the
     /// on-chain burn mirrors it exactly, and there is no change output.
     #[tokio::test]
@@ -863,6 +886,254 @@ mod tests {
         for (i, txin) in result.transaction.input.iter().enumerate() {
             assert!(!txin.script_sig.is_empty(), "input {i} not signed");
         }
+    }
+
+    // -- Input cap (MAX_ASSET_LOCK_INPUTS) ---------------------------------
+    //
+    // Dash Core drops an asset lock with more than 100 inputs as non-standard
+    // without a reject, so an over-cap build only ever surfaces as a broadcast
+    // that never confirms. Every asset-lock build must stay within the cap.
+
+    /// Outpoint `i` of a synthetic funding transaction (`vout = i`).
+    fn nth_outpoint(i: u32) -> OutPoint {
+        OutPoint {
+            txid: Txid::from_byte_array([0xC5; 32]),
+            vout: i,
+        }
+    }
+
+    /// Fund CoinJoin account 0 with `count` confirmed UTXOs valued
+    /// `base + i * step`, returning `(outpoint, value)` pairs.
+    fn fund_coinjoin_ladder(
+        info: &mut ManagedWalletInfo,
+        wallet: &Wallet,
+        count: u32,
+        base: u64,
+        step: u64,
+    ) -> Vec<(OutPoint, u64)> {
+        (0..count)
+            .map(|i| {
+                let value = base + u64::from(i) * step;
+                (insert_funded_coinjoin_utxo_at(info, wallet, nth_outpoint(i), value, true), value)
+            })
+            .collect()
+    }
+
+    fn coinjoin_reserved(info: &ManagedWalletInfo) -> HashSet<OutPoint> {
+        info.accounts.coinjoin_accounts.get(&0).unwrap().reservations().reserved(1100)
+    }
+
+    /// The ticket-32500 shape: more mixed UTXOs than Core accepts in one asset
+    /// lock. The drain takes exactly the 100 largest, locks their sum minus the
+    /// fee, reserves only them, and leaves the rest spendable for a later lock.
+    #[tokio::test]
+    async fn drain_over_the_input_cap_takes_the_largest() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let funded = fund_coinjoin_ladder(&mut info, &wallet, 104, 100_000, 1_000);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                &[AccountTypePreference::CoinJoin],
+                0,
+                test_credit_outputs(&[0]),
+                1000,
+                true,
+            )
+            .await
+            .expect("a bounded drain over 104 UTXOs must build");
+
+        let mut by_value = funded.clone();
+        by_value.sort_by_key(|(_, value)| std::cmp::Reverse(*value));
+        let largest: HashSet<OutPoint> =
+            by_value.iter().take(MAX_ASSET_LOCK_INPUTS).map(|(op, _)| *op).collect();
+        let left_out: HashSet<OutPoint> =
+            by_value.iter().skip(MAX_ASSET_LOCK_INPUTS).map(|(op, _)| *op).collect();
+        let largest_sum: u64 = by_value.iter().take(MAX_ASSET_LOCK_INPUTS).map(|(_, v)| v).sum();
+
+        let spent: HashSet<OutPoint> =
+            result.transaction.input.iter().map(|txin| txin.previous_output).collect();
+        assert_eq!(result.transaction.input.len(), MAX_ASSET_LOCK_INPUTS);
+        assert_eq!(spent, largest, "the drain must spend exactly the 100 largest UTXOs");
+
+        let burn = &result.transaction.output[0];
+        assert_eq!(result.transaction.output.len(), 1, "drain emits no change output");
+        assert_eq!(burn.value, largest_sum - result.fee, "burn must carry Σ(100 largest) − fee");
+        match &result.transaction.special_transaction_payload {
+            Some(TransactionPayload::AssetLockPayloadType(p)) => {
+                assert_eq!(p.credit_outputs[0].value, burn.value)
+            }
+            other => panic!("expected asset-lock payload, got {:?}", other),
+        }
+        assert!(result.transaction.size() <= MAX_ASSET_LOCK_TX_SIZE);
+        for (i, txin) in result.transaction.input.iter().enumerate() {
+            assert!(!txin.script_sig.is_empty(), "input {i} not signed");
+        }
+
+        // Only the spent inputs are reserved; the rest stay free and in the account.
+        assert_eq!(coinjoin_reserved(&info), largest);
+        let account = info.accounts.coinjoin_accounts.get(&0).unwrap();
+        assert!(left_out.iter().all(|op| account.utxos.contains_key(op)));
+    }
+
+    /// At exactly the cap a drain is unchanged: every UTXO is spent.
+    #[tokio::test]
+    async fn drain_at_the_input_cap_spends_everything() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let funded =
+            fund_coinjoin_ladder(&mut info, &wallet, MAX_ASSET_LOCK_INPUTS as u32, 100_000, 1_000);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                &[AccountTypePreference::CoinJoin],
+                0,
+                test_credit_outputs(&[0]),
+                1000,
+                true,
+            )
+            .await
+            .expect("a drain of exactly 100 UTXOs must build");
+
+        let total: u64 = funded.iter().map(|(_, v)| v).sum();
+        assert_eq!(result.transaction.input.len(), MAX_ASSET_LOCK_INPUTS);
+        assert_eq!(result.transaction.output[0].value, total - result.fee);
+    }
+
+    /// The signer-driven builder applies the same bound.
+    #[tokio::test]
+    async fn signer_drain_over_the_input_cap_takes_the_largest() {
+        let (wallet, mut info) = test_wallet_and_info();
+        fund_coinjoin_ladder(&mut info, &wallet, 103, 100_000, 1_000);
+        info.update_last_processed_height(1100);
+        let root = match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!("test_wallet_and_info produces a mnemonic wallet"),
+        };
+        let signer = InMemorySigner {
+            root,
+            network: Network::Testnet,
+        };
+
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                &[AccountTypePreference::CoinJoin],
+                0,
+                test_credit_outputs(&[0]),
+                1000,
+                true,
+                &signer,
+            )
+            .await
+            .expect("a bounded drain via the signer must build");
+        assert_eq!(result.transaction.input.len(), MAX_ASSET_LOCK_INPUTS);
+        // Ladder values start at 100_000 and step 1_000: the three smallest stay.
+        assert!(result.transaction.input.iter().all(|txin| txin.previous_output.vout >= 3));
+    }
+
+    /// An exact-amount lock that cannot be funded within 100 inputs is refused
+    /// with a typed error carrying how many it would need — and reserves nothing.
+    #[tokio::test]
+    async fn exact_amount_needing_more_than_the_cap_is_refused() {
+        let (wallet, mut info) = test_wallet_and_info();
+        for i in 0..150 {
+            insert_funded_utxo_at(&mut info, &wallet, nth_outpoint(i), 10_000, true);
+        }
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                &[AccountTypePreference::BIP44],
+                0,
+                test_credit_outputs(&[1_200_000]),
+                1000,
+                false,
+            )
+            .await;
+
+        match result {
+            Err(AssetLockError::Builder(BuilderError::TooManyInputs {
+                count,
+                max,
+            })) => {
+                assert_eq!(max, MAX_ASSET_LOCK_INPUTS);
+                assert!(count > MAX_ASSET_LOCK_INPUTS, "count {count} must report the need");
+            }
+            other => panic!("expected TooManyInputs, got {:?}", other.err()),
+        }
+        assert!(reserved_outpoints(&info).is_empty(), "a refused build must reserve nothing");
+    }
+
+    /// An exact-amount lock that fits within the cap still builds, with change.
+    #[tokio::test]
+    async fn exact_amount_within_the_cap_builds() {
+        let (wallet, mut info) = test_wallet_and_info();
+        for i in 0..150 {
+            insert_funded_utxo_at(&mut info, &wallet, nth_outpoint(i), 10_000, true);
+        }
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                &[AccountTypePreference::BIP44],
+                0,
+                test_credit_outputs(&[500_000]),
+                1000,
+                false,
+            )
+            .await
+            .expect("a 500k lock from 10k UTXOs needs ~51 inputs");
+        assert!(result.transaction.input.len() <= MAX_ASSET_LOCK_INPUTS);
+        assert_eq!(result.transaction.output[0].value, 500_000);
+        assert_eq!(reserved_outpoints(&info).len(), result.transaction.input.len());
+    }
+
+    /// The post-build backstop refuses an over-cap or oversized transaction
+    /// even if one ever got past selection.
+    #[test]
+    fn standardness_backstop_rejects_oversized_asset_locks() {
+        let input = |vout| dashcore::TxIn {
+            previous_output: nth_outpoint(vout),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffff_ffff,
+            witness: dashcore::Witness::new(),
+        };
+        let tx = |inputs: Vec<dashcore::TxIn>, script_len: usize| Transaction {
+            version: 3,
+            lock_time: 0,
+            input: inputs,
+            output: vec![TxOut {
+                value: 1,
+                script_pubkey: ScriptBuf::from(vec![0u8; script_len]),
+            }],
+            special_transaction_payload: None,
+        };
+
+        let at_cap = tx((0..MAX_ASSET_LOCK_INPUTS as u32).map(input).collect(), 1);
+        assert!(check_asset_lock_standard(&at_cap).is_ok());
+
+        let over_cap = tx((0..=MAX_ASSET_LOCK_INPUTS as u32).map(input).collect(), 1);
+        assert!(matches!(
+            check_asset_lock_standard(&over_cap),
+            Err(AssetLockError::Builder(BuilderError::TooManyInputs {
+                count: 101,
+                max: MAX_ASSET_LOCK_INPUTS
+            }))
+        ));
+
+        let too_big = tx(vec![input(0)], MAX_ASSET_LOCK_TX_SIZE);
+        assert!(matches!(
+            check_asset_lock_standard(&too_big),
+            Err(AssetLockError::Builder(BuilderError::InvalidData(_)))
+        ));
     }
 
     /// A drain build requires exactly one credit output — anything else is

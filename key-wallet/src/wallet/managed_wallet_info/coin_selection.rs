@@ -909,7 +909,110 @@ impl std::error::Error for SelectionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dashcore::OutPoint;
     use test_case::test_case;
+
+    /// `n` confirmed UTXOs with distinct outpoints, valued `base + i * step`.
+    fn ladder(n: u8, base: u64, step: u64) -> Vec<Utxo> {
+        (0..n).map(|i| Utxo::dummy(i, base + u64::from(i) * step, 100, false, true)).collect()
+    }
+
+    /// A bounded drain over more UTXOs than the bound keeps exactly the `max`
+    /// largest and prices the fee for those alone.
+    #[test]
+    fn test_select_all_bounded_keeps_the_largest() {
+        let utxos = ladder(8, 10_000, 1_000);
+        let selector = CoinSelector::new(SelectionStrategy::All).with_max_inputs(5);
+        let result = selector.select_coins(&utxos, 0, FeeRate::new(1000), 200).unwrap();
+
+        let mut values: Vec<u64> = result.selected.iter().map(|u| u.value()).collect();
+        values.sort_unstable();
+        assert_eq!(values, vec![13_000, 14_000, 15_000, 16_000, 17_000]);
+        assert_eq!(result.total_value, 75_000);
+        let default_base_size = 10 + TX_OUTPUT_SIZE + CHANGE_OUTPUT_SIZE;
+        assert_eq!(result.estimated_size, default_base_size + 5 * TX_INPUT_SIZE);
+        assert_eq!(result.target_amount, 75_000 - result.estimated_fee);
+    }
+
+    /// At or under the bound a bounded drain is an ordinary drain.
+    #[test]
+    fn test_select_all_bounded_under_the_bound_drains_everything() {
+        let utxos = ladder(5, 10_000, 1_000);
+        let bounded = CoinSelector::new(SelectionStrategy::All)
+            .with_max_inputs(5)
+            .select_coins(&utxos, 0, FeeRate::new(1000), 200)
+            .unwrap();
+        let unbounded = CoinSelector::new(SelectionStrategy::All)
+            .select_coins(&utxos, 0, FeeRate::new(1000), 200)
+            .unwrap();
+        assert_eq!(bounded.selected.len(), 5);
+        assert_eq!(bounded.estimated_fee, unbounded.estimated_fee);
+        assert_eq!(bounded.target_amount, unbounded.target_amount);
+    }
+
+    /// Equal values must not make the bounded pick depend on input order.
+    #[test]
+    fn test_select_all_bounded_is_deterministic_on_ties() {
+        let utxos = ladder(6, 10_000, 0);
+        let mut reversed = utxos.clone();
+        reversed.reverse();
+        let selector = CoinSelector::new(SelectionStrategy::All).with_max_inputs(3);
+        let pick = |set: &[Utxo]| -> Vec<OutPoint> {
+            let mut outpoints: Vec<OutPoint> = selector
+                .select_coins(set, 0, FeeRate::new(1000), 200)
+                .unwrap()
+                .selected
+                .iter()
+                .map(|u| u.outpoint)
+                .collect();
+            outpoints.sort();
+            outpoints
+        };
+        assert_eq!(pick(&utxos), pick(&reversed));
+    }
+
+    /// A bounded drain only counts spendable UTXOs against the bound: an
+    /// immature coinbase must not displace a spendable coin.
+    #[test]
+    fn test_select_all_bounded_ignores_unspendable() {
+        let mut utxos = ladder(3, 10_000, 1_000);
+        // Immature coinbase, far larger than anything spendable.
+        utxos.push(Utxo::dummy(200, 1_000_000, 190, true, true));
+        let result = CoinSelector::new(SelectionStrategy::All)
+            .with_max_inputs(3)
+            .select_coins(&utxos, 0, FeeRate::new(1000), 200)
+            .unwrap();
+        assert_eq!(result.total_value, 33_000);
+    }
+
+    /// A strategy whose pick exceeds the bound falls back to largest-first,
+    /// which funds the target with the fewest inputs.
+    #[test]
+    fn test_bounded_selection_falls_back_to_largest_first() {
+        let utxos = ladder(20, 10_000, 1_000);
+        let selector = CoinSelector::new(SelectionStrategy::SmallestFirst).with_max_inputs(4);
+        let result = selector.select_coins(&utxos, 80_000, FeeRate::new(1000), 200).unwrap();
+        assert!(result.selected.len() <= 4, "picked {} inputs", result.selected.len());
+        assert!(result.total_value >= 80_000 + result.estimated_fee);
+
+        // Unbounded, the same strategy really does need more than the bound.
+        let unbounded = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .select_coins(&utxos, 80_000, FeeRate::new(1000), 200)
+            .unwrap();
+        assert!(unbounded.selected.len() > 4);
+    }
+
+    /// When no selection within the bound funds the target, the minimum-count
+    /// selection comes back so the caller can report how many inputs it needs.
+    #[test]
+    fn test_bounded_selection_reports_the_inputs_needed() {
+        let utxos = ladder(20, 10_000, 0);
+        let result = CoinSelector::new(SelectionStrategy::BranchAndBound)
+            .with_max_inputs(4)
+            .select_coins(&utxos, 100_000, FeeRate::new(1000), 200)
+            .unwrap();
+        assert_eq!(result.selected.len(), 11, "100k + fee needs eleven 10k inputs");
+    }
 
     #[test]
     fn test_select_all_drains_everything() {
