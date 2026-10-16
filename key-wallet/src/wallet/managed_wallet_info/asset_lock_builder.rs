@@ -1155,6 +1155,66 @@ mod tests {
         assert!(reserved_outpoints(&info).is_empty(), "a refused build must reserve nothing");
     }
 
+    /// A signer whose scriptSigs are larger than the pre-sign bound assumes
+    /// (e.g. uncompressed keys) can push a signed asset lock over Core's size
+    /// limit. The signed size is re-checked, and the inputs are given back.
+    #[tokio::test]
+    async fn oversized_signatures_are_caught_after_signing_and_released() {
+        struct BloatedSigner;
+
+        #[async_trait::async_trait]
+        impl TransactionSigner for BloatedSigner {
+            async fn sign_tx(
+                &self,
+                mut tx: Transaction,
+                _inputs: Vec<Utxo>,
+                _path_resolver: impl Fn(dashcore::Address) -> Option<DerivationPath> + Send,
+            ) -> Result<Transaction, BuilderError> {
+                for input in &mut tx.input {
+                    input.script_sig = ScriptBuf::from(vec![0x51; 300]);
+                }
+                Ok(tx)
+            }
+
+            async fn sig_and_pubkey(
+                &self,
+                _sighash: dashcore::sighash::LegacySighash,
+                _path: DerivationPath,
+            ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), BuilderError> {
+                unreachable!("sign_tx is overridden")
+            }
+        }
+
+        let (wallet, mut info) = test_wallet_and_info();
+        fund_coinjoin_ladder(&mut info, &wallet, 100, 100_000, 1_000);
+        info.update_last_processed_height(1100);
+
+        // 100 inputs pass the pre-sign bound (~15 KB) but sign to ~34 KB.
+        let result = info
+            .build_signed_asset_lock(
+                &wallet,
+                &[AccountTypePreference::CoinJoin],
+                0,
+                test_credit_outputs(&[0]).into_iter().map(|f| f.output).collect(),
+                1000,
+                true,
+                &BloatedSigner,
+            )
+            .await;
+        match result {
+            Err(AssetLockError::Builder(BuilderError::AssetLockTooLarge {
+                size,
+                max,
+            })) => {
+                assert_eq!(max, MAX_ASSET_LOCK_TX_SIZE);
+                assert!(size > MAX_ASSET_LOCK_TX_SIZE);
+            }
+            Err(other) => panic!("expected AssetLockTooLarge, got {other:?}"),
+            Ok(_) => panic!("an oversized signed asset lock must be refused"),
+        }
+        assert!(coinjoin_reserved(&info).is_empty(), "the reservation must be released");
+    }
+
     /// An exact-amount build never reports anything left behind, even when the
     /// account holds UTXOs it did not need.
     #[tokio::test]

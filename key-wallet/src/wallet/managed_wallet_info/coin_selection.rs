@@ -1054,6 +1054,23 @@ mod tests {
         assert_eq!(bounded.total_value, 100_000);
     }
 
+    /// A pool that cannot fund even a one-input spend fails with the first
+    /// strategy's error; the bounded fallback changes nothing there.
+    #[test]
+    fn test_bounded_selection_short_pool_reports_insufficient_funds() {
+        let utxos = ladder(5, 10_000, 0);
+        let result = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .with_max_inputs(3)
+            .select_coins(&utxos, 60_000, FeeRate::new(1000), 200);
+        assert!(matches!(
+            result,
+            Err(SelectionError::InsufficientFunds {
+                available: 50_000,
+                ..
+            })
+        ));
+    }
+
     /// When no selection within the bound funds the target, the minimum-count
     /// selection comes back so the caller can report how many inputs it needs.
     #[test]

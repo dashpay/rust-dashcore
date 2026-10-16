@@ -1589,6 +1589,56 @@ mod tests {
     /// mirroring the payload's credit outputs. That output is part of
     /// Σ(outputs), so the returned fee must be the miner fee only — the locked
     /// credits must never be counted as fee.
+    /// An exact-amount asset lock whose first pick fits the input cap but not
+    /// Core's size limit (a large payload plus many small inputs) falls back to
+    /// largest-first instead of failing.
+    #[test]
+    fn test_asset_lock_size_aware_fallback_to_largest_first() {
+        let mut utxos: Vec<Utxo> =
+            (0..90).map(|i| Utxo::dummy(i, 10_000, 100, false, true)).collect();
+        utxos.push(Utxo::dummy(90, 1_000_000, 100, false, true));
+        let payload = || {
+            TransactionPayload::AssetLockPayloadType(AssetLockPayload {
+                version: 1,
+                credit_outputs: vec![TxOut {
+                    value: 800_000,
+                    script_pubkey: ScriptBuf::from(vec![0x51; 10_000]),
+                }],
+            })
+        };
+        let builder = || {
+            TransactionBuilder::new()
+                .set_current_height(200)
+                .set_fee_rate(FeeRate::new(1000))
+                .set_change_address(Address::dummy(Network::Testnet, 0))
+                .set_special_payload(payload())
+                .add_inputs(utxos.clone())
+        };
+
+        // Smallest-first alone needs over 80 of the 10k inputs: within the
+        // 100-input cap, but ~22 KB signed with the 10 KB payload.
+        let smallest_first = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .with_max_inputs(MAX_ASSET_LOCK_INPUTS)
+            .select_coins_with_size(
+                utxos.iter(),
+                800_000,
+                FeeRate::new(1000),
+                200,
+                builder().calculate_base_size(),
+                CHANGE_OUTPUT_SIZE,
+            )
+            .unwrap();
+        assert!(smallest_first.selected.len() > 80);
+        assert!(smallest_first.selected.len() <= MAX_ASSET_LOCK_INPUTS);
+
+        let (tx, _, _) = builder()
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
+            .build_unsigned_reserved()
+            .expect("largest-first funds it with the single 1M input");
+        assert_eq!(tx.input.len(), 1);
+        assert_eq!(tx.input[0].previous_output, utxos[90].outpoint);
+    }
+
     #[test]
     fn test_asset_lock_fee_excludes_locked_credits() {
         let utxos = vec![Utxo::dummy(0, 1_000_000, 100, false, true)];
