@@ -182,16 +182,19 @@ impl CoinSelector {
     ///   only those; the rest are left unspent. With `max` or fewer it drains
     ///   everything, exactly as without a bound.
     /// * Every other strategy runs unchanged first. If its pick exceeds `max`,
-    ///   selection falls back to largest-first accumulation, which reaches any
-    ///   reachable target with the fewest inputs possible. When even that needs
-    ///   more than `max` inputs, the minimum-count selection is returned as is
-    ///   — its length is how many inputs the target really needs — and the
-    ///   caller must reject it (the transaction builder does, with
-    ///   `BuilderError::TooManyInputs`).
+    ///   or it reports insufficient funds (a strategy that spends small UTXOs
+    ///   first can pay more in fees than they add, where largest-first would
+    ///   fund the target), selection falls back to largest-first accumulation,
+    ///   which reaches any reachable target with the fewest inputs possible.
+    ///   When even that needs more than `max` inputs, the minimum-count
+    ///   selection is returned as is — its length is how many inputs the
+    ///   target really needs — and the caller must reject it (the transaction
+    ///   builder does, with `BuilderError::TooManyInputs`).
     ///
-    /// `max` is clamped to at least 1.
+    /// `max` is taken as given; a drain bounded at `0` selects nothing. The
+    /// transaction builder clamps its bound to `1..=500` before passing it here.
     pub fn with_max_inputs(mut self, max: usize) -> Self {
-        self.max_inputs = Some(max.max(1));
+        self.max_inputs = Some(max);
         self
     }
 
@@ -260,9 +263,15 @@ impl CoinSelector {
                 if spendable.len() > max_inputs {
                     // Bounded drain: the `max_inputs` largest carry the most
                     // value for the same input count, hence the same fee.
-                    spendable.sort_by(|a, b| {
-                        b.value().cmp(&a.value()).then_with(|| a.outpoint.cmp(&b.outpoint))
-                    });
+                    // Partition rather than sort; the outpoint tie-break makes
+                    // the order total, so the kept set does not depend on input
+                    // order. The order within it does not matter: the builder
+                    // re-sorts inputs (BIP-69).
+                    if max_inputs > 0 {
+                        spendable.select_nth_unstable_by(max_inputs - 1, |a, b| {
+                            b.value().cmp(&a.value()).then_with(|| a.outpoint.cmp(&b.outpoint))
+                        });
+                    }
                     spendable.truncate(max_inputs);
                 }
                 self.select_with_strategy(
@@ -275,9 +284,20 @@ impl CoinSelector {
                     change_output_size,
                 )
             }
+            SelectionStrategy::LargestFirst => self.select_with_strategy(
+                SelectionStrategy::LargestFirst,
+                utxos,
+                target_amount,
+                fee_rate,
+                current_height,
+                base_size,
+                change_output_size,
+            ),
             strategy => {
+                // References only, collected once so the fallback can reuse
+                // them; no UTXO is cloned unless selected.
                 let pool: Vec<&'a Utxo> = utxos.into_iter().collect();
-                let result = self.select_with_strategy(
+                match self.select_with_strategy(
                     strategy,
                     pool.iter().copied(),
                     target_amount,
@@ -285,11 +305,15 @@ impl CoinSelector {
                     current_height,
                     base_size,
                     change_output_size,
-                )?;
-                if result.selected.len() <= max_inputs
-                    || strategy == SelectionStrategy::LargestFirst
-                {
-                    return Ok(result);
+                ) {
+                    Ok(result) if result.selected.len() <= max_inputs => return Ok(result),
+                    // Over the bound, or short because small inputs cost more
+                    // than they add: largest-first may still fund it within it.
+                    Ok(_)
+                    | Err(SelectionError::InsufficientFunds {
+                        ..
+                    }) => {}
+                    Err(other) => return Err(other),
                 }
                 // The k largest UTXOs out-value every other k-subset, and the
                 // fee depends only on k, so largest-first funds the target with
@@ -1000,6 +1024,30 @@ mod tests {
             .select_coins(&utxos, 80_000, FeeRate::new(1000), 200)
             .unwrap();
         assert!(unbounded.selected.len() > 4);
+    }
+
+    /// A strategy that fails outright — smallest-first burns more in fees on
+    /// dust inputs than they add — still gets the largest-first fallback.
+    #[test]
+    fn test_bounded_selection_falls_back_when_the_strategy_runs_short() {
+        let mut utxos: Vec<Utxo> = (0..50).map(|i| Utxo::dummy(i, 100, 100, false, true)).collect();
+        utxos.push(Utxo::dummy(50, 50_000, 100, false, true));
+        utxos.push(Utxo::dummy(51, 50_000, 100, false, true));
+
+        let unbounded = CoinSelector::new(SelectionStrategy::SmallestFirst).select_coins(
+            &utxos,
+            99_000,
+            FeeRate::new(1000),
+            200,
+        );
+        assert!(matches!(unbounded, Err(SelectionError::InsufficientFunds { .. })));
+
+        let bounded = CoinSelector::new(SelectionStrategy::SmallestFirst)
+            .with_max_inputs(10)
+            .select_coins(&utxos, 99_000, FeeRate::new(1000), 200)
+            .expect("largest-first funds it with the two 50k inputs");
+        assert_eq!(bounded.selected.len(), 2);
+        assert_eq!(bounded.total_value, 100_000);
     }
 
     /// When no selection within the bound funds the target, the minimum-count

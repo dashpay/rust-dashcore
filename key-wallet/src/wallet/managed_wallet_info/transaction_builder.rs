@@ -5,7 +5,6 @@
 
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
 use crate::managed_account::ManagedCoreFundsAccount;
-use crate::wallet::managed_wallet_info::asset_lock_builder::MAX_ASSET_LOCK_INPUTS;
 use crate::wallet::managed_wallet_info::coin_selection::{
     CoinSelector, SelectionStrategy, CHANGE_OUTPUT_SIZE, TX_OUTPUT_SIZE,
 };
@@ -28,6 +27,44 @@ use std::collections::HashSet;
 /// A transaction with more inputs would exceed the relay standard-size cap (~100 KB at ~148
 /// bytes/signed input) and be rejected by the network
 const MAX_STANDARD_TX_INPUTS: usize = 500;
+
+/// Maximum number of inputs an asset-lock transaction may spend.
+///
+/// Mirrors Dash Core's `MAX_STANDARD_ASSET_LOCK_INPUTS` (`src/evo/specialtxman.cpp`,
+/// `IsStandardSpecialTx`): a larger asset lock is non-standard
+/// (`assetlocktx-too-many-inputs`), so peers drop it without relaying or
+/// rejecting it. Platform enforces the same bound in consensus
+/// (`max_asset_lock_transaction_inputs`).
+///
+/// Every build carrying an asset-lock payload is held to it: a drain spends at
+/// most this many of the largest UTXOs, and an exact-amount build that cannot be
+/// funded within it fails with [`BuilderError::TooManyInputs`]. That makes the
+/// lock relayable by Core and within Platform's input cap. It does not make
+/// every *state transition* built on it fit Platform's size limit: an
+/// InstantSend asset-lock proof embeds the whole transaction plus an IS lock
+/// listing every spent outpoint, so a lock near this cap can still yield an
+/// oversized transition. Sizing the transition is the consumer's concern (a
+/// ChainLock proof, which carries no transaction, avoids it).
+///
+/// Re-exported from `asset_lock_builder`.
+pub const MAX_ASSET_LOCK_INPUTS: usize = 100;
+
+/// Maximum serialized size, in bytes, of an asset-lock transaction.
+///
+/// Mirrors Dash Core's standardness limit on asset locks (`assetlocktx-too-big`
+/// in `IsStandardSpecialTx`). The builder checks its signed-size upper bound
+/// against it before reserving or signing anything, and fails with
+/// [`BuilderError::AssetLockTooLarge`]. At [`MAX_ASSET_LOCK_INPUTS`] P2PKH
+/// inputs a built asset lock stays well below it.
+///
+/// Re-exported from `asset_lock_builder`.
+pub const MAX_ASSET_LOCK_TX_SIZE: usize = 20_480;
+
+/// Upper bound on the signed `scriptSig` of a P2PKH input: a push of a
+/// low-S DER signature plus sighash byte (≤ 72) and a push of a compressed
+/// public key (33). With the 41-byte unsigned input it adds up to the 148-byte
+/// `TX_INPUT_SIZE` that coin selection prices each input at.
+const MAX_P2PKH_SCRIPT_SIG_SIZE: usize = 1 + 72 + 1 + 33;
 /// Relay-policy limit for OP_RETURN payloads, matching Dash Core's `-datacarriersize` default.
 /// Public so callers can reject an over-long payload before handing over a builder
 /// `add_op_return` would consume.
@@ -146,20 +183,30 @@ impl TransactionBuilder {
         self
     }
 
-    /// The input bound coin selection must respect, when one applies: the
-    /// caller's [`Self::set_max_inputs`], and/or [`MAX_ASSET_LOCK_INPUTS`] for an
-    /// asset-lock payload (Core refuses a larger asset lock as non-standard,
-    /// and Platform rejects it), the tighter of the two, never above
-    /// `MAX_STANDARD_TX_INPUTS`.
-    fn selection_input_bound(&self) -> Option<usize> {
-        let asset_lock_bound =
-            matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_)))
-                .then_some(MAX_ASSET_LOCK_INPUTS);
-        let bound = match (self.max_inputs, asset_lock_bound) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }?;
-        Some(bound.clamp(1, MAX_STANDARD_TX_INPUTS))
+    fn is_asset_lock(&self) -> bool {
+        matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_)))
+    }
+
+    /// The most inputs this build may spend: the caller's
+    /// [`Self::set_max_inputs`] and/or [`MAX_ASSET_LOCK_INPUTS`] for an
+    /// asset-lock payload, the tighter of the two, clamped to
+    /// `1..=MAX_STANDARD_TX_INPUTS`; `MAX_STANDARD_TX_INPUTS` when neither applies.
+    fn input_cap(&self) -> usize {
+        let asset_lock_cap = self.is_asset_lock().then_some(MAX_ASSET_LOCK_INPUTS);
+        [self.max_inputs, asset_lock_cap]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(MAX_STANDARD_TX_INPUTS)
+            .clamp(1, MAX_STANDARD_TX_INPUTS)
+    }
+
+    /// Whether coin selection itself must respect [`Self::input_cap`] (bounded
+    /// drain, bounded selection). Without an explicit or asset-lock bound the
+    /// cap is only checked after selection, so an over-cap regular drain fails
+    /// rather than silently leaving coins behind.
+    fn selection_is_bounded(&self) -> bool {
+        self.max_inputs.is_some() || self.is_asset_lock()
     }
 
     /// Restrict coin selection to final inputs: confirmed or
@@ -534,11 +581,10 @@ impl TransactionBuilder {
         // Must match `calculate_base_size`, including the conservative VIN0 routing-script size.
         let change_output_size = self.estimated_change_output_size();
 
-        let input_bound = self.selection_input_bound();
-        let max_inputs = input_bound.unwrap_or(MAX_STANDARD_TX_INPUTS);
+        let max_inputs = self.input_cap();
         let mut selector = CoinSelector::new(self.selection_strategy);
-        if let Some(bound) = input_bound {
-            selector = selector.with_max_inputs(bound);
+        if self.selection_is_bounded() {
+            selector = selector.with_max_inputs(max_inputs);
         }
         let selection = selector
             .select_coins_with_size(
@@ -710,6 +756,22 @@ impl TransactionBuilder {
             output: tx_outputs,
             special_transaction_payload: self.special_payload,
         };
+
+        // Core refuses an oversized asset lock as non-standard and peers drop it
+        // silently. Check the signed-size upper bound now, before anything is
+        // reserved or signed (signing may be a hardware round-trip per input).
+        if matches!(
+            transaction.special_transaction_payload,
+            Some(TransactionPayload::AssetLockPayloadType(_))
+        ) {
+            let size = transaction.size() + transaction.input.len() * MAX_P2PKH_SCRIPT_SIG_SIZE;
+            if size > MAX_ASSET_LOCK_TX_SIZE {
+                return Err(BuilderError::AssetLockTooLarge {
+                    size,
+                    max: MAX_ASSET_LOCK_TX_SIZE,
+                });
+            }
+        }
 
         // Reserve the chosen inputs so a concurrent build skips them until the
         // broadcast transaction is processed back into the wallet (which
@@ -1091,6 +1153,13 @@ pub enum BuilderError {
         len: usize,
         max: usize,
     },
+    /// The asset lock's estimated signed size exceeds Dash Core's standard
+    /// limit ([`MAX_ASSET_LOCK_TX_SIZE`]); Core would refuse to relay it.
+    AssetLockTooLarge {
+        /// Upper bound on the signed transaction's serialized size, in bytes.
+        size: usize,
+        max: usize,
+    },
 }
 
 impl fmt::Display for BuilderError {
@@ -1122,6 +1191,12 @@ impl fmt::Display for BuilderError {
                 max,
             } => {
                 write!(f, "OP_RETURN payload too large: {len} bytes (max {max})")
+            }
+            Self::AssetLockTooLarge {
+                size,
+                max,
+            } => {
+                write!(f, "Asset lock transaction too large: {size} bytes (max {max})")
             }
         }
     }

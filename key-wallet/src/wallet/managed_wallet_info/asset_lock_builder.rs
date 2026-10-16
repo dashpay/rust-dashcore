@@ -7,6 +7,7 @@ use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLock
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::{OutPoint, Transaction, TxOut};
 use secp256k1::PublicKey;
+use std::collections::HashSet;
 use std::fmt;
 
 use crate::account::AccountType;
@@ -19,6 +20,11 @@ use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_builder::{
     BuilderError, TransactionBuilder, TransactionSigner,
 };
+/// Asset-lock standardness limits, defined beside the transaction builder that
+/// enforces them and re-exported here, where asset-lock callers look for them.
+pub use crate::wallet::managed_wallet_info::transaction_builder::{
+    MAX_ASSET_LOCK_INPUTS, MAX_ASSET_LOCK_TX_SIZE,
+};
 use crate::wallet::managed_wallet_info::transaction_building::{
     AccountTypePreference, PooledFunding,
 };
@@ -26,27 +32,6 @@ use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterfa
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::wallet::Wallet;
 use crate::DerivationPath;
-
-/// Maximum number of inputs an asset-lock transaction may spend.
-///
-/// Mirrors Dash Core's `MAX_STANDARD_ASSET_LOCK_INPUTS` (`src/evo/specialtxman.cpp`,
-/// `IsStandardSpecialTx`): a larger asset lock is non-standard
-/// (`assetlocktx-too-many-inputs`), so peers drop it without relaying and it can
-/// never be mined or InstantSend-locked. Platform enforces the same bound in
-/// consensus (`max_asset_lock_transaction_inputs`).
-///
-/// Every asset-lock build is held to it: a drain spends at most this many of the
-/// largest UTXOs (see [`ManagedWalletInfo::build_asset_lock`]), and an
-/// exact-amount build that cannot be funded within it fails with
-/// [`BuilderError::TooManyInputs`].
-pub const MAX_ASSET_LOCK_INPUTS: usize = 100;
-
-/// Maximum serialized size, in bytes, of an asset-lock transaction.
-///
-/// Mirrors Dash Core's standardness limit on asset locks (`assetlocktx-too-big`
-/// in `IsStandardSpecialTx`). At [`MAX_ASSET_LOCK_INPUTS`] P2PKH inputs a built
-/// asset lock stays well below it; it is checked after signing as a backstop.
-pub const MAX_ASSET_LOCK_TX_SIZE: usize = 20_480;
 
 /// Which funding account to derive the one-time key from.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -188,6 +173,18 @@ pub struct AssetLockResult {
     /// bookkeeping scale with the address book while claiming contributions
     /// that never happened.
     pub funding_accounts: Vec<AccountType>,
+    /// How many spendable UTXOs of the funding source(s) a **drain** left
+    /// unspent because it hit [`MAX_ASSET_LOCK_INPUTS`]; `0` when the drain
+    /// took everything, and always `0` for an exact-amount build.
+    ///
+    /// A bounded drain keeps the largest UTXOs, so what remains is the
+    /// *smallest*: a follow-up drain of the rest may fall below the minimum
+    /// amount the target state transition accepts. Surface it to the user
+    /// rather than assuming the account was emptied.
+    pub remaining_utxo_count: usize,
+    /// Total value, in duffs, of the UTXOs counted by
+    /// [`Self::remaining_utxo_count`].
+    pub remaining_duffs: u64,
 }
 
 /// Errors specific to asset lock transaction building.
@@ -316,25 +313,6 @@ fn validate_funding_sources(
     Ok(())
 }
 
-/// Reject a signed asset lock that Dash Core would refuse to relay: more than
-/// [`MAX_ASSET_LOCK_INPUTS`] inputs, or larger than [`MAX_ASSET_LOCK_TX_SIZE`].
-fn check_asset_lock_standard(transaction: &Transaction) -> Result<(), AssetLockError> {
-    if transaction.input.len() > MAX_ASSET_LOCK_INPUTS {
-        return Err(AssetLockError::Builder(BuilderError::TooManyInputs {
-            count: transaction.input.len(),
-            max: MAX_ASSET_LOCK_INPUTS,
-        }));
-    }
-    let size = transaction.size();
-    if size > MAX_ASSET_LOCK_TX_SIZE {
-        return Err(AssetLockError::Builder(BuilderError::InvalidData(format!(
-            "asset lock transaction is {size} bytes, above the {MAX_ASSET_LOCK_TX_SIZE}-byte \
-             standard limit"
-        ))));
-    }
-    Ok(())
-}
-
 /// The accounts among `offered` that contributed an input to `transaction`.
 ///
 /// Only these hold a share of the build's reservation, so this is what the
@@ -403,9 +381,49 @@ struct SignedAssetLock {
     /// order; the first supplied the change address.
     offered: Vec<AccountType>,
     reservations: BuildReservations,
+    left_behind: LeftBehind,
+}
+
+/// What a bounded drain did not spend. See [`AssetLockResult::remaining_utxo_count`].
+#[derive(Default)]
+struct LeftBehind {
+    utxo_count: usize,
+    duffs: u64,
 }
 
 impl ManagedWalletInfo {
+    /// The UTXOs a drain over `offered` could have spent but did not, because
+    /// it hit [`MAX_ASSET_LOCK_INPUTS`]: final, spendable at the current height,
+    /// not reserved (this build's own inputs are reserved by now, and a UTXO
+    /// another in-flight build holds was never a candidate) and not an input of
+    /// `transaction`. An outpoint offered by two overlapping accounts counts once.
+    fn left_behind_by_drain(
+        &self,
+        offered: &[AccountType],
+        transaction: &Transaction,
+    ) -> LeftBehind {
+        let height = self.last_processed_height();
+        let spent: HashSet<OutPoint> =
+            transaction.input.iter().map(|input| input.previous_output).collect();
+        let mut seen: HashSet<OutPoint> = HashSet::new();
+        let mut left = LeftBehind::default();
+        for account in offered.iter().filter_map(|at| self.accounts.funds_account(at)) {
+            let reserved = account.reservations().reserved(height);
+            for utxo in account.utxos.values() {
+                if (utxo.is_confirmed || utxo.is_instantlocked)
+                    && utxo.is_spendable(height)
+                    && !spent.contains(&utxo.outpoint)
+                    && !reserved.contains(&utxo.outpoint)
+                    && seen.insert(utxo.outpoint)
+                {
+                    left.utxo_count += 1;
+                    left.duffs += utxo.value();
+                }
+            }
+        }
+        left
+    }
+
     /// Everything both asset-lock builders do before they diverge: validate the
     /// sources, assemble the payload, fund from the pooled accounts, capture
     /// what a post-build failure must hand back, and sign.
@@ -435,10 +453,9 @@ impl ManagedWalletInfo {
             .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
                 credit_outputs,
             )))
-            .require_final_inputs()
-            // Implied by the asset-lock payload already; stated so the bound is
-            // visible where asset locks are built.
-            .set_max_inputs(MAX_ASSET_LOCK_INPUTS);
+            // The asset-lock payload bounds selection at MAX_ASSET_LOCK_INPUTS
+            // and the signed size at MAX_ASSET_LOCK_TX_SIZE inside the builder.
+            .require_final_inputs();
         if drain {
             builder = builder.set_selection_strategy(SelectionStrategy::All);
         }
@@ -463,26 +480,22 @@ impl ManagedWalletInfo {
 
         let reserved: Vec<OutPoint> =
             transaction.input.iter().map(|input| input.previous_output).collect();
-        let reservations = BuildReservations {
-            sets,
-            reserved,
-            token,
+        let left_behind = if drain {
+            self.left_behind_by_drain(&offered, &transaction)
+        } else {
+            LeftBehind::default()
         };
-
-        // Backstop for the bounds coin selection already enforces: an asset
-        // lock Core deems non-standard is dropped by every peer without a
-        // reject, so the wallet would only ever see the broadcast time out.
-        // Refuse it here and give the inputs back instead.
-        if let Err(e) = check_asset_lock_standard(&transaction) {
-            reservations.release();
-            return Err(e);
-        }
 
         Ok(SignedAssetLock {
             transaction,
             fee,
             offered,
-            reservations,
+            reservations: BuildReservations {
+                sets,
+                reserved,
+                token,
+            },
+            left_behind,
         })
     }
 
@@ -513,6 +526,20 @@ impl ManagedWalletInfo {
     /// be the sole source: pooling mixed outputs with transparent ones in one
     /// transaction links them and undoes the mixing.
     ///
+    /// A bounded drain leaves the smallest UTXOs behind; the result reports
+    /// them in [`AssetLockResult::remaining_utxo_count`] and
+    /// [`AssetLockResult::remaining_duffs`]. A follow-up drain of those may
+    /// fall below the target transition's minimum lock amount.
+    ///
+    /// The input cap makes the lock relayable by Core and within Platform's
+    /// input cap; it does not bound the size of a state transition that embeds
+    /// it. An InstantSend asset-lock proof carries the whole transaction and an
+    /// IS lock listing every spent outpoint, so near the cap the transition can
+    /// exceed Platform's size limit — choosing a ChainLock proof then is the
+    /// consumer's concern. An asset lock whose estimated signed size exceeds
+    /// [`MAX_ASSET_LOCK_TX_SIZE`] fails with [`BuilderError::AssetLockTooLarge`]
+    /// before anything is reserved or signed.
+    ///
     /// A non-drain build spends at most [`MAX_ASSET_LOCK_INPUTS`] inputs; when
     /// the amount cannot be funded within that many it fails with
     /// [`BuilderError::TooManyInputs`] (`count` = the fewest inputs it needs)
@@ -541,6 +568,7 @@ impl ManagedWalletInfo {
             fee,
             offered,
             reservations,
+            left_behind,
         } = self
             .build_signed_asset_lock(
                 wallet,
@@ -584,6 +612,8 @@ impl ManagedWalletInfo {
             keys: AssetLockCreditKeys::Private(keys),
             reservation_token: reservations.token,
             funding_accounts,
+            remaining_utxo_count: left_behind.utxo_count,
+            remaining_duffs: left_behind.duffs,
         })
     }
 
@@ -624,6 +654,7 @@ impl ManagedWalletInfo {
             fee,
             offered,
             reservations,
+            left_behind,
         } = self
             .build_signed_asset_lock(
                 wallet,
@@ -702,6 +733,8 @@ impl ManagedWalletInfo {
             keys: AssetLockCreditKeys::Public(credit_output_keys),
             reservation_token: reservations.token,
             funding_accounts,
+            remaining_utxo_count: left_behind.utxo_count,
+            remaining_duffs: left_behind.duffs,
         })
     }
 }
@@ -930,6 +963,8 @@ mod tests {
     async fn drain_over_the_input_cap_takes_the_largest() {
         let (wallet, mut info) = test_wallet_and_info();
         let funded = fund_coinjoin_ladder(&mut info, &wallet, 104, 100_000, 1_000);
+        // Largest of all but unconfirmed: neither spent nor counted as left behind.
+        insert_funded_coinjoin_utxo(&mut info, &wallet, 0x77, 5_000_000, false);
         info.update_last_processed_height(1100);
 
         let result = info
@@ -973,6 +1008,9 @@ mod tests {
 
         // Only the spent inputs are reserved; the rest stay free and in the account.
         assert_eq!(coinjoin_reserved(&info), largest);
+        let left_out_sum: u64 = by_value.iter().skip(MAX_ASSET_LOCK_INPUTS).map(|(_, v)| v).sum();
+        assert_eq!(result.remaining_utxo_count, left_out.len());
+        assert_eq!(result.remaining_duffs, left_out_sum);
         let account = info.accounts.coinjoin_accounts.get(&0).unwrap();
         assert!(left_out.iter().all(|op| account.utxos.contains_key(op)));
     }
@@ -1000,6 +1038,7 @@ mod tests {
         let total: u64 = funded.iter().map(|(_, v)| v).sum();
         assert_eq!(result.transaction.input.len(), MAX_ASSET_LOCK_INPUTS);
         assert_eq!(result.transaction.output[0].value, total - result.fee);
+        assert_eq!((result.remaining_utxo_count, result.remaining_duffs), (0, 0));
     }
 
     /// The signer-driven builder applies the same bound.
@@ -1035,6 +1074,8 @@ mod tests {
         assert_eq!(result.transaction.input.len(), MAX_ASSET_LOCK_INPUTS);
         // Ladder values start at 100_000 and step 1_000: the three smallest stay.
         assert!(result.transaction.input.iter().all(|txin| txin.previous_output.vout >= 3));
+        assert_eq!(result.remaining_utxo_count, 3);
+        assert_eq!(result.remaining_duffs, 100_000 + 101_000 + 102_000);
     }
 
     /// An exact-amount lock that cannot be funded within 100 inputs is refused
@@ -1096,44 +1137,55 @@ mod tests {
         assert_eq!(reserved_outpoints(&info).len(), result.transaction.input.len());
     }
 
-    /// The post-build backstop refuses an over-cap or oversized transaction
-    /// even if one ever got past selection.
-    #[test]
-    fn standardness_backstop_rejects_oversized_asset_locks() {
-        let input = |vout| dashcore::TxIn {
-            previous_output: nth_outpoint(vout),
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffff_ffff,
-            witness: dashcore::Witness::new(),
-        };
-        let tx = |inputs: Vec<dashcore::TxIn>, script_len: usize| Transaction {
-            version: 3,
-            lock_time: 0,
-            input: inputs,
-            output: vec![TxOut {
-                value: 1,
-                script_pubkey: ScriptBuf::from(vec![0u8; script_len]),
-            }],
-            special_transaction_payload: None,
-        };
+    /// An asset lock whose estimated signed size is over Core's standard limit
+    /// is refused before anything is reserved or signed.
+    #[tokio::test]
+    async fn oversized_asset_lock_is_refused_before_signing() {
+        let (wallet, mut info) = test_wallet_and_info();
+        insert_funded_utxo(&mut info, &wallet, 0x11, 10_000_000, true);
+        info.update_last_processed_height(1100);
 
-        let at_cap = tx((0..MAX_ASSET_LOCK_INPUTS as u32).map(input).collect(), 1);
-        assert!(check_asset_lock_standard(&at_cap).is_ok());
+        // One credit output whose script alone is over the limit.
+        let mut fundings = test_credit_outputs(&[200_000]);
+        fundings[0].output.script_pubkey = ScriptBuf::from(vec![0x51; MAX_ASSET_LOCK_TX_SIZE]);
 
-        let over_cap = tx((0..=MAX_ASSET_LOCK_INPUTS as u32).map(input).collect(), 1);
-        assert!(matches!(
-            check_asset_lock_standard(&over_cap),
-            Err(AssetLockError::Builder(BuilderError::TooManyInputs {
-                count: 101,
-                max: MAX_ASSET_LOCK_INPUTS
-            }))
-        ));
+        let result = info
+            .build_asset_lock(&wallet, &[AccountTypePreference::BIP44], 0, fundings, 1000, false)
+            .await;
+        match result {
+            Err(AssetLockError::Builder(BuilderError::AssetLockTooLarge {
+                size,
+                max,
+            })) => {
+                assert_eq!(max, MAX_ASSET_LOCK_TX_SIZE);
+                assert!(size > MAX_ASSET_LOCK_TX_SIZE);
+            }
+            other => panic!("expected AssetLockTooLarge, got {:?}", other.err()),
+        }
+        assert!(reserved_outpoints(&info).is_empty(), "a refused build must reserve nothing");
+    }
 
-        let too_big = tx(vec![input(0)], MAX_ASSET_LOCK_TX_SIZE);
-        assert!(matches!(
-            check_asset_lock_standard(&too_big),
-            Err(AssetLockError::Builder(BuilderError::InvalidData(_)))
-        ));
+    /// An exact-amount build never reports anything left behind, even when the
+    /// account holds UTXOs it did not need.
+    #[tokio::test]
+    async fn exact_amount_reports_nothing_left_behind() {
+        let (wallet, mut info) = test_wallet_and_info();
+        insert_funded_utxo(&mut info, &wallet, 0x11, 1_000_000, true);
+        insert_funded_utxo(&mut info, &wallet, 0x22, 1_000_000, true);
+        info.update_last_processed_height(1100);
+
+        let result = info
+            .build_asset_lock(
+                &wallet,
+                &[AccountTypePreference::BIP44],
+                0,
+                test_credit_outputs(&[200_000]),
+                1000,
+                false,
+            )
+            .await
+            .expect("funded exact-amount lock");
+        assert_eq!((result.remaining_utxo_count, result.remaining_duffs), (0, 0));
     }
 
     /// A drain build requires exactly one credit output — anything else is
