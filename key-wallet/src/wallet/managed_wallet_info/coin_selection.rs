@@ -284,20 +284,11 @@ impl CoinSelector {
                     change_output_size,
                 )
             }
-            SelectionStrategy::LargestFirst => self.select_with_strategy(
-                SelectionStrategy::LargestFirst,
-                utxos,
-                target_amount,
-                fee_rate,
-                current_height,
-                base_size,
-                change_output_size,
-            ),
             strategy => {
                 // References only, collected once so the fallback can reuse
                 // them; no UTXO is cloned unless selected.
                 let pool: Vec<&'a Utxo> = utxos.into_iter().collect();
-                match self.select_with_strategy(
+                let first = self.select_with_strategy(
                     strategy,
                     pool.iter().copied(),
                     target_amount,
@@ -305,14 +296,27 @@ impl CoinSelector {
                     current_height,
                     base_size,
                     change_output_size,
-                ) {
+                );
+                if strategy == SelectionStrategy::LargestFirst {
+                    // Already the fewest-inputs pick; nothing to fall back to.
+                    return first;
+                }
+                // The cheapest any selection can be: one input, no change.
+                let floor =
+                    target_amount.saturating_add(fee_rate.calculate_fee(
+                        base_size.saturating_sub(change_output_size) + TX_INPUT_SIZE,
+                    ));
+                match first {
                     Ok(result) if result.selected.len() <= max_inputs => return Ok(result),
-                    // Over the bound, or short because small inputs cost more
-                    // than they add: largest-first may still fund it within it.
-                    Ok(_)
-                    | Err(SelectionError::InsufficientFunds {
+                    // Over the bound: largest-first may fit within it.
+                    Ok(_) => {}
+                    // Short because small inputs cost more than they add, where
+                    // largest-first would fund it. Not worth retrying when the
+                    // whole spendable pool is below even a one-input spend.
+                    Err(SelectionError::InsufficientFunds {
+                        available,
                         ..
-                    }) => {}
+                    }) if available >= floor => {}
                     Err(other) => return Err(other),
                 }
                 // The k largest UTXOs out-value every other k-subset, and the
