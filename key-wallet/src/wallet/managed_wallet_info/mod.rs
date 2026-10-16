@@ -28,7 +28,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Transaction, Txid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Information about a managed wallet
 ///
@@ -121,6 +121,13 @@ pub struct ManagedWalletInfo {
     /// migration to load pre-field snapshots.
     #[cfg_attr(feature = "serde", serde(default, with = "observed_spent_outpoints_serde"))]
     pub(crate) observed_spent_outpoints: BTreeMap<OutPoint, CoreBlockHeight>,
+    /// Spent outpoints claimed apart from any account's own records, each
+    /// with the transaction named as its spender; `None` guards permanently.
+    /// Set by [`Self::restore_spent_outpoints`] and consulted for every
+    /// account that holds funds. Not serialized: the host restores it after
+    /// each load.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) spent_claims: BTreeMap<OutPoint, Option<Txid>>,
     /// Generation counter for the wallet's account set, bumped every time an
     /// account is added to a live wallet (see
     /// [`Self::rewind_sync_checkpoint_for_new_account`]).
@@ -245,6 +252,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
         }
@@ -262,6 +270,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
         }
@@ -289,6 +298,7 @@ impl ManagedWalletInfo {
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
             observed_spent_outpoints: BTreeMap::new(),
+            spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
         }
@@ -328,6 +338,83 @@ impl ManagedWalletInfo {
     /// invariants; exposed for diagnostics and tests.
     pub fn observed_spent_outpoints(&self) -> &BTreeMap<OutPoint, CoreBlockHeight> {
         &self.observed_spent_outpoints
+    }
+
+    /// Guard externally persisted spent outpoints against being credited.
+    ///
+    /// For a wallet loaded without the transactions that spent its coins.
+    /// Each entry is a spent outpoint and, when known, the transaction that
+    /// spent it (its claimant). A restored outpoint is never added to the
+    /// `utxos` of any account that holds funds — a contact's watch-only
+    /// DashPay account and an account added after this call included — and
+    /// the guard survives ChainLock pruning. Outpoints this wallet does not
+    /// own are accepted.
+    ///
+    /// **When to call:** once after each load, since claims are not part of
+    /// wallet snapshots — before any transaction funding a restored outpoint
+    /// is delivered, or after the host has replayed the records it holds.
+    /// The guard only stops a later credit: a restored outpoint already in
+    /// `utxos` stays credited and spendable until it leaves `utxos`. Those
+    /// outpoints are returned, sorted, and their count is logged at `warn`.
+    ///
+    /// **Claimants:** [`sweep_conflicts`](Self::sweep_conflicts) or
+    /// [`abandon_transaction`](Self::abandon_transaction) removing the
+    /// claimant releases the outpoint. A confirmed or InstantSend-locked
+    /// transaction spending the outpoint turns its claim into `None`,
+    /// whoever the claimant was, and `None` is never released. Restoring an
+    /// outpoint again with a different claimant — `None` against a txid, or
+    /// two txids — leaves `None`.
+    ///
+    /// **Limits:**
+    ///
+    /// * Only transactions processed by the wallet are guarded:
+    ///   `ManagedAccountRefMut::record_transaction` and `confirm_transaction`
+    ///   drive one account and credit a restored outpoint.
+    /// * A claim restored once the funding is held as a txid only —
+    ///   ChainLocked, without `keep-finalized-transactions` — leaves a later
+    ///   spender recorded as if the coin were not the wallet's.
+    /// * Later changes to a claim stay in memory: making it permanent is not
+    ///   reported, and only a sweep reports a release, in
+    ///   `released_outpoints`. Restoring the host's stale rows brings a
+    ///   released claim back, or leaves `None` where the claimant differs.
+    /// * A claimant the wallet holds no record of is released by
+    ///   [`abandon_transaction`](Self::abandon_transaction) only, not by a
+    ///   final transaction that beats it on another input.
+    /// * A claim does not pass to another transaction: once its claimant is
+    ///   removed the outpoint is released even while another live
+    ///   transaction spends it, and no claim is made for a live spend that
+    ///   only another account recorded. An account that never recorded that
+    ///   spend then credits the funding (dashpay/rust-dashcore#1114).
+    pub fn restore_spent_outpoints(
+        &mut self,
+        outpoints: &[(OutPoint, Option<Txid>)],
+    ) -> Vec<OutPoint> {
+        for (outpoint, claimant) in outpoints {
+            let held = self.spent_claims.entry(*outpoint).or_insert(*claimant);
+            if held != claimant {
+                *held = None;
+            }
+        }
+        let mut still_held = BTreeSet::new();
+        for mut account in self.accounts.all_accounts_mut() {
+            let Some(funds) = account.as_funds_mut() else {
+                continue;
+            };
+            for (outpoint, _) in outpoints {
+                if funds.utxos.contains_key(outpoint) {
+                    still_held.insert(*outpoint);
+                }
+                funds.keep_recorded_output_for_claim(outpoint);
+            }
+        }
+        if !still_held.is_empty() {
+            tracing::warn!(
+                count = still_held.len(),
+                "Restored spent outpoints are still held as UTXOs and stay credited and spendable; \
+                 a claim guards an outpoint only once it has left the UTXO set"
+            );
+        }
+        still_held.into_iter().collect()
     }
 
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]

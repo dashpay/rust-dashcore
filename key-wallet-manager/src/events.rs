@@ -273,17 +273,21 @@ pub enum WalletEvent {
         /// possibly-invisible transaction also claims — so guessing either
         /// re-credits a coin the chain has already spent or leaves a
         /// genuinely free one stranded as spent forever. Wallet-scoped
-        /// rather than attributed per removed transaction: a consumer holds
-        /// every input of every transaction it deletes here, so it only
-        /// needs to know which of them came free, not which removal freed
+        /// rather than attributed per removed transaction: a consumer only
+        /// needs to know which coins came free, not which removal freed
         /// which.
+        ///
+        /// An outpoint whose spent-output claim named a removed transaction
+        /// is released too, and either kind is listed only once nothing in
+        /// the wallet guards it any more — see
+        /// `WalletConflictSweep::released_outpoints` in key-wallet.
         ///
         /// One pre-existing limitation, inherited from `release_spent_marks`
         /// rather than introduced with this field: it decides what stays
         /// spent from the wallet's *live* records, and under the default
         /// `keep-finalized-transactions = off` a chainlocked record is pruned
-        /// to just its txid. So if this wallet ever recorded a second spend
-        /// of a coin an already-pruned chainlocked transaction took — which
+        /// to just its txid. So if an account ever recorded a second spend
+        /// of a coin its own already-pruned chainlocked transaction took — which
         /// needs that second spend to arrive after the pruning, since
         /// otherwise the chainlocked arrival would have swept it — and that
         /// second spend is later swept on a different input, the coin is
