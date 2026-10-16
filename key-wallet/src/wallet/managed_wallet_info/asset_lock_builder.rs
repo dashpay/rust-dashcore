@@ -7,7 +7,6 @@ use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLock
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::{OutPoint, Transaction, TxOut};
 use secp256k1::PublicKey;
-use std::collections::HashSet;
 use std::fmt;
 
 use crate::account::AccountType;
@@ -18,7 +17,7 @@ use crate::signer::Signer;
 use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_builder::{
-    BuilderError, TransactionBuilder, TransactionSigner,
+    BuilderError, TransactionBuilder, TransactionSigner, Unselected,
 };
 /// Asset-lock standardness limits, defined beside the transaction builder that
 /// enforces them and re-exported here, where asset-lock callers look for them.
@@ -313,6 +312,19 @@ fn validate_funding_sources(
     Ok(())
 }
 
+/// Reject a signed asset lock larger than Core's standard limit
+/// ([`MAX_ASSET_LOCK_TX_SIZE`]).
+fn check_signed_asset_lock_size(transaction: &Transaction) -> Result<(), AssetLockError> {
+    let size = transaction.size();
+    if size > MAX_ASSET_LOCK_TX_SIZE {
+        return Err(AssetLockError::Builder(BuilderError::AssetLockTooLarge {
+            size,
+            max: MAX_ASSET_LOCK_TX_SIZE,
+        }));
+    }
+    Ok(())
+}
+
 /// The accounts among `offered` that contributed an input to `transaction`.
 ///
 /// Only these hold a share of the build's reservation, so this is what the
@@ -381,49 +393,12 @@ struct SignedAssetLock {
     /// order; the first supplied the change address.
     offered: Vec<AccountType>,
     reservations: BuildReservations,
-    left_behind: LeftBehind,
-}
-
-/// What a bounded drain did not spend. See [`AssetLockResult::remaining_utxo_count`].
-#[derive(Default)]
-struct LeftBehind {
-    utxo_count: usize,
-    duffs: u64,
+    /// What a bounded drain left behind; zero for an exact-amount build. See
+    /// [`AssetLockResult::remaining_utxo_count`].
+    left_behind: Unselected,
 }
 
 impl ManagedWalletInfo {
-    /// The UTXOs a drain over `offered` could have spent but did not, because
-    /// it hit [`MAX_ASSET_LOCK_INPUTS`]: final, spendable at the current height,
-    /// not reserved (this build's own inputs are reserved by now, and a UTXO
-    /// another in-flight build holds was never a candidate) and not an input of
-    /// `transaction`. An outpoint offered by two overlapping accounts counts once.
-    fn left_behind_by_drain(
-        &self,
-        offered: &[AccountType],
-        transaction: &Transaction,
-    ) -> LeftBehind {
-        let height = self.last_processed_height();
-        let spent: HashSet<OutPoint> =
-            transaction.input.iter().map(|input| input.previous_output).collect();
-        let mut seen: HashSet<OutPoint> = HashSet::new();
-        let mut left = LeftBehind::default();
-        for account in offered.iter().filter_map(|at| self.accounts.funds_account(at)) {
-            let reserved = account.reservations().reserved(height);
-            for utxo in account.utxos.values() {
-                if (utxo.is_confirmed || utxo.is_instantlocked)
-                    && utxo.is_spendable(height)
-                    && !spent.contains(&utxo.outpoint)
-                    && !reserved.contains(&utxo.outpoint)
-                    && seen.insert(utxo.outpoint)
-                {
-                    left.utxo_count += 1;
-                    left.duffs += utxo.value();
-                }
-            }
-        }
-        left
-    }
-
     /// Everything both asset-lock builders do before they diverge: validate the
     /// sources, assemble the payload, fund from the pooled accounts, capture
     /// what a post-build failure must hand back, and sign.
@@ -475,26 +450,41 @@ impl ManagedWalletInfo {
             .map(|account| account.reservations().clone())
             .collect();
 
-        let (transaction, fee, token) =
-            builder.build_signed_reserved(signer, move |addr| paths.get(&addr).cloned()).await?;
+        let (transaction, fee, token, unselected) = builder
+            .build_signed_reserved_reporting(signer, move |addr| paths.get(&addr).cloned())
+            .await?;
 
         let reserved: Vec<OutPoint> =
             transaction.input.iter().map(|input| input.previous_output).collect();
+        let reservations = BuildReservations {
+            sets,
+            reserved,
+            token,
+        };
+
+        // The builder checked a signed-size upper bound before signing, but it
+        // assumes compressed keys and low-S signatures; an external signer
+        // could return larger scriptSigs. Check what was actually signed, and
+        // give the inputs back rather than hand out a lock Core drops.
+        if let Err(e) = check_signed_asset_lock_size(&transaction) {
+            reservations.release();
+            return Err(e);
+        }
+
+        // Selection drew from every final, unreserved, spendable UTXO of the
+        // offered accounts; what it left out is what the cap left behind. An
+        // exact-amount build leaves UTXOs out by design, so it reports none.
         let left_behind = if drain {
-            self.left_behind_by_drain(&offered, &transaction)
+            unselected
         } else {
-            LeftBehind::default()
+            Unselected::default()
         };
 
         Ok(SignedAssetLock {
             transaction,
             fee,
             offered,
-            reservations: BuildReservations {
-                sets,
-                reserved,
-                token,
-            },
+            reservations,
             left_behind,
         })
     }
