@@ -8,8 +8,8 @@
 
 use crate::{dash_spv_ffi_sync_progress_destroy, FFISyncProgress};
 use dash_spv::network::NetworkEvent;
-use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
+use dash_spv::{SyncEvent, SyncProgress};
 use dashcore::hashes::Hash;
 use hex_conservative::DisplayHex;
 use key_wallet::account::AccountType;
@@ -40,17 +40,17 @@ pub enum FFIManagerId {
     Mempool = 7,
 }
 
-impl From<dash_spv::sync::ManagerIdentifier> for FFIManagerId {
-    fn from(id: dash_spv::sync::ManagerIdentifier) -> Self {
+impl From<dash_spv::ManagerIdentifier> for FFIManagerId {
+    fn from(id: dash_spv::ManagerIdentifier) -> Self {
         match id {
-            dash_spv::sync::ManagerIdentifier::BlockHeader => FFIManagerId::Headers,
-            dash_spv::sync::ManagerIdentifier::FilterHeader => FFIManagerId::FilterHeaders,
-            dash_spv::sync::ManagerIdentifier::Filter => FFIManagerId::Filters,
-            dash_spv::sync::ManagerIdentifier::Block => FFIManagerId::Blocks,
-            dash_spv::sync::ManagerIdentifier::Masternode => FFIManagerId::Masternodes,
-            dash_spv::sync::ManagerIdentifier::ChainLock => FFIManagerId::ChainLocks,
-            dash_spv::sync::ManagerIdentifier::InstantSend => FFIManagerId::InstantSend,
-            dash_spv::sync::ManagerIdentifier::Mempool => FFIManagerId::Mempool,
+            dash_spv::ManagerIdentifier::BlockHeader => FFIManagerId::Headers,
+            dash_spv::ManagerIdentifier::FilterHeader => FFIManagerId::FilterHeaders,
+            dash_spv::ManagerIdentifier::Filter => FFIManagerId::Filters,
+            dash_spv::ManagerIdentifier::Block => FFIManagerId::Blocks,
+            dash_spv::ManagerIdentifier::Masternode => FFIManagerId::Masternodes,
+            dash_spv::ManagerIdentifier::ChainLock => FFIManagerId::ChainLocks,
+            dash_spv::ManagerIdentifier::InstantSend => FFIManagerId::InstantSend,
+            dash_spv::ManagerIdentifier::Mempool => FFIManagerId::Mempool,
         }
     }
 }
@@ -94,7 +94,7 @@ impl FFIProgressCallback {
     ///
     /// Creates an FFISyncProgress from the Rust progress, calls the callback,
     /// then cleans up all allocated memory.
-    pub fn dispatch(&self, progress: &dash_spv::sync::SyncProgress) {
+    pub fn dispatch(&self, progress: &dash_spv::SyncProgress) {
         if let Some(cb) = self.on_progress {
             // Clone the progress to get an owned SyncProgress for conversion
             let owned_progress = progress.clone();
@@ -321,8 +321,8 @@ impl Default for FFISyncEventCallbacks {
 
 impl FFISyncEventCallbacks {
     /// Dispatch a SyncEvent to the appropriate callback.
-    pub fn dispatch(&self, event: &dash_spv::sync::SyncEvent) {
-        use dash_spv::sync::SyncEvent;
+    pub fn dispatch(&self, event: &dash_spv::SyncEvent) {
+        use dash_spv::SyncEvent;
 
         match event {
             SyncEvent::SyncStart {

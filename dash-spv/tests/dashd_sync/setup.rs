@@ -8,8 +8,7 @@ use dash_spv::test_utils::{PeerStorage, PersistentPeerStorage, PersistentStorage
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    sync::{ProgressPercentage, SyncEvent, SyncProgress},
-    LoggingGuard, Network,
+    LoggingGuard, Network, ProgressPercentage, SyncEvent, SyncProgress,
 };
 use dashcore::network::address::AddrV2Message;
 use dashcore::network::constants::ServiceFlags;

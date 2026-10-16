@@ -1,4 +1,4 @@
-use dash_spv::sync::ProgressPercentage;
+use dash_spv::ProgressPercentage;
 use dashcore::{Address, Amount, Network};
 use std::collections::HashSet;
 use std::sync::Arc;

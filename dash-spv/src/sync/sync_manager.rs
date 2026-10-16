@@ -33,21 +33,6 @@ pub enum SyncManagerProgress {
     Mempool(MempoolProgress),
 }
 
-impl SyncManagerProgress {
-    pub fn state(&self) -> SyncState {
-        match self {
-            SyncManagerProgress::BlockHeaders(progress) => progress.state(),
-            SyncManagerProgress::FilterHeaders(progress) => progress.state(),
-            SyncManagerProgress::Filters(progress) => progress.state(),
-            SyncManagerProgress::Blocks(progress) => progress.state(),
-            SyncManagerProgress::Masternodes(progress) => progress.state(),
-            SyncManagerProgress::ChainLock(progress) => progress.state(),
-            SyncManagerProgress::InstantSend(progress) => progress.state(),
-            SyncManagerProgress::Mempool(progress) => progress.state(),
-        }
-    }
-}
-
 pub struct SyncManagerTaskContext {
     pub(super) message_receiver: UnboundedReceiver<Message>,
     pub(super) sync_event_sender: broadcast::Sender<SyncEvent>,

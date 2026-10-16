@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dash_spv::sync::{ProgressPercentage, SyncEvent};
 use dash_spv::Network;
+use dash_spv::{ProgressPercentage, SyncEvent};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 use tokio::sync::broadcast::error::TryRecvError;
