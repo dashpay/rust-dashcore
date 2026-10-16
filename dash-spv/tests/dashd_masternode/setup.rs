@@ -10,8 +10,7 @@ use dash_spv::test_utils::{MasternodeListEngine, PersistentBlockHeaderStorage};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    sync::{SyncEvent, SyncProgress},
-    LoggingGuard, Network,
+    LoggingGuard, Network, SyncEvent, SyncProgress,
 };
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{WalletEvent, WalletId, WalletManager};

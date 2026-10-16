@@ -36,8 +36,6 @@ const PENDING_TTL: Duration = Duration::from_secs(3600);
 /// Entry in the InstantLock cache.
 #[derive(Debug, Clone)]
 pub struct InstantLockEntry {
-    /// The InstantLock data.
-    pub instant_lock: InstantLock,
     /// When the InstantLock was received.
     pub received_at: SystemTime,
     /// Whether the BLS signature was validated.
@@ -186,7 +184,6 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
         // Store in cache
         let entry = InstantLockEntry {
-            instant_lock: instantlock.clone(),
             received_at: SystemTime::now(),
             validated,
         };
@@ -349,24 +346,9 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         }
     }
 
-    /// Get an InstantLock by transaction ID.
-    pub fn get_instantlock(&self, txid: &Txid) -> Option<&InstantLockEntry> {
-        self.instantlocks.get(txid)
-    }
-
-    /// Check if a transaction has a validated InstantLock.
-    pub fn is_transaction_locked(&self, txid: &Txid) -> bool {
-        self.instantlocks.get(txid).map(|e| e.validated).unwrap_or(false)
-    }
-
     /// Get the number of pending InstantLocks awaiting validation.
     pub fn pending_count(&self) -> usize {
         self.pending_instantlocks.len()
-    }
-
-    /// Get the number of cached InstantLocks.
-    pub fn cached_count(&self) -> usize {
-        self.instantlocks.len()
     }
 }
 
@@ -566,11 +548,11 @@ mod tests {
         let _ = manager.process_instantlock(&islock).await.unwrap();
 
         // Should be retrievable by txid
-        assert!(manager.get_instantlock(&txid).is_some());
+        assert!(manager.instantlocks.contains_key(&txid));
 
         // Unknown txid
         let unknown = Txid::from_byte_array([2u8; 32]);
-        assert!(manager.get_instantlock(&unknown).is_none());
+        assert!(!manager.instantlocks.contains_key(&unknown));
     }
 
     #[tokio::test]
@@ -587,7 +569,7 @@ mod tests {
         }
 
         // Should be capped at MAX_CACHE_SIZE
-        assert!(manager.cached_count() <= MAX_CACHE_SIZE);
+        assert!(manager.instantlocks.len() <= MAX_CACHE_SIZE);
     }
 
     /// A queued InstantLock must be re-validated by `tick` as soon as the
@@ -731,12 +713,12 @@ mod tests {
         let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(manager.pending_count(), 1);
-        assert!(manager.get_instantlock(&txid).is_some());
+        assert!(manager.instantlocks.contains_key(&txid));
 
         // Disconnect must clear the queue AND the unvalidated cache entry.
         manager.on_disconnect();
         assert_eq!(manager.pending_count(), 0);
-        assert!(manager.get_instantlock(&txid).is_none());
+        assert!(!manager.instantlocks.contains_key(&txid));
 
         // Re-announcement of the same txid is processed fresh, not deduped away.
         let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
