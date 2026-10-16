@@ -2,11 +2,10 @@
 //!
 //! This module contains:
 //! - The main `DashSpvClient` struct definition
-//! - Simple getters for wallet, network, storage, etc.
-//! - Storage operations (clear_storage, clear_sync_state, clear_filters)
-//! - State queries (is_running, tip_hash, tip_height, chain_state, stats)
+//! - Simple getters for wallet and network
+//! - State and header queries (is_running, tip_header, header_at, header_height)
+//! - clear_storage
 //! - Configuration updates
-//! - Terminal UI accessors
 
 use crate::sml_engine::MasternodeListEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,13 +15,15 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::ClientConfig;
-use crate::error::{Result, SpvError};
+use crate::error::{Result, SpvError, StorageResult};
 use crate::network::NetworkManager;
 use crate::storage::{
-    PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
-    PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
+    BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
+    PersistentBlockStorage, PersistentFilterHeaderStorage, PersistentFilterStorage,
+    PersistentMetadataStorage, StorageManager,
 };
 use crate::sync::{Managers, SyncCoordinator};
+use crate::types::HashedBlockHeader;
 use key_wallet_manager::WalletInterface;
 
 pub(super) type SyncManagers<W> = Managers<
@@ -38,7 +39,7 @@ pub(super) type SyncManagers<W> = Managers<
 ///
 /// # Generic Design Philosophy
 ///
-/// This struct uses three generic parameters (`W`, `N`, `S`) instead of concrete types or
+/// This struct uses two generic parameters (`W`, `N`) instead of concrete types or
 /// trait objects. This design choice provides significant benefits for a library:
 ///
 /// ## Benefits of Generic Architecture
@@ -56,7 +57,6 @@ pub(super) type SyncManagers<W> = Managers<
 /// ### 3. **Library Flexibility** 🔌
 /// - Users can plug in their own `WalletInterface` implementations
 /// - Custom `NetworkManager` for specialized network requirements
-/// - Alternative `StorageManager` (in-memory, cloud, custom DB)
 /// - Essential for a reusable library
 ///
 /// ### 4. **Testing Without Mocks** 🧪
@@ -74,7 +74,6 @@ pub(super) type SyncManagers<W> = Managers<
 ///
 /// - `W: WalletInterface` - Handles UTXO tracking, address management, transaction processing
 /// - `N: NetworkManager` - Manages peer connections, message routing, network protocol
-/// - `S: StorageManager` - Persistent storage for headers, filters, chain state
 /// - Event handlers are stored as `Vec<Arc<dyn EventHandler>>`
 ///
 /// ## Common Configurations
@@ -83,18 +82,10 @@ pub(super) type SyncManagers<W> = Managers<
 ///
 /// ```ignore
 /// // Production configuration
-/// type StandardSpvClient = DashSpvClient<
-///     WalletManager,
-///     PeerNetworkManager,
-///     DiskStorageManager,
-/// >;
+/// type StandardSpvClient = DashSpvClient<WalletManager, PeerNetworkManager>;
 ///
 /// // Test configuration
-/// type TestSpvClient = DashSpvClient<
-///     WalletManager,
-///     MockNetworkManager,
-///     DiskStorageManager,
-/// >;
+/// type TestSpvClient = DashSpvClient<WalletManager, MockNetworkManager>;
 /// ```
 ///
 /// ## Why Not Trait Objects?
@@ -106,10 +97,10 @@ pub(super) type SyncManagers<W> = Managers<
 /// - Not reduce binary size (production has one instantiation anyway)
 ///
 /// The generic design is an intentional, beneficial architectural choice for a library.
-pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
+pub struct DashSpvClient<W: WalletInterface, N: NetworkManager> {
     pub(super) config: Arc<RwLock<ClientConfig>>,
     pub(super) network: Arc<Mutex<N>>,
-    pub(super) storage: Arc<Mutex<S>>,
+    pub(super) storage: Arc<Mutex<DiskStorageManager>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
     pub(super) masternode_engine:
@@ -132,7 +123,7 @@ pub(super) struct SyncLoop {
     pub(super) shutdown: CancellationToken,
 }
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> Clone for DashSpvClient<W, N> {
     fn clone(&self) -> Self {
         Self {
             config: Arc::clone(&self.config),
@@ -148,7 +139,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpv
     }
 }
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     // ============ Simple Getters ============
 
     /// Get a reference to the wallet.
@@ -161,11 +152,6 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.config.read().await.network
     }
 
-    /// Get access to storage manager (requires locking).
-    pub fn storage(&self) -> Arc<Mutex<S>> {
-        self.storage.clone()
-    }
-
     // ============ State Queries ============
 
     /// Check if the client is running. Does not wait for an ongoing `run` or `stop`.
@@ -173,15 +159,16 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.running.load(Ordering::Acquire)
     }
 
-    /// Returns the current chain tip hash if available.
-    pub async fn tip_hash(&self) -> Option<dashcore::BlockHash> {
-        let storage = self.storage.lock().await;
-        storage.get_tip().await.map(|tip| *tip.hash())
+    pub async fn tip_header(&self) -> Option<BlockHeaderTip> {
+        self.storage.lock().await.get_tip().await
     }
 
-    /// Returns the current chain tip height (absolute), accounting for checkpoint base.
-    pub async fn tip_height(&self) -> u32 {
-        self.storage.lock().await.get_tip_height().await.unwrap_or(0)
+    pub async fn header_at(&self, height: u32) -> StorageResult<Option<HashedBlockHeader>> {
+        self.storage.lock().await.get_header(height).await
+    }
+
+    pub async fn header_height(&self, hash: &dashcore::BlockHash) -> StorageResult<Option<u32>> {
+        self.storage.lock().await.get_header_height_by_hash(hash).await
     }
 
     // ============ Storage Operations ============

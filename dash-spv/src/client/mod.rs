@@ -40,7 +40,6 @@ mod config_test;
 mod tests {
     use super::{ClientConfig, DashSpvClient};
     use crate::client::config::MempoolStrategy;
-    use crate::storage::DiskStorageManager;
     use crate::test_utils::MockNetworkManager;
     use crate::Network;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
@@ -77,17 +76,12 @@ mod tests {
             .with_storage_path(temp_dir.path());
         config.start_from_height = start_from_height;
 
-        let storage = DiskStorageManager::new(&config).await.expect("Failed to create storage");
-        let client = DashSpvClient::new(
-            config,
-            MockNetworkManager::new(),
-            storage,
-            wallet,
-            vec![Arc::new(())],
-        )
-        .await
-        .expect("client construction must succeed");
-        (client.tip_height().await, client.tip_hash().await)
+        let client =
+            DashSpvClient::new(config, MockNetworkManager::new(), wallet, vec![Arc::new(())])
+                .await
+                .expect("client construction must succeed");
+        let tip = client.tip_header().await;
+        (tip.as_ref().map_or(0, |tip| tip.height()), tip.map(|tip| *tip.hash()))
     }
 
     #[tokio::test]
@@ -117,21 +111,19 @@ mod tests {
 
     #[tokio::test]
     async fn client_exposes_shared_wallet_manager() {
+        let temp_dir = TempDir::new().unwrap();
         let config = ClientConfig::mainnet()
             .without_filters()
             .without_masternodes()
             .with_mempool_tracking(MempoolStrategy::FetchAll)
-            .with_storage_path(TempDir::new().unwrap().path());
+            .with_storage_path(temp_dir.path());
 
         let network_manager = MockNetworkManager::new();
-        let storage =
-            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client =
-            DashSpvClient::new(config, network_manager, storage, wallet, vec![Arc::new(())])
-                .await
-                .expect("client construction must succeed");
+        let client = DashSpvClient::new(config, network_manager, wallet, vec![Arc::new(())])
+            .await
+            .expect("client construction must succeed");
 
         // Verify the wallet is accessible
         let wallet_ref = client.wallet();

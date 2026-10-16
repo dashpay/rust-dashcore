@@ -9,7 +9,6 @@ use tokio::time;
 
 use dash_spv::client::{ClientConfig, DashSpvClient};
 use dash_spv::network::PeerNetworkManager;
-use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -43,14 +42,10 @@ async fn test_peer_connection() {
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
-    // Create storage manager
-    let storage_manager = DiskStorageManager::new(&config).await.unwrap();
-
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    let client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
+    let client = DashSpvClient::new(config, network_manager, wallet, vec![]).await.unwrap();
 
     client.run().await.expect("Should run");
 
@@ -76,16 +71,11 @@ async fn test_peer_persistence() {
         // Create network manager
         let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
-        // Create storage manager
-        let storage_manager = DiskStorageManager::new(&config).await.unwrap();
-
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
         let client =
-            DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![])
-                .await
-                .unwrap();
+            DashSpvClient::new(config.clone(), network_manager, wallet, vec![]).await.unwrap();
 
         client.run().await.expect("Should run");
 
@@ -102,15 +92,10 @@ async fn test_peer_persistence() {
         // Create network manager
         let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
-        // Create storage manager - reuse same path
-        let storage_manager = DiskStorageManager::new(&config).await.unwrap();
-
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client = DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![])
-            .await
-            .unwrap();
+        let client = DashSpvClient::new(config, network_manager, wallet, vec![]).await.unwrap();
 
         // Should connect faster due to saved peers
         let start = tokio::time::Instant::now();
@@ -141,14 +126,10 @@ async fn test_peer_disconnection() {
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
-    // Create storage manager
-    let storage_manager = DiskStorageManager::new(&config).await.unwrap();
-
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    let client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
+    let client = DashSpvClient::new(config, network_manager, wallet, vec![]).await.unwrap();
 
     // Note: This test would require actual regtest nodes running
     // For now, we just test that the API works
