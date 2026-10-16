@@ -7,14 +7,13 @@
 use tokio::sync::watch;
 
 use crate::network::{NetworkEvent, NetworkManager};
-use crate::storage::StorageManager;
 use crate::sync::{SyncEvent, SyncProgress};
 use key_wallet_manager::WalletInterface;
 use tokio::sync::broadcast;
 
 use super::DashSpvClient;
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Subscribe to sync progress updates via watch channel.
     pub(crate) async fn subscribe_progress(&self) -> watch::Receiver<SyncProgress> {
         self.sync_coordinator.lock().await.subscribe_progress()

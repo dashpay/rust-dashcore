@@ -1,14 +1,13 @@
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::NetworkEvent;
-use dash_spv::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use dash_spv::test_utils::{
     create_test_wallet, init_test_logging, next_unused_receive_address, retain_test_dir,
     DashdTestContext, TestChain, TestEventHandler,
 };
+use dash_spv::test_utils::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::DiskStorageManager,
     sync::{ProgressPercentage, SyncEvent, SyncProgress},
     LoggingGuard, Network,
 };
@@ -226,8 +225,7 @@ impl Drop for TestContext {
 }
 
 /// Type alias for the SPV client used in tests.
-pub(super) type TestClient =
-    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>;
+pub(super) type TestClient = DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager>;
 
 /// A `ClientHandle` is a utility structure that manages the state and handles for a `TestClient`
 /// required to interact with the synchronization process and event channels.
@@ -284,18 +282,15 @@ pub(super) async fn create_and_start_client(
 ) -> ClientHandle {
     let network_manager =
         PeerNetworkManager::new(config).await.expect("Failed to create network manager");
-    let storage_manager =
-        DiskStorageManager::new(config).await.expect("Failed to create storage manager");
 
     let handler = Arc::new(TestEventHandler::new());
     let progress_receiver = handler.subscribe_progress();
     let sync_event_receiver = handler.subscribe_sync_events();
     let network_event_receiver = handler.subscribe_network_events();
 
-    let client =
-        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![handler])
-            .await
-            .expect("Failed to create client");
+    let client = DashSpvClient::new(config.clone(), network_manager, wallet, vec![handler])
+        .await
+        .expect("Failed to create client");
 
     let wallet_event_receiver = {
         let w = client.wallet().read().await;
