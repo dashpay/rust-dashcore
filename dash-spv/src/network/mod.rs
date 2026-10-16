@@ -38,7 +38,7 @@ pub use message_type::MessageType;
 pub use peer::Peer;
 pub(crate) use reputation::PeerReputation;
 use std::net::SocketAddr;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 
 const FILTER_TYPE_DEFAULT: u8 = 0;
 
@@ -201,7 +201,7 @@ impl RequestSender {
 #[async_trait]
 pub trait NetworkManager: Send + Sync + 'static {
     /// Creates and returns a receiver that yields only messages of the matching the provided message types.
-    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message>;
+    async fn message_receiver(&mut self, types: &[MessageType]) -> Receiver<Message>;
 
     /// Get a sender for queuing outgoing network requests.
     ///

@@ -16,7 +16,7 @@ use crate::SyncError;
 /// catch up to each other as events flow between them.
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::watch;
 use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
@@ -49,7 +49,7 @@ impl SyncManagerProgress {
 }
 
 pub struct SyncManagerTaskContext {
-    pub(super) message_receiver: UnboundedReceiver<Message>,
+    pub(super) message_receiver: Receiver<Message>,
     pub(super) sync_event_sender: broadcast::Sender<SyncEvent>,
     pub(super) network_event_receiver: broadcast::Receiver<NetworkEvent>,
     pub(super) requests: RequestSender,
@@ -466,7 +466,7 @@ mod tests {
         let tick_count = manager.tick_count.clone();
 
         // Create channels
-        let (_, message_receiver) = mpsc::unbounded_channel();
+        let (_, message_receiver) = mpsc::channel(1);
         let sync_event_sender = broadcast::Sender::<SyncEvent>::new(100);
         let network_event_sender = broadcast::Sender::<NetworkEvent>::new(100);
         let (req_tx, _req_rx) = mpsc::unbounded_channel::<NetworkRequest>();
