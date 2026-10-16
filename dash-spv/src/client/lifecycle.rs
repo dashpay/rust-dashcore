@@ -31,6 +31,7 @@ use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -81,6 +82,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             masternode_engine,
             sync_coordinator: Arc::new(Mutex::new(SyncCoordinator::new(initial_progress.clone()))),
             sync_loop: Arc::new(Mutex::new(None)),
+            running: Arc::new(AtomicBool::new(false)),
             event_handlers: Arc::new(event_handlers),
         };
 
@@ -299,6 +301,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Stop the sync loop before tearing anything down so it cannot lock the
         // sync coordinator again. This prevents a tick from racing against the
         // shutdown below.
+        self.running.store(false, Ordering::Release);
         shutdown.cancel();
         if let Err(e) = task.await {
             tracing::warn!("Sync loop task failed: {}", e);

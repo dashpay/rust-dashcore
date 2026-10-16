@@ -2310,6 +2310,10 @@ pub struct DMNStateDiff {
     /// Setting it clears [`DMNState::payout_address`] on [`DMNState::apply_diff`].
     pub payouts: Option<Vec<DMNPayout>>,
     pub pub_key_operator: Option<Vec<u8>>,
+    /// `None` = unchanged, `Some(None)` = cleared, `Some(Some(_))` = set. Core prints no field
+    /// when it empties the payout (an operator key change, a revocation, a ProUpServTx without
+    /// one), so from Core that change reads as `None`; `Some(None)` comes from an empty string
+    /// or from [`DMNState::compare_to_newer_dmn_state`].
     pub operator_payout_address: Option<Option<[u8; 20]>>,
     pub platform_node_id: Option<[u8; 20]>,
     #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
@@ -2343,6 +2347,7 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             payout_address,
             payouts,
             pub_key_operator,
+            operator_payout_address,
             addresses,
         } = value;
 
@@ -2376,7 +2381,22 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
                 })
             })
             .transpose()?;
-        let operator_payout_address = None;
+        // Core prints no field when it empties the operator payout. An empty string reads as
+        // cleared rather than failing the whole list diff.
+        let operator_payout_address = operator_payout_address
+            .map(|address| {
+                if address.is_empty() {
+                    return Ok(None);
+                }
+                let address = Address::from_str(address.as_str())?;
+                address.payload_to_vec().try_into().map(Some).map_err(|_| {
+                    encode::Error::InvalidVectorSize {
+                        expected: 20,
+                        actual: address.payload_to_vec().len(),
+                    }
+                })
+            })
+            .transpose()?;
 
         let platform_node_id = platform_node_id
             .map(|address| {
@@ -2455,10 +2475,10 @@ impl DMNState {
     /// when they match.
     ///
     /// A field that goes from `Some` to `None` with nothing replacing it (the legacy platform
-    /// ports, `owner_address`, `platform_node_id`, or both payout fields at once) cannot be
-    /// expressed: the diff leaves it out and applying it keeps the old value. Core makes none of
-    /// those transitions except on revoking an extended-address Evo, whose printed ports turn
-    /// to `-1`, and Core's own diff does not print that change either.
+    /// ports, `owner_address`, `platform_node_id`, `pose_revived_height`, or both payout fields
+    /// at once) cannot be expressed: the diff leaves it out and applying it keeps the old value.
+    /// Core makes none of those transitions except on revoking an extended-address Evo, whose
+    /// printed ports turn to `-1`, and Core's own diff does not print that change either.
     pub fn compare_to_newer_dmn_state(&self, newer: &DMNState) -> Option<DMNStateDiff> {
         let mut has_diff = false;
         let diff = DMNStateDiff {
@@ -2583,6 +2603,10 @@ impl DMNState {
     /// they keep their last value, while Core's full state prints `-1`; which value that is
     /// can depend on how Core batched the changes before the revocation, because the diff
     /// doesn't say whether the Evo was extended-address when it was reset.
+    ///
+    /// The operator payout keeps the last value a diff set: Core prints none when it empties
+    /// the payout (an operator key change, a revocation, a ProUpServTx without one), so only a
+    /// full state shows that.
     pub fn apply_diff(&mut self, diff: DMNStateDiff) {
         let DMNStateDiff {
             service,
@@ -2603,7 +2627,9 @@ impl DMNState {
             addresses,
             ..
         } = diff;
-        self.pose_revived_height = pose_revived_height;
+        if let Some(pose_revived_height) = pose_revived_height {
+            self.pose_revived_height = Some(pose_revived_height);
+        }
         if let Some(pose_ban_height) = pose_ban_height {
             self.pose_ban_height = pose_ban_height;
         }
@@ -3219,6 +3245,8 @@ pub struct DMNStateDiffIntermediate {
     pub payouts: Option<Vec<DMNPayout>>,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
     pub pub_key_operator: Option<Vec<u8>>,
+    #[serde(default)]
+    pub operator_payout_address: Option<String>,
     // Three-state: missing field = None, `null` = Some(None), object = Some(Some(_)).
     #[serde(default, deserialize_with = "deserialize_addresses_2opt")]
     pub addresses: Option<Option<MasternodeAddresses>>,
@@ -4306,6 +4334,28 @@ mod tests {
     }
 
     #[test]
+    fn dmn_state_diff_reads_an_empty_operator_payout_address_as_cleared() {
+        // Core prints no field when it empties the operator payout; an empty string, should a
+        // Core version print one, means the same and must not fail the whole list diff.
+        let diff: DMNStateDiff = serde_json::from_value(json!({"operatorPayoutAddress": ""}))
+            .expect("an empty operator payout address must not fail the diff");
+        assert_eq!(diff.operator_payout_address, Some(None));
+
+        let mut state = core_v24_listdiff().added_mns[1].state.clone();
+        state.operator_payout_address = Some([0x77; 20]);
+        state.apply_diff(diff);
+        assert_eq!(state.operator_payout_address, None);
+    }
+
+    #[test]
+    fn dmn_state_diff_rejects_a_malformed_operator_payout_address() {
+        let diff = serde_json::from_value::<DMNStateDiff>(
+            json!({"operatorPayoutAddress": "not-an-address"}),
+        );
+        assert!(diff.is_err(), "a malformed operator payout address must not read as absent");
+    }
+
+    #[test]
     #[allow(deprecated)]
     fn extaddr_evo_port_only_diff_carries_the_new_port_only_in_addresses() {
         // An extended-address Evo keeps its platform ports in `addresses` and its scalar ports
@@ -4995,6 +5045,16 @@ mod tests {
         });
         newer.legacy_platform_p2p_port = Some(36656);
         newer.legacy_platform_http_port = Some(1443);
+        assert_compare_then_apply_round_trips(&older, &newer);
+    }
+
+    #[test]
+    fn compare_then_apply_round_trips_an_unchanged_pose_revived_height() {
+        // A ProUpRegTx changing the voting key of a masternode revived earlier.
+        let mut older = core_v24_listdiff().added_mns[1].state.clone();
+        older.pose_revived_height = Some(1200);
+        let mut newer = older.clone();
+        newer.voting_address = [0xee; 20];
         assert_compare_then_apply_round_trips(&older, &newer);
     }
 

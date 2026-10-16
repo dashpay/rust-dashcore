@@ -19,7 +19,7 @@ permissions: {}
 jobs:
   relay:
     name: ready-for-review-trigger
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Relay to applier
         run: echo "Relaying pull request event to the ready-for-review applier via workflow_run."

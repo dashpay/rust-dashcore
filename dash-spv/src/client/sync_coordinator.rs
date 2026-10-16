@@ -1,5 +1,6 @@
 //! Sync coordination and orchestration.
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -125,6 +126,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 spawn_reservation_sweep(self.wallet.clone(), ttl, monitor_shutdown.clone())
             });
 
+        // Set before the loop starts, so a loop failing right away clears it.
+        self.running.store(true, Ordering::Release);
         let client = self.clone();
         let shutdown = monitor_shutdown.clone();
 
@@ -171,6 +174,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             };
 
             // Signal monitors to shut down before channels close
+            client.running.store(false, Ordering::Release);
             monitor_shutdown.cancel();
             tracing::info!("Stopping sync monitoring");
 

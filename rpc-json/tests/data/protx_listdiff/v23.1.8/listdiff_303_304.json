@@ -1,0 +1,21 @@
+{
+  "baseHeight": 303,
+  "blockHeight": 304,
+  "addedMNs": [],
+  "removedMNs": [],
+  "updatedMNs": [
+    {
+      "06b9004fc63be0fd7a1a552b2f794335883452feafa38f3b93733d10ad326570": {
+        "lastPaidHeight": 304
+      }
+    },
+    {
+      "edf27b823c51820c5e6ac81b1973838ae33f440c021ac569c11bd39e7f2f448f": {
+        "operatorPayoutAddress": "8zojTchrwVdoYzvjcuNjD8cK56UHtyiFCz"
+      }
+    },
+    {
+      "62fe8d4603be148dbf1140323e1280e2e1da075d1b44d341ded74690b6e6ee04": {}
+    }
+  ]
+}
