@@ -12,32 +12,53 @@
 // If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 //
 
+/// Writes already encoded hex in the style of `hex-conservative` 0.2.
+///
+/// Right aligned by default, `0x` under `{:#}`, and precision cuts the digits.
+/// `hex-conservative` 1.x pads like a string, so going through it directly
+/// would change how hashes print with a width.
+#[doc(hidden)]
+pub fn pad_hex(f: &mut core::fmt::Formatter, encoded: &str) -> core::fmt::Result {
+    match f.precision() {
+        Some(precision) if encoded.len() > precision => {
+            f.pad_integral(true, "0x", &encoded[..precision])
+        }
+        _ => f.pad_integral(true, "0x", encoded),
+    }
+}
+
 #[macro_export]
 /// Adds hexadecimal formatting implementation of a trait `$imp` to a given type `$ty`.
 macro_rules! hex_fmt_impl(
-    ($reverse:expr, $ty:ident) => (
-        $crate::hex_fmt_impl!($reverse, $ty, );
+    ($reverse:expr, $len:expr, $ty:ident) => (
+        $crate::hex_fmt_impl!($reverse, $len, $ty, );
     );
-    ($reverse:expr, $ty:ident, $($generator:ident: $gent:ident),*) => (
+    ($reverse:expr, $len:expr, $ty:ident, $($generator:ident: $gent:ident),*) => (
         impl<$($generator: $gent),*> $crate::_export::_core::fmt::LowerHex for $ty<$($generator),*> {
             #[inline]
             fn fmt(&self, f: &mut $crate::_export::_core::fmt::Formatter) -> $crate::_export::_core::fmt::Result {
+                let mut encoder = $crate::_export::hex_conservative::buf_encoder::BufEncoder::<{ $len * 2 }>::new($crate::_export::hex_conservative::Case::Lower);
+                let bytes = $crate::Hash::as_byte_array(self);
                 if $reverse {
-                    $crate::_export::_core::fmt::LowerHex::fmt(&self.0.backward_hex(), f)
+                    encoder.put_bytes(bytes.iter().rev());
                 } else {
-                    $crate::_export::_core::fmt::LowerHex::fmt(&self.0.forward_hex(), f)
+                    encoder.put_bytes(bytes.iter());
                 }
+                $crate::_export::pad_hex(f, encoder.as_str())
             }
         }
 
         impl<$($generator: $gent),*> $crate::_export::_core::fmt::UpperHex for $ty<$($generator),*> {
             #[inline]
             fn fmt(&self, f: &mut $crate::_export::_core::fmt::Formatter) -> $crate::_export::_core::fmt::Result {
+                let mut encoder = $crate::_export::hex_conservative::buf_encoder::BufEncoder::<{ $len * 2 }>::new($crate::_export::hex_conservative::Case::Upper);
+                let bytes = $crate::Hash::as_byte_array(self);
                 if $reverse {
-                    $crate::_export::_core::fmt::UpperHex::fmt(&self.0.backward_hex(), f)
+                    encoder.put_bytes(bytes.iter().rev());
                 } else {
-                    $crate::_export::_core::fmt::UpperHex::fmt(&self.0.forward_hex(), f)
+                    encoder.put_bytes(bytes.iter());
                 }
+                $crate::_export::pad_hex(f, encoder.as_str())
             }
         }
 
@@ -74,35 +95,6 @@ macro_rules! borrow_slice_impl(
             fn as_ref(&self) -> &[u8] {
                 &self[..]
             }
-        }
-    )
-);
-
-macro_rules! engine_input_impl(
-    () => (
-        #[cfg(not(fuzzing))]
-        fn input(&mut self, mut inp: &[u8]) {
-            while !inp.is_empty() {
-                let buf_idx = self.length % <Self as crate::HashEngine>::BLOCK_SIZE;
-                let rem_len = <Self as crate::HashEngine>::BLOCK_SIZE - buf_idx;
-                let write_len = cmp::min(rem_len, inp.len());
-
-                self.buffer[buf_idx..buf_idx + write_len]
-                    .copy_from_slice(&inp[..write_len]);
-                self.length += write_len;
-                if self.length % <Self as crate::HashEngine>::BLOCK_SIZE == 0 {
-                    self.process_block();
-                }
-                inp = &inp[write_len..];
-            }
-        }
-
-        #[cfg(fuzzing)]
-        fn input(&mut self, inp: &[u8]) {
-            for c in inp {
-                self.buffer[0] ^= *c;
-            }
-            self.length += inp.len();
         }
     )
 );
@@ -202,7 +194,11 @@ macro_rules! hash_newtype {
             $({ $($type_attrs)* })*
         }
 
-        $crate::hex_fmt_impl!(<$newtype as $crate::Hash>::DISPLAY_BACKWARD, $newtype);
+        $crate::hex_fmt_impl!(
+            <$newtype as $crate::Hash>::DISPLAY_BACKWARD,
+            <$newtype as $crate::Hash>::LEN,
+            $newtype
+        );
         $crate::serde_impl!($newtype, <$newtype as $crate::Hash>::LEN);
         $crate::bincode_impl!($newtype, <$newtype as $crate::Hash>::LEN);
         $crate::borrow_slice_impl!($newtype);
@@ -291,16 +287,13 @@ macro_rules! hash_newtype {
         }
 
         impl $crate::_export::_core::str::FromStr for $newtype {
-            type Err = $crate::hex::Error;
+            type Err = $crate::_export::hex_conservative::DecodeFixedLengthBytesError;
             fn from_str(s: &str) -> $crate::_export::_core::result::Result<$newtype, Self::Err> {
-                use $crate::hex::{HexIterator, FromHex};
-
-                let inner: <$hash as $crate::Hash>::Bytes = if <Self as $crate::Hash>::DISPLAY_BACKWARD {
-                    FromHex::from_byte_iter(HexIterator::new(s)?.rev())?
-                } else {
-                    FromHex::from_byte_iter(HexIterator::new(s)?)?
-                };
-                Ok($newtype(<$hash as $crate::Hash>::from_byte_array(inner)))
+                let mut bytes: [u8; <Self as $crate::Hash>::LEN] = $crate::_export::hex_conservative::decode_to_array(s)?;
+                if <Self as $crate::Hash>::DISPLAY_BACKWARD {
+                    bytes.reverse();
+                }
+                Ok($newtype(<$hash as $crate::Hash>::from_byte_array(bytes)))
             }
         }
 
@@ -326,7 +319,7 @@ macro_rules! hash_newtype {
         }
 
         impl From<$newtype> for [u8; <$hash as $crate::Hash>::LEN] {
-            fn from(value: $newtype) -> Self { value.0.into() }
+            fn from(value: $newtype) -> Self { $crate::Hash::to_byte_array(value.0) }
         }
         )+
     };
@@ -345,7 +338,11 @@ macro_rules! hash_newtype_no_ord {
             $({ $($type_attrs)* })*
         }
 
-        $crate::hex_fmt_impl!(<$newtype as $crate::Hash>::DISPLAY_BACKWARD, $newtype);
+        $crate::hex_fmt_impl!(
+            <$newtype as $crate::Hash>::DISPLAY_BACKWARD,
+            <$newtype as $crate::Hash>::LEN,
+            $newtype
+        );
         $crate::serde_impl!($newtype, <$newtype as $crate::Hash>::LEN);
         $crate::borrow_slice_impl!($newtype);
 
@@ -425,16 +422,13 @@ macro_rules! hash_newtype_no_ord {
         }
 
         impl $crate::_export::_core::str::FromStr for $newtype {
-            type Err = $crate::hex::Error;
+            type Err = $crate::_export::hex_conservative::DecodeFixedLengthBytesError;
             fn from_str(s: &str) -> $crate::_export::_core::result::Result<$newtype, Self::Err> {
-                use $crate::hex::{HexIterator, FromHex};
-
-                let inner: <$hash as $crate::Hash>::Bytes = if <Self as $crate::Hash>::DISPLAY_BACKWARD {
-                    FromHex::from_byte_iter(HexIterator::new(s)?.rev())?
-                } else {
-                    FromHex::from_byte_iter(HexIterator::new(s)?)?
-                };
-                Ok($newtype(<$hash as $crate::Hash>::from_byte_array(inner)))
+                let mut bytes: [u8; <Self as $crate::Hash>::LEN] = $crate::_export::hex_conservative::decode_to_array(s)?;
+                if <Self as $crate::Hash>::DISPLAY_BACKWARD {
+                    bytes.reverse();
+                }
+                Ok($newtype(<$hash as $crate::Hash>::from_byte_array(bytes)))
             }
         }
 
@@ -460,7 +454,7 @@ macro_rules! hash_newtype_no_ord {
         }
 
         impl From<$newtype> for [u8; <$hash as $crate::Hash>::LEN] {
-            fn from(value: $newtype) -> Self { value.0.into() }
+            fn from(value: $newtype) -> Self { $crate::Hash::to_byte_array(value.0) }
         }
         )+
     };
@@ -579,100 +573,30 @@ macro_rules! hash_newtype_known_attrs {
     ($($ignore:tt)*) => {};
 }
 
-#[cfg(feature = "schemars")]
-pub mod json_hex_string {
-    use schemars::SchemaGenerator;
-    use schemars::{json_schema, Schema};
-    macro_rules! define_custom_hex {
-        ($name:ident, $len:expr) => {
-            pub fn $name(_generator: &mut SchemaGenerator) -> Schema {
-                // In schemars 1.0, we can use the json_schema! macro to create schemas
-                json_schema!({
-                    "type": "string",
-                    "minLength": $len * 2,
-                    "maxLength": $len * 2,
-                    "pattern": "^[0-9a-fA-F]+$"
-                })
-            }
-        };
-    }
-    define_custom_hex!(len_8, 8);
-    define_custom_hex!(len_20, 20);
-    define_custom_hex!(len_32, 32);
-    define_custom_hex!(len_64, 64);
-}
-
 #[cfg(test)]
-mod test {
-    use crate::{sha256, Hash};
+mod tests {
+    use crate::{sha256, sha256d, Hash};
 
-    #[test]
-    fn hash_as_ref_array() {
-        let hash = sha256::Hash::hash(&[3, 50]);
-        let r = AsRef::<[u8; 32]>::as_ref(&hash);
-        assert_eq!(r, hash.as_byte_array());
+    crate::hash_newtype! {
+        /// Displayed backward, like `sha256d`.
+        struct Backward(sha256d::Hash);
+        /// Displayed forward, like `sha256`.
+        struct Forward(sha256::Hash);
     }
 
     #[test]
-    fn hash_as_ref_slice() {
-        let hash = sha256::Hash::hash(&[3, 50]);
-        let r = AsRef::<[u8]>::as_ref(&hash);
-        assert_eq!(r, hash.as_byte_array());
-    }
-
-    #[test]
-    fn hash_borrow() {
-        use core::borrow::Borrow;
-
-        let hash = sha256::Hash::hash(&[3, 50]);
-        let borrowed: &[u8] = hash.borrow();
-        assert_eq!(borrowed, hash.as_byte_array());
-    }
-
-    hash_newtype! {
-        /// Test hash.
-        struct TestHash(crate::sha256d::Hash);
-    }
-
-    #[test]
-    fn display() {
-        let want = "0000000000000000000000000000000000000000000000000000000000000000";
-        let got = format!("{}", TestHash::all_zeros());
-        assert_eq!(got, want)
-    }
-
-    #[test]
-    fn display_alternate() {
-        let want = "0x0000000000000000000000000000000000000000000000000000000000000000";
-        let got = format!("{:#}", TestHash::all_zeros());
-        assert_eq!(got, want)
-    }
-
-    #[test]
-    fn lower_hex() {
-        let want = "0000000000000000000000000000000000000000000000000000000000000000";
-        let got = format!("{:x}", TestHash::all_zeros());
-        assert_eq!(got, want)
-    }
-
-    #[test]
-    fn lower_hex_alternate() {
-        let want = "0x0000000000000000000000000000000000000000000000000000000000000000";
-        let got = format!("{:#x}", TestHash::all_zeros());
-        assert_eq!(got, want)
-    }
-
-    #[test]
-    fn inner_hash_as_ref_array() {
-        let hash = TestHash::all_zeros();
-        let r = AsRef::<[u8; 32]>::as_ref(&hash);
-        assert_eq!(r, hash.as_byte_array());
-    }
-
-    #[test]
-    fn inner_hash_as_ref_slice() {
-        let hash = TestHash::all_zeros();
-        let r = AsRef::<[u8]>::as_ref(&hash);
-        assert_eq!(r, hash.as_byte_array());
+    fn newtype_formatting_matches_hex_conservative_0_2() {
+        let backward = sha256d::Hash::hash(b"backward");
+        let forward = sha256::Hash::hash(b"forward");
+        macro_rules! same {
+            ($($spec:literal),*) => {$(
+                assert_eq!(format!($spec, Backward(backward)), format!($spec, backward), "{}", $spec);
+                assert_eq!(format!($spec, Forward(forward)), format!($spec, forward), "{}", $spec);
+            )*};
+        }
+        same!(
+            "{}", "{:?}", "{:x}", "{:X}", "{:#}", "{:#x}", "{:#X}", "{:70}", "{:<70}", "{:>70}",
+            "{:^70}", "{:*^70}", "{:070}", "{:#070x}", "{:.10}", "{:#.10}", "{:20.10}"
+        );
     }
 }

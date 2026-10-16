@@ -1,4 +1,4 @@
-use hashes::{Hash, sha256d};
+use hashes::Hash;
 
 use crate::bls_sig_utils::{BLSSignature, BlsScheme};
 use crate::sml::message_verification_error::MessageVerificationError;
@@ -48,7 +48,7 @@ impl QualifiedQuorumEntry {
             .map_err(|e| {
                 MessageVerificationError::ThresholdSignatureNotValid(
                     Box::new(signature),
-                    Box::new(sha256d::Hash::from_byte_array(message_digest)),
+                    Box::new(crate::hash_types::Sha256dHash::from_byte_array(message_digest)),
                     Box::new(self.quorum_entry.quorum_public_key),
                     self.quorum_entry.quorum_hash,
                     self.quorum_entry.llmq_type,

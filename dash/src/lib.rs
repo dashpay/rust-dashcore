@@ -105,9 +105,7 @@ pub mod ephemerealdata;
 pub mod error;
 pub mod hash_types;
 pub mod merkle_tree;
-pub mod platform_node_id {
-    pub use dashcore_crypto::eddsa::EddsaPkHash as PlatformNodeId;
-}
+pub mod platform_node_id;
 pub mod policy;
 pub mod pow;
 pub mod sign_message;
@@ -157,7 +155,7 @@ pub mod prelude {
 
     pub use std::io::sink;
 
-    pub use internals::hex::display::DisplayHex;
+    pub use hex_conservative::DisplayHex;
 
     pub type CoreBlockHeight = u32;
 }

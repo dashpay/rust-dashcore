@@ -8,6 +8,7 @@
 use std::str::FromStr;
 
 use dashcore::hashes::Hash;
+use hex_conservative::DisplayHex;
 use key_wallet::mnemonic::Mnemonic;
 use key_wallet::{DerivationPath, ExtendedPrivKey, ExtendedPubKey, Network};
 
@@ -42,7 +43,7 @@ fn test_dip17_platform_payment_vector1_mainnet() {
     let xprv = master_key.derive_priv(&path).unwrap();
 
     // Verify private key matches DIP-17 test vector
-    let privkey_hex = hex::encode(xprv.private_key.to_secret_bytes());
+    let privkey_hex = xprv.private_key.to_secret_bytes().to_lower_hex_string();
     assert_eq!(
         privkey_hex, "6bca392f43453b7bc33a9532b69221ce74906a8815281637e0c9d0bee35361fe",
         "Private key mismatch for DIP-17 vector 1"
@@ -51,7 +52,7 @@ fn test_dip17_platform_payment_vector1_mainnet() {
     // Get compressed public key
     let xpub = ExtendedPubKey::from_priv(&xprv);
     let pubkey = PublicKey::new(xpub.public_key);
-    let pubkey_hex = hex::encode(pubkey.to_bytes());
+    let pubkey_hex = pubkey.to_bytes().to_lower_hex_string();
     assert_eq!(
         pubkey_hex, "03de102ed1fc43cbdb16af02e294945ffaed8e0595d3072f4c592ae80816e6859e",
         "Public key mismatch for DIP-17 vector 1"
@@ -59,7 +60,7 @@ fn test_dip17_platform_payment_vector1_mainnet() {
 
     // Verify HASH160
     let pubkey_hash = pubkey.pubkey_hash();
-    let hash160_hex = hex::encode(pubkey_hash.to_byte_array());
+    let hash160_hex = pubkey_hash.to_byte_array().to_lower_hex_string();
     assert_eq!(
         hash160_hex, "f7da0a2b5cbd4ff6bb2c4d89b67d2f3ffeec0525",
         "HASH160 mismatch for DIP-17 vector 1"
@@ -114,7 +115,7 @@ fn test_dip17_platform_payment_vector2() {
     let xprv_mainnet = master_mainnet.derive_priv(&path_mainnet).unwrap();
 
     // Verify private key
-    let privkey_hex = hex::encode(xprv_mainnet.private_key.to_secret_bytes());
+    let privkey_hex = xprv_mainnet.private_key.to_secret_bytes().to_lower_hex_string();
     assert_eq!(
         privkey_hex, "eef58ce73383f63d5062f281ed0c1e192693c170fbc0049662a73e48a1981523",
         "Private key mismatch for DIP-17 vector 2"
@@ -124,7 +125,7 @@ fn test_dip17_platform_payment_vector2() {
     let pubkey_mainnet = PublicKey::new(xpub_mainnet.public_key);
 
     // Verify public key
-    let pubkey_hex = hex::encode(pubkey_mainnet.to_bytes());
+    let pubkey_hex = pubkey_mainnet.to_bytes().to_lower_hex_string();
     assert_eq!(
         pubkey_hex, "02269ff766fcd04184bc314f5385a04498df215ce1e7193cec9a607f69bc8954da",
         "Public key mismatch for DIP-17 vector 2"
@@ -132,7 +133,7 @@ fn test_dip17_platform_payment_vector2() {
 
     // Verify HASH160
     let pubkey_hash_mainnet = pubkey_mainnet.pubkey_hash();
-    let hash160_hex = hex::encode(pubkey_hash_mainnet.to_byte_array());
+    let hash160_hex = pubkey_hash_mainnet.to_byte_array().to_lower_hex_string();
     assert_eq!(
         hash160_hex, "a5ff0046217fd1c7d238e3e146cc5bfd90832a7e",
         "HASH160 mismatch for DIP-17 vector 2"
@@ -172,7 +173,7 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
     let xprv_mainnet = master_mainnet.derive_priv(&path_mainnet).unwrap();
 
     // Verify private key
-    let privkey_hex = hex::encode(xprv_mainnet.private_key.to_secret_bytes());
+    let privkey_hex = xprv_mainnet.private_key.to_secret_bytes().to_lower_hex_string();
     assert_eq!(
         privkey_hex, "cc05b4389712a2e724566914c256217685d781503d7cc05af6642e60260830db",
         "Private key mismatch for DIP-17 vector 3"
@@ -182,7 +183,7 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
     let pubkey_mainnet = PublicKey::new(xpub_mainnet.public_key);
 
     // Verify public key
-    let pubkey_hex = hex::encode(pubkey_mainnet.to_bytes());
+    let pubkey_hex = pubkey_mainnet.to_bytes().to_lower_hex_string();
     assert_eq!(
         pubkey_hex, "0317a3ed70c141cffafe00fa8bf458cec119f6fc039a7ba9a6b7303dc65b27bed3",
         "Public key mismatch for DIP-17 vector 3"
@@ -190,7 +191,7 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
 
     // Verify HASH160
     let pubkey_hash_mainnet = pubkey_mainnet.pubkey_hash();
-    let hash160_hex = hex::encode(pubkey_hash_mainnet.to_byte_array());
+    let hash160_hex = pubkey_hash_mainnet.to_byte_array().to_lower_hex_string();
     assert_eq!(
         hash160_hex, "6d92674fd64472a3dfcfc3ebcfed7382bf699d7b",
         "HASH160 mismatch for DIP-17 vector 3"

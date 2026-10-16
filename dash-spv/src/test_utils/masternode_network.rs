@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dashcore::sml::llmq_type::LLMQ_TEST_DIP00024;
+use dashcore::sml::llmq_type::{LLMQType, LLMQ_TEST_DIP00024};
 use dashcore::BlockHash;
 use dashcore_rpc::{Auth, Client, RpcApi};
 use serde::Deserialize;
@@ -357,6 +357,47 @@ impl MasternodeTestContext {
                 }
             }
             if member_count >= expected_members {
+                return true;
+            }
+            if poll_iter.is_multiple_of(5) {
+                self.bump_mocktime(1);
+            }
+            poll_iter += 1;
+            thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+
+    /// Wait until the controller would mine a non-null commitment of `llmq_type`
+    /// for `quorum_hash` in its next block (`quorum dkgstatus`
+    /// `minableCommitments`; a null commitment has no signers).
+    fn wait_for_minable_commitment(
+        &mut self,
+        llmq_type: LLMQType,
+        quorum_hash: &str,
+        timeout_secs: u64,
+    ) -> bool {
+        let start = Instant::now();
+        let timeout = Duration::from_secs(timeout_secs);
+        let llmq_type = u64::from(u8::from(llmq_type));
+        let mut poll_iter: u32 = 0;
+
+        while start.elapsed() < timeout {
+            let status = self.controller.try_rpc_call("quorum", &["dkgstatus".into()]);
+            let minable = status
+                .as_ref()
+                .and_then(|status| status.get("minableCommitments"))
+                .and_then(|commitments| commitments.as_array())
+                .is_some_and(|commitments| {
+                    commitments.iter().any(|commitment| {
+                        commitment.get("llmqType").and_then(|t| t.as_u64()) == Some(llmq_type)
+                            && commitment.get("quorumHash").and_then(|h| h.as_str())
+                                == Some(quorum_hash)
+                            && commitment.get("signersCount").and_then(|c| c.as_u64()).unwrap_or(0)
+                                > 0
+                    })
+                });
+            if minable {
                 return true;
             }
             if poll_iter.is_multiple_of(5) {
@@ -858,6 +899,18 @@ impl MasternodeTestContext {
                 timeout_secs,
             ) {
                 warn!("DKG phase {} (llmq_test_dip0024 q_0) timeout", phase);
+                return None;
+            }
+            // Phase 6 only reports the phase: the llmq_test commitment may not
+            // be on the controller yet, and the block would get a null one.
+            if phase == 6
+                && !self.wait_for_minable_commitment(
+                    LLMQType::LlmqtypeTest,
+                    &q0_hash_str,
+                    timeout_secs,
+                )
+            {
+                warn!("llmq_test commitment not minable on the controller");
                 return None;
             }
             self.mine_block_then_notify(&mut on_block_mined);

@@ -31,13 +31,6 @@ pub enum LLMQEntryVerificationSkipStatus {
     /// covers none of a quorum's quarter work blocks, or whose quorum hash
     /// heights are unknown, leaves the 4-sig tuple unpopulated.
     MissingRotationChainLockSigs(QuorumHash),
-    /// A specific rotation chain-lock signature at offset `h - n` was not
-    /// present for the masternode diff at the given block hash. The first
-    /// field is the rotation offset, the second is the diff block hash.
-    /// Distinct from `MissingRotationChainLockSigs`, which covers the case
-    /// where the entire 4-sig tuple is absent.
-    MissingRotationChainLockSig(u8, BlockHash),
-    OtherContext(String),
     /// At least one of the quarter chain-lock signatures used to reconstruct
     /// this quorum was keyed by elimination rather than by a known quorum
     /// height, so a verification failure says nothing about the quorum data
@@ -68,15 +61,6 @@ impl Display for LLMQEntryVerificationSkipStatus {
                 LLMQEntryVerificationSkipStatus::MissingRotationChainLockSigs(quorum_hash) => {
                     format!("MissingRotationChainLockSigs({})", quorum_hash)
                 }
-                LLMQEntryVerificationSkipStatus::MissingRotationChainLockSig(
-                    offset,
-                    block_hash,
-                ) => {
-                    format!("MissingRotationChainLockSig(h - {}, {})", offset, block_hash)
-                }
-                LLMQEntryVerificationSkipStatus::OtherContext(message) => {
-                    format!("OtherContext({message})")
-                }
                 LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(quorum_hash) => {
                     format!("InferredRotationChainLockSigs({})", quorum_hash)
                 }
@@ -105,14 +89,7 @@ impl From<QuorumValidationError> for LLMQEntryVerificationStatus {
             QuorumValidationError::RequiredBlockNotPresent(block_hash, _) => {
                 Self::Skipped(LLMQEntryVerificationSkipStatus::UnknownBlock(block_hash))
             }
-            // `VerifyingMasternodeListNotPresent` is grouped here because the
-            // verifying masternode list at the validation height is caller-
-            // supplied infrastructure, not quorum data. Treating it as
-            // `Skipped` mirrors the sibling `RequiredMasternodeListNotPresent`
-            // case and lets the caller refetch instead of rejecting the quorum.
-            QuorumValidationError::RequiredMasternodeListNotPresent(height)
-            | QuorumValidationError::RequiredBlockHeightNotPresent(height)
-            | QuorumValidationError::VerifyingMasternodeListNotPresent(height) => {
+            QuorumValidationError::RequiredMasternodeListNotPresent(height) => {
                 Self::Skipped(LLMQEntryVerificationSkipStatus::MissedList(height))
             }
             QuorumValidationError::RequiredSnapshotNotPresent(hash) => {
@@ -124,11 +101,6 @@ impl From<QuorumValidationError> for LLMQEntryVerificationStatus {
             QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(quorum_hash) => {
                 Self::Skipped(LLMQEntryVerificationSkipStatus::MissingRotationChainLockSigs(
                     quorum_hash,
-                ))
-            }
-            QuorumValidationError::RequiredRotatedChainLockSigNotPresent(offset, block_hash) => {
-                Self::Skipped(LLMQEntryVerificationSkipStatus::MissingRotationChainLockSig(
-                    offset, block_hash,
                 ))
             }
             // A cycle base sitting below the depth a rotation reconstruction
@@ -172,7 +144,6 @@ mod tests {
         let h1 = dummy_hash(1);
         let h2 = dummy_hash(2);
         let h3 = dummy_hash(3);
-        let h4 = dummy_hash(4);
         let h5 = dummy_hash(5);
 
         let cases: Vec<(QuorumValidationError, LLMQEntryVerificationStatus)> = vec![
@@ -186,18 +157,6 @@ mod tests {
                 QuorumValidationError::RequiredMasternodeListNotPresent(42),
                 LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(
                     42,
-                )),
-            ),
-            (
-                QuorumValidationError::RequiredBlockHeightNotPresent(99),
-                LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(
-                    99,
-                )),
-            ),
-            (
-                QuorumValidationError::VerifyingMasternodeListNotPresent(123),
-                LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(
-                    123,
                 )),
             ),
             (
@@ -216,12 +175,6 @@ mod tests {
                 QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(h3),
                 LLMQEntryVerificationStatus::Skipped(
                     LLMQEntryVerificationSkipStatus::MissingRotationChainLockSigs(h3),
-                ),
-            ),
-            (
-                QuorumValidationError::RequiredRotatedChainLockSigNotPresent(2, h4),
-                LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::MissingRotationChainLockSig(2, h4),
                 ),
             ),
             (
@@ -254,10 +207,6 @@ mod tests {
             (
                 LLMQEntryVerificationSkipStatus::MissingRotationChainLockSigs(h),
                 format!("MissingRotationChainLockSigs({h})"),
-            ),
-            (
-                LLMQEntryVerificationSkipStatus::MissingRotationChainLockSig(2, h),
-                format!("MissingRotationChainLockSig(h - 2, {h})"),
             ),
             (
                 LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(h),

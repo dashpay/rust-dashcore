@@ -4,6 +4,7 @@ use crate::deref_ptr;
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIAccountKind, FFIAccountResult, FFIWallet};
 use dash_network::ffi::FFINetwork;
+use hex_conservative::DisplayHex;
 #[cfg(feature = "bls")]
 use key_wallet::account::BLSAccount;
 #[cfg(feature = "eddsa")]
@@ -330,7 +331,7 @@ pub unsafe extern "C" fn bls_account_get_extended_public_key_as_string(
     // For BLS accounts, we need to encode the extended public key bytes
     // There's no standard string representation for BLS extended keys
     let bytes = account.inner().bls_public_key.to_bytes();
-    let hex_string = hex::encode(bytes);
+    let hex_string = bytes.to_lower_hex_string();
 
     match std::ffi::CString::new(hex_string) {
         Ok(c_str) => c_str.into_raw(),
@@ -447,7 +448,7 @@ pub unsafe extern "C" fn eddsa_account_get_extended_public_key_as_string(
     // For EdDSA accounts, we need to encode the extended public key
     // There's no standard string representation for Ed25519 extended keys
     let bytes = account.inner().ed25519_public_key.encode();
-    let hex_string = hex::encode(bytes);
+    let hex_string = bytes.to_lower_hex_string();
 
     match std::ffi::CString::new(hex_string) {
         Ok(c_str) => c_str.into_raw(),

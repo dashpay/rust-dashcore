@@ -60,55 +60,46 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
 
         // Try to receive (may buffer if out of order)
         if let Some(data) = self.pipeline.receive(start_height, cfheaders) {
-            // In order - process immediately
-            let count = self.process_cfheaders(&data, start_height).await?;
-            if count == 0 {
-                return Err(SyncError::Network("CFHeaders batch contained no headers".to_string()));
-            }
-            let batch_start = start_height;
-            let batch_end = start_height + count.saturating_sub(1);
-
-            // Advance and capture any buffered batches that are now ready
-            let mut ready_batches = self.pipeline.advance(count);
-            self.progress.update_current_height(self.pipeline.next_expected().saturating_sub(1));
-
-            tracing::debug!(
-                "Processed {} filter headers at {}, now at {}/{}",
-                count,
-                start_height,
-                self.progress.current_height(),
-                self.progress.block_header_tip_height()
-            );
-
-            // Emit event for this batch
-            events.push(SyncEvent::FilterHeadersStored {
-                start_height: batch_start,
-                end_height: batch_end,
-                tip_height: self.progress.current_height(),
-            });
-
-            // Process buffered responses (including any returned by first advance)
-            while !ready_batches.is_empty() {
-                // Take ownership and process each batch
-                for (height, data) in std::mem::take(&mut ready_batches) {
-                    let count = self.process_cfheaders(&data, height).await?;
-                    if count == 0 {
-                        return Err(SyncError::Network(
-                            "CFHeaders batch contained no headers".to_string(),
-                        ));
+            // In order - process it, then any buffered batches that become ready
+            let mut ready_batches = vec![(start_height, data)];
+            while let Some((height, data)) = ready_batches.pop() {
+                let count = match self.process_cfheaders(&data, height).await {
+                    Ok(count) => count,
+                    Err(SyncError::Validation(reason)) => {
+                        tracing::warn!(
+                            "Rejected CFHeaders batch at {}, requesting it again: {}",
+                            height,
+                            reason
+                        );
+                        self.pipeline.requeue_rejected(height, data.stop_hash);
+                        break;
                     }
-                    // Get more ready batches (advance returns any that are now ready)
-                    let more_ready = self.pipeline.advance(count);
-                    ready_batches.extend(more_ready);
-                    self.progress
-                        .update_current_height(self.pipeline.next_expected().saturating_sub(1));
-
-                    events.push(SyncEvent::FilterHeadersStored {
-                        start_height: height,
-                        end_height: height + count.saturating_sub(1),
-                        tip_height: self.progress.current_height(),
-                    });
+                    Err(e) => return Err(e),
+                };
+                if count == 0 {
+                    return Err(SyncError::Network(
+                        "CFHeaders batch contained no headers".to_string(),
+                    ));
                 }
+
+                // Advance and capture any buffered batch that is now ready
+                ready_batches.extend(self.pipeline.advance(count));
+                self.progress
+                    .update_current_height(self.pipeline.next_expected().saturating_sub(1));
+
+                tracing::debug!(
+                    "Processed {} filter headers at {}, now at {}/{}",
+                    count,
+                    height,
+                    self.progress.current_height(),
+                    self.progress.block_header_tip_height()
+                );
+
+                events.push(SyncEvent::FilterHeadersStored {
+                    start_height: height,
+                    end_height: height + count.saturating_sub(1),
+                    tip_height: self.progress.current_height(),
+                });
             }
         } else {
             tracing::debug!(

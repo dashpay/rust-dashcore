@@ -3,23 +3,23 @@
 //! This module provides account functionality using Ed25519 keys
 //! for Platform identity operations.
 
-use super::account_trait::AccountTrait;
-use crate::account::AccountType;
-use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey};
-use crate::error::{Error, Result};
-use crate::{ChildNumber, DerivationPath, Network};
 use core::fmt;
-use dashcore::eddsa::{EddsaPkBytes, EddsaSkBytes};
-use dashcore::Address;
 
+#[cfg(feature = "bincode")]
+use bincode_derive::{Decode, Encode};
+use dashcore::eddsa::{EddsaPkBytes, EddsaPkHash, EddsaPublicKey, EddsaSkBytes};
+use dashcore::Address;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use super::account_trait::AccountTrait;
 use crate::account::derivation::AccountDerivation;
+use crate::account::AccountType;
 use crate::bip32::{ChainCode, Fingerprint};
+use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey};
+use crate::error::{Error, Result};
 use crate::managed_account::address_pool::AddressPoolType;
-#[cfg(feature = "bincode")]
-use bincode_derive::{Decode, Encode};
+use crate::{ChildNumber, DerivationPath, Network};
 
 /// EdDSA (Ed25519) account structure for Platform identity operations
 #[derive(Debug, Clone)]
@@ -64,8 +64,7 @@ impl EdDSAAccount {
     ) -> Result<Self> {
         // Create an extended public key with default metadata
         let verifying_key = EddsaPkBytes::from_bytes(ed25519_public_key);
-        verifying_key
-            .validate()
+        EddsaPublicKey::try_from(verifying_key)
             .map_err(|e| Error::InvalidParameter(format!("Invalid Ed25519 public key: {}", e)))?;
 
         let extended_key = ExtendedEd25519PubKey {
@@ -339,7 +338,7 @@ impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, EddsaPkByt
         let ed25519_pubkey =
             self.derive_public_key_at(address_pool_type, index, use_hardened_with_priv_key)?;
 
-        let node_id = ed25519_pubkey.hash().to_canonical_bytes();
+        let node_id = EddsaPkHash::from(ed25519_pubkey).to_canonical_bytes();
 
         use dashcore::address::Payload;
         use dashcore::hashes::Hash;
@@ -431,6 +430,7 @@ mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
     use crate::managed_account::address_pool::AddressPoolType;
+    use hex_conservative::DisplayHex;
 
     #[test]
     fn test_eddsa_account_creation() {
@@ -530,7 +530,7 @@ mod tests {
     fn test_derive_address_at_uses_tenderdash_node_id() {
         use dashcore::hashes::Hash;
 
-        let seed = hex::decode(
+        let seed = hex_conservative::decode_to_vec(
             "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1\
              9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",
         )
@@ -558,7 +558,10 @@ mod tests {
         let dashcore::address::Payload::PubkeyHash(hash) = address.payload() else {
             panic!("platform pseudo-addresses use P2PKH-style payloads");
         };
-        assert_eq!(hex::encode(hash.to_byte_array()), "302f2615e6955cce8ed3cff81e8011bfd3a2991f");
+        assert_eq!(
+            hash.to_byte_array().to_lower_hex_string(),
+            "302f2615e6955cce8ed3cff81e8011bfd3a2991f"
+        );
     }
 
     #[test]

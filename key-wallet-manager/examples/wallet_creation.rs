@@ -5,6 +5,7 @@
 //! - Creating wallets from mnemonics
 //! - Managing wallet accounts and addresses
 
+use hex_conservative::DisplayHex;
 use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
@@ -26,7 +27,7 @@ fn main() {
     let wallet_id = match result {
         Ok(wallet_id) => {
             println!("✅ Wallet created successfully!");
-            println!("   Wallet ID: {}", hex::encode(wallet_id));
+            println!("   Wallet ID: {}", wallet_id.to_lower_hex_string());
             println!("   Total wallets: {}", manager.wallet_count());
             wallet_id
         }
@@ -50,7 +51,7 @@ fn main() {
     let wallet_id2 = match result {
         Ok(wallet_id2) => {
             println!("✅ Wallet created from mnemonic!");
-            println!("   Wallet ID: {}", hex::encode(wallet_id2));
+            println!("   Wallet ID: {}", wallet_id2.to_lower_hex_string());
             wallet_id2
         }
         Err(e) => {

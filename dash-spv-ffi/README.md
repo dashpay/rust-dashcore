@@ -109,4 +109,4 @@ The FFI bindings are thread-safe. The client uses internal synchronization to en
 
 ## License
 
-MIT
+CC0-1.0

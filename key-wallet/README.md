@@ -31,7 +31,6 @@ The library is organized into several key modules:
 
 - **BIP32**: Hierarchical deterministic key derivation
 - **BIP39**: Mnemonic phrase generation and validation (multiple languages)
-- **BIP38**: Encrypted private key support (optional feature)
 - **SLIP-10**: Ed25519 key derivation for Platform identities
 
 ### Transactions
@@ -77,6 +76,7 @@ The library is organized into several key modules:
 ```rust
 use key_wallet::{Wallet, Mnemonic, Network};
 use key_wallet::mnemonic::Language;
+use hex_conservative::DisplayHex;
 
 // Generate a new mnemonic
 let mnemonic = Mnemonic::generate(24, Language::English)?;
@@ -86,7 +86,7 @@ println!("Mnemonic: {}", mnemonic.phrase());
 let wallet = Wallet::from_mnemonic(mnemonic.clone(), None, Network::Mainnet)?;
 
 // Get wallet ID (unique identifier)
-println!("Wallet ID: {:?}", hex::encode(wallet.wallet_id));
+println!("Wallet ID: {}", wallet.wallet_id.to_lower_hex_string());
 ```
 
 ### Managing Accounts
@@ -163,6 +163,7 @@ let pool_1_address = coinjoin_account.derive_address_at_pool(1, 0)?;
 ```rust
 #[cfg(feature = "eddsa")]
 {
+    use hex_conservative::DisplayHex;
     use key_wallet::account::EdDSAAccount;
     
     // Create identity registration funding account
@@ -173,7 +174,7 @@ let pool_1_address = coinjoin_account.derive_address_at_pool(1, 0)?;
     
     // Get Ed25519 public key for Platform
     let pubkey = identity_account.get_public_key_bytes();
-    println!("Identity public key: {}", hex::encode(pubkey));
+    println!("Identity public key: {}", pubkey.to_lower_hex_string());
 }
 ```
 
@@ -206,7 +207,6 @@ if result.is_relevant {
 - `std`: Standard library support (enabled by default)
 - `serde`: Serialization/deserialization support
 - `bincode`: Binary serialization support
-- `bip38`: BIP38 encrypted private key support
 - `eddsa`: Ed25519 support for Platform identities
 - `bls`: BLS signature support for masternodes
 - `test-utils`: Testing helpers and fixtures (for use in dev-dependencies)
@@ -258,7 +258,6 @@ if result.is_relevant {
 - Supports watch-only wallets for cold storage scenarios
 - Compatible with hardware wallet integration
 - Memory-safe Rust implementation
-- Optional encryption via BIP38
 
 ## Dependencies
 

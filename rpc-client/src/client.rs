@@ -25,7 +25,7 @@ use crate::dashcore::{ScriptBuf, block, consensus};
 use crate::error::*;
 use crate::json;
 use crate::queryable;
-use dashcore::hashes::hex::FromHex;
+use dashcore::hashes::Hash;
 use dashcore::secp256k1::ecdsa::Signature;
 use dashcore::{
     Address, Amount, Block, OutPoint, PrivateKey, ProTxHash, PublicKey, QuorumHash, Transaction,
@@ -158,7 +158,7 @@ pub trait RawTx: Sized + Clone {
 
 impl RawTx for &Transaction {
     fn raw_hex(self) -> String {
-        hex::encode(consensus::encode::serialize(&self))
+        consensus::encode::serialize(&self).to_lower_hex_string()
     }
 }
 
@@ -317,7 +317,7 @@ pub trait RpcApi: Sized {
 
     fn get_block(&self, hash: &BlockHash) -> Result<Block> {
         let hex: String = self.call("getblock", &[into_json(hash)?, 0.into()])?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -336,7 +336,7 @@ pub trait RpcApi: Sized {
 
     fn get_block_header(&self, hash: &BlockHash) -> Result<block::Header> {
         let hex: String = self.call("getblockheader", &[into_json(hash)?, false.into()])?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -375,6 +375,17 @@ pub trait RpcApi: Sized {
     /// blockchain processing.
     fn get_blockchain_info(&self) -> Result<json::GetBlockchainInfoResult> {
         self.call("getblockchaininfo", &[])
+    }
+
+    /// Returns the state of the consensus deployments at `block_hash`, or at the chain tip when
+    /// it is `None`. Core before v24 answers method not found (`-32601`) and reports them at the
+    /// tip as `softforks` in `getblockchaininfo`.
+    fn get_deployment_info(
+        &self,
+        block_hash: Option<&BlockHash>,
+    ) -> Result<json::GetDeploymentInfoResult> {
+        let mut args = [opt_into_json(block_hash)?];
+        self.call("getdeploymentinfo", handle_defaults(&mut args, &[null()]))
     }
 
     /// Returns the numbers of block in the longest chain.
@@ -439,7 +450,7 @@ pub trait RpcApi: Sized {
     ) -> Result<Transaction> {
         let mut args = [into_json(txid)?, into_json(false)?, opt_into_json(block_hash)?];
         let hex: String = self.call("getrawtransaction", handle_defaults(&mut args, &[null()]))?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -578,7 +589,7 @@ pub trait RpcApi: Sized {
     ) -> Result<Vec<u8>> {
         let mut args = [into_json(txids)?, opt_into_json(block_hash)?];
         let hex: String = self.call("gettxoutproof", handle_defaults(&mut args, &[null()]))?;
-        Ok(FromHex::from_hex(&hex)?)
+        Ok(hex_conservative::decode_to_vec(&hex)?)
     }
 
     fn import_public_key(
@@ -729,7 +740,7 @@ pub trait RpcApi: Sized {
         locktime: Option<i64>,
     ) -> Result<Transaction> {
         let hex: String = self.create_raw_transaction_hex(utxos, outs, locktime)?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -1625,8 +1636,8 @@ pub trait RpcApi: Sized {
     /// If the returned height is higher that the given chain lock this means that we ignored the chain lock because core had something better.
     fn submit_chain_lock(&self, chain_lock: &ChainLock) -> Result<u32> {
         let mut args = [
-            into_json(hex::encode(chain_lock.block_hash))?,
-            into_json(hex::encode(chain_lock.signature.as_bytes()))?,
+            into_json(chain_lock.block_hash)?,
+            into_json(chain_lock.signature.as_bytes().to_lower_hex_string())?,
             into_json(chain_lock.block_height)?,
         ];
         self.call::<u32>("submitchainlock", handle_defaults(&mut args, &[null()]))
@@ -1665,8 +1676,19 @@ impl fmt::Debug for Client {
 impl Client {
     /// Creates a client to a dashd JSON-RPC server.
     ///
-    /// Can only return [Err] when using cookie authentication.
+    /// Returns [Err] for an invalid or `https://` URL, or when the cookie file can't be read.
+    /// The transport speaks plaintext HTTP only (dashd has no TLS RPC), so an `https://` URL is
+    /// rejected rather than sending the credentials unencrypted to port 443.
     pub fn new(url: &str, auth: Auth) -> Result<Self> {
+        if url.split_once("://").is_some_and(|(scheme, _)| scheme == "https") {
+            return Err(super::error::Error::JsonRpc(
+                jsonrpc::simple_http::Error::InvalidUrl {
+                    url: url.to_owned(),
+                    reason: "https is not supported, the transport is plaintext HTTP",
+                }
+                .into(),
+            ));
+        }
         let (user, pass) = auth.get_user_pass()?;
         jsonrpc::client::Client::simple_http(url, user, pass)
             .map(|client| Client {
@@ -1695,7 +1717,7 @@ impl RpcApi for Client {
         let raw_args = Some(serde_json::value::RawValue::from_string(raw_args_json)?);
         let req = self.client.build_request(cmd, raw_args.as_deref());
         if tracing::enabled!(target: "dashcore_rpc", Level::DEBUG) {
-            tracing::debug!(target: "dashcore_rpc", "JSON-RPC request: {} {}", cmd, serde_json::Value::from(args));
+            tracing::debug!(target: "dashcore_rpc", "JSON-RPC request: {}", cmd);
         }
 
         let resp = self.client.send_request(req).map_err(Error::from);
@@ -1721,13 +1743,7 @@ fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
                         tracing::debug!(target: "dashcore_rpc", "JSON-RPC error for {}: {:?}", cmd, e);
                     }
                 } else if tracing::enabled!(target: "dashcore_rpc", Level::TRACE) {
-                    // we can't use to_raw_value here due to compat with Rust 1.29
-                    let def = serde_json::value::RawValue::from_string(
-                        serde_json::Value::Null.to_string(),
-                    )
-                    .unwrap();
-                    let result = resp.result.as_ref().unwrap_or(&def);
-                    tracing::trace!(target: "dashcore_rpc", "JSON-RPC response for {}: {}", cmd, result);
+                    tracing::trace!(target: "dashcore_rpc", "JSON-RPC response for {}", cmd);
                 }
             }
         }
@@ -1736,18 +1752,28 @@ fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     #[test]
     fn test_raw_tx() {
         use dashcore::consensus::encode;
         let client = Client::new("http://localhost/", Auth::None).unwrap();
-        let tx: Transaction = encode::deserialize(&Vec::<u8>::from_hex("0200000001586bd02815cf5faabfec986a4e50d25dbee089bd2758621e61c5fab06c334af0000000006b483045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c012103dae30a4d7870cd87b45dd53e6012f71318fdd059c1c2623b8cc73f8af287bb2dfeffffff021dc4260c010000001976a914f602e88b2b5901d8aab15ebe4a97cf92ec6e03b388ac00e1f505000000001976a914687ffeffe8cf4e4c038da46a9b1d37db385a472d88acfd211500").unwrap()).unwrap();
+        let tx: Transaction = encode::deserialize(&hex_conservative::decode_to_vec("0200000001586bd02815cf5faabfec986a4e50d25dbee089bd2758621e61c5fab06c334af0000000006b483045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c012103dae30a4d7870cd87b45dd53e6012f71318fdd059c1c2623b8cc73f8af287bb2dfeffffff021dc4260c010000001976a914f602e88b2b5901d8aab15ebe4a97cf92ec6e03b388ac00e1f505000000001976a914687ffeffe8cf4e4c038da46a9b1d37db385a472d88acfd211500").unwrap()).unwrap();
 
         assert!(client.send_raw_transaction(&tx).is_err());
         assert!(client.send_raw_transaction(&encode::serialize(&tx)).is_err());
         assert!(client.send_raw_transaction("deadbeef").is_err());
         assert!(client.send_raw_transaction("deadbeef".to_owned()).is_err());
+    }
+
+    #[test_case("https://127.0.0.1:9998/", false; "https is rejected")]
+    #[test_case("http://127.0.0.1:9998/", true; "http is accepted")]
+    #[test_case("127.0.0.1:9998", true; "no scheme is accepted")]
+    fn new_accepts_only_plaintext_urls(url: &str, accepted: bool) {
+        let auth = Auth::UserPass("user".into(), "pass".into());
+        assert_eq!(Client::new(url, auth).is_ok(), accepted);
     }
 
     fn test_handle_defaults_inner() -> Result<()> {
@@ -1805,5 +1831,47 @@ mod tests {
     #[test]
     fn test_handle_defaults() {
         test_handle_defaults_inner().unwrap();
+    }
+
+    /// Answers `getdeploymentinfo` as Core v24 does, after checking its arguments.
+    struct DeploymentInfoCore {
+        expected_args: Vec<serde_json::Value>,
+    }
+
+    impl RpcApi for DeploymentInfoCore {
+        fn call<T: for<'a> serde::de::Deserialize<'a>>(
+            &self,
+            cmd: &str,
+            args: &[serde_json::Value],
+        ) -> Result<T> {
+            assert_eq!(cmd, "getdeploymentinfo");
+            assert_eq!(args, self.expected_args.as_slice());
+            Ok(serde_json::from_str(
+                r#"{
+                  "hash": "74b4fb2caeeebbc7cd5dcc50b58532d983f0e5c87f3ac729c6d47f0ace76b97d",
+                  "height": 440,
+                  "deployments": {"mn_rr": {"type": "buried", "active": true, "height": 432}}
+                }"#,
+            )?)
+        }
+    }
+
+    #[test]
+    fn get_deployment_info_asks_for_the_chain_tip_without_a_block_hash() {
+        let core = DeploymentInfoCore {
+            expected_args: vec![],
+        };
+        let info = core.get_deployment_info(None).unwrap();
+        assert_eq!(info.height, 440);
+        assert_eq!(info.deployments["mn_rr"].height, Some(432));
+    }
+
+    #[test]
+    fn get_deployment_info_asks_for_the_given_block() {
+        let hash = "74b4fb2caeeebbc7cd5dcc50b58532d983f0e5c87f3ac729c6d47f0ace76b97d";
+        let core = DeploymentInfoCore {
+            expected_args: vec![serde_json::Value::String(hash.to_string())],
+        };
+        core.get_deployment_info(Some(&hash.parse().unwrap())).unwrap();
     }
 }

@@ -28,7 +28,7 @@ macro_rules! bincode_impl {
         impl<$($gen: $gent),*> bincode::Encode for $t<$($gen),*> {
             fn encode<E: bincode::enc::Encoder>(&self, encoder: &mut E) -> Result<(), bincode::error::EncodeError> {
                 // Use the as_byte_array method so that we encode the inner byte array
-                self.as_byte_array().encode(encoder)
+                $crate::Hash::as_byte_array(self).encode(encoder)
             }
         }
 
@@ -36,7 +36,7 @@ macro_rules! bincode_impl {
             fn decode<D: bincode::de::Decoder<Context = C>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
                 // Decode a fixed-length byte array and then reconstruct via from_byte_array
                 let bytes: [u8; $len] = <[u8; $len]>::decode(decoder)?;
-                Ok(Self::from_byte_array(bytes))
+                Ok(<Self as $crate::Hash>::from_byte_array(bytes))
             }
         }
 
@@ -53,7 +53,7 @@ macro_rules! bincode_impl {
                     .map_err(|_| bincode::error::DecodeError::Other("Incorrect byte length".into()))?;
 
                 // Construct the hash from the reference (cloned since the type is Copy)
-                Ok(Self::from_byte_array(bytes))
+                Ok(<Self as $crate::Hash>::from_byte_array(bytes))
             }
         }
     };

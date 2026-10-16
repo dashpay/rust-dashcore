@@ -72,30 +72,34 @@ impl NetworkExt for Network {
     fn known_genesis_block_hash(&self) -> Option<BlockHash> {
         match self {
             Network::Mainnet => {
-                let mut block_hash =
-                    hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
-                        .expect("expected valid hex");
+                let mut block_hash = hex_conservative::decode_to_vec(
+                    "00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6",
+                )
+                .expect("expected valid hex");
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
             Network::Testnet => {
-                let mut block_hash =
-                    hex::decode("00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c")
-                        .expect("expected valid hex");
+                let mut block_hash = hex_conservative::decode_to_vec(
+                    "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
+                )
+                .expect("expected valid hex");
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
             Network::Devnet => {
-                let mut block_hash =
-                    hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
-                        .expect("expected valid hex");
+                let mut block_hash = hex_conservative::decode_to_vec(
+                    "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e",
+                )
+                .expect("expected valid hex");
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
             Network::Regtest => {
-                let mut block_hash =
-                    hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
-                        .expect("expected valid hex");
+                let mut block_hash = hex_conservative::decode_to_vec(
+                    "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e",
+                )
+                .expect("expected valid hex");
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }

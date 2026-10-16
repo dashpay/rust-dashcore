@@ -10,13 +10,11 @@ use core::ops::Index;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use secp256k1::ecdsa;
 
 use crate::consensus::encode::{Error, MAX_VEC_SIZE};
 use crate::consensus::{Decodable, Encodable, WriteExt};
 use crate::io::{self, Read, Write};
 use crate::prelude::*;
-use crate::sighash::EcdsaSighashType;
 use crate::taproot::TAPROOT_ANNEX_PREFIX;
 use crate::{Script, VarInt};
 
@@ -275,20 +273,6 @@ impl Witness {
         self.content[end_varint..end_varint + new_element.len()].copy_from_slice(new_element);
     }
 
-    /// Pushes a DER-encoded ECDSA signature with a signature hash type as a new element on the
-    /// witness, requires an allocation.
-    pub fn push_bitcoin_signature(
-        &mut self,
-        signature: &ecdsa::SerializedSignature,
-        hash_type: EcdsaSighashType,
-    ) {
-        // Note that a maximal length ECDSA signature is 72 bytes, plus the sighash type makes 73
-        let mut sig = [0; 73];
-        sig[..signature.len()].copy_from_slice(signature);
-        sig[signature.len()] = hash_type as u8;
-        self.push(&sig[..signature.len() + 1]);
-    }
-
     fn element_at(&self, index: usize) -> Option<&[u8]> {
         let varint = VarInt::consensus_decode(&mut &self.content[index..]).ok()?;
         let start = index + varint.len();
@@ -428,8 +412,7 @@ impl<'de> serde::Deserialize<'de> for Witness {
                 self,
                 mut a: A,
             ) -> Result<Self::Value, A::Error> {
-                use hashes::hex::Error::*;
-                use hashes::hex::FromHex;
+                use hex_conservative::DecodeVariableLengthBytesError::*;
                 use serde::de::{self, Unexpected};
 
                 let mut ret = match a.size_hint() {
@@ -438,23 +421,22 @@ impl<'de> serde::Deserialize<'de> for Witness {
                 };
 
                 while let Some(elem) = a.next_element::<String>()? {
-                    let vec = Vec::<u8>::from_hex(&elem).map_err(|e| match e {
-                        InvalidChar(b) => match core::char::from_u32(b.into()) {
-                            Some(c) => de::Error::invalid_value(
-                                Unexpected::Char(c),
-                                &"a valid hex character",
-                            ),
-                            None => de::Error::invalid_value(
-                                Unexpected::Unsigned(b.into()),
-                                &"a valid hex character",
-                            ),
-                        },
-                        OddLengthString(len) => {
-                            de::Error::invalid_length(len, &"an even length string")
+                    let vec = hex_conservative::decode_to_vec(&elem).map_err(|e| match e {
+                        InvalidChar(e) => {
+                            let b = e.invalid_char();
+                            match core::char::from_u32(b.into()) {
+                                Some(c) => de::Error::invalid_value(
+                                    Unexpected::Char(c),
+                                    &"a valid hex character",
+                                ),
+                                None => de::Error::invalid_value(
+                                    Unexpected::Unsigned(b.into()),
+                                    &"a valid hex character",
+                                ),
+                            }
                         }
-                        InvalidLength(expected, got) => {
-                            let exp = format!("expected length: {}", expected);
-                            de::Error::invalid_length(got, &exp.as_str())
+                        OddLengthString(e) => {
+                            de::Error::invalid_length(e.length(), &"an even length string")
                         }
                     })?;
                     ret.push(vec);
@@ -498,8 +480,6 @@ impl From<Vec<&[u8]>> for Witness {
 
 #[cfg(test)]
 mod test {
-    use secp256k1::ecdsa;
-
     use super::*;
     use crate::Transaction;
     use crate::consensus::{deserialize, serialize};
@@ -580,21 +560,6 @@ mod test {
             assert_eq!(iter.len(), i);
             iter.next();
         }
-    }
-
-    #[test]
-    fn test_push_ecdsa_sig() {
-        // The very first signature in block 734,958
-        let sig_bytes = hex!(
-            "304402207c800d698f4b0298c5aac830b822f011bb02df41eb114ade9a6702f364d5e39c0220366900d2a60cab903e77ef7dd415d46509b1f78ac78906e3296f495aa1b1b541"
-        );
-        let sig = ecdsa::Signature::from_der(&sig_bytes).unwrap();
-        let mut witness = Witness::default();
-        witness.push_bitcoin_signature(&sig.serialize_der(), EcdsaSighashType::All);
-        let expected_witness = vec![hex!(
-            "304402207c800d698f4b0298c5aac830b822f011bb02df41eb114ade9a6702f364d5e39c0220366900d2a60cab903e77ef7dd415d46509b1f78ac78906e3296f495aa1b1b54101"
-        )];
-        assert_eq!(witness.to_vec(), expected_witness);
     }
 
     #[test]

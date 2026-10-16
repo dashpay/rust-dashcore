@@ -25,8 +25,11 @@ pub use masternodes::{MasternodesManager, MasternodesProgress};
 pub(crate) use mempool::MempoolManager;
 pub use mempool::{BroadcastConfig, BroadcastHoldout, BroadcastResult, MempoolProgress};
 
+pub use crate::sml_engine::QRInfoFeedResult;
 pub use events::SyncEvent;
 pub use identifier::ManagerIdentifier;
 pub use progress::{ProgressPercentage, SyncProgress, SyncState};
 pub use sync_coordinator::{Managers, SyncCoordinator};
 pub use sync_manager::{SyncManager, SyncManagerProgress, SyncManagerTaskContext};
+
+const BEST_CHAINLOCK_METADATA_STORAGE_KEY: &str = "best_chainlock";

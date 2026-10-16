@@ -37,7 +37,7 @@ pub mod hex {
     use core::fmt;
     use core::marker::PhantomData;
 
-    use internals::hex::BufEncoder;
+    use hex_conservative::buf_encoder::BufEncoder;
 
     /// Marker for upper/lower case type-level flags ("type-level enum").
     ///
@@ -55,15 +55,15 @@ pub mod hex {
     mod sealed {
         pub trait Case {
             /// Internal detail, don't depend on it!!!
-            const INTERNAL_CASE: internals::hex::Case;
+            const INTERNAL_CASE: hex_conservative::Case;
         }
 
         impl Case for super::Lower {
-            const INTERNAL_CASE: internals::hex::Case = internals::hex::Case::Lower;
+            const INTERNAL_CASE: hex_conservative::Case = hex_conservative::Case::Lower;
         }
 
         impl Case for super::Upper {
-            const INTERNAL_CASE: internals::hex::Case = internals::hex::Case::Upper;
+            const INTERNAL_CASE: hex_conservative::Case = hex_conservative::Case::Upper;
         }
     }
 
@@ -72,11 +72,11 @@ pub mod hex {
 
     /// Hex byte encoder.
     // We wrap `BufEncoder` to not leak internal representation.
-    pub struct Encoder<C: Case>(BufEncoder<[u8; HEX_BUF_SIZE]>, PhantomData<C>);
+    pub struct Encoder<C: Case>(BufEncoder<HEX_BUF_SIZE>, PhantomData<C>);
 
     impl<C: Case> From<super::Hex<C>> for Encoder<C> {
         fn from(_: super::Hex<C>) -> Self {
-            Encoder(BufEncoder::new([0; HEX_BUF_SIZE]), Default::default())
+            Encoder(BufEncoder::new(C::INTERNAL_CASE), Default::default())
         }
     }
 
@@ -86,7 +86,7 @@ pub mod hex {
                 if self.0.is_full() {
                     self.flush(writer)?;
                 }
-                bytes = self.0.put_bytes_min(bytes, C::INTERNAL_CASE);
+                bytes = self.0.put_bytes_min(bytes);
             }
             Ok(())
         }
@@ -103,19 +103,21 @@ pub mod hex {
 
     /// Error returned when a hex string decoder can't be created.
     #[derive(Debug)]
-    pub struct DecodeInitError(hashes::hex::Error);
+    pub struct DecodeInitError(hex_conservative::OddLengthStringError);
 
     /// Error returned when a hex string contains invalid characters.
     #[derive(Debug)]
-    pub struct DecodeError(hashes::hex::Error);
+    pub struct DecodeError(hex_conservative::InvalidCharError);
 
     /// Hex decoder state.
-    pub struct Decoder<'a>(hashes::hex::HexIterator<'a>);
+    pub struct Decoder<'a>(
+        Box<dyn Iterator<Item = Result<u8, hex_conservative::InvalidCharError>> + 'a>,
+    );
 
     impl<'a> Decoder<'a> {
         fn new(s: &'a str) -> Result<Self, DecodeInitError> {
-            match hashes::hex::HexIterator::new(s) {
-                Ok(iter) => Ok(Decoder(iter)),
+            match hex_conservative::HexSliceToBytesIter::new(s) {
+                Ok(iter) => Ok(Decoder(Box::new(iter))),
                 Err(error) => Err(DecodeInitError(error)),
             }
         }
@@ -141,32 +143,21 @@ pub mod hex {
 
     impl super::IntoDeError for DecodeInitError {
         fn into_de_error<E: serde::de::Error>(self) -> E {
-            use hashes::hex::Error;
-
-            match self.0 {
-                Error::OddLengthString(len) => {
-                    E::invalid_length(len, &"an even number of ASCII-encoded hex digits")
-                }
-                error => panic!("unexpected error: {:?}", error),
-            }
+            E::invalid_length(self.0.length(), &"an even number of ASCII-encoded hex digits")
         }
     }
 
     impl super::IntoDeError for DecodeError {
         fn into_de_error<E: serde::de::Error>(self) -> E {
-            use hashes::hex::Error;
             use serde::de::Unexpected;
 
             const EXPECTED_CHAR: &str = "an ASCII-encoded hex digit";
 
-            match self.0 {
-                Error::InvalidChar(c) if c.is_ascii() => {
-                    E::invalid_value(Unexpected::Char(c as _), &EXPECTED_CHAR)
-                }
-                Error::InvalidChar(c) => {
-                    E::invalid_value(Unexpected::Unsigned(c.into()), &EXPECTED_CHAR)
-                }
-                error => panic!("unexpected error: {:?}", error),
+            let c = self.0.invalid_char();
+            if c.is_ascii() {
+                E::invalid_value(Unexpected::Char(c as _), &EXPECTED_CHAR)
+            } else {
+                E::invalid_value(Unexpected::Unsigned(c.into()), &EXPECTED_CHAR)
             }
         }
     }

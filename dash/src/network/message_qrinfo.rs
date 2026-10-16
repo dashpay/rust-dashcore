@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn deserialize_qr_info() {
         let block_hex = include_str!("../../tests/data/test_DML_diffs/QR_INFO_0_2224359.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
+        let data = hex_conservative::decode_to_vec(block_hex).expect("decode hex");
         let network_qr_info: RawNetworkMessage = deserialize(&data).expect("deserialize QR_INFO");
 
         let RawNetworkMessage {
@@ -343,7 +343,7 @@ mod tests {
 
     fn load_v3_qrinfo_bytes() -> Vec<u8> {
         let hex = include_str!("../../tests/data/test_DML_diffs/qrinfo_core231_paloma.hex");
-        let data = hex::decode(hex.trim()).expect("decode hex");
+        let data = hex_conservative::decode_to_vec(hex.trim()).expect("decode hex");
         assert_eq!(data.len(), 20064);
         assert_eq!(
             sha256::Hash::hash(&data).to_string(),

@@ -47,25 +47,13 @@ impl Validator<&[HashedBlockHeader]> for BlockHeaderValidator {
 
 #[cfg(test)]
 mod tests {
-    use dashcore::{
-        block::Version, constants::genesis_block, CompactTarget, Header as BlockHeader, Network,
-    };
+    use dashcore::{constants::genesis_block, BlockHash, Header, Network};
     use dashcore_hashes::Hash;
 
     use super::*;
 
-    // Very easy target to pass PoW checks for continuity tests
-    const MAX_TARGET: u32 = 0x2100ffff;
-
-    fn create_test_header(prev_hash: dashcore::BlockHash, nonce: u32) -> HashedBlockHeader {
-        HashedBlockHeader::from(BlockHeader {
-            version: Version::from_consensus(1),
-            prev_blockhash: prev_hash,
-            merkle_root: dashcore::TxMerkleNode::all_zeros(),
-            time: 0,
-            bits: CompactTarget::from_consensus(MAX_TARGET),
-            nonce,
-        })
+    fn hashed(headers: Vec<Header>) -> Vec<HashedBlockHeader> {
+        headers.into_iter().map(HashedBlockHeader::from).collect()
     }
 
     #[test]
@@ -79,23 +67,15 @@ mod tests {
     fn test_single_header() {
         let validator = BlockHeaderValidator::new();
 
-        let header = create_test_header(dashcore::BlockHash::all_zeros(), 0);
-        assert!(validator.validate(&[header]).is_ok());
+        let headers = hashed(Header::dummy_chain(1, BlockHash::all_zeros()));
+        assert!(validator.validate(&headers).is_ok());
     }
 
     #[test]
     fn test_valid_chain() {
         let validator = BlockHeaderValidator::new();
 
-        let mut headers = vec![];
-        let mut prev_hash = dashcore::BlockHash::all_zeros();
-
-        for i in 0..10 {
-            let header = create_test_header(prev_hash, i);
-            prev_hash = *header.hash();
-            headers.push(header);
-        }
-
+        let headers = hashed(Header::dummy_chain(10, BlockHash::all_zeros()));
         assert!(validator.validate(&headers).is_ok());
     }
 
@@ -103,12 +83,11 @@ mod tests {
     fn test_broken_chain() {
         let validator = BlockHeaderValidator::new();
 
-        let header1 = create_test_header(dashcore::BlockHash::all_zeros(), 0);
-        let header2 = create_test_header(*header1.hash(), 1);
-        // header3 doesn't connect to header2
-        let header3 = create_test_header(dashcore::BlockHash::all_zeros(), 2);
+        let mut headers = Header::dummy_chain(3, BlockHash::all_zeros());
+        // The third header doesn't connect to the second
+        headers[2].prev_blockhash = BlockHash::all_zeros();
 
-        let result = validator.validate(&[header1, header2, header3]);
+        let result = validator.validate(&hashed(headers));
         assert!(matches!(result, Err(ValidationError::InvalidHeaderChain(_))));
     }
 
@@ -116,16 +95,8 @@ mod tests {
     fn test_invalid_pow() {
         let validator = BlockHeaderValidator::new();
 
-        let header = HashedBlockHeader::from(BlockHeader {
-            version: Version::from_consensus(1),
-            prev_blockhash: dashcore::BlockHash::all_zeros(),
-            merkle_root: dashcore::TxMerkleNode::all_zeros(),
-            time: 0,
-            bits: CompactTarget::from_consensus(0x1d00ffff), // Hard target
-            nonce: 0,
-        });
-
-        let result = validator.validate(&[header]);
+        // `Header::dummy` has a hard target its hash doesn't meet
+        let result = validator.validate(&hashed(vec![Header::dummy(0)]));
         assert!(matches!(result, Err(ValidationError::InvalidProofOfWork)));
     }
 
@@ -147,22 +118,16 @@ mod tests {
     fn test_invalid_pow_mid_chain() {
         let validator = BlockHeaderValidator::new();
 
-        let header1 = create_test_header(dashcore::BlockHash::all_zeros(), 0);
-        let header2 = create_test_header(*header1.hash(), 1);
+        // The third header has valid continuity but a hard target its hash doesn't meet
+        let mut headers = Header::dummy_chain(2, BlockHash::all_zeros());
+        let hard = Header {
+            prev_blockhash: headers[1].block_hash(),
+            ..Header::dummy(2)
+        };
+        headers.push(hard);
+        headers.extend(Header::dummy_chain(1, hard.block_hash()));
 
-        // Header 3 has valid continuity but impossible PoW target
-        let header3 = HashedBlockHeader::from(BlockHeader {
-            version: Version::from_consensus(1),
-            prev_blockhash: *header2.hash(),
-            merkle_root: dashcore::TxMerkleNode::all_zeros(),
-            time: 0,
-            bits: CompactTarget::from_consensus(0x1d00ffff), // Hard target
-            nonce: 0,
-        });
-
-        let header4 = create_test_header(*header3.hash(), 3);
-
-        let result = validator.validate(&[header1, header2, header3, header4]);
+        let result = validator.validate(&hashed(headers));
         assert!(matches!(result, Err(ValidationError::InvalidProofOfWork)));
     }
 }

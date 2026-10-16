@@ -53,15 +53,7 @@
 - ✅ UTXO tracking and management
 - ✅ Asset lock/unlock transactions (Dash-specific)
 
-### 6. BIP38 Support (`bip38.rs`)
-
-- ✅ Password-protected private key encryption
-- ✅ Key decryption with password
-- ✅ Intermediate code generation
-- ✅ Multiple encryption modes
-- ✅ Optional feature (can be disabled)
-
-### 7. Address Support
+### 6. Address Support
 
 - ✅ P2PKH address generation
 - ✅ P2SH address support
@@ -69,7 +61,7 @@
 - ✅ Script pubkey generation
 - ✅ Base58check encoding/decoding
 
-### 8. Mnemonic Support (`mnemonic.rs`)
+### 7. Mnemonic Support (`mnemonic.rs`)
 
 - ✅ Multi-language support (10 languages)
 - ✅ 12/15/18/21/24 word phrases
@@ -94,7 +86,6 @@
 ### Security Features
 
 - Private keys never exposed in Debug output
-- Optional BIP38 encryption
 - Secure random number generation
 - Memory-safe implementations
 
@@ -115,7 +106,6 @@
 - ✅ UTXO selection
 - ✅ Fee calculation
 - ✅ Transaction creation
-- ✅ BIP38 encryption/decryption
 
 ### Integration Points
 
@@ -199,7 +189,6 @@ let address = managed.next_receive_address(Some(&account.account_xpub), true)?;
 
 - `serde` - Serialization support
 - `bincode` - Binary encoding
-- `scrypt`, `aes`, `sha2` - BIP38 support
 - `getrandom` - Random number generation
 
 ## License

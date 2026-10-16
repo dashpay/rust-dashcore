@@ -14,6 +14,10 @@ use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey}
 use crate::error::{Error, Result};
 use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 use crate::Network;
+use dashcore::address::Payload;
+#[cfg(feature = "eddsa")]
+use dashcore::eddsa::{EddsaPkBytes, EddsaPkHash};
+use dashcore::hashes::{hash160, Hash};
 use dashcore::{Address, AddressType, ScriptBuf};
 
 /// Types of public keys used in the address pool
@@ -522,11 +526,9 @@ impl AddressPool {
             }
             DerivedKey::BLS(public_key_bytes) => {
                 // BLS addresses use Hash160 of the public key bytes
-                use dashcore::hashes::{hash160, Hash};
                 let pubkey_hash = hash160::Hash::hash(&public_key_bytes);
 
                 // Create P2PKH address from the hash
-                use dashcore::address::Payload;
                 let payload = Payload::PubkeyHash(pubkey_hash.into());
                 let address = Address::new(self.network, payload);
 
@@ -547,12 +549,8 @@ impl AddressPool {
                             public_key_bytes.len()
                         ))
                     })?;
-                let node_id = dashcore::eddsa::EddsaPkBytes::from_bytes(*pubkey_arr)
-                    .hash()
-                    .to_canonical_bytes();
-
-                use dashcore::address::Payload;
-                use dashcore::hashes::Hash;
+                let node_id =
+                    EddsaPkHash::from(EddsaPkBytes::from_bytes(*pubkey_arr)).to_canonical_bytes();
                 let payload = Payload::PubkeyHash(dashcore::PubkeyHash::from_byte_array(node_id));
                 let address = Address::new(self.network, payload);
 

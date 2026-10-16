@@ -503,6 +503,17 @@ impl DashCoreNode {
         client.get_best_block_hash().expect("getbestblockhash failed")
     }
 
+    pub fn get_block_hash(&self, height: u32) -> BlockHash {
+        let client = self.rpc_client();
+        client.get_block_hash(height).expect("getblockhash failed")
+    }
+
+    /// Mark a block and its descendants invalid, rewinding the chain to its parent.
+    pub fn invalidate_block(&self, hash: &BlockHash) {
+        let client = self.rpc_client();
+        client.invalidate_block(hash).expect("invalidateblock failed");
+    }
+
     /// Call getblocktemplate to trigger CreateNewBlock (includes quorum commitments).
     pub fn get_block_template(&self) {
         let client = self.rpc_client();

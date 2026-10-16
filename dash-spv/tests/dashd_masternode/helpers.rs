@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use dash_spv::storage::BlockHeaderStorage;
 use dash_spv::sync::{MasternodesProgress, SyncEvent, SyncProgress, SyncState};
+use dash_spv::test_utils::MasternodeListEngine;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Txid;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet_manager::WalletEvent;
@@ -104,8 +105,10 @@ pub(super) async fn mine_dkg_cycle_and_wait(
 }
 
 /// Assert every rotated quorum across all stored cycles is `Verified`.
-pub(super) fn assert_all_rotated_quorums_verified(engine: &MasternodeListEngine) {
-    for (cycle_key, cycle_quorums) in &engine.rotated_quorums_per_cycle {
+pub(super) fn assert_all_rotated_quorums_verified<H: BlockHeaderStorage>(
+    engine: &MasternodeListEngine<H>,
+) {
+    for (cycle_key, cycle_quorums) in engine.rotated_quorums_per_cycle() {
         for (idx, entry) in cycle_quorums {
             assert!(
                 matches!(entry.verified, LLMQEntryVerificationStatus::Verified),

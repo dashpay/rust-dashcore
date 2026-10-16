@@ -1,12 +1,12 @@
 //! Integration tests for QRInfo message handling
 
+use dash_spv::test_utils::WORK_DIFF_DEPTH;
 use dashcore::{
     bls_sig_utils::{BLSPublicKey, BLSSignature},
     hash_types::QuorumVVecHash,
     network::message_qrinfo::{GetQRInfo, MNSkipListMode, QRInfo, QuorumSnapshot},
     network::message_sml::MnListDiff,
     sml::llmq_type::LLMQType,
-    sml::masternode_list_engine::WORK_DIFF_DEPTH,
     transaction::special_transaction::quorum_commitment::QuorumEntry,
     BlockHash, QuorumHash, Transaction,
 };

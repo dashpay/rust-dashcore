@@ -19,7 +19,9 @@ use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
+use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, TxIn, TxOut, Txid};
+use std::net::SocketAddr;
 
 #[test]
 fn test_provider_update_registrar_classification() {
@@ -36,6 +38,7 @@ fn test_provider_update_registrar_classification() {
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         payload_sig: vec![4u8; 65],
+        payouts: None,
     };
 
     tx.special_transaction_payload =
@@ -60,8 +63,7 @@ fn test_provider_update_service_classification() {
         version: 1,
         mn_type: None,
         pro_tx_hash: Txid::from_byte_array([1u8; 32]),
-        ip_address: 0x0100007f, // 127.0.0.1
-        port: 19999,
+        service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([127, 0, 0, 1], 19999))),
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         platform_node_id: None,
@@ -204,9 +206,9 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999"
-                    .parse()
-                    .expect("Failed to parse service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("Failed to parse service address"),
+                ),
                 owner_key_hash: *owner_address
                     .payload()
                     .as_pubkey_hash()
@@ -224,6 +226,8 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
                 platform_node_id: None,
                 platform_p2p_port: None,
                 platform_http_port: None,
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     };
@@ -339,9 +343,9 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999"
-                    .parse()
-                    .expect("Failed to parse service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("Failed to parse service address"),
+                ),
                 owner_key_hash: *owner_address
                     .payload()
                     .as_pubkey_hash()
@@ -359,6 +363,8 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
                 platform_node_id: None,
                 platform_p2p_port: None,
                 platform_http_port: None,
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     };
@@ -475,9 +481,9 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999"
-                    .parse()
-                    .expect("Failed to parse service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("Failed to parse service address"),
+                ),
                 owner_key_hash: *owner_address
                     .payload()
                     .as_pubkey_hash()
@@ -495,6 +501,8 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
                 platform_node_id: None,
                 platform_p2p_port: None,
                 platform_http_port: None,
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     };
@@ -679,9 +687,9 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999"
-                    .parse()
-                    .expect("Failed to parse service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("Failed to parse service address"),
+                ),
                 owner_key_hash: *owner_address
                     .payload()
                     .as_pubkey_hash()
@@ -696,7 +704,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
                 inputs_hash: dashcore::hash_types::InputsHash::from_slice(&[6u8; 32])
                     .expect("Failed to create inputs hash from bytes"),
                 signature: vec![7u8; 65], // Simplified signature
-                platform_node_id: Some(dashcore::PlatformNodeId::from_canonical_bytes(
+                platform_node_id: Some(dashcore::PlatformNodeId::from_byte_array(
                     platform_node_id
                         .payload()
                         .as_pubkey_hash()
@@ -705,6 +713,8 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
                 )),
                 platform_p2p_port: Some(26656),
                 platform_http_port: Some(8080),
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     };
@@ -755,8 +765,7 @@ fn test_provider_update_service_with_operator_key() {
         version: 1, // LegacyBLS version
         mn_type: None,
         pro_tx_hash: Txid::from_byte_array([1u8; 32]),
-        ip_address: 0x0100007f, // 127.0.0.1 in network byte order
-        port: 19999,
+        service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([127, 0, 0, 1], 19999))),
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         platform_node_id: None,
@@ -828,6 +837,7 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         payload_sig: vec![4u8; 65],
+        payouts: None,
     };
 
     tx.special_transaction_payload =

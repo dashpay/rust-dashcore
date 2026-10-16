@@ -1,7 +1,7 @@
 use core::str::FromStr;
 
 use hashes::Hash;
-use hex_lit::hex;
+use hex_conservative::hex;
 
 use super::*;
 use crate::blockdata::opcodes;

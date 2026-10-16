@@ -9,7 +9,7 @@
 
   <p>
     <a href="https://crates.io/crates/dash"><img alt="Crate Info" src="https://img.shields.io/crates/v/dash.svg"/></a>
-    <a href="https://github.com/dashpay/rust-dashcore/blob/main/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
+    <a href="https://github.com/dashpay/rust-dashcore/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/dashpay/rust-dashcore"/></a>
     <a href="https://github.com/dashpay/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashpay/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
     <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/main"><img alt="Coverage (main)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/main/graph/badge.svg"/></a>
     <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/dev"><img alt="Coverage (dev)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/dev/graph/badge.svg"/></a>

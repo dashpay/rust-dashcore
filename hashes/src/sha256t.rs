@@ -1,99 +1,18 @@
-// Bitcoin Hashes Library
-// Written in 2019 by
-//   The rust-dash developers.
 //
-// To the extent possible under law, the author(s) have dedicated all
-// copyright and related and neighboring rights to this software to
-// the public domain worldwide. This software is distributed without
-// any warranty.
-//
-// You should have received a copy of the CC0 Public Domain Dedication
-// along with this software.
-// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+// This file is a part of rust-dashcore. Contains portions from rust-bitcoin.
+// SPDX-License-Identifier: CC0-1.0
+// See the accompanying file LICENSE or https://creativecommons.org/publicdomain/zero/1.0
 //
 
 //! SHA256t implementation (tagged SHA256).
-//!
 
-use core::marker::PhantomData;
-use core::ops::Index;
-use core::slice::SliceIndex;
-use core::{cmp, str};
-
-use crate::{sha256, Error};
-
-type HashEngine = sha256::HashEngine;
-
-/// Trait representing a tag that can be used as a context for SHA256t hashes.
-pub trait Tag {
-    /// Returns a hash engine that is pre-tagged and is ready to be used for the data.
-    fn engine() -> sha256::HashEngine;
-}
-
-/// Output of the SHA256t hash function.
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[repr(transparent)]
-pub struct Hash<T: Tag>(
-    #[cfg_attr(
-        feature = "schemars",
-        schemars(schema_with = "crate::util::json_hex_string::len_32")
-    )]
-    [u8; 32],
-    #[cfg_attr(feature = "schemars", schemars(skip))] PhantomData<T>,
-);
-
-impl<T: Tag> Hash<T> {
-    fn internal_new(arr: [u8; 32]) -> Self {
-        Hash(arr, Default::default())
-    }
-
-    fn internal_engine() -> HashEngine {
-        T::engine()
-    }
-}
-
-impl<T: Tag> Copy for Hash<T> {}
-impl<T: Tag> Clone for Hash<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T: Tag> PartialEq for Hash<T> {
-    fn eq(&self, other: &Hash<T>) -> bool {
-        self.0 == other.0
-    }
-}
-impl<T: Tag> Eq for Hash<T> {}
-impl<T: Tag> Default for Hash<T> {
-    fn default() -> Self {
-        Hash([0; 32], PhantomData)
-    }
-}
-impl<T: Tag> PartialOrd for Hash<T> {
-    fn partial_cmp(&self, other: &Hash<T>) -> Option<cmp::Ordering> {
-        Some(cmp::Ord::cmp(self, other))
-    }
-}
-impl<T: Tag> Ord for Hash<T> {
-    fn cmp(&self, other: &Hash<T>) -> cmp::Ordering {
-        cmp::Ord::cmp(&self.0, &other.0)
-    }
-}
-impl<T: Tag> core::hash::Hash for Hash<T> {
-    fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
-        self.0.hash(h)
-    }
-}
-
-crate::internal_macros::hash_trait_impls!(256, true, T: Tag);
-
-fn from_engine<T: Tag>(e: sha256::HashEngine) -> Hash<T> {
-    use crate::Hash as _;
-
-    Hash::from_byte_array(sha256::Hash::from_engine(e).to_byte_array())
-}
+pub use bitcoin_hashes::sha256t::{Hash, Tag};
 
 /// Macro used to define a newtype tagged hash.
+///
+/// A copy of upstream's, differing only in expanding to this crate's
+/// [`hash_newtype`](crate::hash_newtype): tagged hashes need the `bincode` and
+/// any-shape `serde` surface that upstream's does not generate.
 ///
 /// This macro creates two types:
 ///
@@ -154,77 +73,39 @@ macro_rules! sha256t_hash_newtype {
     }
 }
 
-// Workaround macros being unavailable in attributes.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! sha256t_hash_newtype_tag {
-    ($vis:vis, $tag:ident, $name:expr, $(#[$($attr:meta)*])*) => {
-        #[doc = "The tag used for [`"]
-        #[doc = $name]
-        #[doc = "`]\n\n"]
-        $(#[$($attr)*])*
-        #[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Hash)]
-        $vis struct $tag;
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! sha256t_hash_newtype_tag_constructor {
-    (hash_str, $value:expr) => {
-        ($crate::sha256::Midstate::hash_tag($value.as_bytes()), 64)
-    };
-    (hash_bytes, $value:expr) => {
-        ($crate::sha256::Midstate::hash_tag($value), 64)
-    };
-    (raw, $bytes:expr, $len:expr) => {
-        ($crate::sha256::Midstate::from_byte_array($bytes), $len)
-    };
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::Hash;
-    use crate::{sha256, sha256t};
+    use crate::{sha256, sha256t, Hash};
 
+    // The TapLeaf midstate.
     const TEST_MIDSTATE: [u8; 32] = [
         156, 224, 228, 230, 124, 17, 108, 57, 56, 179, 202, 242, 195, 15, 80, 137, 211, 243, 147,
         108, 71, 99, 110, 96, 125, 179, 62, 234, 221, 198, 240, 201,
     ];
 
     #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
-    #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
     pub struct TestHashTag;
 
     impl sha256t::Tag for TestHashTag {
         fn engine() -> sha256::HashEngine {
-            // The TapRoot TapLeaf midstate.
             let midstate = sha256::Midstate::from_byte_array(TEST_MIDSTATE);
             sha256::HashEngine::from_midstate(midstate, 64)
         }
     }
 
-    /// A hash tagged with `$name`.
-    pub type TestHash = sha256t::Hash<TestHashTag>;
+    type TestHash = sha256t::Hash<TestHashTag>;
 
     sha256t_hash_newtype! {
-        /// Test detailed explanation.
         struct NewTypeTag = raw(TEST_MIDSTATE, 64);
 
-        /// A test hash.
         #[hash_newtype(backward)]
         struct NewTypeHash(_);
     }
 
     #[test]
     fn test_sha256t() {
-        assert_eq!(
-            TestHash::hash(&[0]).to_string(),
-            "29589d5122ec666ab5b4695070b6debc63881a4f85d88d93ddc90078038213ed"
-        );
-        assert_eq!(
-            NewTypeHash::hash(&[0]).to_string(),
-            "29589d5122ec666ab5b4695070b6debc63881a4f85d88d93ddc90078038213ed"
-        );
+        let expected = "29589d5122ec666ab5b4695070b6debc63881a4f85d88d93ddc90078038213ed";
+        assert_eq!(TestHash::hash(&[0]).to_string(), expected);
+        assert_eq!(NewTypeHash::hash(&[0]).to_string(), expected);
     }
 }

@@ -133,3 +133,7 @@ See [docs/PEER_REPUTATION_SYSTEM.md](docs/PEER_REPUTATION_SYSTEM.md) for detaile
 6. **Performance**: Async design for better resource utilization
 
 This refactoring transforms an example script into a production-ready library suitable for integration into wallets, explorers, and other Dash applications requiring SPV functionality.
+
+## License
+
+CC0-1.0

@@ -2,14 +2,16 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use async_trait::async_trait;
+use dashcore::block::Header as BlockHeader;
 use dashcore::BlockHash;
 
 use crate::error::StorageResult;
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
 use crate::types::HashedBlockHeader;
 
-/// A [`BlockHeaderStorage`] that answers hash lookups from a map and nothing else.
-/// Everything outside `get_header_height_by_hash` is inert.
+/// A [`BlockHeaderStorage`] that answers hash and height lookups from a map
+/// and nothing else. A header it returns carries the mapped hash on a dummy
+/// header. Everything else is inert.
 pub struct MockHeaderStorage(pub HashMap<BlockHash, u32>);
 
 #[async_trait]
@@ -38,6 +40,11 @@ impl BlockHeaderStorage for MockHeaderStorage {
     }
     async fn get_stored_headers_len(&self) -> u32 {
         0
+    }
+    async fn get_header(&self, height: u32) -> StorageResult<Option<HashedBlockHeader>> {
+        Ok(self.0.iter().find(|(_, h)| **h == height).map(|(hash, _)| {
+            HashedBlockHeader::with_trusted_hash(BlockHeader::dummy(height), *hash)
+        }))
     }
     async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
         Ok(self.0.get(hash).copied())

@@ -279,10 +279,8 @@ mod tests {
     // ✓ Test BIP32 derivation with exact DashSync test vectors
     #[test]
     fn test_bip32_derivation_vectors() {
-        use hex::FromHex;
-
         // Test vector from DashSync DSBIP32Tests.m - seed "000102030405060708090a0b0c0d0e0f"
-        let seed = Vec::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
+        let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // Create master key
         let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
@@ -305,9 +303,10 @@ mod tests {
         // The DashSync test expects this private key at m/0'/1/2':
         // DashSync includes a network prefix byte (0xCC for mainnet) before the key
         // "cccbce0d719ecf7431d88e6a89fa1483e02e35092af60c042b1df2ff59fa424dca"
-        let expected_with_prefix =
-            Vec::from_hex("cccbce0d719ecf7431d88e6a89fa1483e02e35092af60c042b1df2ff59fa424dca")
-                .unwrap();
+        let expected_with_prefix = hex_conservative::decode_to_vec(
+            "cccbce0d719ecf7431d88e6a89fa1483e02e35092af60c042b1df2ff59fa424dca",
+        )
+        .unwrap();
         // Skip the first byte (network prefix) and compare the actual 32-byte key
         assert_eq!(&derived_key.private_key.to_secret_bytes(), &expected_with_prefix[1..]);
 
@@ -327,18 +326,17 @@ mod tests {
         let derived_key_zero = master_key.derive_priv(&path_zero_padding).unwrap();
 
         // DashSync expects: "00136c1ad038f9a00871895322a487ed14f1cdc4d22ad351cfa1a0d235975dd7"
-        let expected_zero_padded =
-            Vec::from_hex("00136c1ad038f9a00871895322a487ed14f1cdc4d22ad351cfa1a0d235975dd7")
-                .unwrap();
+        let expected_zero_padded = hex_conservative::decode_to_vec(
+            "00136c1ad038f9a00871895322a487ed14f1cdc4d22ad351cfa1a0d235975dd7",
+        )
+        .unwrap();
         assert_eq!(&derived_key_zero.private_key.to_secret_bytes(), &expected_zero_padded[..]);
     }
 
     // ✓ Test extended key serialization (from DashSync DSBIP32Tests.m)
     #[test]
     fn test_extended_key_serialization() {
-        use hex::FromHex;
-
-        let seed = Vec::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
+        let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // Test master key serialization (m)
         let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();

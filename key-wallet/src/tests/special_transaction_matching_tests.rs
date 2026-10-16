@@ -40,6 +40,7 @@ use dashcore::blockdata::transaction::txout::TxOut;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::blockdata::witness::Witness;
 use dashcore::hashes::Hash;
+use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{BlockHash, Txid};
 
 const TEST_NETWORK: Network = Network::Testnet;
@@ -305,7 +306,9 @@ fn prov_reg_tx(
                     txid: Txid::from_byte_array([1u8; 32]),
                     vout: 0,
                 },
-                service_address: "127.0.0.1:19999".parse().expect("service address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("service address"),
+                ),
                 owner_key_hash,
                 operator_public_key,
                 voting_key_hash,
@@ -317,6 +320,8 @@ fn prov_reg_tx(
                 platform_node_id,
                 platform_p2p_port: platform_node_id.map(|_| 26656),
                 platform_http_port: platform_node_id.map(|_| 8080),
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     }
@@ -552,7 +557,7 @@ async fn provider_registration_with_platform_node_id_matches_provider_platform_k
         .expect("provider_platform_keys managed")
         .next_eddsa_platform_key(eddsa, true)
         .expect("derive platform");
-    let platform_node_id = dashcore::PlatformNodeId::from_canonical_bytes(
+    let platform_node_id = dashcore::PlatformNodeId::from_byte_array(
         derive_pubkey_hash(&platform_info.address).to_byte_array(),
     );
 
@@ -618,6 +623,7 @@ async fn provider_update_registrar_with_voting_key_change_matches_provider_votin
                 script_payout: ScriptBuf::new(),
                 inputs_hash: [3u8; 32].into(),
                 payload_sig: vec![4u8; 65],
+                payouts: None,
             },
         )),
     };
@@ -671,6 +677,7 @@ async fn provider_update_registrar_with_operator_key_change_matches_provider_ope
                 script_payout: ScriptBuf::new(),
                 inputs_hash: [3u8; 32].into(),
                 payload_sig: vec![4u8; 65],
+                payouts: None,
             },
         )),
     };

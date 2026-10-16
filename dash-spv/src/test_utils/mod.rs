@@ -30,3 +30,21 @@ pub use wallet::{
 };
 
 pub(crate) use node::DashCoreConfig;
+
+pub use crate::sml_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
+
+/// The client's masternode list engine, for tests that inspect its state.
+pub fn masternode_list_engine<W, N, S>(
+    client: &crate::client::DashSpvClient<W, N, S>,
+) -> crate::error::Result<
+    std::sync::Arc<
+        tokio::sync::RwLock<MasternodeListEngine<crate::storage::PersistentBlockHeaderStorage>>,
+    >,
+>
+where
+    W: key_wallet_manager::WalletInterface,
+    N: crate::network::NetworkManager,
+    S: crate::storage::StorageManager,
+{
+    client.masternode_list_engine()
+}

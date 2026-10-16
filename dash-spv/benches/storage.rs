@@ -88,7 +88,7 @@ fn bench_disk_storage(c: &mut Criterion) {
     });
 
     rt.block_on(async {
-        storage.shutdown().await;
+        storage.stop().await;
     });
 }
 

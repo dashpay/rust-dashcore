@@ -10,6 +10,7 @@
 //!
 
 use core::fmt;
+use std::collections::HashSet;
 
 use hashes::{Hash, HashEngine};
 
@@ -213,11 +214,23 @@ impl Block {
     }
 
     /// Checks if merkle root of header matches merkle root of the transaction list.
+    ///
+    /// Returns `false` if any txid appears more than once: repeating the trailing
+    /// transactions keeps the merkle root unchanged (CVE-2012-2459).
     pub fn check_merkle_root(&self) -> bool {
-        match self.compute_merkle_root() {
-            Some(merkle_root) => self.header.merkle_root == merkle_root,
-            None => false,
+        let mut seen = HashSet::with_capacity(self.txdata.len());
+        let mut hashes = Vec::with_capacity(self.txdata.len());
+
+        for tx in &self.txdata {
+            let txid = tx.txid();
+            if !seen.insert(txid) {
+                return false;
+            }
+            hashes.push(txid.to_raw_hash());
         }
+
+        merkle_tree::calculate_root(hashes.into_iter()).map(TxMerkleNode::from_raw_hash)
+            == Some(self.header.merkle_root)
     }
 
     /// Checks if witness commitment in coinbase matches the transaction list.
@@ -419,7 +432,6 @@ impl From<&Block> for BlockHash {
 
 #[cfg(test)]
 mod tests {
-    use hashes::hex::FromHex;
 
     use super::*;
     use crate::consensus::encode::{deserialize, serialize};
@@ -440,7 +452,7 @@ mod tests {
         const BAD_HEX: &str = "0200000035ab154183570282ce9afc0b494c9fc6a3cfea05aa8c1add2ecc56490000000038ba3d78e4500a5a7570dbe61960398add4410d278b21cd9708e6d9743f374d544fc055227f1001c29c1ea3b0101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff3d09a08601112233445566000427f1001c046a510100522cfabe6d6d0000000000000000000068692066726f6d20706f6f6c7365727665726aac1eeeed88ffffffff0100f2052a010000001976a914912e2b234f941f30b18afbb4fa46171214bf66c888ac00000000";
         let bad: Block = deserialize(&hex!(BAD_HEX)).unwrap();
 
-        let push = Vec::<u8>::from_hex("a08601112233445566").unwrap();
+        let push = hex_conservative::decode_to_vec("a08601112233445566").unwrap();
         assert_eq!(bad.bip34_block_height(), Err(super::Bip34Error::UnexpectedPush(push)));
     }
 
@@ -663,6 +675,22 @@ mod tests {
         assert!(!segwit_signal.is_signalling_soft_fork(0));
         assert!(segwit_signal.is_signalling_soft_fork(1));
         assert!(!segwit_signal.is_signalling_soft_fork(2));
+    }
+
+    /// Repeating the trailing transaction keeps the merkle root, so only the
+    /// repeated txid shows that the block is not the one the header commits to.
+    #[test]
+    fn check_merkle_root_rejects_repeated_txid() {
+        let address = crate::Address::dummy(crate::Network::Testnet, 0);
+        let mut txdata = vec![Transaction::dummy_coinbase(&address, 50)];
+        txdata.extend((0..2).map(|i| Transaction::dummy(&address, i..i + 1, &[10])));
+        let mut block = Block::dummy(100, txdata);
+        block.header.merkle_root = block.compute_merkle_root().unwrap();
+        assert!(block.check_merkle_root());
+
+        block.txdata.push(block.txdata[2].clone());
+        assert_eq!(block.compute_merkle_root(), Some(block.header.merkle_root));
+        assert!(!block.check_merkle_root());
     }
 }
 

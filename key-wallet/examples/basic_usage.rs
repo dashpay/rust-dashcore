@@ -18,7 +18,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 2. Generate seed
     println!("\n2. Generating seed...");
     let seed = mnemonic.to_seed("");
-    println!("   Seed: {}", hex::encode(&seed[..32])); // Show first 32 bytes
+    println!("   Seed: {}", seed[..32].to_lower_hex_string()); // Show first 32 bytes
 
     // 3. Create master key
     println!("\n3. Creating master key...");

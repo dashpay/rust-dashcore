@@ -3,15 +3,18 @@
 //! This module provides methods on ManagedWalletInfo for checking
 //! if transactions belong to the wallet.
 
+use super::account_checker::AddressClassification;
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::{Amount, SignedAmount};
+use dashcore::{Address, Amount, OutPoint, SignedAmount};
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -29,6 +32,11 @@ pub trait WalletTransactionChecker {
     /// Callers that batch multiple transactions (e.g. block processing) can pass `false`
     /// and refresh once at the end via `update_last_processed_height`.
     ///
+    /// Late funding corrects accounting only while the spender's full record is retained.
+    /// By default, ChainLocks prune funds records to txids; later funding cannot correct
+    /// those records or previously emitted copies. Enable `keep-finalized-transactions`
+    /// before processing for corrections after finalization, at the cost of retaining history.
+    ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
     async fn check_core_transaction(
@@ -42,6 +50,101 @@ pub trait WalletTransactionChecker {
 }
 
 impl ManagedWalletInfo {
+    /// Correct late inputs in existing records; missing account slices use block replay.
+    fn attribute_late_inputs(&mut self, tx: &Transaction, result: &mut TransactionCheckResult) {
+        let txid = tx.txid();
+        for mut account in self.accounts.all_accounts_mut() {
+            let Some(funds) = account.as_funds_mut() else {
+                continue;
+            };
+            for (vout, output) in tx.output.iter().enumerate() {
+                let outpoint = OutPoint::new(txid, vout as u32);
+                if !funds.is_outpoint_spent(&outpoint) {
+                    continue;
+                }
+                let Ok(address) = Address::from_script(&output.script_pubkey, self.network) else {
+                    continue;
+                };
+                if !funds.contains_address(&address) {
+                    continue;
+                }
+                let spenders: Vec<_> = funds
+                    .transactions()
+                    .values()
+                    .filter_map(|record| {
+                        let index = record
+                            .transaction
+                            .input
+                            .iter()
+                            .position(|i| i.previous_output == outpoint)?;
+                        if record.input_details.iter().any(|d| d.index == index as u32) {
+                            return None;
+                        }
+                        let outputs: Vec<_> = record
+                            .transaction
+                            .output
+                            .iter()
+                            .enumerate()
+                            .map(|(index, output)| {
+                                let address =
+                                    Address::from_script(&output.script_pubkey, self.network).ok();
+                                let role = match address.as_ref() {
+                                    Some(address) if funds.contains_address(address) => {
+                                        match funds.classify_address(address) {
+                                            AddressClassification::Internal => OutputRole::Change,
+                                            _ => OutputRole::Received,
+                                        }
+                                    }
+                                    None if output.script_pubkey.is_provably_unspendable() => {
+                                        OutputRole::Unspendable
+                                    }
+                                    _ => OutputRole::Sent,
+                                };
+                                OutputDetail {
+                                    index: index as u32,
+                                    role,
+                                    address,
+                                    value: output.value,
+                                }
+                            })
+                            .collect();
+                        Some((record.txid, index as u32, outputs))
+                    })
+                    .collect();
+                for (spender_txid, index, outputs) in spenders {
+                    let Some(record) = funds.transactions_mut().get_mut(&spender_txid) else {
+                        continue;
+                    };
+                    record.input_details.push(InputDetail {
+                        index,
+                        value: output.value,
+                        address: address.clone(),
+                    });
+                    record.input_details.sort_by_key(|d| d.index);
+                    // Address pools may have expanded since this spender was recorded.
+                    for output in outputs {
+                        if let Some(detail) =
+                            record.output_details.iter_mut().find(|d| d.index == output.index)
+                        {
+                            if detail.role == OutputRole::Sent {
+                                detail.role = output.role;
+                            }
+                        } else {
+                            record.output_details.push(output);
+                        }
+                    }
+                    record.output_details.sort_by_key(|d| d.index);
+                    record.recompute_net_and_direction();
+                    result
+                        .updated_records
+                        .retain(|r| r.txid != record.txid || r.account_type != record.account_type);
+                    result.updated_records.push(record.clone());
+                    result.state_modified = true;
+                }
+            }
+        }
+    }
+
     /// Promote records whose first sighting already consumed the live UTXO
     /// evidence used by transaction relevance checks.
     ///
@@ -77,6 +180,12 @@ impl ManagedWalletInfo {
 
             record.update_context(context.clone());
             let updated = record.clone();
+
+            if context.is_chain_locked() {
+                if let crate::managed_account::ManagedAccountRefMut::Funds(funds) = &mut account {
+                    funds.settle_spend(txid);
+                }
+            }
 
             // Match the existing finalized-record retention policy after the
             // event payload has captured the promoted context.
@@ -203,7 +312,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         if !is_new {
             // IS lock on a transaction that is already confirmed is stale — ignore
             if context.is_instant_send() {
-                if !self.instant_send_locks.insert(txid) {
+                if self.instant_send_locks.contains(&txid) {
                     return result;
                 }
                 // Only accept IS transitions for unconfirmed transactions.
@@ -225,6 +334,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 if already_confirmed {
                     return result;
                 }
+                // A stale full delivery must leave the lock-only UTXO notification available.
+                self.instant_send_locks.insert(txid);
                 // Mark UTXOs as IS-locked and update the transaction context.
                 // An account can match (its address pool detects the tx) without
                 // already holding a record — backfill via `record_transaction`
@@ -256,6 +367,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         result.new_records.push(record);
                     }
                 }
+                self.attribute_late_inputs(tx, &mut result);
                 if update_balance {
                     self.update_balance();
                 }
@@ -340,6 +452,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 account.bump_monitor_revision();
             }
         }
+
+        self.attribute_late_inputs(tx, &mut result);
 
         if is_new {
             // Populate dedup sets when a tx arrives with an initial IS status
@@ -2846,8 +2960,14 @@ mod tests {
     /// coins from the spent set, but their `Utxo` values were discarded when
     /// the loser was recorded — so the sweep alone cannot put them back, and
     /// the coins must be recoverable by the rescan the release enables.
+    ///
+    /// The loser is an asset lock, so the identity account it pays records it
+    /// too: a record left there would keep claiming B and withhold its release.
     #[tokio::test]
     async fn test_a_swept_losers_extra_input_is_recoverable_by_rescan() {
+        use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+        use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+
         let mut ctx = TestWalletContext::new_random();
         let external_address = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
@@ -2905,8 +3025,37 @@ mod tests {
             .expect("account")
             .next_change_address(Some(&ctx.xpub), true)
             .expect("change address");
-        let loser = spend(vec![coin_a, coin_b], &loser_change, 99_000, 800_000);
+        let identity_xpub = ctx
+            .wallet
+            .accounts
+            .identity_registration
+            .as_ref()
+            .expect("identity account")
+            .account_xpub;
+        let identity_address = ctx
+            .managed_wallet
+            .identity_registration_managed_account_mut()
+            .expect("managed identity account")
+            .next_address(Some(&identity_xpub), true)
+            .expect("identity address");
+        let mut loser = spend(vec![coin_a, coin_b], &loser_change, 99_000, 800_000);
+        loser.version = 3;
+        loser.special_transaction_payload =
+            Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload {
+                version: 1,
+                credit_outputs: vec![TxOut {
+                    value: 100_000,
+                    script_pubkey: identity_address.script_pubkey(),
+                }],
+            }));
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
+        assert!(
+            ctx.managed_wallet
+                .identity_registration_managed_account()
+                .expect("managed identity account")
+                .has_transaction(&loser.txid()),
+            "the identity account records the asset lock it is paid by"
+        );
 
         let winner_change = ctx
             .managed_wallet
@@ -2926,9 +3075,17 @@ mod tests {
             )
             .await;
 
-        // The loser is gone, and B is not credited — its `Utxo` was
-        // discarded when the loser was recorded and cannot be invented.
-        assert!(!ctx.bip44_account().transactions().contains_key(&loser.txid()));
+        // The loser is gone from every account that recorded it, and B is not
+        // credited — its `Utxo` was discarded when the loser was recorded and
+        // cannot be invented.
+        assert!(
+            !ctx.managed_wallet
+                .accounts
+                .all_accounts()
+                .into_iter()
+                .any(|account| account.has_transaction(&loser.txid())),
+            "a swept loser must not stay recorded in any account"
+        );
         assert!(!ctx.bip44_account().utxos.contains_key(&coin_b));
 
         // The event carries exactly what was released: B, and not A — A is
@@ -3773,5 +3930,105 @@ mod tests {
         assert!(!utxo.is_trusted, "external payment is not a self-send change");
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), payment_value);
+    }
+
+    /// An imported account can discover a mempool child before its known parent's IS redelivery.
+    #[tokio::test]
+    async fn born_spent_attribution_runs_on_the_instant_send_backfill_branch() {
+        use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+        let mut ctx = TestWalletContext::new_random();
+        let account_type = AccountType::Standard {
+            index: 1,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        ctx.wallet.add_account(account_type, None).unwrap();
+        let xpub = ctx.wallet.accounts.standard_bip44_accounts[&1].account_xpub;
+        let mut preview =
+            ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "preview".into(), 0);
+        let account = preview.bip44_managed_account_at_index_mut(1).unwrap();
+        let crate::ManagedAccountType::Standard {
+            external_addresses,
+            ..
+        } = account.managed_account_type_mut()
+        else {
+            panic!("expected standard account");
+        };
+        let addresses: Vec<_> = (0..=30)
+            .map(|index| {
+                external_addresses
+                    .generate_address_at_index(index, &KeySource::Public(xpub), true)
+                    .unwrap()
+            })
+            .collect();
+        let address = &addresses[0];
+        let mut funding = Transaction::dummy(&ctx.receive_address, 0..1, &[100_000]);
+        funding.output.push(TxOut {
+            value: 50_000,
+            script_pubkey: address.script_pubkey(),
+        });
+        let first = ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+        assert_eq!(first.new_records.len(), 1);
+
+        ctx.managed_wallet.add_managed_account(&ctx.wallet, account_type).unwrap();
+        let mut spender = Transaction::dummy(&addresses[1], 1..2, &[40_000]);
+        let outpoint = OutPoint::new(funding.txid(), 1);
+        spender.input[0].previous_output = outpoint;
+        spender.output.push(TxOut {
+            value: 5_000,
+            script_pubkey: addresses[30].script_pubkey(),
+        });
+        assert!(!ctx
+            .managed_wallet
+            .bip44_managed_account_at_index(1)
+            .unwrap()
+            .contains_address(&addresses[30]));
+        ctx.check_transaction(&spender, TransactionContext::Mempool).await;
+        let account = ctx.managed_wallet.bip44_managed_account_at_index_mut(1).unwrap();
+        assert!(account.contains_address(&addresses[30]));
+        let original = account.transactions_mut().get_mut(&spender.txid()).unwrap();
+        assert_eq!(original.net_amount, 40_000);
+        original.set_fee(5_000);
+        original.set_label("retained child".into()).unwrap();
+        let original_output = original.output_details[0].clone();
+        let result = ctx
+            .check_transaction(
+                &funding,
+                TransactionContext::InstantSend(InstantLock {
+                    txid: funding.txid(),
+                    ..InstantLock::default()
+                }),
+            )
+            .await;
+        assert!(!result.is_new_transaction);
+        assert!(result.state_modified);
+        assert_eq!(result.new_records.len(), 1);
+        assert_eq!(result.new_records[0].account_type, account_type);
+        let corrected = result.updated_records.iter().find(|r| r.txid == spender.txid()).unwrap();
+        assert_eq!(corrected.net_amount, -5_000);
+        assert_eq!(
+            corrected.direction,
+            crate::managed_account::transaction_record::TransactionDirection::Internal
+        );
+        assert_eq!(corrected.output_details.len(), 2);
+        assert_eq!(corrected.output_details[0].role, original_output.role);
+        assert_eq!(corrected.output_details[0].address, original_output.address);
+        assert_eq!(corrected.output_details[0].value, original_output.value);
+        assert_eq!(corrected.output_details[1].role, OutputRole::Received);
+        assert_eq!(corrected.fee, Some(5_000));
+        assert_eq!(corrected.label, "retained child");
+        let stored = &ctx.managed_wallet.bip44_managed_account_at_index(1).unwrap().transactions()
+            [&spender.txid()];
+        assert_eq!(stored.net_amount, corrected.net_amount);
+        assert_eq!(stored.direction, corrected.direction);
+        assert_eq!(stored.context, corrected.context);
+        assert_eq!(stored.output_details[1].role, OutputRole::Received);
+        assert_eq!(corrected.input_details.len(), 1);
+        assert_eq!(corrected.context, TransactionContext::Mempool);
+        assert!(!ctx
+            .managed_wallet
+            .bip44_managed_account_at_index(1)
+            .unwrap()
+            .utxos
+            .contains_key(&outpoint));
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! This module defines the trait that SPV clients use to interact with wallets.
 
-use crate::{WalletEvent, WalletId};
+use crate::{WalletError, WalletEvent, WalletId};
 use async_trait::async_trait;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -166,6 +166,16 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// only advance forward (a value below the current is silently ignored).
     fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight);
 
+    /// Drop what every wallet recorded from blocks above `height`, including
+    /// their sync heights, so blocks above it are processed again, and emit a
+    /// [`WalletEvent::ChainTruncated`] per wallet that processed a block above
+    /// it. A wallet that did not is left as it is. Called when a fork replaces
+    /// the chain above `height`.
+    ///
+    /// Fails with [`WalletError::TruncateBelowChainLock`] and changes no wallet
+    /// when `height` is below any wallet's applied ChainLock.
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<(), WalletError>;
+
     /// Advance one wallet's last-processed height after a block has been applied
     /// to its state. Implementations must only advance forward.
     fn update_wallet_last_processed_height(
@@ -198,6 +208,18 @@ pub trait WalletInterface: Send + Sync + 'static {
     /// Process an InstantSend lock for a transaction already in the wallet.
     /// Marks UTXOs as IS-locked, emits status change and balance update events.
     fn process_instant_send_lock(&mut self, _instant_lock: InstantLock) {}
+
+    /// Process a lock for a transaction tracked by the mempool manager.
+    /// Implementations can use the full transaction to backfill account history.
+    /// The default delegates once to the existing lock-only hook, preserving
+    /// notification behavior for custom wallet implementations.
+    async fn process_mempool_instant_send_lock(
+        &mut self,
+        _tx: &Transaction,
+        instant_lock: InstantLock,
+    ) {
+        self.process_instant_send_lock(instant_lock);
+    }
 
     /// Apply a validated `chain_lock` to every wallet, promoting any
     /// `InBlock` records at height `<= chain_lock.block_height` to

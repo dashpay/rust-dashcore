@@ -1765,7 +1765,6 @@ impl TapTweak for UntweakedKeyPair {
 mod test {
     use core::str::FromStr;
 
-    use hashes::hex::FromHex;
     use hashes::sha256t::Tag;
     use hashes::{Hash, HashEngine, sha256};
     use secp256k1::XOnlyPublicKey;
@@ -1778,6 +1777,7 @@ mod test {
     #[cfg(feature = "serde")]
     use {
         crate::internal_macros::hex,
+        serde::{Deserialize, Serialize},
         serde_test::Configure,
         serde_test::{Token, assert_tokens},
     };
@@ -1862,7 +1862,8 @@ mod test {
         let out_pk = TweakedPublicKey::dangerous_assume_tweaked(out_pk);
         let script = ScriptBuf::from_hex(script_hex).unwrap();
         let control_block =
-            ControlBlock::decode(&Vec::<u8>::from_hex(control_block_hex).unwrap()).unwrap();
+            ControlBlock::decode(&hex_conservative::decode_to_vec(control_block_hex).unwrap())
+                .unwrap();
         assert_eq!(control_block_hex, control_block.serialize().to_lower_hex_string());
         assert!(control_block.verify_taproot_commitment(out_pk.to_inner(), &script));
     }
@@ -2137,6 +2138,44 @@ mod test {
         assert_eq!(leaf_version, leaf_version2);
     }
 
+    /// A tagged hash must accept every shape `ContentDeserializer` can replay,
+    /// which is why `sha256t_hash_newtype!` routes through our `hash_newtype!`
+    /// rather than upstream's.
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_round_trip_through_internally_tagged_enum() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct WithNodeHash {
+            node: TapNodeHash,
+        }
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        #[serde(tag = "type")]
+        enum Tagged {
+            A(WithNodeHash),
+        }
+
+        let bytes = hex!("03ba2a4dcd914fed29a1c630c7e811271b081a0e2f2f52cf1c197583dfd46c1b");
+        let original = Tagged::A(WithNodeHash {
+            node: TapNodeHash::from_slice(&bytes).unwrap(),
+        });
+
+        let value = serde_json::to_value(&original).unwrap();
+        let restored: Tagged = serde_json::from_value(value).unwrap();
+        assert_eq!(original, restored);
+
+        let mut object = serde_json::Map::new();
+        object.insert("type".into(), serde_json::Value::String("A".into()));
+        object.insert(
+            "node".into(),
+            serde_json::Value::Array(
+                bytes.iter().map(|b| serde_json::Value::Number((*b).into())).collect(),
+            ),
+        );
+        let from_seq: Tagged = serde_json::from_value(serde_json::Value::Object(object)).unwrap();
+        assert_eq!(from_seq, original);
+    }
+
     #[test]
     #[cfg(feature = "serde")]
     fn test_merkle_branch_serde() {
@@ -2210,7 +2249,7 @@ mod test {
                 for (i, script_ver) in leaves.iter().enumerate() {
                     let expected_leaf_hash = leaf_hashes[i].as_str().unwrap();
                     let expected_ctrl_blk = ControlBlock::decode(
-                        &Vec::<u8>::from_hex(ctrl_blks[i].as_str().unwrap()).unwrap(),
+                        &hex_conservative::decode_to_vec(ctrl_blks[i].as_str().unwrap()).unwrap(),
                     )
                     .unwrap();
 

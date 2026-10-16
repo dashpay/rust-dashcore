@@ -6,6 +6,7 @@ mod helpers;
 mod setup;
 mod tests_basic;
 mod tests_disconnect;
+mod tests_fork;
 mod tests_mempool;
 mod tests_multi_wallet;
 mod tests_restart;

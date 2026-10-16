@@ -3,10 +3,12 @@ use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dash_spv::sync::SyncEvent;
+use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::Network;
 
-use super::helpers::{get_spendable_balance, is_progress_event, wait_for_sync};
+use super::helpers::{
+    get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete,
+};
 use dash_spv::test_utils::SYNC_TIMEOUT;
 
 use super::setup::{create_and_start_client, TestContext};
@@ -210,4 +212,51 @@ async fn test_sync_with_random_restarts() {
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
     tracing::info!("Sync completed after {} random restarts (seed={})", num_restarts, seed);
+}
+
+/// Verify the same client syncs again after being stopped, including after
+/// runs that were stopped right away.
+#[tokio::test]
+async fn test_sync_restarts_same_client() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let mut client_handle = ctx.spawn_new_client().await;
+
+    for _ in 0..3 {
+        client_handle.run().await;
+        client_handle.stop().await;
+    }
+
+    client_handle.run().await;
+    wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
+    client_handle.stop().await;
+
+    ctx.assert_synced(&client_handle.client.progress().await).await;
+}
+
+/// Verify clearing the storage of a running client stops it, and the client
+/// syncs from scratch after its storage was cleared again between runs.
+#[tokio::test]
+async fn test_clear_storage_stops_running_client() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
+
+    client_handle.client.clear_storage().await.unwrap();
+    assert!(!client_handle.client.is_running().await);
+    assert_eq!(client_handle.client.tip_height().await, 0);
+    assert_eq!(client_handle.client.progress().await, SyncProgress::default());
+
+    client_handle.stop().await;
+    client_handle.run().await;
+    client_handle.client.clear_storage().await.unwrap();
+
+    client_handle.sync_event_receiver = client_handle.sync_event_receiver.resubscribe();
+    client_handle.run().await;
+    wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
+    client_handle.stop().await;
+    ctx.assert_synced(&client_handle.client.progress().await).await;
 }

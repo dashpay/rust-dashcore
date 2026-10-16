@@ -131,6 +131,44 @@ impl TransactionRecord {
         }
     }
 
+    /// Derive account-local flow from attributed inputs and owned outputs.
+    pub(crate) fn recompute_net_and_direction(&mut self) {
+        let owned: i64 = self
+            .output_details
+            .iter()
+            .filter(|o| matches!(o.role, OutputRole::Received | OutputRole::Change))
+            .map(|o| o.value as i64)
+            .sum();
+        let spent: i64 = self.input_details.iter().map(|i| i.value as i64).sum();
+        self.net_amount = owned - spent;
+        self.direction = Self::direction_for(
+            self.transaction_type,
+            !self.input_details.is_empty(),
+            &self.output_details,
+        );
+    }
+
+    /// Classify account-local flow consistently for initial records and late-input corrections.
+    pub(crate) fn direction_for(
+        transaction_type: TransactionType,
+        has_inputs: bool,
+        output_details: &[OutputDetail],
+    ) -> TransactionDirection {
+        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
+        let has_our_outputs = output_details
+            .iter()
+            .any(|d| matches!(d.role, OutputRole::Received | OutputRole::Change));
+        if transaction_type == TransactionType::CoinJoin {
+            TransactionDirection::CoinJoin
+        } else if !has_sent && has_inputs && has_our_outputs {
+            TransactionDirection::Internal
+        } else if has_inputs {
+            TransactionDirection::Outgoing
+        } else {
+            TransactionDirection::Incoming
+        }
+    }
+
     /// Calculate the number of confirmations based on current chain height
     pub fn confirmations(&self, current_height: u32) -> u32 {
         match self.context.block_info() {

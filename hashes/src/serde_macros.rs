@@ -27,11 +27,10 @@ pub mod serde_details {
 
     /// Single visitor that accepts every shape a hash can arrive in: an ASCII
     /// hex string (`visit_str`), a UTF-8 byte slice that decodes as hex
-    /// (`visit_bytes` of length `2*N` — note `N` is in BYTES per the macro,
-    /// see `serde_impl!` invocation in `internal_macros.rs`), a raw byte
-    /// slice of the hash's length-in-bytes (`visit_bytes` of length `N`),
-    /// or a length-prefixed sequence of `u8` from non-self-describing
-    /// formats (`visit_seq`, used by bincode).
+    /// (`visit_bytes` of length `2*N`, where `N` is in bytes as passed to
+    /// `serde_impl!`), a raw byte slice of the hash's length-in-bytes
+    /// (`visit_bytes` of length `N`), or a length-prefixed sequence of `u8`
+    /// from non-self-describing formats (`visit_seq`, used by bincode).
     ///
     /// Required to interoperate with serde's `ContentDeserializer`, the
     /// format-agnostic intermediate buffer serde uses to dispatch
@@ -78,10 +77,9 @@ pub mod serde_details {
             E: de::Error,
         {
             // Disambiguate by length. A correctly-sized raw hash byte string
-            // is exactly `N` bytes (`N` is in bytes per the macro — see
-            // `serde_impl!` invocation in `internal_macros.rs`); a hex-encoded
-            // form of that hash is `2*N` ASCII bytes. Any other length is
-            // rejected.
+            // is exactly `N` bytes (`N` is in bytes as passed to
+            // `serde_impl!`); a hex-encoded form of that hash is `2*N` ASCII
+            // bytes. Any other length is rejected.
             let raw_len_bytes = ValueT::N;
             let hex_len_bytes = raw_len_bytes * 2;
             if v.len() == raw_len_bytes {

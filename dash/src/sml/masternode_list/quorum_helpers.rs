@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use crate::hash_types::QuorumOrderingHash;
 use crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use crate::sml::llmq_type::{LLMQType, network::NetworkLLMQExt};
@@ -24,65 +22,6 @@ impl MasternodeList {
             .map(|quorum| &**quorum)
             .ok_or(MessageVerificationError::MasternodeListHasNoQuorums(self.known_height))
     }
-    /// Returns a set of quorum hashes, optionally excluding specified quorum types.
-    ///
-    /// # Parameters
-    /// - `exclude_quorum_types`: A slice of `LLMQType` values representing quorum types to exclude.
-    ///
-    /// # Returns
-    /// - `BTreeSet<QuorumHash>`: A set of quorum hashes, excluding the specified types if provided.
-    pub fn quorum_hashes(&self, exclude_quorum_types: &[LLMQType]) -> BTreeSet<QuorumHash> {
-        if exclude_quorum_types.is_empty() {
-            self.quorums.values().flat_map(|quorum_map| quorum_map.keys().cloned()).collect()
-        } else {
-            self.quorums
-                .iter()
-                .filter(|(llmq_type, _)| !exclude_quorum_types.contains(llmq_type))
-                .flat_map(|(_, quorums)| quorums.keys().cloned())
-                .collect()
-        }
-    }
-
-    /// Returns a set of non-rotating quorum hashes, optionally excluding specified quorum types.
-    ///
-    /// # Parameters
-    /// - `exclude_quorum_types`: A slice of `LLMQType` values representing quorum types to exclude.
-    ///
-    /// # Returns
-    /// - `BTreeSet<QuorumHash>`: A set of quorum hashes for non-rotating quorums.
-    pub fn non_rotating_quorum_hashes(
-        &self,
-        exclude_quorum_types: &[LLMQType],
-    ) -> BTreeSet<QuorumHash> {
-        self.quorums
-            .iter()
-            .filter(|(llmq_type, _)| {
-                !llmq_type.is_rotating_quorum_type() && !exclude_quorum_types.contains(llmq_type)
-            })
-            .flat_map(|(_, quorums)| quorums.keys().cloned())
-            .collect()
-    }
-
-    /// Returns a set of rotating quorum hashes, optionally excluding specified quorum types.
-    ///
-    /// # Parameters
-    /// - `exclude_quorum_types`: A slice of `LLMQType` values representing quorum types to exclude.
-    ///
-    /// # Returns
-    /// - `BTreeSet<QuorumHash>`: A set of quorum hashes for rotating quorums.
-    pub fn rotating_quorum_hashes(
-        &self,
-        exclude_quorum_types: &[LLMQType],
-    ) -> BTreeSet<QuorumHash> {
-        self.quorums
-            .iter()
-            .filter(|(llmq_type, _)| {
-                llmq_type.is_rotating_quorum_type() && !exclude_quorum_types.contains(llmq_type)
-            })
-            .flat_map(|(_, quorums)| quorums.keys().cloned())
-            .collect()
-    }
-
     /// Retrieves a reference to a quorum entry of a specific type for a given quorum hash.
     ///
     /// # Parameters

@@ -26,9 +26,6 @@ pub mod utxo;
 pub mod wallet;
 pub mod wallet_manager;
 
-#[cfg(feature = "bip38")]
-pub mod bip38;
-
 // Test modules are now included in each source file
 
 // Re-export main types for convenience

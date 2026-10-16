@@ -54,6 +54,11 @@ pub enum Inventory {
 
     ChainLock(ChainLockHash),
     InstantSendLock(InstantSendLockHash),
+    /// Version 2 asset unlock, announced by its [`Transaction::instance_hash`]. A `getdata`
+    /// for it is answered with a `tx` message.
+    ///
+    /// [`Transaction::instance_hash`]: crate::Transaction::instance_hash
+    AssetUnlock(Txid),
 
     /// Unknown inventory type
     Unknown {
@@ -84,6 +89,7 @@ impl Encodable for Inventory {
 
             Inventory::ChainLock(ref b) => encode_inv!(29, b),
             Inventory::InstantSendLock(ref b) => encode_inv!(31, b),
+            Inventory::AssetUnlock(ref t) => encode_inv!(34, t),
 
             Inventory::Unknown {
                 inv_type: t,
@@ -106,6 +112,7 @@ impl Decodable for Inventory {
             5 => Inventory::WTx(Decodable::consensus_decode(r)?),
             29 => Inventory::ChainLock(Decodable::consensus_decode(r)?),
             31 => Inventory::InstantSendLock(Decodable::consensus_decode(r)?),
+            34 => Inventory::AssetUnlock(Decodable::consensus_decode(r)?),
             0x40000001 => Inventory::WitnessTransaction(Decodable::consensus_decode(r)?),
             0x40000002 => Inventory::WitnessBlock(Decodable::consensus_decode(r)?),
             tp => Inventory::Unknown {
@@ -174,9 +181,19 @@ impl_consensus_encoding!(GetHeadersMessage, version, locator_hashes, stop_hash);
 mod tests {
     use hashes::Hash;
 
-    use super::{GetBlocksMessage, GetHeadersMessage, Vec};
+    use super::{GetBlocksMessage, GetHeadersMessage, Inventory, Vec};
+    use crate::Txid;
     use crate::consensus::encode::{deserialize, serialize};
     use crate::internal_macros::hex;
+
+    #[test]
+    fn asset_unlock_inventory_round_trips() {
+        let mut bytes = 34u32.to_le_bytes().to_vec();
+        bytes.extend([0xab; 32]);
+        let inv: Inventory = deserialize(&bytes).unwrap();
+        assert_eq!(inv, Inventory::AssetUnlock(Txid::from_byte_array([0xab; 32])));
+        assert_eq!(serialize(&inv), bytes);
+    }
 
     #[test]
     fn getblocks_message_test() {

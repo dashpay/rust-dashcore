@@ -121,7 +121,6 @@ def categorize_functions(functions: List[FFIFunction]) -> Dict[str, List[FFIFunc
         'Address Management': [],
         'Transaction Management': [],
         'Key Management': [],
-        'BIP38 Encryption': [],
         'UTXO Management': [],
         'Mnemonic Operations': [],
         'Utility Functions': [],
@@ -146,8 +145,6 @@ def categorize_functions(functions: List[FFIFunction]) -> Dict[str, List[FFIFunc
             categories['Transaction Management'].append(func)
         elif 'key' in name or 'derive' in name:
             categories['Key Management'].append(func)
-        elif 'bip38' in name:
-            categories['BIP38 Encryption'].append(func)
         elif 'utxo' in name:
             categories['UTXO Management'].append(func)
         elif 'mnemonic' in name:

@@ -452,6 +452,227 @@ mod tests {
         assert!(events.is_empty());
 
         assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
+
+        use dashcore::{InstantLock, OutPoint, Transaction, TxOut};
+        use key_wallet::account::StandardAccountType;
+        use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
+        use key_wallet::managed_account::transaction_record::TransactionDirection;
+        use key_wallet::test_utils::TestWalletContext;
+        use key_wallet::transaction_checking::TransactionContext;
+        use key_wallet::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
+        use key_wallet::wallet::ManagedWalletInfo;
+        use key_wallet::AccountType;
+        use key_wallet_manager::{WalletEvent, WalletManager};
+
+        let mut ctx = TestWalletContext::new_random();
+        let account_type = AccountType::Standard {
+            index: 1,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        ctx.wallet.add_account(account_type, None).unwrap();
+        let mut preview =
+            ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "preview".into(), 0);
+        let address = preview
+            .bip44_managed_account_at_index_mut(1)
+            .unwrap()
+            .next_receive_address(None, true)
+            .unwrap();
+        let mut funding = Transaction::dummy(&ctx.receive_address, 0..1, &[100_000]);
+        funding.output.push(TxOut {
+            value: 50_000,
+            script_pubkey: address.script_pubkey(),
+        });
+        let mut spender = Transaction::dummy(&address, 1..2, &[40_000]);
+        let outpoint = OutPoint::new(funding.txid(), 1);
+        spender.input[0].previous_output = outpoint;
+
+        let mut wallet = WalletManager::new(dashcore::Network::Testnet);
+        let wallet_id = wallet.insert_wallet(ctx.wallet, ctx.managed_wallet).unwrap();
+        let wallet = Arc::new(RwLock::new(wallet));
+        let mut manager = MempoolManager::new(
+            wallet.clone(),
+            MempoolStrategy::FetchAll,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
+        manager
+            .handle_message(
+                Message::new(peer, NetworkMessage::Tx(funding.clone().into())),
+                &requests,
+            )
+            .await
+            .unwrap();
+        {
+            let mut wallet = wallet.write().await;
+            let (inner, info) = wallet.get_wallet_and_info_mut(&wallet_id).unwrap();
+            info.add_managed_account(inner, account_type).unwrap();
+        }
+        manager
+            .handle_message(
+                Message::new(peer, NetworkMessage::Tx(spender.clone().into())),
+                &requests,
+            )
+            .await
+            .unwrap();
+        let mut rx = wallet.read().await.subscribe_events();
+        let lock = InstantLock {
+            txid: funding.txid(),
+            ..InstantLock::default()
+        };
+        let event = SyncEvent::InstantLockReceived {
+            instant_lock: lock,
+            validated: true,
+        };
+        manager.handle_sync_event(&event, &requests).await.unwrap();
+        let mut corrections = Vec::new();
+        let mut backfilled = 0;
+        let mut locked = 0;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                WalletEvent::TransactionDetected {
+                    record,
+                    ..
+                } if record.txid == spender.txid() => {
+                    corrections.push(record);
+                }
+                WalletEvent::TransactionDetected {
+                    record,
+                    ..
+                } if record.txid == funding.txid() => {
+                    assert_eq!(record.account_type, account_type);
+                    backfilled += 1;
+                }
+                WalletEvent::TransactionInstantLocked {
+                    txid,
+                    ..
+                } => {
+                    assert_eq!(txid, funding.txid(), "funding lock must not lock the child");
+                    locked += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(backfilled, 1);
+        assert_eq!(locked, 1);
+        assert_eq!(corrections.len(), 1);
+        let corrected = &corrections[0];
+        assert_eq!(corrected.net_amount, -10_000);
+        assert_eq!(corrected.direction, TransactionDirection::Internal);
+        assert_eq!(corrected.context, TransactionContext::Mempool);
+        assert_eq!(corrected.input_details.len(), 1);
+        {
+            let wallet = wallet.read().await;
+            let account = wallet
+                .get_wallet_info(&wallet_id)
+                .unwrap()
+                .bip44_managed_account_at_index(1)
+                .unwrap();
+            assert_eq!(account.transactions()[&spender.txid()].net_amount, -10_000);
+            assert!(!account.utxos.contains_key(&outpoint));
+        }
+        manager.handle_sync_event(&event, &requests).await.unwrap();
+        manager
+            .handle_message(
+                Message::new(peer, NetworkMessage::Tx(funding.clone().into())),
+                &requests,
+            )
+            .await
+            .unwrap();
+        assert!(rx.try_recv().is_err(), "duplicate lock/transaction must not emit events");
+
+        // Both accounts already know these transactions; block processing can precede mempool cleanup.
+        for confirmed in [false, true] {
+            let mut tx = Transaction::dummy(&address, 10 + u8::from(confirmed)..12, &[50_000]);
+            tx.output = funding.output.clone();
+            manager
+                .handle_message(
+                    Message::new(peer, NetworkMessage::Tx(tx.clone().into())),
+                    &requests,
+                )
+                .await
+                .unwrap();
+            let block_context =
+                TransactionContext::InBlock(key_wallet::transaction_checking::BlockInfo::new(
+                    1001,
+                    dashcore::BlockHash::from_byte_array([0xab; 32]),
+                    1700000000,
+                ));
+            if confirmed {
+                wallet
+                    .write()
+                    .await
+                    .check_transaction_in_all_wallets(&tx, block_context.clone(), true, true)
+                    .await;
+            }
+            while rx.try_recv().is_ok() {}
+            let event = SyncEvent::InstantLockReceived {
+                instant_lock: InstantLock {
+                    txid: tx.txid(),
+                    ..InstantLock::default()
+                },
+                validated: true,
+            };
+            manager.handle_sync_event(&event, &requests).await.unwrap();
+            let mut locks = 0;
+            while let Ok(event) = rx.try_recv() {
+                assert!(
+                    matches!(event, WalletEvent::TransactionInstantLocked { txid, .. } if txid == tx.txid())
+                );
+                locks += 1;
+            }
+            assert_eq!(locks, 1, "one lock event per wallet, including after confirmation");
+            {
+                let wallet = wallet.read().await;
+                for index in [0, 1] {
+                    let account = wallet
+                        .get_wallet_info(&wallet_id)
+                        .unwrap()
+                        .bip44_managed_account_at_index(index)
+                        .unwrap();
+                    let record = &account.transactions()[&tx.txid()];
+                    if confirmed {
+                        assert_eq!(record.context, block_context);
+                    } else {
+                        assert!(matches!(record.context, TransactionContext::InstantSend(_)));
+                    }
+                    assert!(account.utxos[&OutPoint::new(tx.txid(), index)].is_instantlocked);
+                }
+            }
+            manager.handle_sync_event(&event, &requests).await.unwrap();
+            assert!(rx.try_recv().is_err());
+        }
+
+        let foreign = dashcore::Address::dummy(dashcore::Network::Testnet, 999);
+        let mut outgoing = Transaction::dummy(&foreign, 20..21, &[99_000]);
+        outgoing.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+        manager
+            .handle_message(
+                Message::new(peer, NetworkMessage::Tx(outgoing.clone().into())),
+                &requests,
+            )
+            .await
+            .unwrap();
+        while rx.try_recv().is_ok() {}
+        let event = SyncEvent::InstantLockReceived {
+            instant_lock: InstantLock {
+                txid: outgoing.txid(),
+                ..InstantLock::default()
+            },
+            validated: true,
+        };
+        manager.handle_sync_event(&event, &requests).await.unwrap();
+        assert!(
+            matches!(rx.try_recv().unwrap(), WalletEvent::TransactionInstantLocked { txid, .. } if txid == outgoing.txid())
+        );
+        assert!(rx.try_recv().is_err());
+        let wallet = wallet.read().await;
+        let account =
+            wallet.get_wallet_info(&wallet_id).unwrap().first_bip44_managed_account().unwrap();
+        assert!(matches!(
+            account.transactions()[&outgoing.txid()].context,
+            TransactionContext::InstantSend(_)
+        ));
     }
 
     #[tokio::test]
