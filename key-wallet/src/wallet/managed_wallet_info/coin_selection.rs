@@ -111,7 +111,10 @@ pub enum SelectionStrategy {
     /// Random selection for privacy
     Random,
     /// Select EVERY spendable UTXO (drain / sweep an account empty). There is no change: the
-    /// single deliverable output is worth the total minus the fee to spend them all
+    /// single deliverable output is worth the total minus the fee to spend them all.
+    ///
+    /// Under [`CoinSelector::with_max_inputs`] this is a *bounded* drain: only the `max`
+    /// largest spendable UTXOs are selected and the rest stay unspent.
     All,
 }
 
@@ -157,6 +160,9 @@ pub struct SelectionResult {
 pub struct CoinSelector {
     strategy: SelectionStrategy,
     dust_threshold: u64,
+    /// Upper bound on the number of inputs a selection may use. See
+    /// [`Self::with_max_inputs`].
+    max_inputs: Option<usize>,
 }
 
 impl CoinSelector {
@@ -164,7 +170,29 @@ impl CoinSelector {
         Self {
             strategy,
             dust_threshold: 546, // Standard dust threshold
+            max_inputs: None,
         }
+    }
+
+    /// Bound the number of inputs a selection may use.
+    ///
+    /// * [`SelectionStrategy::All`] becomes a *bounded drain*: when more than
+    ///   `max` spendable UTXOs are offered it keeps the `max` largest by value
+    ///   (ties broken by outpoint, so the pick is deterministic) and drains
+    ///   only those; the rest are left unspent. With `max` or fewer it drains
+    ///   everything, exactly as without a bound.
+    /// * Every other strategy runs unchanged first. If its pick exceeds `max`,
+    ///   selection falls back to largest-first accumulation, which reaches any
+    ///   reachable target with the fewest inputs possible. When even that needs
+    ///   more than `max` inputs, the minimum-count selection is returned as is
+    ///   — its length is how many inputs the target really needs — and the
+    ///   caller must reject it (the transaction builder does, with
+    ///   `BuilderError::TooManyInputs`).
+    ///
+    /// `max` is clamped to at least 1.
+    pub fn with_max_inputs(mut self, max: usize) -> Self {
+        self.max_inputs = Some(max.max(1));
+        self
     }
 
     /// Set dust threshold
@@ -213,9 +241,90 @@ impl CoinSelector {
     where
         I: IntoIterator<Item = &'a Utxo>,
     {
+        let Some(max_inputs) = self.max_inputs else {
+            return self.select_with_strategy(
+                self.strategy,
+                utxos,
+                target_amount,
+                fee_rate,
+                current_height,
+                base_size,
+                change_output_size,
+            );
+        };
+
+        match self.strategy {
+            SelectionStrategy::All => {
+                let mut spendable: Vec<&'a Utxo> =
+                    utxos.into_iter().filter(|u| u.is_spendable(current_height)).collect();
+                if spendable.len() > max_inputs {
+                    // Bounded drain: the `max_inputs` largest carry the most
+                    // value for the same input count, hence the same fee.
+                    spendable.sort_by(|a, b| {
+                        b.value().cmp(&a.value()).then_with(|| a.outpoint.cmp(&b.outpoint))
+                    });
+                    spendable.truncate(max_inputs);
+                }
+                self.select_with_strategy(
+                    SelectionStrategy::All,
+                    spendable,
+                    target_amount,
+                    fee_rate,
+                    current_height,
+                    base_size,
+                    change_output_size,
+                )
+            }
+            strategy => {
+                let pool: Vec<&'a Utxo> = utxos.into_iter().collect();
+                let result = self.select_with_strategy(
+                    strategy,
+                    pool.iter().copied(),
+                    target_amount,
+                    fee_rate,
+                    current_height,
+                    base_size,
+                    change_output_size,
+                )?;
+                if result.selected.len() <= max_inputs
+                    || strategy == SelectionStrategy::LargestFirst
+                {
+                    return Ok(result);
+                }
+                // The k largest UTXOs out-value every other k-subset, and the
+                // fee depends only on k, so largest-first funds the target with
+                // the fewest inputs any selection can.
+                self.select_with_strategy(
+                    SelectionStrategy::LargestFirst,
+                    pool,
+                    target_amount,
+                    fee_rate,
+                    current_height,
+                    base_size,
+                    change_output_size,
+                )
+            }
+        }
+    }
+
+    /// [`Self::select_coins_with_size`] for one strategy, ignoring `max_inputs`.
+    #[allow(clippy::too_many_arguments)]
+    fn select_with_strategy<'a, I>(
+        &self,
+        strategy: SelectionStrategy,
+        utxos: I,
+        target_amount: u64,
+        fee_rate: FeeRate,
+        current_height: u32,
+        base_size: usize,
+        change_output_size: usize,
+    ) -> Result<SelectionResult, SelectionError>
+    where
+        I: IntoIterator<Item = &'a Utxo>,
+    {
         // For strategies that need sorting, we must collect
         // For others, we can work with iterators directly
-        match self.strategy {
+        match strategy {
             SelectionStrategy::SmallestFirst
             | SelectionStrategy::LargestFirst
             | SelectionStrategy::SmallestFirstTill(_)
@@ -238,7 +347,7 @@ impl CoinSelector {
                     });
                 }
 
-                match self.strategy {
+                match strategy {
                     SelectionStrategy::SmallestFirst => {
                         available.sort_by_key(|u| u.value());
                         self.accumulate_coins_with_size(
