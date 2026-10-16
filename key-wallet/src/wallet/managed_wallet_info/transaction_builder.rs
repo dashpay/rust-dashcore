@@ -135,7 +135,7 @@ impl TransactionBuilder {
     /// [`BuilderError::TooManyInputs`] (whose `count` is the fewest inputs the
     /// amount needs) when none exists.
     ///
-    /// The bound is clamped to the relay-standard maximum of 500 inputs. A
+    /// The bound is clamped to 1..=500 (the relay-standard maximum). A
     /// builder carrying an asset-lock payload is bounded at
     /// [`MAX_ASSET_LOCK_INPUTS`] without calling this; a lower value set here
     /// still wins. Without either, a build is only checked against the 500-input
@@ -159,7 +159,7 @@ impl TransactionBuilder {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         }?;
-        Some(bound.min(MAX_STANDARD_TX_INPUTS))
+        Some(bound.clamp(1, MAX_STANDARD_TX_INPUTS))
     }
 
     /// Restrict coin selection to final inputs: confirmed or
