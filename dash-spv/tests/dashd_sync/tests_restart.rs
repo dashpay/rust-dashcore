@@ -246,7 +246,7 @@ async fn test_clear_storage_stops_running_client() {
     wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
 
     client_handle.client.clear_storage().await.unwrap();
-    assert!(!client_handle.client.is_running().await);
+    assert!(!client_handle.client.is_running());
     assert_eq!(client_handle.client.tip_height().await, 0);
     assert_eq!(client_handle.client.progress().await, SyncProgress::default());
 
