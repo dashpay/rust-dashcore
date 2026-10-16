@@ -1,5 +1,7 @@
 //! Error types for the Dash SPV client.
 
+use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
+use dashcore::QuorumHash;
 use std::io;
 use thiserror::Error;
 
@@ -110,6 +112,12 @@ pub enum ValidationError {
 
     #[error("Invalid filter header chain: {0}")]
     InvalidFilterHeaderChain(String),
+
+    #[error("Invalid merkle root: {0}")]
+    InvalidMerkleRoot(String),
+
+    #[error("Quorum {0} is not verified: {1}")]
+    QuorumNotVerified(QuorumHash, LLMQEntryVerificationStatus),
 }
 
 /// Synchronization-related errors.

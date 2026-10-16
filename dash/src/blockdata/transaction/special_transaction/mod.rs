@@ -74,6 +74,11 @@ pub const MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE: usize = 75;
 
 /// An enum wrapper around various special transaction payloads.
 /// Special transactions are defined in DIP 2.
+///
+/// Add a new variant at the end, never between existing ones. `serde` and `bincode` encode a
+/// variant by its index, hosts persist transactions in those encodings (Dash Platform's wallet
+/// store does), and a variant inserted earlier shifts the index of every one after it, so what
+/// was stored with them no longer decodes. The derived `Ord` follows the same order.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -96,12 +101,6 @@ pub enum TransactionPayload {
     AssetLockPayloadType(AssetLockPayload),
     /// A wrapper for an Asset Unlock payload
     AssetUnlockPayloadType(AssetUnlockPayload),
-    /// A wrapper for a Masternode Dissolve payload
-    ProviderDissolvePayloadType(ProviderDissolvePayload),
-    /// A wrapper for a Masternode Update Share payload
-    ProviderUpdateSharePayloadType(ProviderUpdateSharePayload),
-    /// A wrapper for a Masternode Update Shared Registrar payload
-    ProviderUpdateSharedRegistrarPayloadType(ProviderUpdateSharedRegistrarPayload),
     /// A pseudo-payload that carries the raw `nTxType` u16 read from a pre-DIP-0002
     /// transaction (`version == 0`). Older transactions on the chain were free to put
     /// arbitrary bytes in the type slot; we keep the original value here so that
@@ -113,6 +112,12 @@ pub enum TransactionPayload {
     /// like a newer version. Keeping the bytes lets the block decode, and the transaction
     /// re-encode to the same bytes and txid. [`Self::get_type`] still reports a known type.
     RawPayloadType(u16, Vec<u8>),
+    /// A wrapper for a Masternode Dissolve payload
+    ProviderDissolvePayloadType(ProviderDissolvePayload),
+    /// A wrapper for a Masternode Update Share payload
+    ProviderUpdateSharePayloadType(ProviderUpdateSharePayload),
+    /// A wrapper for a Masternode Update Shared Registrar payload
+    ProviderUpdateSharedRegistrarPayloadType(ProviderUpdateSharedRegistrarPayload),
 }
 
 impl Encodable for TransactionPayload {

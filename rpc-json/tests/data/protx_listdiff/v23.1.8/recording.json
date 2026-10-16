@@ -1,0 +1,68 @@
+{
+  "subversion": "/Dash Core:23.1.8/",
+  "masternodes": {
+    "MN1": "edf27b823c51820c5e6ac81b1973838ae33f440c021ac569c11bd39e7f2f448f",
+    "MN2": "06b9004fc63be0fd7a1a552b2f794335883452feafa38f3b93733d10ad326570",
+    "MN3": "62fe8d4603be148dbf1140323e1280e2e1da075d1b44d341ded74690b6e6ee04"
+  },
+  "addresses": {
+    "mn1_operator_payout_p2pkh": {
+      "address": "yPxSLV3rNkiq4aNsvYHLb5RzgtwwnHPLWP",
+      "scriptPubKey": "76a91427e75718606f8ef33accab82c58078865869518c88ac"
+    },
+    "mn2_operator_payout_p2pkh": {
+      "address": "yS7dwS3EDYyzBVNmFj1FNQ9HsPnWvn4bHh",
+      "scriptPubKey": "76a9143f950550bb0601a5be1dcddb35a1904e3f348a6788ac"
+    },
+    "mn1_operator_payout_p2sh": {
+      "address": "8zojTchrwVdoYzvjcuNjD8cK56UHtyiFCz",
+      "redeemScript": "512102c184c8fe5dec7b24335fa2bf390440ec2137daa5519de1be9d20509c2122f08051ae"
+    },
+    "mn1_new_operator_payout_p2pkh": {
+      "address": "yabAqcVFPhbKdjJBq7jNDiPWX6TtNVtor6",
+      "scriptPubKey": "76a9149c8b0d3ea1ee3a4b40d4236027b933906df8c7fd88ac"
+    }
+  },
+  "steps": [
+    {
+      "from": 302,
+      "to": 303,
+      "step": "MN1 and MN2 set a P2PKH operator payout"
+    },
+    {
+      "from": 303,
+      "to": 304,
+      "step": "MN1 changes its operator payout to a P2SH address"
+    },
+    {
+      "from": 304,
+      "to": 305,
+      "step": "MN1 owner changes the operator key (PoSe ban, operator fields reset)"
+    },
+    {
+      "from": 305,
+      "to": 306,
+      "step": "MN1 new operator sets a P2PKH operator payout (revive)"
+    },
+    {
+      "from": 306,
+      "to": 307,
+      "step": "payment"
+    },
+    {
+      "from": 307,
+      "to": 308,
+      "step": "payment"
+    },
+    {
+      "from": 308,
+      "to": 309,
+      "step": "payment (MN1 paid)"
+    },
+    {
+      "from": 309,
+      "to": 310,
+      "step": "MN2 operator revokes (operator fields reset)"
+    }
+  ]
+}

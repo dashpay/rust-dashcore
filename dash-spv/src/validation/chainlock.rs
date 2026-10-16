@@ -1,4 +1,5 @@
 use dashcore::bls_sig_utils::BlsScheme;
+use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::message_verification_error::MessageVerificationError;
@@ -19,12 +20,7 @@ pub struct ChainLockValidator<'a> {
 
 impl Validator<&ChainLock> for ChainLockValidator<'_> {
     fn validate(&self, chain_lock: &ChainLock) -> ValidationResult<()> {
-        self.verify(chain_lock).map_err(|e| {
-            ValidationError::InvalidSignature(format!(
-                "ChainLock signature verification failed for height {}: {e}",
-                chain_lock.block_height
-            ))
-        })
+        self.verify(chain_lock)
     }
 }
 
@@ -43,10 +39,12 @@ impl<'a> ChainLockValidator<'a> {
         }
     }
 
-    fn verify(&self, chain_lock: &ChainLock) -> Result<(), MessageVerificationError> {
-        let request_id = chain_lock.request_id().map_err(|e| e.to_string())?;
+    fn verify(&self, chain_lock: &ChainLock) -> ValidationResult<()> {
+        let request_id = chain_lock.request_id().map_err(|e| invalid_signature(chain_lock, e))?;
         match (self.before, self.after) {
-            (None, None) => Err(MessageVerificationError::NoMasternodeLists),
+            (None, None) => {
+                Err(invalid_signature(chain_lock, MessageVerificationError::NoMasternodeLists))
+            }
             (Some(list), None) | (None, Some(list)) => {
                 self.verify_with_list(chain_lock, list, &request_id)
             }
@@ -71,8 +69,17 @@ impl<'a> ChainLockValidator<'a> {
         chain_lock: &ChainLock,
         masternode_list: &MasternodeList,
         request_id: &QuorumSigningRequestId,
-    ) -> Result<(), MessageVerificationError> {
-        let quorum = masternode_list.quorum_for_request(self.quorum_type, request_id)?;
+    ) -> ValidationResult<()> {
+        let quorum = masternode_list
+            .quorum_for_request(self.quorum_type, request_id)
+            .map_err(|e| invalid_signature(chain_lock, e))?;
+
+        if quorum.verified != LLMQEntryVerificationStatus::Verified {
+            return Err(ValidationError::QuorumNotVerified(
+                quorum.quorum_entry.quorum_hash,
+                quorum.verified.clone(),
+            ));
+        }
 
         let sign_id = chain_lock
             .sign_id(
@@ -80,22 +87,37 @@ impl<'a> ChainLockValidator<'a> {
                 quorum.quorum_entry.quorum_hash,
                 Some(*request_id),
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| invalid_signature(chain_lock, e))?;
 
-        quorum.verify_message_digest(
-            sign_id.to_byte_array(),
-            chain_lock.signature,
-            BlsScheme::Modern,
-        )
+        quorum
+            .verify_message_digest(sign_id.to_byte_array(), chain_lock.signature, BlsScheme::Modern)
+            .map_err(|e| invalid_signature(chain_lock, e))
     }
+}
+
+fn invalid_signature(chain_lock: &ChainLock, e: impl std::fmt::Display) -> ValidationError {
+    ValidationError::InvalidSignature(format!(
+        "ChainLock signature verification failed for height {}: {e}",
+        chain_lock.block_height
+    ))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::ChainLockValidator;
+    use crate::error::ValidationError;
     use crate::sml_engine::test_support::TestEngine;
+    use crate::validation::Validator;
+    use dashcore::sml::llmq_entry_verification::{
+        LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
+    };
+    use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+    use dashcore::sml::quorum_validation_error::QuorumValidationError;
     use dashcore::ChainLock;
     use dashcore_hashes::Hash;
     use hex_conservative::DisplayHex;
+    use std::sync::Arc;
+    use test_case::test_case;
 
     #[test]
     fn chain_locks_verify_against_the_newest_list() {
@@ -140,6 +162,40 @@ mod tests {
             ..genuine
         };
         assert!(engine.verify_chain_lock(&replayed).is_err());
+    }
+
+    /// The quorum selected to verify a ChainLock has to be `Verified`.
+    #[test_case(LLMQEntryVerificationStatus::Verified, true; "verified")]
+    #[test_case(LLMQEntryVerificationStatus::Unknown, false; "unknown")]
+    #[test_case(LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(2243485)), false; "skipped")]
+    #[test_case(LLMQEntryVerificationStatus::Invalid(QuorumValidationError::InvalidQuorumPublicKey), false; "invalid")]
+    fn a_chain_lock_needs_a_verified_quorum(status: LLMQEntryVerificationStatus, valid: bool) {
+        let engine = TestEngine::mainnet_fixture();
+        let [chain_lock, _] = ChainLock::mainnet_fixture_pair();
+        let quorum_type = engine.network().chain_locks_type();
+        let request_id = chain_lock.request_id().expect("request id");
+
+        let mut list = engine.latest_masternode_list().expect("newest").clone();
+        let quorum_hash = list
+            .quorum_for_request(quorum_type, &request_id)
+            .expect("selected quorum")
+            .quorum_entry
+            .quorum_hash;
+        let selected = Arc::make_mut(&mut list.quorums)
+            .get_mut(&quorum_type)
+            .and_then(|quorums| quorums.get_mut(&quorum_hash))
+            .expect("selected quorum");
+        Arc::make_mut(selected).verified = status;
+
+        let result = ChainLockValidator::new(quorum_type, Some(&list), None).validate(&chain_lock);
+        if valid {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            assert!(
+                matches!(result, Err(ValidationError::QuorumNotVerified(hash, _)) if hash == quorum_hash),
+                "{result:?}"
+            );
+        }
     }
 
     #[test]
