@@ -27,6 +27,27 @@ use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::wallet::Wallet;
 use crate::DerivationPath;
 
+/// Maximum number of inputs an asset-lock transaction may spend.
+///
+/// Mirrors Dash Core's `MAX_STANDARD_ASSET_LOCK_INPUTS` (`src/evo/specialtxman.cpp`,
+/// `IsStandardSpecialTx`): a larger asset lock is non-standard
+/// (`assetlocktx-too-many-inputs`), so peers drop it without relaying and it can
+/// never be mined or InstantSend-locked. Platform enforces the same bound in
+/// consensus (`max_asset_lock_transaction_inputs`).
+///
+/// Every asset-lock build is held to it: a drain spends at most this many of the
+/// largest UTXOs (see [`ManagedWalletInfo::build_asset_lock`]), and an
+/// exact-amount build that cannot be funded within it fails with
+/// [`BuilderError::TooManyInputs`].
+pub const MAX_ASSET_LOCK_INPUTS: usize = 100;
+
+/// Maximum serialized size, in bytes, of an asset-lock transaction.
+///
+/// Mirrors Dash Core's standardness limit on asset locks (`assetlocktx-too-big`
+/// in `IsStandardSpecialTx`). At [`MAX_ASSET_LOCK_INPUTS`] P2PKH inputs a built
+/// asset lock stays well below it; it is checked after signing as a backstop.
+pub const MAX_ASSET_LOCK_TX_SIZE: usize = 20_480;
+
 /// Which funding account to derive the one-time key from.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +67,8 @@ pub enum AssetLockFundingType {
 }
 
 /// A single wallet account that supplies the funding UTXOs (and signs the
-/// inputs) of a whole-balance **drain** asset lock.
+/// inputs) of a **drain** asset lock (the whole balance, or its
+/// [`MAX_ASSET_LOCK_INPUTS`] largest UTXOs when the account holds more).
 ///
 /// The asset-lock builders take a *list* of [`AccountTypePreference`] sources
 /// and pool them; this is the narrower vocabulary of the drain flows, which
@@ -294,6 +316,25 @@ fn validate_funding_sources(
     Ok(())
 }
 
+/// Reject a signed asset lock that Dash Core would refuse to relay: more than
+/// [`MAX_ASSET_LOCK_INPUTS`] inputs, or larger than [`MAX_ASSET_LOCK_TX_SIZE`].
+fn check_asset_lock_standard(transaction: &Transaction) -> Result<(), AssetLockError> {
+    if transaction.input.len() > MAX_ASSET_LOCK_INPUTS {
+        return Err(AssetLockError::Builder(BuilderError::TooManyInputs {
+            count: transaction.input.len(),
+            max: MAX_ASSET_LOCK_INPUTS,
+        }));
+    }
+    let size = transaction.size();
+    if size > MAX_ASSET_LOCK_TX_SIZE {
+        return Err(AssetLockError::Builder(BuilderError::InvalidData(format!(
+            "asset lock transaction is {size} bytes, above the {MAX_ASSET_LOCK_TX_SIZE}-byte \
+             standard limit"
+        ))));
+    }
+    Ok(())
+}
+
 /// The accounts among `offered` that contributed an input to `transaction`.
 ///
 /// Only these hold a share of the build's reservation, so this is what the
@@ -394,7 +435,10 @@ impl ManagedWalletInfo {
             .set_special_payload(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(
                 credit_outputs,
             )))
-            .require_final_inputs();
+            .require_final_inputs()
+            // Implied by the asset-lock payload already; stated so the bound is
+            // visible where asset locks are built.
+            .set_max_inputs(MAX_ASSET_LOCK_INPUTS);
         if drain {
             builder = builder.set_selection_strategy(SelectionStrategy::All);
         }
@@ -419,16 +463,26 @@ impl ManagedWalletInfo {
 
         let reserved: Vec<OutPoint> =
             transaction.input.iter().map(|input| input.previous_output).collect();
+        let reservations = BuildReservations {
+            sets,
+            reserved,
+            token,
+        };
+
+        // Backstop for the bounds coin selection already enforces: an asset
+        // lock Core deems non-standard is dropped by every peer without a
+        // reject, so the wallet would only ever see the broadcast time out.
+        // Refuse it here and give the inputs back instead.
+        if let Err(e) = check_asset_lock_standard(&transaction) {
+            reservations.release();
+            return Err(e);
+        }
 
         Ok(SignedAssetLock {
             transaction,
             fee,
             offered,
-            reservations: BuildReservations {
-                sets,
-                reserved,
-                token,
-            },
+            reservations,
         })
     }
 
@@ -450,12 +504,19 @@ impl ManagedWalletInfo {
     /// [`ManagedWalletInfo::build_and_sign_transaction`] for the shared
     /// source-list semantics.
     ///
-    /// `drain` locks the sourced accounts' whole spendable balance: every final
-    /// UTXO is consumed and the single credit output's value is rewritten to
+    /// `drain` locks the sourced accounts' spendable balance: every final UTXO
+    /// is consumed — or, when there are more than [`MAX_ASSET_LOCK_INPUTS`], the
+    /// [`MAX_ASSET_LOCK_INPUTS`] largest, leaving the rest in the account for a
+    /// later lock — and the single credit output's value is rewritten to
     /// `Σ inputs − fee` (the caller's credit-output value is ignored; exactly
     /// one credit output is required). CoinJoin funding is drain-only and must
     /// be the sole source: pooling mixed outputs with transparent ones in one
     /// transaction links them and undoes the mixing.
+    ///
+    /// A non-drain build spends at most [`MAX_ASSET_LOCK_INPUTS`] inputs; when
+    /// the amount cannot be funded within that many it fails with
+    /// [`BuilderError::TooManyInputs`] (`count` = the fewest inputs it needs)
+    /// and reserves nothing.
     pub async fn build_asset_lock(
         &mut self,
         wallet: &Wallet,

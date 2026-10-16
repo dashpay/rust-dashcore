@@ -5,6 +5,7 @@
 
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
 use crate::managed_account::ManagedCoreFundsAccount;
+use crate::wallet::managed_wallet_info::asset_lock_builder::MAX_ASSET_LOCK_INPUTS;
 use crate::wallet::managed_wallet_info::coin_selection::{
     CoinSelector, SelectionStrategy, CHANGE_OUTPUT_SIZE, TX_OUTPUT_SIZE,
 };
@@ -90,6 +91,8 @@ pub struct TransactionBuilder {
     /// Finalizes `special_payload` after input selection, for payloads that
     /// commit to the chosen inputs. See [`Self::set_payload_finalizer`].
     payload_finalizer: Option<PayloadFinalizer>,
+    /// Caller-set input bound. See [`Self::set_max_inputs`].
+    max_inputs: Option<usize>,
     /// Reservation set of each funding account paired with the outpoints that
     /// account contributed, captured by `add_funding`. Reservations live on the
     /// account that holds the UTXO, so each account reserves its own share of
@@ -118,8 +121,45 @@ impl TransactionBuilder {
             change_to_first_input: false,
             special_payload: None,
             payload_finalizer: None,
+            max_inputs: None,
             funding: Vec::new(),
         }
+    }
+
+    /// Bound the number of inputs this build may spend, and have coin
+    /// selection respect the bound instead of only rejecting an oversized pick.
+    ///
+    /// A drain ([`SelectionStrategy::All`]) becomes a *bounded drain*: it
+    /// spends the `max` largest spendable UTXOs and leaves the rest. Any other
+    /// strategy picks a selection within `max` inputs, or fails with
+    /// [`BuilderError::TooManyInputs`] (whose `count` is the fewest inputs the
+    /// amount needs) when none exists.
+    ///
+    /// The bound is clamped to the relay-standard maximum of 500 inputs. A
+    /// builder carrying an asset-lock payload is bounded at
+    /// [`MAX_ASSET_LOCK_INPUTS`] without calling this; a lower value set here
+    /// still wins. Without either, a build is only checked against the 500-input
+    /// standard limit after selection, as before: an unbounded drain over a
+    /// larger account fails rather than leaving coins behind.
+    pub fn set_max_inputs(mut self, max: usize) -> Self {
+        self.max_inputs = Some(max);
+        self
+    }
+
+    /// The input bound coin selection must respect, when one applies: the
+    /// caller's [`Self::set_max_inputs`], and/or [`MAX_ASSET_LOCK_INPUTS`] for an
+    /// asset-lock payload (Core refuses a larger asset lock as non-standard,
+    /// and Platform rejects it), the tighter of the two, never above
+    /// `MAX_STANDARD_TX_INPUTS`.
+    fn selection_input_bound(&self) -> Option<usize> {
+        let asset_lock_bound =
+            matches!(self.special_payload, Some(TransactionPayload::AssetLockPayloadType(_)))
+                .then_some(MAX_ASSET_LOCK_INPUTS);
+        let bound = match (self.max_inputs, asset_lock_bound) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }?;
+        Some(bound.min(MAX_STANDARD_TX_INPUTS))
     }
 
     /// Restrict coin selection to final inputs: confirmed or
@@ -499,7 +539,13 @@ impl TransactionBuilder {
         // Must match `calculate_base_size`, including the conservative VIN0 routing-script size.
         let change_output_size = self.estimated_change_output_size();
 
-        let selection = CoinSelector::new(self.selection_strategy)
+        let input_bound = self.selection_input_bound();
+        let max_inputs = input_bound.unwrap_or(MAX_STANDARD_TX_INPUTS);
+        let mut selector = CoinSelector::new(self.selection_strategy);
+        if let Some(bound) = input_bound {
+            selector = selector.with_max_inputs(bound);
+        }
+        let selection = selector
             .select_coins_with_size(
                 self.inputs.iter(),
                 total_output,
@@ -512,10 +558,12 @@ impl TransactionBuilder {
 
         let mut selected_inputs = selection.selected;
 
-        if selected_inputs.len() > MAX_STANDARD_TX_INPUTS {
+        // A bounded selector only exceeds its bound when no selection within it
+        // funds the target; an unbounded one is checked against the standard cap.
+        if selected_inputs.len() > max_inputs {
             return Err(BuilderError::TooManyInputs {
                 count: selected_inputs.len(),
-                max: MAX_STANDARD_TX_INPUTS,
+                max: max_inputs,
             });
         }
 
