@@ -97,7 +97,7 @@ fn test_wallet_creation_from_extended_key() {
     let seed = mnemonic.to_seed("");
     let root_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let master_key = root_key.to_extended_priv_key(Network::Testnet);
-    let master_private_key = master_key.private_key;
+    let master_private_key = master_key.private_key.clone();
 
     let wallet = Wallet::from_extended_key(
         master_key,

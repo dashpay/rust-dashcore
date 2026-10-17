@@ -5,11 +5,11 @@ use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpStream};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, process};
 
+use dashcore::Network;
 use dashcore::consensus::{Decodable, encode};
+use dashcore::key::rand;
 use dashcore::network::{address, constants, message, message_network};
-use dashcore::secp256k1::rand::Rng;
-use dashcore::{Network, secp256k1};
-use secp256k1::rand;
+use rand::Rng;
 
 fn main() {
     // This example establishes a connection to a Bitcoin node, sends the initial

@@ -698,7 +698,7 @@ impl FFIDerivedAddress {
                     pool_type: FFIDerivedAddressPoolType::from(d.pool_type),
                     derivation_index: d.derivation_index,
                     address: c_address.into_raw(),
-                    public_key: d.public_key.inner.serialize(),
+                    public_key: d.public_key.inner.to_compressed(),
                 }
             })
             .collect()

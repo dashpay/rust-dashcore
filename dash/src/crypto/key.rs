@@ -155,12 +155,12 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn public_key_constructors() {
-        use secp256k1::rand;
+        use crate::crypto::ecdsa::EcdsaSecretKey;
 
-        let kp = Keypair::new(&mut rand::rng());
+        let pk = EcdsaSecretKey::generate().public_key();
 
-        let _ = PublicKey::new(kp);
-        let _ = PublicKey::new_uncompressed(kp);
+        let _ = PublicKey::new(pk);
+        let _ = PublicKey::new_uncompressed(pk);
     }
 
     #[test]

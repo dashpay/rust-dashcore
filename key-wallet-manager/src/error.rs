@@ -101,7 +101,6 @@ impl From<key_wallet::Error> for WalletError {
                 WalletError::InvalidParameter(format!("Serialization error: {}", msg))
             }
             Error::Bip32(e) => WalletError::AccountCreation(format!("BIP32 error: {}", e)),
-            Error::Secp256k1(e) => WalletError::AccountCreation(format!("Secp256k1 error: {}", e)),
             Error::Base58 => WalletError::InvalidParameter("Base58 decoding error".to_string()),
             Error::NoKeySource => {
                 WalletError::InvalidParameter("No key source available".to_string())

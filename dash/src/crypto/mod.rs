@@ -7,7 +7,11 @@
 //!
 
 pub mod ecdsa {
-    pub use dashcore_crypto::ecdsa::{Error, SerializedSignature, Signature};
+    pub use dashcore_crypto::ecdsa::{
+        DecodeError, ECDSA_PK_LEN, ECDSA_PK_UNCOMPRESSED_LEN, ECDSA_REC_SIG_LEN, ECDSA_SIG_LEN,
+        ECDSA_SK_LEN, EcdsaError, EcdsaPublicKey, EcdsaRecSignature, EcdsaSecretKey,
+        EcdsaSignature, ParseSignatureError, SerializedSignature, Signature,
+    };
 }
 pub mod key;
 pub mod sighash;

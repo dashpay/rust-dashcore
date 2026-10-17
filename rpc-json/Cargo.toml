@@ -26,6 +26,6 @@ serde_repr = "0.1"
 hex-conservative = { workspace = true }
 
 key-wallet = { path = "../key-wallet", default-features = false, features=["serde", "getrandom"] }
-dashcore = { path = "../dash", features=["secp-recovery", "rand-std", "signer", "serde"] }
+dashcore = { path = "../dash", features=["rand-std", "signer", "serde"] }
 
 bincode = { workspace = true, features = ["serde"] }

@@ -11,12 +11,12 @@ use core::fmt;
 use core::iter::FusedIterator;
 
 use hashes::{Hash, HashEngine, sha256t_hash_newtype};
-use internals::write_err;
-use secp256k1::{self, Parity, Scalar};
 
 use crate::consensus::Encodable;
+use crate::crypto::ecdsa::EcdsaSecretKey;
 use crate::crypto::key::{
-    TweakedKeyPair, TweakedPublicKey, UntweakedKeyPair, UntweakedPublicKey, XOnlyPublicKey,
+    Keypair, Parity, Scalar, TweakedKeypair, TweakedPublicKey, UntweakedKeypair,
+    UntweakedPublicKey, XOnlyPublicKey, constants,
 };
 // Re-export these so downstream only has to use one `taproot` module.
 pub use crate::crypto::taproot::{Error, Signature};
@@ -59,7 +59,7 @@ impl TapTweakHash {
     ) -> TapTweakHash {
         let mut eng = TapTweakHash::engine();
         // always hash the key
-        eng.input(&internal_key.to_byte_array());
+        eng.input(&internal_key.serialize().0);
         if let Some(h) = merkle_root {
             eng.input(h.as_ref());
         } else {
@@ -189,7 +189,7 @@ pub struct TaprootSpendInfo {
     /// The merkle root of the script tree (None if there are no scripts).
     merkle_root: Option<TapNodeHash>,
     /// The sign final output pubkey as per BIP 341.
-    output_key_parity: secp256k1::Parity,
+    output_key_parity: Parity,
     /// The tweaked output key.
     output_key: TweakedPublicKey,
     /// Map from (script, leaf_version) to (sets of) [`TaprootMerkleBranch`]. More than one control
@@ -262,7 +262,7 @@ impl TaprootSpendInfo {
     }
 
     /// Returns the parity of the output key. See also [`TaprootSpendInfo::output_key`].
-    pub fn output_key_parity(&self) -> secp256k1::Parity {
+    pub fn output_key_parity(&self) -> Parity {
         self.output_key_parity
     }
 
@@ -1294,7 +1294,7 @@ pub struct ControlBlock {
     /// The tapleaf version.
     pub leaf_version: LeafVersion,
     /// The parity of the output key (NOT THE INTERNAL KEY WHICH IS ALWAYS XONLY).
-    pub output_key_parity: secp256k1::Parity,
+    pub output_key_parity: Parity,
     /// The internal key.
     pub internal_key: UntweakedPublicKey,
     /// The merkle proof of a script associated with this leaf.
@@ -1317,7 +1317,6 @@ impl ControlBlock {
     /// # Errors
     ///
     /// - [`TaprootError::InvalidControlBlockSize`] if `sl` is not of size 1 + 32 + 32N for any N >= 0.
-    /// - [`TaprootError::InvalidParity`] if first byte of `sl` is not a valid output key parity.
     /// - [`TaprootError::InvalidTaprootLeafVersion`] if first byte of `sl` is not a valid leaf version.
     /// - [`TaprootError::InvalidInternalKey`] if internal key is invalid (first 32 bytes after the parity byte).
     /// - [`TaprootError::InvalidMerkleTreeDepth`] if merkle tree is too deep (more than 128 levels).
@@ -1327,17 +1326,20 @@ impl ControlBlock {
         {
             return Err(TaprootError::InvalidControlBlockSize(sl.len()));
         }
-        let output_key_parity =
-            secp256k1::Parity::from_i32((sl[0] & 1) as i32).map_err(TaprootError::InvalidParity)?;
+        let output_key_parity = if sl[0] & 1 == 1 {
+            Parity::Odd
+        } else {
+            Parity::Even
+        };
         let leaf_version = LeafVersion::from_consensus(sl[0] & TAPROOT_LEAF_MASK)?;
         // Chunking the key off the parity byte yields the array
         let Some((internal_key, merkle_branch)) =
-            sl[1..].split_first_chunk::<{ secp256k1::constants::SCHNORR_PUBLIC_KEY_SIZE }>()
+            sl[1..].split_first_chunk::<{ constants::SCHNORR_PUBLIC_KEY_SIZE }>()
         else {
             return Err(TaprootError::InvalidControlBlockSize(sl.len()));
         };
-        let internal_key = UntweakedPublicKey::from_byte_array(*internal_key)
-            .map_err(TaprootError::InvalidInternalKey)?;
+        let internal_key = UntweakedPublicKey::from_byte_array(internal_key)
+            .map_err(|_| TaprootError::InvalidInternalKey)?;
         let merkle_branch = TaprootMerkleBranch::decode(merkle_branch)?;
         Ok(ControlBlock {
             leaf_version,
@@ -1362,7 +1364,7 @@ impl ControlBlock {
         let first_byte: u8 =
             i32::from(self.output_key_parity) as u8 | self.leaf_version.to_consensus();
         writer.write_all(&[first_byte])?;
-        writer.write_all(&self.internal_key.to_byte_array())?;
+        writer.write_all(&self.internal_key.serialize().0)?;
         self.merkle_branch.encode(&mut writer)?;
         Ok(self.size())
     }
@@ -1394,7 +1396,7 @@ impl ControlBlock {
         // compute the taptweak
         let tweak =
             TapTweakHash::from_key_and_tweak(self.internal_key, Some(curr_hash)).to_scalar();
-        self.internal_key.tweak_add_check(&output_key, self.output_key_parity, tweak)
+        self.internal_key.tweak_add_check(&output_key.with_parity(self.output_key_parity), tweak)
     }
 }
 
@@ -1566,7 +1568,7 @@ pub enum TaprootBuilderError {
     /// Two nodes at depth 0 are not allowed.
     OverCompleteTree,
     /// Invalid taproot internal key.
-    InvalidInternalKey(secp256k1::Error),
+    InvalidInternalKey,
     /// Called finalize on a empty tree.
     EmptyTree,
 }
@@ -1589,9 +1591,7 @@ impl fmt::Display for TaprootBuilderError {
                 "Attempted to create a tree with two nodes at depth 0. There must\
                 only be a exactly one node at depth 0",
             ),
-            TaprootBuilderError::InvalidInternalKey(ref e) => {
-                write_err!(f, "invalid internal x-only key"; e)
-            }
+            TaprootBuilderError::InvalidInternalKey => write!(f, "invalid internal x-only key"),
             TaprootBuilderError::EmptyTree => {
                 write!(f, "Called finalize on an empty tree")
             }
@@ -1604,8 +1604,11 @@ impl std::error::Error for TaprootBuilderError {
         use self::TaprootBuilderError::*;
 
         match self {
-            InvalidInternalKey(e) => Some(e),
-            InvalidMerkleTreeDepth(_) | NodeNotInDfsOrder | OverCompleteTree | EmptyTree => None,
+            InvalidInternalKey
+            | InvalidMerkleTreeDepth(_)
+            | NodeNotInDfsOrder
+            | OverCompleteTree
+            | EmptyTree => None,
         }
     }
 }
@@ -1623,9 +1626,7 @@ pub enum TaprootError {
     /// Invalid control block size.
     InvalidControlBlockSize(usize),
     /// Invalid taproot internal key.
-    InvalidInternalKey(secp256k1::Error),
-    /// Invalid parity for internal key.
-    InvalidParity(secp256k1::InvalidParityValue),
+    InvalidInternalKey,
     /// Empty tap tree.
     EmptyTree,
 }
@@ -1651,10 +1652,7 @@ impl fmt::Display for TaprootError {
                 "Control Block size({}) must be of the form 33 + 32*m where  0 <= m <= {} ",
                 sz, TAPROOT_CONTROL_MAX_NODE_COUNT
             ),
-            TaprootError::InvalidInternalKey(ref e) => {
-                write_err!(f, "invalid internal x-only key"; e)
-            }
-            TaprootError::InvalidParity(_) => write!(f, "invalid parity value for internal key"),
+            TaprootError::InvalidInternalKey => write!(f, "invalid internal x-only key"),
             TaprootError::EmptyTree => write!(f, "Taproot Tree must contain at least one script"),
         }
     }
@@ -1665,12 +1663,11 @@ impl std::error::Error for TaprootError {
         use self::TaprootError::*;
 
         match self {
-            InvalidInternalKey(e) => Some(e),
-            InvalidMerkleBranchSize(_)
+            InvalidInternalKey
+            | InvalidMerkleBranchSize(_)
             | InvalidMerkleTreeDepth(_)
             | InvalidTaprootLeafVersion(_)
             | InvalidControlBlockSize(_)
-            | InvalidParity(_)
             | EmptyTree => None,
         }
     }
@@ -1722,10 +1719,10 @@ impl TapTweak for UntweakedPublicKey {
     /// The tweaked key and its parity.
     fn tap_tweak(self, merkle_root: Option<TapNodeHash>) -> (TweakedPublicKey, Parity) {
         let tweak = TapTweakHash::from_key_and_tweak(self, merkle_root).to_scalar();
-        let (output_key, parity) = self.add_tweak(&tweak).expect("Tap tweak failed");
+        let output_key = self.add_tweak(&tweak).expect("Tap tweak failed");
 
-        debug_assert!(self.tweak_add_check(&output_key, parity, tweak));
-        (TweakedPublicKey::dangerous_assume_tweaked(output_key), parity)
+        debug_assert!(self.tweak_add_check(&output_key, tweak));
+        (TweakedPublicKey::dangerous_assume_tweaked(output_key), output_key.parity())
     }
 
     fn dangerous_assume_tweaked(self) -> TweakedPublicKey {
@@ -1733,9 +1730,9 @@ impl TapTweak for UntweakedPublicKey {
     }
 }
 
-impl TapTweak for UntweakedKeyPair {
-    type TweakedAux = TweakedKeyPair;
-    type TweakedKey = TweakedKeyPair;
+impl TapTweak for UntweakedKeypair {
+    type TweakedAux = TweakedKeypair;
+    type TweakedKey = TweakedKeypair;
 
     /// Tweaks private and public keys within an untweaked `KeyPair` with corresponding public key
     /// value and optional script tree merkle root.
@@ -1749,15 +1746,21 @@ impl TapTweak for UntweakedKeyPair {
     ///
     /// # Returns
     /// The tweaked key and its parity.
-    fn tap_tweak(self, merkle_root: Option<TapNodeHash>) -> TweakedKeyPair {
-        let (pubkey, _parity) = XOnlyPublicKey::from_keypair(&self);
-        let tweak = TapTweakHash::from_key_and_tweak(pubkey, merkle_root).to_scalar();
-        let tweaked = self.add_xonly_tweak(&tweak).expect("Tap tweak failed");
-        TweakedKeyPair::dangerous_assume_tweaked(tweaked)
+    fn tap_tweak(self, merkle_root: Option<TapNodeHash>) -> TweakedKeypair {
+        let pubkey = XOnlyPublicKey::from_keypair(&self);
+        let tweak = TapTweakHash::from_key_and_tweak(pubkey, merkle_root);
+        let mut sk = self.to_private_key();
+        if pubkey.parity() == Parity::Odd {
+            sk = sk.negate();
+        }
+        let tweaked = EcdsaSecretKey::from_bytes(&sk.to_secret_bytes())
+            .and_then(|sk| sk.add_tweak(&tweak.to_byte_array()))
+            .expect("Tap tweak failed");
+        TweakedKeypair::dangerous_assume_tweaked(Keypair::from(tweaked))
     }
 
-    fn dangerous_assume_tweaked(self) -> TweakedKeyPair {
-        TweakedKeyPair::dangerous_assume_tweaked(self)
+    fn dangerous_assume_tweaked(self) -> TweakedKeypair {
+        TweakedKeypair::dangerous_assume_tweaked(self)
     }
 }
 
@@ -1767,7 +1770,6 @@ mod test {
 
     use hashes::sha256t::Tag;
     use hashes::{Hash, HashEngine, sha256};
-    use secp256k1::XOnlyPublicKey;
 
     use super::*;
     use crate::sighash::{TapSighash, TapSighashTag};
@@ -1865,7 +1867,7 @@ mod test {
             ControlBlock::decode(&hex_conservative::decode_to_vec(control_block_hex).unwrap())
                 .unwrap();
         assert_eq!(control_block_hex, control_block.serialize().to_lower_hex_string());
-        assert!(control_block.verify_taproot_commitment(out_pk.to_inner(), &script));
+        assert!(control_block.verify_taproot_commitment(out_pk.to_x_only_public_key(), &script));
     }
 
     #[test]
@@ -2052,7 +2054,10 @@ mod test {
         for (_weights, script) in script_weights {
             let ver_script = (script, LeafVersion::TapScript);
             let ctrl_block = tree_info.control_block(&ver_script).unwrap();
-            assert!(ctrl_block.verify_taproot_commitment(output_key.to_inner(), &ver_script.0,))
+            assert!(
+                ctrl_block
+                    .verify_taproot_commitment(output_key.to_x_only_public_key(), &ver_script.0,)
+            )
         }
     }
 
@@ -2122,7 +2127,10 @@ mod test {
         for script in [a, b, c, d, e] {
             let ver_script = (script, LeafVersion::TapScript);
             let ctrl_block = tree_info.control_block(&ver_script).unwrap();
-            assert!(ctrl_block.verify_taproot_commitment(output_key.to_inner(), &ver_script.0,))
+            assert!(
+                ctrl_block
+                    .verify_taproot_commitment(output_key.to_x_only_public_key(), &ver_script.0,)
+            )
         }
     }
 
@@ -2276,7 +2284,7 @@ mod test {
             let addr = Address::p2tr(internal_key, merkle_root, Network::Mainnet);
             let spk = addr.script_pubkey();
 
-            assert_eq!(expected_output_key, output_key.to_inner());
+            assert_eq!(expected_output_key.serialize().0, output_key.serialize());
             assert_eq!(expected_tweak, tweak);
             assert_eq!(expected_addr, addr);
             assert_eq!(expected_spk, spk);

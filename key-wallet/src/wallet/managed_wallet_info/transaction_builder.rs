@@ -15,12 +15,11 @@ use dashcore::blockdata::opcodes;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 use dashcore::sighash::{EcdsaSighashType, LegacySighash, SighashCache};
 use dashcore::Address;
 use dashcore::{Network, TxIn, TxOut};
 use dashcore_hashes::Hash;
-use secp256k1::ecdsa::Signature;
-use secp256k1::{Message, PublicKey};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
@@ -940,7 +939,7 @@ pub trait TransactionSigner {
             let (sig, pubkey) = self.sig_and_pubkey(sighash, path).await?;
 
             let script_sig = Builder::new()
-                .push_slice(dashcore::ecdsa::Signature::sighash_all(sig).serialize())
+                .push_slice(dashcore::ecdsa::Signature::sighash_all(sig.into()).serialize())
                 .push_key(&dashcore::PublicKey::new(pubkey))
                 .into_script();
 
@@ -958,7 +957,7 @@ pub trait TransactionSigner {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError>;
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError>;
 }
 
 #[async_trait::async_trait]
@@ -967,7 +966,7 @@ impl TransactionSigner for Wallet {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError> {
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError> {
         let root_xpriv =
             self.root_extended_priv_key().map_err(|_| BuilderError::WatchOnlyWallet)?;
 
@@ -975,11 +974,10 @@ impl TransactionSigner for Wallet {
         let derived_xpriv = root_ext_priv.derive_priv(&path).map_err(|e| {
             BuilderError::SigningFailed(format!("couldn't derive extended priv key: {}", e))
         })?;
-        let key = derived_xpriv.private_key;
+        let key = &derived_xpriv.private_key;
 
-        let message = Message::from_digest(*sighash.as_byte_array());
-        let signature = key.sign_ecdsa(message);
-        let pubkey = PublicKey::from_secret_key(&key);
+        let signature = key.sign(sighash.as_byte_array());
+        let pubkey = key.public_key();
 
         Ok((signature, pubkey))
     }
@@ -991,7 +989,7 @@ impl<S: Signer> TransactionSigner for S {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError> {
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError> {
         if !self.supports(crate::signer::SignerMethod::Digest) {
             return Err(BuilderError::SigningFailed(format!(
                 "signer does not support required method {:?}",
