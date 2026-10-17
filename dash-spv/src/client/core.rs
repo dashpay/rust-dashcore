@@ -11,7 +11,7 @@ use crate::sml_engine::MasternodeListEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
 use super::ClientConfig;
@@ -113,6 +113,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager> {
     /// Whether the sync loop is running, readable without locking `sync_loop`.
     /// Set once `run` started it, cleared as soon as it stops or fails.
     pub(super) running: Arc<AtomicBool>,
+    pub(super) detached_tasks: Arc<Mutex<JoinSet<()>>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
@@ -134,6 +135,7 @@ impl<W: WalletInterface, N: NetworkManager> Clone for DashSpvClient<W, N> {
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             sync_loop: Arc::clone(&self.sync_loop),
             running: Arc::clone(&self.running),
+            detached_tasks: Arc::clone(&self.detached_tasks),
             event_handlers: Arc::clone(&self.event_handlers),
         }
     }

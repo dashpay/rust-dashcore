@@ -109,6 +109,33 @@ mod tests {
         assert_eq!(anchored_tip(120_000, Some(60_000)).await.0, 50_000);
     }
 
+    /// `stop` returns only once the tasks the sync loop detached are done, so
+    /// none of them still holds a client clone, and with it the storage.
+    #[tokio::test]
+    async fn stop_waits_for_detached_tasks() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = ClientConfig::testnet()
+            .without_filters()
+            .without_masternodes()
+            .with_storage_path(temp_dir.path());
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let client =
+            DashSpvClient::new(config, MockNetworkManager::new(), wallet, vec![Arc::new(())])
+                .await
+                .expect("client construction must succeed");
+
+        client.run().await.expect("client must start");
+
+        let detached = client.clone();
+        client.detached_tasks.lock().await.spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            drop(detached);
+        });
+
+        client.stop().await;
+        assert_eq!(Arc::strong_count(&client.storage), 1);
+    }
+
     #[tokio::test]
     async fn client_exposes_shared_wallet_manager() {
         let temp_dir = TempDir::new().unwrap();

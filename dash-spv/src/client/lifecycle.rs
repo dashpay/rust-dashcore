@@ -34,6 +34,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinSet;
 
 impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Create a new SPV client with the given configuration, network and wallet.
@@ -84,6 +85,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             sync_coordinator: Arc::new(Mutex::new(SyncCoordinator::new(initial_progress.clone()))),
             sync_loop: Arc::new(Mutex::new(None)),
             running: Arc::new(AtomicBool::new(false)),
+            detached_tasks: Arc::new(Mutex::new(JoinSet::new())),
             event_handlers: Arc::new(event_handlers),
         };
 
@@ -234,11 +236,31 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         Ok(())
     }
 
-    /// Stop the SPV client.
+    /// Stop the SPV client. Returns once nothing the client started holds its
+    /// storage any more.
     pub async fn stop(&self) {
         let mut sync_loop = self.sync_loop.lock().await;
         if let Some(running) = sync_loop.take() {
             self.stop_locked(running).await;
+        }
+        drop(sync_loop);
+
+        self.join_detached_tasks().await;
+    }
+
+    async fn join_detached_tasks(&self) {
+        loop {
+            let mut tasks = std::mem::take(&mut *self.detached_tasks.lock().await);
+
+            if tasks.is_empty() {
+                return;
+            }
+
+            while let Some(result) = tasks.join_next().await {
+                if let Err(e) = result {
+                    tracing::warn!("Detached client task failed: {}", e);
+                }
+            }
         }
     }
 

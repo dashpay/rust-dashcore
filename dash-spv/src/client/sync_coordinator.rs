@@ -1,6 +1,7 @@
 //! Sync coordination and orchestration.
 
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -149,10 +150,10 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                         // Recovering stops this task, so it runs in a task of its own,
                         // which only acts on a loop whose token is cancelled.
                         monitor_shutdown.cancel();
-                        let client = client.clone();
+                        let recovering = client.clone();
 
-                        tokio::spawn(async move {
-                            if let Err(e) = client.handle_fork(fork_height).await {
+                        client.detached_tasks.lock().await.spawn(async move {
+                            if let Err(e) = recovering.handle_fork(fork_height).await {
                                 tracing::warn!("Error recovering from the fork: {}", e);
                             }
                         });
@@ -193,7 +194,8 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     handler.on_error(&e.to_string());
                 }
                 // Stopping waits for this task, so it runs in a task of its own.
-                tokio::spawn(async move { client.stop_failed().await });
+                let detached_tasks = Arc::clone(&client.detached_tasks);
+                detached_tasks.lock().await.spawn(async move { client.stop_failed().await });
             }
         });
 
