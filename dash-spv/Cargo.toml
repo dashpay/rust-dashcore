@@ -70,6 +70,10 @@ harness = false
 name = "dash-spv"
 path = "src/main.rs"
 
+[[bin]]
+name = "generate-checkpoints"
+path = "src/bin/generate_checkpoints.rs"
+
 [lib]
 name = "dash_spv"
 path = "src/lib.rs"
