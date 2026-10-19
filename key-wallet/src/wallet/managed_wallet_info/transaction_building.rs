@@ -635,7 +635,7 @@ mod tests {
     use crate::DerivationPath;
     use crate::Wallet;
     use dashcore::address::NetworkUnchecked;
-    use secp256k1::PublicKey;
+    use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 
     fn test_wallet_and_info() -> (Wallet, ManagedWalletInfo) {
         let wallet =
@@ -667,25 +667,24 @@ mod tests {
             &self,
             path: &DerivationPath,
             sighash: [u8; 32],
-        ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+        ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
                 .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            let msg = secp256k1::Message::from_digest(sighash);
-            let sig = xpriv.private_key.sign_ecdsa(msg);
-            let pk = secp256k1::PublicKey::from_secret_key(&xpriv.private_key);
+            let sig = xpriv.private_key.sign(&sighash);
+            let pk = xpriv.private_key.public_key();
             Ok((sig, pk))
         }
 
-        async fn public_key(&self, path: &DerivationPath) -> Result<PublicKey, Self::Error> {
+        async fn public_key(&self, path: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
                 .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            Ok(secp256k1::PublicKey::from_secret_key(&xpriv.private_key))
+            Ok(xpriv.private_key.public_key())
         }
     }
 
@@ -779,10 +778,10 @@ mod tests {
                 &self,
                 _: &DerivationPath,
                 _: [u8; 32],
-            ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+            ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
                 unreachable!("should be rejected before any signing is attempted")
             }
-            async fn public_key(&self, _: &DerivationPath) -> Result<PublicKey, Self::Error> {
+            async fn public_key(&self, _: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
                 unreachable!()
             }
         }

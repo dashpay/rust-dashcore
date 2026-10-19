@@ -16,9 +16,10 @@
 use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::provider_registration::{
-    CompactSignature, decode_compact_signatures, encode_compact_signatures,
+    decode_compact_signatures, encode_compact_signatures,
 };
 use crate::consensus::{Decodable, Encodable, encode};
+use crate::crypto::ecdsa::EcdsaRecSignature;
 use crate::hash_types::Txid;
 use crate::io;
 use crate::prelude::*;
@@ -33,7 +34,7 @@ pub struct ProviderDissolvePayload {
     /// Index of the share dissolving the masternode.
     pub actor_index: u16,
     /// One signature for a unilateral dissolution, one per share for a unanimous one.
-    pub signatures: Vec<CompactSignature>,
+    pub signatures: Vec<EcdsaRecSignature>,
 }
 
 impl ProviderDissolvePayload {
@@ -82,8 +83,8 @@ mod tests {
             pro_tx_hash: Txid::from_byte_array([0x11; 32]),
             actor_index: 2,
             signatures: vec![
-                CompactSignature::from([0x22; 65]),
-                CompactSignature::from([0x33; 65]),
+                EcdsaRecSignature::from([0x22; 65]),
+                EcdsaRecSignature::from([0x33; 65]),
             ],
         };
         let mut want = vec![0x01, 0x00];

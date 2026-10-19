@@ -23,11 +23,11 @@
 //!
 //! ```rust
 //! # #[cfg(feature = "rand-std")] {
+//! use dashcore::ecdsa::EcdsaSecretKey;
 //! use dashcore::{Address, PublicKey, Network};
-//! use dashcore::secp256k1::{self, rand};
 //!
 //! // Generate random key pair.
-//! let public_key = PublicKey::new(secp256k1::generate_keypair(&mut rand::rng()).1);
+//! let public_key = PublicKey::new(EcdsaSecretKey::generate().public_key());
 //!
 //! // Generate pay-to-pubkey-hash address.
 //! let address = Address::p2pkh(&public_key, Network::Mainnet);
@@ -45,10 +45,10 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
 
+use crate::crypto::key::XOnlyPublicKey;
 use bech32;
 use hashes::{Hash, HashEngine, sha256};
 use internals::write_err;
-use secp256k1::XOnlyPublicKey;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -599,7 +599,7 @@ impl Payload {
     /// Create a pay to taproot payload from untweaked key
     pub fn p2tr(internal_key: UntweakedPublicKey, merkle_root: Option<TapNodeHash>) -> Payload {
         let (output_key, _parity) = internal_key.tap_tweak(merkle_root);
-        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.to_inner().to_byte_array())
+        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.serialize())
             .expect("taproot output key has len 32 <= 40");
         Payload::WitnessProgram(prog)
     }
@@ -608,7 +608,7 @@ impl Payload {
     ///
     /// This method is not recommended for use and [Payload::p2tr()] should be used where possible.
     pub fn p2tr_tweaked(output_key: TweakedPublicKey) -> Payload {
-        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.to_inner().to_byte_array())
+        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.serialize())
             .expect("taproot output key has len 32 <= 40");
         Payload::WitnessProgram(prog)
     }
@@ -1227,7 +1227,7 @@ impl Address {
         let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
 
         (*pubkey_hash.as_byte_array() == *payload)
-            || (xonly_pubkey.to_byte_array() == *payload)
+            || (xonly_pubkey.serialize().0 == *payload)
             || (*segwit_redeem_hash(&pubkey_hash).as_byte_array() == *payload)
     }
 
@@ -1237,7 +1237,7 @@ impl Address {
     /// assumed to have already been tweaked.
     pub fn is_related_to_xonly_pubkey(&self, xonly_pubkey: &XOnlyPublicKey) -> bool {
         let payload = self.payload().inner_prog_as_bytes();
-        payload == xonly_pubkey.to_byte_array()
+        payload == xonly_pubkey.serialize().0
     }
 
     /// Returns true if the address creates a particular script
@@ -1482,8 +1482,8 @@ fn segwit_redeem_hash(pubkey_hash: &PubkeyHash) -> crate::hashes::hash160::Hash 
 mod tests {
     use core::str::FromStr;
 
+    use crate::crypto::key::XOnlyPublicKey;
     use hex_conservative::hex;
-    use secp256k1::XOnlyPublicKey;
 
     use super::*;
     use crate::Network::{Mainnet, Testnet};

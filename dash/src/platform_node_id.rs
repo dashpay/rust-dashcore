@@ -24,8 +24,8 @@ use hashes::{Hash, sha256};
 use internals::impl_array_newtype;
 
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::internal_macros::impl_bytes_newtype;
 use crate::io;
+use internals::impl_bytes_newtype;
 
 /// A Dash Platform (Tenderdash/CometBFT) node ID.
 ///

@@ -203,10 +203,10 @@ fn script_generators() {
             .unwrap();
     assert!(ScriptBuf::new_p2pk(&pubkey).is_p2pk());
 
-    let pubkey_hash = PubkeyHash::hash(&pubkey.inner.serialize());
+    let pubkey_hash = PubkeyHash::hash(&pubkey.inner.to_compressed());
     assert!(ScriptBuf::new_p2pkh(&pubkey_hash).is_p2pkh());
 
-    let wpubkey_hash = WPubkeyHash::hash(&pubkey.inner.serialize());
+    let wpubkey_hash = WPubkeyHash::hash(&pubkey.inner.to_compressed());
     assert!(ScriptBuf::new_v0_p2wpkh(&wpubkey_hash).is_v0_p2wpkh());
 
     let script = Builder::new().push_opcode(OP_NUMEQUAL).push_verify().into_script();

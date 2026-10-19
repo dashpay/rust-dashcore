@@ -10,10 +10,10 @@ use core::{convert, fmt, mem};
 use std::error;
 
 use hashes::{Hash, sha256, siphash24};
-use internals::impl_array_newtype;
+use internals::{impl_array_newtype, impl_bytes_newtype};
 
 use crate::consensus::encode::{self, Decodable, Encodable, VarInt};
-use crate::internal_macros::{impl_bytes_newtype, impl_consensus_encoding};
+use crate::internal_macros::impl_consensus_encoding;
 use crate::prelude::*;
 use crate::{Block, BlockHash, Transaction, block, io};
 
