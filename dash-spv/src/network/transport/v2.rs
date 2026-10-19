@@ -314,7 +314,9 @@ impl Transport for V2Transport {
 
                 // Validate packet length
                 if decrypted_len > MAX_MSG_SIZE + 1 + 16 {
-                    // MAX_MSG_SIZE + header + tag
+                    // MAX_MSG_SIZE + header + tag. The inbound cipher has already
+                    // advanced past these length bytes, so the session can't recover.
+                    self.connected = false;
                     return Err(NetworkError::ProtocolError(format!(
                         "V2 packet too large: {} bytes",
                         decrypted_len
@@ -351,9 +353,17 @@ impl Transport for V2Transport {
             let ciphertext = &self.receive_buffer[NUM_LENGTH_BYTES..total_len];
 
             let (packet_type, plaintext) =
-                self.cipher.inbound().decrypt_to_vec(ciphertext, None).map_err(|e| {
-                    NetworkError::V2DecryptionFailed(format!("Decryption failed: {}", e))
-                })?;
+                match self.cipher.inbound().decrypt_to_vec(ciphertext, None) {
+                    Ok(decrypted) => decrypted,
+                    Err(e) => {
+                        // An authentication failure leaves the cipher state unusable.
+                        self.connected = false;
+                        return Err(NetworkError::V2DecryptionFailed(format!(
+                            "Decryption failed: {}",
+                            e
+                        )));
+                    }
+                };
 
             // Consume the packet from the buffer and clear cached length
             self.receive_buffer.drain(0..total_len);

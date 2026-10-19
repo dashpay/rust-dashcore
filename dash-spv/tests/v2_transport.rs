@@ -8,27 +8,28 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use dash_spv::network::transport::{V2HandshakeManager, V2HandshakeResult, V2Transport};
+use bip324::PacketType;
+use dash_spv::network::transport::{V2HandshakeManager, V2HandshakeResult, V2Session, V2Transport};
 use dash_spv::network::{Peer, Transport, TransportPreference};
 use dashcore::consensus::encode::{deserialize, serialize};
 use dashcore::network::message::{CommandString, NetworkMessage, RawNetworkMessage};
 use dashcore::network::message_sml::GetMnListDiff;
 use dashcore::{BlockHash, Network};
 use dashcore_hashes::Hash;
+use test_case::test_case;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 
-const NETWORK: Network = Network::Regtest;
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Accept one connection and complete a V2 handshake as the responder, returning
 /// the encrypted transport for the server side.
-async fn accept_v2(listener: &TcpListener) -> V2Transport {
+async fn accept_v2(listener: &TcpListener, network: Network) -> V2Transport {
     let (stream, client_addr) = listener.accept().await.unwrap();
     stream.set_nodelay(true).unwrap();
-    let manager = V2HandshakeManager::new_responder(NETWORK, client_addr);
+    let manager = V2HandshakeManager::new_responder(network, client_addr);
     match manager.perform_handshake(stream).await.expect("responder handshake failed") {
         V2HandshakeResult::Success(session) => V2Transport::new(*session, client_addr),
         V2HandshakeResult::FallbackToV1 => panic!("responder unexpectedly saw V1 magic"),
@@ -36,7 +37,7 @@ async fn accept_v2(listener: &TcpListener) -> V2Transport {
 }
 
 /// Read one V1-framed message from a raw stream.
-async fn read_v1_message(stream: &mut TcpStream) -> NetworkMessage {
+async fn read_v1_message(stream: &mut TcpStream, network: Network) -> NetworkMessage {
     const HEADER_LEN: usize = 24;
     let mut header = [0u8; HEADER_LEN];
     stream.read_exact(&mut header).await.unwrap();
@@ -45,24 +46,24 @@ async fn read_v1_message(stream: &mut TcpStream) -> NetworkMessage {
     frame.resize(HEADER_LEN + payload_len, 0);
     stream.read_exact(&mut frame[HEADER_LEN..]).await.unwrap();
     let raw: RawNetworkMessage = deserialize(&frame).unwrap();
-    assert_eq!(raw.magic, NETWORK.magic());
+    assert_eq!(raw.magic, network.magic());
     raw.payload
 }
 
 /// Write one V1-framed message to a raw stream.
-async fn write_v1_message(stream: &mut TcpStream, message: NetworkMessage) {
+async fn write_v1_message(stream: &mut TcpStream, network: Network, message: NetworkMessage) {
     let raw = RawNetworkMessage {
-        magic: NETWORK.magic(),
+        magic: network.magic(),
         payload: message,
     };
     stream.write_all(&serialize(&raw)).await.unwrap();
 }
 
 /// Serve a single V1 ping/pong exchange on an already-accepted stream.
-async fn serve_v1_ping_pong(mut stream: TcpStream) {
-    match read_v1_message(&mut stream).await {
+async fn serve_v1_ping_pong(mut stream: TcpStream, network: Network) {
+    match read_v1_message(&mut stream, network).await {
         NetworkMessage::Ping(nonce) => {
-            write_v1_message(&mut stream, NetworkMessage::Pong(nonce)).await
+            write_v1_message(&mut stream, network, NetworkMessage::Pong(nonce)).await
         }
         other => panic!("expected V1 ping, got {:?}", other.cmd()),
     }
@@ -79,13 +80,16 @@ async fn assert_ping_pong(peer: &mut Peer, nonce: u64) {
     assert_eq!(reply.inner(), &NetworkMessage::Pong(nonce));
 }
 
+#[test_case(Network::Mainnet; "mainnet")]
+#[test_case(Network::Testnet; "testnet")]
+#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages() {
+async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages(network: Network) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
 
     let server = tokio::spawn(async move {
-        let mut transport = accept_v2(&listener).await;
+        let mut transport = accept_v2(&listener, network).await;
         assert_eq!(transport.protocol_version(), 2);
 
         // Short-ID message (BIP324 table).
@@ -121,7 +125,7 @@ async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages() {
 
     let mut peer = timeout(
         TEST_TIMEOUT,
-        Peer::connect(addr, CONNECT_TIMEOUT_SECS, NETWORK, TransportPreference::V2Only),
+        Peer::connect(addr, CONNECT_TIMEOUT_SECS, network, TransportPreference::V2Only),
     )
     .await
     .expect("connect timed out")
@@ -160,8 +164,61 @@ async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages() {
     server.await.unwrap();
 }
 
+#[test_case(Network::Mainnet; "mainnet")]
+#[test_case(Network::Testnet; "testnet")]
+#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_preferred_falls_back_when_peer_replies_with_v1_magic() {
+async fn v2_tampered_packet_disconnects(network: Network) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, client_addr) = listener.accept().await.unwrap();
+        let manager = V2HandshakeManager::new_responder(network, client_addr);
+        let V2HandshakeResult::Success(session) = manager.perform_handshake(stream).await.unwrap()
+        else {
+            panic!("responder unexpectedly saw V1 magic");
+        };
+        let V2Session {
+            mut stream,
+            mut cipher,
+            ..
+        } = *session;
+        // A packet whose authentication tag doesn't verify.
+        let mut packet = cipher.outbound().encrypt_to_vec(&[0u8; 9], PacketType::Genuine, None);
+        *packet.last_mut().unwrap() ^= 0x01;
+        stream.write_all(&packet).await.unwrap();
+        // Keep the socket open until the client gives up on it.
+        let mut sink = [0u8; 64];
+        let _ = stream.read(&mut sink).await;
+    });
+
+    let mut peer = timeout(
+        TEST_TIMEOUT,
+        Peer::connect(addr, CONNECT_TIMEOUT_SECS, network, TransportPreference::V2Only),
+    )
+    .await
+    .expect("connect timed out")
+    .expect("V2Only connect failed");
+
+    let result = timeout(TEST_TIMEOUT, peer.receive_message()).await.unwrap();
+    assert!(
+        matches!(result, Err(dash_spv::error::NetworkError::V2DecryptionFailed(_))),
+        "expected decryption failure, got {:?}",
+        result.map(|m| m.map(|m| m.inner().cmd()))
+    );
+    // The inbound cipher state is now unusable, so the peer must not look connected.
+    assert!(!peer.is_connected());
+
+    drop(peer);
+    server.await.unwrap();
+}
+
+#[test_case(Network::Mainnet; "mainnet")]
+#[test_case(Network::Testnet; "testnet")]
+#[test_case(Network::Regtest; "regtest")]
+#[tokio::test]
+async fn v2_preferred_falls_back_when_peer_replies_with_v1_magic(network: Network) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
 
@@ -169,16 +226,16 @@ async fn v2_preferred_falls_back_when_peer_replies_with_v1_magic() {
         // First connection: a V1-only node answers our ElligatorSwift key with a V1
         // message. The client should notice the network magic and give up on V2.
         let (mut stream, _) = listener.accept().await.unwrap();
-        write_v1_message(&mut stream, NetworkMessage::Verack).await;
+        write_v1_message(&mut stream, network, NetworkMessage::Verack).await;
         // Hold the stream open until the client has reconnected, so the peek sees data.
         let (second, _) = listener.accept().await.unwrap();
         drop(stream);
-        serve_v1_ping_pong(second).await;
+        serve_v1_ping_pong(second, network).await;
     });
 
     let mut peer = timeout(
         TEST_TIMEOUT,
-        Peer::connect(addr, CONNECT_TIMEOUT_SECS, NETWORK, TransportPreference::V2Preferred),
+        Peer::connect(addr, CONNECT_TIMEOUT_SECS, network, TransportPreference::V2Preferred),
     )
     .await
     .expect("connect timed out")
@@ -189,8 +246,11 @@ async fn v2_preferred_falls_back_when_peer_replies_with_v1_magic() {
     server.await.unwrap();
 }
 
+#[test_case(Network::Mainnet; "mainnet")]
+#[test_case(Network::Testnet; "testnet")]
+#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_preferred_falls_back_when_peer_hangs_up_on_v2_key() {
+async fn v2_preferred_falls_back_when_peer_hangs_up_on_v2_key(network: Network) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
 
@@ -200,16 +260,16 @@ async fn v2_preferred_falls_back_when_peer_hangs_up_on_v2_key() {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut key = [0u8; 64];
         stream.read_exact(&mut key).await.unwrap();
-        assert_ne!(&key[..4], &NETWORK.magic().to_le_bytes(), "client sent V1 magic on V2 probe");
+        assert_ne!(&key[..4], &network.magic().to_le_bytes(), "client sent V1 magic on V2 probe");
         drop(stream);
 
         let (second, _) = listener.accept().await.unwrap();
-        serve_v1_ping_pong(second).await;
+        serve_v1_ping_pong(second, network).await;
     });
 
     let mut peer = timeout(
         TEST_TIMEOUT,
-        Peer::connect(addr, CONNECT_TIMEOUT_SECS, NETWORK, TransportPreference::V2Preferred),
+        Peer::connect(addr, CONNECT_TIMEOUT_SECS, network, TransportPreference::V2Preferred),
     )
     .await
     .expect("connect timed out")
@@ -220,14 +280,17 @@ async fn v2_preferred_falls_back_when_peer_hangs_up_on_v2_key() {
     server.await.unwrap();
 }
 
+#[test_case(Network::Mainnet; "mainnet")]
+#[test_case(Network::Testnet; "testnet")]
+#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_only_fails_against_v1_only_peer() {
+async fn v2_only_fails_against_v1_only_peer(network: Network) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
 
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        write_v1_message(&mut stream, NetworkMessage::Verack).await;
+        write_v1_message(&mut stream, network, NetworkMessage::Verack).await;
         // Keep the socket open until the client has read the magic and bailed.
         let mut sink = [0u8; 64];
         let _ = stream.read(&mut sink).await;
@@ -235,7 +298,7 @@ async fn v2_only_fails_against_v1_only_peer() {
 
     let result = timeout(
         TEST_TIMEOUT,
-        Peer::connect(addr, CONNECT_TIMEOUT_SECS, NETWORK, TransportPreference::V2Only),
+        Peer::connect(addr, CONNECT_TIMEOUT_SECS, network, TransportPreference::V2Only),
     )
     .await
     .expect("connect timed out");
@@ -247,20 +310,23 @@ async fn v2_only_fails_against_v1_only_peer() {
     server.abort();
 }
 
+#[test_case(Network::Mainnet; "mainnet")]
+#[test_case(Network::Testnet; "testnet")]
+#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v1_only_never_sends_v2_key() {
+async fn v1_only_never_sends_v2_key(network: Network) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
 
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         // The very first bytes on the wire must be a V1 frame, not a 64-byte key.
-        serve_v1_ping_pong(stream).await;
+        serve_v1_ping_pong(stream, network).await;
     });
 
     let mut peer = timeout(
         TEST_TIMEOUT,
-        Peer::connect(addr, CONNECT_TIMEOUT_SECS, NETWORK, TransportPreference::V1Only),
+        Peer::connect(addr, CONNECT_TIMEOUT_SECS, network, TransportPreference::V1Only),
     )
     .await
     .expect("connect timed out")
