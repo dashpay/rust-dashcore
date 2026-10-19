@@ -1,7 +1,6 @@
 //! Sync coordination and orchestration.
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -194,8 +193,12 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     handler.on_error(&e.to_string());
                 }
                 // Stopping waits for this task, so it runs in a task of its own.
-                let detached_tasks = Arc::clone(&client.detached_tasks);
-                detached_tasks.lock().await.spawn(async move { client.stop_failed().await });
+                let stopping = client.clone();
+                client
+                    .detached_tasks
+                    .lock()
+                    .await
+                    .spawn(async move { stopping.stop_failed().await });
             }
         });
 

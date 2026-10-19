@@ -113,6 +113,7 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager> {
     /// Whether the sync loop is running, readable without locking `sync_loop`.
     /// Set once `run` started it, cleared as soon as it stops or fails.
     pub(super) running: Arc<AtomicBool>,
+    /// Tasks the sync loop detached, each holding a client clone. `stop` joins them.
     pub(super) detached_tasks: Arc<Mutex<JoinSet<()>>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }

@@ -245,21 +245,12 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         }
         drop(sync_loop);
 
-        self.join_detached_tasks().await;
-    }
-
-    async fn join_detached_tasks(&self) {
-        loop {
-            let mut tasks = std::mem::take(&mut *self.detached_tasks.lock().await);
-
-            if tasks.is_empty() {
-                return;
-            }
-
-            while let Some(result) = tasks.join_next().await {
-                if let Err(e) = result {
-                    tracing::warn!("Detached client task failed: {}", e);
-                }
+        // Joined under the lock, so a concurrent `stop` waits for them too. The
+        // tasks only need `sync_loop`, released above, so this cannot deadlock.
+        let mut tasks = self.detached_tasks.lock().await;
+        while let Some(result) = tasks.join_next().await {
+            if let Err(e) = result {
+                tracing::warn!("Detached client task failed: {}", e);
             }
         }
     }
