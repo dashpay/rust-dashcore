@@ -92,7 +92,8 @@ pub trait StorageManager:
 
 /// Disk-based storage manager with segmented files and async background saving.
 /// Only one instance of DiskStorageManager working on the same storage path
-/// can exist at a time.
+/// can exist at a time. The background saving runs from [`StorageManager::start`]
+/// until [`StorageManager::stop`] or drop.
 pub struct DiskStorageManager {
     storage_path: PathBuf,
     network: Network,
@@ -148,7 +149,7 @@ impl DiskStorageManager {
         let block_headers =
             Arc::new(RwLock::new(PersistentBlockHeaderStorage::open(&storage_path).await?));
 
-        let mut storage = Self {
+        Ok(Self {
             storage_path: storage_path.clone(),
             network: config.network,
 
@@ -171,11 +172,7 @@ impl DiskStorageManager {
             worker_handle: None,
 
             _lock_file: lock_file,
-        };
-
-        storage.start_worker().await;
-
-        Ok(storage)
+        })
     }
 
     #[cfg(test)]
@@ -232,6 +229,13 @@ impl DiskStorageManager {
         let _ = self.filters.write().await.persist(storage_path).await;
         let _ = self.blocks.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
+    }
+}
+
+/// Aborts the background worker without saving, use [`StorageManager::stop`] to persist.
+impl Drop for DiskStorageManager {
+    fn drop(&mut self) {
+        self.stop_worker();
     }
 }
 
@@ -527,6 +531,20 @@ mod tests {
         let _storage_b = DiskStorageManager::new(&config_b).await?;
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_worker_runs_from_start_until_drop() {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        assert!(storage.worker_handle.is_none());
+
+        storage.start().await;
+        let block_headers = Arc::downgrade(&storage.block_headers());
+        drop(storage);
+        tokio::task::yield_now().await;
+
+        // Only the worker could still hold the storages.
+        assert!(block_headers.upgrade().is_none());
     }
 
     #[tokio::test]
