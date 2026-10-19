@@ -64,7 +64,9 @@ impl Validator<&[HashedBlockHeader]> for BlockHeaderValidator {
             let bits = header.header().bits;
             let required = self.params.next_work_required(window, height - 1, header.header().time);
 
-            if let Some(required) = required.filter(|required| *required != bits) {
+            if let Some(required) =
+                required.filter(|required| !self.params.bits_meet_required(height, bits, *required))
+            {
                 return Err(ValidationError::InvalidDifficulty {
                     height,
                     actual: bits.to_consensus(),

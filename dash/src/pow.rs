@@ -454,6 +454,22 @@ impl Params {
         Some(self.dark_gravity_wave(window).to_compact_lossy())
     }
 
+    /// Whether `bits` meets the `required` difficulty at `height`, as Core's
+    /// `ContextualCheckBlockHeader` judges it.
+    pub fn bits_meet_required(
+        &self,
+        height: u32,
+        bits: CompactTarget,
+        required: CompactTarget,
+    ) -> bool {
+        if self.pow_dgw_tolerant_height.is_some_and(|tolerant| height <= tolerant) {
+            let actual = bits_to_difficulty(bits);
+            let required = bits_to_difficulty(required);
+            return (actual - required).abs() <= actual * 0.5;
+        }
+        bits == required
+    }
+
     /// Dash Core's `DarkGravityWave` over exactly [`DGW_PAST_BLOCKS`] headers, oldest first.
     fn dark_gravity_wave(&self, window: &[Header]) -> Target {
         // Not quite an average, but the one Core computes, newest first.
@@ -476,6 +492,22 @@ impl Params {
         let target = Target(average * actual_timespan as u32 / target_timespan as u64);
         target.min(self.pow_limit)
     }
+}
+
+/// Dash Core's `ConvertBitsToDouble`.
+fn bits_to_difficulty(bits: CompactTarget) -> f64 {
+    let bits = bits.to_consensus();
+    let mut shift = (bits >> 24) & 0xff;
+    let mut difficulty = f64::from(0x0000ffff) / f64::from(bits & 0x00ffffff);
+    while shift < 29 {
+        difficulty *= 256.0;
+        shift += 1;
+    }
+    while shift > 29 {
+        difficulty /= 256.0;
+        shift -= 1;
+    }
+    difficulty
 }
 
 // Target::MAX as a float value. Calculated with `Arith256::to_f64`.
@@ -543,6 +575,27 @@ mod tests {
         assert_eq!(
             Params::new(network).next_work_required(window, last_height, time),
             required.map(CompactTarget::from_consensus)
+        );
+    }
+
+    // The first DGW header on mainnet, 34140, whose bits differ from DGW's.
+    #[test_case(Network::Mainnet, 34_140, 0x1c00f8a9, true; "mainnet first dgw header")]
+    #[test_case(Network::Mainnet, 68_589, 0x1c00f8a9, true; "mainnet last tolerant height")]
+    #[test_case(Network::Mainnet, 68_590, 0x1c00f8a9, false; "mainnet first exact height")]
+    #[test_case(Network::Mainnet, 68_590, 0x1c00f987, true; "mainnet exact bits")]
+    #[test_case(Network::Mainnet, 68_589, 0x1c01f154, false; "mainnet under half the difficulty")]
+    #[test_case(Network::Mainnet, 68_589, 0x1c007cc0, false; "mainnet over twice the difficulty")]
+    #[test_case(Network::Testnet, 34_140, 0x1c00f8a9, false; "testnet")]
+    fn bits_meet_required_rules(network: Network, height: u32, bits: u32, meets: bool) {
+        let required = CompactTarget::from_consensus(0x1c00f987);
+
+        assert_eq!(
+            Params::new(network).bits_meet_required(
+                height,
+                CompactTarget::from_consensus(bits),
+                required
+            ),
+            meets
         );
     }
 
