@@ -103,6 +103,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             }
         }
         self.rotated_quorums_per_cycle.retain(|hash, _| !dropped.contains(hash));
+
+        if self.latest_coinbase.as_ref().is_some_and(|coinbase| coinbase.height > height) {
+            self.latest_coinbase = None;
+        }
     }
 
     /// Sets the verification status of a quorum in every list holding it.
@@ -426,7 +430,9 @@ mod prune_tests {
     use super::*;
     use crate::sml_engine::test_support::TestEngine;
     use dashcore::network::message_sml::MnListDiff;
+    use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
     use dashcore::{BlockHash, Network};
+    use test_case::test_case;
 
     const TIP: CoreBlockHeight = 1_000_000;
     /// Within the window at `TIP` and below the next QRInfo's h-4c reach.
@@ -463,8 +469,14 @@ mod prune_tests {
     /// the dropped blocks may answer for them: the lists above the fork go, and
     /// so does a rotated cycle whose base left the chain or whose commitments
     /// could have been mined above the fork.
+    #[test_case(TIP - 1, true; "keeps a coinbase below the fork")]
+    #[test_case(TIP, true; "keeps a coinbase at the fork")]
+    #[test_case(TIP + 1, false; "drops a coinbase above the fork")]
     #[tokio::test]
-    async fn truncating_above_a_fork_drops_what_the_dropped_blocks_built() {
+    async fn truncating_above_a_fork_drops_what_the_dropped_blocks_built(
+        coinbase_height: CoreBlockHeight,
+        coinbase_kept: bool,
+    ) {
         let fork = TIP;
         let window_end = Network::Mainnet.isd_llmq_type().params().dkg_params.mining_window_end;
         let mut engine = TestEngine::dummy_with_lists(&[fork - 100, fork, fork + 1, fork + 50]);
@@ -478,8 +490,11 @@ mod prune_tests {
         for height in [fork + 1, left_the_chain, fork + 50] {
             engine.forget_block(&BlockHash::dummy(height));
         }
+        engine.latest_coinbase = Some(CoinbasePayload::dummy(coinbase_height));
 
         engine.truncate_above(fork).await;
+
+        assert_eq!(engine.latest_coinbase.is_some(), coinbase_kept);
 
         assert_eq!(heights(&engine), vec![fork - 100, fork]);
         assert_eq!(
