@@ -14,6 +14,7 @@ use dashcore::hashes::Hash;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::QuorumHash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
@@ -60,6 +61,13 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     pub fn latest_masternode_list_blocking(&self) -> Option<MasternodeList> {
         let engine = self.masternode_engine.as_ref()?;
         engine.blocking_read().latest_masternode_list().cloned()
+    }
+
+    /// The coinbase payload of the newest block a masternode list diff proved it
+    /// in, `None` while masternode sync is off or has validated none yet.
+    pub async fn latest_coinbase(&self) -> Option<CoinbasePayload> {
+        let engine = self.masternode_engine.as_ref()?;
+        engine.read().await.latest_coinbase().cloned()
     }
 
     /// Get a quorum entry by type and hash at a specific block height.
