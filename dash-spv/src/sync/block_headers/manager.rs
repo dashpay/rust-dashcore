@@ -45,6 +45,8 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     pub(super) metadata_storage: Arc<RwLock<M>>,
     /// Pipeline for parallel header downloads (used for both initial sync and post-sync).
     pub(super) pipeline: HeadersPipeline,
+    /// Compiled-in checkpoints, which no fork may branch off below.
+    checkpoint_manager: Arc<CheckpointManager>,
     /// Pending block announcements waiting for headers message (post-sync).
     pub(super) pending_announcements: HashMap<BlockHash, Instant>,
     /// Peers we've sent a GetHeaders to after sync, so Dash Core knows our tip
@@ -90,7 +92,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             progress: initial_progress,
             header_storage,
             metadata_storage,
-            pipeline: HeadersPipeline::new(checkpoint_manager),
+            pipeline: HeadersPipeline::new(checkpoint_manager.clone()),
+            checkpoint_manager,
             pending_announcements: HashMap::new(),
             announced_peers: HashSet::new(),
         })
@@ -186,8 +189,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     }
 
     /// Height where `headers` branch off the stored chain below its tip, if they
-    /// do. A branch off below the best ChainLock is not followed: the blocks it
-    /// locks are final.
+    /// do. A branch off below the best ChainLock, or below the newest checkpoint
+    /// the stored chain reaches, is not followed: the blocks they fix are final.
     async fn fork_height(&self, headers: &[HashedBlockHeader]) -> SyncResult<Option<u32>> {
         let storage = self.header_storage.read().await;
 
@@ -203,6 +206,18 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             else {
                 return Ok(None);
             };
+
+            if let Some(checkpoint) = tip
+                .and_then(|tip| self.checkpoint_manager.last_checkpoint_before_height(tip))
+                .filter(|checkpoint| fork_height < checkpoint.height)
+            {
+                tracing::warn!(
+                    "Ignoring a fork at height {}, below the checkpoint at {}",
+                    fork_height,
+                    checkpoint.height
+                );
+                return Ok(None);
+            }
 
             let chain_lock = self
                 .metadata_storage
@@ -352,6 +367,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 mod tests {
     use super::*;
     use crate::chain::checkpoints::testnet_checkpoints;
+    use crate::chain::Checkpoint;
     use crate::network::{MessageType, NetworkEvent, NetworkRequest, RequestSender};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
@@ -410,6 +426,43 @@ mod tests {
             storage.block_headers(),
             storage.metadata(),
             create_test_checkpoint_manager(),
+        )
+        .await
+        .unwrap();
+
+        let branch = Header {
+            prev_blockhash: stored[branch_off as usize].block_hash(),
+            ..Header::dummy(1_000)
+        };
+
+        assert_eq!(
+            manager.fork_height(&[HashedBlockHeader::from(&branch)]).await.unwrap(),
+            expected
+        );
+    }
+
+    /// Blocks below the newest checkpoint the stored chain reaches are final, as
+    /// below the best ChainLock. A checkpoint above the tip fixes nothing yet,
+    /// or no fork could ever be followed before the chain reached it.
+    #[test_case(5, None; "below the checkpoint")]
+    #[test_case(6, Some(6); "at the checkpoint")]
+    #[test_case(7, Some(7); "above the checkpoint")]
+    #[tokio::test]
+    async fn a_branch_off_below_the_newest_reached_checkpoint_is_no_fork(
+        branch_off: u32,
+        expected: Option<u32>,
+    ) {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let stored = Header::dummy_batch(0..10);
+        storage
+            .store_headers(&stored.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        let checkpoints = [0, 6, 20].map(Checkpoint::dummy).to_vec();
+        let manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            Arc::new(CheckpointManager::new(checkpoints)),
         )
         .await
         .unwrap();
