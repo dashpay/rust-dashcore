@@ -127,6 +127,11 @@ pub(super) struct MasternodeSyncState {
     /// without sending (no stored tip, tip at genesis) cannot turn it into a
     /// per-tick retry loop.
     pub(super) last_qrinfo_dispatch: Option<Instant>,
+    /// Peers whose QRInfo for the tip it names was rejected. Retries for that
+    /// tip avoid them, and another QRInfo from one of them is ignored. It
+    /// outlives a budget at the same tip, so peers sending bad QRInfos cannot
+    /// spend budget after budget, and goes when the requested tip changes.
+    pub(super) qrinfo_refusers: Option<(BlockHash, Vec<SocketAddr>)>,
 }
 
 impl MasternodeSyncState {
@@ -191,6 +196,47 @@ impl MasternodeSyncState {
     /// flight, which no `tick` branch can recover from.
     pub(super) fn qrinfo_received(&mut self) {
         self.qrinfo_in_flight = None;
+        self.qrinfo_refusers = None;
+    }
+
+    /// Records that `peer` sent the in-flight QRInfo a response that was
+    /// rejected.
+    pub(super) fn qrinfo_refused_by(&mut self, peer: SocketAddr) {
+        let Some(in_flight) = self.qrinfo_in_flight else {
+            return;
+        };
+        let (tip, peers) = self.qrinfo_refusers.get_or_insert_with(|| (in_flight.tip, Vec::new()));
+        if *tip != in_flight.tip {
+            *tip = in_flight.tip;
+            peers.clear();
+        }
+        if !peers.contains(&peer) {
+            peers.push(peer);
+        }
+    }
+
+    /// Whether `peer` already sent a rejected QRInfo for `tip`.
+    pub(super) fn has_refused_qrinfo(&self, tip: BlockHash, peer: SocketAddr) -> bool {
+        self.qrinfo_refusers
+            .as_ref()
+            .is_some_and(|(refused_tip, peers)| *refused_tip == tip && peers.contains(&peer))
+    }
+
+    /// The peers a QRInfo request for `tip` avoids, forgetting those that
+    /// refused another tip.
+    fn qrinfo_peers_to_avoid(&mut self, tip: BlockHash) -> Vec<SocketAddr> {
+        match &self.qrinfo_refusers {
+            Some((refused_tip, peers)) if *refused_tip == tip => peers.clone(),
+            _ => {
+                self.qrinfo_refusers = None;
+                Vec::new()
+            }
+        }
+    }
+
+    /// Forgets the peers that refused a QRInfo, for a new set of peers.
+    pub(super) fn forget_qrinfo_refusers(&mut self) {
+        self.qrinfo_refusers = None;
     }
 
     /// Mark the in-flight QRInfo attempt as answered-but-unusable.
@@ -626,7 +672,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         // connected during a reconnect race), the `?` propagates and we leave
         // `WaitingForConnections` intact instead of stranding the manager in
         // `Syncing` with `qrinfo_in_flight = None`, which `tick` cannot recover.
-        requests.request_qr_info(base_hashes, tip_block_hash, true)?;
+        let avoid = self.sync_state.qrinfo_peers_to_avoid(tip_block_hash);
+        requests.request_qr_info_avoiding(base_hashes, tip_block_hash, true, &avoid)?;
         self.progress.add_qr_infos_requested(1);
         self.sync_state.record_qrinfo_attempt(tip_height);
         self.sync_state.start_waiting_for_qrinfo(tip_block_hash);
@@ -701,6 +748,24 @@ mod tests {
     use tokio::sync::mpsc;
 
     type TestMasternodesManager = MasternodesManager<PersistentBlockHeaderStorage>;
+
+    /// Peers that sent a rejected QRInfo are avoided for that tip only: a
+    /// request for another tip avoids nobody, so a deterministic failure cannot
+    /// leave every peer ignored for longer than a block.
+    #[test]
+    fn qrinfo_refusers_are_forgotten_for_another_tip() {
+        let tip_a = BlockHash::from_byte_array([0xAA; 32]);
+        let tip_b = BlockHash::from_byte_array([0xBB; 32]);
+        let peer: SocketAddr = "127.0.0.1:19999".parse().unwrap();
+        let mut state = MasternodeSyncState::default();
+        state.start_waiting_for_qrinfo(tip_a);
+        state.qrinfo_refused_by(peer);
+
+        assert!(state.has_refused_qrinfo(tip_a, peer));
+        assert_eq!(state.qrinfo_peers_to_avoid(tip_a), vec![peer]);
+        assert!(state.qrinfo_peers_to_avoid(tip_b).is_empty());
+        assert!(!state.has_refused_qrinfo(tip_a, peer));
+    }
 
     async fn create_test_manager_for(network: dashcore::Network) -> TestMasternodesManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
