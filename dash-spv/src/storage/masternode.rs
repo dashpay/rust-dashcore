@@ -373,6 +373,7 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
 mod tests {
     use super::*;
     use crate::test_utils::MockHeaderStorage;
+    use dashcore::sml::masternode_list::MasternodeList;
     use dashcore_hashes::Hash;
 
     use tempfile::TempDir;
@@ -380,6 +381,28 @@ mod tests {
 
     fn hash(byte: u8) -> BlockHash {
         BlockHash::from_slice(&[byte; 32]).unwrap()
+    }
+
+    /// [`MnListDiff::dummy`] from genesis to the first block of `chain`, then
+    /// from each block to the next, each at its height and committing to the
+    /// list it builds on the one before it.
+    fn dummy_chain(chain: &[(u8, u32)]) -> Vec<MnListDiff> {
+        let mut diffs = Vec::new();
+        let mut list: Option<MasternodeList> = None;
+        let mut base = 0x00;
+        for &(tip, height) in chain {
+            let diff = MnListDiff::dummy(base, tip).committing_on(list.as_ref(), height);
+            list = Some(
+                match &list {
+                    Some(list) => list.apply_diff(diff.clone(), height, Network::Regtest),
+                    None => MasternodeList::from_diff(diff.clone(), height, Network::Regtest),
+                }
+                .expect("the dummy diff applies"),
+            );
+            diffs.push(diff);
+            base = tip;
+        }
+        diffs
     }
 
     async fn open_storage(
@@ -417,10 +440,11 @@ mod tests {
     async fn a_reopened_storage_replays_what_was_stored() {
         let dir = TempDir::new().unwrap();
         let heights = [(0x00, 0), (0xAA, 100), (0xBB, 200)];
+        let diffs = dummy_chain(&[(0xAA, 100), (0xBB, 200)]);
         {
             let mut storage = open_storage(&dir, &heights).await;
-            storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
-            storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+            storage.store_diff(100, &diffs[0]).await.unwrap();
+            storage.store_diff(200, &diffs[1]).await.unwrap();
         }
 
         let engine = open_storage(&dir, &heights).await.load_engine().await;
@@ -462,7 +486,8 @@ mod tests {
                 index_set: vec![0],
             }],
             ..MnListDiff::dummy(0x00, 0xAA)
-        };
+        }
+        .committing_on(None, 100);
         let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
         storage.store_diff(100, &diff).await.unwrap();
 
@@ -485,8 +510,9 @@ mod tests {
     async fn replay_skips_a_message_whose_block_left_the_chain() {
         let dir = TempDir::new().unwrap();
         let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
-        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
-        storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+        let diffs = dummy_chain(&[(0xAA, 100), (0xBB, 200)]);
+        storage.store_diff(100, &diffs[0]).await.unwrap();
+        storage.store_diff(200, &diffs[1]).await.unwrap();
 
         let engine = storage.load_engine().await;
 
@@ -499,9 +525,10 @@ mod tests {
         let mut storage =
             open_storage(&dir, &[(0x00, 0), (0xAA, 100), (0xBB, 150), (0xDD, 120)]).await;
 
-        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+        let diffs = dummy_chain(&[(0xAA, 100), (0xBB, 150)]);
+        storage.store_diff(100, &diffs[0]).await.unwrap();
         storage.store_diff(120, &MnListDiff::dummy(0xEE, 0xDD)).await.unwrap();
-        storage.store_diff(150, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+        storage.store_diff(150, &diffs[1]).await.unwrap();
 
         let engine = storage.load_engine().await;
 
@@ -588,7 +615,7 @@ mod tests {
 
         {
             let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
-            storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+            storage.store_diff(100, &dummy_chain(&[(0xAA, 100)])[0]).await.unwrap();
         }
 
         tokio::fs::write(folder.join("diff_50.dat"), b"not a diff").await.unwrap();
@@ -641,14 +668,18 @@ mod tests {
                 index_set: vec![0],
             }],
             ..MnListDiff::dummy(0x00, 0x01)
-        };
+        }
+        .committing_on(None, 1);
+        let with_quorum = MasternodeList::from_diff(mined.clone(), 1, Network::Regtest).unwrap();
         let retired = MnListDiff {
             deleted_quorums: vec![DeletedQuorum {
                 llmq_type,
                 quorum_hash,
             }],
             ..MnListDiff::dummy_between(1, 2)
-        };
+        }
+        .committing_on(Some(&with_quorum), 2);
+        let without_quorum = with_quorum.apply_diff(retired.clone(), 2, Network::Regtest).unwrap();
 
         let dir = TempDir::new().unwrap();
         let folder = dir.path().join(S::FOLDER_NAME);
@@ -660,7 +691,9 @@ mod tests {
         write(1, &mined);
         write(2, &retired);
         for height in 3..=tip {
-            write(height, &MnListDiff::dummy_between(height - 1, height));
+            let unchanged = MnListDiff::dummy_between(height - 1, height)
+                .committing_on(Some(&without_quorum), height);
+            write(height, &unchanged);
         }
         let heights = (1..=tip).map(|height| (BlockHash::dummy(height), height)).collect();
         let storage = S::open(
@@ -732,10 +765,17 @@ mod tests {
         .await
         .unwrap();
         storage.store_qr_info(tip_height, &qr_info).await.unwrap();
+        let replayed = storage.load_engine().await;
+        let base_list = replayed
+            .masternode_lists
+            .values()
+            .find(|list| list.block_hash == base)
+            .expect("the QRInfo builds its h-c list");
         let diff = MnListDiff {
             base_block_hash: base,
             ..MnListDiff::dummy(0x00, 0xEE)
-        };
+        }
+        .committing_on(Some(base_list), work_block_height);
         storage.store_diff(work_block_height, &diff).await.unwrap();
 
         let engine = storage.load_engine().await;

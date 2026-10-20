@@ -172,22 +172,13 @@ mod tests {
         deserialize(&hex_conservative::decode_to_vec(hex.trim()).expect("hex")).expect("decodes")
     }
 
-    fn mainnet_diff_0_2221605() -> MnListDiff {
-        let message: RawNetworkMessage =
-            decode_hex(include_str!("../../tests/data/test_DML_diffs/DML_0_2221605.hex"));
-        let NetworkMessage::MnListDiff(diff) = message.payload else {
-            panic!("expected an mnlistdiff message");
-        };
-        *diff
-    }
-
     /// Fixture diffs with the headers of their blocks, as public block
     /// explorers serve them. Each header has to hash to its diff's block hash,
     /// which vouches for the merkle root it carries.
     fn fixtures_with_headers() -> Vec<(MnListDiff, Header)> {
         [
             (
-                mainnet_diff_0_2221605(),
+                MnListDiff::mainnet_fixture_0_2221605(),
                 "000000204ec775c3857587ed8ce3e6cf6eaf64bfb90db816033385f71d0000000000000068c9fe75363f12a93d2650265d79a2f7211a2cf8d05836e2f62c40a500cb379d3e3cad675c6a2619187b5901",
             ),
             (
@@ -375,7 +366,7 @@ mod tests {
     /// other selection does not prove the coinbase.
     #[test]
     fn a_proof_that_does_not_select_only_the_coinbase_is_refused() {
-        let diff = mainnet_diff_0_2221605();
+        let diff = MnListDiff::mainnet_fixture_0_2221605();
         let txids = [
             diff.coinbase_tx.txid(),
             Txid::from_byte_array([1; 32]),
@@ -398,7 +389,7 @@ mod tests {
     /// transaction the diff names.
     #[test]
     fn a_proof_of_a_transaction_that_is_not_a_coinbase_is_refused() {
-        let mut diff = mainnet_diff_0_2221605();
+        let mut diff = MnListDiff::mainnet_fixture_0_2221605();
         diff.coinbase_tx.input[0].previous_output.vout = 0;
         assert!(!diff.coinbase_tx.is_coin_base());
         let tree = PartialMerkleTree::from_txids(
@@ -417,7 +408,7 @@ mod tests {
     /// `merkleRootMNList`, and is proven like any other.
     #[test]
     fn a_version_1_coinbase_is_proven_by_its_block() {
-        let mut diff = mainnet_diff_0_2221605();
+        let mut diff = MnListDiff::mainnet_fixture_0_2221605();
         let Some(TransactionPayload::CoinbasePayloadType(payload)) =
             &mut diff.coinbase_tx.special_transaction_payload
         else {
