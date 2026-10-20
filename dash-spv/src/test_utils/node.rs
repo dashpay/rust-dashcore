@@ -6,7 +6,7 @@ use dashcore::{Address, Amount, BlockHash, Transaction, Txid};
 use dashcore_rpc::json as rpc_json;
 use dashcore_rpc::{Auth, Client, RpcApi};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
@@ -16,17 +16,43 @@ use std::time::Duration;
 use tokio::process::Child;
 use tokio::time::{sleep, timeout};
 
-/// Atomic counter for unique port allocation across parallel tests.
-/// Starts below the standard Dash regtest ports (19898/19899) to avoid conflicts.
-static NEXT_PORT: AtomicU16 = AtomicU16::new(19400);
+/// Base of the port range used by tests. Sits above the standard Dash regtest
+/// ports (19898/19899) and below the Linux ephemeral range (32768+).
+const PORT_RANGE_BASE: u16 = 20000;
+/// Ports handed out per test process before wrapping into a neighbour's lane.
+///
+/// Sized for the heaviest target: `dashd_masternode` runs 3 controller-only
+/// tests (2 ports each) plus 7 full-network ones (controller + 4 masternodes at
+/// 2 ports apiece), so ~76 ports in one process.
+const PORT_LANE_WIDTH: u16 = 100;
+/// Number of lanes carved out of the range
+const PORT_LANE_COUNT: u16 = 120;
+
+const _: () = assert!(
+    PORT_RANGE_BASE as u32 + PORT_LANE_WIDTH as u32 * PORT_LANE_COUNT as u32 <= 32768,
+    "range must stay below the Linux ephemeral range"
+);
 
 const MAX_PORT_ATTEMPTS: usize = 100;
 
+/// Atomic counter for unique port allocation across parallel tests.
+/// Seeded lazily from the PID
+static NEXT_PORT: AtomicU16 = AtomicU16::new(0);
+
 /// Allocate a unique, available TCP port for test use.
 pub(super) fn find_available_port() -> u16 {
+    let _ = NEXT_PORT.compare_exchange(
+        0,
+        PORT_RANGE_BASE + (std::process::id() % PORT_LANE_COUNT as u32) as u16 * PORT_LANE_WIDTH,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
+
     for _ in 0..MAX_PORT_ATTEMPTS {
-        let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
-        assert!(port >= 1024, "port counter overflowed");
+        let raw = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
+        // Keep the counter inside the range no matter how many are allocated.
+        let port = PORT_RANGE_BASE
+            + raw.wrapping_sub(PORT_RANGE_BASE) % (PORT_LANE_WIDTH * PORT_LANE_COUNT);
         if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
             return port;
         }
@@ -313,6 +339,22 @@ impl DashCoreNode {
             .send_to_address(address, amount, None, None, None, None, None, None, None, None)
             .expect("failed to send to address");
         tracing::info!("Sent {} to {}, txid: {}", amount, address, txid);
+        txid
+    }
+
+    /// Send DASH to many addresses in a single transaction from the primary
+    /// wallet, so one transaction carries one output per `(address, amount)`
+    /// pair.
+    pub fn send_many(&self, payments: &[(Address, Amount)]) -> Txid {
+        let client = self.rpc_client();
+        let amounts: Map<String, Value> = payments
+            .iter()
+            .map(|(address, amount)| (address.to_string(), serde_json::json!(amount.to_dash())))
+            .collect();
+        let txid: Txid = client
+            .call("sendmany", &[serde_json::json!(""), Value::Object(amounts)])
+            .expect("failed to sendmany");
+        tracing::info!("Sent {} outputs in one transaction, txid: {}", payments.len(), txid);
         txid
     }
 

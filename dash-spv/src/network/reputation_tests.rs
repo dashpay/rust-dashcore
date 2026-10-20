@@ -2,28 +2,29 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{PersistentPeerStorage, PersistentStorage};
+    use crate::storage::{PeerStorage, PersistentPeerStorage, PersistentStorage};
 
     use super::super::*;
+    use std::collections::HashMap;
     use std::net::SocketAddr;
+    use std::time::{Duration, SystemTime};
+
+    async fn score(manager: &PeerReputationManager, peer: &SocketAddr) -> i32 {
+        manager.get_all_reputations().await.get(peer).map_or(0, |rep| rep.score)
+    }
 
     #[tokio::test]
     async fn test_basic_reputation_operations() {
         let manager = PeerReputationManager::new();
         let peer: SocketAddr = "127.0.0.1:8333".parse().unwrap();
 
-        // Initial score should be 0
-        assert_eq!(manager.get_score(&peer).await, 0);
+        assert_eq!(score(&manager, &peer).await, 0);
 
-        // Test misbehavior
-        manager
-            .update_reputation(peer, misbehavior_scores::INVALID_MESSAGE, "Test invalid message")
-            .await;
-        assert_eq!(manager.get_score(&peer).await, 10);
+        manager.update_reputation(peer, ChangeReason::HandshakeFailed).await;
+        assert_eq!(score(&manager, &peer).await, 10);
 
-        // Test positive behavior
-        manager.update_reputation(peer, positive_scores::VALID_HEADERS, "Test valid headers").await;
-        assert_eq!(manager.get_score(&peer).await, 5);
+        manager.update_reputation(peer, ChangeReason::PingFailed).await;
+        assert_eq!(score(&manager, &peer).await, 15);
     }
 
     #[tokio::test]
@@ -31,17 +32,9 @@ mod tests {
         let manager = PeerReputationManager::new();
         let peer: SocketAddr = "192.168.1.1:8333".parse().unwrap();
 
-        // Accumulate misbehavior
+        // Banned on the 10th violation (10 * 10 = 100).
         for i in 0..10 {
-            let banned = manager
-                .update_reputation(
-                    peer,
-                    misbehavior_scores::INVALID_MESSAGE,
-                    &format!("Violation {}", i),
-                )
-                .await;
-
-            // Should be banned on the 10th violation (total score = 100)
+            let banned = manager.update_reputation(peer, ChangeReason::HandshakeFailed).await;
             if i == 9 {
                 assert!(banned);
             } else {
@@ -58,11 +51,9 @@ mod tests {
         let peer1: SocketAddr = "10.0.0.1:8333".parse().unwrap();
         let peer2: SocketAddr = "10.0.0.2:8333".parse().unwrap();
 
-        // Set reputations
-        manager.update_reputation(peer1, -10, "Good peer").await;
-        manager.update_reputation(peer2, 50, "Bad peer").await;
+        manager.update_reputation(peer1, ChangeReason::PingFailed).await;
+        manager.update_reputation(peer2, ChangeReason::InvalidTransactionInBlock).await;
 
-        // Save and load
         let temp_dir = tempfile::TempDir::new().unwrap();
         let peer_storage = PersistentPeerStorage::open(temp_dir.path())
             .await
@@ -72,31 +63,34 @@ mod tests {
         let new_manager = PeerReputationManager::new();
         new_manager.load_from_storage(&peer_storage).await.unwrap();
 
-        // Verify scores were preserved
-        assert_eq!(new_manager.get_score(&peer1).await, -10);
-        assert_eq!(new_manager.get_score(&peer2).await, 50);
+        assert_eq!(score(&new_manager, &peer1).await, 5);
+        assert_eq!(score(&new_manager, &peer2).await, 20);
     }
 
     #[tokio::test]
     async fn test_peer_selection() {
         let manager = PeerReputationManager::new();
 
-        let good_peer = AddrV2Message::dummy(0, "1.1.1.1".parse().unwrap(), 8333);
-        let neutral_peer = AddrV2Message::dummy(0, "2.2.2.2".parse().unwrap(), 8333);
+        let clean_peer = AddrV2Message::dummy(0, "1.1.1.1".parse().unwrap(), 8333);
+        let other_clean_peer = AddrV2Message::dummy(0, "2.2.2.2".parse().unwrap(), 8333);
         let bad_peer = AddrV2Message::dummy(0, "3.3.3.3".parse().unwrap(), 8333);
 
-        // Set different reputations
-        manager.update_reputation(good_peer.socket_addr().unwrap(), -20, "Very good").await;
-        manager.update_reputation(bad_peer.socket_addr().unwrap(), 80, "Very bad").await;
-        // neutral_peer has default score of 0
+        manager
+            .update_reputation(
+                bad_peer.socket_addr().unwrap(),
+                ChangeReason::InvalidTransactionInBlock,
+            )
+            .await;
 
-        let all_peers = vec![good_peer.clone(), neutral_peer.clone(), bad_peer.clone()];
+        let all_peers = vec![clean_peer.clone(), other_clean_peer.clone(), bad_peer.clone()];
         let selected = manager.select_best_peers(all_peers, 2).await;
 
-        // Should select good_peer first, then neutral_peer
+        // The two clean peers are indistinguishable, and deliberately so: the score
+        // only records misbehavior, and equal scores are returned shuffled so
+        // clients do not all herd onto the same node. Only their exclusion of the
+        // misbehaving peer is guaranteed, not their order.
         assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0], good_peer.socket_addr().unwrap());
-        assert_eq!(selected[1], neutral_peer.socket_addr().unwrap());
+        assert!(!selected.contains(&bad_peer.socket_addr().unwrap()));
     }
 
     #[tokio::test]
@@ -114,5 +108,73 @@ mod tests {
 
         assert_eq!(rep.connection_attempts, 2);
         assert_eq!(rep.successful_connections, 1);
+    }
+
+    #[tokio::test]
+    async fn test_request_timeout_penalty_and_ban() {
+        let manager = PeerReputationManager::new();
+        let peer: SocketAddr = "127.0.0.1:7777".parse().unwrap();
+
+        // Ten stalls (10 * 10) reach the ban line; only the tenth bans.
+        for i in 0..10 {
+            let banned = manager.update_reputation(peer, ChangeReason::RequestTimeout).await;
+            assert_eq!(banned, i == 9);
+        }
+        assert_eq!(score(&manager, &peer).await, 100);
+        assert!(manager.is_banned(&peer).await);
+    }
+
+    #[tokio::test]
+    async fn test_scores_for_returns_scores_and_defaults() {
+        let manager = PeerReputationManager::new();
+        let slight: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let bad: SocketAddr = "127.0.0.1:2".parse().unwrap();
+        let unknown: SocketAddr = "127.0.0.1:3".parse().unwrap();
+
+        manager.update_reputation(slight, ChangeReason::PingFailed).await;
+        manager.update_reputation(bad, ChangeReason::InvalidTransactionInBlock).await;
+
+        let scores = manager.scores_for([slight, bad, unknown]).await;
+        assert_eq!(scores.get(&slight), Some(&5));
+        assert_eq!(scores.get(&bad), Some(&20));
+        assert_eq!(scores.get(&unknown), Some(&0));
+    }
+
+    #[tokio::test]
+    async fn test_load_clamps_score_and_credits_offline_decay() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let storage = PersistentPeerStorage::open(temp_dir.path()).await.unwrap();
+
+        // Persisted near the ban line but seen recently: clamps to the restart ceiling.
+        let near_ban: SocketAddr = "10.0.0.1:8333".parse().unwrap();
+        // Persisted mid-score but offline ~2 hours: decays by two intervals on load.
+        let offline: SocketAddr = "10.0.0.2:8333".parse().unwrap();
+
+        let mut map: HashMap<SocketAddr, PeerReputation> = HashMap::new();
+        map.insert(
+            near_ban,
+            PeerReputation {
+                score: 95,
+                last_seen: SystemTime::now(),
+                ..Default::default()
+            },
+        );
+        map.insert(
+            offline,
+            PeerReputation {
+                score: 30,
+                last_seen: SystemTime::now() - Duration::from_secs(2 * 60 * 60 + 60),
+                ..Default::default()
+            },
+        );
+        storage.save_peers_reputation(&map).await.unwrap();
+
+        let manager = PeerReputationManager::new();
+        manager.load_from_storage(&storage).await.unwrap();
+
+        // Clamped to RESTART_SCORE_CEILING, so one post-restart penalty cannot ban it.
+        assert_eq!(score(&manager, &near_ban).await, 40);
+        // 30 - 2 intervals * 5 decay.
+        assert_eq!(score(&manager, &offline).await, 20);
     }
 }

@@ -180,13 +180,13 @@ async fn test_transaction_routing_to_coinjoin_account() {
             .first_coinjoin_managed_account_mut()
             .expect("Failed to get first CoinJoin managed account");
         let ManagedAccountType::CoinJoin {
-            addresses,
+            external_addresses,
             ..
         } = managed_account.managed_account_type_mut()
         else {
             panic!("Expected CoinJoin account type");
         };
-        addresses
+        external_addresses
             .next_unused(&KeySource::Public(xpub), true)
             .expect("Failed to derive CoinJoin address")
     };
@@ -432,9 +432,15 @@ fn test_asset_lock_transaction_routing() {
     let tx_type = TransactionType::AssetLock;
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
 
-    // Should check standard accounts and all identity accounts
+    // Should check all fund-bearing accounts (an asset lock can be funded from any of them)
+    // and all identity accounts.
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
+    // Fund-bearing accounts an asset lock can spend from. Their absence let asset-lock
+    // spends of CoinJoin / DashPay UTXOs go undebited (dashpay/platform#4073, #4074).
+    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayReceivingFunds));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayExternalAccount));
     assert!(accounts.contains(&AccountTypeToCheck::IdentityRegistration));
     assert!(accounts.contains(&AccountTypeToCheck::IdentityTopUp));
     assert!(accounts.contains(&AccountTypeToCheck::IdentityTopUpNotBound));

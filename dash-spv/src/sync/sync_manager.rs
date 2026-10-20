@@ -133,6 +133,20 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
     /// immediately to the new peer.
     fn on_disconnect(&mut self);
 
+    /// Requeue in-flight work after a single peer drops while others remain.
+    ///
+    /// Distinct from [`SyncManager::on_disconnect`], which runs only once every
+    /// peer is gone and is therefore free to discard peer-bound state wholesale.
+    /// Here the surviving peers can still serve the work, so an implementation
+    /// must requeue and nothing else.
+    ///
+    /// In-flight items carry no peer attribution, so an implementation requeues
+    /// everything outstanding, including requests a healthy peer is still going
+    /// to answer. Retry counts survive a requeue and every receive path treats a
+    /// response it no longer tracks as unrequested, so the cost is redundant
+    /// traffic rather than lost work or a corrupted retry budget.
+    fn on_peer_disconnect(&mut self) {}
+
     /// Handle an incoming network message.
     ///
     /// Returns events to emit to other managers.
@@ -171,27 +185,38 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
         event: &NetworkEvent,
         requests: &RequestSender,
     ) -> SyncResult<Vec<SyncEvent>> {
-        // Default: transition from WaitingForConnections to Syncing when peers connect
-        if let NetworkEvent::PeersUpdated {
-            connected_count,
-            best_height,
-            ..
-        } = event
-        {
-            if let Some(best_height) = best_height {
-                self.update_target_height(*best_height);
+        match event {
+            // `PeersUpdated` carries only the surviving count, so a drop that
+            // leaves other peers connected is invisible there. `PeerDisconnected`
+            // precedes it for every removal path and is what makes the drop
+            // observable at all.
+            NetworkEvent::PeerDisconnected {
+                ..
+            } => self.on_peer_disconnect(),
+            // Default: transition from WaitingForConnections to Syncing when peers connect
+            NetworkEvent::PeersUpdated {
+                connected_count,
+                best_height,
+                ..
+            } => {
+                if let Some(best_height) = best_height {
+                    self.update_target_height(*best_height);
+                }
+                if *connected_count == 0 {
+                    tracing::info!("{} - no peers available, stopping sync", self.identifier());
+                    self.stop_sync();
+                } else if *connected_count > 0 && self.state() == SyncState::WaitingForConnections {
+                    tracing::info!(
+                        "{} - peers available ({}), starting sync",
+                        self.identifier(),
+                        connected_count
+                    );
+                    return self.start_sync(requests).await;
+                }
             }
-            if *connected_count == 0 {
-                tracing::info!("{} - no peers available, stopping sync", self.identifier());
-                self.stop_sync();
-            } else if *connected_count > 0 && self.state() == SyncState::WaitingForConnections {
-                tracing::info!(
-                    "{} - peers available ({}), starting sync",
-                    self.identifier(),
-                    connected_count
-                );
-                return self.start_sync(requests).await;
-            }
+            NetworkEvent::PeerConnected {
+                ..
+            } => {}
         }
         Ok(vec![])
     }
@@ -340,6 +365,7 @@ mod tests {
     use crate::network::NetworkRequest;
     use crate::sync::BlockHeadersProgress;
     use crate::sync::SyncState;
+    use crate::test_utils::test_socket_address;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -352,6 +378,24 @@ mod tests {
         message_count: Arc<AtomicU32>,
         event_count: Arc<AtomicU32>,
         tick_count: Arc<AtomicU32>,
+        /// Stands in for the destructive state a total-loss `on_disconnect`
+        /// throws away.
+        progress_kept: bool,
+        requeue_count: u32,
+    }
+
+    impl MockManager {
+        fn new(state: SyncState) -> Self {
+            Self {
+                identifier: ManagerIdentifier::BlockHeader,
+                state,
+                message_count: Arc::new(AtomicU32::new(0)),
+                event_count: Arc::new(AtomicU32::new(0)),
+                tick_count: Arc::new(AtomicU32::new(0)),
+                progress_kept: true,
+                requeue_count: 0,
+            }
+        }
     }
 
     impl std::fmt::Debug for MockManager {
@@ -378,7 +422,13 @@ mod tests {
             &[]
         }
 
-        fn on_disconnect(&mut self) {}
+        fn on_disconnect(&mut self) {
+            self.progress_kept = false;
+        }
+
+        fn on_peer_disconnect(&mut self) {
+            self.requeue_count += 1;
+        }
 
         async fn handle_message(
             &mut self,
@@ -412,17 +462,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_manager_task_shutdown() {
-        let message_count = Arc::new(AtomicU32::new(0));
-        let event_count = Arc::new(AtomicU32::new(0));
-        let tick_count = Arc::new(AtomicU32::new(0));
-
-        let manager = MockManager {
-            identifier: ManagerIdentifier::BlockHeader,
-            state: SyncState::WaitForEvents,
-            message_count: message_count.clone(),
-            event_count: event_count.clone(),
-            tick_count: tick_count.clone(),
-        };
+        let manager = MockManager::new(SyncState::WaitForEvents);
+        let tick_count = manager.tick_count.clone();
 
         // Create channels
         let (_, message_receiver) = mpsc::unbounded_channel();
@@ -460,5 +501,44 @@ mod tests {
 
         // Verify tick was called multiple times
         assert!(tick_count.load(Ordering::Relaxed) > 0);
+    }
+
+    /// Losing one peer of several must reach the requeue hook and leave the
+    /// destructive total-loss hook alone. Only the final `PeersUpdated` with a
+    /// zero count is allowed to discard progress.
+    #[tokio::test]
+    async fn test_peer_disconnect_requeues_without_dropping_progress() {
+        let mut manager = MockManager::new(SyncState::Syncing);
+        let (req_tx, _req_rx) = mpsc::unbounded_channel::<NetworkRequest>();
+        let requests = RequestSender::new(req_tx);
+
+        let disconnect = NetworkEvent::PeerDisconnected {
+            address: test_socket_address(1),
+        };
+        let survivors = NetworkEvent::PeersUpdated {
+            connected_count: 2,
+            addresses: vec![test_socket_address(2), test_socket_address(3)],
+            best_height: Some(1000),
+        };
+
+        manager.handle_network_event(&disconnect, &requests).await.unwrap();
+        manager.handle_network_event(&survivors, &requests).await.unwrap();
+
+        assert_eq!(manager.requeue_count, 1);
+        assert!(manager.progress_kept);
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        // The last peer going away still runs the destructive hook.
+        let no_peers = NetworkEvent::PeersUpdated {
+            connected_count: 0,
+            addresses: vec![],
+            best_height: Some(1000),
+        };
+        manager.handle_network_event(&disconnect, &requests).await.unwrap();
+        manager.handle_network_event(&no_peers, &requests).await.unwrap();
+
+        assert_eq!(manager.requeue_count, 2);
+        assert!(!manager.progress_kept);
+        assert_eq!(manager.state(), SyncState::WaitingForConnections);
     }
 }

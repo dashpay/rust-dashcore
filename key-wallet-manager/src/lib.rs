@@ -21,16 +21,19 @@ mod wallet_interface;
 
 pub use error::WalletError;
 pub use events::{DerivedAddress, WalletEvent};
-pub use matching::{check_compact_filters_for_script_pubkeys, FilterMatchKey};
+pub use matching::{check_compact_filters_for_elements, FilterMatchKey};
 pub use wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
 
-use dashcore::blockdata::transaction::Transaction;
+use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::prelude::CoreBlockHeight;
+use dashcore::Txid;
 use key_wallet::account::AccountCollection;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
+use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use key_wallet::wallet::managed_wallet_info::AbandonOutcome;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletCoreBalance};
@@ -39,7 +42,7 @@ use std::str::FromStr;
 
 use dashcore::address::NetworkUnchecked;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 /// Default capacity for the wallet event bus.
 const DEFAULT_WALLET_EVENT_CAPACITY: usize = 1000;
@@ -93,6 +96,19 @@ pub struct CheckTransactionsResult {
     /// Records whose state was updated by this check (confirmation or
     /// InstantSend lock on a previously stored record), grouped by wallet.
     pub per_wallet_updated_records: BTreeMap<WalletId, Vec<TransactionRecord>>,
+    /// Transactions this check *removed*, grouped by wallet: recorded spends
+    /// the arriving transaction provably beat to one of its inputs. See
+    /// [`crate::events::WalletEvent::TransactionsSwept`]
+    /// — a consumer mirroring wallet state must delete these rows, since no
+    /// other signal on the bus reports a removal.
+    pub per_wallet_swept: BTreeMap<WalletId, Vec<Txid>>,
+    /// Outpoints released as a side effect of `per_wallet_swept`, grouped by
+    /// wallet: inputs the removed transactions claimed to spend that no
+    /// surviving record spends too. Parallels `per_wallet_swept` rather than
+    /// folding into it because the two have different owners downstream —
+    /// see [`crate::events::WalletEvent::TransactionsSwept`] for why a
+    /// consumer needs this set named explicitly instead of re-deriving it.
+    pub per_wallet_released_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
 }
 
 impl CheckTransactionsResult {
@@ -126,8 +142,65 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
     /// added/removed. Combined with per-wallet account-level revisions to
     /// produce the total monitor revision.
     structural_revision: u64,
-    /// Event sender for wallet events
+    /// Event sender for wallet events.
+    ///
+    /// This is a *bounded, lossy* fan-out (capacity
+    /// [`DEFAULT_WALLET_EVENT_CAPACITY`]): under a heavy SPV catch-up a
+    /// subscriber that drains slower than blocks are processed overflows the
+    /// ring and receives `RecvError::Lagged`, silently dropping every
+    /// record/UTXO/watermark event in between. That is acceptable for the
+    /// *incidental* subscribers reached via [`subscribe_events`] (dash-spv's
+    /// `EventHandler` fan-out, unit tests) but NOT for the durable-persistence
+    /// consumer — see `persistence_sender`.
+    ///
+    /// [`subscribe_events`]: WalletManager::subscribe_events
     event_sender: broadcast::Sender<WalletEvent>,
+    /// Lossless, unbounded persistence event channel (dashpay/platform#4069).
+    ///
+    /// Carries the *same* event stream, in the *same* order, to the single
+    /// durable-persistence consumer with **no drops**. The platform consumer
+    /// projects each event into a persisted changeset; a dropped
+    /// record/watermark event there lets the durable sync watermark advance
+    /// past rows that never reached disk, which its `#4069` guard then latches
+    /// into a permanent freeze. An unbounded `mpsc` can never `Lagged`, so that
+    /// guard never fires.
+    ///
+    /// It is deliberately unbounded rather than a bounded back-pressuring
+    /// channel: several emit sites run *inside this manager's `RwLock` write
+    /// guard* (SPV block processing holds `wallet.write().await` across
+    /// `process_block_for_wallets`), while the consumer needs a `read()` lock
+    /// on the same manager to project each event. A bounded
+    /// `send().await`/`blocking_send` that parked under the write guard would
+    /// therefore deadlock the very consumer that must drain it. A non-blocking
+    /// unbounded enqueue keeps the emit paths lock-safe. See [`emit_event`].
+    ///
+    /// Persistence delivery is **opt-in**: this is `None` until a durable
+    /// consumer installs itself by calling [`take_persistence_receiver`], which
+    /// creates the channel and returns the receive half. Until then
+    /// [`emit_event`] enqueues nothing, so a `WalletManager` used without a
+    /// persistence consumer (e.g. a pure wallet-management embedding that never
+    /// drives block processing, or one that simply never installs a consumer)
+    /// cannot accumulate an unbounded backlog of undrained events. The
+    /// documented contract is that the consumer takes the receiver *before* the
+    /// manager is shared with any producer, so no pre-consumer events are lost.
+    ///
+    /// [`take_persistence_receiver`]: WalletManager::take_persistence_receiver
+    /// [`emit_event`]: WalletManager::emit_event
+    persistence_sender: Option<mpsc::UnboundedSender<WalletEvent>>,
+    /// Latches `true` the first time a persistence send fails because the
+    /// installed consumer dropped its receiver while the manager is still
+    /// running, so that anomaly is surfaced (logged) exactly once instead of on
+    /// every subsequent emit.
+    persistence_consumer_lost: std::sync::atomic::AtomicBool,
+    /// Latches `true` on the first [`emit_event`] call. Read by
+    /// [`take_persistence_receiver`] to warn when a persistence consumer
+    /// installs itself only AFTER events have already been emitted — those
+    /// events reached only the lossy broadcast and are permanently absent from
+    /// the persistence stream, with no `Lagged`-style marker to reveal the gap.
+    ///
+    /// [`emit_event`]: WalletManager::emit_event
+    /// [`take_persistence_receiver`]: WalletManager::take_persistence_receiver
+    events_emitted: std::sync::atomic::AtomicBool,
 }
 
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
@@ -139,7 +212,55 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             wallet_infos: BTreeMap::new(),
             structural_revision: 0,
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
+            // Persistence delivery is opt-in; the channel is created lazily when
+            // a consumer calls `take_persistence_receiver`. See that field's docs.
+            persistence_sender: None,
+            persistence_consumer_lost: std::sync::atomic::AtomicBool::new(false),
+            events_emitted: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Emit a wallet event to BOTH the incidental broadcast fan-out and the
+    /// lossless persistence channel (dashpay/platform#4069).
+    ///
+    /// This is the single emit choke point, so both channels observe events in
+    /// the same order (the manager is the only producer). The persistence send
+    /// is a non-blocking, non-dropping `mpsc` enqueue: it is safe to call from
+    /// the synchronous emit paths that run while this manager's `RwLock` write
+    /// guard is held, whereas a bounded blocking send there would deadlock the
+    /// persistence consumer (which needs a `read()` lock to drain). See the
+    /// `persistence_sender` field docs for the full rationale.
+    fn emit_event(&self, event: WalletEvent) {
+        self.events_emitted.store(true, std::sync::atomic::Ordering::Relaxed);
+        // Lossless path: the persistence consumer must never miss a row-bearing
+        // or watermark event, or its durable sync height freezes. Only enqueue
+        // once a consumer has installed itself (opt-in), so a manager with no
+        // persistence consumer never accumulates an undrained backlog.
+        if let Some(sender) = &self.persistence_sender {
+            // `send` fails only after the consumer dropped its receiver. Under
+            // the documented contract that happens at manager shutdown, when
+            // there is nothing left to persist to. If it happens *while the
+            // manager is still running* (a consumer task that exited early),
+            // durable persistence has silently stopped: surface it loudly, once.
+            // We do not halt in-memory state advancement — the manager does not
+            // own durable state, and on restart the wallet re-scans from the
+            // last persisted height, so a lost consumer causes no durable
+            // corruption (dashpay/platform#4069).
+            if sender.send(event.clone()).is_err()
+                && !self.persistence_consumer_lost.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                tracing::error!(
+                    "wallet-manager persistence consumer dropped its receiver while the manager is \
+                     still running; durable persistence has stopped. In-memory state keeps \
+                     advancing and is recovered by a re-scan from the last persisted height on \
+                     restart, so there is no durable corruption (dashpay/platform#4069)."
+                );
+            }
+        }
+        // Lossy-tolerant fan-out for incidental subscribers (dash-spv
+        // `EventHandler` dispatch, tests). A `Lagged` drop here never affects
+        // the durable watermark.
+        let _ = self.event_sender.send(event);
     }
 
     /// Increment the structural revision for wallet/account additions or removals.
@@ -147,15 +268,16 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         self.structural_revision += 1;
     }
 
-    /// Create a new wallet from mnemonic and add it to the manager
-    /// Returns the computed wallet ID
+    /// Create a new wallet from mnemonic and add it to the manager.
+    /// The mnemonic may be in any supported BIP-39 language (detected
+    /// automatically). Returns the computed wallet ID.
     pub fn create_wallet_from_mnemonic(
         &mut self,
         mnemonic: &str,
         birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
-        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         let wallet = Wallet::from_mnemonic(mnemonic_obj, self.network, account_creation_options)
@@ -192,7 +314,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// It supports downgrading to a public-key-only wallet for security purposes.
     ///
     /// # Arguments
-    /// * `mnemonic` - The mnemonic phrase
+    /// * `mnemonic` - The mnemonic phrase, in any supported BIP-39 language
     /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `account_creation_options` - Which accounts to create initially
     /// * `downgrade_to_pubkey_wallet` - If true, creates a wallet without private keys
@@ -217,7 +339,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ) -> Result<(Vec<u8>, WalletId), WalletError> {
         use zeroize::Zeroize;
 
-        let mnemonic_obj = Mnemonic::from_phrase(mnemonic, key_wallet::mnemonic::Language::English)
+        let mnemonic_obj = Mnemonic::from_phrase(mnemonic)
             .map_err(|e| WalletError::InvalidMnemonic(e.to_string()))?;
 
         let mut wallet =
@@ -306,6 +428,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ///
     /// # Arguments
     /// * `xprv` - The extended private key string (base58check encoded)
+    /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `account_creation_options` - Specifies which accounts to create during initialization
     ///
     /// # Returns
@@ -314,6 +437,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     pub fn import_wallet_from_extended_priv_key(
         &mut self,
         xprv: &str,
+        birth_height: CoreBlockHeight,
         account_creation_options: key_wallet::wallet::initialization::WalletAccountCreationOptions,
     ) -> Result<WalletId, WalletError> {
         // Parse the extended private key
@@ -333,7 +457,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
 
         // Create managed wallet info
-        let managed_info = T::from_wallet(&wallet, self.last_processed_height());
+        let managed_info = T::from_wallet(&wallet, birth_height);
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
@@ -348,6 +472,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     ///
     /// # Arguments
     /// * `xpub` - The extended public key string (base58check encoded)
+    /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     /// * `can_sign_externally` - If true, creates an externally signable wallet (e.g., for hardware wallets).
     ///   If false, creates a pure watch-only wallet.
     ///
@@ -357,6 +482,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     pub fn import_wallet_from_xpub(
         &mut self,
         xpub: &str,
+        birth_height: CoreBlockHeight,
         can_sign_externally: bool,
     ) -> Result<WalletId, WalletError> {
         // Parse the extended public key
@@ -379,7 +505,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
 
         // Create managed wallet info
-        let managed_info = T::from_wallet(&wallet, self.last_processed_height());
+        let managed_info = T::from_wallet(&wallet, birth_height);
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
@@ -393,8 +519,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// This is useful for restoring wallets from backups or transferring wallets
     /// between systems.
     ///
+    /// The serialized form contains only the immutable `Wallet`, not the mutable
+    /// `ManagedWalletInfo`, so the caller must supply a `birth_height` to seed the
+    /// new wallet's sync checkpoint. Pass 0 to rescan from genesis, or the chain
+    /// tip if no historical scan is desired.
+    ///
     /// # Arguments
     /// * `wallet_bytes` - The bincode-serialized wallet bytes
+    /// * `birth_height` - Birth height for wallet scanning (0 to sync from genesis)
     ///
     /// # Returns
     /// * `Ok(WalletId)` - The computed wallet ID of the imported wallet
@@ -403,6 +535,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     pub fn import_wallet_from_bytes(
         &mut self,
         wallet_bytes: &[u8],
+        birth_height: CoreBlockHeight,
     ) -> Result<WalletId, WalletError> {
         // Deserialize the wallet from bincode
         let wallet: Wallet = bincode::decode_from_slice(wallet_bytes, bincode::config::standard())
@@ -419,10 +552,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             return Err(WalletError::WalletExists(wallet_id));
         }
 
-        // Create managed wallet info from the imported wallet, using the manager's
-        // current aggregated last-processed height as the fallback birth height
-        // since the serialized form does not preserve it.
-        let managed_info = T::from_wallet(&wallet, self.last_processed_height());
+        // Create managed wallet info from the imported wallet
+        let managed_info = T::from_wallet(&wallet, birth_height);
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
@@ -513,6 +644,24 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     }
                 }
 
+                // Gathered outside the relevance branch above: a sweep can
+                // fire for a transaction this wallet finds irrelevant — the
+                // shared input is gone from `utxos` and the winner may pay
+                // only external addresses — and the removal still has to
+                // reach the consumer.
+                if !check_result.swept_transactions.is_empty() {
+                    result
+                        .per_wallet_swept
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.swept_transactions);
+                    result
+                        .per_wallet_released_outpoints
+                        .entry(*wallet_id)
+                        .or_default()
+                        .extend(check_result.released_outpoints);
+                }
+
                 if !check_result.new_addresses.is_empty() {
                     result
                         .new_addresses
@@ -547,6 +696,51 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 }
 
 impl WalletManager<ManagedWalletInfo> {
+    /// Abandon `root` in `wallet_id`, and every recorded transaction
+    /// descending from it, then recompute the balance.
+    ///
+    /// The manager-level entry point for
+    /// [`ManagedWalletInfo::abandon_transaction_with_spends`] — the only
+    /// production path that clears a transaction the network never accepted.
+    /// The conflict sweep cannot reach that case: it needs a competing final
+    /// spend to prove the loser dead, and a transaction nobody ever saw has
+    /// no competitor. Its outputs would otherwise be credited forever, and as
+    /// trusted self-send change they are counted confirmed and are spendable.
+    ///
+    /// `external_spends` maps an outpoint to the transaction a caller's
+    /// persistence mirror recorded as spending it, for descendants whose own
+    /// records the load path never restored. Pass an empty map to walk only
+    /// the recorded transactions.
+    ///
+    /// **This asserts the root is dead; it does not establish it.** There is
+    /// no negative signal on the p2p network — Dash Core removed BIP61
+    /// `reject` — so silence is not proof, and abandoning a transaction that
+    /// is merely quiet re-exposes its inputs to coin selection. Settled roots
+    /// are refused, but the judgement otherwise belongs to the caller that
+    /// owns broadcast policy.
+    ///
+    /// Returns `None` when the wallet is unknown.
+    pub fn abandon_transaction(
+        &mut self,
+        wallet_id: &WalletId,
+        root: Txid,
+        external_spends: &BTreeMap<OutPoint, Txid>,
+    ) -> Option<AbandonOutcome> {
+        let info = self.get_wallet_info_mut(wallet_id)?;
+        let outcome = info.abandon_transaction_with_spends(root, external_spends);
+        if !outcome.is_empty() {
+            info.update_balance();
+            tracing::info!(
+                %root,
+                abandoned = outcome.abandoned.len(),
+                records_removed = outcome.records_removed,
+                utxos_removed = outcome.utxos_removed,
+                "Abandoned a dead transaction and everything built on it"
+            );
+        }
+        Some(outcome)
+    }
+
     /// Get receive address from a specific wallet and account
     pub fn next_receive_address(
         &mut self,
@@ -578,9 +772,11 @@ impl WalletManager<ManagedWalletInfo> {
     pub async fn build_and_sign_transaction(
         &mut self,
         wallet_id: &WalletId,
-        account_index: u32,
+        sources: &[AccountTypePreference],
+        source_index: u32,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
+        strategy: SelectionStrategy,
     ) -> Result<(Transaction, u64), WalletError> {
         // Get the managed account for UTXOs and signing data
         let (wallet, managed_wallet) = self
@@ -588,7 +784,7 @@ impl WalletManager<ManagedWalletInfo> {
             .ok_or(WalletError::WalletNotFound(*wallet_id))?;
 
         managed_wallet
-            .build_and_sign_transaction(wallet, account_index, outputs, fee_rate)
+            .build_and_sign_transaction(wallet, sources, source_index, outputs, fee_rate, strategy)
             .await
             .map_err(|e| WalletError::TransactionBuild(e.to_string()))
     }

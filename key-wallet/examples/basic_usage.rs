@@ -3,7 +3,6 @@
 use core::str::FromStr;
 use dashcore::{Address, Network as DashNetwork};
 use key_wallet::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
-use key_wallet::mnemonic::Language;
 use key_wallet::prelude::*;
 use key_wallet::Network;
 
@@ -12,10 +11,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
 
     // 1. Create a mnemonic
     println!("1. Creating mnemonic...");
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English
-    )?;
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")?;
     println!("   Mnemonic: {}", mnemonic.phrase());
     println!("   Word count: {}", mnemonic.word_count());
 

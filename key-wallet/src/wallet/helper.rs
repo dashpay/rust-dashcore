@@ -101,6 +101,28 @@ impl Wallet {
         matches!(self.wallet_type, WalletType::Seed { .. } | WalletType::Mnemonic { .. })
     }
 
+    /// Get the wallet's 64-byte seed, if it has one.
+    ///
+    /// For mnemonic wallets this is the BIP39 seed (empty passphrase — the
+    /// same convention wallet construction uses to derive the root key).
+    /// Wallets created from an extended private key, watch-only wallets and
+    /// external-signable wallets have no seed and return `None`.
+    pub fn wallet_seed_bytes(&self) -> Option<[u8; 64]> {
+        match &self.wallet_type {
+            WalletType::Mnemonic {
+                mnemonic,
+                ..
+            } => Some(mnemonic.to_seed("")),
+            WalletType::Seed {
+                seed,
+                ..
+            } => Some(*seed.as_bytes()),
+            WalletType::ExtendedPrivKey(_)
+            | WalletType::ExternalSignable
+            | WalletType::WatchOnly => None,
+        }
+    }
+
     /// Create accounts based on the provided creation options
     pub(crate) fn create_accounts_from_options(
         &mut self,
@@ -321,10 +343,18 @@ impl Wallet {
         // Provider keys accounts
         self.add_account(AccountType::ProviderVotingKeys, None)?;
         self.add_account(AccountType::ProviderOwnerKeys, None)?;
-        #[cfg(feature = "bls")]
-        self.add_bls_account(AccountType::ProviderOperatorKeys, None)?;
-        #[cfg(feature = "eddsa")]
-        self.add_eddsa_account(AccountType::ProviderPlatformKeys, None)?;
+        // Operator (BLS) and platform-node (Ed25519) keys are derived from the
+        // raw wallet seed in their own scheme (matching DashSync/dashbls), not
+        // from the secp256k1 root key — so they can only be auto-created for
+        // wallets that carry a seed. Seedless wallets (extended-priv-key based)
+        // can still add them explicitly via add_bls_account/add_eddsa_account
+        // with an externally supplied seed.
+        if self.has_seed() {
+            #[cfg(feature = "bls")]
+            self.add_bls_account(AccountType::ProviderOperatorKeys, None)?;
+            #[cfg(feature = "eddsa")]
+            self.add_eddsa_account(AccountType::ProviderPlatformKeys, None)?;
+        }
 
         Ok(())
     }
@@ -584,6 +614,40 @@ impl Wallet {
                 // Currently not retrieved via this helper
                 None
             }
+        }
+    }
+
+    /// Get a [`crate::KeySource`] capable of public (watch-side) derivation
+    /// for a specific account type.
+    ///
+    /// This is the key-source counterpart of
+    /// [`Self::extended_public_key_for_account_type`]: ECDSA accounts yield
+    /// [`crate::KeySource::Public`], while the BLS provider operator account
+    /// yields [`crate::KeySource::BLSPublic`] (legacy-scheme non-hardened
+    /// derivation) so gap-limit maintenance can extend the operator key pool
+    /// just like the owner/voting pools.
+    ///
+    /// Returns [`crate::KeySource::NoKeySource`] for account types that
+    /// cannot derive publicly: the Ed25519 platform node account (SLIP-0010
+    /// supports hardened derivation only) and Dashpay accounts (not
+    /// retrieved via this helper).
+    pub fn key_source_for_account_type(
+        &self,
+        account_type: &crate::transaction_checking::transaction_router::AccountTypeToCheck,
+        account_index: Option<u32>,
+    ) -> crate::KeySource {
+        match account_type {
+            #[cfg(feature = "bls")]
+            crate::transaction_checking::transaction_router::AccountTypeToCheck::ProviderOperatorKeys => self
+                .accounts
+                .provider_operator_keys
+                .as_ref()
+                .map(|a| crate::KeySource::BLSPublic(a.bls_public_key.clone()))
+                .unwrap_or(crate::KeySource::NoKeySource),
+            _ => self
+                .extended_public_key_for_account_type(account_type, account_index)
+                .map(crate::KeySource::Public)
+                .unwrap_or(crate::KeySource::NoKeySource),
         }
     }
 }

@@ -7,7 +7,7 @@ use key_wallet::account::{
 };
 use key_wallet::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use key_wallet::managed_account::address_pool::AddressPoolType;
-use key_wallet::mnemonic::{Language, Mnemonic};
+use key_wallet::mnemonic::Mnemonic;
 use key_wallet::Network;
 use secp256k1::Secp256k1;
 
@@ -18,10 +18,7 @@ use key_wallet::derivation_slip10::ExtendedEd25519PrivKey;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate a mnemonic for testing
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )?;
+    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")?;
     let seed = mnemonic.to_seed("");
 
     // Create master key
@@ -68,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bls_account = BLSAccount::from_seed(
             None,
             AccountType::ProviderVotingKeys,
-            bls_seed,
+            &bls_seed,
             Network::Testnet,
         )?;
 
@@ -110,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let eddsa_account = EdDSAAccount::from_seed(
             None,
             AccountType::IdentityRegistration,
-            ed25519_seed,
+            &ed25519_seed,
             Network::Testnet,
         )?;
 
@@ -164,7 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bls_account = BLSAccount::from_seed(
             None,
             AccountType::ProviderVotingKeys,
-            bls_seed,
+            &bls_seed,
             Network::Testnet,
         )?;
         let watch_only_bls = bls_account.to_watch_only();
@@ -177,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let eddsa_account = EdDSAAccount::from_seed(
             None,
             AccountType::IdentityRegistration,
-            ed25519_seed,
+            &ed25519_seed,
             Network::Testnet,
         )?;
         let watch_only_eddsa = eddsa_account.to_watch_only();

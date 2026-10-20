@@ -1,7 +1,7 @@
 use dashcore::bip158::BlockFilter;
 use dashcore::ScriptBuf;
 use key_wallet_manager::{FilterMatchKey, WalletId};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A completed batch of compact block filters ready for verification.
 ///
@@ -24,14 +24,21 @@ pub(super) struct FiltersBatch {
     pending_blocks: u32,
     /// Whether rescan has been completed for this batch.
     rescan_complete: bool,
-    /// Wallets that were behind for this batch's height range at scan time and
-    /// therefore need their `synced_height` advanced when the batch commits.
-    /// Already-synced wallets must not be touched.
-    scanned_wallets: BTreeSet<WalletId>,
+    /// Wallets that were behind for this batch's height range at scan time —
+    /// and therefore need their `synced_height` advanced when the batch
+    /// commits — each mapped to the wallet's `account_generation` at scan
+    /// time. Commit refuses to advance a wallet whose generation has changed
+    /// since the scan: an account added mid-flight means the scan did not test
+    /// the new account's scripts, so the batch cannot certify coverage for the
+    /// current account set (dashpay/rust-dashcore#649). Already-synced wallets
+    /// must not be touched.
+    scanned_wallets: BTreeMap<WalletId, u64>,
     /// Cached scriptPubKeys discovered during block processing that still
     /// need rescan, attributed per wallet so we can rerun matching only
     /// against the wallet that produced each new script.
     collected_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
+    /// Every script already matched against this batch's filters, per wallet.
+    tested_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
 }
 
 impl FiltersBatch {
@@ -49,8 +56,9 @@ impl FiltersBatch {
             scanned: false,
             pending_blocks: 0,
             rescan_complete: false,
-            scanned_wallets: BTreeSet::new(),
+            scanned_wallets: BTreeMap::new(),
             collected_scripts: HashMap::new(),
+            tested_scripts: HashMap::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -114,17 +122,37 @@ impl FiltersBatch {
     ) {
         self.collected_scripts.entry(wallet_id).or_default().extend(scripts);
     }
+    /// Record that `scripts` have been matched against this batch's filters.
+    pub(super) fn mark_tested<I: IntoIterator<Item = ScriptBuf>>(
+        &mut self,
+        wallet_id: WalletId,
+        scripts: I,
+    ) {
+        self.tested_scripts.entry(wallet_id).or_default().extend(scripts);
+    }
+
+    /// The wallet's scripts that this batch has never been matched against.
+    pub(super) fn untested<'a>(
+        &'a self,
+        wallet_id: &WalletId,
+        monitored: &'a [ScriptBuf],
+    ) -> impl Iterator<Item = &'a ScriptBuf> {
+        let tested = self.tested_scripts.get(wallet_id);
+        monitored.iter().filter(move |script| tested.is_none_or(|t| !t.contains(*script)))
+    }
+
     /// Take collected per-wallet scripts for rescan, leaving the map empty.
     pub(super) fn take_collected_scripts(&mut self) -> HashMap<WalletId, HashSet<ScriptBuf>> {
         std::mem::take(&mut self.collected_scripts)
     }
-    /// Record the set of wallets that were behind for this batch at scan time.
-    pub(super) fn set_scanned_wallets(&mut self, wallets: BTreeSet<WalletId>) {
+    /// Record the wallets that were behind for this batch at scan time, each
+    /// with its `account_generation` snapshot.
+    pub(super) fn set_scanned_wallets(&mut self, wallets: BTreeMap<WalletId, u64>) {
         self.scanned_wallets = wallets;
     }
-    /// Wallets that were behind at scan time and must have their synced_height
-    /// advanced when this batch commits.
-    pub(super) fn scanned_wallets(&self) -> &BTreeSet<WalletId> {
+    /// Wallets that were behind at scan time (with their generation snapshot)
+    /// and must have their synced_height advanced when this batch commits.
+    pub(super) fn scanned_wallets(&self) -> &BTreeMap<WalletId, u64> {
         &self.scanned_wallets
     }
 }

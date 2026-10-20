@@ -4,7 +4,7 @@
 import subprocess
 import sys
 
-cmd = [
+base = [
     "cargo", "clippy",
     "--workspace",
     "--all-features",
@@ -14,8 +14,16 @@ cmd = [
 
 # Exclude dash-fuzz on Windows (honggfuzz doesn't support Windows)
 if sys.platform == "win32":
-    cmd.extend(["--exclude", "dash-fuzz"])
+    base.extend(["--exclude", "dash-fuzz"])
 
-cmd.extend(["--", "-D", "warnings"])
+profiles = [
+    ("debug", []),
+    ("release", ["--release"]),
+]
 
-sys.exit(subprocess.call(cmd))
+for label, extra in profiles:
+    cmd = base + extra + ["--", "-D", "warnings"]
+    rc = subprocess.call(cmd)
+    if rc != 0:
+        print(f"Clippy failed ({label}): {' '.join(cmd)}", file=sys.stderr)
+        sys.exit(rc)

@@ -1,3 +1,4 @@
+use crate::sync::mempool::BroadcastResult;
 use crate::sync::ManagerIdentifier;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -162,6 +163,20 @@ pub enum SyncEvent {
         validated: bool,
     },
 
+    /// The network-level outcome of a self-broadcast transaction was
+    /// determined: accepted (echoed back by non-recipient peers, InstantSend
+    /// locked, or confirmed) or uncertain (no signal within the timeout).
+    /// An `Uncertain` outcome may later be followed by an `Accepted` one.
+    ///
+    /// Emitted by: `MempoolManager`
+    /// Consumed by: External listeners, `broadcast_transaction_and_wait`
+    TransactionBroadcastResult {
+        /// The broadcast transaction's txid
+        txid: Txid,
+        /// The determined outcome
+        result: BroadcastResult,
+    },
+
     /// Sync has reached the chain tip (all managers idle).
     ///
     /// Emitted on every not-synced to synced transition. Cycle 0 is the
@@ -226,12 +241,13 @@ impl fmt::Display for SyncEvent {
             } => match qr_info_result {
                 Some(s) => write!(
                     f,
-                    "MasternodeStateUpdated(height={}, qr_info={{stored_cycle_height={:?}, verified={}/{}, newly_qualified={}}})",
+                    "MasternodeStateUpdated(height={}, qr_info={{stored_cycle_height={:?}, verified={}/{}, newly_qualified={}, previous_cycle_invalid={}}})",
                     height,
                     s.stored_cycle_height,
                     s.fully_verified_count,
                     s.rotated_quorum_count,
                     s.newly_qualified_count,
+                    s.previous_cycle_invalid_count,
                 ),
                 None => write!(f, "MasternodeStateUpdated(height={})", height),
             },
@@ -256,6 +272,10 @@ impl fmt::Display for SyncEvent {
                 "InstantLockReceived(txid={}, validated={})",
                 instant_lock.txid, validated
             ),
+            SyncEvent::TransactionBroadcastResult {
+                txid,
+                result,
+            } => write!(f, "TransactionBroadcastResult(txid={}, result={})", txid, result),
             SyncEvent::SyncComplete {
                 header_tip,
                 cycle,

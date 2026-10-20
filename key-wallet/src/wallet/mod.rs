@@ -244,7 +244,7 @@ mod tests {
     use super::*;
     use crate::account::account_collection::AccountCollection;
     use crate::account::{AccountType, StandardAccountType};
-    use crate::mnemonic::Language;
+
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
     #[test]
@@ -262,10 +262,7 @@ mod tests {
 
     #[test]
     fn test_wallet_from_mnemonic() {
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            Language::English,
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let wallet = Wallet::from_mnemonic(
             mnemonic,
@@ -344,7 +341,7 @@ mod tests {
     #[test]
     fn test_wallet_creation_from_known_mnemonic() {
         let mnemonic_phrase = "upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow";
-        let mnemonic = Mnemonic::from_phrase(mnemonic_phrase, Language::English).unwrap();
+        let mnemonic = Mnemonic::from_phrase(mnemonic_phrase).unwrap();
 
         let wallet = Wallet::from_mnemonic(
             mnemonic,
@@ -362,7 +359,7 @@ mod tests {
     #[test]
     fn test_wallet_recovery_from_seed() {
         let mnemonic_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let mnemonic = Mnemonic::from_phrase(mnemonic_phrase, Language::English).unwrap();
+        let mnemonic = Mnemonic::from_phrase(mnemonic_phrase).unwrap();
 
         // Create first wallet
         let wallet1 = Wallet::from_mnemonic(
@@ -589,10 +586,7 @@ mod tests {
         assert_eq!(wallet.wallet_id, computed_id);
 
         // Test that wallets from the same mnemonic have the same ID
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            Language::English,
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let wallet1 = Wallet::from_mnemonic(
             mnemonic.clone(),
@@ -615,7 +609,7 @@ mod tests {
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     fn fixture_root_pub_key(network: Network) -> RootExtendedPubKey {
-        let mnemonic = Mnemonic::from_phrase(FIXTURE_MNEMONIC, Language::English).unwrap();
+        let mnemonic = Mnemonic::from_phrase(FIXTURE_MNEMONIC).unwrap();
         let wallet = Wallet::from_mnemonic(
             mnemonic,
             network,
@@ -661,7 +655,7 @@ mod tests {
     #[test]
     fn test_wallet_id_is_network_scoped_by_default() {
         let make = |network| {
-            let mnemonic = Mnemonic::from_phrase(FIXTURE_MNEMONIC, Language::English).unwrap();
+            let mnemonic = Mnemonic::from_phrase(FIXTURE_MNEMONIC).unwrap();
             Wallet::from_mnemonic(
                 mnemonic,
                 network,
@@ -694,7 +688,7 @@ mod tests {
     // (c) Same seed + same network => stable id across calls and across wallets.
     #[test]
     fn test_wallet_id_is_stable() {
-        let mnemonic = Mnemonic::from_phrase(FIXTURE_MNEMONIC, Language::English).unwrap();
+        let mnemonic = Mnemonic::from_phrase(FIXTURE_MNEMONIC).unwrap();
         let wallet = Wallet::from_mnemonic(
             mnemonic,
             Network::Testnet,
@@ -705,7 +699,7 @@ mod tests {
         let first = wallet.compute_wallet_id();
         assert_eq!(first, wallet.compute_wallet_id(), "id must be stable across calls");
 
-        let mnemonic2 = Mnemonic::from_phrase(FIXTURE_MNEMONIC, Language::English).unwrap();
+        let mnemonic2 = Mnemonic::from_phrase(FIXTURE_MNEMONIC).unwrap();
         let wallet2 = Wallet::from_mnemonic(
             mnemonic2,
             Network::Testnet,

@@ -50,3 +50,4 @@ __pycache__/
 
 # Build scripts artifacts
 *.log
+target-linux/

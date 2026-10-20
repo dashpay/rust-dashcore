@@ -52,7 +52,8 @@ fn test_try_from_standard_bip32_account() {
 fn test_try_from_coinjoin_account() {
     let managed_account = ManagedAccountType::CoinJoin {
         index: 0,
-        addresses: test_single_pool(),
+        external_addresses: test_single_pool(),
+        internal_addresses: test_single_pool(),
     };
 
     let check_type: AccountTypeToCheck = managed_account.try_into().unwrap();
@@ -181,7 +182,8 @@ fn test_try_from_ref_all_account_types() {
         (
             ManagedAccountType::CoinJoin {
                 index: 0,
-                addresses: test_single_pool(),
+                external_addresses: test_single_pool(),
+                internal_addresses: test_single_pool(),
             },
             AccountTypeToCheck::CoinJoin,
         ),

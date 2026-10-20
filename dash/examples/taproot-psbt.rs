@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tx_hex_string = encode::serialize_hex(&generate_bip86_key_spend_tx(
         &secp,
         // The master extended private key from the descriptor in step 4
-        ExtendedPrivKey::from_str(BENEFACTOR_XPRIV_STR)?,
+        &ExtendedPrivKey::from_str(BENEFACTOR_XPRIV_STR)?,
         // Set these fields with valid data for the UTXO from step 5 above
         UTXO_1,
         vec![
@@ -231,7 +231,7 @@ struct P2trUtxo<'a> {
 
 fn generate_bip86_key_spend_tx(
     secp: &secp256k1::Secp256k1<secp256k1::All>,
-    master_xpriv: ExtendedPrivKey,
+    master_xpriv: &ExtendedPrivKey,
     input_utxo: P2trUtxo,
     outputs: Vec<TxOut>,
 ) -> Result<Transaction, Box<dyn std::error::Error>> {
@@ -430,7 +430,7 @@ impl BenefactorWallet {
         // Spend a normal BIP86-like output as an input in our inheritance funding transaction
         let tx = generate_bip86_key_spend_tx(
             &self.secp,
-            self.master_xpriv,
+            &self.master_xpriv,
             input_utxo,
             vec![TxOut {
                 script_pubkey: script_pubkey.clone(),

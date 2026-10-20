@@ -50,7 +50,9 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
     ) -> SyncResult<Vec<SyncEvent>> {
         match msg.inner() {
             NetworkMessage::Inv(inv) => self.handle_inv(inv, msg.peer_address(), requests).await,
-            NetworkMessage::Tx(tx) => self.handle_tx(tx.clone(), msg.peer_address()).await,
+            NetworkMessage::Tx(tx) => {
+                self.handle_tx(tx.clone(), msg.peer_address(), requests).await
+            }
             _ => Ok(vec![]),
         }
     }
@@ -88,24 +90,26 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 // Remove confirmed transactions from mempool.
                 // Bloom filter rebuild is handled by the tick's revision check.
                 if !confirmed_txids.is_empty() {
-                    self.remove_confirmed(confirmed_txids);
+                    return Ok(self.remove_confirmed(confirmed_txids));
                 }
                 Ok(vec![])
             }
             SyncEvent::InstantLockReceived {
                 instant_lock,
                 ..
-            } => {
-                self.process_instant_send(instant_lock.clone()).await;
-                Ok(vec![])
-            }
+            } => Ok(self.process_instant_send(instant_lock.clone()).await),
             _ => Ok(vec![]),
         }
     }
 
     async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+        // Broadcast bookkeeping runs regardless of sync state: broadcasts can
+        // be initiated (and time out) before the mempool phase is synced.
+        let events = self.expire_broadcasts();
+        self.rebroadcast_if_due(requests).await;
+
         if self.state() != SyncState::Synced {
-            return Ok(vec![]);
+            return Ok(events);
         }
 
         // Prune expired transactions periodically
@@ -116,9 +120,6 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
 
         // Send queued getdata requests now that slots may have freed up
         self.send_queued(requests).await?;
-
-        // Rebroadcast unconfirmed self-sent transactions on a randomized interval
-        self.rebroadcast_if_due(requests).await;
 
         // Rebuild bloom filter if the wallet's monitored set has changed.
         //
@@ -137,7 +138,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
             self.last_monitor_revision = current_revision;
         }
 
-        Ok(vec![])
+        Ok(events)
     }
 
     async fn handle_network_event(
@@ -191,6 +192,7 @@ mod tests {
     use super::*;
     use crate::client::config::MempoolStrategy;
     use crate::network::NetworkRequest;
+    use crate::sync::BroadcastConfig;
     use crate::test_utils::test_socket_address;
     use dashcore::hashes::Hash;
     use key_wallet_manager::test_utils::MockWallet;
@@ -204,7 +206,13 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let manager = MempoolManager::new(wallet, MempoolStrategy::FetchAll, 1000, 0);
+        let manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::FetchAll,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
 
         (manager, requests, rx)
     }
@@ -556,7 +564,13 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager = MempoolManager::new(wallet, MempoolStrategy::BloomFilter, 1000, 0);
+        let mut manager = MempoolManager::new(
+            wallet,
+            MempoolStrategy::BloomFilter,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
 
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
@@ -631,6 +645,7 @@ mod tests {
             MempoolStrategy::BloomFilter,
             1000,
             initial_revision,
+            BroadcastConfig::default(),
         );
 
         let peer = test_socket_address(1);
@@ -686,7 +701,13 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel::<NetworkRequest>();
         let requests = RequestSender::new(tx);
 
-        let mut manager = MempoolManager::new(wallet.clone(), MempoolStrategy::FetchAll, 1000, 0);
+        let mut manager = MempoolManager::new(
+            wallet.clone(),
+            MempoolStrategy::FetchAll,
+            1000,
+            0,
+            BroadcastConfig::default(),
+        );
 
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
@@ -740,6 +761,7 @@ mod tests {
             MempoolStrategy::BloomFilter,
             1000,
             initial_revision,
+            BroadcastConfig::default(),
         );
 
         let peer = test_socket_address(1);
@@ -789,6 +811,7 @@ mod tests {
             MempoolStrategy::BloomFilter,
             1000,
             initial_revision,
+            BroadcastConfig::default(),
         );
 
         let peer = test_socket_address(1);
@@ -808,7 +831,7 @@ mod tests {
             output: vec![],
             special_transaction_payload: None,
         };
-        manager.handle_tx(tx, test_socket_address(1)).await.unwrap();
+        manager.handle_tx(tx, test_socket_address(1), &requests).await.unwrap();
 
         let has_filter_load = std::iter::from_fn(|| rx.try_recv().ok()).any(|msg| {
             matches!(msg, NetworkRequest::SendMessageToPeer(NetworkMessage::FilterLoad(_), _))

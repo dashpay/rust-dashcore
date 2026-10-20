@@ -227,7 +227,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     async fn verify_block_hash(&self, chainlock: &ChainLock) -> bool {
         let storage = self.header_storage.read().await;
         match storage.get_header(chainlock.block_height).await {
-            Ok(Some(header)) => header.block_hash() == chainlock.block_hash,
+            Ok(Some(header)) => *header.hash() == chainlock.block_hash,
             Ok(None) => {
                 // Don't reject if we don't have the header yet
                 true
@@ -412,7 +412,7 @@ mod tests {
             .block_headers()
             .write()
             .await
-            .store_headers_at_height(&[header], 100)
+            .store_headers_at_height(&[crate::types::HashedBlockHeader::from(header)], 100)
             .await
             .expect("store header at 100");
 

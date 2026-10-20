@@ -78,6 +78,7 @@ mod tests {
                 on_instantlock_received: None,
                 on_manager_error: None,
                 on_sync_complete: Some(on_sync_complete),
+                on_transaction_broadcast_result: None,
                 user_data: &event_data as *const _ as *mut c_void,
             };
 

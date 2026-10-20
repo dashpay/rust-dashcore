@@ -1,23 +1,36 @@
 use dash_spv::sync::ProgressPercentage;
 use dashcore::{Address, Amount, Network};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
 use super::helpers::{
-    wait_for_mempool_tx, wait_for_sync, wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
+    count_wallet_transactions, get_spendable_balance, wait_for_mempool_tx, wait_for_sync,
+    wait_for_wallet_synced, EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
-use super::setup::{create_and_start_client, TestContext};
+use super::setup::{create_and_start_client, ClientHandle, TestContext};
 use dash_spv::test_utils::{create_test_wallet, TestChain};
 use dashcore::address::NetworkUnchecked;
+use dashcore::secp256k1::Secp256k1;
+use dashcore::PublicKey;
 use key_wallet::account::ManagedAccountTrait;
+use key_wallet::bip32::{ChildNumber, ExtendedPrivKey};
+use key_wallet::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
+use key_wallet::mnemonic::Mnemonic;
+use key_wallet::wallet::balance::WalletCoreBalance;
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
+use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
 use key_wallet::wallet::managed_wallet_info::transaction_builder::{
     BuilderError, TransactionBuilder,
 };
+use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::ManagedWalletInfo;
 use key_wallet::ManagedAccountType;
 use key_wallet_manager::{WalletId, WalletManager};
+use std::collections::BTreeSet;
 
 /// Verify incremental sync works by generating blocks after initial sync.
 ///
@@ -247,6 +260,79 @@ async fn test_multiple_transactions_across_blocks() {
 
 const MEMPOOL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Derive the first `count` BIP44 external addresses of `mnemonic` directly,
+/// independently of any wallet state, so a test can pay addresses far beyond
+/// the pre-generated pool window.
+fn derive_external_addresses(mnemonic: &str, count: u32) -> Vec<Address> {
+    let mnemonic = Mnemonic::from_phrase(mnemonic).expect("mnemonic");
+    let seed = mnemonic.to_seed("");
+    let secp = Secp256k1::new();
+    let master = ExtendedPrivKey::new_master(Network::Regtest, &seed).expect("master key");
+    let chain = [
+        ChildNumber::from_hardened_idx(44).expect("purpose"),
+        ChildNumber::from_hardened_idx(1).expect("coin type"),
+        ChildNumber::from_hardened_idx(0).expect("account"),
+        ChildNumber::from_normal_idx(0).expect("external branch"),
+    ];
+    (0..count)
+        .map(|index| {
+            let mut path = chain.to_vec();
+            path.push(ChildNumber::from_normal_idx(index).expect("index"));
+            let xprv = master.derive_priv(&secp, &path).expect("derive");
+            let pk = PublicKey::new(xprv.private_key.public_key(&secp));
+            Address::p2pkh(&pk, Network::Regtest)
+        })
+        .collect()
+}
+
+/// A single transaction paying a run of consecutive fresh addresses reaching
+/// far beyond the gap window (the shape of a CreateDenominations burst),
+/// mined before the client ever starts. A sync from scratch must recognize
+/// every output: the block is scanned to fixpoint against the extending
+/// pool, so outputs past the initial look-ahead are still credited.
+#[tokio::test]
+async fn test_burst_payment_beyond_gap_window_synced_from_scratch() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let burst = DEFAULT_EXTERNAL_GAP_LIMIT + 21;
+    let addresses = derive_external_addresses(EMPTY_MNEMONIC, burst);
+    let per_output = Amount::from_sat(100_000);
+    let payments: Vec<(Address, Amount)> =
+        addresses.into_iter().map(|address| (address, per_output)).collect();
+    let burst_txid = ctx.dashd.node.send_many(&payments);
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let funded_height = ctx.dashd.initial_height + 1;
+
+    // Only now create the wallet and start the client, so discovery has to
+    // climb the whole burst during the historical scan.
+    let (wallet, wallet_id) = create_test_wallet(EMPTY_MNEMONIC, Network::Regtest);
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+
+    assert_eq!(
+        count_wallet_transactions(&wallet, &wallet_id).await,
+        1,
+        "burst tx {} must be discovered",
+        burst_txid
+    );
+    assert_eq!(
+        get_spendable_balance(&wallet, &wallet_id).await,
+        burst as u64 * per_output.to_sat(),
+        "every burst output must be credited, not only those inside the initial gap window"
+    );
+
+    client_handle.stop().await;
+}
+
 async fn reserve_first_address(mnemonic: &str) -> Address {
     let (temp_mgr, temp_id) = create_test_wallet(mnemonic, Network::Regtest);
 
@@ -285,7 +371,7 @@ async fn build_and_sign(
 
     TransactionBuilder::new()
         .set_current_height(height)
-        .set_funding(funds_account, &account)
+        .add_funding(funds_account, &account)
         .add_output(&dest, amount)
         .build_signed(w, |a| funds_account.address_derivation_path(&a))
         .await
@@ -345,6 +431,72 @@ async fn test_spend_change_balance() {
     client_handle.stop().await;
 }
 
+/// Two transactions built from the same wallet before either is broadcast must
+/// not select the same UTXO. The first build reserves its inputs so the second
+/// build's coin selection skips them, preventing a double-spend the network
+/// would reject. Without the reservation both builds pick the same UTXO and the
+/// `tx_a`/`tx_b` inputs overlap, so the disjoint-input assertion below fails.
+///
+/// The two builds run sequentially: this guards that the first build's
+/// reservation outlives its wallet lock and is observed by the second build,
+/// not that the two builds are scheduled concurrently.
+#[tokio::test]
+async fn test_concurrent_builds_do_not_double_spend() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    let (wallet, wallet_id) = create_test_wallet(EMPTY_MNEMONIC, Network::Regtest);
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    // Fund the wallet with two separate, equal UTXOs at the same receive
+    // address. Either one alone covers a single send, so naive coin selection
+    // would pick the same UTXO for both builds.
+    let receive_address = reserve_first_address(EMPTY_MNEMONIC).await;
+    let utxo_amount = Amount::from_sat(200_000_000);
+    ctx.dashd.node.send_to_address(&receive_address, utxo_amount);
+    ctx.dashd.node.send_to_address(&receive_address, utxo_amount);
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let funded_height = ctx.dashd.initial_height + 1;
+    wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+
+    // Build both transactions before broadcasting either, so neither spend has
+    // been processed back into the wallet when the second build selects inputs.
+    let dest_a = Address::dummy(Network::Regtest, 1);
+    let dest_b = Address::dummy(Network::Regtest, 2);
+    let (tx_a, _) =
+        build_and_sign(&wallet, &wallet_id, &dest_a, 50_000_000).await.expect("build tx_a");
+    let (tx_b, _) =
+        build_and_sign(&wallet, &wallet_id, &dest_b, 50_000_000).await.expect("build tx_b");
+
+    let inputs_a: HashSet<_> = tx_a.input.iter().map(|i| i.previous_output).collect();
+    let overlap = tx_b.input.iter().any(|i| inputs_a.contains(&i.previous_output));
+    assert!(!overlap, "tx_a and tx_b must not share an input (double-spend)");
+
+    // Both broadcasts succeed and both transactions reach the mempool: a
+    // double-spend would have the second rejected by the network.
+    client_handle.client.broadcast_transaction(&tx_a).await.expect("broadcast tx_a");
+    let detected_a = wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("detect tx_a");
+    assert_eq!(detected_a, tx_a.txid());
+    client_handle.client.broadcast_transaction(&tx_b).await.expect("broadcast tx_b");
+    let detected_b = wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("detect tx_b");
+    assert_eq!(detected_b, tx_b.txid());
+
+    client_handle.stop().await;
+}
+
 /// Spend an incoming mempool UTXO (we own the output, none of the inputs)
 /// before it confirms.
 #[tokio::test]
@@ -384,4 +536,199 @@ async fn test_spend_incoming_balance() {
         .expect("detect spend");
 
     client_handle.stop().await;
+}
+
+/// Drain every UTXO of one account into another account of the same wallet.
+///
+/// Funds a BIP32 account with 3 UTXOs, then drains it into a BIP44 receive address with
+/// `SelectionStrategy::All` (spend every UTXO; single output = total - fee, no change)
+#[tokio::test]
+async fn test_drain_account_into_another() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    const FUNDING: u64 = 50_000_000;
+    const FEE: u64 = 488;
+
+    // Fresh wallet with a BIP32 account 0 (drain source) and a BIP44 account 0 (destination).
+    // The default test options only create the BIP44 account.
+    let (wallet, wallet_id) = {
+        let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Regtest);
+        let id = manager
+            .create_wallet_from_mnemonic(
+                EMPTY_MNEMONIC,
+                0,
+                WalletAccountCreationOptions::SpecificAccounts(
+                    BTreeSet::from([0]), // BIP44 account 0
+                    BTreeSet::from([0]), // BIP32 account 0
+                    BTreeSet::new(),
+                    BTreeSet::new(),
+                    BTreeSet::new(),
+                    None,
+                ),
+            )
+            .expect("create wallet with bip32 + bip44 accounts");
+        (Arc::new(RwLock::new(manager)), id)
+    };
+
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let (fund_addresses, dest) = {
+        let mut lock = wallet.write().await;
+        let (w, info) = lock.get_wallet_and_info_mut(&wallet_id).expect("wallet");
+        let fund: Vec<Address> = (0..3)
+            .map(|_| info.next_receive_address(w, 0, AccountTypePreference::BIP32, true).unwrap())
+            .collect();
+        let dest = info.next_receive_address(w, 0, AccountTypePreference::BIP44, true).unwrap();
+        (fund, dest)
+    };
+
+    let miner = ctx.dashd.node.get_new_address_from_wallet("default");
+    for address in &fund_addresses {
+        ctx.dashd.node.send_to_address(address, Amount::from_sat(FUNDING));
+    }
+    ctx.dashd.node.generate_blocks(1, &miner);
+
+    let funded_height = ctx.dashd.initial_height + 1;
+    wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+
+    // Drain the BIP32 account into the BIP44 destination (amount ignored under `All`).
+    let (tx, _) = {
+        let mut lock = wallet.write().await;
+
+        let (w, info) = lock.get_wallet_and_info_mut(&wallet_id).expect("wallet");
+        info.build_and_sign_transaction(
+            w,
+            &[AccountTypePreference::BIP32],
+            0,
+            vec![(dest.as_unchecked().clone(), 0)],
+            FeeRate::normal(),
+            SelectionStrategy::All,
+        )
+        .await
+        .expect("drain")
+    };
+
+    client_handle.client.broadcast_transaction(&tx).await.expect("broadcast");
+    wait_for_mempool_tx(&mut client_handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("mempool");
+    ctx.dashd.node.generate_blocks(1, &miner);
+
+    let drained_height = funded_height + 1;
+    wait_for_sync(&mut client_handle.progress_receiver, drained_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, drained_height).await;
+
+    // Final state: BIP32 emptied, BIP44 holds the single drained UTXO.
+    let reader = wallet.read().await;
+    let info = reader.get_wallet_info(&wallet_id).expect("wallet");
+    let balance = |pref| info.account_balance(pref, 0).unwrap().total();
+    let utxos = |pref| info.funds_account(pref, 0).unwrap().utxos.len();
+
+    assert_eq!(balance(AccountTypePreference::BIP32), 0);
+    assert_eq!(utxos(AccountTypePreference::BIP32), 0);
+    assert_eq!(balance(AccountTypePreference::BIP44), FUNDING * 3 - FEE);
+    assert_eq!(utxos(AccountTypePreference::BIP44), 1);
+
+    client_handle.stop().await;
+}
+
+const COINBASE_MATURITY: u64 = 100;
+
+async fn mining_context() -> Option<TestContext> {
+    let ctx = TestContext::new(TestChain::Minimal).await?;
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return None;
+    }
+    Some(ctx)
+}
+
+async fn wallet_balance(ctx: &TestContext) -> WalletCoreBalance {
+    ctx.wallet.read().await.get_wallet_balance(&ctx.wallet_id).expect("wallet balance")
+}
+
+/// Mine a coinbase to the wallet and bury it under `COINBASE_MATURITY` blocks
+/// paid to the separate mining wallet. Returns the balance before the coinbase
+/// and the immature balance carrying it.
+async fn bury_wallet_coinbase(ctx: &TestContext, handle: &mut ClientHandle) -> (u64, u64) {
+    let baseline = wallet_balance(ctx).await;
+
+    let reward_address = ctx.receive_address().await;
+    ctx.dashd.node.generate_blocks(1, &reward_address);
+    let reward_height = ctx.dashd.initial_height + 1;
+    wait_for_sync(&mut handle.progress_receiver, reward_height).await;
+
+    let immature = wallet_balance(ctx).await.immature();
+    assert!(
+        immature > baseline.immature(),
+        "coinbase should be immature at its own height: {} -> {}",
+        baseline.immature(),
+        immature
+    );
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(COINBASE_MATURITY, &miner_address);
+    let mature_height = reward_height + COINBASE_MATURITY as u32;
+    wait_for_sync(&mut handle.progress_receiver, mature_height).await;
+    wait_for_wallet_synced(&ctx.wallet, &ctx.wallet_id, mature_height).await;
+
+    (baseline.spendable(), immature)
+}
+
+/// A coinbase must mature once it is `COINBASE_MATURITY` blocks deep, even when
+/// none of those blocks touches the wallet (dashpay/rust-dashcore#995).
+#[tokio::test]
+async fn test_coinbase_matures_without_later_wallet_activity() {
+    let Some(ctx) = mining_context().await else {
+        return;
+    };
+    let mut handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let (spendable_before, immature) = bury_wallet_coinbase(&ctx, &mut handle).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while wallet_balance(&ctx).await.immature() != 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let balance = wallet_balance(&ctx).await;
+    handle.stop().await;
+
+    assert_eq!(balance.immature(), 0, "buried coinbase is still immature");
+    assert_eq!(balance.spendable(), spendable_before + immature, "matured coinbase is unspendable");
+}
+
+/// The control: the same chain, plus a later block paying the wallet. It is the
+/// workaround reported in dashpay/rust-dashcore#995, and the only difference
+/// from the test above.
+#[tokio::test]
+async fn test_coinbase_matures_when_a_later_block_touches_the_wallet() {
+    let Some(ctx) = mining_context().await else {
+        return;
+    };
+    let mut handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    let (spendable_before, immature) = bury_wallet_coinbase(&ctx, &mut handle).await;
+
+    let address = ctx.receive_address().await;
+    ctx.dashd.node.generate_blocks(1, &address);
+    let height = ctx.dashd.initial_height + COINBASE_MATURITY as u32 + 2;
+    wait_for_sync(&mut handle.progress_receiver, height).await;
+    wait_for_wallet_synced(&ctx.wallet, &ctx.wallet_id, height).await;
+
+    let balance = wallet_balance(&ctx).await;
+    handle.stop().await;
+
+    assert!(balance.immature() > 0, "the newest coinbase is immature");
+    assert_eq!(balance.spendable(), spendable_before + immature, "matured coinbase is unspendable");
 }

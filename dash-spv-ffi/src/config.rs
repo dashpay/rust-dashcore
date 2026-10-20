@@ -325,6 +325,86 @@ pub unsafe extern "C" fn dash_spv_ffi_config_set_fetch_mempool_transactions(
     FFIErrorCode::Success as i32
 }
 
+/// Withholds broadcast transactions from half of the connected peers
+/// (the default policy). The withheld peers are the source of the `inv`
+/// echo that proves a broadcast propagated through the network.
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_broadcast_holdout_half(
+    config: *mut FFIClientConfig,
+) -> i32 {
+    null_check!(config);
+
+    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    config.broadcast_holdout = dash_spv::BroadcastHoldout::Half;
+    FFIErrorCode::Success as i32
+}
+
+/// Withholds broadcast transactions from a fixed number of peers (clamped so
+/// that at least one peer always receives the transaction).
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_broadcast_holdout_count(
+    config: *mut FFIClientConfig,
+    count: u32,
+) -> i32 {
+    null_check!(config);
+
+    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    config.broadcast_holdout = dash_spv::BroadcastHoldout::Count(count as usize);
+    FFIErrorCode::Success as i32
+}
+
+/// Sets how many distinct non-recipient peers must announce a broadcast txid
+/// back before it is reported as accepted. Must be > 0.
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_broadcast_acceptance_threshold(
+    config: *mut FFIClientConfig,
+    threshold: u32,
+) -> i32 {
+    null_check!(config);
+    if threshold == 0 {
+        set_last_error("broadcast acceptance threshold must be > 0");
+        return FFIErrorCode::InvalidArgument as i32;
+    }
+
+    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    config.broadcast_acceptance_threshold = threshold as usize;
+    FFIErrorCode::Success as i32
+}
+
+/// Sets the timeout (in seconds) after which a pending broadcast with no
+/// acceptance signal is reported as uncertain. Must be > 0.
+///
+/// # Safety
+/// - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet
+/// - The caller must ensure the config pointer remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn dash_spv_ffi_config_set_broadcast_acceptance_timeout_secs(
+    config: *mut FFIClientConfig,
+    seconds: u32,
+) -> i32 {
+    null_check!(config);
+    if seconds == 0 {
+        set_last_error("broadcast acceptance timeout must be > 0");
+        return FFIErrorCode::InvalidArgument as i32;
+    }
+
+    let config = unsafe { &mut *((*config).inner as *mut ClientConfig) };
+    config.broadcast_acceptance_timeout = std::time::Duration::from_secs(seconds as u64);
+    FFIErrorCode::Success as i32
+}
+
 // Checkpoint sync configuration functions
 
 /// Sets the starting block height for synchronization

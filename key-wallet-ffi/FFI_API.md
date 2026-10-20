@@ -4,7 +4,7 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 258
+**Total Functions**: 261
 
 ## Table of Contents
 
@@ -113,7 +113,7 @@ Functions: 63
 | `wallet_build_and_sign_transaction` | Build and sign a transaction using the wallet's managed info  This is the... | transaction |
 | `wallet_check_transaction` | Check if a transaction belongs to the wallet using ManagedWalletInfo  #... | transaction |
 | `wallet_create_from_mnemonic` | Create a new wallet from mnemonic (backward compatibility - single network) ... | wallet |
-| `wallet_create_from_mnemonic_with_options` | Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must... | wallet |
+| `wallet_create_from_mnemonic_with_options` | Create a new wallet from mnemonic with options  The mnemonic may be in any... | wallet |
 | `wallet_create_from_seed` | Create a new wallet from seed (backward compatibility)  # Safety  - `seed`... | wallet |
 | `wallet_create_from_seed_with_options` | Create a new wallet from seed with options  # Safety  - `seed` must be a... | wallet |
 | `wallet_create_random` | Create a new random wallet (backward compatibility)  # Safety  - `error`... | wallet |
@@ -140,7 +140,7 @@ Functions: 63
 
 ### Account Management
 
-Functions: 108
+Functions: 109
 
 | Function | Description | Module |
 |----------|-------------|--------|
@@ -231,7 +231,7 @@ Functions: 108
 | `managed_account_collection_summary_data` | Get structured account collection summary data for managed collection ... | managed_account_collection |
 | `managed_account_collection_summary_free` | Free a managed account collection summary and all its allocated memory  #... | managed_account_collection |
 | `managed_core_account_free` | Free a managed account handle  # Safety  - `account` must be a valid pointer... | managed_account |
-| `managed_core_account_free_transactions` | Free transactions array returned by managed_core_account_get_transactions ... | managed_account |
+| `managed_core_account_free_transactions` | Free a transactions array returned by `managed_core_account_get_transactions`... | managed_account |
 | `managed_core_account_get_account_type` | Get the account type of a managed account  # Safety  - `account` must be a... | managed_account |
 | `managed_core_account_get_address_pool` | Get an address pool from a managed account by type  This function returns... | managed_account |
 | `managed_core_account_get_balance` | Get the balance of a managed account | managed_account |
@@ -239,6 +239,7 @@ Functions: 108
 | `managed_core_account_get_index` | Get the account index from a managed account  Returns the primary account... | managed_account |
 | `managed_core_account_get_internal_address_pool` | Get the internal address pool from a managed account  This function returns... | managed_account |
 | `managed_core_account_get_network` | Get the network of a managed account  # Safety  - `account` must be a valid... | managed_account |
+| `managed_core_account_get_special_transactions` | Get the transactions of a managed account that carry a DIP-2 special payload... | managed_account |
 | `managed_core_account_get_transaction_count` | Get the number of transactions in a managed account  Only available with the... | managed_account |
 | `managed_core_account_get_transactions` | Get all transactions from a managed account  Returns an array of... | managed_account |
 | `managed_core_account_get_utxo_count` | Get the number of UTXOs in a managed account | managed_account |
@@ -272,16 +273,18 @@ Functions: 10
 
 ### Transaction Management
 
-Functions: 14
+Functions: 16
 
 | Function | Description | Module |
 |----------|-------------|--------|
+| `decoded_transaction_free` | Release a `DecodedTransactionFFI` returned by `transaction_decode` | tx_decode |
 | `transaction_add_input` | Add an input to a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_add_output` | Add an output to a transaction  # Safety - `tx` must be a valid pointer to... | transaction |
 | `transaction_bytes_free` | Free transaction bytes  # Safety  - `tx_bytes` must be a valid pointer... | transaction |
 | `transaction_check_result_free` | Free a transaction check result  # Safety  - `result` must be a valid... | transaction_checking |
 | `transaction_classify` | Get the transaction classification for routing  Returns a string describing... | transaction_checking |
 | `transaction_create` | Create a new empty transaction  # Returns - Pointer to FFITransaction on... | transaction |
+| `transaction_decode` | Consensus-decode `tx_bytes` into a `DecodedTransactionFFI` | tx_decode |
 | `transaction_deserialize` | Deserialize a transaction  # Safety - `data` must be a valid pointer to... | transaction |
 | `transaction_destroy` | Destroy a transaction  # Safety - `tx` must be a valid pointer to an... | transaction |
 | `transaction_get_txid` | Get the transaction ID  # Safety - `tx` must be a valid pointer to an... | transaction |
@@ -321,8 +324,8 @@ Functions: 6
 | `mnemonic_free` | Free a mnemonic string  # Safety  - `mnemonic` must be a valid pointer... | mnemonic |
 | `mnemonic_generate` | Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)  #... | mnemonic |
 | `mnemonic_generate_with_language` | Generate a new mnemonic with specified language and word count  # Safety ... | mnemonic |
-| `mnemonic_to_seed` | Convert mnemonic to seed with optional passphrase  # Safety  - `mnemonic`... | mnemonic |
-| `mnemonic_validate` | Validate a mnemonic phrase  # Safety  - `mnemonic` must be a valid... | mnemonic |
+| `mnemonic_to_seed` | Convert mnemonic to seed with optional passphrase  The mnemonic may be in... | mnemonic |
+| `mnemonic_validate` | Validate a mnemonic phrase in any supported BIP-39 language | mnemonic |
 | `mnemonic_word_count` | Get word count from mnemonic  # Safety  - `mnemonic` must be a valid... | mnemonic |
 
 ### Utility Functions
@@ -678,7 +681,7 @@ Get wallet IDs  # Safety  - `manager` must be a valid pointer to an FFIWalletMan
 #### `wallet_manager_import_wallet_from_bytes`
 
 ```c
-wallet_manager_import_wallet_from_bytes(manager: *mut FFIWalletManager, wallet_bytes: *const u8, wallet_bytes_len: usize, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
+wallet_manager_import_wallet_from_bytes(manager: *mut FFIWalletManager, wallet_bytes: *const u8, wallet_bytes_len: usize, birth_height: u32, wallet_id_out: *mut u8, error: *mut FFIError,) -> bool
 ```
 
 **Module:** `wallet_manager`
@@ -1302,14 +1305,14 @@ This function dereferences a raw pointer to FFIWallet. The caller must ensure th
 #### `wallet_build_and_sign_asset_lock_transaction`
 
 ```c
-wallet_build_and_sign_asset_lock_transaction(manager: *const FFIWalletManager, wallet: *const FFIWallet, account_index: u32, funding_types: *const FFIAssetLockFundingType, identity_indices: *const u32, credit_output_scripts: *const *const u8, credit_output_script_lens: *const usize, credit_output_amounts: *const u64, credit_outputs_count: usize, fee_per_kb: u64, fee_out: *mut u64, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, private_keys_out: *mut [u8; 32], error: *mut FFIError,) -> bool
+wallet_build_and_sign_asset_lock_transaction(manager: *const FFIWalletManager, wallet: *const FFIWallet, funding_sources: *const FFIAccountTypePreference, funding_sources_count: usize, account_index: u32, funding_types: *const FFIAssetLockFundingType, identity_indices: *const u32, credit_output_scripts: *const *const u8, credit_output_script_lens: *const usize, credit_output_amounts: *const u64, credit_outputs_count: usize, fee_per_kb: u64, fee_out: *mut u64, tx_bytes_out: *mut *mut u8, tx_len_out: *mut usize, private_keys_out: *mut [u8; 32], error: *mut FFIError,) -> bool
 ```
 
 **Description:**
-Build and sign an asset lock transaction for Core to Platform transfers.  Creates a special transaction (type 8) with `AssetLockPayload` that locks Dash for Platform credits. Derives one unique private key per credit output from the specified funding account types.  # Parameters  - `funding_types`: Array of `credit_outputs_count` funding account types, one per credit output (registration, top-up, invitation, etc.) - `identity_indices`: Array of `credit_outputs_count` identity indices. Only used for `IdentityTopUp` entries; ignored for other funding types. - `private_keys_out`: Caller-allocated array of `credit_outputs_count` × 32-byte buffers. On success, each `private_keys_out[i]` receives the one-time private key corresponding to `credit_output_scripts[i]`.  # Safety  - All pointer parameters must be valid and non-null - All parallel arrays must have at least `credit_outputs_count` elements - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+Build and sign an asset lock transaction for Core to Platform transfers.  Creates a special transaction (type 8) with `AssetLockPayload` that locks Dash for Platform credits. Derives one unique private key per credit output from the specified funding account types.  Funding is POOLED across the caller's `funding_sources`: coin selection draws from the union of those accounts' UTXOs, so a lock no longer needs the whole amount sitting in one account. Which accounts to pool is the caller's policy — this layer applies no default and never widens the list — so a client that wants only the primary transparent balance passes a single `BIP44` source and gets exactly the pre-pooling behavior.  # Parameters  - `funding_sources`: Array of `funding_sources_count` accounts to fund from, in priority order. The FIRST source supplies the change address, so pass the account that should receive change first. At least one is required. A single source is strict — it fails if the wallet has no such account — while a list of two or more skips the sources this wallet has nothing for and fails only if none of them funds anything. This entry point builds a non-drain lock, so `CoinJoin` is rejected here even as the sole source: mixed funds can only back a drain. - `funding_sources_count`: Number of entries in `funding_sources`. - `account_index`: Index addressing the standard families (BIP44, BIP32, CoinJoin). DashPay sources span their own indices and ignore it. - `funding_types`: Array of `credit_outputs_count` funding account types, one per credit output (registration, top-up, invitation, etc.) - `identity_indices`: Array of `credit_outputs_count` identity indices. Only used for `IdentityTopUp` entries; ignored for other funding types. - `private_keys_out`: Caller-allocated array of `credit_outputs_count` × 32-byte buffers. On success, each `private_keys_out[i]` receives the one-time private key corresponding to `credit_output_scripts[i]`.  # Safety  - All pointer parameters must be valid and non-null - `funding_sources` must have at least `funding_sources_count` elements - Every `funding_sources[i].kind` must be a declared [`FFIAccountTypePreferenceKind`] discriminant (`0..=5`). Reading any other value as that enum is undefined behavior, so it cannot be rejected here — pass the generated C enum rather than a cast integer. - All other parallel arrays must have at least `credit_outputs_count` elements - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers - Caller must free `tx_bytes_out` with `transaction_bytes_free`
 
 **Safety:**
-- All pointer parameters must be valid and non-null - All parallel arrays must have at least `credit_outputs_count` elements - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers - Caller must free `tx_bytes_out` with `transaction_bytes_free`
+- All pointer parameters must be valid and non-null - `funding_sources` must have at least `funding_sources_count` elements - Every `funding_sources[i].kind` must be a declared [`FFIAccountTypePreferenceKind`] discriminant (`0..=5`). Reading any other value as that enum is undefined behavior, so it cannot be rejected here — pass the generated C enum rather than a cast integer. - All other parallel arrays must have at least `credit_outputs_count` elements - `private_keys_out` must point to an array of `credit_outputs_count` × `[u8; 32]` buffers - Caller must free `tx_bytes_out` with `transaction_bytes_free`
 
 **Module:** `transaction`
 
@@ -1354,7 +1357,7 @@ wallet_create_from_mnemonic(mnemonic: *const c_char, network: FFINetwork, error:
 ```
 
 **Description:**
-Create a new wallet from mnemonic (backward compatibility - single network)  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+Create a new wallet from mnemonic (backward compatibility - single network)  The mnemonic may be in any supported BIP-39 language (detected automatically).  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Safety:**
 - `mnemonic` must be a valid pointer to a null-terminated C string - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
@@ -1370,7 +1373,7 @@ wallet_create_from_mnemonic_with_options(mnemonic: *const c_char, network: FFINe
 ```
 
 **Description:**
-Create a new wallet from mnemonic with options  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
+Create a new wallet from mnemonic with options  The mnemonic may be in any supported BIP-39 language (detected automatically).  # Safety  - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
 
 **Safety:**
 - `mnemonic` must be a valid pointer to a null-terminated C string - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null - `error` must be a valid pointer to an FFIError structure - The caller must ensure all pointers remain valid for the duration of this call - The returned pointer must be freed with `wallet_free` when no longer needed
@@ -2204,7 +2207,7 @@ account_derive_extended_private_key_from_mnemonic(account: *const FFIAccount, mn
 ```
 
 **Description:**
-Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
+Derive an extended private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.  Accepts a mnemonic in any supported BIP-39 language (detected automatically).  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
 - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
@@ -2268,7 +2271,7 @@ account_derive_private_key_from_mnemonic(account: *const FFIAccount, mnemonic: *
 ```
 
 **Description:**
-Derive a private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
+Derive a private key from a mnemonic + optional passphrase at the given index. Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.  Accepts a mnemonic in any supported BIP-39 language (detected automatically).  # Safety - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
 
 **Safety:**
 - `account` must be a valid pointer to an FFIAccount - `mnemonic` must be a valid, null-terminated C string - `passphrase` may be null; if not null, must be a valid C string - `error` must be a valid pointer to an FFIError
@@ -3064,10 +3067,10 @@ managed_core_account_free_transactions(transactions: *mut FFITransactionRecord, 
 ```
 
 **Description:**
-Free transactions array returned by managed_core_account_get_transactions  Only available with the `keep-finalized-transactions` Cargo feature, in which configuration `managed_core_account_get_transactions` is also available — the two functions are paired.  # Safety  - `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
+Free a transactions array returned by `managed_core_account_get_transactions` or `managed_core_account_get_special_transactions`.  # Safety  - `transactions` must be a pointer returned by one of the paired getters - `count` must be the count returned alongside it - This function must only be called once per allocation
 
 **Safety:**
-- `transactions` must be a pointer returned by `managed_core_account_get_transactions` - `count` must be the count returned by `managed_core_account_get_transactions` - This function must only be called once per allocation
+- `transactions` must be a pointer returned by one of the paired getters - `count` must be the count returned alongside it - This function must only be called once per allocation
 
 **Module:** `managed_account`
 
@@ -3180,6 +3183,22 @@ Get the network of a managed account  # Safety  - `account` must be a valid poin
 
 **Safety:**
 - `account` must be a valid pointer to an FFIManagedCoreAccount instance - Returns `FFINetwork::Mainnet` if the account is null
+
+**Module:** `managed_account`
+
+---
+
+#### `managed_core_account_get_special_transactions`
+
+```c
+managed_core_account_get_special_transactions(account: *const FFIManagedCoreAccount, transactions_out: *mut *mut FFITransactionRecord, count_out: *mut usize,) -> bool
+```
+
+**Description:**
+Get the transactions of a managed account that carry a DIP-2 special payload (provider registrations / updates, asset locks, …).  Unlike `managed_core_account_get_transactions` this is available in every feature configuration: provider-relevant records are retained in memory even after their block is chainlocked (see `ManagedCoreKeysAccount::drop_finalized_transaction` in `key-wallet`), so a provider-key account's registration history — including each masternode's service IP — remains queryable without the `keep-finalized-transactions` feature.  Returns records in txid order. Each record's `special_transaction_payload` field is non-null.  # Safety  - `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`
+
+**Safety:**
+- `account` must be a valid pointer to an FFIManagedCoreAccount instance - `transactions_out` must be a valid pointer to receive the transactions array pointer - `count_out` must be a valid pointer to receive the count - The caller must free the returned array using `managed_core_account_free_transactions`
 
 **Module:** `managed_account`
 
@@ -3557,6 +3576,22 @@ Validate an address  # Safety  - `address` must be a valid null-terminated C str
 
 ### Transaction Management - Detailed
 
+#### `decoded_transaction_free`
+
+```c
+decoded_transaction_free(decoded: *mut DecodedTransactionFFI) -> ()
+```
+
+**Description:**
+Release a `DecodedTransactionFFI` returned by `transaction_decode`. Safe to call with null.  # Safety `decoded` must be null or a pointer previously returned by `transaction_decode` that has not been freed yet.
+
+**Safety:**
+`decoded` must be null or a pointer previously returned by `transaction_decode` that has not been freed yet.
+
+**Module:** `tx_decode`
+
+---
+
 #### `transaction_add_input`
 
 ```c
@@ -3647,6 +3682,22 @@ transaction_create() -> *mut FFITransaction
 Create a new empty transaction  # Returns - Pointer to FFITransaction on success - NULL on error
 
 **Module:** `transaction`
+
+---
+
+#### `transaction_decode`
+
+```c
+transaction_decode(tx_bytes: *const u8, tx_bytes_len: usize, network: FFINetwork, out_decoded: *mut *mut DecodedTransactionFFI, error: *mut FFIError,) -> bool
+```
+
+**Description:**
+Consensus-decode `tx_bytes` into a `DecodedTransactionFFI`. Rejects trailing bytes after a valid transaction (uses [`deserialize`], not a streaming decode), so a valid prefix followed by garbage is an error rather than a silent trim.  # Safety - `tx_bytes` must point to `tx_bytes_len` readable bytes. - `out_decoded` must be a valid pointer; it is nulled on entry and, on success, receives an owned `*mut DecodedTransactionFFI` that must be released with `decoded_transaction_free`. - `error` must be a valid pointer to an FFIError.
+
+**Safety:**
+- `tx_bytes` must point to `tx_bytes_len` readable bytes. - `out_decoded` must be a valid pointer; it is nulled on entry and, on success, receives an owned `*mut DecodedTransactionFFI` that must be released with `decoded_transaction_free`. - `error` must be a valid pointer to an FFIError.
+
+**Module:** `tx_decode`
 
 ---
 
@@ -4061,7 +4112,7 @@ mnemonic_to_seed(mnemonic: *const c_char, passphrase: *const c_char, seed_out: *
 ```
 
 **Description:**
-Convert mnemonic to seed with optional passphrase  # Safety  - `mnemonic` must be a valid null-terminated C string - `passphrase` must be a valid null-terminated C string or null - `seed_out` must be a valid pointer to a buffer of at least 64 bytes - `seed_len` must be a valid pointer to store the seed length - `error` must be a valid pointer to an FFIError
+Convert mnemonic to seed with optional passphrase  The mnemonic may be in any supported BIP-39 language (detected automatically).  # Safety  - `mnemonic` must be a valid null-terminated C string - `passphrase` must be a valid null-terminated C string or null - `seed_out` must be a valid pointer to a buffer of at least 64 bytes - `seed_len` must be a valid pointer to store the seed length - `error` must be a valid pointer to an FFIError
 
 **Safety:**
 - `mnemonic` must be a valid null-terminated C string - `passphrase` must be a valid null-terminated C string or null - `seed_out` must be a valid pointer to a buffer of at least 64 bytes - `seed_len` must be a valid pointer to store the seed length - `error` must be a valid pointer to an FFIError
@@ -4077,7 +4128,7 @@ mnemonic_validate(mnemonic: *const c_char, error: *mut FFIError) -> bool
 ```
 
 **Description:**
-Validate a mnemonic phrase  # Safety  - `mnemonic` must be a valid null-terminated C string or null - `error` must be a valid pointer to an FFIError
+Validate a mnemonic phrase in any supported BIP-39 language.  Shares the parse path with `mnemonic_to_seed` and `wallet_create_from_mnemonic`, so a phrase this accepts is guaranteed to be accepted by those functions as well.  # Safety  - `mnemonic` must be a valid null-terminated C string or null - `error` must be a valid pointer to an FFIError
 
 **Safety:**
 - `mnemonic` must be a valid null-terminated C string or null - `error` must be a valid pointer to an FFIError

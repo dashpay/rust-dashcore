@@ -6,7 +6,7 @@
 mod tests;
 
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::special_transaction::TransactionType as TxType;
 use dashcore::blockdata::transaction::Transaction;
 
 /// Classification of transaction types for routing
@@ -41,41 +41,29 @@ pub struct TransactionRouter;
 impl TransactionRouter {
     /// Classify a transaction based on its type and payload
     pub fn classify_transaction(tx: &Transaction) -> TransactionType {
-        // Check if it's a special transaction
-        let special_classification = tx.special_transaction_payload.as_ref().and_then(|payload| {
-            match payload {
-                TransactionPayload::ProviderRegistrationPayloadType(_) => {
-                    Some(TransactionType::ProviderRegistration)
+        match tx.tx_type() {
+            TxType::ProviderRegistration => TransactionType::ProviderRegistration,
+            TxType::ProviderUpdateRegistrar => TransactionType::ProviderUpdateRegistrar,
+            TxType::ProviderUpdateService => TransactionType::ProviderUpdateService,
+            TxType::ProviderUpdateRevocation => TransactionType::ProviderUpdateRevocation,
+            TxType::AssetLock => TransactionType::AssetLock,
+            TxType::AssetUnlock => TransactionType::AssetUnlock,
+            TxType::Coinbase => TransactionType::Coinbase,
+            TxType::QuorumCommitment | TxType::MnhfSignal => TransactionType::Ignored,
+            // Classic and pre-DIP-0002 transactions are classified by shape. So are special
+            // types we can't parse yet: they may still spend or pay wallet coins, so they are
+            // checked across every fund-bearing account.
+            TxType::Classic
+            | TxType::ClassicalWithNonStandardVersionTypeBytes(_)
+            | TxType::Unknown(_) => {
+                if tx.is_coin_base() {
+                    TransactionType::Coinbase
+                } else if Self::is_coinjoin_transaction(tx) {
+                    TransactionType::CoinJoin
+                } else {
+                    TransactionType::Standard
                 }
-                TransactionPayload::ProviderUpdateRegistrarPayloadType(_) => {
-                    Some(TransactionType::ProviderUpdateRegistrar)
-                }
-                TransactionPayload::ProviderUpdateServicePayloadType(_) => {
-                    Some(TransactionType::ProviderUpdateService)
-                }
-                TransactionPayload::ProviderUpdateRevocationPayloadType(_) => {
-                    Some(TransactionType::ProviderUpdateRevocation)
-                }
-                TransactionPayload::AssetLockPayloadType(_) => Some(TransactionType::AssetLock),
-                TransactionPayload::AssetUnlockPayloadType(_) => Some(TransactionType::AssetUnlock),
-                TransactionPayload::CoinbasePayloadType(_) => Some(TransactionType::Coinbase),
-                TransactionPayload::QuorumCommitmentPayloadType(_) => {
-                    Some(TransactionType::Ignored)
-                }
-                TransactionPayload::MnhfSignalPayloadType(_) => Some(TransactionType::Ignored),
-                // Pre-DIP-0002 transactions are logically Classic — fall through to the
-                // standard / coinbase / coinjoin classification below.
-                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => None,
             }
-        });
-        if let Some(classification) = special_classification {
-            classification
-        } else if tx.is_coin_base() {
-            TransactionType::Coinbase
-        } else if Self::is_coinjoin_transaction(tx) {
-            TransactionType::CoinJoin
-        } else {
-            TransactionType::Standard
         }
     }
 
@@ -134,18 +122,32 @@ impl TransactionRouter {
                 AccountTypeToCheck::StandardBIP32,
                 AccountTypeToCheck::CoinJoin,
             ],
-            TransactionType::AssetLock => vec![
-                AccountTypeToCheck::StandardBIP44,
-                AccountTypeToCheck::StandardBIP32,
-                AccountTypeToCheck::IdentityRegistration,
-                AccountTypeToCheck::IdentityTopUp,
-                AccountTypeToCheck::IdentityTopUpNotBound,
-                AccountTypeToCheck::IdentityInvitation,
-                AccountTypeToCheck::AssetLockAddressTopUp,
-                AccountTypeToCheck::AssetLockShieldedAddressTopUp,
-            ],
+            TransactionType::AssetLock => {
+                // An asset lock can be funded from any fund-bearing account, and only
+                // `check_core_transaction` debits a spent UTXO — scoped to the accounts
+                // returned here. Omitting CoinJoin / DashPay meant asset locks funded from
+                // those accounts never had their inputs debited, so the spent UTXOs kept
+                // counting toward the balance indefinitely while the (BIP44) change output
+                // was still credited — the balance ended up high by exactly the
+                // CoinJoin/DashPay amount spent, both on relay and on rescan
+                // (dashpay/platform#4073, dashpay/platform#4074, dashpay/dash-wallet#1507).
+                // Discovery is membership-based like Dash Core's `IsMine`, so consulting the
+                // full fund-bearing set never yields false positives.
+                let mut accounts = Self::fund_bearing_account_types();
+                accounts.extend([
+                    AccountTypeToCheck::IdentityRegistration,
+                    AccountTypeToCheck::IdentityTopUp,
+                    AccountTypeToCheck::IdentityTopUpNotBound,
+                    AccountTypeToCheck::IdentityInvitation,
+                    AccountTypeToCheck::AssetLockAddressTopUp,
+                    AccountTypeToCheck::AssetLockShieldedAddressTopUp,
+                ]);
+                accounts
+            }
             TransactionType::AssetUnlock => {
-                vec![AccountTypeToCheck::StandardBIP44, AccountTypeToCheck::StandardBIP32]
+                // Withdrawal outputs may pay any owned script, including DIP-15 contact
+                // addresses. Restricting discovery to standard accounts loses those receipts.
+                Self::fund_bearing_account_types()
             }
             TransactionType::Coinbase => vec![
                 // Check all account types for unknown special transactions

@@ -1,7 +1,6 @@
 use crate::error::{SyncError, SyncResult};
 use crate::network::{Message, MessageType, RequestSender};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
-use crate::sync::progress::ProgressPercentage;
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
     FiltersManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -48,6 +47,10 @@ impl<
         self.filter_pipeline.requeue_in_flight();
     }
 
+    fn on_peer_disconnect(&mut self) {
+        self.filter_pipeline.requeue_in_flight();
+    }
+
     async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
 
@@ -56,7 +59,22 @@ impl<
         // any pending verified batches; calling `start_download` here would
         // insert a fresh batch at `scan_start` and clobber the existing one,
         // leaking its `pending_blocks` counter forever.
-        if !self.active_batches.is_empty() {
+        //
+        // The condition is `is_idle()` — the whole invariant `start_download`
+        // asserts — and not `active_batches` alone. They are not the same
+        // question: `on_disconnect` calls `requeue_in_flight`, which moves the
+        // pipeline's in-flight slots to *pending*, and a batch that finished
+        // downloading leaves `active_batches` while its verified output waits
+        // in `pending_batches` and its blocks wait in the tracker. Any of those
+        // three outlasting the last active batch used to fall through to
+        // `start_download` and trip its `debug_assert!(is_idle())` — an abort
+        // in any build with debug assertions on.
+        //
+        // Resuming is safe for all of them: this path sets `Syncing`, and
+        // `tick` in that state runs `send_pending`, `store_and_match_batches`
+        // and `try_process_batch` unconditionally. `send_pending` is a no-op
+        // when the pipeline has nothing queued.
+        if !self.is_idle() {
             self.filter_pipeline.send_pending(requests, &*self.header_storage.read().await).await?;
             self.set_state(SyncState::Syncing);
             return Ok(vec![]);
@@ -81,26 +99,13 @@ impl<
             return Ok(events);
         }
 
-        // Already at or beyond stored filters tip - check if fully synced
+        // Already at or beyond stored filters tip - delegate to start_download,
+        // whose early-return path anchors the store and processing cursors at
+        // the frontier and parks the idle pipeline there. Unlike the branch
+        // above this must not emit a SyncStart.
         if stored_filters_tip > 0 && stored_filters_tip == self.progress.committed_height() {
             self.progress.update_filter_header_tip_height(stored_filters_tip);
-            // Initialize the pipeline at the current tip. On full disconnect in-flight state gets
-            // reset, so we need to initialize the pipeline otherwise it would re-queue from height 1.
-            self.filter_pipeline.init(stored_filters_tip + 1, stored_filters_tip);
-            // Only emit SyncComplete if we've also reached the chain tip
-            if self.progress.committed_height() >= self.progress.target_height() {
-                self.set_state(SyncState::Synced);
-                tracing::info!(
-                    "FiltersManager: already synced at height {}",
-                    self.progress.committed_height()
-                );
-                return Ok(vec![SyncEvent::FiltersSyncComplete {
-                    tip_height: stored_filters_tip,
-                }]);
-            }
-            // Caught up to stored filters but chain tip not reached yet
-            self.set_state(SyncState::WaitForEvents);
-            return Ok(vec![]);
+            return self.start_download(requests).await;
         }
 
         // No stored filters to process - wait for FilterHeadersSyncComplete events
@@ -178,7 +183,8 @@ impl<
                 self.tracker.record_processed(*height, *block_hash, wallets);
 
                 // Check if this block is part of our tracked blocks
-                if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash) {
+                let in_flight = self.tracker.finish_in_flight(block_hash);
+                if let Some((_, batch_start)) = in_flight {
                     if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                         batch.decrement_pending_blocks();
                         tracing::debug!(
@@ -189,17 +195,13 @@ impl<
                             batch.pending_blocks()
                         );
                     }
+                }
 
-                    // Collect per-wallet new scripts for deferred rescan at commit time.
-                    for (wallet_id, scripts) in new_scripts {
-                        if scripts.is_empty() {
-                            continue;
-                        }
-                        if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                            batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned());
-                        }
-                    }
+                // Outside the in-flight arm on purpose: that record is consumed
+                // by the first delivery, and a block is delivered more than once.
+                let derived = self.collect_new_scripts(*height, new_scripts);
 
+                if in_flight.is_some() || derived > 0 {
                     return self.try_process_batch().await;
                 }
             }
@@ -222,16 +224,29 @@ impl<
             let behind = wallet_read.wallets_behind(committed);
             let stale_min_synced =
                 behind.iter().map(|id| wallet_read.wallet_synced_height(id)).min();
+            let birth_height = wallet_read.earliest_required_height().await;
             drop(wallet_read);
             if let Some(stale_min_synced) = stale_min_synced {
-                tracing::info!(
-                    "Wallet synced_height {} fell below filter committed_height {}, restarting scan",
-                    stale_min_synced,
-                    committed
-                );
-                self.reset_for_rescan();
-                self.progress.update_committed_height(stale_min_synced);
-                return self.start_download(requests).await;
+                // Where a restart would actually resume: `start_download` floors the
+                // scan at the wallets' birth heights and at the stored headers' start.
+                let scan_floor = birth_height
+                    .max(self.header_storage.read().await.get_start_height().await.unwrap_or(0));
+                let restart_at = stale_min_synced.saturating_add(1).max(scan_floor);
+                // Restart only if that reaches below the committed frontier. Comparing
+                // the raw `synced_height` instead would fire on every tick for a wallet
+                // that reports 0 yet needs nothing below the floor, wiping the in-flight
+                // filter batches before any can complete.
+                if restart_at <= committed {
+                    tracing::info!(
+                        "Wallet synced_height {} fell below filter committed_height {}, restarting scan at {}",
+                        stale_min_synced,
+                        committed,
+                        restart_at
+                    );
+                    self.reset_for_rescan();
+                    self.progress.update_committed_height(stale_min_synced);
+                    return self.start_download(requests).await;
+                }
             }
         }
 

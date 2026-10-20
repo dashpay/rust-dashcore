@@ -128,6 +128,7 @@ impl WalletInterface for MockWallet {
     async fn process_block_for_wallets(
         &mut self,
         block: &Block,
+        _block_hash: dashcore::BlockHash,
         height: u32,
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult {
@@ -290,6 +291,7 @@ impl WalletInterface for NonMatchingMockWallet {
     async fn process_block_for_wallets(
         &mut self,
         _block: &Block,
+        _block_hash: dashcore::BlockHash,
         height: u32,
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult {
@@ -378,12 +380,20 @@ pub struct MockWalletState {
     pub addresses: Vec<Address>,
     pub synced_height: CoreBlockHeight,
     pub last_processed_height: CoreBlockHeight,
+    /// Mirrors `ManagedWalletInfo::account_generation`: bumped by tests to
+    /// simulate an account being added to this wallet mid-flight.
+    pub account_generation: u64,
 }
 
 /// Multi-wallet mock that holds independent state for several wallet IDs,
 /// enabling tests that exercise per-wallet attribution paths.
 pub struct MultiMockWallet {
     wallets: std::collections::BTreeMap<WalletId, MockWalletState>,
+    /// Per-wallet override for `scan_script_pubkeys_for`. Wallets absent here
+    /// fall back to the monitored set, mirroring the trait default. Lets tests
+    /// hand the filter scan a query that does not cover everything the wallet
+    /// watches.
+    scan_addresses: std::collections::BTreeMap<WalletId, Vec<Address>>,
     event_sender: broadcast::Sender<WalletEvent>,
     /// Track every block processed for assertions.
     processed: Arc<Mutex<Vec<(WalletId, dashcore::BlockHash, u32)>>>,
@@ -400,6 +410,7 @@ impl MultiMockWallet {
         let (event_sender, _) = broadcast::channel(16);
         Self {
             wallets: std::collections::BTreeMap::new(),
+            scan_addresses: std::collections::BTreeMap::new(),
             event_sender,
             processed: Arc::new(Mutex::new(Vec::new())),
         }
@@ -408,6 +419,12 @@ impl MultiMockWallet {
     /// Insert or replace a wallet's state.
     pub fn insert_wallet(&mut self, wallet_id: WalletId, state: MockWalletState) {
         self.wallets.insert(wallet_id, state);
+    }
+
+    /// Override the scan query for one wallet: `scan_script_pubkeys_for`
+    /// returns these addresses' scripts instead of the monitored set.
+    pub fn set_scan_addresses(&mut self, wallet_id: WalletId, addresses: Vec<Address>) {
+        self.scan_addresses.insert(wallet_id, addresses);
     }
 
     /// Mutable access to a wallet's state, panicking if absent.
@@ -425,6 +442,7 @@ impl WalletInterface for MultiMockWallet {
     async fn process_block_for_wallets(
         &mut self,
         block: &Block,
+        _block_hash: dashcore::BlockHash,
         height: CoreBlockHeight,
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult {
@@ -460,6 +478,13 @@ impl WalletInterface for MultiMockWallet {
             .unwrap_or_default()
     }
 
+    fn scan_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        match self.scan_addresses.get(wallet_id) {
+            Some(addresses) => addresses.iter().map(|a| a.script_pubkey()).collect(),
+            None => self.monitored_script_pubkeys_for(wallet_id),
+        }
+    }
+
     fn watched_outpoints(&self) -> Vec<OutPoint> {
         Vec::new()
     }
@@ -487,6 +512,10 @@ impl WalletInterface for MultiMockWallet {
 
     fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight {
         self.wallets.get(wallet_id).map(|s| s.synced_height).unwrap_or(0)
+    }
+
+    fn wallet_account_generation(&self, wallet_id: &WalletId) -> u64 {
+        self.wallets.get(wallet_id).map(|s| s.account_generation).unwrap_or(0)
     }
 
     fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {

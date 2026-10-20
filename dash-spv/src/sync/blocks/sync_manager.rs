@@ -62,6 +62,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         self.pipeline.requeue_in_flight();
     }
 
+    fn on_peer_disconnect(&mut self) {
+        self.pipeline.requeue_in_flight();
+    }
+
     async fn handle_message(
         &mut self,
         msg: Message,
@@ -74,7 +78,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         let hashed_block = HashedBlock::from(block);
 
         // Check if this is a block we requested (pipeline handles buffering with height)
-        if !self.pipeline.receive_block(block) {
+        if !self.pipeline.receive_block(&hashed_block) {
             tracing::debug!("Received unrequested block {}", hashed_block.hash());
             return Ok(vec![]);
         }
@@ -146,11 +150,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
                         )));
                     }
                     // Block loaded from storage, add to pipeline for processing
-                    self.pipeline.add_from_storage(
-                        hashed_block.block().clone(),
-                        key.height(),
-                        wallets.clone(),
-                    );
+                    self.pipeline.add_from_storage(hashed_block, key.height(), wallets.clone());
                     self.progress.add_from_storage(1);
                     continue;
                 }

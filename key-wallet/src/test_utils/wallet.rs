@@ -29,8 +29,14 @@ impl TestWalletContext {
     /// Creates a new random testnet wallet with a BIP44 account and one
     /// pre-derived receive address.
     pub fn new_random() -> Self {
-        let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-            .expect("Should create wallet");
+        Self::new_random_with_options(WalletAccountCreationOptions::Default)
+    }
+
+    /// Like [`new_random`](Self::new_random) but with explicit account-creation
+    /// options, so a test can build e.g. a funding-only wallet with no provider
+    /// accounts.
+    pub fn new_random_with_options(options: WalletAccountCreationOptions) -> Self {
+        let wallet = Wallet::new_random(Network::Testnet, options).expect("Should create wallet");
         let mut managed_wallet =
             ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 

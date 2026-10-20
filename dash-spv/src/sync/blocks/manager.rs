@@ -77,15 +77,19 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
     /// in the correct sequence.
     pub(super) async fn process_buffered_blocks(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
+        // Highest height applied in this drain, used below to advance the
+        // storage's committed watermark exactly once.
+        let mut last_applied: Option<u32> = None;
 
         // Process blocks in height order using pipeline's ordering logic
         while let Some((block, height, interested)) = self.pipeline.take_next_ordered_block() {
-            let hash = block.block_hash();
+            let hash = *block.hash();
 
             // Process the block only for the wallets whose filter matched it.
             // Already-synced wallets that did not match are not touched.
             let mut wallet = self.wallet.write().await;
-            let result = wallet.process_block_for_wallets(&block, height, &interested).await;
+            let result =
+                wallet.process_block_for_wallets(block.block(), hash, height, &interested).await;
             drop(wallet);
 
             let total_relevant = result.relevant_tx_count();
@@ -123,6 +127,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
             // Only count new transactions to avoid double-counting during rescans
             self.progress.add_transactions(result.new_txids.len() as u32);
             self.progress.update_last_processed(height);
+            last_applied = Some(height);
 
             events.push(SyncEvent::BlockProcessed {
                 block_hash: hash,
@@ -131,6 +136,20 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 new_scripts,
                 confirmed_txids,
             });
+        }
+
+        // Blocks are drained in strict height order, so `last_applied` is the
+        // high-water mark of blocks now applied to every interested wallet.
+        // Telling storage lets it release those block bodies from memory on the
+        // next persist instead of pinning the whole backfill; they stay
+        // readable via `load_block`, which reloads them from disk.
+        //
+        // Set once per drain rather than per block: this takes the block
+        // storage write lock, and the loop above can run thousands of times.
+        // No other guard is held here, and the wallet lock inside the loop was
+        // dropped before this point.
+        if let Some(height) = last_applied {
+            self.block_storage.write().await.set_committed_height(height).await;
         }
 
         // Check if pipeline is empty
@@ -166,15 +185,20 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> std::fmt::Debug
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, NetworkManager};
+    use crate::network::{MessageType, NetworkEvent, NetworkManager, NetworkRequest};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentBlockStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
-    use crate::test_utils::MockNetworkManager;
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
+    use crate::types::HashedBlock;
+    use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_blockdata::Inventory;
+    use dashcore::BlockHash;
     use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
-    use key_wallet_manager::FilterMatchKey;
+    use key_wallet_manager::{FilterMatchKey, WalletId};
     use std::collections::{BTreeMap, BTreeSet};
+    use tokio::sync::mpsc;
 
     type TestBlocksManager =
         BlocksManager<PersistentBlockHeaderStorage, PersistentBlockStorage, MockWallet>;
@@ -232,6 +256,61 @@ mod tests {
         assert!(events.is_empty());
     }
 
+    /// Losing one peer of several must put that peer's `getdata` back on the
+    /// queue right away instead of waiting out the block download timeout.
+    #[tokio::test]
+    async fn test_peer_disconnect_reissues_in_flight_block_requests() {
+        let mut manager = create_test_manager().await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        let blocks: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = (100..103)
+            .map(|height| {
+                (
+                    FilterMatchKey::new(height, BlockHash::dummy(height)),
+                    BTreeSet::from([MOCK_WALLET_ID]),
+                )
+            })
+            .collect();
+        let event = SyncEvent::BlocksNeeded {
+            blocks,
+        };
+        manager.handle_sync_event(&event, &requests).await.unwrap();
+
+        let requested = drain_requested_blocks(&mut rx);
+        assert_eq!(requested.len(), 3);
+
+        let disconnect = NetworkEvent::PeerDisconnected {
+            address: test_socket_address(1),
+        };
+        manager.handle_network_event(&disconnect, &requests).await.unwrap();
+
+        manager.tick(&requests).await.unwrap();
+        assert_eq!(drain_requested_blocks(&mut rx), requested);
+    }
+
+    fn drain_requested_blocks(
+        rx: &mut mpsc::UnboundedReceiver<NetworkRequest>,
+    ) -> BTreeSet<BlockHash> {
+        let mut hashes = BTreeSet::new();
+        while let Ok(request) = rx.try_recv() {
+            match request {
+                NetworkRequest::SendMessage(NetworkMessage::GetData(inventory)) => {
+                    for item in inventory {
+                        match item {
+                            Inventory::Block(hash) => {
+                                hashes.insert(hash);
+                            }
+                            other => panic!("Expected a block inventory item, got {:?}", other),
+                        }
+                    }
+                }
+                other => panic!("Expected GetData, got {:?}", other),
+            }
+        }
+        hashes
+    }
+
     /// `process_buffered_blocks` must call `process_block_for_wallets` with
     /// the exact wallet set carried in the pipeline so already-synced
     /// wallets are not touched by routing logic.
@@ -256,7 +335,11 @@ mod tests {
             header,
             txdata: vec![],
         };
-        manager.pipeline.add_from_storage(block.clone(), 100, BTreeSet::from([MOCK_WALLET_ID]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            100,
+            BTreeSet::from([MOCK_WALLET_ID]),
+        );
 
         let events = manager.process_buffered_blocks().await.unwrap();
         assert!(matches!(events.first(), Some(SyncEvent::BlockProcessed { .. })));
@@ -312,7 +395,11 @@ mod tests {
             txdata: vec![],
         };
         // Only wallet_in is in the routed set.
-        manager.pipeline.add_from_storage(block.clone(), 100, BTreeSet::from([wallet_in]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            100,
+            BTreeSet::from([wallet_in]),
+        );
 
         let _ = manager.process_buffered_blocks().await.unwrap();
 
@@ -357,7 +444,11 @@ mod tests {
         };
 
         // Already-downloaded block sitting in the pipeline.
-        manager.pipeline.add_from_storage(block.clone(), 200, BTreeSet::from([MOCK_WALLET_ID]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            200,
+            BTreeSet::from([MOCK_WALLET_ID]),
+        );
 
         manager.on_disconnect();
 

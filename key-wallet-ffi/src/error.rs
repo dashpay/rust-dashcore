@@ -250,9 +250,13 @@ impl From<key_wallet::Error> for FFIError {
             Error::InvalidNetwork => FFIErrorCode::InvalidNetwork,
             Error::InvalidAddress(_) => FFIErrorCode::InvalidAddress,
             Error::Serialization(_) => FFIErrorCode::SerializationError,
-            Error::WatchOnly | Error::CoinJoinNotEnabled | Error::NoKeySource => {
-                FFIErrorCode::InvalidState
-            }
+            Error::InvalidState(_)
+            | Error::WatchOnly
+            | Error::CoinJoinNotEnabled
+            | Error::NoKeySource
+            | Error::KeylessWalletRequiresAccountKey {
+                ..
+            } => FFIErrorCode::InvalidState,
             Error::Bip32(_)
             | Error::Slip10(_)
             | Error::BLS(_)

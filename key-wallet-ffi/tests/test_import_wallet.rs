@@ -58,6 +58,7 @@ mod tests {
                 manager2,
                 ptr::null(),
                 0,
+                0,
                 imported_wallet_id.as_mut_ptr(),
                 &mut error,
             );

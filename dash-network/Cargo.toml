@@ -22,8 +22,8 @@ ffi = []
 
 [dependencies]
 serde = { version = "1.0.219", default-features = false, features = ["derive"], optional = true }
-bincode = { version = "2.0.1", optional = true }
-bincode_derive = { version = "2.0.1", optional = true }
+bincode = { workspace = true, optional = true }
+bincode_derive = { workspace = true, optional = true }
 
 [build-dependencies]
 cbindgen = "0.29"

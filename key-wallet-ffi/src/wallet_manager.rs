@@ -278,6 +278,8 @@ pub unsafe extern "C" fn wallet_manager_free_wallet_bytes(wallet_bytes: *mut u8,
 /// - `manager` must be a valid pointer to an FFIWalletManager instance
 /// - `wallet_bytes` must be a valid pointer to bincode-serialized wallet bytes
 /// - `wallet_bytes_len` must be the exact length of the wallet bytes
+/// - `birth_height` is the birth height to seed the wallet's sync checkpoint
+///   (0 to rescan from genesis)
 /// - `wallet_id_out` must be a valid pointer to a 32-byte array that will receive the wallet ID
 /// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
@@ -287,6 +289,7 @@ pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
     manager: *mut FFIWalletManager,
     wallet_bytes: *const u8,
     wallet_bytes_len: usize,
+    birth_height: u32,
     wallet_id_out: *mut u8,
     error: *mut FFIError,
 ) -> bool {
@@ -299,7 +302,7 @@ pub unsafe extern "C" fn wallet_manager_import_wallet_from_bytes(
     // Import the wallet using async runtime
     let result = manager_ref.runtime.block_on(async {
         let mut manager_guard = manager_ref.manager.write().await;
-        manager_guard.import_wallet_from_bytes(wallet_bytes_slice)
+        manager_guard.import_wallet_from_bytes(wallet_bytes_slice, birth_height)
     });
 
     let wallet_id = unwrap_or_return!(result, error);

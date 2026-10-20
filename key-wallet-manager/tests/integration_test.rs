@@ -41,6 +41,28 @@ fn test_wallet_manager_from_mnemonic() {
 }
 
 #[test]
+fn test_wallet_manager_from_non_english_mnemonic() {
+    // The mnemonic parse used to hardcode English; a French phrase (with
+    // non-ASCII words) must create a wallet too, with language auto-detected,
+    // on both network configurations.
+    let mnemonic = Mnemonic::generate(12, Language::French).unwrap();
+    for network in [Network::Mainnet, Network::Testnet] {
+        let mut manager = WalletManager::<ManagedWalletInfo>::new(network);
+
+        let wallet_result = manager.create_wallet_from_mnemonic(
+            &mnemonic.to_string(),
+            0,
+            WalletAccountCreationOptions::Default,
+        );
+        assert!(
+            wallet_result.is_ok(),
+            "Failed to create French-mnemonic wallet on {network:?}: {wallet_result:?}"
+        );
+        assert_eq!(manager.wallet_count(), 1);
+    }
+}
+
+#[test]
 fn test_account_management() {
     let mut manager = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
 

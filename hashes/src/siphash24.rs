@@ -26,6 +26,12 @@ use core::{cmp, mem, ptr, str};
 
 use crate::{Error, Hash as _, HashEngine as _};
 
+// Lane-vector types for the per-arch SIMD batchers, so helper signatures stay readable.
+#[cfg(target_arch = "aarch64")]
+use core::arch::aarch64::uint64x2_t;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::__m256i;
+
 crate::internal_macros::hash_type! {
     64,
     false,
@@ -44,26 +50,25 @@ fn from_engine(e: HashEngine) -> Hash {
     Hash::from_u64(state.v0 ^ state.v1 ^ state.v2 ^ state.v3)
 }
 
-macro_rules! compress {
-    ($state:expr) => {{
-        compress!($state.v0, $state.v1, $state.v2, $state.v3)
-    }};
-    ($v0:expr, $v1:expr, $v2:expr, $v3:expr) => {{
-        $v0 = $v0.wrapping_add($v1);
-        $v1 = $v1.rotate_left(13);
-        $v1 ^= $v0;
-        $v0 = $v0.rotate_left(32);
-        $v2 = $v2.wrapping_add($v3);
-        $v3 = $v3.rotate_left(16);
-        $v3 ^= $v2;
-        $v0 = $v0.wrapping_add($v3);
-        $v3 = $v3.rotate_left(21);
-        $v3 ^= $v0;
-        $v2 = $v2.wrapping_add($v1);
-        $v1 = $v1.rotate_left(17);
-        $v1 ^= $v2;
-        $v2 = $v2.rotate_left(32);
-    }};
+/// One scalar SipRound over the four state words. The reference the SIMD kernels
+/// ([`sip_round_avx2`], [`sip_round_neon`]) reproduce lane-for-lane.
+#[inline]
+fn sip_round_scalar(mut v0: u64, mut v1: u64, mut v2: u64, mut v3: u64) -> (u64, u64, u64, u64) {
+    v0 = v0.wrapping_add(v1);
+    v1 = v1.rotate_left(13);
+    v1 ^= v0;
+    v0 = v0.rotate_left(32);
+    v2 = v2.wrapping_add(v3);
+    v3 = v3.rotate_left(16);
+    v3 ^= v2;
+    v0 = v0.wrapping_add(v3);
+    v3 = v3.rotate_left(21);
+    v3 ^= v0;
+    v2 = v2.wrapping_add(v1);
+    v1 = v1.rotate_left(17);
+    v1 ^= v2;
+    v2 = v2.rotate_left(32);
+    (v0, v1, v2, v3)
 }
 
 /// Load an integer of the desired type from a byte stream, in LE order. Uses
@@ -139,17 +144,22 @@ impl HashEngine {
     }
 
     #[inline]
+    fn rounds(state: &mut State, n: usize) {
+        let (mut v0, mut v1, mut v2, mut v3) = (state.v0, state.v1, state.v2, state.v3);
+        for _ in 0..n {
+            (v0, v1, v2, v3) = sip_round_scalar(v0, v1, v2, v3);
+        }
+        (state.v0, state.v1, state.v2, state.v3) = (v0, v1, v2, v3);
+    }
+
+    #[inline]
     fn c_rounds(state: &mut State) {
-        compress!(state);
-        compress!(state);
+        HashEngine::rounds(state, 2);
     }
 
     #[inline]
     fn d_rounds(state: &mut State) {
-        compress!(state);
-        compress!(state);
-        compress!(state);
-        compress!(state);
+        HashEngine::rounds(state, 4);
     }
 }
 
@@ -280,8 +290,418 @@ unsafe fn u8to64_le(buf: &[u8], start: usize, len: usize) -> u64 {
     out
 }
 
+/// Scalar SipHash-2-4 one-shot: hashes `data` under keys `(k0, k1)` to a `u64`.
+/// The reference [`siphash_batch`] must match bit-for-bit.
+pub fn siphash(k0: u64, k1: u64, data: &[u8]) -> u64 {
+    let mut v0 = k0 ^ 0x736f6d6570736575;
+    let mut v1 = k1 ^ 0x646f72616e646f6d;
+    let mut v2 = k0 ^ 0x6c7967656e657261;
+    let mut v3 = k1 ^ 0x7465646279746573;
+
+    let len = data.len();
+    let nfull = len / 8;
+    for blk in 0..nfull {
+        let m = load_int_le!(data, blk * 8, u64);
+        v3 ^= m;
+        (v0, v1, v2, v3) = sip_round_scalar(v0, v1, v2, v3);
+        (v0, v1, v2, v3) = sip_round_scalar(v0, v1, v2, v3);
+        v0 ^= m;
+    }
+
+    let left = len & 7;
+    let b = ((len as u64 & 0xff) << 56) | unsafe { u8to64_le(data, nfull * 8, left) };
+    v3 ^= b;
+    (v0, v1, v2, v3) = sip_round_scalar(v0, v1, v2, v3);
+    (v0, v1, v2, v3) = sip_round_scalar(v0, v1, v2, v3);
+    v0 ^= b;
+
+    v2 ^= 0xff;
+    for _ in 0..4 {
+        (v0, v1, v2, v3) = sip_round_scalar(v0, v1, v2, v3);
+    }
+
+    v0 ^ v1 ^ v2 ^ v3
+}
+
+/// Batch SipHash-2-4 over `inputs` that are all exactly `LEN` bytes, writing
+/// `out[i] = siphash(k0, k1, &inputs[i])`. Uses the AVX2 (x86_64) or NEON (aarch64) batch
+/// kernel when available, else the scalar one-shot; bit-identical to per-input [`siphash`].
+pub fn siphash_batch<const LEN: usize>(k0: u64, k1: u64, inputs: &[[u8; LEN]], out: &mut [u64]) {
+    assert!(out.len() >= inputs.len(), "output buffer too small");
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            unsafe { hash_many_wide_avx2::<LEN, AVX2_R>(k0, k1, inputs, out) };
+        } else {
+            siphash_each(k0, k1, inputs, out);
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        hash_many_wide_neon::<LEN, NEON_R>(k0, k1, inputs, out)
+    };
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    siphash_each(k0, k1, inputs, out);
+}
+
+/// Scalar fallback for [`siphash_batch`] where no SIMD kernel applies (x86 without AVX2, and
+/// targets with no vectorised path). aarch64 always batches via NEON, so it never uses this.
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn siphash_each<const LEN: usize>(k0: u64, k1: u64, inputs: &[[u8; LEN]], out: &mut [u64]) {
+    for (i, inp) in inputs.iter().enumerate() {
+        out[i] = siphash(k0, k1, inp);
+    }
+}
+
+/// Rotate-left of each 64-bit lane by `L` (`R = 64 - L`): shift + shift + or. Lane-vector
+/// (`uint64x2_t` = 2 messages) analogue of [`rotl_avx2`].
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn sip_rotl<const L: i32, const R: i32>(x: uint64x2_t) -> uint64x2_t {
+    use core::arch::aarch64::*;
+    vorrq_u64(vshlq_n_u64::<L>(x), vshrq_n_u64::<R>(x))
+}
+
+/// SipRound on a lane-vector (`uint64x2_t` = 2 messages), shared by the NEON kernels.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn sip_round_neon(
+    mut v0: uint64x2_t,
+    mut v1: uint64x2_t,
+    mut v2: uint64x2_t,
+    mut v3: uint64x2_t,
+) -> (uint64x2_t, uint64x2_t, uint64x2_t, uint64x2_t) {
+    use core::arch::aarch64::*;
+    v0 = vaddq_u64(v0, v1);
+    v1 = sip_rotl::<13, 51>(v1);
+    v1 = veorq_u64(v1, v0);
+    v0 = sip_rotl::<32, 32>(v0);
+    v2 = vaddq_u64(v2, v3);
+    v3 = sip_rotl::<16, 48>(v3);
+    v3 = veorq_u64(v3, v2);
+    v0 = vaddq_u64(v0, v3);
+    v3 = sip_rotl::<21, 43>(v3);
+    v3 = veorq_u64(v3, v0);
+    v2 = vaddq_u64(v2, v1);
+    v1 = sip_rotl::<17, 47>(v1);
+    v1 = veorq_u64(v1, v2);
+    v2 = sip_rotl::<32, 32>(v2);
+    (v0, v1, v2, v3)
+}
+
+/// ILP knob: independent `uint64x2_t` register-sets the NEON batcher keeps in flight (2
+/// messages each, so batch width `2 * NEON_R` = 12). More sets hide SipHash's serial
+/// per-message latency; `6` is the widest that fits aarch64's 32 registers without spilling.
+#[cfg(target_arch = "aarch64")]
+const NEON_R: usize = 6;
+
+/// Hashes exactly `2 * R` equal-length inputs, keeping `R` independent `uint64x2_t`
+/// register-sets in flight (2 messages each) to overlap the per-message SipHash dependency
+/// chains. Writes `out[0..2*R]`. NEON analogue of [`siphash_block_avx2`] (4 lanes there).
+///
+/// # Safety
+/// NEON is baseline on aarch64. `inputs`/`out` must have at least `2 * R` elements.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+// The `for r in 0..R` loops step the register-sets in lockstep by design; index-based.
+#[allow(clippy::needless_range_loop)]
+unsafe fn siphash_block_neon<const LEN: usize, const R: usize>(
+    k0: u64,
+    k1: u64,
+    inputs: &[[u8; LEN]],
+    out: &mut [u64],
+) {
+    use core::arch::aarch64::*;
+
+    // Build a lane-vector {x, y} from two scalar words. `vcombine`/`vcreate` moves the GPRs
+    // straight into the SIMD lanes (lane0 = x, lane1 = y), avoiding the stack round-trip a
+    // `vld1q_u64([x, y])` load would incur.
+    let pack = |x: u64, y: u64| -> uint64x2_t { vcombine_u64(vcreate_u64(x), vcreate_u64(y)) };
+
+    let mut v0 = [vdupq_n_u64(k0 ^ 0x736f6d6570736575); R];
+    let mut v1 = [vdupq_n_u64(k1 ^ 0x646f72616e646f6d); R];
+    let mut v2 = [vdupq_n_u64(k0 ^ 0x6c7967656e657261); R];
+    let mut v3 = [vdupq_n_u64(k1 ^ 0x7465646279746573); R];
+
+    // One `uint64x2_t` per register holding lane `k`'s next 8-byte word `| extra`;
+    // register `r` carries inputs `2r..2r+2`, lane order low..high = those two.
+    macro_rules! words {
+        ($word:expr) => {{
+            let mut m = [vdupq_n_u64(0); R];
+            for r in 0..R {
+                let b = r * 2;
+                m[r] = pack($word(&inputs[b]), $word(&inputs[b + 1]));
+            }
+            m
+        }};
+    }
+    macro_rules! xor_all {
+        ($dst:ident, $src:expr) => {{
+            let src = $src;
+            for r in 0..R {
+                $dst[r] = veorq_u64($dst[r], src[r]);
+            }
+        }};
+    }
+    macro_rules! rounds {
+        ($n:literal) => {
+            for r in 0..R {
+                let (mut a0, mut a1, mut a2, mut a3) = (v0[r], v1[r], v2[r], v3[r]);
+                for _ in 0..$n {
+                    (a0, a1, a2, a3) = sip_round_neon(a0, a1, a2, a3);
+                }
+                v0[r] = a0;
+                v1[r] = a1;
+                v2[r] = a2;
+                v3[r] = a3;
+            }
+        };
+    }
+
+    // Full 8-byte message blocks.
+    for blk in 0..LEN / 8 {
+        let off = blk * 8;
+        let m = words!(|inp: &[u8; LEN]| load_int_le!(inp, off, u64));
+        xor_all!(v3, m);
+        rounds!(2);
+        xor_all!(v0, m);
+    }
+
+    // Final block: the leftover tail bytes with the length in the top byte.
+    let lb = (LEN as u64 & 0xff) << 56;
+    let off = LEN / 8 * 8;
+    let left = LEN % 8;
+    let b = words!(|inp: &[u8; LEN]| lb | u8to64_le(inp, off, left));
+    xor_all!(v3, b);
+    rounds!(2);
+    xor_all!(v0, b);
+
+    let ff = vdupq_n_u64(0xff);
+    for r in 0..R {
+        v2[r] = veorq_u64(v2[r], ff);
+    }
+    rounds!(4);
+
+    // out lane = v0 ^ v1 ^ v2 ^ v3, written as one 128-bit store per register (lane order
+    // low..high maps to out[b..b+2], matching the scalar reference).
+    for r in 0..R {
+        let h = veorq_u64(veorq_u64(v0[r], v1[r]), veorq_u64(v2[r], v3[r]));
+        let b = r * 2;
+        vst1q_u64(out[b..].as_mut_ptr(), h);
+    }
+}
+
+/// Driver over the `R`-register NEON block (width `2 * R`): the tail after the wide loop is
+/// drained with 2-lane (`R = 1`) blocks, then a final scalar one-shot.
+///
+/// # Safety
+/// NEON is baseline on aarch64.
+#[cfg(target_arch = "aarch64")]
+unsafe fn hash_many_wide_neon<const LEN: usize, const R: usize>(
+    k0: u64,
+    k1: u64,
+    inputs: &[[u8; LEN]],
+    out: &mut [u64],
+) {
+    let w = 2 * R;
+    let n = inputs.len();
+    let mut i = 0;
+    while i + w <= n {
+        siphash_block_neon::<LEN, R>(k0, k1, &inputs[i..], &mut out[i..]);
+        i += w;
+    }
+    // Drain remaining pairs through the 2-lane kernel (the same block with R = 1).
+    while i + 2 <= n {
+        siphash_block_neon::<LEN, 1>(k0, k1, &inputs[i..], &mut out[i..]);
+        i += 2;
+    }
+    if i < n {
+        out[i] = siphash(k0, k1, &inputs[i]);
+    }
+}
+
+/// ILP knob: independent `__m256i` register-sets the AVX2 batcher keeps in flight (4
+/// messages each, so batch width `4 * AVX2_R` = 12). More sets hide SipHash's serial
+/// per-message latency; `3` is the widest that fits x86_64's 16 YMMs without spilling
+/// (`4` spills and regresses).
+#[cfg(target_arch = "x86_64")]
+const AVX2_R: usize = 3;
+
+/// Rotate-left of each 64-bit lane by `L` (`R = 64 - L`), the generic case: shift + shift + or.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn rotl_avx2<const L: i32, const R: i32>(x: __m256i) -> __m256i {
+    use core::arch::x86_64::*;
+    _mm256_or_si256(_mm256_slli_epi64::<L>(x), _mm256_srli_epi64::<R>(x))
+}
+
+/// SipRound on a `__m256i` holding 4 lanes (4 messages).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn sip_round_avx2(
+    mut v0: __m256i,
+    mut v1: __m256i,
+    mut v2: __m256i,
+    mut v3: __m256i,
+) -> (__m256i, __m256i, __m256i, __m256i) {
+    use core::arch::x86_64::*;
+    v0 = _mm256_add_epi64(v0, v1);
+    v1 = rotl_avx2::<13, 51>(v1);
+    v1 = _mm256_xor_si256(v1, v0);
+    v0 = rotl_avx2::<32, 32>(v0);
+    v2 = _mm256_add_epi64(v2, v3);
+    v3 = rotl_avx2::<16, 48>(v3);
+    v3 = _mm256_xor_si256(v3, v2);
+    v0 = _mm256_add_epi64(v0, v3);
+    v3 = rotl_avx2::<21, 43>(v3);
+    v3 = _mm256_xor_si256(v3, v0);
+    v2 = _mm256_add_epi64(v2, v1);
+    v1 = rotl_avx2::<17, 47>(v1);
+    v1 = _mm256_xor_si256(v1, v2);
+    v2 = rotl_avx2::<32, 32>(v2);
+    (v0, v1, v2, v3)
+}
+
+/// Hashes exactly `4 * R` equal-length inputs, keeping `R` independent `__m256i`
+/// register sets in flight (4 messages each) to overlap the per-message SipHash dependency
+/// chains. Writes `out[0..4*R]`.
+///
+/// # Safety
+/// Requires AVX2. `inputs`/`out` must have at least `4 * R` elements.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+// The `for r in 0..R` loops step the register sets in lockstep by design; index-based.
+#[allow(clippy::needless_range_loop)]
+unsafe fn siphash_block_avx2<const LEN: usize, const R: usize>(
+    k0: u64,
+    k1: u64,
+    inputs: &[[u8; LEN]],
+    out: &mut [u64],
+) {
+    use core::arch::x86_64::*;
+
+    let mut v0 = [_mm256_set1_epi64x((k0 ^ 0x736f6d6570736575) as i64); R];
+    let mut v1 = [_mm256_set1_epi64x((k1 ^ 0x646f72616e646f6d) as i64); R];
+    let mut v2 = [_mm256_set1_epi64x((k0 ^ 0x6c7967656e657261) as i64); R];
+    let mut v3 = [_mm256_set1_epi64x((k1 ^ 0x7465646279746573) as i64); R];
+
+    // These lockstep helpers stay macros on purpose: as functions taking `&mut [__m256i; R]`
+    // the compiler spills the state arrays to the stack instead of keeping them in YMM
+    // registers (measured ~4% slower), whereas the macros keep every lane as an SSA value.
+    // One `__m256i` per register holds lane `k`'s next 8-byte word `| extra`;
+    // register `r` carries inputs `4r..4r+4`, lane order low..high = those four.
+    macro_rules! words {
+        ($word:expr) => {{
+            let mut m = [_mm256_setzero_si256(); R];
+            for r in 0..R {
+                let b = r * 4;
+                m[r] = _mm256_set_epi64x(
+                    $word(&inputs[b + 3]) as i64,
+                    $word(&inputs[b + 2]) as i64,
+                    $word(&inputs[b + 1]) as i64,
+                    $word(&inputs[b]) as i64,
+                );
+            }
+            m
+        }};
+    }
+    macro_rules! xor_all {
+        ($dst:ident, $src:expr) => {{
+            let src = $src;
+            for r in 0..R {
+                $dst[r] = _mm256_xor_si256($dst[r], src[r]);
+            }
+        }};
+    }
+    macro_rules! rounds {
+        ($n:literal) => {
+            for r in 0..R {
+                let (mut a0, mut a1, mut a2, mut a3) = (v0[r], v1[r], v2[r], v3[r]);
+                for _ in 0..$n {
+                    (a0, a1, a2, a3) = sip_round_avx2(a0, a1, a2, a3);
+                }
+                v0[r] = a0;
+                v1[r] = a1;
+                v2[r] = a2;
+                v3[r] = a3;
+            }
+        };
+    }
+
+    // Full 8-byte message blocks.
+    for blk in 0..LEN / 8 {
+        let off = blk * 8;
+        let m = words!(|inp: &[u8; LEN]| load_int_le!(inp, off, u64));
+        xor_all!(v3, m);
+        rounds!(2);
+        xor_all!(v0, m);
+    }
+
+    // Final block: the leftover tail bytes with the length in the top byte.
+    let lb = (LEN as u64 & 0xff) << 56;
+    let off = LEN / 8 * 8;
+    let left = LEN % 8;
+    let b = words!(|inp: &[u8; LEN]| lb | unsafe { u8to64_le(inp, off, left) });
+    xor_all!(v3, b);
+    rounds!(2);
+    xor_all!(v0, b);
+
+    for r in 0..R {
+        v2[r] = _mm256_xor_si256(v2[r], _mm256_set1_epi64x(0xff));
+    }
+    rounds!(4);
+
+    // out lane = v0 ^ v1 ^ v2 ^ v3, written as one 256-bit store per register (lane order
+    // low..high maps to out[b..b+4], matching the scalar reference).
+    for r in 0..R {
+        let h = _mm256_xor_si256(_mm256_xor_si256(v0[r], v1[r]), _mm256_xor_si256(v2[r], v3[r]));
+        let b = r * 4;
+        _mm256_storeu_si256(out[b..].as_mut_ptr() as *mut __m256i, h);
+    }
+}
+
+/// Driver over the `R`-register AVX2 block (width `4 * R`): the tail after the wide loop is
+/// drained with 4-lane (`R = 1`) blocks, then a final scalar one-shot. Mirrors
+/// [`hash_many_wide_neon`].
+///
+/// # Safety
+/// Requires AVX2.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn hash_many_wide_avx2<const LEN: usize, const R: usize>(
+    k0: u64,
+    k1: u64,
+    inputs: &[[u8; LEN]],
+    out: &mut [u64],
+) {
+    let w = 4 * R;
+    let n = inputs.len();
+    let mut i = 0;
+    while i + w <= n {
+        siphash_block_avx2::<LEN, R>(k0, k1, &inputs[i..], &mut out[i..]);
+        i += w;
+    }
+    // Drain remaining quads through the 4-lane kernel (the same block with R = 1).
+    while i + 4 <= n {
+        siphash_block_avx2::<LEN, 1>(k0, k1, &inputs[i..], &mut out[i..]);
+        i += 4;
+    }
+    while i < n {
+        out[i] = siphash(k0, k1, &inputs[i]);
+        i += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     #[test]
@@ -365,9 +785,94 @@ mod tests {
             let out = Hash::hash_with_keys(k0, k1, &vin[0..i]);
             assert_eq!(vec, out, "vec #{}", i);
 
+            // The standalone one-shot must match the official vector too.
+            assert_eq!(siphash(k0, k1, &vin[0..i]), u64::from_le_bytes(vecs[i]), "siphash #{}", i);
+
             let inc = Hash::from_engine(state_inc.clone());
             assert_eq!(vec, inc, "vec #{}", i);
             state_inc.input(&[i as u8]);
         }
+
+        // Same 64 vectors, but each input (length `L`, bytes `0..L`) hashed in BULK:
+        // a batch of identical inputs through `siphash_batch::<L>` must match the
+        // official vector on every lane. `L` must be a constant, so we unroll 0..64.
+        // A batch of 20 exercises the wide SIMD path (>8) plus the scalar leftovers.
+        fn check_bulk<const L: usize>(k0: u64, k1: u64, expected: [u8; 8]) {
+            let input: [u8; L] = core::array::from_fn(|b| b as u8);
+            let batch = [input; 20];
+            let mut out = [0u64; 20];
+            siphash_batch::<L>(k0, k1, &batch, &mut out);
+            let want = u64::from_le_bytes(expected);
+            for (j, &got) in out.iter().enumerate() {
+                assert_eq!(got, want, "bulk len={L} idx={j}");
+            }
+        }
+        macro_rules! check_all_lens {
+            ($($l:literal),* $(,)?) => {$( check_bulk::<$l>(k0, k1, vecs[$l]); )*};
+        }
+        check_all_lens!(
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+        );
+    }
+
+    // The compile-time-length batch must be bit-identical to the scalar one-shot.
+    // `test_siphash_2_4` already checks every length at a single count, so the job here
+    // is COUNT coverage — one case per batch size, sweeping zero/one/several wide (8-lane)
+    // blocks and every leftover size 0..7, plus two large counts for many blocks. For each
+    // count, every fixed LEN below (tail sizes 0..7) is hashed with pseudo-random content.
+    #[test_case(0)]
+    #[test_case(1)]
+    #[test_case(2)]
+    #[test_case(3)]
+    #[test_case(4)]
+    #[test_case(5)]
+    #[test_case(6)]
+    #[test_case(7)]
+    #[test_case(8)]
+    #[test_case(9)]
+    #[test_case(15)]
+    #[test_case(16)]
+    #[test_case(17)]
+    #[test_case(100)]
+    #[test_case(257)]
+    fn siphash_batch_matches_scalar(count: usize) {
+        fn check<const LEN: usize>(count: usize) {
+            let mut seed: u64 = 0x1234_5678_9abc_def0
+                ^ (LEN as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                ^ (count as u64).wrapping_mul(0xd6e8_feb8_6659_fd93);
+            let mut next = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            };
+            let k0 = 0x0706_0504_0302_0100u64;
+            let k1 = 0x0f0e_0d0c_0b0a_0908u64;
+            let inputs: Vec<[u8; LEN]> =
+                (0..count).map(|_| core::array::from_fn(|_| next() as u8)).collect();
+            let mut got = vec![0u64; count];
+            siphash_batch::<LEN>(k0, k1, &inputs, &mut got);
+            for (idx, inp) in inputs.iter().enumerate() {
+                assert_eq!(got[idx], siphash(k0, k1, inp), "LEN={LEN} count={count} idx={idx}");
+            }
+        }
+
+        check::<0>(count);
+        check::<1>(count);
+        check::<2>(count);
+        check::<3>(count);
+        check::<4>(count);
+        check::<5>(count);
+        check::<6>(count);
+        check::<7>(count);
+        check::<8>(count);
+        check::<9>(count);
+        check::<16>(count);
+        check::<23>(count);
+        check::<25>(count);
+        check::<32>(count);
+        check::<40>(count);
     }
 }

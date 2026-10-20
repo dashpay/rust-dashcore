@@ -8,11 +8,15 @@ use super::managed_account_operations::ManagedAccountOperations;
 use crate::account::{AccountType, ManagedAccountTrait};
 use crate::managed_account::managed_account_collection::ManagedAccountCollection;
 use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
+use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::managed_account::ManagedCoreFundsAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
+use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Network, Utxo, Wallet, WalletCoreBalance};
+use dashcore::address::Payload;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
@@ -86,6 +90,31 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get cached scriptPubKeys for every monitored address.
     fn monitored_script_pubkeys(&self) -> Vec<ScriptBuf>;
 
+    /// Get the scriptPubKeys worth matching in a forward compact-filter scan.
+    ///
+    /// Returns the full monitored set, CoinJoin addresses included, however
+    /// long ago they were emptied. They are single-use by protocol, but
+    /// mainnet pays them again — 287 of one mixing-heavy wallet's were, some
+    /// nearly 100 000 blocks later — so dropping them loses transactions and
+    /// overstates the balance. Narrow this only with proof the dropped
+    /// scripts cannot be paid.
+    fn scan_script_pubkeys(&self) -> Vec<ScriptBuf> {
+        self.monitored_script_pubkeys()
+    }
+
+    /// Get bare `hash160` filter elements that a compact filter carries in
+    /// addition to scriptPubKeys.
+    ///
+    /// Dash Core inserts a `ProRegTx`'s owner (`keyIDOwner`) and voting
+    /// (`keyIDVoting`) key hashes into the block's BIP158 compact filter as
+    /// bare 20-byte `hash160` elements, not as P2PKH scripts (see Dash Core's
+    /// `ExtractSpecialTxFilterElements`). A masternode owner watching only
+    /// those keys therefore never matches on the scriptPubKey path, so the
+    /// query must also carry the same bare hashes. This returns each provider
+    /// owner/voting address's 20-byte `hash160`; every other account type is
+    /// omitted because its scriptPubKeys already cover the query.
+    fn monitored_filter_elements(&self) -> Vec<Vec<u8>>;
+
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
 
@@ -112,6 +141,41 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
             .collect()
     }
 
+    /// The funds-bearing account selected by `(preference, index)`, if it
+    /// exists. `None` for a DashPay source naming a set of accounts rather than
+    /// one — those are only reachable through transaction building.
+    fn funds_account(
+        &self,
+        preference: AccountTypePreference,
+        index: u32,
+    ) -> Option<&ManagedCoreFundsAccount> {
+        let account_type = preference.account_type(index)?;
+        self.accounts().funds_account(&account_type)
+    }
+
+    /// Balance of the funds-bearing account selected by `(preference, index)`, if it exists.
+    fn account_balance(
+        &self,
+        preference: AccountTypePreference,
+        index: u32,
+    ) -> Option<WalletCoreBalance> {
+        self.funds_account(preference, index).map(|account| account.balance)
+    }
+
+    /// Reclaim expired receive-address reservations across every funding
+    /// account, returning the total number reclaimed.
+    ///
+    /// `now` and `ttl` are caller-supplied (seconds); the wallet keeps no
+    /// clock. Delegates to `ManagedCoreFundsAccount::sweep_expired_receive_reservations`
+    /// for each funding account.
+    fn sweep_expired_reservations(&mut self, now: u64, ttl: u64) -> usize {
+        self.accounts_mut()
+            .all_funding_accounts_mut()
+            .into_iter()
+            .map(|account| account.sweep_expired_receive_reservations(now, ttl))
+            .sum()
+    }
+
     /// Get transaction history
     fn transaction_history(&self) -> Vec<&TransactionRecord>;
 
@@ -129,6 +193,16 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
 
     /// Return the durable wallet sync checkpoint height.
     fn synced_height(&self) -> CoreBlockHeight;
+
+    /// Return the current generation of the wallet's account set — a counter
+    /// bumped on every account addition. Filter-sync layers snapshot it at
+    /// scan time and refuse to certify coverage at commit time when it has
+    /// changed, since the scan did not include the added account's scripts
+    /// (dashpay/rust-dashcore#649). The default (constant `0`) opts an
+    /// implementation out of the check.
+    fn account_generation(&self) -> u64 {
+        0
+    }
 
     /// Return the highest chainlock that has been applied to this
     /// wallet, retaining the signing proof. Blocks at or below
@@ -194,6 +268,14 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Mark UTXOs for a transaction as InstantSend-locked across all accounts
     /// and update the corresponding transaction record context.
     /// Returns `true` if any UTXO was newly marked.
+    /// Apply an InstantSend lock: mark the transaction's UTXOs, rewrite its
+    /// record context, and drop any competing spend the lock now settles.
+    ///
+    /// Returns whether wallet state changed in any of those ways — callers
+    /// use it to refresh balances and to decide whether to emit
+    /// `TransactionInstantLocked`. An outgoing transaction can own no UTXOs
+    /// of ours and still change state by rewriting its context or by the
+    /// sweep removing a loser, so this is broader than "a UTXO was marked".
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
 
     /// Return the aggregated monitor revision across all accounts.
@@ -249,6 +331,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
         self.metadata.synced_height
     }
 
+    fn account_generation(&self) -> u64 {
+        self.account_generation
+    }
+
     fn last_applied_chain_lock(&self) -> Option<&ChainLock> {
         self.metadata.last_applied_chain_lock.as_ref()
     }
@@ -289,6 +375,11 @@ impl WalletInfoInterface for ManagedWalletInfo {
             self.metadata.last_applied_chain_lock = Some(chain_lock);
         }
 
+        // Evict observed-spent entries the promotion above just made final.
+        // Must run after both the per-account promotion and the metadata
+        // advance, so the finality boundary reflects this chainlock.
+        self.prune_finalized_observed_spends();
+
         ApplyChainLockOutcome {
             locked_transactions,
             metadata_advanced: advance,
@@ -313,6 +404,53 @@ impl WalletInfoInterface for ManagedWalletInfo {
             scripts.extend(account.all_script_pubkeys());
         }
         scripts
+    }
+
+    fn monitored_filter_elements(&self) -> Vec<Vec<u8>> {
+        let mut elements = Vec::new();
+        for account in self.accounts.all_accounts() {
+            if matches!(
+                account.managed_account_type(),
+                ManagedAccountType::ProviderOwnerKeys { .. }
+                    | ManagedAccountType::ProviderVotingKeys { .. }
+            ) {
+                // Extract the bare 20-byte `hash160` a peer inserted into the
+                // compact filter, matching the byte order the BIP37 bloom path
+                // uses in `dash-spv`'s `address_payload_bytes`. Provider
+                // owner/voting keys are P2PKH, so this is the pubkey hash.
+                elements.extend(account.all_addresses().iter().filter_map(|a| match a.payload() {
+                    Payload::PubkeyHash(hash) => Some(<[u8; 20]>::from(*hash).to_vec()),
+                    Payload::ScriptHash(hash) => Some(<[u8; 20]>::from(*hash).to_vec()),
+                    _ => None,
+                }));
+            }
+        }
+        // Dash Core inserts a `ProRegTx`'s `collateralOutpoint` into the block's
+        // compact filter serialized the consensus way — 32-byte txid followed by
+        // the 4-byte little-endian vout, 36 bytes total (see
+        // `ExtractSpecialTxFilterElements`). A wallet that owns the collateral
+        // output but not the masternode's owner/voting keys would otherwise never
+        // match that `ProRegTx` on the scriptPubKey path, so watch each UTXO's
+        // outpoint directly.
+        //
+        // This is gated on the wallet holding provider accounts because the
+        // element is only ever useful to a masternode owner: it discovers a
+        // `ProRegTx` that *references* one of the wallet's UTXOs as collateral.
+        // The common paths are already covered without it — an owner-created
+        // `ProRegTx` is matched by its fee input's script, and a key-holding
+        // owner by the owner/voting hashes above — so the collateral element
+        // only adds the narrow case where the wallet owns the collateral but
+        // holds neither the keys nor the funding inputs. A funding-only wallet
+        // can never hit that case, so it skips these elements rather than pay
+        // the per-UTXO false-positive cost on every compact-filter query. Within
+        // a provider wallet every UTXO is watched (not just collateral-sized
+        // ones) to avoid hardcoding network-specific collateral amounts.
+        if self.accounts.has_provider_accounts() {
+            for utxo in self.utxos() {
+                elements.push(dashcore::consensus::encode::serialize(&utxo.outpoint));
+            }
+        }
+        elements
     }
 
     fn utxos(&self) -> BTreeSet<&Utxo> {
@@ -391,6 +529,9 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn update_synced_height(&mut self, current_height: u32) {
         self.metadata.synced_height = current_height;
+        // A newly committed checkpoint can lift the finality boundary when the
+        // chainlock was already ahead of the old synced_height.
+        self.prune_finalized_observed_spends();
     }
 
     fn matured_coinbase_records(
@@ -425,21 +566,90 @@ impl WalletInfoInterface for ManagedWalletInfo {
             return false;
         }
         let mut any_changed = false;
+        // Kept for the sweep below: it needs the locked transaction's inputs,
+        // and this signature carries only its txid.
+        let mut locked_transaction = None;
         for mut account in self.accounts.all_accounts_mut() {
             if account.mark_utxos_instant_send(txid) {
                 any_changed = true;
             }
             if let Some(record) = account.transactions_mut().get_mut(txid) {
                 record.update_context(TransactionContext::InstantSend(lock.clone()));
+                any_changed = true;
+                if locked_transaction.is_none() {
+                    locked_transaction = Some(record.transaction.clone());
+                }
             }
         }
-        if any_changed {
+        // An IS lock settles this transaction's inputs, so any recorded
+        // competing spend can never confirm. This is the path the live
+        // dash-spv pipeline takes for a lock arriving after the transaction is
+        // already tracked (`process_instant_send_lock`), and it had no sweep —
+        // the one in `check_core_transaction` is only reachable on a first
+        // sighting that already carries the lock.
+        let swept = locked_transaction.is_some_and(|tx| {
+            !self.sweep_conflicts(&tx, &TransactionContext::InstantSend(lock.clone())).is_empty()
+        });
+        if any_changed && !swept {
+            // `sweep_conflicts` recomputes on its own when it removes
+            // something, so this only covers the marking-only case.
             self.update_balance();
         }
-        any_changed
+        any_changed || swept
     }
 
     fn monitor_revision(&self) -> u64 {
         self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestWalletContext;
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+
+    /// A wallet that owns a UTXO must surface that UTXO's outpoint as a bare
+    /// filter element, consensus-serialized to the 36-byte form Dash Core
+    /// inserts for a `ProRegTx`'s `collateralOutpoint`, so a compact-filter
+    /// scan matches a masternode registration against the wallet's collateral
+    /// even when the wallet holds none of the masternode's keys.
+    #[tokio::test]
+    async fn test_watched_utxo_outpoint_is_filter_element() {
+        let (ctx, _tx) = TestWalletContext::new_random().with_mempool_funding(200_000).await;
+        let outpoint = ctx.first_utxo().outpoint;
+        let serialized = dashcore::consensus::encode::serialize(&outpoint);
+        assert_eq!(serialized.len(), 36, "outpoint serializes to txid ++ le-vout");
+
+        let elements = ctx.managed_wallet.monitored_filter_elements();
+        assert!(
+            elements.contains(&serialized),
+            "monitored_filter_elements must carry the watched UTXO's serialized outpoint"
+        );
+    }
+
+    /// A funding-only wallet (no provider accounts) must not surface its UTXO
+    /// outpoints as filter elements. The collateral outpoint only helps a
+    /// masternode owner discover a `ProRegTx` referencing its collateral, so a
+    /// plain payment wallet skips that per-UTXO cost entirely.
+    #[tokio::test]
+    async fn test_funding_only_wallet_omits_collateral_outpoints() {
+        let (ctx, _tx) = TestWalletContext::new_random_with_options(
+            WalletAccountCreationOptions::BIP44AccountsOnly([0].into()),
+        )
+        .with_mempool_funding(200_000)
+        .await;
+
+        // The wallet is funded, so it owns a UTXO...
+        let serialized = dashcore::consensus::encode::serialize(&ctx.first_utxo().outpoint);
+        assert_eq!(serialized.len(), 36);
+
+        // ...but with no provider accounts it emits no filter elements at all,
+        // in particular none of its UTXO outpoints.
+        let elements = ctx.managed_wallet.monitored_filter_elements();
+        assert!(
+            elements.is_empty(),
+            "funding-only wallet must not emit collateral outpoint elements"
+        );
     }
 }
