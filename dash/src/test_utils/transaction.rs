@@ -1,5 +1,9 @@
 use std::ops::Range;
 
+use hashes::Hash;
+
+use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
 
 /// A special transaction type no Dash Core version assigns
@@ -73,6 +77,22 @@ impl Transaction {
             input: inputs,
             output: outputs,
             special_transaction_payload: None,
+        }
+    }
+}
+
+impl CoinbasePayload {
+    /// A current version payload at `height` committing to empty lists.
+    pub fn dummy(height: u32) -> Self {
+        CoinbasePayload {
+            version: CoinbasePayload::CURRENT_VERSION,
+            height,
+            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
+            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+            best_cl_height: None,
+            best_cl_signature: None,
+            asset_locked_amount: None,
+            merkle_root_asset_unlocks: None,
         }
     }
 }
