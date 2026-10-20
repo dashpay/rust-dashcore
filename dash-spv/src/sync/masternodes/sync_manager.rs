@@ -647,7 +647,7 @@ mod tests {
     };
     use crate::error::{StorageError, StorageResult};
     use crate::network::{Message, NetworkRequest, RequestSender};
-    use crate::sml_engine::test_support::quorum_entry;
+    use crate::sml_engine::test_support::{qr_info_diffs_mut, quorum_entry};
     use crate::sml_engine::{FeedError, MasternodeListEngine, QRInfoFeedResult};
     use crate::storage::{
         BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
@@ -810,17 +810,22 @@ mod tests {
         tip: u32,
     ) -> (TestMasternodesManager, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>, BlockHash)
     {
+        syncing_manager_awaiting_qrinfo_over(Header::dummy_batch(0..tip + 1)).await
+    }
+
+    /// [`syncing_manager_awaiting_qrinfo`] over the header chain `headers`, up
+    /// to its last header.
+    async fn syncing_manager_awaiting_qrinfo_over(
+        headers: Vec<Header>,
+    ) -> (TestMasternodesManager, RequestSender, mpsc::UnboundedReceiver<NetworkRequest>, BlockHash)
+    {
+        let tip = headers.len() as u32 - 1;
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let block_headers = storage.block_headers();
         block_headers
             .write()
             .await
-            .store_headers(
-                &Header::dummy_batch(0..tip + 1)
-                    .iter()
-                    .map(HashedBlockHeader::from)
-                    .collect::<Vec<_>>(),
-            )
+            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
             .await
             .unwrap();
         let engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
@@ -853,20 +858,23 @@ mod tests {
             DiskStorageManager::new(&ClientConfig::testnet().with_storage_path(dir.path()))
                 .await
                 .unwrap();
-        let (mut manager, engine, requests, _rx, hashes) =
-            manager_after_a_tip_update_request(&storage, true, |hashes| {
-                vec![MasternodeList::empty(hashes[TIP as usize], TIP)]
-            })
+        let (mut manager, engine, requests, _rx, _hashes, mut diffs) =
+            manager_after_a_tip_update_request(
+                &storage,
+                true,
+                |hashes| vec![MasternodeList::empty(hashes[TIP as usize], TIP)],
+                |hashes, lists| {
+                    let diff = MnListDiff {
+                        base_block_hash: hashes[TIP as usize],
+                        ..MnListDiff::dummy_between(0, 0)
+                    };
+                    vec![(TIP + 1, diff.committing_on(Some(&lists[0]), TIP + 1))]
+                },
+            )
             .await;
         manager.set_state(state);
 
-        let diff = MnListDiff {
-            base_block_hash: hashes[TIP as usize],
-            block_hash: hashes[TIP as usize + 1],
-            ..MnListDiff::dummy_between(0, 0)
-        };
-        let diff = committing(&engine, diff, TIP + 1).await;
-        deliver(&mut manager, &requests, diff).await;
+        deliver(&mut manager, &requests, diffs.remove(0)).await;
 
         assert!(engine.read().await.masternode_lists.contains_key(&(TIP + 1)));
         let file = dir.path().join("masternodes").join(format!("diff_{}.dat", TIP + 1));
@@ -889,20 +897,45 @@ mod tests {
     /// A synced manager over `storage`, whose header chain runs to `TIP + 1`
     /// and whose engine holds the lists `lists` builds from the block hashes,
     /// once it sent the tip update from `TIP` to `TIP + 1`. With
-    /// `store_diffs`, it stores diffs in `storage`. Returns the manager, its
-    /// engine, the request channel, and the block hash at each height.
+    /// `store_diffs`, it stores diffs in `storage`.
+    ///
+    /// `diffs` builds the diffs a test delivers, from the block hashes and
+    /// the lists, each with the height of its block. A coinbase does not
+    /// depend on the hash of its block, so the header at that height is then
+    /// given the merkle root the diff's proof leads to, and the diff the hash
+    /// of that header.
+    ///
+    /// Returns the manager, its engine, the request channel, the block hash
+    /// at each height and the diffs.
     async fn manager_after_a_tip_update_request(
         storage: &DiskStorageManager,
         store_diffs: bool,
         lists: impl FnOnce(&[BlockHash]) -> Vec<MasternodeList>,
+        diffs: impl FnOnce(&[BlockHash], &[MasternodeList]) -> Vec<(u32, MnListDiff)>,
     ) -> (
         MasternodesManager<PersistentBlockHeaderStorage>,
         Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>,
         RequestSender,
         mpsc::UnboundedReceiver<NetworkRequest>,
         Vec<BlockHash>,
+        Vec<MnListDiff>,
     ) {
-        let headers = Header::dummy_batch(0..TIP + 2);
+        let mut headers = Header::dummy_batch(0..TIP + 2);
+        let unproven: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
+        let lists = lists(&unproven);
+        let diffs = diffs(&unproven, &lists)
+            .into_iter()
+            .map(|(height, mut diff)| {
+                assert!(
+                    lists.iter().all(|list| list.known_height != height),
+                    "the header at {height} holds a list, whose block hash would change"
+                );
+                let header = &mut headers[height as usize];
+                header.merkle_root = diff.proven_merkle_root();
+                diff.block_hash = header.block_hash();
+                diff
+            })
+            .collect();
         let block_headers = storage.block_headers();
         block_headers
             .write()
@@ -912,7 +945,7 @@ mod tests {
             .unwrap();
         let hashes: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
         let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
-        for list in lists(&hashes) {
+        for list in lists {
             engine.masternode_lists.insert(list.known_height, list);
         }
         let engine = Arc::new(RwLock::new(engine));
@@ -929,7 +962,7 @@ mod tests {
         let requests = RequestSender::new(tx);
         manager.send_tip_mnlistdiff_update(&requests).await.unwrap();
         rx.try_recv().expect("the tip update is sent");
-        (manager, engine, requests, rx, hashes)
+        (manager, engine, requests, rx, hashes, diffs)
     }
 
     /// A synced manager that sent a tip update from `TIP` to `TIP + 1`, whose
@@ -937,43 +970,60 @@ mod tests {
     /// already holds an older unverified quorum mined at `OLD_MINED`, and the
     /// engine holds no list at either quorum's work block, only one at
     /// `OLDER`. Returns the manager, its engine, the request channel, the
-    /// response, and the block hash at each height.
+    /// response, the work-block list an honest peer serves for the new
+    /// quorum, and the block hash at each height.
     async fn manager_awaiting_a_tip_update_with_a_new_quorum() -> (
         MasternodesManager<PersistentBlockHeaderStorage>,
         Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>,
         RequestSender,
         mpsc::UnboundedReceiver<NetworkRequest>,
         MnListDiff,
+        MnListDiff,
         Vec<BlockHash>,
     ) {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        let (manager, engine, requests, rx, hashes) =
-            manager_after_a_tip_update_request(&storage, false, |hashes| {
-                let old = Arc::new(test_quorum(hashes[OLD_MINED as usize]).into());
-                let quorums = BTreeMap::from([(
-                    LLMQType::LlmqtypeTest,
-                    BTreeMap::from([(quorum_hash_at(hashes, OLD_MINED), old)]),
-                )]);
-                vec![
-                    MasternodeList::empty(hashes[OLDER as usize], OLDER),
-                    MasternodeList::build(BTreeMap::new(), quorums, hashes[TIP as usize], TIP)
-                        .build(),
-                ]
-            })
+        let work = MINED - QUORUM_MEMBER_LIST_OFFSET;
+        let (manager, engine, requests, rx, hashes, mut diffs) =
+            manager_after_a_tip_update_request(
+                &storage,
+                false,
+                |hashes| {
+                    let old = Arc::new(test_quorum(hashes[OLD_MINED as usize]).into());
+                    let quorums = BTreeMap::from([(
+                        LLMQType::LlmqtypeTest,
+                        BTreeMap::from([(quorum_hash_at(hashes, OLD_MINED), old)]),
+                    )]);
+                    vec![
+                        MasternodeList::empty(hashes[OLDER as usize], OLDER),
+                        MasternodeList::build(BTreeMap::new(), quorums, hashes[TIP as usize], TIP)
+                            .build(),
+                    ]
+                },
+                |hashes, lists| {
+                    let tip_update = MnListDiff {
+                        base_block_hash: hashes[TIP as usize],
+                        new_quorums: vec![test_quorum(hashes[MINED as usize])],
+                        quorums_chainlock_signatures: vec![QuorumCLSigObject {
+                            signature: BLSSignature::from([2; 96]),
+                            index_set: vec![0],
+                        }],
+                        ..MnListDiff::dummy_between(0, 0)
+                    };
+                    let work_list = MnListDiff {
+                        base_block_hash: hashes[OLDER as usize],
+                        ..MnListDiff::dummy_between(0, 0)
+                    };
+                    vec![
+                        (TIP + 1, tip_update.committing_on(Some(&lists[1]), TIP + 1)),
+                        (work, work_list.committing_on(Some(&lists[0]), work)),
+                    ]
+                },
+            )
             .await;
 
-        let tip_update = MnListDiff {
-            base_block_hash: hashes[TIP as usize],
-            block_hash: hashes[TIP as usize + 1],
-            new_quorums: vec![test_quorum(hashes[MINED as usize])],
-            quorums_chainlock_signatures: vec![QuorumCLSigObject {
-                signature: BLSSignature::from([2; 96]),
-                index_set: vec![0],
-            }],
-            ..MnListDiff::dummy_between(0, 0)
-        };
-        let tip_update = committing(&engine, tip_update, TIP + 1).await;
-        (manager, engine, requests, rx, tip_update, hashes)
+        let work_list = diffs.pop().expect("the work-block list");
+        let tip_update = diffs.pop().expect("the tip update");
+        (manager, engine, requests, rx, tip_update, work_list, hashes)
     }
 
     const OLDER: u32 = 70;
@@ -1049,7 +1099,7 @@ mod tests {
     /// the update did not bring is left to the QRInfo path.
     #[tokio::test]
     async fn a_tip_update_fetches_the_work_block_list_of_a_quorum_it_brings() {
-        let (mut manager, engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, engine, requests, mut rx, tip_update, work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let work = MINED - QUORUM_MEMBER_LIST_OFFSET;
 
@@ -1071,13 +1121,7 @@ mod tests {
         );
         assert_eq!(next_diff_request(&mut rx), None, "the older quorum is not asked for");
 
-        let (base_block_hash, block_hash) = request.unwrap();
-        let work_list = MnListDiff {
-            base_block_hash,
-            block_hash,
-            ..MnListDiff::dummy_between(0, 0)
-        };
-        let work_list = committing(&engine, work_list, work).await;
+        assert_eq!(request, Some((work_list.base_block_hash, work_list.block_hash)));
         let events = deliver(&mut manager, &requests, work_list).await;
 
         let engine = engine.read().await;
@@ -1111,7 +1155,7 @@ mod tests {
     /// work-block list.
     #[tokio::test]
     async fn a_refused_tip_update_is_retried_then_given_up() {
-        let (mut manager, engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, engine, requests, mut rx, tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let refused = MnListDiff {
             // A new quorum needs a ChainLock signature to be applied.
@@ -1142,7 +1186,7 @@ mod tests {
     /// header tip is asked for as usual.
     #[tokio::test]
     async fn a_given_up_tip_update_is_not_asked_again_until_the_tip_moves() {
-        let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, _engine, requests, mut rx, tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let refused = MnListDiff {
             quorums_chainlock_signatures: Vec::new(),
@@ -1180,7 +1224,7 @@ mod tests {
     /// three peers refused: it publishes nothing and waits for the next tip.
     #[tokio::test]
     async fn a_tip_update_no_peer_answers_is_given_up_until_the_tip_moves() {
-        let (mut manager, engine, requests, mut rx, _tip_update, hashes) =
+        let (mut manager, engine, requests, mut rx, _tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         manager.sync_state.mnlistdiff_pipeline.set_timeout(Duration::from_millis(1));
 
@@ -1205,7 +1249,7 @@ mod tests {
     /// each one times out.
     #[tokio::test]
     async fn a_tip_update_whose_peers_keep_dropping_is_given_up_within_its_lifetime() {
-        let (mut manager, engine, requests, mut rx, _tip_update, hashes) =
+        let (mut manager, engine, requests, mut rx, _tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let lifetime = Duration::from_secs(1);
         manager.sync_state.mnlistdiff_pipeline.set_lifetime(lifetime);
@@ -1239,18 +1283,15 @@ mod tests {
     /// update it was fetched for applied, so the update completes.
     #[tokio::test]
     async fn a_tip_update_completes_when_its_work_block_list_is_given_up() {
-        let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, _engine, requests, mut rx, tip_update, work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         deliver(&mut manager, &requests, tip_update).await;
-        let (base_block_hash, block_hash) =
-            next_diff_request(&mut rx).expect("the work-block list is asked for");
+        assert!(next_diff_request(&mut rx).is_some(), "the work-block list is asked for");
 
         let unusable = MnListDiff {
-            base_block_hash,
-            block_hash,
             // A new quorum without its ChainLock signature is refused.
             new_quorums: vec![test_quorum(hashes[MINED as usize])],
-            ..MnListDiff::dummy_between(0, 0)
+            ..work_list
         };
         for refusing in [peer(1), peer(2)] {
             let events = deliver_from(&mut manager, &requests, refusing, unusable.clone()).await;
@@ -1301,14 +1342,27 @@ mod tests {
     }
 
     /// Has the header tip move to a new block at `height`, and returns the
-    /// tip update to it `tick` asks for, which brings no quorum.
+    /// tip update to it `tick` asks for, which brings no quorum and deletes
+    /// `deleted_quorums`, proven by the new header.
     async fn move_the_tip_to<H: BlockHeaderStorage>(
         manager: &mut MasternodesManager<H>,
         requests: &RequestSender,
         rx: &mut mpsc::UnboundedReceiver<NetworkRequest>,
         height: u32,
+        deleted_quorums: Vec<DeletedQuorum>,
     ) -> MnListDiff {
-        let tip = Header::dummy(height);
+        let base_block_hash =
+            manager.engine.read().await.latest_masternode_list().expect("a list").block_hash;
+        let tip_update = MnListDiff {
+            base_block_hash,
+            deleted_quorums,
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let tip_update = committing(&manager.engine, tip_update, height).await;
+        let tip = Header {
+            merkle_root: tip_update.proven_merkle_root(),
+            ..Header::dummy(height)
+        };
         manager
             .header_storage
             .write()
@@ -1318,21 +1372,21 @@ mod tests {
             .unwrap();
         manager.progress.update_block_header_tip_height(height);
         manager.tick(requests).await.expect("tick succeeds");
-        let (base_block_hash, block_hash) =
-            next_diff_request(rx).expect("the next header tip is asked for");
-        assert_eq!(block_hash, tip.block_hash(), "the tip update to {height}");
-        let tip_update = MnListDiff {
-            base_block_hash,
-            block_hash,
-            ..MnListDiff::dummy_between(0, 0)
-        };
-        committing(&manager.engine, tip_update, height).await
+        assert_eq!(
+            next_diff_request(rx),
+            Some((base_block_hash, tip.block_hash())),
+            "the tip update to {height} is asked for"
+        );
+        MnListDiff {
+            block_hash: tip.block_hash(),
+            ..tip_update
+        }
     }
 
     /// Gives up the work-block list the tip update to `TIP + 1` asks for,
     /// after three timeouts or three refusing peers, then has the header tip
     /// move to `TIP + 2` and returns the tip update to it, which brings no
-    /// quorum.
+    /// quorum and deletes `deleted_quorums`.
     async fn give_up_the_work_block_list_then_move_the_tip(
         manager: &mut MasternodesManager<PersistentBlockHeaderStorage>,
         requests: &RequestSender,
@@ -1340,6 +1394,7 @@ mod tests {
         tip_update: MnListDiff,
         hashes: &[BlockHash],
         by_timeouts: bool,
+        deleted_quorums: Vec<DeletedQuorum>,
     ) -> MnListDiff {
         deliver(manager, requests, tip_update).await;
         let request = next_diff_request(rx).expect("the work-block list is asked for");
@@ -1358,7 +1413,7 @@ mod tests {
             manager.tick(requests).await.expect("tick succeeds");
         }
         assert!(rx.try_recv().is_err(), "no tick asks for the work-block list again");
-        move_the_tip_to(manager, requests, rx, TIP + 2).await
+        move_the_tip_to(manager, requests, rx, TIP + 2, deleted_quorums).await
     }
 
     /// A work-block list given up is asked for again, with fresh attempts,
@@ -1370,7 +1425,7 @@ mod tests {
     #[test_case(false; "after three refusing peers")]
     #[tokio::test]
     async fn a_given_up_work_block_list_is_asked_again_with_the_next_tip_update(by_timeouts: bool) {
-        let (mut manager, engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, engine, requests, mut rx, tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let work = MINED - QUORUM_MEMBER_LIST_OFFSET;
         let next_tip_update = give_up_the_work_block_list_then_move_the_tip(
@@ -1380,6 +1435,7 @@ mod tests {
             tip_update,
             &hashes,
             by_timeouts,
+            Vec::new(),
         )
         .await;
         let nearer = OLDER + 10;
@@ -1432,25 +1488,21 @@ mod tests {
     /// of the newest list needs it, forgotten rather than asked for again.
     #[tokio::test]
     async fn a_given_up_work_block_list_no_quorum_needs_is_forgotten() {
-        let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, _engine, requests, mut rx, tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
-        let next_tip_update = give_up_the_work_block_list_then_move_the_tip(
+        let removing_the_quorum = give_up_the_work_block_list_then_move_the_tip(
             &mut manager,
             &requests,
             &mut rx,
             tip_update,
             &hashes,
             false,
-        )
-        .await;
-        let removing_the_quorum = MnListDiff {
-            deleted_quorums: vec![DeletedQuorum {
+            vec![DeletedQuorum {
                 llmq_type: LLMQType::LlmqtypeTest,
                 quorum_hash: quorum_hash_at(&hashes, MINED),
             }],
-            ..next_tip_update
-        };
-        let removing_the_quorum = committing(&manager.engine, removing_the_quorum, TIP + 2).await;
+        )
+        .await;
 
         let events = deliver(&mut manager, &requests, removing_the_quorum).await;
 
@@ -1471,7 +1523,7 @@ mod tests {
     /// update by the list's lifetime, for as long as a quorum needs it.
     #[tokio::test]
     async fn a_work_block_list_given_up_again_is_asked_for_less_and_less_often() {
-        let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, _engine, requests, mut rx, tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         // Keeps every tip of the test, up to 119, to tip updates: the cycle
         // based at 96 needs no QRInfo once validated.
@@ -1484,6 +1536,7 @@ mod tests {
                 tip_update,
                 &hashes,
                 false,
+                Vec::new(),
             )
             .await,
         );
@@ -1492,7 +1545,7 @@ mod tests {
         for height in TIP + 2..=TIP + 16 {
             let tip_update = match next_tip_update.take() {
                 Some(tip_update) => tip_update,
-                None => move_the_tip_to(&mut manager, &requests, &mut rx, height).await,
+                None => move_the_tip_to(&mut manager, &requests, &mut rx, height, Vec::new()).await,
             };
             let events = deliver(&mut manager, &requests, tip_update).await;
             if let Some(request) = next_diff_request(&mut rx) {
@@ -1517,7 +1570,23 @@ mod tests {
     async fn a_given_up_work_block_list_is_kept_while_the_headers_do_not_read() {
         let dir = tempfile::TempDir::new().unwrap();
         let mut inner = PersistentBlockHeaderStorage::open(dir.path()).await.unwrap();
-        let headers = Header::dummy_batch(0..TIP + 2);
+        let mut headers = Header::dummy_batch(0..TIP + 2);
+        let unproven: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
+        let tip_update = MnListDiff {
+            base_block_hash: unproven[TIP as usize],
+            new_quorums: vec![test_quorum(unproven[MINED as usize])],
+            quorums_chainlock_signatures: vec![QuorumCLSigObject {
+                signature: BLSSignature::from([2; 96]),
+                index_set: vec![0],
+            }],
+            ..MnListDiff::dummy_between(0, 0)
+        }
+        .committing_on(Some(&MasternodeList::empty(unproven[TIP as usize], TIP)), TIP + 1);
+        headers[TIP as usize + 1].merkle_root = tip_update.proven_merkle_root();
+        let tip_update = MnListDiff {
+            block_hash: headers[TIP as usize + 1].block_hash(),
+            ..tip_update
+        };
         inner
             .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
             .await
@@ -1543,30 +1612,21 @@ mod tests {
         let requests = RequestSender::new(tx);
         manager.send_tip_mnlistdiff_update(&requests).await.unwrap();
         rx.try_recv().expect("the tip update is sent");
-        let tip_update = MnListDiff {
-            base_block_hash: hashes[TIP as usize],
-            block_hash: hashes[TIP as usize + 1],
-            new_quorums: vec![test_quorum(hashes[MINED as usize])],
-            quorums_chainlock_signatures: vec![QuorumCLSigObject {
-                signature: BLSSignature::from([2; 96]),
-                index_set: vec![0],
-            }],
-            ..MnListDiff::dummy_between(0, 0)
-        };
-        let tip_update = committing(&manager.engine, tip_update, TIP + 1).await;
         deliver(&mut manager, &requests, tip_update).await;
         let work_list = next_diff_request(&mut rx).expect("the work-block list is asked for");
         give_up_the_work_block_list(&mut manager, &requests, work_list, &hashes, false).await;
         while rx.try_recv().is_ok() {}
 
-        let next_tip_update = move_the_tip_to(&mut manager, &requests, &mut rx, TIP + 2).await;
+        let next_tip_update =
+            move_the_tip_to(&mut manager, &requests, &mut rx, TIP + 2, Vec::new()).await;
         header_storage.write().await.unreadable_block = Some(hashes[MINED as usize]);
         let events = deliver(&mut manager, &requests, next_tip_update).await;
         assert!(!events.is_empty(), "the update completes, got {events:?}");
         assert!(rx.try_recv().is_err(), "the list cannot be told still needed, so not asked");
 
         header_storage.write().await.unreadable_block = None;
-        let next_tip_update = move_the_tip_to(&mut manager, &requests, &mut rx, TIP + 3).await;
+        let next_tip_update =
+            move_the_tip_to(&mut manager, &requests, &mut rx, TIP + 3, Vec::new()).await;
         deliver(&mut manager, &requests, next_tip_update).await;
         assert_eq!(
             next_diff_request(&mut rx).map(|(_, target)| target),
@@ -1580,7 +1640,7 @@ mod tests {
     /// it with the next tip update.
     #[tokio::test]
     async fn a_full_disconnect_has_a_given_up_work_block_list_asked_with_the_next_tip_update() {
-        let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, _engine, requests, mut rx, tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let next_tip_update = give_up_the_work_block_list_then_move_the_tip(
             &mut manager,
@@ -1589,6 +1649,7 @@ mod tests {
             tip_update,
             &hashes,
             false,
+            Vec::new(),
         )
         .await;
         deliver(&mut manager, &requests, next_tip_update).await;
@@ -1597,7 +1658,8 @@ mod tests {
         while rx.try_recv().is_ok() {}
 
         manager.on_disconnect();
-        let next_tip_update = move_the_tip_to(&mut manager, &requests, &mut rx, TIP + 3).await;
+        let next_tip_update =
+            move_the_tip_to(&mut manager, &requests, &mut rx, TIP + 3, Vec::new()).await;
         deliver(&mut manager, &requests, next_tip_update).await;
 
         assert_eq!(
@@ -1611,7 +1673,7 @@ mod tests {
     /// and the tip update it was fetched for completes.
     #[tokio::test]
     async fn a_tip_update_completes_when_no_peer_answers_its_work_block_list() {
-        let (mut manager, _engine, requests, mut rx, tip_update, _hashes) =
+        let (mut manager, _engine, requests, mut rx, tip_update, _work_list, _hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         deliver(&mut manager, &requests, tip_update).await;
         assert!(next_diff_request(&mut rx).is_some(), "the work-block list is asked for");
@@ -1636,7 +1698,7 @@ mod tests {
     /// from another base is not what was asked for, and spends nothing.
     #[tokio::test]
     async fn an_mnlistdiff_from_another_base_is_ignored() {
-        let (mut manager, engine, requests, mut rx, tip_update, hashes) =
+        let (mut manager, engine, requests, mut rx, tip_update, _work_list, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let from_another_base = MnListDiff {
             base_block_hash: hashes[OLDER as usize],
@@ -1920,6 +1982,30 @@ mod tests {
         }
     }
 
+    /// The header chain up to `TIP` and the QRInfo [`qr_info_for_tip`] builds
+    /// on it, whose tip diff also brings the quorums `tip_quorums` makes of the
+    /// block hashes. The header of each diff's block takes the merkle root the
+    /// diff proves, and the diff the hash of that header. Returns the headers,
+    /// the QRInfo and the block hash at each height.
+    fn proven_qr_info(
+        tip_quorums: impl FnOnce(&[BlockHash]) -> Vec<QuorumEntry>,
+    ) -> (Vec<Header>, QRInfo, Vec<BlockHash>) {
+        let mut headers = Header::dummy_batch(0..TIP + 1);
+        let unproven: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
+        let mut qr_info = qr_info_for_tip(&unproven, tip_quorums(&unproven));
+        for diff in qr_info_diffs_mut(&mut qr_info) {
+            let height = unproven
+                .iter()
+                .position(|block_hash| *block_hash == diff.block_hash)
+                .expect("a diff ends at a header");
+            let header = &mut headers[height];
+            header.merkle_root = diff.proven_merkle_root();
+            diff.block_hash = header.block_hash();
+        }
+        let hashes = headers.iter().map(|header| header.block_hash()).collect();
+        (headers, qr_info, hashes)
+    }
+
     /// A QRInfo the engine could not judge because our header storage did not
     /// read is not the peer's fault: the peer is not recorded as a refuser,
     /// and its QRInfo is processed once the storage reads again. A block the
@@ -1929,12 +2015,11 @@ mod tests {
     async fn a_qr_info_our_header_storage_could_not_read_is_not_held_against_its_peer() {
         let dir = tempfile::TempDir::new().unwrap();
         let mut inner = PersistentBlockHeaderStorage::open(dir.path()).await.unwrap();
-        let headers = Header::dummy_batch(0..TIP + 1);
+        let (headers, honest, hashes) = proven_qr_info(|_| Vec::new());
         inner
             .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
             .await
             .unwrap();
-        let hashes: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
         let header_storage = Arc::new(RwLock::new(UnreadableHeaders::new(inner)));
         let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&header_storage));
         engine.masternode_lists.insert(
@@ -1952,7 +2037,6 @@ mod tests {
         let requests = RequestSender::new(tx);
         manager.send_qrinfo_for_tip(&requests).await.expect("the QRInfo is sent");
         let tip = hashes[TIP as usize];
-        let honest = qr_info_for_tip(&hashes, Vec::new());
         let response = |peer, qr_info: &QRInfo| {
             Message::new(peer, NetworkMessage::QRInfo(Box::new(qr_info.clone())))
         };
@@ -2003,14 +2087,14 @@ mod tests {
     #[test_case(false; "after three refusing peers")]
     #[tokio::test]
     async fn an_initial_sync_completes_when_a_work_block_list_is_given_up(by_timeouts: bool) {
-        let (mut manager, requests, mut rx, _) = syncing_manager_awaiting_qrinfo(TIP).await;
-        let hashes: Vec<BlockHash> =
-            Header::dummy_batch(0..TIP + 1).iter().map(|header| header.block_hash()).collect();
+        let (headers, qr_info, hashes) =
+            proven_qr_info(|hashes| vec![test_quorum(hashes[OLD_MINED as usize])]);
+        let (mut manager, requests, mut rx, _) =
+            syncing_manager_awaiting_qrinfo_over(headers).await;
         manager.engine.write().await.masternode_lists.insert(
             QR_INFO_BASE,
             MasternodeList::empty(hashes[QR_INFO_BASE as usize], QR_INFO_BASE),
         );
-        let qr_info = qr_info_for_tip(&hashes, vec![test_quorum(hashes[OLD_MINED as usize])]);
         let events = manager
             .handle_message(
                 Message::new(peer(1), NetworkMessage::QRInfo(Box::new(qr_info))),
@@ -2227,7 +2311,7 @@ mod tests {
     /// third refusal though a peer dropped in between.
     #[tokio::test]
     async fn a_peer_disconnect_keeps_the_attempts_a_target_spent() {
-        let (mut manager, _engine, requests, mut rx, tip_update, _hashes) =
+        let (mut manager, _engine, requests, mut rx, tip_update, _work_list, _hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let refused = MnListDiff {
             quorums_chainlock_signatures: Vec::new(),
@@ -2256,10 +2340,13 @@ mod tests {
     async fn an_mnlistdiff_failing_on_our_own_gap_is_not_held_against_its_peer(
         base_in_chain: bool,
     ) {
-        let (mut manager, requests, mut rx, _) = syncing_manager_awaiting_qrinfo(200).await;
+        let unproven = MnListDiff::dummy_between(0, 0);
+        let mut headers = Header::dummy_batch(0..201);
+        headers[160].merkle_root = unproven.proven_merkle_root();
+        let hashes: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
+        let (mut manager, requests, mut rx, _) =
+            syncing_manager_awaiting_qrinfo_over(headers).await;
         manager.sync_state.qrinfo_received();
-        let hashes: Vec<BlockHash> =
-            Header::dummy_batch(0..201).iter().map(|header| header.block_hash()).collect();
         let base = if base_in_chain {
             hashes[150]
         } else {
@@ -2272,7 +2359,7 @@ mod tests {
         let diff = MnListDiff {
             base_block_hash: base,
             block_hash: target,
-            ..MnListDiff::dummy_between(0, 0)
+            ..unproven
         };
 
         deliver_from(&mut manager, &requests, peer(1), diff).await;
@@ -2297,14 +2384,13 @@ mod tests {
     /// QRInfo for it is taken, and when the tip asked for moves on.
     #[tokio::test]
     async fn the_peers_that_refused_a_qr_info_are_forgotten_on_success_and_on_a_new_tip() {
-        let (mut manager, requests, mut rx, tip) = syncing_manager_awaiting_qrinfo(TIP).await;
-        let hashes: Vec<BlockHash> =
-            Header::dummy_batch(0..TIP + 1).iter().map(|header| header.block_hash()).collect();
+        let (headers, honest, hashes) = proven_qr_info(|_| Vec::new());
+        let (mut manager, requests, mut rx, tip) =
+            syncing_manager_awaiting_qrinfo_over(headers).await;
         manager.engine.write().await.masternode_lists.insert(
             QR_INFO_BASE,
             MasternodeList::empty(hashes[QR_INFO_BASE as usize], QR_INFO_BASE),
         );
-        let honest = qr_info_for_tip(&hashes, Vec::new());
         let mut refused = honest.clone();
         refused.mn_list_diff_h.block_hash = BlockHash::from_byte_array([0x33; 32]);
         let response = |peer, qr_info: &QRInfo| {

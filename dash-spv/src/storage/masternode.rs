@@ -405,14 +405,21 @@ mod tests {
         diffs
     }
 
+    /// A storage in `dir` over a header chain holding `heights`, whose headers
+    /// prove the coinbases of `proven`.
     async fn open_storage(
         dir: &TempDir,
         heights: &[(u8, u32)],
+        proven: &[&MnListDiff],
     ) -> PersistentMasternodeStorage<MockHeaderStorage> {
-        let map = heights.iter().map(|(b, h)| (hash(*b), *h)).collect();
+        let mut headers =
+            MockHeaderStorage::new(heights.iter().map(|(b, h)| (hash(*b), *h)).collect());
+        for diff in proven {
+            headers.prove(diff);
+        }
         PersistentMasternodeStorage::open(
             dir.path(),
-            Arc::new(RwLock::new(MockHeaderStorage(map))),
+            Arc::new(RwLock::new(headers)),
             Network::Regtest,
         )
         .await
@@ -423,7 +430,7 @@ mod tests {
     async fn truncating_drops_the_messages_stored_above() {
         let dir = TempDir::new().unwrap();
         let heights = [(0x00, 0), (0xAA, 100), (0xBB, 200)];
-        let mut storage = open_storage(&dir, &heights).await;
+        let mut storage = open_storage(&dir, &heights, &[]).await;
 
         storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
         storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
@@ -431,7 +438,7 @@ mod tests {
 
         storage.truncate_above(100).await.unwrap();
 
-        let reopened = open_storage(&dir, &heights).await;
+        let reopened = open_storage(&dir, &heights, &[]).await;
         assert_eq!(reopened.diffs.keys().copied().collect::<Vec<_>>(), vec![100]);
         assert!(reopened.qr_infos.is_empty());
     }
@@ -442,12 +449,13 @@ mod tests {
         let heights = [(0x00, 0), (0xAA, 100), (0xBB, 200)];
         let diffs = dummy_chain(&[(0xAA, 100), (0xBB, 200)]);
         {
-            let mut storage = open_storage(&dir, &heights).await;
+            let mut storage = open_storage(&dir, &heights, &[]).await;
             storage.store_diff(100, &diffs[0]).await.unwrap();
             storage.store_diff(200, &diffs[1]).await.unwrap();
         }
 
-        let engine = open_storage(&dir, &heights).await.load_engine().await;
+        let engine =
+            open_storage(&dir, &heights, &[&diffs[0], &diffs[1]]).await.load_engine().await;
 
         assert_eq!(engine.masternode_lists.keys().copied().collect::<Vec<_>>(), vec![100, 200]);
         assert_eq!(engine.masternode_lists[&200].block_hash, hash(0xBB));
@@ -488,7 +496,7 @@ mod tests {
             ..MnListDiff::dummy(0x00, 0xAA)
         }
         .committing_on(None, 100);
-        let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
+        let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)], &[&diff]).await;
         storage.store_diff(100, &diff).await.unwrap();
 
         let engine = storage.load_engine().await;
@@ -509,8 +517,8 @@ mod tests {
     #[tokio::test]
     async fn replay_skips_a_message_whose_block_left_the_chain() {
         let dir = TempDir::new().unwrap();
-        let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
         let diffs = dummy_chain(&[(0xAA, 100), (0xBB, 200)]);
+        let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)], &[&diffs[0]]).await;
         storage.store_diff(100, &diffs[0]).await.unwrap();
         storage.store_diff(200, &diffs[1]).await.unwrap();
 
@@ -522,10 +530,10 @@ mod tests {
     #[tokio::test]
     async fn replay_skips_an_orphan_and_keeps_going() {
         let dir = TempDir::new().unwrap();
-        let mut storage =
-            open_storage(&dir, &[(0x00, 0), (0xAA, 100), (0xBB, 150), (0xDD, 120)]).await;
-
         let diffs = dummy_chain(&[(0xAA, 100), (0xBB, 150)]);
+        let heights = [(0x00, 0), (0xAA, 100), (0xBB, 150), (0xDD, 120)];
+        let mut storage = open_storage(&dir, &heights, &[&diffs[0], &diffs[1]]).await;
+
         storage.store_diff(100, &diffs[0]).await.unwrap();
         storage.store_diff(120, &MnListDiff::dummy(0xEE, 0xDD)).await.unwrap();
         storage.store_diff(150, &diffs[1]).await.unwrap();
@@ -542,7 +550,7 @@ mod tests {
     #[tokio::test]
     async fn storing_the_same_height_twice_keeps_the_newer_message() {
         let dir = TempDir::new().unwrap();
-        let mut storage = open_storage(&dir, &[]).await;
+        let mut storage = open_storage(&dir, &[], &[]).await;
 
         storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
         storage.store_diff(100, &MnListDiff::dummy(0x00, 0xBB)).await.unwrap();
@@ -591,7 +599,7 @@ mod tests {
         let height = 100;
         let stored = chained_qr_info(0xA0, 0xE0);
         let dir = TempDir::new().unwrap();
-        let mut storage = open_storage(&dir, &[]).await;
+        let mut storage = open_storage(&dir, &[], &[]).await;
         storage.store_qr_info(height, &stored).await.unwrap();
         if corrupt_stored {
             tokio::fs::write(&storage.qr_infos[&height], b"not a qrinfo").await.unwrap();
@@ -613,15 +621,16 @@ mod tests {
         let folder = dir.path().join(PersistentMasternodeStorage::<MockHeaderStorage>::FOLDER_NAME);
         tokio::fs::create_dir_all(&folder).await.unwrap();
 
+        let diff = dummy_chain(&[(0xAA, 100)]).remove(0);
         {
-            let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
-            storage.store_diff(100, &dummy_chain(&[(0xAA, 100)])[0]).await.unwrap();
+            let mut storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)], &[]).await;
+            storage.store_diff(100, &diff).await.unwrap();
         }
 
         tokio::fs::write(folder.join("diff_50.dat"), b"not a diff").await.unwrap();
         tokio::fs::write(folder.join("diff_abc.dat"), b"x").await.unwrap();
 
-        let storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)]).await;
+        let storage = open_storage(&dir, &[(0x00, 0), (0xAA, 100)], &[&diff]).await;
         assert_eq!(
             storage.diffs.keys().copied().collect::<Vec<_>>(),
             vec![50, 100],
@@ -688,21 +697,21 @@ mod tests {
             std::fs::write(folder.join(S::file_name(S::DIFF_PREFIX, height)), serialize(diff))
                 .unwrap()
         };
+        let mut headers = MockHeaderStorage::new(
+            (1..=tip).map(|height| (BlockHash::dummy(height), height)).collect(),
+        );
         write(1, &mined);
+        headers.prove(&mined);
         write(2, &retired);
+        headers.prove(&retired);
         for height in 3..=tip {
             let unchanged = MnListDiff::dummy_between(height - 1, height)
                 .committing_on(Some(&without_quorum), height);
             write(height, &unchanged);
+            headers.prove(&unchanged);
         }
-        let heights = (1..=tip).map(|height| (BlockHash::dummy(height), height)).collect();
-        let storage = S::open(
-            dir.path(),
-            Arc::new(RwLock::new(MockHeaderStorage(heights))),
-            Network::Regtest,
-        )
-        .await
-        .unwrap();
+        let storage =
+            S::open(dir.path(), Arc::new(RwLock::new(headers)), Network::Regtest).await.unwrap();
 
         let engine = storage.load_engine().await;
         assert!(engine
@@ -753,13 +762,20 @@ mod tests {
         heights.remove(&Network::Mainnet.known_genesis_block_hash().unwrap());
         let tip_height = heights[&qr_info.mn_list_diff_tip.block_hash];
         let base = qr_info.mn_list_diff_at_h_minus_c.block_hash;
-        let work_block_height = heights[&base] + 24;
+        // A block of its own, above the h-c list and below the tip.
+        let work_block_height = (heights[&base] + 1..)
+            .find(|height| !heights.values().any(|held| held == height))
+            .expect("a free height");
         heights.insert(hash(0xEE), work_block_height);
 
+        let mut headers = MockHeaderStorage::new(heights);
+        for diff in qr_info_diffs(&qr_info) {
+            headers.prove(diff);
+        }
         let dir = TempDir::new().unwrap();
         let mut storage = PersistentMasternodeStorage::open(
             dir.path(),
-            Arc::new(RwLock::new(MockHeaderStorage(heights))),
+            Arc::new(RwLock::new(headers)),
             Network::Mainnet,
         )
         .await
@@ -776,6 +792,7 @@ mod tests {
             ..MnListDiff::dummy(0x00, 0xEE)
         }
         .committing_on(Some(base_list), work_block_height);
+        storage.headers.write().await.prove(&diff);
         storage.store_diff(work_block_height, &diff).await.unwrap();
 
         let engine = storage.load_engine().await;
