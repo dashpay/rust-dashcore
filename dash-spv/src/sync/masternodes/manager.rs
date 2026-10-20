@@ -11,7 +11,7 @@ use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
-use super::pipeline::MnListDiffPipeline;
+use super::pipeline::{Attempt, MnListDiffPipeline, MAX_MNLISTDIFF_ATTEMPTS};
 use crate::error::{StorageResult, SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, MasternodeStorage, PersistentMasternodeStorage};
@@ -20,6 +20,7 @@ use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::BlockHash;
 use std::collections::BTreeSet;
+use std::net::SocketAddr;
 
 /// Single enum that serves two roles in the masternode-sync flow:
 ///
@@ -459,6 +460,58 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         self.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base_hash, new_tip_hash)]);
         self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
         Ok(vec![])
+    }
+
+    /// Spends an attempt of `target`, whose response could not be used, then
+    /// sends its retry, or gives it up and moves the pipeline on. `refused_by`
+    /// is the peer to avoid for the retry, `None` when the fault is ours, and
+    /// `tip_update` tells whether `target` was a tip update.
+    pub(super) async fn retry_or_give_up(
+        &mut self,
+        target: BlockHash,
+        refused_by: Option<SocketAddr>,
+        tip_update: bool,
+        requests: &RequestSender,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        match self.sync_state.mnlistdiff_pipeline.retry_or_give_up(target, refused_by) {
+            Attempt::Retried => {
+                self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+                Ok(vec![])
+            }
+            Attempt::GivenUp => {
+                tracing::warn!(
+                    "Giving up on the MnListDiff for {target} after {MAX_MNLISTDIFF_ATTEMPTS} \
+                     attempts"
+                );
+                self.progress.add_diffs_processed(1);
+                self.continue_diff_pipeline(tip_update, requests).await
+            }
+        }
+    }
+
+    /// Sends what the diff pipeline has pending and completes it once it
+    /// drained. `gave_up_tip_update` tells whether a tip update was just given
+    /// up.
+    pub(super) async fn continue_diff_pipeline(
+        &mut self,
+        gave_up_tip_update: bool,
+        requests: &RequestSender,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
+            return Ok(vec![]);
+        }
+        // In `Incremental` mode, a tip update given up leaves the engine state
+        // unchanged. Skip completion to avoid emitting a spurious
+        // `MasternodeStateUpdated` for stale state. A work-block list given up
+        // leaves the tip it was fetched for applied, so that pipeline still
+        // completes.
+        if gave_up_tip_update && matches!(self.sync_state.pipeline_mode, PipelineMode::Incremental)
+        {
+            return Ok(vec![]);
+        }
+        tracing::info!("MnListDiff pipeline complete");
+        self.complete_pipeline(requests).await
     }
 
     /// Dispatch pipeline completion based on the current `PipelineMode`. Called when

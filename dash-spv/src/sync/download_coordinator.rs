@@ -165,6 +165,27 @@ impl<K: Hash + Eq + Clone> DownloadCoordinator<K> {
         }
     }
 
+    /// Takes `key` out of flight without counting it as received, so the
+    /// retries already spent on it carry over to the next one.
+    pub(crate) fn release(&mut self, key: &K) {
+        self.in_flight.remove(key);
+    }
+
+    /// Retries spent on `key` since it was last received or cancelled.
+    pub(crate) fn retry_count(&self, key: &K) -> u32 {
+        self.retry_counts.get(key).copied().unwrap_or(0)
+    }
+
+    /// Forgets the retries spent on every item.
+    pub(crate) fn clear_retry_counts(&mut self) {
+        self.retry_counts.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_timeout(&mut self, timeout: Duration) {
+        self.config.timeout = timeout;
+    }
+
     /// Drop a key from the pending queue without touching in-flight state.
     ///
     /// Used when a pending item is satisfied through a side channel: a late
