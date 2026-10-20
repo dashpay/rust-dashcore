@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use crate::BlockHash;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::sml::error::SmlError;
 use crate::sml::masternode_list::{MasternodeList, MasternodeMap, QuorumMap};
+use crate::{BlockHash, Transaction};
 
 pub struct MasternodeListBuilder {
     pub block_hash: BlockHash,
@@ -38,6 +39,28 @@ impl MasternodeListBuilder {
         self.masternode_merkle_root = Some(masternode_merkle_root);
         self.llmq_merkle_root = llmq_merkle_root;
         self
+    }
+
+    /// Builds the list once it matches what `coinbase_transaction` commits to, see
+    /// [`MasternodeList::check_coinbase_commitments`]. The list holds the roots that check
+    /// returns.
+    pub(crate) fn build_matching_coinbase(
+        self,
+        coinbase_transaction: &Transaction,
+    ) -> Result<MasternodeList, SmlError> {
+        let mut list = MasternodeList {
+            block_hash: self.block_hash,
+            known_height: self.block_height,
+            masternode_merkle_root: None,
+            llmq_merkle_root: None,
+            masternodes: self.masternodes,
+            quorums: self.quorums,
+        };
+        let (masternode_root, quorum_root) =
+            list.check_coinbase_commitments(coinbase_transaction)?;
+        list.masternode_merkle_root = Some(masternode_root);
+        list.llmq_merkle_root = Some(quorum_root);
+        Ok(list)
     }
 
     pub fn build(self) -> MasternodeList {

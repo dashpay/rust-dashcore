@@ -23,6 +23,12 @@ impl MasternodeList {
     /// - Adds or updates new masternodes.
     /// - Removes deleted quorums.
     /// - Adds or updates new quorums.
+    /// - Checks the resulting list against what the diff's coinbase commits to, as Dash Core
+    ///   checks a block: its height, `merkleRootMNList` and, from payload version 2,
+    ///   `merkleRootQuorums`.
+    ///
+    /// The coinbase is taken as given: [`MnListDiff::verify_coinbase_merkle_proof`] ties it to
+    /// the block header, which only the caller holds.
     ///
     /// # Parameters
     ///
@@ -32,12 +38,15 @@ impl MasternodeList {
     /// # Returns
     ///
     /// - `Ok(MasternodeList)`: A new `MasternodeList` reflecting the applied changes.
-    /// - `Err(SmlError)`: An error if the base block hash does not match the expected value.
+    /// - `Err(SmlError)`: An error if the diff does not apply to this list.
     ///
     /// # Errors
     ///
     /// - Returns `SmlError::BaseBlockHashMismatch` if the `base_block_hash` of the `diff`
     ///   does not match the expected block hash of the current masternode list.
+    /// - Returns `SmlError::MissingCoinbasePayload`, `SmlError::InvalidCoinbasePayload`,
+    ///   `SmlError::CoinbaseHeightMismatch`, `SmlError::MasternodeListMerkleRootMismatch` or
+    ///   `SmlError::QuorumMerkleRootMismatch` if the resulting list does not match the coinbase.
     pub fn apply_diff(
         &self,
         diff: MnListDiff,
@@ -51,6 +60,8 @@ impl MasternodeList {
                 found: diff.base_block_hash,
             });
         }
+
+        let coinbase_tx = diff.coinbase_tx;
 
         let mut updated_masternodes = Arc::clone(&self.masternodes);
         if !diff.deleted_masternodes.is_empty() || !diff.new_masternodes.is_empty() {
@@ -68,13 +79,13 @@ impl MasternodeList {
             && diff.new_quorums.is_empty()
             && diff.quorums_chainlock_signatures.is_empty()
         {
-            let builder = MasternodeList::build(
+            return MasternodeList::build(
                 updated_masternodes,
                 shared_quorums,
                 diff.block_hash,
                 diff_end_height,
-            );
-            return Ok(builder.build());
+            )
+            .build_matching_coinbase(&coinbase_tx);
         }
         let updated_quorums = Arc::make_mut(&mut shared_quorums);
 
@@ -142,15 +153,9 @@ impl MasternodeList {
             );
         }
 
-        // Create and return the new MasternodeList
-        let builder = MasternodeList::build(
-            updated_masternodes,
-            shared_quorums,
-            diff.block_hash,
-            diff_end_height,
-        );
-
-        Ok(builder.build())
+        // Create the new MasternodeList and return it once the coinbase vouches for it
+        MasternodeList::build(updated_masternodes, shared_quorums, diff.block_hash, diff_end_height)
+            .build_matching_coinbase(&coinbase_tx)
     }
 }
 

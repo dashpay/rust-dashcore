@@ -2,6 +2,7 @@
 use bincode::{Decode, Encode};
 use thiserror::Error;
 
+use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::{BlockHash, TxMerkleNode};
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -63,4 +64,41 @@ pub enum SmlError {
     /// first transaction of the block.
     #[error("The merkle proof in the diff for block {0} does not prove its coinbase transaction")]
     CoinbaseNotProven(BlockHash),
+
+    /// The coinbase carries no coinbase payload while the list holds masternodes or quorums, or
+    /// carries a payload of another type.
+    #[error("The coinbase transaction in the diff for block {0} carries no coinbase payload")]
+    MissingCoinbasePayload(BlockHash),
+
+    /// The coinbase payload is version 0 or too short for its version.
+    #[error("The coinbase payload in the diff for block {0} is invalid")]
+    InvalidCoinbasePayload(BlockHash),
+
+    /// The coinbase payload is for another height than the list built from the diff.
+    #[error(
+        "The coinbase of block {block_hash} is for height {found}, but its list is at {expected}"
+    )]
+    CoinbaseHeightMismatch {
+        block_hash: BlockHash,
+        expected: u32,
+        found: u32,
+    },
+
+    /// The masternode list built from the diff does not match `merkleRootMNList` of the coinbase.
+    #[error(
+        "Masternode list merkle root at block {block_hash} is {computed}, not the one the coinbase commits to"
+    )]
+    MasternodeListMerkleRootMismatch {
+        block_hash: BlockHash,
+        computed: MerkleRootMasternodeList,
+    },
+
+    /// The quorums built from the diff do not match `merkleRootQuorums` of the coinbase.
+    #[error(
+        "Quorum merkle root at block {block_hash} is {computed}, not the one the coinbase commits to"
+    )]
+    QuorumMerkleRootMismatch {
+        block_hash: BlockHash,
+        computed: MerkleRootQuorums,
+    },
 }

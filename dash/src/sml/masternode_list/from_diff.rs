@@ -19,7 +19,8 @@ use hashes::Hash;
 use std::collections::BTreeMap;
 
 impl MasternodeList {
-    /// The list a diff from the genesis block builds, known at `known_height`.
+    /// The list a diff from the genesis block builds, known at `known_height`, once it matches
+    /// what the diff's coinbase commits to, as [`MasternodeList::apply_diff`] checks it.
     pub fn from_diff(
         diff: MnListDiff,
         known_height: CoreBlockHeight,
@@ -95,15 +96,9 @@ impl MasternodeList {
             },
         );
 
-        // Construct `MasternodeList`
-        Ok(MasternodeList {
-            block_hash: diff.block_hash,
-            known_height,
-            masternode_merkle_root: diff.merkle_hashes.first().cloned(),
-            llmq_merkle_root: None, // Adjust based on real data availability
-            masternodes: masternodes.into(),
-            quorums: quorums.into(),
-        })
+        // Construct the `MasternodeList` and return it once the coinbase vouches for it
+        MasternodeList::build(masternodes, quorums, diff.block_hash, known_height)
+            .build_matching_coinbase(&diff.coinbase_tx)
     }
 }
 
