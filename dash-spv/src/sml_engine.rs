@@ -655,7 +655,26 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// Applies a QRInfo's diffs, then validates and stores its active rotation
     /// set and the previous cycle's. An invalid current-cycle quorum fails it.
+    ///
+    /// A QRInfo that fails leaves the engine as it was: its retry starts from
+    /// the same lists, and no later message builds on lists of a QRInfo that
+    /// was refused, and so never stored for the next start. The copy kept
+    /// meanwhile shares the lists' maps; the few stored cycles are copied.
     pub async fn feed_qr_info(
+        &mut self,
+        qr_info: QRInfo,
+    ) -> Result<QRInfoFeedResult, QuorumValidationError> {
+        let masternode_lists = self.masternode_lists.clone();
+        let rotated_quorums_per_cycle = self.rotated_quorums_per_cycle.clone();
+        let result = self.apply_qr_info(qr_info).await;
+        if result.is_err() {
+            self.masternode_lists = masternode_lists;
+            self.rotated_quorums_per_cycle = rotated_quorums_per_cycle;
+        }
+        result
+    }
+
+    async fn apply_qr_info(
         &mut self,
         qr_info: QRInfo,
     ) -> Result<QRInfoFeedResult, QuorumValidationError> {
@@ -1031,6 +1050,7 @@ mod tests {
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
     use dashcore::prelude::CoreBlockHeight;
+    use dashcore::sml::error::SmlError;
     use dashcore::sml::llmq_entry_verification::{
         LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
     };
@@ -1376,6 +1396,36 @@ mod tests {
         (engine, qr_info)
     }
 
+    /// A QRInfo the engine refuses leaves it as it was, so a retry against
+    /// another peer starts from the same lists, and no later message builds on
+    /// lists of a QRInfo that was never stored.
+    #[tokio::test]
+    async fn a_refused_qr_info_leaves_the_engine_as_it_was() {
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        assert!(
+            !qr_info.mn_list_diff_h.new_quorums.is_empty(),
+            "diff h must bring quorums for their signatures to be required"
+        );
+        qr_info.mn_list_diff_h.quorums_chainlock_signatures.clear();
+        let lists = engine.masternode_lists.clone();
+        let cycles = engine.rotated_quorums_per_cycle.clone();
+
+        let result = engine.feed_qr_info(qr_info).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(QuorumValidationError::SMLError(SmlError::IncompleteSignatureSet))
+            ),
+            "diff h must be refused, got {result:?}"
+        );
+        assert!(
+            engine.masternode_lists == lists,
+            "a refused QRInfo must leave the lists as they were"
+        );
+        assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
+    }
+
     #[tokio::test]
     async fn validate_first_qr_info_on_fresh_engine_with_mixed_cycle_quorums() {
         let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
@@ -1635,6 +1685,35 @@ mod tests {
             !engine.rotated_quorums_per_cycle.contains_key(&cycle_key),
             "rejected QRInfo must not have stored its cycle"
         );
+    }
+
+    /// A QRInfo refused after its diffs applied, here for a current-cycle
+    /// quorum whose signature does not verify, leaves the engine as it was
+    /// too: neither the lists its diffs built nor the previous cycle it stored
+    /// on the way stay behind.
+    #[tokio::test]
+    async fn a_qr_info_refused_after_its_diffs_applied_leaves_the_engine_as_it_was() {
+        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture().await;
+        let target = qr_info.last_commitment_per_index[0].quorum_hash;
+        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
+            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        let lists = engine.masternode_lists.clone();
+        let cycles = engine.rotated_quorums_per_cycle.clone();
+
+        let result = engine.feed_qr_info(qr_info).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(_))
+            ),
+            "the current-cycle quorum must be refused, got {result:?}"
+        );
+        assert!(
+            engine.masternode_lists == lists,
+            "a refused QRInfo must leave the lists as they were"
+        );
+        assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
     }
 
     /// A quarter signature keyed by elimination can belong to another cycle,
