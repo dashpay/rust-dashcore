@@ -1162,7 +1162,7 @@ pub(crate) mod test_support {
             network: Network,
             heights: HashMap<BlockHash, CoreBlockHeight>,
         ) -> Self {
-            Self::new(network, Arc::new(RwLock::new(MockHeaderStorage(heights))))
+            Self::new(network, Arc::new(RwLock::new(MockHeaderStorage::new(heights))))
         }
 
         pub(crate) fn headers(&self) -> Arc<RwLock<MockHeaderStorage>> {
@@ -1170,24 +1170,40 @@ pub(crate) mod test_support {
         }
 
         pub(crate) fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
-            self.headers.try_write().expect("unlocked").0.insert(block_hash, height);
+            self.headers.try_write().expect("unlocked").insert(block_hash, height);
         }
 
         pub(crate) fn forget_block(&mut self, block_hash: &BlockHash) {
-            self.headers.try_write().expect("unlocked").0.remove(block_hash);
+            self.headers.try_write().expect("unlocked").remove(block_hash);
         }
 
         pub(crate) fn block_height(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
-            self.headers.try_read().expect("unlocked").0.get(block_hash).copied()
+            self.headers.try_read().expect("unlocked").height(block_hash)
+        }
+
+        /// Gives the header of `diff`'s block the merkle root its coinbase
+        /// proof leads to.
+        pub(crate) fn prove(&self, diff: &MnListDiff) {
+            self.headers.try_write().expect("unlocked").prove(diff);
+        }
+
+        /// [`Self::prove`] for every diff of `qr_info`.
+        pub(crate) fn prove_qr_info(&self, qr_info: &QRInfo) {
+            for diff in qr_info_diffs(qr_info) {
+                self.prove(diff);
+            }
         }
 
         /// `diff` with a coinbase that commits to the list it builds on this
-        /// engine's list at its base, at the height of its block.
+        /// engine's list at its base, at the height of its block, and a header
+        /// of that block its proof holds against.
         pub(crate) fn with_matching_coinbase(&self, diff: MnListDiff) -> MnListDiff {
             let height = self.block_height(&diff.block_hash).expect("the block's height is known");
             let base =
                 self.masternode_lists.values().find(|list| list.block_hash == diff.base_block_hash);
-            diff.committing_on(base, height)
+            let diff = diff.committing_on(base, height);
+            self.prove(&diff);
+            diff
         }
 
         /// Gives every diff of `qr_info` a coinbase that commits to the list it
@@ -1195,42 +1211,52 @@ pub(crate) mod test_support {
         /// edits the commitments a QRInfo carries uses this, since its diffs no
         /// longer match the coinbases of their blocks.
         pub(crate) fn recommit(&self, qr_info: &mut QRInfo) {
+            let QRInfo {
+                mn_list_diff_tip,
+                mn_list_diff_h,
+                mn_list_diff_at_h_minus_c,
+                mn_list_diff_at_h_minus_2c,
+                mn_list_diff_at_h_minus_3c,
+                quorum_snapshot_and_mn_list_diff_at_h_minus_4c,
+                mn_list_diff_list,
+                ..
+            } = qr_info;
+            // The order `feed_qr_info` applies them in.
+            let in_feed_order = mn_list_diff_list
+                .iter_mut()
+                .chain(
+                    quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_mut().map(|(_, diff)| diff),
+                )
+                .chain([
+                    mn_list_diff_at_h_minus_3c,
+                    mn_list_diff_at_h_minus_2c,
+                    mn_list_diff_at_h_minus_c,
+                    mn_list_diff_h,
+                    mn_list_diff_tip,
+                ]);
             let mut built: HashMap<BlockHash, MasternodeList> = HashMap::new();
-            let mut pending = qr_info_diffs_mut(qr_info);
-            while !pending.is_empty() {
-                let before = pending.len();
-                let mut waiting = Vec::new();
-                for diff in pending {
-                    let base = match built.get(&diff.base_block_hash) {
-                        Some(list) => Some(list.clone()),
-                        None if diff.base_block_hash == diff.block_hash => {
-                            waiting.push(diff);
-                            continue;
-                        }
-                        None => self
-                            .masternode_lists
-                            .values()
-                            .find(|list| list.block_hash == diff.base_block_hash)
-                            .cloned(),
-                    };
-                    let height =
-                        self.block_height(&diff.block_hash).expect("the block's height is known");
-                    *diff = diff.clone().committing_on(base.as_ref(), height);
-                    let list = match &base {
-                        Some(base) => base.apply_diff(diff.clone(), height, self.network),
-                        None => MasternodeList::from_diff(diff.clone(), height, self.network),
-                    }
-                    .expect("a recommitted diff applies");
-                    built.insert(diff.block_hash, list);
+            for diff in in_feed_order {
+                let base = built.get(&diff.base_block_hash).cloned().or_else(|| {
+                    self.masternode_lists
+                        .values()
+                        .find(|list| list.block_hash == diff.base_block_hash)
+                        .cloned()
+                });
+                let height =
+                    self.block_height(&diff.block_hash).expect("the block's height is known");
+                *diff = diff.clone().committing_on(base.as_ref(), height);
+                self.prove(diff);
+                let list = match &base {
+                    Some(base) => base.apply_diff(diff.clone(), height, self.network),
+                    None => MasternodeList::from_diff(diff.clone(), height, self.network),
                 }
-                assert!(waiting.len() < before, "a diff of the QRInfo has no base");
-                pending = waiting;
+                .expect("a recommitted diff applies");
+                built.insert(diff.block_hash, list);
             }
         }
 
         pub(crate) fn block_hash_at(&self, height: CoreBlockHeight) -> Option<BlockHash> {
-            let headers = self.headers.try_read().expect("unlocked");
-            headers.0.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
+            self.headers.try_read().expect("unlocked").hash_at(height)
         }
 
         /// Verifies `chain_lock` as the ChainLock manager does.
@@ -1629,11 +1655,13 @@ mod tests {
         for diff in qr_info_diffs_mut(&mut qr_info) {
             restore_2240504_capture(diff);
         }
+        engine.prove_qr_info(&qr_info);
 
         for ((base_height, height), mut diff) in mn_list_diffs {
             restore_2240504_capture(&mut diff);
             engine.feed_block_height(base_height, diff.base_block_hash);
             engine.feed_block_height(height, diff.block_hash);
+            engine.prove(&diff);
             engine.apply_diff(diff).await.expect("expected to apply diff");
         }
 
@@ -1666,6 +1694,7 @@ mod tests {
         let qr_info: QRInfo = decode_fixture(include_bytes!(
             "../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"
         ));
+        engine.prove_qr_info(&qr_info);
         (engine, qr_info)
     }
 
@@ -2164,7 +2193,7 @@ mod tests {
         readable: usize,
     ) -> MasternodeListEngine<FailingFrom> {
         let headers = Arc::new(RwLock::new(FailingFrom {
-            inner: MockHeaderStorage(engine.headers().try_read().expect("unlocked").0.clone()),
+            inner: engine.headers().try_read().expect("unlocked").clone(),
             unreadable,
             readable,
             reads: AtomicUsize::new(0),

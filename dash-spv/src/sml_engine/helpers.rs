@@ -442,7 +442,8 @@ mod prune_tests {
 
     async fn extend(engine: &mut TestEngine, from: CoreBlockHeight, to: CoreBlockHeight) {
         engine.feed_block_height(to, BlockHash::dummy(to));
-        engine.apply_diff(MnListDiff::dummy_between(from, to)).await.unwrap();
+        let unchanged = engine.with_matching_coinbase(MnListDiff::dummy_between(from, to));
+        engine.apply_diff(unchanged).await.unwrap();
     }
 
     /// 400_85's active window plus 8, beyond Platform's walk-back (2304) and
