@@ -44,15 +44,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
     }
 
-    /// The coinbase payload of the highest block a masternode list diff was
-    /// applied for. `None` while masternode sync is off or before a diff whose
-    /// coinbase carries one was applied.
+    /// **Not secure, and temporary:** the unverified coinbase payload of the
+    /// highest block an applied masternode list diff carried one for, replaced
+    /// on the `dev` branch by a version that keeps only coinbases verified
+    /// against their block (dashpay/rust-dashcore#1202).
     ///
-    /// **Not secure, and temporary.** Nothing authenticates the payload, so a
-    /// single peer can serve one of its choosing. The `dev` branch replaces
-    /// this with a version that keeps only coinbases verified against their
-    /// block (dashpay/rust-dashcore#1202). See
-    /// [`MasternodeListEngine::latest_coinbase`].
+    /// Nothing authenticates the payload, so a single peer can serve one of its
+    /// choosing; see [`MasternodeListEngine::latest_coinbase`]. `None` while
+    /// masternode sync is off, and after a restart until a diff whose coinbase
+    /// carries one is applied.
     pub async fn latest_coinbase(&self) -> Option<CoinbasePayload> {
         let engine = self.masternode_engine.as_ref()?;
         engine.read().await.latest_coinbase().cloned()

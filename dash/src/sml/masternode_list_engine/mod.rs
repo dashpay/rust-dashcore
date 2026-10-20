@@ -254,7 +254,8 @@ pub struct MasternodeListEngine {
         >,
     >,
     pub network: Network,
-    /// Not secure, and temporary: see
+    /// **Not secure, and temporary:** replaced on the `dev` branch by a version
+    /// that keeps only verified coinbases (dashpay/rust-dashcore#1202); see
     /// [`MasternodeListEngine::latest_coinbase`]. Kept in memory only: serde
     /// and bincode skip it, so a persisted engine keeps its layout and decodes
     /// with `None`. It still takes part in `==`.
@@ -476,16 +477,16 @@ impl MasternodeListEngine {
         self.masternode_lists.last_key_value().map(|(_, list)| list)
     }
 
-    /// The coinbase payload of the highest block a masternode list diff was
-    /// applied for.
+    /// **Not secure, and temporary:** the unverified coinbase payload of the
+    /// highest block an applied masternode list diff carried one for, replaced
+    /// on the `dev` branch by a version that keeps only coinbases verified
+    /// against their block (dashpay/rust-dashcore#1202).
     ///
-    /// **Not secure, and temporary.** Nothing authenticates the payload: the
-    /// engine checks neither the diff's merkle proof of the coinbase against
-    /// the block header nor the payload's merkle roots against the lists, so a
-    /// single peer can serve a diff whose quorums verify together with a
-    /// payload of its choosing. The `dev` branch replaces this with a version
-    /// that keeps only coinbases verified against their block
-    /// (dashpay/rust-dashcore#1202).
+    /// Nothing authenticates the payload. The engine checks neither the diff's
+    /// merkle proof of the coinbase against the block header nor the payload's
+    /// merkle roots against the lists, and quorum verification does not gate
+    /// it: any diff the engine applies sets it, even one from a QRInfo the
+    /// engine then rejects. A single peer can serve a payload of its choosing.
     ///
     /// Every `MnListDiff` carries its block's coinbase transaction. Each diff
     /// the engine applies, including those [`Self::feed_qr_info`] and
@@ -493,7 +494,8 @@ impl MasternodeListEngine {
     /// payload unless a higher block's is kept; a diff applied again for the
     /// same block replaces it, as it does that block's list. A payload whose
     /// `height` is not the height the diff was applied at is not kept, since
-    /// Core requires the two to match. `None` until a diff whose coinbase
+    /// Core requires the two to match, so the kept payload can be a lower
+    /// block's than the highest list's. `None` until a diff whose coinbase
     /// carries a payload is applied, and after decoding, since the payload is
     /// not persisted.
     pub fn latest_coinbase(&self) -> Option<&CoinbasePayload> {
@@ -3170,6 +3172,7 @@ mod tests {
         (to_2227096, to_2241332)
     }
 
+    /// The coinbase payload of `diff`, for tests that tamper with it.
     fn coinbase_payload_mut(diff: &mut MnListDiff) -> &mut CoinbasePayload {
         match &mut diff.coinbase_tx.special_transaction_payload {
             Some(TransactionPayload::CoinbasePayloadType(payload)) => payload,
@@ -3177,6 +3180,7 @@ mod tests {
         }
     }
 
+    /// The height and version of the payload the engine kept.
     fn latest_coinbase_height_and_version(engine: &MasternodeListEngine) -> Option<(u32, u16)> {
         engine.latest_coinbase().map(|coinbase| (coinbase.height, coinbase.version))
     }
