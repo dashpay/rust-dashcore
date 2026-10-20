@@ -2,7 +2,7 @@
 use bincode::{Decode, Encode};
 use thiserror::Error;
 
-use crate::BlockHash;
+use crate::{BlockHash, TxMerkleNode};
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -42,4 +42,25 @@ pub enum SmlError {
     /// Error indicating the quorum signature set is incomplete (some slots were not filled).
     #[error("Incomplete quorum signature set; not all slots were filled")]
     IncompleteSignatureSet,
+
+    /// The diff's partial merkle tree is malformed.
+    #[error("Invalid coinbase merkle proof in the diff for block {block_hash}: {reason}")]
+    InvalidCoinbaseMerkleProof {
+        block_hash: BlockHash,
+        reason: String,
+    },
+
+    /// The diff's partial merkle tree does not lead to the merkle root of the block header.
+    #[error(
+        "Coinbase merkle proof for block {block_hash} leads to {computed}, not to the merkle root of the block header"
+    )]
+    CoinbaseMerkleRootMismatch {
+        block_hash: BlockHash,
+        computed: TxMerkleNode,
+    },
+
+    /// The diff's partial merkle tree does not prove exactly its coinbase transaction as the
+    /// first transaction of the block.
+    #[error("The merkle proof in the diff for block {0} does not prove its coinbase transaction")]
+    CoinbaseNotProven(BlockHash),
 }

@@ -4,10 +4,12 @@ use bincode::{Decode, Encode};
 use crate::bls_sig_utils::BLSSignature;
 use crate::hash_types::MerkleRootMasternodeList;
 use crate::internal_macros::impl_consensus_encoding;
+use crate::merkle_tree::PartialMerkleTree;
+use crate::sml::error::SmlError;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use crate::{BlockHash, ProTxHash, QuorumHash, Transaction};
+use crate::{BlockHash, ProTxHash, QuorumHash, Transaction, TxMerkleNode};
 
 /// The `getmnlistd` message requests a `mnlistdiff` message that provides either:
 /// - A full masternode list (if `base_block_hash` is all-zero)
@@ -76,6 +78,59 @@ impl_consensus_encoding!(
     quorums_chainlock_signatures
 );
 
+impl MnListDiff {
+    /// Checks that `coinbase_tx` is the first transaction of the block whose header commits to
+    /// `block_merkle_root`, the proof Dash Core builds in `BuildSimplifiedMNListDiff`: the
+    /// partial merkle tree (`total_transactions`, `merkle_hashes`, `merkle_flags`) must lead to
+    /// that root and match exactly one transaction, at position 0, whose txid is the coinbase's.
+    ///
+    /// # Errors
+    ///
+    /// - `SmlError::InvalidCoinbaseMerkleProof` if the partial merkle tree is malformed.
+    /// - `SmlError::CoinbaseMerkleRootMismatch` if it leads to a different merkle root.
+    /// - `SmlError::CoinbaseNotProven` if it does not match exactly the coinbase at position 0,
+    ///   or `coinbase_tx` is not a coinbase.
+    pub fn verify_coinbase_merkle_proof(
+        &self,
+        block_merkle_root: TxMerkleNode,
+    ) -> Result<(), SmlError> {
+        let mut matches = Vec::new();
+        let mut indexes = Vec::new();
+        let tree = self.coinbase_proof_tree();
+        let computed = tree.extract_matches(&mut matches, &mut indexes).map_err(|error| {
+            SmlError::InvalidCoinbaseMerkleProof {
+                block_hash: self.block_hash,
+                reason: error.to_string(),
+            }
+        })?;
+        if computed != block_merkle_root {
+            return Err(SmlError::CoinbaseMerkleRootMismatch {
+                block_hash: self.block_hash,
+                computed,
+            });
+        }
+        if indexes != [0]
+            || matches != [self.coinbase_tx.txid()]
+            || !self.coinbase_tx.is_coin_base()
+        {
+            return Err(SmlError::CoinbaseNotProven(self.block_hash));
+        }
+        Ok(())
+    }
+
+    /// The partial merkle tree the diff embeds field by field.
+    pub(crate) fn coinbase_proof_tree(&self) -> PartialMerkleTree {
+        PartialMerkleTree::from_parts(
+            self.total_transactions,
+            self.merkle_hashes
+                .iter()
+                .map(|hash| TxMerkleNode::from_raw_hash(hash.to_raw_hash()))
+                .collect(),
+            &self.merkle_flags,
+        )
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -99,10 +154,295 @@ impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
+    use hashes::Hash;
 
+    use crate::block::Header;
     use crate::consensus::{deserialize, serialize};
+    use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+    use crate::merkle_tree::PartialMerkleTree;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
+    use crate::network::message_qrinfo::QRInfo;
     use crate::network::message_sml::MnListDiff;
+    use crate::sml::error::SmlError;
+    use crate::transaction::special_transaction::TransactionPayload;
+    use crate::transaction::special_transaction::coinbase::CoinbasePayload;
+    use crate::{Block, TxMerkleNode, Txid};
+
+    fn decode_hex<T: crate::consensus::Decodable>(hex: &str) -> T {
+        deserialize(&hex_conservative::decode_to_vec(hex.trim()).expect("hex")).expect("decodes")
+    }
+
+    fn mainnet_diff_0_2221605() -> MnListDiff {
+        let message: RawNetworkMessage =
+            decode_hex(include_str!("../../tests/data/test_DML_diffs/DML_0_2221605.hex"));
+        let NetworkMessage::MnListDiff(diff) = message.payload else {
+            panic!("expected an mnlistdiff message");
+        };
+        *diff
+    }
+
+    /// Fixture diffs with the headers of their blocks, as public block
+    /// explorers serve them. Each header has to hash to its diff's block hash,
+    /// which vouches for the merkle root it carries.
+    fn fixtures_with_headers() -> Vec<(MnListDiff, Header)> {
+        [
+            (
+                mainnet_diff_0_2221605(),
+                "000000204ec775c3857587ed8ce3e6cf6eaf64bfb90db816033385f71d0000000000000068c9fe75363f12a93d2650265d79a2f7211a2cf8d05836e2f62c40a500cb379d3e3cad675c6a2619187b5901",
+            ),
+            (
+                deserialize(include_bytes!(
+                    "../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+                ))
+                .expect("fixture decodes"),
+                "00000020e78c642c9c5eb8c74fed6b669804cd137c3b0962e42ad9c5020000000000000031f22fe6c6efe79702be25811d2bb599393a896996e9e560d01a1181a78585294f78ba67247728195c403c3b",
+            ),
+            (
+                deserialize(include_bytes!(
+                    "../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin"
+                ))
+                .expect("fixture decodes"),
+                "000000202996884499815938739e79ab0ddd74f3d29c8c0d14f552ab0d000000000000005880e9ed43f861deacd74ee245eb7e6c6c8e89c0cd67f792c4b35e08c4e471a9fdb6dc677e4621196c87ee9c",
+            ),
+            (
+                deserialize(include_bytes!("../../artifacts/mn_list_diff_testnet_0_1296600.bin"))
+                    .expect("fixture decodes"),
+                "000000200433318ebbd848278dc2f76559d4567e18a3d90de3a87374c55cfca237010000bbcb40f521223cac77feef6223ecb62beeccbf78fd918b7f8c98f29c661d1914d0bf86680176021e0f4f0400",
+            ),
+        ]
+        .into_iter()
+        .map(|(diff, header)| {
+            let header: Header = decode_hex(header);
+            assert_eq!(header.block_hash(), diff.block_hash, "a header of another block");
+            (diff, header)
+        })
+        .collect()
+    }
+
+    fn set_proof(diff: &mut MnListDiff, tree: &PartialMerkleTree) {
+        diff.total_transactions = tree.num_transactions();
+        diff.merkle_hashes = tree
+            .hashes()
+            .iter()
+            .map(|hash| MerkleRootMasternodeList::from_raw_hash(hash.to_raw_hash()))
+            .collect();
+        let mut flags = vec![0u8; tree.bits().len().div_ceil(8)];
+        for (position, bit) in tree.bits().iter().enumerate() {
+            if *bit {
+                flags[position / 8] |= 1 << (position % 8);
+            }
+        }
+        diff.merkle_flags = flags;
+    }
+
+    fn root_of(tree: &PartialMerkleTree) -> TxMerkleNode {
+        tree.extract_matches(&mut vec![], &mut vec![]).expect("a well-formed tree")
+    }
+
+    #[test]
+    fn fixture_coinbases_are_proven_by_their_block_headers() {
+        for (diff, header) in fixtures_with_headers() {
+            diff.verify_coinbase_merkle_proof(header.merkle_root)
+                .unwrap_or_else(|e| panic!("{}: {e}", diff.block_hash));
+        }
+    }
+
+    /// Every diff of a mainnet QRInfo is proven by the header of its block.
+    #[test]
+    fn every_diff_of_a_qr_info_is_proven_by_its_block_header() {
+        const HEADERS: [&str; 5] = [
+            "00000020552ffd09b040ec6aafd6a76fe586eed37dca3a88b653732027000000000000001a28433a3aaf9be619f3d9ae713e329a48c35a366afd488662a159df84d4484f08deb367ccfe2619980e0ae3",
+            "000000203d986f88b0a06213229d3ab8a3650bc86af8e04fb3d9be9b20000000000000000bbea6733e6180f312fbd891d5dbd72f3089d66af33e9292aa4e1be985652ffc8186b367773b2c196646dce8",
+            "000000200c2693bfeffebad43ea41aca74fb652f58e3264d65454ace1d0000000000000040a50328f3f6e173ce97b4d1fa9e0b3f36948e6888be0adf39d024540e4bb950a2d5b26799c12b19821af24e",
+            "00000020174c02dd39c2371274cf025eeb2b70b9a156ad1327ecded51200000000000000785ec2546f5347f4960171ee93b319094a34aa4cab8277f985434b6b4b4fa6e9fb21b267ba072f19b46b3938",
+            "000000207654d9fcd141892f9d47cf5c40d46d133d573e8bb9fbaf350400000000000000925d75e37bfd754cc73d6f54629ab6e1e38eb917a3452a73d1377be0d6c62876d36eb16781f3231902819b59",
+        ];
+        let headers: Vec<Header> = HEADERS.iter().map(|header| decode_hex(header)).collect();
+        let message: RawNetworkMessage =
+            decode_hex(include_str!("../../tests/data/test_DML_diffs/QR_INFO_0_2224359.hex"));
+        let NetworkMessage::QRInfo(qr_info) = message.payload else {
+            panic!("expected a qrinfo message");
+        };
+        let QRInfo {
+            mn_list_diff_tip,
+            mn_list_diff_h,
+            mn_list_diff_at_h_minus_c,
+            mn_list_diff_at_h_minus_2c,
+            mn_list_diff_at_h_minus_3c,
+            quorum_snapshot_and_mn_list_diff_at_h_minus_4c,
+            mn_list_diff_list,
+            ..
+        } = *qr_info;
+        assert!(
+            quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_none()
+                && mn_list_diff_list.is_empty()
+        );
+
+        for diff in [
+            mn_list_diff_tip,
+            mn_list_diff_h,
+            mn_list_diff_at_h_minus_c,
+            mn_list_diff_at_h_minus_2c,
+            mn_list_diff_at_h_minus_3c,
+        ] {
+            let header = headers
+                .iter()
+                .find(|header| header.block_hash() == diff.block_hash)
+                .unwrap_or_else(|| panic!("no header for {}", diff.block_hash));
+            diff.verify_coinbase_merkle_proof(header.merkle_root)
+                .unwrap_or_else(|e| panic!("{}: {e}", diff.block_hash));
+        }
+    }
+
+    /// Core v24 blocks carry version 4 coinbases. A proof built from the
+    /// transactions of each block, selecting its coinbase as Core does, leads
+    /// to the block's merkle root.
+    #[test]
+    fn the_coinbases_of_core_v24_blocks_are_proven_by_their_headers() {
+        for hex in [
+            include_str!("../../tests/data/core_v24_devnet/block_15000.hex"),
+            include_str!("../../tests/data/core_v24_devnet/block_15146.hex"),
+            include_str!("../../tests/data/core_v24_devnet/block_15153.hex"),
+            include_str!("../../tests/data/core_v24_devnet/block_15166.hex"),
+            include_str!("../../tests/data/core_v24_devnet/block_15182.hex"),
+            include_str!("../../tests/data/core_v24_devnet/block_15190.hex"),
+        ] {
+            let block: Block = decode_hex(hex);
+            let txids: Vec<Txid> = block.txdata.iter().map(|tx| tx.txid()).collect();
+            let mut selection = vec![false; txids.len()];
+            selection[0] = true;
+            let mut diff = MnListDiff {
+                coinbase_tx: block.txdata[0].clone(),
+                ..MnListDiff::dummy_empty(0x00, 0x00)
+            };
+            set_proof(&mut diff, &PartialMerkleTree::from_txids(&txids, &selection));
+
+            diff.verify_coinbase_merkle_proof(block.header.merkle_root)
+                .unwrap_or_else(|e| panic!("block {}: {e}", block.block_hash()));
+        }
+    }
+
+    #[test]
+    fn an_edited_merkle_proof_is_refused() {
+        let (diff, header) = fixtures_with_headers().swap_remove(0);
+        assert!(diff.total_transactions > 2, "the fixture proves a block of several transactions");
+
+        let mut edited = diff.clone();
+        let last = edited.merkle_hashes.len() - 1;
+        edited.merkle_hashes[last] = MerkleRootMasternodeList::from_byte_array([7; 32]);
+        assert_matches!(
+            edited.verify_coinbase_merkle_proof(header.merkle_root),
+            Err(SmlError::CoinbaseMerkleRootMismatch { .. })
+        );
+
+        for bit in 0..2 {
+            let mut edited = diff.clone();
+            edited.merkle_flags[0] ^= 1 << bit;
+            assert!(
+                edited.verify_coinbase_merkle_proof(header.merkle_root).is_err(),
+                "flag bit {bit} flipped"
+            );
+        }
+
+        // A count that changes the height of the tree changes the path to the
+        // coinbase. One of the same height leaves the leftmost path, and so
+        // the proof, as it is.
+        let mut edited = diff.clone();
+        edited.total_transactions *= 2;
+        assert!(edited.verify_coinbase_merkle_proof(header.merkle_root).is_err());
+    }
+
+    #[test]
+    fn a_foreign_coinbase_or_header_is_refused() {
+        let fixtures = fixtures_with_headers();
+        let (diff, header) = &fixtures[0];
+        let (other_diff, other_header) = &fixtures[1];
+
+        assert_matches!(
+            diff.verify_coinbase_merkle_proof(other_header.merkle_root),
+            Err(SmlError::CoinbaseMerkleRootMismatch { .. })
+        );
+
+        let mut swapped = diff.clone();
+        swapped.coinbase_tx = other_diff.coinbase_tx.clone();
+        assert_matches!(
+            swapped.verify_coinbase_merkle_proof(header.merkle_root),
+            Err(SmlError::CoinbaseNotProven(_))
+        );
+    }
+
+    /// Core's proof flags the coinbase and nothing else, so a proof of any
+    /// other selection does not prove the coinbase.
+    #[test]
+    fn a_proof_that_does_not_select_only_the_coinbase_is_refused() {
+        let diff = mainnet_diff_0_2221605();
+        let txids = [
+            diff.coinbase_tx.txid(),
+            Txid::from_byte_array([1; 32]),
+            Txid::from_byte_array([2; 32]),
+        ];
+
+        for selection in [[false, true, false], [true, true, false]] {
+            let tree = PartialMerkleTree::from_txids(&txids, &selection);
+            let mut proven = diff.clone();
+            set_proof(&mut proven, &tree);
+            assert_matches!(
+                proven.verify_coinbase_merkle_proof(root_of(&tree)),
+                Err(SmlError::CoinbaseNotProven(_)),
+                "selection {selection:?}"
+            );
+        }
+    }
+
+    /// The transaction proven at position 0 has to be a coinbase, not just the
+    /// transaction the diff names.
+    #[test]
+    fn a_proof_of_a_transaction_that_is_not_a_coinbase_is_refused() {
+        let mut diff = mainnet_diff_0_2221605();
+        diff.coinbase_tx.input[0].previous_output.vout = 0;
+        assert!(!diff.coinbase_tx.is_coin_base());
+        let tree = PartialMerkleTree::from_txids(
+            &[diff.coinbase_tx.txid(), Txid::from_byte_array([1; 32])],
+            &[true, false],
+        );
+        set_proof(&mut diff, &tree);
+
+        assert_matches!(
+            diff.verify_coinbase_merkle_proof(root_of(&tree)),
+            Err(SmlError::CoinbaseNotProven(_))
+        );
+    }
+
+    /// A version 1 coinbase payload carries only the height and
+    /// `merkleRootMNList`, and is proven like any other.
+    #[test]
+    fn a_version_1_coinbase_is_proven_by_its_block() {
+        let mut diff = mainnet_diff_0_2221605();
+        let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+            &mut diff.coinbase_tx.special_transaction_payload
+        else {
+            panic!("the fixture's coinbase carries a payload");
+        };
+        *payload = CoinbasePayload {
+            version: 1,
+            height: payload.height,
+            merkle_root_masternode_list: payload.merkle_root_masternode_list,
+            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+            best_cl_height: None,
+            best_cl_signature: None,
+            asset_locked_amount: None,
+            merkle_root_asset_unlocks: None,
+        };
+        let tree = PartialMerkleTree::from_txids(
+            &[diff.coinbase_tx.txid(), Txid::from_byte_array([1; 32])],
+            &[true, false],
+        );
+        set_proof(&mut diff, &tree);
+
+        let decoded: MnListDiff = deserialize(&serialize(&diff)).expect("round trip");
+        assert_eq!(decoded, diff, "a version 1 payload survives the wire");
+        decoded.verify_coinbase_merkle_proof(root_of(&tree)).expect("the proof holds");
+    }
 
     #[test]
     fn deserialize_mn_list_diff() {
