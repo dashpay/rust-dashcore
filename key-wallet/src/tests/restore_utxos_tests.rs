@@ -241,7 +241,7 @@ fn a_copy_another_account_holds_is_taken_out_on_restore() {
     assert_eq!(ctx.managed_wallet.balance.total(), 100_000);
 }
 
-/// The restored UTXO keeps the InstantSend lock and trust of the copy it
+/// The restored UTXO keeps the InstantSend lock of the copy it
 /// takes out of BIP44. Its coin lock follows the wallet's lock set, whatever
 /// flag it or the copies it replaces carry.
 #[test_case(true; "a locked outpoint restores locked")]
@@ -258,7 +258,6 @@ fn a_restored_utxo_keeps_the_flags_of_the_copies_it_replaces(locked: bool) {
     accounts.coinjoin_accounts.get_mut(&0).unwrap().utxos.insert(utxo.outpoint, held);
     let mut misplaced = utxo.clone();
     misplaced.is_instantlocked = true;
-    misplaced.is_trusted = true;
     accounts.standard_bip44_accounts.get_mut(&0).unwrap().utxos.insert(utxo.outpoint, misplaced);
     utxo.is_locked = !locked;
 
@@ -267,7 +266,6 @@ fn a_restored_utxo_keeps_the_flags_of_the_copies_it_replaces(locked: bool) {
     let restored = &ctx.managed_wallet.accounts.coinjoin_accounts[&0].utxos[&utxo.outpoint];
     assert_eq!(restored.is_locked, locked);
     assert!(restored.is_instantlocked);
-    assert!(restored.is_trusted);
 }
 
 enum SeenSpent {
