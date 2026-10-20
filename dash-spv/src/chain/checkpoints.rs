@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::sync::LazyLock;
 
 use dashcore::block::Header;
 use dashcore::consensus::{encode, Decodable, Encodable};
@@ -19,6 +20,21 @@ pub const CHECKPOINT_HEADERS: usize = 25;
 
 const MAINNET_CHECKPOINTS: &[u8] = include_bytes!("../../checkpoints/mainnet.checkpoints");
 const TESTNET_CHECKPOINTS: &[u8] = include_bytes!("../../checkpoints/testnet.checkpoints");
+
+// The embedded files are decoded and validated by the tests.
+static MAINNET: LazyLock<CheckpointManager> = LazyLock::new(|| {
+    CheckpointManager::new(
+        decode_checkpoints(MAINNET_CHECKPOINTS).expect("embedded checkpoints must decode"),
+    )
+});
+static TESTNET: LazyLock<CheckpointManager> = LazyLock::new(|| {
+    CheckpointManager::new(
+        decode_checkpoints(TESTNET_CHECKPOINTS).expect("embedded checkpoints must decode"),
+    )
+});
+static NO_CHECKPOINTS: CheckpointManager = CheckpointManager {
+    checkpoints: BTreeMap::new(),
+};
 
 /// A known block and the [`CHECKPOINT_HEADERS`] - 1 headers before it.
 #[derive(Debug, Clone)]
@@ -106,17 +122,12 @@ pub struct CheckpointManager {
 impl CheckpointManager {
     /// The checkpoints embedded for `network`. Networks without any (devnet, regtest)
     /// have none.
-    pub fn for_network(network: Network) -> Self {
-        let bytes = match network {
-            Network::Mainnet => MAINNET_CHECKPOINTS,
-            Network::Testnet => TESTNET_CHECKPOINTS,
-            _ => &[],
-        };
-
-        // The embedded files are decoded and validated by the tests.
-        let checkpoints = decode_checkpoints(bytes).expect("embedded checkpoints must decode");
-
-        Self::new(checkpoints)
+    pub fn for_network(network: Network) -> &'static Self {
+        match network {
+            Network::Mainnet => &MAINNET,
+            Network::Testnet => &TESTNET,
+            _ => &NO_CHECKPOINTS,
+        }
     }
 
     fn new(checkpoints: Vec<Checkpoint>) -> Self {

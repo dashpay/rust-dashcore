@@ -46,7 +46,7 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Pipeline for parallel header downloads (used for both initial sync and post-sync).
     pub(super) pipeline: HeadersPipeline,
     /// Compiled-in checkpoints, which no fork may branch off below.
-    checkpoint_manager: Arc<CheckpointManager>,
+    checkpoint_manager: &'static CheckpointManager,
     /// Pending block announcements waiting for headers message (post-sync).
     pub(super) pending_announcements: HashMap<BlockHash, Instant>,
     /// Peers we've sent a GetHeaders to after sync, so Dash Core knows our tip
@@ -68,7 +68,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     pub async fn new(
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
-        checkpoint_manager: Arc<CheckpointManager>,
+        checkpoint_manager: &'static CheckpointManager,
     ) -> SyncResult<Self> {
         let tip = header_storage
             .read()
@@ -92,7 +92,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             progress: initial_progress,
             header_storage,
             metadata_storage,
-            pipeline: HeadersPipeline::new(checkpoint_manager.clone()),
+            pipeline: HeadersPipeline::new(checkpoint_manager),
             checkpoint_manager,
             pending_announcements: HashMap::new(),
             announced_peers: HashSet::new(),
@@ -380,8 +380,8 @@ mod tests {
     type TestBlockHeadersManager =
         BlockHeadersManager<PersistentBlockHeaderStorage, PersistentMetadataStorage>;
 
-    fn create_test_checkpoint_manager() -> Arc<CheckpointManager> {
-        Arc::new(CheckpointManager::for_network(dashcore::Network::Testnet))
+    fn create_test_checkpoint_manager() -> &'static CheckpointManager {
+        CheckpointManager::for_network(dashcore::Network::Testnet)
     }
 
     async fn create_test_manager() -> TestBlockHeadersManager {

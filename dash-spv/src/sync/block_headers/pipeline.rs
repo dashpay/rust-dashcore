@@ -4,8 +4,6 @@
 //! downloaded in parallel from multiple peers. Each segment tracks its own
 //! progress and buffers headers until ready for ordered storage.
 
-use std::sync::Arc;
-
 #[cfg(test)]
 use dashcore::block::Header;
 use dashcore::BlockHash;
@@ -30,7 +28,7 @@ pub struct HeadersPipeline {
     /// Index of the next segment to store (all previous must be complete).
     next_to_store: usize,
     /// Checkpoint manager reference.
-    checkpoint_manager: Arc<CheckpointManager>,
+    checkpoint_manager: &'static CheckpointManager,
     /// Whether the pipeline has been initialized.
     initialized: bool,
 }
@@ -47,7 +45,7 @@ impl std::fmt::Debug for HeadersPipeline {
 
 impl HeadersPipeline {
     /// Create a new headers pipeline with the given checkpoint manager.
-    pub fn new(checkpoint_manager: Arc<CheckpointManager>) -> Self {
+    pub fn new(checkpoint_manager: &'static CheckpointManager) -> Self {
         Self {
             segments: Vec::new(),
             next_to_store: 0,
@@ -355,13 +353,13 @@ mod tests {
     use crate::network::{NetworkRequest, RequestSender};
     use crate::sync::block_headers::segment_state::SegmentState;
 
-    fn create_test_checkpoint_manager(is_testnet: bool) -> Arc<CheckpointManager> {
+    fn create_test_checkpoint_manager(is_testnet: bool) -> &'static CheckpointManager {
         let network = if is_testnet {
             Network::Testnet
         } else {
             Network::Mainnet
         };
-        Arc::new(CheckpointManager::for_network(network))
+        CheckpointManager::for_network(network)
     }
 
     fn testnet_genesis_hash() -> BlockHash {
@@ -386,7 +384,7 @@ mod tests {
     #[test]
     fn test_pipeline_init_testnet() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
         pipeline.init(0, testnet_genesis_hash(), 1_200_000);
 
@@ -398,7 +396,7 @@ mod tests {
     #[test]
     fn test_pipeline_init_from_middle() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
         // Start from checkpoint 500k
         let cp_500k = cm.last_checkpoint_before_height(500_000).unwrap();
@@ -413,7 +411,7 @@ mod tests {
     #[test]
     fn test_pipeline_send_pending() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
         pipeline.init(0, testnet_genesis_hash(), 1_200_000);
 
@@ -451,7 +449,7 @@ mod tests {
     #[test]
     fn test_pipeline_is_complete_initially() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
         pipeline.init(0, testnet_genesis_hash(), 1_200_000);
 
@@ -461,7 +459,7 @@ mod tests {
     #[test]
     fn test_take_ready_to_store_empty() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
         pipeline.init(0, testnet_genesis_hash(), 1_200_000);
 

@@ -120,7 +120,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     ) -> Result<SyncManagers<W>> {
         let mut managers: SyncManagers<W> = Managers::default();
 
-        let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
+        let checkpoint_manager = CheckpointManager::for_network(config.network);
         managers.block_headers = Some(
             BlockHeadersManager::new(
                 storage.block_headers(),
