@@ -91,6 +91,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         self.sync_state.requeue_in_flight();
         // A fresh peer set earns fresh attempts for every diff, too.
         self.sync_state.mnlistdiff_pipeline.forget_attempts();
+        self.sync_state.forget_qrinfo_refusers();
         // A fresh peer set earns a fresh retry budget, and the dedup guard must not
         // reject a response for a tip whose earlier attempt died with the old peer.
         self.sync_state.qrinfo_retry_count = 0;
@@ -113,6 +114,13 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 if !self.sync_state.should_process_qrinfo(qr_info) {
                     return Ok(vec![]);
                 }
+                let peer = msg.peer_address();
+                if self.sync_state.has_refused_qrinfo(qr_info.mn_list_diff_tip.block_hash, peer) {
+                    tracing::debug!(
+                        "Ignoring QRInfo from {peer}, whose earlier one for this tip was rejected"
+                    );
+                    return Ok(vec![]);
+                }
                 tracing::info!("Processing QRInfo message");
 
                 let mut engine = self.engine.write().await;
@@ -132,6 +140,10 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         // consumer with it. Flag the attempt instead: `tick` rotates
                         // to the next peer, and the existing budget still gives up on
                         // a deterministically-bad response after MAX_RETRY_ATTEMPTS.
+                        // The peer's next QRInfo for this tip is ignored. The
+                        // blocks a QRInfo names are the peer's choice, so even
+                        // one our header chain does not hold counts against it.
+                        self.sync_state.qrinfo_refused_by(peer);
                         self.sync_state.qrinfo_rejected();
                         return Err(SyncError::MasternodeSyncFailed(e.to_string()));
                     }
@@ -1169,20 +1181,24 @@ mod tests {
     /// verification and every masternode-list consumer dead behind it.
     ///
     /// With the slot kept armed and the attempt flagged, `tick` retries on the
-    /// existing budget. Each dispatch goes out through `send_distributed`, whose
-    /// round-robin lands it on a different peer than the one that served the bad
-    /// response, and a deterministically-bad response still terminates - after
-    /// `MAX_RETRY_ATTEMPTS` dispatches, not silently and not never.
+    /// existing budget. Each dispatch goes out through `send_distributed`. A
+    /// rejected peer's repeat for the tip is ignored, so each attempt here is
+    /// answered by another peer, and a deterministically-bad response still
+    /// terminates - after `MAX_RETRY_ATTEMPTS` dispatches answered by as many
+    /// peers, not silently and not never.
     #[tokio::test]
     async fn test_rejected_qrinfo_retries_against_another_peer_then_gives_up() {
         let (mut manager, requests, mut rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
-        let peer = "127.0.0.1:19999".parse().unwrap();
-        let bad_response =
-            || Message::new(peer, NetworkMessage::QRInfo(Box::new(qrinfo_with_tip_hash(tip_hash))));
+        let bad_response = |attempt: u8| {
+            Message::new(
+                peer(attempt + 1),
+                NetworkMessage::QRInfo(Box::new(qrinfo_with_tip_hash(tip_hash))),
+            )
+        };
 
         for attempt in 0..MAX_RETRY_ATTEMPTS - 1 {
             let err = manager
-                .handle_message(bad_response(), &requests)
+                .handle_message(bad_response(attempt), &requests)
                 .await
                 .expect_err("the engine must reject this filler QRInfo");
             assert!(
@@ -1220,7 +1236,7 @@ mod tests {
         // again, and leaves the manager `Syncing` with nothing in flight, for
         // the stall watchdog.
         manager
-            .handle_message(bad_response(), &requests)
+            .handle_message(bad_response(MAX_RETRY_ATTEMPTS - 1), &requests)
             .await
             .expect_err("the engine must reject this filler QRInfo");
         let _ = manager.tick(&requests).await;
@@ -1239,6 +1255,34 @@ mod tests {
         );
     }
 
+    /// A peer whose QRInfo was rejected cannot spend the budget again: another
+    /// QRInfo from it for the same tip is ignored.
+    #[tokio::test]
+    async fn a_peer_whose_qrinfo_was_rejected_is_ignored() {
+        let (mut manager, requests, mut rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
+        let response = |peer| {
+            Message::new(peer, NetworkMessage::QRInfo(Box::new(qrinfo_with_tip_hash(tip_hash))))
+        };
+
+        manager.handle_message(response(peer(1)), &requests).await.expect_err("rejected");
+        manager.tick(&requests).await.expect("tick retries the rejected attempt");
+        assert!(
+            matches!(rx.try_recv(), Ok(NetworkRequest::SendMessage(NetworkMessage::GetQRInfo(_)))),
+            "the rejected QRInfo is asked again"
+        );
+
+        let events = manager
+            .handle_message(response(peer(1)), &requests)
+            .await
+            .expect("a repeat from the rejecting peer is ignored");
+        assert!(events.is_empty());
+        assert!(
+            !manager.sync_state.qrinfo_in_flight.expect("still in flight").rejected,
+            "the repeat spends nothing"
+        );
+        assert_eq!(manager.sync_state.qrinfo_retry_count, 1);
+    }
+
     /// When every QRInfo attempt fails before the engine holds any list, the
     /// manager stays `Syncing`: `Error` has no way out, while the stall
     /// watchdog starts a fresh budget once the last attempt is old enough.
@@ -1246,9 +1290,8 @@ mod tests {
     async fn qrinfo_attempts_exhausted_on_an_empty_engine_are_retried_by_the_watchdog() {
         let (mut manager, requests, mut rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
         for attempt in 0..MAX_RETRY_ATTEMPTS {
-            let peer = SocketAddr::from(([127, 0, 0, 1], 19_990 + u16::from(attempt)));
             let refused = Message::new(
-                peer,
+                peer(attempt + 1),
                 NetworkMessage::QRInfo(Box::new(qrinfo_with_tip_hash(tip_hash))),
             );
             let _ = manager.handle_message(refused, &requests).await;
@@ -1271,6 +1314,11 @@ mod tests {
             "the watchdog must start a fresh QRInfo budget"
         );
         assert_eq!(manager.sync_state.qrinfo_retry_count, 0);
+        assert!(
+            (1..=MAX_RETRY_ATTEMPTS)
+                .all(|id| manager.sync_state.has_refused_qrinfo(tip_hash, peer(id))),
+            "the fresh budget still ignores the peers whose QRInfo was rejected"
+        );
     }
 
     /// The stall watchdog is the backstop for every route into the stranded state
