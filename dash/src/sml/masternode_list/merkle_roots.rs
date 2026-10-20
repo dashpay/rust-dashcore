@@ -1,8 +1,9 @@
 use hashes::{Hash, sha256d};
 
-use crate::consensus::Decodable;
+use crate::consensus::{Decodable, serialize};
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::error::SmlError;
+use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list::MasternodeList;
 use crate::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::transaction::special_transaction::{TransactionPayload, TransactionType};
@@ -14,6 +15,19 @@ const COINBASE_VERSION_MERKLE_ROOT_QUORUMS: u16 = 2;
 
 /// Newest coinbase payload version this crate decodes.
 const NEWEST_KNOWN_COINBASE_VERSION: u16 = 4;
+
+/// Most commitments of types this crate does not know a list may hold for their type bytes to
+/// be recovered. Dash Core keeps at most `signingActiveQuorumCount` active commitments per type,
+/// 32 for any type it defines today.
+const MAX_UNKNOWN_TYPE_COMMITMENTS: usize = 64;
+
+/// Most commitments of any type a list may hold for the types of unknown ones to be recovered,
+/// several times what Dash Core keeps active on any network it defines. It keeps a peer from
+/// making each of the 242 candidate roots cost more than a few hundred hashes.
+const MAX_QUORUMS_TO_RECOVER: usize = 256;
+
+/// Offset of the LLMQ type byte in a serialized commitment, after its `u16` version.
+const COMMITMENT_TYPE_BYTE_OFFSET: usize = 2;
 
 /// What a coinbase commits to about the masternode list of its block (DIP-4).
 pub(crate) struct CoinbaseCommitments {
@@ -138,7 +152,8 @@ pub fn merkle_root_from_hashes(hashes: Vec<sha256d::Hash>) -> Option<sha256d::Ha
 impl MasternodeList {
     /// Checks this list against the commitments of its block's coinbase, as Dash Core does when
     /// it validates the block (`CheckCbTx`, `CheckCbTxMerkleRoots`), and returns the roots
-    /// `(merkleRootMNList, merkleRootQuorums)` it computed for the list.
+    /// `(merkleRootMNList, merkleRootQuorums)` of the list: the ones it computed, or the committed
+    /// quorum root once the types of unknown commitments are recovered.
     ///
     /// - The payload height has to be the list's height.
     /// - `merkleRootMNList` has to be the merkle root of the entry hashes ordered by ProRegTx
@@ -182,13 +197,60 @@ impl MasternodeList {
                 computed: masternode_root,
             });
         }
-        if commitments.merkle_root_quorums.is_some_and(|committed| committed != quorum_root) {
-            return Err(SmlError::QuorumMerkleRootMismatch {
-                block_hash: self.block_hash,
-                computed: quorum_root,
-            });
+        if let Some(committed) = commitments.merkle_root_quorums.filter(|root| *root != quorum_root)
+        {
+            if !self.recovers_unknown_quorum_types(committed) {
+                return Err(SmlError::QuorumMerkleRootMismatch {
+                    block_hash: self.block_hash,
+                    computed: quorum_root,
+                });
+            }
+            return Ok((masternode_root, committed));
         }
         Ok((masternode_root, quorum_root))
+    }
+
+    /// Whether the quorum root is `committed` once the commitments of types this crate does not
+    /// know get their type byte back.
+    ///
+    /// Such a commitment decodes as `LlmqtypeUnknown` and re-encodes with type 0, so its hash is
+    /// not the one Dash Core puts in `merkleRootQuorums`, and a network mining a type this crate
+    /// does not know would otherwise have every list refused. Each type byte no known type decodes
+    /// from is tried for all of them, which recovers one new type at a time. The match is exact,
+    /// so a fabricated commitment cannot pass. A list holding more than
+    /// [`MAX_UNKNOWN_TYPE_COMMITMENTS`] of them, or more than [`MAX_QUORUMS_TO_RECOVER`] in all,
+    /// is not tried, which bounds the work a peer can cause.
+    fn recovers_unknown_quorum_types(&self, committed: MerkleRootQuorums) -> bool {
+        let Some(unknown) = self.quorums.get(&LLMQType::LlmqtypeUnknown) else {
+            return false;
+        };
+        let quorums: usize = self.quorums.values().map(|quorums| quorums.len()).sum();
+        if unknown.len() > MAX_UNKNOWN_TYPE_COMMITMENTS || quorums > MAX_QUORUMS_TO_RECOVER {
+            return false;
+        }
+        let known: Vec<sha256d::Hash> = self
+            .quorums
+            .iter()
+            .filter(|(llmq_type, _)| **llmq_type != LLMQType::LlmqtypeUnknown)
+            .flat_map(|(_, quorums)| quorums.values().map(|quorum| quorum.entry_hash.to_raw_hash()))
+            .collect();
+        let mut unknown: Vec<Vec<u8>> =
+            unknown.values().map(|quorum| serialize(&quorum.quorum_entry)).collect();
+        (0..=u8::MAX).filter(|byte| LLMQType::from(*byte) == LLMQType::LlmqtypeUnknown).any(
+            |byte| {
+                let mut hashes = known.clone();
+                for commitment in &mut unknown {
+                    let Some(type_byte) = commitment.get_mut(COMMITMENT_TYPE_BYTE_OFFSET) else {
+                        return false;
+                    };
+                    *type_byte = byte;
+                    hashes.push(sha256d::Hash::hash(commitment));
+                }
+                hashes.sort();
+                merkle_root_from_hashes(hashes).map(MerkleRootQuorums::from_raw_hash)
+                    == Some(committed)
+            },
+        )
     }
 
     /// Validates whether the stored masternode list Merkle root matches the one in the coinbase transaction.
@@ -339,6 +401,7 @@ mod tests {
 
     use super::*;
     use crate::Network;
+    use crate::QuorumHash;
     use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::{deserialize, serialize};
     use crate::network::constants::NetworkExt;
@@ -346,6 +409,7 @@ mod tests {
     use crate::network::message_qrinfo::QRInfo;
     use crate::network::message_sml::MnListDiff;
     use crate::sml::masternode_list_entry::MasternodeNetInfo;
+    use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
     fn decode_hex<T: Decodable>(hex: &str) -> T {
         deserialize(&hex_conservative::decode_to_vec(hex.trim()).expect("hex")).expect("decodes")
@@ -765,6 +829,107 @@ mod tests {
             empty.apply_diff(no_payload(one_masternode), 1, Network::Regtest),
             Err(SmlError::MissingCoinbasePayload(_))
         ));
+    }
+
+    /// `diff` with its first `count` commitments, or copies of its first one
+    /// under other quorum hashes, served with type byte 200, which no type
+    /// this crate knows decodes from, and a coinbase committing to Dash Core's
+    /// hashes of them.
+    fn with_unknown_type_commitments(mut diff: MnListDiff, count: usize) -> MnListDiff {
+        let template = diff.new_quorums[0].clone();
+        diff.new_quorums.remove(0);
+        let mut core_hashes = Vec::new();
+        for n in 0..count {
+            let mut bytes = serialize(&QuorumEntry {
+                quorum_hash: QuorumHash::from_byte_array([n as u8 + 1; 32]),
+                ..template.clone()
+            });
+            bytes[COMMITMENT_TYPE_BYTE_OFFSET] = 200;
+            core_hashes.push(sha256d::Hash::hash(&bytes));
+            let served: QuorumEntry =
+                deserialize(&bytes).expect("a commitment of any type decodes");
+            assert_eq!(served.llmq_type, LLMQType::LlmqtypeUnknown);
+            diff.new_quorums.push(served);
+        }
+        let slots = diff.new_quorums.len() as u16;
+        diff.quorums_chainlock_signatures[0].index_set = (0..slots).collect();
+        diff.quorums_chainlock_signatures.truncate(1);
+        let mut hashes: Vec<sha256d::Hash> = diff.new_quorums[..diff.new_quorums.len() - count]
+            .iter()
+            .map(|quorum| quorum.calculate_entry_hash().to_raw_hash())
+            .chain(core_hashes)
+            .collect();
+        hashes.sort();
+        coinbase_payload(&mut diff).merkle_root_quorums =
+            MerkleRootQuorums::from_raw_hash(merkle_root_from_hashes(hashes).expect("quorums"));
+        diff
+    }
+
+    /// A commitment of a type this crate does not know decodes as
+    /// `LlmqtypeUnknown`, and its hash is recovered by trying the type bytes
+    /// no known type decodes from. A commitment the coinbase does not commit
+    /// to cannot be passed off as one of an unknown type.
+    #[test]
+    fn a_quorum_of_a_type_this_library_does_not_know_is_recovered() {
+        let mut diff = with_unknown_type_commitments(MnListDiff::mainnet_fixture_0_2221605(), 2);
+        let committed = coinbase_payload(&mut diff).merkle_root_quorums;
+
+        let list = list_from(diff.clone()).expect("the type byte is recovered");
+        assert_eq!(list.llmq_merkle_root, Some(committed));
+
+        let mut fabricated = diff;
+        let extra = QuorumEntry {
+            quorum_hash: QuorumHash::from_byte_array([0xEE; 32]),
+            ..fabricated.new_quorums.last().expect("a commitment").clone()
+        };
+        fabricated.new_quorums.push(extra);
+        fabricated.quorums_chainlock_signatures[0]
+            .index_set
+            .push(fabricated.new_quorums.len() as u16 - 1);
+        assert!(matches!(list_from(fabricated), Err(SmlError::QuorumMerkleRootMismatch { .. })));
+    }
+
+    /// Recovering type bytes costs a merkle root per candidate, so a list
+    /// holding more unknown-type commitments than any type keeps active is
+    /// refused without trying.
+    #[test]
+    fn too_many_quorums_of_unknown_types_are_refused_without_recovery() {
+        let within = with_unknown_type_commitments(
+            MnListDiff::mainnet_fixture_0_2221605(),
+            MAX_UNKNOWN_TYPE_COMMITMENTS,
+        );
+        assert!(list_from(within).is_ok());
+
+        let beyond = with_unknown_type_commitments(
+            MnListDiff::mainnet_fixture_0_2221605(),
+            MAX_UNKNOWN_TYPE_COMMITMENTS + 1,
+        );
+        assert!(matches!(list_from(beyond), Err(SmlError::QuorumMerkleRootMismatch { .. })));
+    }
+
+    /// Each candidate type byte costs a merkle root over every commitment of
+    /// the list, so a list holding more than any network keeps active is not
+    /// tried either, however few of them are of unknown types.
+    #[test]
+    fn a_list_holding_too_many_quorums_is_refused_without_recovery() {
+        for (quorums, recovered) in
+            [(MAX_QUORUMS_TO_RECOVER, true), (MAX_QUORUMS_TO_RECOVER + 1, false)]
+        {
+            let mut diff = MnListDiff::mainnet_fixture_0_2221605();
+            let template = diff.new_quorums[0].clone();
+            diff.new_quorums = (0..quorums)
+                .map(|n| {
+                    let mut quorum_hash = [0xAA; 32];
+                    quorum_hash[..2].copy_from_slice(&(n as u16).to_le_bytes());
+                    QuorumEntry {
+                        quorum_hash: QuorumHash::from_byte_array(quorum_hash),
+                        ..template.clone()
+                    }
+                })
+                .collect();
+            let diff = with_unknown_type_commitments(diff, 1);
+            assert_eq!(list_from(diff).is_ok(), recovered, "{quorums} quorums");
+        }
     }
 
     /// Core's `ComputeMerkleRoot` gives an empty set the all-zero root.
