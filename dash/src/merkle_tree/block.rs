@@ -45,12 +45,15 @@ use hashes::Hash;
 
 use self::MerkleBlockError::*;
 use crate::blockdata::block::{self, Block};
-use crate::blockdata::constants::{MAX_BLOCK_WEIGHT, MIN_TRANSACTION_WEIGHT};
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::{TxMerkleNode, Txid};
 use crate::io;
 use crate::prelude::*;
+
+/// The most transactions a Dash block holds: its 2 MB size limit over the 60
+/// bytes of the smallest transaction, Dash Core's bound in `CPartialMerkleTree`.
+const MAX_BLOCK_TRANSACTIONS: u32 = 2_000_000 / 60;
 
 /// Data structure that represents a block header paired to a partial merkle tree.
 ///
@@ -284,7 +287,7 @@ impl PartialMerkleTree {
             return Err(NoTransactions);
         };
         // check for excessively high numbers of transactions
-        if self.num_transactions > MAX_BLOCK_WEIGHT / MIN_TRANSACTION_WEIGHT {
+        if self.num_transactions > MAX_BLOCK_TRANSACTIONS {
             return Err(TooManyTransactions);
         }
         // there can never be more hashes provided than one for every txid
@@ -654,6 +657,32 @@ mod tests {
                 assert_ne!(merkle_root_3, merkle_root_1);
             }
         }
+    }
+
+    /// A Dash block holds up to 33,333 transactions: 2 MB over the 60-byte
+    /// smallest transaction, the bound Dash Core's `CPartialMerkleTree` allows.
+    /// A proof of a transaction in such a block is accepted; one claiming a
+    /// larger block is refused.
+    #[test]
+    fn a_partial_merkle_tree_spans_as_many_transactions_as_a_dash_block_holds() {
+        let tree = |count: u32| {
+            let txids: Vec<Txid> = (0..count)
+                .map(|i| {
+                    let mut bytes = [0u8; 32];
+                    bytes[..4].copy_from_slice(&i.to_le_bytes());
+                    <Txid as hashes::Hash>::from_byte_array(bytes)
+                })
+                .collect();
+            let mut matches = vec![false; count as usize];
+            matches[0] = true;
+            PartialMerkleTree::from_txids(&txids, &matches)
+        };
+
+        assert!(tree(33_333).extract_matches(&mut vec![], &mut vec![]).is_ok());
+        assert!(matches!(
+            tree(33_334).extract_matches(&mut vec![], &mut vec![]),
+            Err(MerkleBlockError::TooManyTransactions)
+        ));
     }
 
     #[test]
