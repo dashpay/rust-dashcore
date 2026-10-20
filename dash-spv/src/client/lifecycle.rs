@@ -15,7 +15,7 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::{
-    BlockHeaderStorage, BlockStorage, FilterHeaderStorage, FilterStorage,
+    BlockHeaderStorage, BlockStorage, DiskStorageManager, FilterHeaderStorage, FilterStorage,
     PersistentBlockHeaderStorage, StorageManager,
 };
 use crate::sync::{
@@ -35,12 +35,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
-    /// Create a new SPV client with the given configuration, network, storage, and wallet.
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
+    /// Create a new SPV client with the given configuration, network and wallet.
     pub async fn new(
         config: ClientConfig,
         network: N,
-        mut storage: S,
         wallet: Arc<RwLock<W>>,
         event_handlers: Vec<Arc<dyn EventHandler>>,
     ) -> Result<Self> {
@@ -49,6 +48,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
         config.apply_global_overrides().map_err(SpvError::Config)?;
+
+        let mut storage = DiskStorageManager::new(&config).await?;
 
         let start_from_height = Self::resolve_start_height(&config, &wallet).await;
 
@@ -118,7 +119,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// Build the sync managers enabled by `config` on top of `storage`.
     async fn build_managers(
         config: &ClientConfig,
-        storage: &S,
+        storage: &DiskStorageManager,
         wallet: &Arc<RwLock<W>>,
         masternode_engine: Option<&Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>>,
     ) -> Result<SyncManagers<W>> {
@@ -330,7 +331,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     async fn initialize_genesis_block(
         config: &ClientConfig,
         start_from_height: Option<u32>,
-        storage: &mut S,
+        storage: &mut DiskStorageManager,
     ) -> Result<()> {
         // Check if we already have any headers in storage
         let current_tip = storage.get_tip_height().await;

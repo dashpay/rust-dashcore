@@ -2,16 +2,14 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use dash_spv::network::NetworkEvent;
-use dash_spv::storage::PersistentBlockHeaderStorage;
-use dash_spv::test_utils::MasternodeListEngine;
 use dash_spv::test_utils::{
     create_test_wallet, init_test_logging, next_unused_receive_address, retain_test_dir,
     MasternodeTestContext, TestEventHandler,
 };
+use dash_spv::test_utils::{MasternodeListEngine, PersistentBlockHeaderStorage};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::DiskStorageManager,
     sync::{SyncEvent, SyncProgress},
     LoggingGuard, Network,
 };
@@ -26,8 +24,7 @@ use tokio::time;
 /// Timeout for masternode sync tests (masternode sync takes longer than wallet sync).
 pub(super) const SYNC_TIMEOUT: u64 = 60;
 
-pub(super) type TestClient =
-    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>;
+pub(super) type TestClient = DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager>;
 
 pub(super) struct ClientHandle {
     pub(super) client: TestClient,
@@ -167,8 +164,6 @@ pub(super) async fn create_client(
 ) -> ClientHandle {
     let network_manager =
         PeerNetworkManager::new(config).await.expect("Failed to create network manager");
-    let storage_manager =
-        DiskStorageManager::new(config).await.expect("Failed to create storage manager");
 
     let handler = Arc::new(TestEventHandler::new());
     let progress_receiver = handler.subscribe_progress();
@@ -176,10 +171,9 @@ pub(super) async fn create_client(
     let wallet_event_receiver = handler.subscribe_wallet_events();
     let _network_event_receiver = handler.subscribe_network_events();
 
-    let client =
-        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![handler])
-            .await
-            .expect("Failed to create client");
+    let client = DashSpvClient::new(config.clone(), network_manager, wallet, vec![handler])
+        .await
+        .expect("Failed to create client");
 
     let engine = dash_spv::test_utils::masternode_list_engine(&client)
         .expect("Engine should be initialized after creation");

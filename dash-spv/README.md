@@ -10,10 +10,9 @@ This refactored SPV client extracts the monolithic `handshake.rs` example into a
 
 - **Modular Design**: Separated network, storage, sync, and validation concerns
 - **Async/Await Support**: Built on tokio for modern async Rust
-- **Trait-Based Abstractions**: Easily swap storage backends and network implementations  
+- **Trait-Based Abstractions**: Easily swap network implementations
 - **Error Handling**: Comprehensive error types with proper propagation
 - **Configuration Management**: Flexible, builder-pattern configuration
-- **Multiple Storage Backends**: In-memory and disk-based storage
 
 ### ✅ **Key Features Implemented**
 
@@ -74,7 +73,7 @@ dash-spv/
 ├── client/         # High-level client API and configuration
 ├── network/        # TCP connections, handshake, message routing
 │   └── reputation/ # Peer reputation tracking and management
-├── storage/        # Storage abstraction (memory/disk backends)
+├── storage/        # Internal disk storage
 ├── sync/           # Header, filter, and masternode synchronization
 ├── validation/     # Header, ChainLock, InstantLock validation
 ├── types.rs        # Common types and data structures
@@ -119,7 +118,6 @@ See [docs/PEER_REPUTATION_SYSTEM.md](docs/PEER_REPUTATION_SYSTEM.md) for detaile
 - ✅ **Trait-based design** for testability and extensibility
 - ✅ **Comprehensive error types** with proper propagation
 - ✅ **Configuration management** with builder pattern
-- ✅ **Multiple storage backends** (memory, disk)
 - ✅ **Async/await support** throughout
 - ✅ **Library + Binary** - reusable components
 
@@ -127,7 +125,7 @@ See [docs/PEER_REPUTATION_SYSTEM.md](docs/PEER_REPUTATION_SYSTEM.md) for detaile
 
 1. **Maintainability**: Clear module boundaries and single responsibilities
 2. **Testability**: Trait abstractions enable comprehensive unit testing  
-3. **Extensibility**: Easy to add new storage backends, networks, validation modes
+3. **Extensibility**: Easy to add new networks, validation modes
 4. **Reusability**: Library can be used by other Dash projects
 5. **Documentation**: Self-documenting API with comprehensive examples
 6. **Performance**: Async design for better resource utilization

@@ -1495,7 +1495,7 @@ mod tests {
     #[test]
     #[cfg(feature = "rand-std")]
     fn serialization_round_trips() {
-        use secp256k1::rand::{Rng, rng};
+        use crate::crypto::key::rand::{Rng, rng};
 
         macro_rules! round_trip {
             ($($val_type:ty),*) => {

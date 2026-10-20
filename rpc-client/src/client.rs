@@ -25,8 +25,8 @@ use crate::dashcore::{ScriptBuf, block, consensus};
 use crate::error::*;
 use crate::json;
 use crate::queryable;
+use dashcore::ecdsa::EcdsaSignature;
 use dashcore::hashes::Hash;
-use dashcore::secp256k1::ecdsa::Signature;
 use dashcore::{
     Address, Amount, Block, OutPoint, PrivateKey, ProTxHash, PublicKey, QuorumHash, Transaction,
 };
@@ -797,7 +797,7 @@ pub trait RpcApi: Sized {
     fn verify_message(
         &self,
         address: &Address,
-        signature: &Signature,
+        signature: &EcdsaSignature,
         message: &str,
     ) -> Result<bool> {
         let args = [address.to_string().into(), signature.to_string().into(), into_json(message)?];

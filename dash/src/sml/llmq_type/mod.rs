@@ -77,8 +77,8 @@ pub const DKG_DEVNET: DKGParams = DKGParams {
 pub const DKG_DEVNET_DIP_0024: DKGParams = DKGParams {
     interval: 48,
     phase_blocks: 2,
-    mining_window_start: 10,
-    mining_window_end: 18,
+    mining_window_start: 12,
+    mining_window_end: 20,
     bad_votes_threshold: 7,
 };
 pub const DKG_50_60: DKGParams = DKGParams {
@@ -135,7 +135,7 @@ pub const DKG_TEST_DIP0024: DKGParams = DKGParams {
 };
 
 pub const DKG_PLATFORM_TESTNET: DKGParams = DKGParams {
-    interval: 24 * 12,
+    interval: 24,
     phase_blocks: 2,
     mining_window_start: 10,
     mining_window_end: 18,
@@ -143,7 +143,7 @@ pub const DKG_PLATFORM_TESTNET: DKGParams = DKGParams {
 };
 
 pub const DKG_PLATFORM_DEVNET: DKGParams = DKGParams {
-    interval: 24 * 12,
+    interval: 24,
     phase_blocks: 2,
     mining_window_start: 10,
     mining_window_end: 18,
@@ -153,7 +153,7 @@ pub const DKG_PLATFORM_DEVNET: DKGParams = DKGParams {
 pub const LLMQ_TEST: LLMQParams = LLMQParams {
     quorum_type: LLMQType::LlmqtypeTest,
     name: "llmq_test",
-    size: 4,
+    size: 3,
     min_size: 2,
     threshold: 2,
     dkg_params: DKG_TEST,
@@ -214,7 +214,7 @@ pub const LLMQ_DEVNET: LLMQParams = LLMQParams {
     threshold: 6,
     dkg_params: DKG_DEVNET,
     signing_active_quorum_count: 4,
-    keep_old_connections: 4,
+    keep_old_connections: 5,
     recovery_members: 6,
 };
 
@@ -478,14 +478,14 @@ pub const LLMQ_TEST_PLATFORM: LLMQParams = LLMQParams {
 
 pub const LLMQ_DEV_PLATFORM: LLMQParams = LLMQParams {
     quorum_type: LLMQType::LlmqtypeDevnetPlatform,
-    name: "llmq_dev_platform",
+    name: "llmq_devnet_platform",
     size: 12,
     min_size: 9,
     threshold: 8,
     dkg_params: DKG_PLATFORM_DEVNET,
     signing_active_quorum_count: 4,
-    keep_old_connections: 4,
-    recovery_members: 3,
+    keep_old_connections: 5,
+    recovery_members: 6,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]

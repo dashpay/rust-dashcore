@@ -267,14 +267,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let storage_manager = match dash_spv::storage::DiskStorageManager::new(&config).await {
-        Ok(sm) => sm,
-        Err(e) => {
-            eprintln!("Failed to create disk storage manager: {}", e);
-            process::exit(1);
-        }
-    };
-    run_client(config, network_manager, storage_manager, wallet).await?;
+    run_client(config, network_manager, wallet).await?;
 
     Ok(())
 }
@@ -380,29 +373,24 @@ fn parse_llmq_devnet_params(raw: &str) -> Result<LlmqDevnetParams, String> {
     })
 }
 
-async fn run_client<S: dash_spv::storage::StorageManager>(
+async fn run_client(
     config: ClientConfig,
     network_manager: dash_spv::network::manager::PeerNetworkManager,
-    storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
-    let client =
-        match DashSpvClient::<
-            WalletManager<ManagedWalletInfo>,
-            dash_spv::network::manager::PeerNetworkManager,
-            S,
-        >::new(
-            config.clone(), network_manager, storage_manager, wallet.clone(), Vec::new()
-        )
-        .await
-        {
-            Ok(client) => client,
-            Err(e) => {
-                eprintln!("Failed to create SPV client: {}", e);
-                process::exit(1);
-            }
-        };
+    let client = match DashSpvClient::<
+        WalletManager<ManagedWalletInfo>,
+        dash_spv::network::manager::PeerNetworkManager,
+    >::new(config.clone(), network_manager, wallet.clone(), Vec::new())
+    .await
+    {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("Failed to create SPV client: {}", e);
+            process::exit(1);
+        }
+    };
 
     client.run().await?;
 

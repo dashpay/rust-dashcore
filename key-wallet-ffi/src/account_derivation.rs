@@ -231,7 +231,7 @@ pub unsafe extern "C" fn account_derive_private_key_at(
         account.inner().derive_from_master_xpriv_extended_xpriv_at(master_xpriv.inner(), index),
         error
     );
-    Box::into_raw(Box::new(FFIPrivateKey::from_secret(derived.private_key)))
+    Box::into_raw(Box::new(FFIPrivateKey::from_secret(derived.private_key.clone())))
 }
 
 /// Derive a private key from an account at a given chain/index and return as WIF string.
@@ -262,7 +262,8 @@ pub unsafe extern "C" fn account_derive_private_key_as_wif_at(
         account.inner().derive_from_master_xpriv_extended_xpriv_at(master_xpriv.inner(), index),
         error
     );
-    let dash_priv = dashcore::PrivateKey::new(derived.private_key, account.inner().network());
+    let dash_priv =
+        dashcore::PrivateKey::new(derived.private_key.clone(), account.inner().network());
     unwrap_or_return!(CString::new(dash_priv.to_wif()), error).into_raw()
 }
 
@@ -313,7 +314,7 @@ pub unsafe extern "C" fn account_derive_private_key_from_seed(
         account.inner().derive_from_seed_extended_xpriv_at(seed_slice, index),
         error
     );
-    Box::into_raw(Box::new(FFIPrivateKey::from_secret(derived.private_key)))
+    Box::into_raw(Box::new(FFIPrivateKey::from_secret(derived.private_key.clone())))
 }
 
 /// Derive an extended private key from a mnemonic + optional passphrase at the given index.
@@ -383,7 +384,7 @@ pub unsafe extern "C" fn account_derive_private_key_from_mnemonic(
             .derive_from_mnemonic_extended_xpriv_at(mnemonic_str, passphrase_str, index,),
         error
     );
-    Box::into_raw(Box::new(FFIPrivateKey::from_secret(derived.private_key)))
+    Box::into_raw(Box::new(FFIPrivateKey::from_secret(derived.private_key.clone())))
 }
 
 #[cfg(test)]

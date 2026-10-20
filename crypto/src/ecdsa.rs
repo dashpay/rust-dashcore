@@ -9,266 +9,287 @@
 //!
 //! This module provides ECDSA signatures used Bitcoin that can be roundtrip (de)serialized.
 
+use core::fmt;
 use core::str::FromStr;
-use core::{fmt, iter};
 
+#[cfg(feature = "rand")]
+use bitcoin_crypto::key::rand;
+use bitcoin_crypto::key::{Keypair, XOnlyPublicKey};
+use dash_pkc::__deps::secp256k1;
+use dash_pkc::ecdsa::{
+    Compression, EcdsaPublicKey as PkcPublicKey, EcdsaRecSigBytes as PkcRecSigBytes,
+    EcdsaRecSignature as PkcRecSignature, EcdsaSecretKey as PkcSecretKey,
+    EcdsaSignature as PkcSignature,
+};
+use dash_types::type_cvrt;
+use delegate::delegate;
 use hex_conservative::DisplayHex;
-use internals::write_err;
-use secp256k1;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use internals::{debug_from_display, impl_array_newtype, impl_bytes_newtype};
+use zeroize::{Zeroize, Zeroizing};
 
-use crate::sighash::EcdsaSighashType;
+pub use bitcoin_crypto::ecdsa::{DecodeError, ParseSignatureError, SerializedSignature, Signature};
+pub use dash_pkc::ecdsa::EcdsaError;
 
-const MAX_SIG_LEN: usize = 73;
+/// Compressed SEC1 public key length.
+pub const ECDSA_PK_LEN: usize = 33;
 
-/// An ECDSA signature with the corresponding hash type.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Signature {
-    /// The underlying ECDSA Signature
-    pub sig: secp256k1::ecdsa::Signature,
-    /// The corresponding hash type
-    pub hash_ty: EcdsaSighashType,
-}
+/// Uncompressed SEC1 public key length.
+pub const ECDSA_PK_UNCOMPRESSED_LEN: usize = 65;
 
-impl Signature {
-    /// Constructs an ECDSA dash signature for [`EcdsaSighashType::All`].
-    pub fn sighash_all(sig: secp256k1::ecdsa::Signature) -> Signature {
-        Signature {
-            sig,
-            hash_ty: EcdsaSighashType::All,
+/// Scalar (secret key or tweak) length.
+pub const ECDSA_SK_LEN: usize = 32;
+
+/// Compact (`r || s`) signature length.
+pub const ECDSA_SIG_LEN: usize = 64;
+
+/// Compact recoverable signature length (a header byte, then `r || s`).
+pub const ECDSA_REC_SIG_LEN: usize = ECDSA_SIG_LEN + 1;
+
+/// A secp256k1 public key.
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(from = "secp256k1::PublicKey"))]
+#[cfg_attr(feature = "serde", serde(into = "secp256k1::PublicKey"))]
+pub struct EcdsaPublicKey(PkcPublicKey);
+
+impl EcdsaPublicKey {
+    delegate! {
+        to PkcPublicKey {
+            /// Parses a compressed, uncompressed or hybrid SEC1 encoding.
+            #[expr($.map(Self))]
+            pub fn from_bytes(bytes: &[u8]) -> Result<Self, EcdsaError>;
+        }
+        to self.0 {
+            /// The compressed SEC1 encoding.
+            pub fn to_compressed(&self) -> [u8; ECDSA_PK_LEN];
+
+            /// The uncompressed SEC1 encoding.
+            pub fn to_uncompressed(&self) -> [u8; ECDSA_PK_UNCOMPRESSED_LEN];
+
+            /// Adds `tweak * G` to the point.
+            #[expr($.map(Self))]
+            pub fn add_tweak(&self, tweak: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError>;
+
+            /// Checks `sig` over the 32-byte prehashed message.
+            pub fn verify(
+                &self,
+                msg_hash: &[u8; 32],
+                #[newtype] sig: EcdsaSignature,
+            ) -> Result<(), EcdsaError>;
         }
     }
 
-    /// Deserializes from slice following the standardness rules for [`EcdsaSighashType`].
-    pub fn from_slice(sl: &[u8]) -> Result<Self, Error> {
-        let (hash_ty, sig) = sl.split_last().ok_or(Error::EmptySignature)?;
-        let hash_ty = EcdsaSighashType::from_standard(*hash_ty as u32)
-            .map_err(|_| Error::NonStandardSighashType(*hash_ty as u32))?;
-        let sig = secp256k1::ecdsa::Signature::from_der(sig).map_err(Error::Secp256k1)?;
-        Ok(Signature {
-            sig,
-            hash_ty,
-        })
-    }
-
-    /// Serializes an ECDSA signature (inner secp256k1 signature in DER format).
-    ///
-    /// This does **not** perform extra heap allocation.
-    pub fn serialize(&self) -> SerializedSignature {
-        let mut buf = [0u8; MAX_SIG_LEN];
-        let signature = self.sig.serialize_der();
-        buf[..signature.len()].copy_from_slice(&signature);
-        buf[signature.len()] = self.hash_ty.to_consensus_u8();
-        SerializedSignature {
-            data: buf,
-            len: signature.len() + 1,
-        }
-    }
-
-    /// Serializes an ECDSA signature (inner secp256k1 signature in DER format) into `Vec`.
-    ///
-    /// Note: this performs an extra heap allocation, you might prefer the
-    /// [`serialize`](Self::serialize) method instead.
-    pub fn to_vec(self) -> Vec<u8> {
-        // TODO: add support to serialize to a writer to SerializedSig
-        self.sig
-            .serialize_der()
-            .iter()
-            .copied()
-            .chain(iter::once(self.hash_ty.to_consensus_u8()))
-            .collect()
+    /// Recovers the signing key from a recoverable signature over the 32-byte
+    /// prehashed message.
+    pub fn recover(msg_hash: &[u8; 32], sig: &EcdsaRecSignature) -> Result<Self, EcdsaError> {
+        PkcPublicKey::recover(msg_hash, &sig.parse()?).map(Self)
     }
 }
 
-impl fmt::Display for Signature {
+/// Compared as curve points, whichever encoding the key was parsed from.
+impl PartialEq for EcdsaPublicKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_compressed() == other.to_compressed()
+    }
+}
+
+impl Eq for EcdsaPublicKey {}
+
+impl core::hash::Hash for EcdsaPublicKey {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.to_compressed().hash(state)
+    }
+}
+
+debug_from_display!(EcdsaPublicKey);
+
+/// Hex of the compressed encoding.
+impl fmt::Display for EcdsaPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:x}", self.sig.serialize_der().as_hex())?;
-        write!(f, "{:x}", [self.hash_ty.to_consensus_u8()].as_hex())
+        write!(f, "{:x}", self.to_compressed().as_hex())
     }
 }
 
-impl FromStr for Signature {
-    type Err = Error;
+/// Hex of either SEC1 encoding.
+impl FromStr for EcdsaPublicKey {
+    type Err = EcdsaError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = hex_conservative::decode_to_vec(s)?;
-        let (sighash_byte, signature) = bytes.split_last().ok_or(Error::EmptySignature)?;
-        Ok(Signature {
-            sig: secp256k1::ecdsa::Signature::from_der(signature)?,
-            hash_ty: EcdsaSighashType::from_standard(*sighash_byte as u32)
-                .map_err(|_| Error::NonStandardSighashType(*sighash_byte as u32))?,
-        })
+        Self::from_bytes(
+            &hex_conservative::decode_to_vec(s).map_err(|_| EcdsaError::InvalidPublicKey)?,
+        )
     }
 }
 
-/// Holds signature serialized in-line (not in `Vec`).
-///
-/// This avoids allocation and allows proving maximum size of the signature (73 bytes).
-/// The type can be used largely as a byte slice. It implements all standard traits one would
-/// expect and has familiar methods.
-/// However, the usual use case is to push it into a script. This can be done directly passing it
-/// into `ScriptBuf::push_slice`.
-#[derive(Copy, Clone)]
-pub struct SerializedSignature {
-    data: [u8; MAX_SIG_LEN],
-    len: usize,
-}
+type_cvrt!(From<secp256k1::PublicKey> for EcdsaPublicKey, |pk| Self(pk.into()));
+type_cvrt!(From<EcdsaPublicKey> for secp256k1::PublicKey, |pk| pk.0.into());
+type_cvrt!(From<EcdsaPublicKey> for XOnlyPublicKey, |pk| {
+    Self::from(secp256k1::PublicKey::from(pk))
+});
 
-impl SerializedSignature {
-    /// Returns an iterator over bytes of the signature.
-    #[inline]
-    pub fn iter(&self) -> core::slice::Iter<'_, u8> {
-        self.into_iter()
-    }
-}
+/// A secp256k1 secret key.
+#[derive(Clone, Eq, PartialEq, Zeroize)]
+pub struct EcdsaSecretKey(PkcSecretKey);
 
-impl core::ops::Deref for SerializedSignature {
-    type Target = [u8];
+impl EcdsaSecretKey {
+    delegate! {
+        to PkcSecretKey {
+            /// Wraps a big-endian scalar.
+            #[expr($.map(Self))]
+            pub fn from_bytes(
+                bytes: &[u8; ECDSA_SK_LEN],
+                [Compression::Compressed],
+            ) -> Result<Self, EcdsaError>;
+        }
+        to self.0 {
+            /// Copies out the big-endian scalar.
+            pub fn to_bytes(&self) -> Zeroizing<[u8; ECDSA_SK_LEN]>;
 
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.data[..self.len]
-    }
-}
+            /// Derives the corresponding public key.
+            #[expr(EcdsaPublicKey($))]
+            pub fn public_key(&self) -> EcdsaPublicKey;
 
-impl core::ops::DerefMut for SerializedSignature {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data[..self.len]
-    }
-}
+            /// Adds `tweak` to the scalar.
+            #[expr($.map(Self))]
+            pub fn add_tweak(&self, tweak: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError>;
 
-impl AsRef<[u8]> for SerializedSignature {
-    #[inline]
-    fn as_ref(&self) -> &[u8] {
-        self
-    }
-}
+            /// Signs a 32-byte prehashed message (RFC 6979, low-S, low-R ground).
+            #[expr(EcdsaSignature($))]
+            pub fn sign(&self, msg_hash: &[u8; 32]) -> EcdsaSignature;
 
-impl AsMut<[u8]> for SerializedSignature {
-    #[inline]
-    fn as_mut(&mut self) -> &mut [u8] {
-        self
-    }
-}
-
-impl core::borrow::Borrow<[u8]> for SerializedSignature {
-    #[inline]
-    fn borrow(&self) -> &[u8] {
-        self
-    }
-}
-
-impl core::borrow::BorrowMut<[u8]> for SerializedSignature {
-    #[inline]
-    fn borrow_mut(&mut self) -> &mut [u8] {
-        self
-    }
-}
-
-impl fmt::Debug for SerializedSignature {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-impl fmt::Display for SerializedSignature {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::LowerHex::fmt(self, f)
-    }
-}
-
-impl fmt::LowerHex for SerializedSignature {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:x}", (**self).as_hex())
-    }
-}
-
-impl fmt::UpperHex for SerializedSignature {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:X}", (**self).as_hex())
-    }
-}
-
-impl PartialEq for SerializedSignature {
-    #[inline]
-    fn eq(&self, other: &SerializedSignature) -> bool {
-        **self == **other
-    }
-}
-
-impl Eq for SerializedSignature {}
-
-impl core::hash::Hash for SerializedSignature {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        core::hash::Hash::hash(&**self, state)
-    }
-}
-
-impl<'a> IntoIterator for &'a SerializedSignature {
-    type IntoIter = core::slice::Iter<'a, u8>;
-    type Item = &'a u8;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        (*self).iter()
-    }
-}
-
-/// A key-related error.
-#[derive(Clone, PartialEq, Eq, Debug)]
-#[non_exhaustive]
-pub enum Error {
-    /// Hex encoding error
-    HexEncoding(hex_conservative::DecodeVariableLengthBytesError),
-    /// Non-standard sighash type
-    NonStandardSighashType(u32),
-    /// Empty Signature
-    EmptySignature,
-    /// secp256k1-related error
-    Secp256k1(secp256k1::Error),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::HexEncoding(ref e) => write_err!(f, "Signature hex encoding error"; e),
-            Error::NonStandardSighashType(hash_ty) => {
-                write!(f, "Non standard signature hash type {}", hash_ty)
-            }
-            Error::EmptySignature => write!(f, "Empty ECDSA signature"),
-            Error::Secp256k1(ref e) => write_err!(f, "invalid ECDSA signature"; e),
+            /// Signs a 32-byte prehashed message recoverably (RFC 6979, low-S).
+            #[expr(EcdsaRecSignature::from_pkc($))]
+            pub fn sign_recoverable(&self, msg_hash: &[u8; 32]) -> EcdsaRecSignature;
         }
     }
+
+    /// Draws a random scalar from the thread RNG.
+    #[cfg(feature = "rand")]
+    pub fn generate() -> Self {
+        Self(secp256k1::SecretKey::new(&mut rand::rng()).into())
+    }
 }
 
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        use self::Error::*;
+impl fmt::Debug for EcdsaSecretKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("EcdsaSecretKey(..)")
+    }
+}
 
-        match self {
-            HexEncoding(e) => Some(e),
-            Secp256k1(e) => Some(e),
-            NonStandardSighashType(_) | EmptySignature => None,
+type_cvrt!(From<EcdsaSecretKey> for Keypair, |sk| {
+    Self::from(secp256k1::Keypair::from_secret_key(&(&sk.0).into()))
+});
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for EcdsaSecretKey {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(&secp256k1::SecretKey::from(&self.0), s)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for EcdsaSecretKey {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        <secp256k1::SecretKey as serde::Deserialize>::deserialize(d).map(|sk| Self(sk.into()))
+    }
+}
+
+/// A secp256k1 ECDSA signature (the `r` and `s` scalars, without a sighash
+/// type).
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(from = "secp256k1::ecdsa::Signature"))]
+#[cfg_attr(feature = "serde", serde(into = "secp256k1::ecdsa::Signature"))]
+pub struct EcdsaSignature(PkcSignature);
+
+impl EcdsaSignature {
+    delegate! {
+        to PkcSignature {
+            /// Parses the compact (`r || s`) encoding.
+            #[expr($.map(Self))]
+            pub fn from_bytes(bytes: &[u8; ECDSA_SIG_LEN]) -> Result<Self, EcdsaError>;
+
+            /// Parses a DER encoding.
+            #[expr($.map(Self))]
+            pub fn from_der(bytes: &[u8]) -> Result<Self, EcdsaError>;
+        }
+        to self.0 {
+            /// The compact (`r || s`) encoding.
+            pub fn to_bytes(&self) -> [u8; ECDSA_SIG_LEN];
         }
     }
-}
 
-impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Error {
-        Error::Secp256k1(e)
+    /// Calls `f` with the DER encoding, without allocating.
+    pub fn with_der<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
+        f(self.0.to_der().as_bytes())
     }
 }
 
-impl From<hex_conservative::DecodeVariableLengthBytesError> for Error {
-    fn from(err: hex_conservative::DecodeVariableLengthBytesError) -> Self {
-        Error::HexEncoding(err)
+debug_from_display!(EcdsaSignature);
+
+/// Hex of the DER encoding.
+impl fmt::Display for EcdsaSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.with_der(|der| write!(f, "{:x}", der.as_hex()))
+    }
+}
+
+/// Hex of the DER encoding.
+impl FromStr for EcdsaSignature {
+    type Err = EcdsaError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_der(
+            &hex_conservative::decode_to_vec(s).map_err(|_| EcdsaError::InvalidSignature)?,
+        )
+    }
+}
+
+type_cvrt!(From<secp256k1::ecdsa::Signature> for EcdsaSignature, |sig| Self(PkcSignature::from(*sig)));
+type_cvrt!(From<EcdsaSignature> for secp256k1::ecdsa::Signature, |sig| Self::from(sig.0));
+
+/// A compact recoverable signature as Dash Core writes it, a header byte
+/// carrying the recovery id and key compression, then `r || s`. Checked by
+/// the operations that read it.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "bincode", derive(bincode_derive::Encode, bincode_derive::Decode))]
+pub struct EcdsaRecSignature([u8; ECDSA_REC_SIG_LEN]);
+
+impl_array_newtype!(EcdsaRecSignature, u8, ECDSA_REC_SIG_LEN);
+impl_bytes_newtype!(EcdsaRecSignature, ECDSA_REC_SIG_LEN);
+
+impl EcdsaRecSignature {
+    /// Pairs a signature with its recovery id and key compression.
+    pub fn from_parts(
+        sig: EcdsaSignature,
+        recovery_id: u8,
+        compressed: bool,
+    ) -> Result<Self, EcdsaError> {
+        PkcRecSignature::from_parts(sig.0, recovery_id, compressed.into()).map(Self::from_pkc)
+    }
+
+    fn from_pkc(sig: PkcRecSignature) -> Self {
+        Self(PkcRecSigBytes::from(sig).to_bytes())
+    }
+
+    fn parse(&self) -> Result<PkcRecSignature, EcdsaError> {
+        PkcRecSigBytes::from_raw(self.0).ok_or(EcdsaError::InvalidRecoveryId)?.try_into()
+    }
+
+    delegate! {
+        to self.parse()? {
+            /// Whether the signing key serializes compressed.
+            #[expr(Ok($))]
+            pub fn is_compressed(&self) -> Result<bool, EcdsaError>;
+
+            /// The recovery id, in `0..=3`.
+            #[expr(Ok($))]
+            pub fn recovery_id(&self) -> Result<u8, EcdsaError>;
+
+            /// The signature without its recovery id.
+            #[expr(Ok(EcdsaSignature(*$)))]
+            pub fn signature(&self) -> Result<EcdsaSignature, EcdsaError>;
+        }
     }
 }
 
@@ -279,23 +300,168 @@ mod tests {
     // A DER signature with `SIGHASH_ALL` appended.
     const SIG_HEX: &str = "3045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c01";
 
-    /// Formatting flags are ignored, as `hex-conservative` 1.x would otherwise
-    /// pad and prefix each part of the signature separately.
+    /// Formatting flags apply to the whole encoding, as for a string.
     #[test]
-    fn display_ignores_format_flags() {
+    fn display_applies_format_flags() {
         let sig = Signature::from_str(SIG_HEX).unwrap();
-        for out in [
-            format!("{}", sig),
-            format!("{:#}", sig),
-            format!("{:>200}", sig),
-            format!("{:.4}", sig),
-        ] {
-            assert_eq!(out, SIG_HEX);
-        }
+        assert_eq!(format!("{}", sig), SIG_HEX);
+        assert_eq!(format!("{:#}", sig), format!("0x{}", SIG_HEX));
+        assert_eq!(format!("{:>200}", sig), format!("{:>200}", SIG_HEX));
+        assert_eq!(format!("{:.4}", sig), SIG_HEX[..4]);
 
         let serialized = sig.serialize();
         assert_eq!(format!("{:x}", serialized), SIG_HEX);
-        assert_eq!(format!("{:#x}", serialized), SIG_HEX);
+        assert_eq!(format!("{:#x}", serialized), format!("0x{}", SIG_HEX));
         assert_eq!(format!("{:X}", serialized), SIG_HEX.to_uppercase());
+    }
+
+    /// Signing grinds a low R, as Dash Core does, so DER signatures fit in 70
+    /// bytes; the result verifies and survives both encodings.
+    #[test]
+    fn sign_is_low_r_and_round_trips() {
+        let sk = EcdsaSecretKey::from_bytes(&[0x42; ECDSA_SK_LEN]).expect("valid secret key");
+        let pk = sk.public_key();
+        for i in 0..32u8 {
+            let msg = [i; 32];
+            let sig = sk.sign(&msg);
+            assert!(sig.to_bytes()[0] < 0x80, "R must be low");
+            assert!(sig.with_der(<[u8]>::len) <= 70);
+            assert_eq!(sig, sk.sign(&msg), "signing is deterministic");
+            pk.verify(&msg, sig).expect("signature verifies");
+            assert_eq!(pk.verify(&[i ^ 1; 32], sig), Err(EcdsaError::VerifyFailed));
+            assert_eq!(EcdsaSignature::from_bytes(&sig.to_bytes()), Ok(sig));
+            assert_eq!(sig.with_der(EcdsaSignature::from_der), Ok(sig));
+        }
+    }
+
+    #[test]
+    fn rec_signature_keeps_compression() {
+        let sk = EcdsaSecretKey::from_bytes(&[0x42; ECDSA_SK_LEN]).expect("valid secret key");
+        let rec = sk.sign_recoverable(&[0x07; 32]);
+        assert_eq!(rec.is_compressed(), Ok(true));
+
+        let sig = rec.signature().unwrap();
+        let id = rec.recovery_id().unwrap();
+        assert_eq!(EcdsaRecSignature::from_parts(sig, id, true), Ok(rec));
+        let legacy = EcdsaRecSignature::from_parts(sig, id, false).unwrap();
+        assert_eq!(legacy.is_compressed(), Ok(false));
+        assert_ne!(legacy, rec);
+        assert_eq!(EcdsaRecSignature::from_parts(sig, 4, true), Err(EcdsaError::InvalidRecoveryId));
+    }
+
+    #[test]
+    fn rec_signature_carries_the_core_header() {
+        let sk = EcdsaSecretKey::from_bytes(&[0x42; ECDSA_SK_LEN]).expect("valid secret key");
+        let rec = sk.sign_recoverable(&[0x07; 32]);
+        let id = rec.recovery_id().unwrap();
+        assert_eq!(rec[0], 31 + id);
+        assert_eq!(rec[1..], rec.signature().unwrap().to_bytes());
+
+        let legacy = EcdsaRecSignature::from_parts(rec.signature().unwrap(), id, false);
+        assert_eq!(legacy.unwrap()[0], 27 + id);
+        assert_eq!(rec.to_string().parse::<EcdsaRecSignature>(), Ok(rec));
+    }
+
+    #[test]
+    fn rec_signature_is_checked_when_read() {
+        let pk = EcdsaSecretKey::from_bytes(&[0x42; ECDSA_SK_LEN]).unwrap().public_key();
+        for header in [26, 35] {
+            let mut raw = [0x01; ECDSA_REC_SIG_LEN];
+            raw[0] = header;
+            let rec = EcdsaRecSignature::from(raw);
+            assert_eq!(rec.to_bytes(), raw, "raw bytes stay unchecked");
+            assert_eq!(rec.recovery_id(), Err(EcdsaError::InvalidRecoveryId));
+            assert_eq!(
+                EcdsaPublicKey::recover(&[0x07; 32], &rec),
+                Err(EcdsaError::InvalidRecoveryId)
+            );
+        }
+        let mut raw = [0xff; ECDSA_REC_SIG_LEN];
+        raw[0] = 31;
+        let rec = EcdsaRecSignature::from(raw);
+        assert_eq!(rec.signature(), Err(EcdsaError::InvalidSignature));
+        assert_ne!(EcdsaPublicKey::recover(&[0x07; 32], &rec), Ok(pk));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn rec_signature_serde_layout_is_hex_or_bytes() {
+        let bytes = EcdsaRecSignature::from([0x22; ECDSA_REC_SIG_LEN]);
+        let hex = "22".repeat(ECDSA_REC_SIG_LEN);
+
+        let json = serde_json::to_string(&bytes).expect("serialize signature");
+        assert_eq!(json, format!("\"{}\"", hex));
+        assert_eq!(serde_json::from_str::<EcdsaRecSignature>(&json).expect("deserialize"), bytes);
+
+        #[cfg(feature = "bincode")]
+        {
+            let config = bincode::config::standard();
+            let raw = bincode::encode_to_vec(bytes, config).expect("encode signature");
+            assert_eq!(raw, [0x22; ECDSA_REC_SIG_LEN]);
+
+            let encoded = bincode::serde::encode_to_vec(bytes, config).expect("encode signature");
+            assert_eq!(encoded, [&[65u8][..], &[0x22; ECDSA_REC_SIG_LEN]].concat());
+            let (decoded, _): (EcdsaRecSignature, _) =
+                bincode::serde::decode_from_slice(&encoded, config).expect("decode signature");
+            assert_eq!(decoded, bytes);
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    const DER_HEX: &str =
+        "3045022100d2e84c0a1a8e0d31d1b0f8b3cde37ab19ef8e6bff4f72c5ac6f0a4b8a8d1ec2d\
+                           02204c7b8e3f2a5d6c1b0e9f8a7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39";
+    #[cfg(feature = "serde")]
+    const COMPACT_HEX: &str = "d2e84c0a1a8e0d31d1b0f8b3cde37ab19ef8e6bff4f72c5ac6f0a4b8a8d1ec2d\
+                               4c7b8e3f2a5d6c1b0e9f8a7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39";
+
+    /// The signature serializes as DER, a hex string in human-readable formats
+    /// and a byte string otherwise.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_layout_is_der() {
+        let sig = Signature::from_str(&format!("{}01", DER_HEX)).expect("parse signature");
+
+        let json = serde_json::to_string(&sig).expect("serialize signature");
+        assert_eq!(
+            json,
+            format!("{{\"signature\":\"{}\",\"sighash_type\":\"SIGHASH_ALL\"}}", DER_HEX)
+        );
+        assert_eq!(serde_json::from_str::<Signature>(&json).expect("deserialize signature"), sig);
+
+        let config = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(sig, config).expect("encode signature");
+        let mut expected = vec![0x47];
+        expected.extend(hex_conservative::decode_to_vec(DER_HEX).expect("decode hex"));
+        expected.push(0x0b);
+        expected.extend(b"SIGHASH_ALL");
+        assert_eq!(bytes, expected);
+        let (decoded, _): (Signature, _) =
+            bincode::serde::decode_from_slice(&bytes, config).expect("decode signature");
+        assert_eq!(decoded, sig);
+    }
+
+    /// The signature takes hex in either case. Anything other than one DER
+    /// encoding is rejected in both formats.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_input_is_der_only() {
+        let json =
+            |sig: &str| format!("{{\"signature\":\"{}\",\"sighash_type\":\"SIGHASH_ALL\"}}", sig);
+        let sig = Signature::from_str(&format!("{}01", DER_HEX)).expect("parse signature");
+
+        let upper = serde_json::from_str::<Signature>(&json(&DER_HEX.to_uppercase()));
+        assert_eq!(upper.expect("uppercase hex"), sig);
+        let trailing = format!("{}00", DER_HEX);
+        for bad in [COMPACT_HEX, &trailing, &DER_HEX[..DER_HEX.len() - 1]] {
+            assert!(serde_json::from_str::<Signature>(&json(bad)).is_err(), "{}", bad);
+        }
+
+        let mut bytes = vec![0x40];
+        bytes.extend(hex_conservative::decode_to_vec(COMPACT_HEX).expect("decode hex"));
+        bytes.push(0x0b);
+        bytes.extend(b"SIGHASH_ALL");
+        let config = bincode::config::standard();
+        assert!(bincode::serde::decode_from_slice::<Signature, _>(&bytes, config).is_err());
     }
 }

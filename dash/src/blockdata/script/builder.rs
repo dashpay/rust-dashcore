@@ -6,7 +6,7 @@ use core::convert::From;
 use core::default::Default;
 use core::fmt;
 
-use secp256k1::XOnlyPublicKey;
+use crate::crypto::key::XOnlyPublicKey;
 
 use crate::blockdata::locktime::absolute;
 use crate::blockdata::opcodes::all::*;
@@ -80,7 +80,7 @@ impl Builder {
 
     /// Adds instructions to push an XOnly public key onto the stack.
     pub fn push_x_only_key(self, x_only_key: &XOnlyPublicKey) -> Builder {
-        self.push_slice(x_only_key.to_byte_array())
+        self.push_slice(x_only_key.serialize().0)
     }
 
     /// Adds a single opcode to the script.
