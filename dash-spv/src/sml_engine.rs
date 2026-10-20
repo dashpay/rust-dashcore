@@ -818,6 +818,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// Applies a QRInfo's diffs, then validates and stores its active rotation
     /// set and the previous cycle's. An invalid current-cycle quorum fails it.
     ///
+    /// Dash Core builds a QRInfo at the block it was asked for, so the QRInfo
+    /// has to be for the tip it was requested for: its cycle diffs and its
+    /// active rotation set are checked against that tip.
+    ///
     /// A QRInfo that fails, or whose feed is dropped part way as an aborted
     /// task drops it, leaves the engine as it was: its retry starts from the
     /// same lists, and no later message builds on lists of a QRInfo that was
@@ -868,6 +872,18 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let h_block_hash = mn_list_diff_h.block_hash;
         let tip_block_hash = mn_list_diff_tip.block_hash;
         let rotation_quorum_type = self.rotation_quorum_type(&last_commitment_per_index);
+        self.check_cycle_work_blocks(
+            tip_block_hash,
+            [
+                Some(&mn_list_diff_h),
+                Some(&mn_list_diff_at_h_minus_c),
+                Some(&mn_list_diff_at_h_minus_2c),
+                Some(&mn_list_diff_at_h_minus_3c),
+                quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_ref().map(|(_, diff)| diff),
+            ],
+            rotation_quorum_type.params().dkg_params.interval,
+        )
+        .await?;
         let rotated_quorum_count = last_commitment_per_index.len();
 
         let mut snapshots = BTreeMap::new();
@@ -969,6 +985,46 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             fully_verified_count,
             stored_cycle_height,
         })
+    }
+
+    /// Checks that the diffs a QRInfo builds the rotation cycles from end where
+    /// Dash Core builds them for the requested tip, the only tip a QRInfo is
+    /// accepted for: the first at the work block of the tip's cycle (h), each
+    /// next one at the work block one cycle further back (h-c to h-4c). The
+    /// previous cycle is stored from the list at h, so a diff to another
+    /// block, such as one inside the current cycle's mining window, would
+    /// store a set mixing cycles under the current cycle's key, and the real
+    /// set could no longer replace it. A cycle below genesis has no work block
+    /// and is refused with `expected` 0. Fails with
+    /// [`FeedError::HeaderStorage`] when a height cannot be read.
+    async fn check_cycle_work_blocks(
+        &self,
+        tip_block_hash: BlockHash,
+        cycle_diffs: [Option<&MnListDiff>; 5],
+        interval: u32,
+    ) -> Result<(), FeedError<SmlError>> {
+        if interval == 0 {
+            return Ok(());
+        }
+        let tip_height = self.required_height_of(&tip_block_hash).await?;
+        let cycle_base = tip_height - tip_height % interval;
+        for (cycles_back, diff) in (0u32..).zip(cycle_diffs) {
+            let Some(diff) = diff else {
+                continue;
+            };
+            let expected = cycles_back
+                .checked_mul(interval)
+                .and_then(|back| cycle_base.checked_sub(back))
+                .and_then(|cycle| cycle.checked_sub(WORK_DIFF_DEPTH));
+            if expected.is_none() || self.height_of(&diff.block_hash).await? != expected {
+                return Err(SmlError::QRInfoDiffAtWrongHeight {
+                    block_hash: diff.block_hash,
+                    expected: expected.unwrap_or_default(),
+                }
+                .into());
+            }
+        }
+        Ok(())
     }
 
     /// Checks that every commitment of `served` is the one the list at
@@ -1878,6 +1934,59 @@ mod tests {
         );
         assert!(engine.masternode_lists == lists, "a refused QRInfo leaves the lists as they were");
         assert!(engine.rotated_quorums_per_cycle.is_empty(), "and stores no cycle");
+    }
+
+    /// Dash Core builds the diffs of a QRInfo at the work blocks of the
+    /// requested tip's cycle (h) and of the cycles before it (h-c to h-4c).
+    /// The previous cycle is stored from the list at h, so a diff to another
+    /// block is refused, even a proven one building the same list: one inside
+    /// the current cycle's mining window would store a set mixing cycles under
+    /// the current cycle's key, and the real set could no longer replace it.
+    #[tokio::test]
+    async fn a_qr_info_whose_h_diff_is_not_at_the_cycle_work_block_is_refused() {
+        let (mut fed, qr_info) = load_qrinfo_2518986_fixture();
+        fed.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+        let height = |block_hash: &BlockHash| fed.block_height(block_hash).expect("known");
+        let h_height = height(&qr_info.mn_list_diff_h.block_hash);
+        let tip_height = height(&qr_info.mn_list_diff_tip.block_hash);
+        let list_at = |block_hash: &BlockHash| fed.masternode_lists[&height(block_hash)].clone();
+        let h_c_list = list_at(&qr_info.mn_list_diff_h.base_block_hash);
+        assert_eq!(qr_info.mn_list_diff_tip.base_block_hash, qr_info.mn_list_diff_h.block_hash);
+
+        // The same lists, with the one at h built at the block above it.
+        let (mut engine, mut moved) = load_qrinfo_2518986_fixture();
+        let off_cycle = BlockHash::dummy(h_height + 1);
+        engine.feed_block_height(h_height + 1, off_cycle);
+        moved.mn_list_diff_h = MnListDiff {
+            block_hash: off_cycle,
+            ..moved.mn_list_diff_h
+        }
+        .committing_on(Some(&h_c_list), h_height + 1);
+        let off_cycle_list = h_c_list
+            .apply_diff(moved.mn_list_diff_h.clone(), h_height + 1, Network::Mainnet)
+            .expect("the moved h diff applies");
+        moved.mn_list_diff_tip = MnListDiff {
+            base_block_hash: off_cycle,
+            ..moved.mn_list_diff_tip
+        }
+        .committing_on(Some(&off_cycle_list), tip_height);
+        engine.prove(&moved.mn_list_diff_h);
+        engine.prove(&moved.mn_list_diff_tip);
+
+        let result = engine.feed_qr_info(moved).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(FeedError::Refused(QuorumValidationError::SMLError(
+                    SmlError::QRInfoDiffAtWrongHeight {
+                        block_hash,
+                        expected,
+                    }
+                ))) if block_hash == off_cycle && expected == h_height
+            ),
+            "got {result:?}"
+        );
     }
 
     /// A QRInfo the engine refuses leaves it as it was, so a retry against
