@@ -1096,7 +1096,8 @@ mod tests {
         }
 
         // Budget spent. The last rejection must terminate rather than dispatch
-        // again, and must not park the manager in `Syncing` forever.
+        // again, and leaves the manager `Syncing` with nothing in flight, for
+        // the stall watchdog.
         manager
             .handle_message(bad_response(), &requests)
             .await
@@ -1111,11 +1112,44 @@ mod tests {
             MAX_RETRY_ATTEMPTS as u32,
             "exactly MAX_RETRY_ATTEMPTS dispatches: the initial one plus its retries"
         );
-        assert_ne!(
-            manager.state(),
-            SyncState::Syncing,
-            "giving up must resolve the state, not leave it silently Syncing"
+        assert!(
+            manager.state() == SyncState::Syncing && manager.sync_state.qrinfo_in_flight.is_none(),
+            "giving up on an empty engine leaves the manager to the stall watchdog"
         );
+    }
+
+    /// When every QRInfo attempt fails before the engine holds any list, the
+    /// manager stays `Syncing`: `Error` has no way out, while the stall
+    /// watchdog starts a fresh budget once the last attempt is old enough.
+    #[tokio::test]
+    async fn qrinfo_attempts_exhausted_on_an_empty_engine_are_retried_by_the_watchdog() {
+        let (mut manager, requests, mut rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
+        for attempt in 0..MAX_RETRY_ATTEMPTS {
+            let peer = std::net::SocketAddr::from(([127, 0, 0, 1], 19_990 + u16::from(attempt)));
+            let refused = Message::new(
+                peer,
+                NetworkMessage::QRInfo(Box::new(qrinfo_with_tip_hash(tip_hash))),
+            );
+            let _ = manager.handle_message(refused, &requests).await;
+            let _ = manager.tick(&requests).await;
+        }
+        while rx.try_recv().is_ok() {}
+
+        assert!(manager.engine.read().await.masternode_lists.is_empty());
+        assert_eq!(manager.state(), SyncState::Syncing, "giving up must not end in Error");
+        assert!(manager.sync_state.qrinfo_in_flight.is_none());
+
+        manager.sync_state.last_qrinfo_dispatch = Some(
+            Instant::now()
+                .checked_sub(QRINFO_STALL_WATCHDOG + Duration::from_secs(1))
+                .expect("test host uptime must exceed the watchdog interval"),
+        );
+        manager.tick(&requests).await.expect("the watchdog re-dispatch succeeds");
+        assert!(
+            matches!(rx.try_recv(), Ok(NetworkRequest::SendMessage(NetworkMessage::GetQRInfo(_)))),
+            "the watchdog must start a fresh QRInfo budget"
+        );
+        assert_eq!(manager.sync_state.qrinfo_retry_count, 0);
     }
 
     /// The stall watchdog is the backstop for every route into the stranded state
