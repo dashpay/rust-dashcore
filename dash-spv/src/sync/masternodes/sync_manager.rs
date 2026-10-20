@@ -89,13 +89,14 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
     /// peer-bound network slots. See `MasternodeSyncState::requeue_in_flight`.
     fn on_disconnect(&mut self) {
         self.sync_state.requeue_in_flight();
-        // A fresh peer set earns fresh attempts for every diff, too.
-        self.sync_state.mnlistdiff_pipeline.forget_attempts();
-        self.sync_state.forget_qrinfo_refusers();
         // A fresh peer set earns a fresh retry budget, and the dedup guard must not
         // reject a response for a tip whose earlier attempt died with the old peer.
         self.sync_state.qrinfo_retry_count = 0;
         self.sync_state.last_processed_qrinfo_tip = None;
+        // Nor do the refusals of the old peers count against the new ones.
+        self.sync_state.mnlistdiff_pipeline.forget_attempts();
+        self.sync_state.forget_qrinfo_refusers();
+        self.sync_state.given_up_tip = None;
     }
 
     fn on_peer_disconnect(&mut self) {
@@ -462,7 +463,11 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         // trigger an incremental update (the handler requires Synced). The tick
         // catches this gap and fires the appropriate pipeline.
         if self.state() == SyncState::Synced && !self.sync_state.has_pending_requests() {
-            if self.progress.current_height() < self.progress.block_header_tip_height() {
+            // A tip update given up waits for the next block, so the mode
+            // selector below is not consulted, and does not log, on every tick.
+            if self.progress.current_height() < self.progress.block_header_tip_height()
+                && !self.tip_update_given_up().await
+            {
                 let tip = self.progress.block_header_tip_height();
                 match self.next_pipeline_mode(tip) {
                     PipelineMode::QuorumValidation {
@@ -535,7 +540,10 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                          {MAX_MNLISTDIFF_ATTEMPTS} requests"
                     );
                     self.progress.add_diffs_processed(1);
-                    gave_up_tip_update |= Some(base) == newest;
+                    if Some(base) == newest {
+                        gave_up_tip_update = true;
+                        self.sync_state.given_up_tip = Some(target);
+                    }
                 }
             }
             return self.continue_diff_pipeline(gave_up_tip_update, requests).await;
@@ -589,6 +597,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 #[cfg(test)]
 mod tests {
     use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
+    use super::super::pipeline::Attempt;
     use super::{
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
@@ -1081,6 +1090,67 @@ mod tests {
         assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
     }
 
+    /// A tip update given up is not asked for again, which the `Synced` tick
+    /// would do every 100 ms for as long as the header tip stays put. The next
+    /// header tip is asked for as usual.
+    #[tokio::test]
+    async fn a_given_up_tip_update_is_not_asked_again_until_the_tip_moves() {
+        let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let refused = MnListDiff {
+            quorums_chainlock_signatures: Vec::new(),
+            ..tip_update
+        };
+        for refusing in [peer(1), peer(2), peer(3)] {
+            deliver_from(&mut manager, &requests, refusing, refused.clone()).await;
+        }
+        while rx.try_recv().is_ok() {}
+
+        manager.send_tip_mnlistdiff_update(&requests).await.expect("nothing to send");
+        for _ in 0..5 {
+            manager.tick(&requests).await.expect("tick succeeds");
+        }
+        assert!(rx.try_recv().is_err(), "the given-up tip update is not asked again");
+
+        let next_tip = Header::dummy(TIP + 2);
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(&[HashedBlockHeader::from(&next_tip)])
+            .await
+            .unwrap();
+        manager.progress.update_block_header_tip_height(TIP + 2);
+        manager.tick(&requests).await.expect("tick succeeds");
+        assert_eq!(
+            next_diff_request(&mut rx),
+            Some((hashes[TIP as usize], next_tip.block_hash())),
+            "the next header tip is asked for"
+        );
+    }
+
+    /// A tip update no peer answers is given up after three timeouts like one
+    /// three peers refused: it publishes nothing and waits for the next tip.
+    #[tokio::test]
+    async fn a_tip_update_no_peer_answers_is_given_up_until_the_tip_moves() {
+        let (mut manager, engine, requests, mut rx, _tip_update, hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        manager.sync_state.mnlistdiff_pipeline.set_timeout(Duration::from_millis(1));
+
+        for attempt in 1..=3 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let events = manager.tick(&requests).await.expect("tick succeeds");
+            assert!(events.is_empty(), "a tip update no peer answers publishes nothing");
+            assert_eq!(next_diff_request(&mut rx).is_some(), attempt < 3, "attempt {attempt}");
+        }
+
+        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+        assert_eq!(manager.sync_state.given_up_tip, Some(hashes[TIP as usize + 1]));
+        manager.tick(&requests).await.expect("tick succeeds");
+        assert!(rx.try_recv().is_err(), "the given-up tip update is not asked again");
+        assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
+    }
+
     /// A work-block list given up after three refusing peers leaves the tip
     /// update it was fetched for applied, so the update completes.
     #[tokio::test]
@@ -1428,6 +1498,37 @@ mod tests {
             manager.sync_state.last_processed_qrinfo_tip, None,
             "the dedup guard must not reject the reconnect's response"
         );
+    }
+
+    /// A disconnect from every peer forgets what the old peers refused: the
+    /// next peers get every attempt of every diff, are not avoided or ignored
+    /// for a QRInfo, and are asked for the tip update that was given up.
+    #[tokio::test]
+    async fn a_full_disconnect_forgets_the_refusals_of_the_old_peers() {
+        let (mut manager, requests, _rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
+        let base = BlockHash::from_byte_array([0x11; 32]);
+        let target = BlockHash::from_byte_array([0x22; 32]);
+        let pipeline = &mut manager.sync_state.mnlistdiff_pipeline;
+        pipeline.queue_requests(vec![(base, target)]);
+        pipeline.send_pending(&requests).expect("send succeeds");
+        pipeline.retry_or_give_up(target, Some(peer(1)));
+        manager.sync_state.qrinfo_refused_by(peer(2));
+        manager.sync_state.given_up_tip = Some(tip_hash);
+
+        manager.on_disconnect();
+
+        let pipeline = &mut manager.sync_state.mnlistdiff_pipeline;
+        assert!(!pipeline.has_refused(target, peer(1)));
+        for _ in 0..2 {
+            pipeline.send_pending(&requests).expect("send succeeds");
+            assert_eq!(
+                pipeline.retry_or_give_up(target, None),
+                Attempt::Retried,
+                "the attempt spent before the disconnect no longer counts"
+            );
+        }
+        assert!(!manager.sync_state.has_refused_qrinfo(tip_hash, peer(2)));
+        assert_eq!(manager.sync_state.given_up_tip, None);
     }
 
     /// `tick` must reissue MnListDiff requests that a disconnect moved back to
