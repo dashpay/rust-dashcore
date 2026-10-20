@@ -211,39 +211,16 @@ impl ManagedCoreFundsAccount {
             .map(|record| record.txid)
     }
 
-    /// Collect the outpoints among `tx`'s inputs that this account holds as a
-    /// final UTXO — confirmed, InstantSend-locked, or trusted.
-    ///
-    /// Used at the wallet level to assemble the cross-account parent view that
-    /// [`Self::record_transaction`] needs: one account cannot tell whether a
-    /// pooled transaction's other inputs are ours, but the wallet can ask every
-    /// account and union the answers.
-    pub(crate) fn collect_final_parents(&self, tx: &Transaction, into: &mut BTreeSet<OutPoint>) {
-        for input in &tx.input {
-            if self.utxos.get(&input.previous_output).is_some_and(|parent| {
-                parent.is_confirmed || parent.is_instantlocked || parent.is_trusted
-            }) {
-                into.insert(input.previous_output);
-            }
-        }
-    }
-
     /// Add new UTXOs for received outputs, remove spent ones.
     ///
     /// Skips any output whose outpoint is already in `observed_spent` — it is
     /// spent on-chain (dashpay/rust-dashcore#649), so the record stays consistent.
-    ///
-    /// `external_final_parents` carries the wallet-level view of the inputs:
-    /// outpoints that a *sibling* account of the same wallet holds as final.
-    /// See [`Self::record_transaction`] for why a per-account view is not
-    /// enough. An empty set degrades this to the account-local check.
     fn update_utxos(
         &mut self,
         tx: &Transaction,
         account_match: &AccountMatch,
         context: TransactionContext,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
-        external_final_parents: &BTreeSet<OutPoint>,
     ) {
         // Update UTXOs only for spendable account types
         match self.keys.managed_account_type() {
@@ -265,37 +242,6 @@ impl ManagedCoreFundsAccount {
                     .iter()
                     .map(|info| info.address.clone())
                     .collect();
-                let change_addrs: BTreeSet<_> = account_match
-                    .account_type_match
-                    .involved_change_addresses()
-                    .iter()
-                    .map(|info| info.address.clone())
-                    .collect();
-
-                // Detect a trusted self-send, mirroring Bitcoin Core's
-                // `CWalletTx::IsTrusted`: every input must spend one of our own
-                // UTXOs that is itself final (confirmed, InstantSend-locked, or
-                // trusted). Parent trust already carries the recursion, so one
-                // level of lookup is transitive over the whole ancestry. The
-                // spent parents are still present in `self.utxos` here because
-                // they are only removed after the insert loop below. An unknown
-                // or non-final parent denies trust, so funds that the network
-                // may still drop never surface as confirmed.
-                //
-                // "Ours" is a wallet-level question, not an account-level one:
-                // pooled funding (asset locks draw from BIP44 + BIP32 + the
-                // DashPay contact-receiving accounts) routinely puts inputs
-                // from a sibling account into a transaction whose change lands
-                // here. Consulting only `self.utxos` would deny trust to our
-                // own transfer and file its change under `unconfirmed`, so the
-                // caller's wallet-wide view fills in the parents this account
-                // cannot see.
-                let all_inputs_final_and_ours = tx.input.iter().all(|input| {
-                    self.utxos.get(&input.previous_output).is_some_and(|parent| {
-                        parent.is_confirmed || parent.is_instantlocked || parent.is_trusted
-                    }) || external_final_parents.contains(&input.previous_output)
-                });
-
                 let txid = tx.txid();
                 let mut utxos_changed = false;
 
@@ -386,14 +332,6 @@ impl ManagedCoreFundsAccount {
                                 continue;
                             }
 
-                            // Flag outputs from a "trusted" mempool transaction we created —
-                            // one whose inputs all spend our own final UTXOs and which pays
-                            // this output back to one of our internal (change) addresses.
-                            // Such an output is just our previously-tracked funds returning,
-                            // so `update_balance` credits it to the confirmed bucket even
-                            // before the parent transaction settles.
-                            let is_trusted_output =
-                                all_inputs_final_and_ours && change_addrs.contains(&addr);
                             let txout = dashcore::TxOut {
                                 value: output.value,
                                 script_pubkey: output.script_pubkey.clone(),
@@ -404,17 +342,14 @@ impl ManagedCoreFundsAccount {
                             utxo.is_confirmed = context.confirmed();
                             utxo.is_instantlocked =
                                 matches!(context, TransactionContext::InstantSend(_));
-                            utxo.is_trusted = is_trusted_output;
                             // Reprocessing (e.g. mempool→block) rebuilds this UTXO from
                             // scratch, so carry forward flags that must not regress. An
-                            // InstantSend lock is permanent for a txid (DIP-0010) and
-                            // trust only ever settles, so both latch monotonically. A
-                            // coin reservation is orthogonal to chain context and is kept
-                            // as-is. `is_confirmed` stays freshly derived so a reorg can
+                            // InstantSend lock is permanent for a txid (DIP-0010), so it
+                            // latches monotonically. A coin reservation is orthogonal to
+                            // chain context and is kept as-is. `is_confirmed` stays freshly derived so a reorg can
                             // still downgrade it.
                             if let Some(prior) = self.utxos.get(&outpoint) {
                                 utxo.is_instantlocked |= prior.is_instantlocked;
-                                utxo.is_trusted |= prior.is_trusted;
                                 utxo.is_locked = prior.is_locked;
                             }
                             self.utxos.insert(outpoint, utxo);
@@ -629,9 +564,7 @@ impl ManagedCoreFundsAccount {
     /// money that does not exist. Nothing else removes them: the loser is not
     /// in a block, so no block processing revisits it, and mempool expiry in
     /// dash-spv only drops its own tracking without telling the wallet. Left
-    /// alone they are counted permanently — and as *confirmed*, not merely
-    /// unconfirmed, whenever the trusted-self-send rule applies to them,
-    /// which also makes them selectable by coin selection.
+    /// alone they are counted permanently.
     ///
     /// This is deliberately narrow. It fires only on proof — a conflicting
     /// spend that is itself final — never on a timeout: the p2p network has no
@@ -832,7 +765,6 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
-        external_final_parents: &BTreeSet<OutPoint>,
     ) -> Option<TransactionRecord> {
         let txid = tx.txid();
 
@@ -851,7 +783,6 @@ impl ManagedCoreFundsAccount {
                 context,
                 transaction_type,
                 observed_spent,
-                external_final_parents,
             );
             return Some(record);
         }
@@ -891,7 +822,7 @@ impl ManagedCoreFundsAccount {
         // chainlock catches up.
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        self.update_utxos(tx, account_match, context, observed_spent);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -907,14 +838,6 @@ impl ManagedCoreFundsAccount {
     /// for any output whose outpoint is already observed spent on-chain, so a
     /// coin whose spend was seen in an earlier-processed block is never
     /// (re-)tracked as spendable.
-    ///
-    /// `external_final_parents` is the wallet-level answer to "are these
-    /// inputs ours and final" for parents this account does not hold. A
-    /// transaction funded from several accounts — the normal shape for asset
-    /// locks — is still our own self-send, and its change must not be filed
-    /// under `unconfirmed` merely because the sibling account's UTXOs are
-    /// invisible from here. Callers driving a single account directly pass an
-    /// empty set and get the account-local behavior.
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -922,7 +845,6 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
-        external_final_parents: &BTreeSet<OutPoint>,
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
@@ -1024,7 +946,7 @@ impl ManagedCoreFundsAccount {
         // feature is on (we want to keep the full record).
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        self.update_utxos(tx, account_match, context, observed_spent);
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -1088,12 +1010,9 @@ impl ManagedCoreFundsAccount {
     /// Update the account balance.
     ///
     /// Mature, non-locked UTXOs land in either the `confirmed` bucket
-    /// (in a block, InstantSend-locked, or trusted mempool change) or
-    /// the `unconfirmed` bucket (untrusted mempool only). Trusted
-    /// mempool change is surfaced as confirmed because it is just our
-    /// previously-tracked funds returning, see [`Utxo::is_trusted`].
-    /// Both buckets are spendable per [`Utxo::is_spendable`]. The split
-    /// is only for display.
+    /// (in a block or InstantSend-locked), which funds new transactions,
+    /// or the `unconfirmed` bucket (mempool only), which waits for the
+    /// network to settle it.
     pub fn update_balance(&mut self, last_processed_height: u32) {
         let mut confirmed = 0;
         let mut unconfirmed = 0;
@@ -1105,7 +1024,7 @@ impl ManagedCoreFundsAccount {
                 locked += value;
             } else if !utxo.is_mature(last_processed_height) {
                 immature += value;
-            } else if utxo.is_confirmed || utxo.is_instantlocked || utxo.is_trusted {
+            } else if utxo.is_confirmed || utxo.is_instantlocked {
                 confirmed += value;
             } else {
                 unconfirmed += value;

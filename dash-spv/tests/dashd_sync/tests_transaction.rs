@@ -20,6 +20,7 @@ use key_wallet::wallet::balance::WalletCoreBalance;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::fee::FeeRate;
+use key_wallet::wallet::managed_wallet_info::transaction_builder::BuilderError;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::ManagedWalletInfo;
@@ -345,8 +346,8 @@ async fn reserve_first_address(mnemonic: &str) -> Address {
     external_addresses.unused_addresses().into_iter().next().expect("unused address")
 }
 
-/// Build, sign and broadcast a tx via `TransactionBuilder`, then re-spend
-/// the resulting mempool change UTXO before its parent confirms.
+/// Build, sign and broadcast a tx via `TransactionBuilder`: its mempool change
+/// funds the next payment only once its parent is in a block.
 #[tokio::test]
 async fn test_spend_change_balance() {
     let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
@@ -380,15 +381,35 @@ async fn test_spend_change_balance() {
         .await
         .expect("detect tx_a");
 
-    // The wallet's only UTXO now is the mempool change from tx_a, so a
-    // successful build proves coin selection used it.
+    // The wallet's only UTXO now is the mempool change from tx_a.
     let dest_b = Address::dummy(Network::Regtest, 2);
+    assert!(matches!(
+        build_and_sign(&wallet, &wallet_id, &dest_b, 50_000_000).await,
+        Err(BuilderError::FundsAwaitingFinality { .. })
+    ));
+
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !ctx
+            .dashd
+            .node
+            .try_rpc_call("getrawmempool", &[])
+            .is_some_and(|mempool| mempool.to_string().contains(&tx_a.txid().to_string()))
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("tx_a did not reach dashd's mempool");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    wait_for_sync(&mut client_handle.progress_receiver, funded_height + 1).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, funded_height + 1).await;
+
     let (tx_b, _) = build_and_sign(&wallet, &wallet_id, &dest_b, 50_000_000)
         .await
-        .expect("spend mempool change");
+        .expect("spend confirmed change");
     assert!(
         tx_b.input.iter().any(|i| i.previous_output.txid == tx_a.txid()),
-        "tx_b must spend tx_a's mempool change UTXO",
+        "tx_b must spend tx_a's change UTXO",
     );
 
     client_handle.client.broadcast_transaction(&tx_b).await.expect("broadcast tx_b");
@@ -465,8 +486,8 @@ async fn test_concurrent_builds_do_not_double_spend() {
     client_handle.stop().await;
 }
 
-/// Spend an incoming mempool UTXO (we own the output, none of the inputs)
-/// before it confirms.
+/// An incoming mempool UTXO (we own the output, none of the inputs) funds a
+/// payment only once it is in a block.
 #[tokio::test]
 async fn test_spend_incoming_balance() {
     let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
@@ -490,12 +511,23 @@ async fn test_spend_incoming_balance() {
         .expect("detect incoming");
 
     let dest = Address::dummy(Network::Regtest, 3);
+    assert!(matches!(
+        build_and_sign(&wallet, &wallet_id, &dest, 150_000_000).await,
+        Err(BuilderError::FundsAwaitingFinality { .. })
+    ));
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    let confirmed_height = ctx.dashd.initial_height + 1;
+    wait_for_sync(&mut client_handle.progress_receiver, confirmed_height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, confirmed_height).await;
+
     let (tx, _) = build_and_sign(&wallet, &wallet_id, &dest, 150_000_000)
         .await
-        .expect("spend unconfirmed incoming");
+        .expect("spend confirmed incoming");
     assert!(
         tx.input.iter().any(|i| i.previous_output.txid == incoming_txid),
-        "spend must reference the unconfirmed incoming txid",
+        "spend must reference the incoming txid",
     );
 
     client_handle.client.broadcast_transaction(&tx).await.expect("broadcast spend");

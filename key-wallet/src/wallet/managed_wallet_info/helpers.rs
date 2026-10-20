@@ -146,8 +146,7 @@ impl ManagedWalletInfo {
     /// cases that matter:
     ///
     /// * Pooled funding puts a loser's change in an account the winner never
-    ///   touches, so sweeping only the winner's accounts leaves it credited —
-    ///   and as *trusted* change it is counted confirmed and is spendable.
+    ///   touches, so sweeping only the winner's accounts leaves it credited.
     /// * Relevance is computed from matching outputs and from inputs still
     ///   present in `utxos`, but the loser already removed the shared input.
     ///   A winner that spends our coin and pays only external addresses is

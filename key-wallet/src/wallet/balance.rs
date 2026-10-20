@@ -10,16 +10,15 @@ use serde::{Deserialize, Serialize};
 
 /// Wallet balance breakdown.
 ///
-/// Both `confirmed` and `unconfirmed` funds are spendable — the
-/// split exists purely so callers can surface the distinction to
-/// users. `spendable()` returns their sum.
+/// Only `confirmed` funds are spendable: `unconfirmed` funds wait for
+/// the network to settle them, in a block or with an InstantSend lock.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct WalletCoreBalance {
     /// Mature UTXOs that are confirmed in a block or InstantSend-locked.
     confirmed: u64,
     /// Mature UTXOs that are seen in the mempool but not yet confirmed
-    /// or InstantSend-locked. Still spendable — just not settled.
+    /// or InstantSend-locked. Not spendable until they are.
     unconfirmed: u64,
     /// Immature balance (UTXOs without enough confirmations for maturity, e.g. 100 for coinbase).
     immature: u64,
@@ -44,14 +43,14 @@ impl WalletCoreBalance {
     }
 
     /// Get the unconfirmed balance: mature mempool UTXOs that are not yet
-    /// confirmed or InstantSend-locked. Also spendable.
+    /// confirmed or InstantSend-locked. Not spendable until they are.
     pub fn unconfirmed(&self) -> u64 {
         self.unconfirmed
     }
 
-    /// Get the total spendable balance (confirmed + unconfirmed).
+    /// Get the spendable balance, the confirmed one.
     pub fn spendable(&self) -> u64 {
-        self.confirmed + self.unconfirmed
+        self.confirmed
     }
 
     /// Get the immature balance.
@@ -102,7 +101,7 @@ mod tests {
         let balance = WalletCoreBalance::new(1000, 500, 100, 200);
         assert_eq!(balance.confirmed(), 1000);
         assert_eq!(balance.unconfirmed(), 500);
-        assert_eq!(balance.spendable(), 1500);
+        assert_eq!(balance.spendable(), 1000);
         assert_eq!(balance.immature(), 100);
         assert_eq!(balance.locked(), 200);
         assert_eq!(balance.total(), 1800);

@@ -704,8 +704,7 @@ impl WalletManager<ManagedWalletInfo> {
     /// production path that clears a transaction the network never accepted.
     /// The conflict sweep cannot reach that case: it needs a competing final
     /// spend to prove the loser dead, and a transaction nobody ever saw has
-    /// no competitor. Its outputs would otherwise be credited forever, and as
-    /// trusted self-send change they are counted confirmed and are spendable.
+    /// no competitor. Its outputs would otherwise be credited forever.
     ///
     /// `external_spends` maps an outpoint to the transaction a caller's
     /// persistence mirror recorded as spending it, for descendants whose own
