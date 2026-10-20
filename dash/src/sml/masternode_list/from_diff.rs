@@ -136,16 +136,13 @@ mod tests {
 
     #[test]
     fn pre_v20_allows_missing_chainlock_signatures() {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let mut diff: MnListDiff =
-            deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+        // Use a pre-V20 height on mainnet (V20 at 1,987,776)
+        let pre_v20_height = 1_900_000;
+        let mut diff = MnListDiff::mainnet_fixture_0_2227096().with_coinbase_height(pre_v20_height);
 
         // Clear signatures to simulate pre-V20 data
         diff.quorums_chainlock_signatures.clear();
 
-        // Use a pre-V20 height on mainnet (V20 at 1,987,776)
-        let pre_v20_height = 1_900_000;
         assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
 
         let result = MasternodeList::from_diff(diff, pre_v20_height, Network::Mainnet);

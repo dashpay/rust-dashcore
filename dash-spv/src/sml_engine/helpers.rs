@@ -383,7 +383,8 @@ mod shared_map_tests {
         );
         insert_quorum(&mut engine, TIP - 1, quorum);
 
-        engine.apply_diff(MnListDiff::dummy_between(TIP - 1, TIP)).await.unwrap();
+        let unchanged = engine.with_matching_coinbase(MnListDiff::dummy_between(TIP - 1, TIP));
+        engine.apply_diff(unchanged).await.unwrap();
 
         assert_eq!(
             engine.masternode_lists[&TIP].quorums[&PLATFORM_TYPE][&quorum_hash].verified,
@@ -403,7 +404,9 @@ mod shared_map_tests {
         insert_quorum(&mut engine, TIP - 2, quorum);
         for height in [TIP - 1, TIP] {
             engine.feed_block_height(height, BlockHash::dummy(height));
-            engine.apply_and_prune(MnListDiff::dummy_between(height - 1, height)).await.unwrap();
+            let unchanged =
+                engine.with_matching_coinbase(MnListDiff::dummy_between(height - 1, height));
+            engine.apply_and_prune(unchanged).await.unwrap();
         }
 
         engine.set_quorum_status(

@@ -1135,6 +1135,22 @@ pub(crate) mod test_support {
         heights_of(decode(bytes))
     }
 
+    /// Every masternode list diff a QRInfo carries, for a test to edit.
+    pub(crate) fn qr_info_diffs_mut(qr_info: &mut QRInfo) -> Vec<&mut MnListDiff> {
+        let mut diffs: Vec<&mut MnListDiff> = vec![
+            &mut qr_info.mn_list_diff_tip,
+            &mut qr_info.mn_list_diff_h,
+            &mut qr_info.mn_list_diff_at_h_minus_c,
+            &mut qr_info.mn_list_diff_at_h_minus_2c,
+            &mut qr_info.mn_list_diff_at_h_minus_3c,
+        ];
+        if let Some((_, diff)) = &mut qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            diffs.push(diff);
+        }
+        diffs.extend(qr_info.mn_list_diff_list.iter_mut());
+        diffs
+    }
+
     impl TestEngine {
         /// An empty engine with an empty header chain.
         pub(crate) fn empty(network: Network) -> Self {
@@ -1163,6 +1179,53 @@ pub(crate) mod test_support {
 
         pub(crate) fn block_height(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
             self.headers.try_read().expect("unlocked").0.get(block_hash).copied()
+        }
+
+        /// `diff` with a coinbase that commits to the list it builds on this
+        /// engine's list at its base, at the height of its block.
+        pub(crate) fn with_matching_coinbase(&self, diff: MnListDiff) -> MnListDiff {
+            let height = self.block_height(&diff.block_hash).expect("the block's height is known");
+            let base =
+                self.masternode_lists.values().find(|list| list.block_hash == diff.base_block_hash);
+            diff.committing_on(base, height)
+        }
+
+        /// Gives every diff of `qr_info` a coinbase that commits to the list it
+        /// builds, each on the list the diff it builds on built. A test that
+        /// edits the commitments a QRInfo carries uses this, since its diffs no
+        /// longer match the coinbases of their blocks.
+        pub(crate) fn recommit(&self, qr_info: &mut QRInfo) {
+            let mut built: HashMap<BlockHash, MasternodeList> = HashMap::new();
+            let mut pending = qr_info_diffs_mut(qr_info);
+            while !pending.is_empty() {
+                let before = pending.len();
+                let mut waiting = Vec::new();
+                for diff in pending {
+                    let base = match built.get(&diff.base_block_hash) {
+                        Some(list) => Some(list.clone()),
+                        None if diff.base_block_hash == diff.block_hash => {
+                            waiting.push(diff);
+                            continue;
+                        }
+                        None => self
+                            .masternode_lists
+                            .values()
+                            .find(|list| list.block_hash == diff.base_block_hash)
+                            .cloned(),
+                    };
+                    let height =
+                        self.block_height(&diff.block_hash).expect("the block's height is known");
+                    *diff = diff.clone().committing_on(base.as_ref(), height);
+                    let list = match &base {
+                        Some(base) => base.apply_diff(diff.clone(), height, self.network),
+                        None => MasternodeList::from_diff(diff.clone(), height, self.network),
+                    }
+                    .expect("a recommitted diff applies");
+                    built.insert(diff.block_hash, list);
+                }
+                assert!(waiting.len() < before, "a diff of the QRInfo has no base");
+                pending = waiting;
+            }
         }
 
         pub(crate) fn block_hash_at(&self, height: CoreBlockHeight) -> Option<BlockHash> {
@@ -1213,7 +1276,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{fixture_heights, quorum_entry, TestEngine};
+    use super::test_support::{fixture_heights, qr_info_diffs_mut, quorum_entry, TestEngine};
     use super::{
         build_cycle_quorum_map, FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH,
     };
@@ -1546,30 +1609,45 @@ mod tests {
                 "../../dash/tests/data/test_DML_diffs/block_container_2240504.dat"
             )),
         );
-        let diff: MnListDiff = deserialize(include_bytes!(
-            "../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
-        ))
-        .expect("expected to deserialize");
         engine.masternode_lists.insert(
             2227096,
-            MasternodeList::from_diff(diff, 2227096, Network::Mainnet).expect("first list"),
+            MasternodeList::from_diff(
+                MnListDiff::mainnet_fixture_0_2227096(),
+                2227096,
+                Network::Mainnet,
+            )
+            .expect("first list"),
         );
 
         let mn_list_diffs: BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff> =
             decode_fixture(include_bytes!(
                 "../../dash/tests/data/test_DML_diffs/mnlistdiffs_2240504.dat"
             ));
-        let qr_info: QRInfo = decode_fixture(include_bytes!(
+        let mut qr_info: QRInfo = decode_fixture(include_bytes!(
             "../../dash/tests/data/test_DML_diffs/qrinfo_2240504.dat"
         ));
+        for diff in qr_info_diffs_mut(&mut qr_info) {
+            restore_2240504_capture(diff);
+        }
 
-        for ((base_height, height), diff) in mn_list_diffs {
+        for ((base_height, height), mut diff) in mn_list_diffs {
+            restore_2240504_capture(&mut diff);
             engine.feed_block_height(base_height, diff.base_block_hash);
             engine.feed_block_height(height, diff.block_hash);
             engine.apply_diff(diff).await.expect("expected to apply diff");
         }
 
         (engine, qr_info)
+    }
+
+    /// The 2240504 fixtures are bincode captures from a build that decoded an
+    /// unset service address as `0.0.0.0` and held platform node ids in Core's
+    /// wire order. Both feed the entry hash, so the lists they build match
+    /// `merkleRootMNList` only once the diff is back to what the current
+    /// decoder makes of Core's bytes.
+    fn restore_2240504_capture(diff: &mut MnListDiff) {
+        diff.restore_core_service_addresses();
+        diff.reverse_platform_node_ids();
     }
 
     /// Captured 2026-08-09 from a fresh mainnet sync at tip 2518986 (cycle
@@ -1831,6 +1909,7 @@ mod tests {
         for diff in qr_info.mn_list_diff_list.iter_mut() {
             strip(diff);
         }
+        engine.recommit(&mut qr_info);
 
         let expected_cycle_key = served_cycle_key(&engine, &qr_info).await;
 
@@ -2236,6 +2315,7 @@ mod tests {
             foreign_aggregate_signature(&qr_info.mn_list_diff_h.new_quorums, corrupted_quorum_hash);
         qr_info.mn_list_diff_h.new_quorums[corrupt_position].all_commitment_aggregated_signature =
             foreign_signature;
+        engine.recommit(&mut qr_info);
         let h_block_hash = qr_info.mn_list_diff_h.block_hash;
 
         let feed_result = engine
@@ -2694,7 +2774,8 @@ mod tests {
                 .await,
             vec![(BlockHash::dummy(older_list), BlockHash::dummy(work))]
         );
-        engine.apply_diff(MnListDiff::dummy_between(older_list, work)).await.expect("work list");
+        let work_list = engine.with_matching_coinbase(MnListDiff::dummy_between(older_list, work));
+        engine.apply_diff(work_list).await.expect("work list");
         assert!(
             matches!(status(&engine), Some(LLMQEntryVerificationStatus::Invalid(_))),
             "{:?}",
@@ -2703,7 +2784,8 @@ mod tests {
 
         let mut base = tip;
         for next in next_tips {
-            engine.apply_diff(MnListDiff::dummy_between(base, next)).await.expect("tip update");
+            let tip_update = engine.with_matching_coinbase(MnListDiff::dummy_between(base, next));
+            engine.apply_diff(tip_update).await.expect("tip update");
             base = next;
             assert!(
                 matches!(status(&engine), Some(LLMQEntryVerificationStatus::Invalid(_))),

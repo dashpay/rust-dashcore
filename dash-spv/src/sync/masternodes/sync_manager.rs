@@ -865,11 +865,25 @@ mod tests {
             block_hash: hashes[TIP as usize + 1],
             ..MnListDiff::dummy_between(0, 0)
         };
+        let diff = committing(&engine, diff, TIP + 1).await;
         deliver(&mut manager, &requests, diff).await;
 
         assert!(engine.read().await.masternode_lists.contains_key(&(TIP + 1)));
         let file = dir.path().join("masternodes").join(format!("diff_{}.dat", TIP + 1));
         assert_eq!(file.exists(), stored);
+    }
+
+    /// `diff` with a coinbase that commits to the list it builds on `engine`'s
+    /// list at its base, at `height`.
+    async fn committing<H: BlockHeaderStorage>(
+        engine: &RwLock<MasternodeListEngine<H>>,
+        diff: MnListDiff,
+        height: u32,
+    ) -> MnListDiff {
+        let engine = engine.read().await;
+        let base =
+            engine.masternode_lists.values().find(|list| list.block_hash == diff.base_block_hash);
+        diff.committing_on(base, height)
     }
 
     /// A synced manager over `storage`, whose header chain runs to `TIP + 1`
@@ -958,6 +972,7 @@ mod tests {
             }],
             ..MnListDiff::dummy_between(0, 0)
         };
+        let tip_update = committing(&engine, tip_update, TIP + 1).await;
         (manager, engine, requests, rx, tip_update, hashes)
     }
 
@@ -1062,6 +1077,7 @@ mod tests {
             block_hash,
             ..MnListDiff::dummy_between(0, 0)
         };
+        let work_list = committing(&engine, work_list, work).await;
         let events = deliver(&mut manager, &requests, work_list).await;
 
         let engine = engine.read().await;
@@ -1305,11 +1321,12 @@ mod tests {
         let (base_block_hash, block_hash) =
             next_diff_request(rx).expect("the next header tip is asked for");
         assert_eq!(block_hash, tip.block_hash(), "the tip update to {height}");
-        MnListDiff {
+        let tip_update = MnListDiff {
             base_block_hash,
             block_hash,
             ..MnListDiff::dummy_between(0, 0)
-        }
+        };
+        committing(&manager.engine, tip_update, height).await
     }
 
     /// Gives up the work-block list the tip update to `TIP + 1` asks for,
@@ -1387,6 +1404,7 @@ mod tests {
             block_hash,
             ..MnListDiff::dummy_between(0, 0)
         };
+        let work_list = committing(&engine, work_list, work).await;
         let events = deliver(&mut manager, &requests, work_list).await;
 
         assert!(
@@ -1432,6 +1450,7 @@ mod tests {
             }],
             ..next_tip_update
         };
+        let removing_the_quorum = committing(&manager.engine, removing_the_quorum, TIP + 2).await;
 
         let events = deliver(&mut manager, &requests, removing_the_quorum).await;
 
@@ -1534,6 +1553,7 @@ mod tests {
             }],
             ..MnListDiff::dummy_between(0, 0)
         };
+        let tip_update = committing(&manager.engine, tip_update, TIP + 1).await;
         deliver(&mut manager, &requests, tip_update).await;
         let work_list = next_diff_request(&mut rx).expect("the work-block list is asked for");
         give_up_the_work_block_list(&mut manager, &requests, work_list, &hashes, false).await;
@@ -1861,17 +1881,37 @@ mod tests {
 
     /// A QRInfo for `TIP` whose diffs all build on the list at
     /// [`QR_INFO_BASE`], one to each of [`CYCLE_WORK_BLOCKS`] and one to the
-    /// tip, given the block hash at each height. Every diff is empty, so an
-    /// engine holding an empty list at `QR_INFO_BASE` applies them all.
-    fn qr_info_for_tip(hashes: &[BlockHash]) -> QRInfo {
-        let diff = |height: u32| MnListDiff {
-            base_block_hash: hashes[QR_INFO_BASE as usize],
-            block_hash: hashes[height as usize],
-            ..MnListDiff::dummy_between(0, 0)
+    /// tip, given the block hash at each height. The tip diff brings
+    /// `tip_quorums`, with a ChainLock signature, and the others nothing, so
+    /// an engine holding an empty list at `QR_INFO_BASE` applies them all.
+    /// Every diff commits to the list it builds.
+    fn qr_info_for_tip(hashes: &[BlockHash], tip_quorums: Vec<QuorumEntry>) -> QRInfo {
+        let base = MasternodeList::empty(hashes[QR_INFO_BASE as usize], QR_INFO_BASE);
+        let diff = |height: u32| {
+            MnListDiff {
+                base_block_hash: base.block_hash,
+                block_hash: hashes[height as usize],
+                ..MnListDiff::dummy_between(0, 0)
+            }
+            .committing_on(Some(&base), height)
         };
         let [h_minus_3c, h_minus_2c, h_minus_c, h] = CYCLE_WORK_BLOCKS.map(diff);
+        let quorums_chainlock_signatures = if tip_quorums.is_empty() {
+            Vec::new()
+        } else {
+            vec![QuorumCLSigObject {
+                signature: BLSSignature::from([2; 96]),
+                index_set: (0..tip_quorums.len() as u16).collect(),
+            }]
+        };
+        let tip = MnListDiff {
+            new_quorums: tip_quorums,
+            quorums_chainlock_signatures,
+            ..diff(TIP)
+        }
+        .committing_on(Some(&base), TIP);
         QRInfo {
-            mn_list_diff_tip: diff(TIP),
+            mn_list_diff_tip: tip,
             mn_list_diff_h: h,
             mn_list_diff_at_h_minus_c: h_minus_c,
             mn_list_diff_at_h_minus_2c: h_minus_2c,
@@ -1912,7 +1952,7 @@ mod tests {
         let requests = RequestSender::new(tx);
         manager.send_qrinfo_for_tip(&requests).await.expect("the QRInfo is sent");
         let tip = hashes[TIP as usize];
-        let honest = qr_info_for_tip(&hashes);
+        let honest = qr_info_for_tip(&hashes, Vec::new());
         let response = |peer, qr_info: &QRInfo| {
             Message::new(peer, NetworkMessage::QRInfo(Box::new(qr_info.clone())))
         };
@@ -1970,12 +2010,7 @@ mod tests {
             QR_INFO_BASE,
             MasternodeList::empty(hashes[QR_INFO_BASE as usize], QR_INFO_BASE),
         );
-        let mut qr_info = qr_info_for_tip(&hashes);
-        qr_info.mn_list_diff_tip.new_quorums = vec![test_quorum(hashes[OLD_MINED as usize])];
-        qr_info.mn_list_diff_tip.quorums_chainlock_signatures = vec![QuorumCLSigObject {
-            signature: BLSSignature::from([2; 96]),
-            index_set: vec![0],
-        }];
+        let qr_info = qr_info_for_tip(&hashes, vec![test_quorum(hashes[OLD_MINED as usize])]);
         let events = manager
             .handle_message(
                 Message::new(peer(1), NetworkMessage::QRInfo(Box::new(qr_info))),
@@ -2269,7 +2304,7 @@ mod tests {
             QR_INFO_BASE,
             MasternodeList::empty(hashes[QR_INFO_BASE as usize], QR_INFO_BASE),
         );
-        let honest = qr_info_for_tip(&hashes);
+        let honest = qr_info_for_tip(&hashes, Vec::new());
         let mut refused = honest.clone();
         refused.mn_list_diff_h.block_hash = BlockHash::from_byte_array([0x33; 32]);
         let response = |peer, qr_info: &QRInfo| {
