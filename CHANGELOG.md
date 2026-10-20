@@ -111,6 +111,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `key::Error::InvalidWifCompressionFlag`
 - Accept an IL of zero in `key-wallet` private child derivation
 - `transaction_sign_input` in `key-wallet-ffi` rejects flags above `0xff`
+- `dash-spv` drops the masternode lists, and the rotated quorum cycles, built
+  above a fork it follows, so they no longer answer for blocks that left the
+  chain
 
 ### Removed
 
