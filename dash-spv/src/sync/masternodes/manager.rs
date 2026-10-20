@@ -607,9 +607,12 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 qr_info_result,
             });
         } else if is_initial_sync {
-            drop(engine);
-            self.set_state(SyncState::Error);
-            return Err(SyncError::MasternodeSyncFailed("No masternode lists available".into()));
+            // Nothing leaves `Error`, so the manager stays `Syncing` with
+            // nothing in flight, the state the stall watchdog restarts from.
+            return Err(SyncError::MasternodeSyncFailed(
+                "No masternode list after every QRInfo attempt failed, the stall watchdog retries"
+                    .into(),
+            ));
         }
 
         drop(engine);
