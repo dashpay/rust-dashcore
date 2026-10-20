@@ -132,6 +132,10 @@ pub(super) struct MasternodeSyncState {
     /// same tip, so peers sending bad QRInfos cannot spend budget after budget,
     /// and goes when the requested tip changes.
     pub(super) qrinfo_refusers: Option<(BlockHash, Vec<SocketAddr>)>,
+    /// Target of the last tip update given up. It is not asked for again
+    /// while it is the header tip: the `Synced` tick would otherwise ask for
+    /// it on every pass until the next block.
+    pub(super) given_up_tip: Option<BlockHash>,
 }
 
 impl MasternodeSyncState {
@@ -482,6 +486,9 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 None => return Ok(vec![]),
             }
         };
+        if self.sync_state.given_up_tip == Some(new_tip_hash) {
+            return Ok(vec![]);
+        }
 
         let Some(base_hash) =
             self.engine.read().await.latest_masternode_list().map(|list| list.block_hash)
@@ -522,6 +529,9 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                     "Giving up on the MnListDiff for {target} after {MAX_MNLISTDIFF_ATTEMPTS} \
                      attempts"
                 );
+                if tip_update {
+                    self.sync_state.given_up_tip = Some(target);
+                }
                 self.progress.add_diffs_processed(1);
                 self.continue_diff_pipeline(tip_update, requests).await
             }
@@ -551,6 +561,14 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
         tracing::info!("MnListDiff pipeline complete");
         self.complete_pipeline(requests).await
+    }
+
+    /// Whether the header tip is the target of the last tip update given up.
+    pub(super) async fn tip_update_given_up(&self) -> bool {
+        let Some(given_up) = self.sync_state.given_up_tip else {
+            return false;
+        };
+        self.header_storage.read().await.get_tip().await.is_some_and(|tip| *tip.hash() == given_up)
     }
 
     /// Dispatch pipeline completion based on the current `PipelineMode`. Called when
