@@ -42,4 +42,10 @@ pub enum SmlError {
     /// Error indicating the quorum signature set is incomplete (some slots were not filled).
     #[error("Incomplete quorum signature set; not all slots were filled")]
     IncompleteSignatureSet,
+
+    #[error("The MnListDiff merkle proof does not prove the coinbase of block {0}")]
+    InvalidCoinbaseProof(BlockHash),
+
+    #[error("The coinbase of block {0} does not commit to the lists the MnListDiff builds")]
+    CoinbaseCommitmentMismatch(BlockHash),
 }
