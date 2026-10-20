@@ -348,17 +348,14 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
     }
 
     async fn truncate_above(&mut self, height: CoreBlockHeight) -> StorageResult<()> {
-        let Some(above) = height.checked_add(1) else {
-            return Ok(());
-        };
-
-        let diffs = self.diffs.split_off(&above).into_values();
-        let qr_infos = self.qr_infos.split_off(&above).into_values();
-
-        for path in diffs.chain(qr_infos) {
-            match tokio::fs::remove_file(&path).await {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-                _ => {}
+        // A message leaves its index only once its file is gone, so a retry
+        // finds what a failed deletion left.
+        for index in [&mut self.diffs, &mut self.qr_infos] {
+            while let Some(entry) = index.last_entry().filter(|entry| *entry.key() > height) {
+                match tokio::fs::remove_file(entry.get()).await {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                    _ => entry.remove(),
+                };
             }
         }
 
