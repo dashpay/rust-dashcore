@@ -136,6 +136,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep a spend-first coin recognisable so its spend stays in history (#1001) @ZocoLini
 - Discover DashPay asset unlock receipts (#1004) @PastaPastaPasta
 - Stop losing derived scripts, and close the loop on wallet state (#989) @ZocoLini
+- Prune observed spends during the initial sync, so a wallet persisted mid-sync loads again (#1014) @ZocoLini
 - Only decode a special payload from transaction version 3 (#1155) @ZocoLini
 - Keep the pre-v4 serde shape of `CoinbasePayload` (#1149) @ZocoLini
 - Send the ChainLock block hash in display order to `submitchainlock` (#1148) @ZocoLini
