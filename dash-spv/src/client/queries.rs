@@ -12,6 +12,7 @@ use crate::storage::StorageManager;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::QuorumHash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
@@ -41,6 +42,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             Some(ref masternode_engine) => Ok(masternode_engine.clone()),
             None => Err(SpvError::Config("Masternode list engine not initialized".to_string())),
         }
+    }
+
+    /// The coinbase payload of the highest block a masternode list diff was
+    /// applied for. `None` while masternode sync is off or before a diff whose
+    /// coinbase carries one was applied.
+    ///
+    /// **Not secure, and temporary.** Nothing authenticates the payload, so a
+    /// single peer can serve one of its choosing. The `dev` branch replaces
+    /// this with a version that keeps only coinbases verified against their
+    /// block (dashpay/rust-dashcore#1202). See
+    /// [`MasternodeListEngine::latest_coinbase`].
+    pub async fn latest_coinbase(&self) -> Option<CoinbasePayload> {
+        let engine = self.masternode_engine.as_ref()?;
+        engine.read().await.latest_coinbase().cloned()
     }
 
     /// Get a quorum entry by type and hash at a specific block height.
