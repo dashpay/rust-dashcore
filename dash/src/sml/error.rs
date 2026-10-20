@@ -106,4 +106,11 @@ pub enum SmlError {
     /// not hold.
     #[error("The QRInfo serves a commitment of quorum {0} that its tip list does not hold")]
     CommitmentNotInTipList(QuorumHash),
+
+    /// A diff of a QRInfo that has to end at a cycle's work block ends at another block.
+    #[error("The QRInfo diff to block {block_hash} is not at the work block height {expected}")]
+    QRInfoDiffAtWrongHeight {
+        block_hash: BlockHash,
+        expected: u32,
+    },
 }
