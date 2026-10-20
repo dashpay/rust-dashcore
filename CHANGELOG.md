@@ -114,6 +114,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `dash-spv` drops the masternode lists, and the rotated quorum cycles, built
   above a fork it follows, so they no longer answer for blocks that left the
   chain
+- `dash-spv` no longer follows a fork that branches off below the newest
+  checkpoint its stored chain reaches
 
 ### Removed
 
