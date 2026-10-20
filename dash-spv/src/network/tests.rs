@@ -124,12 +124,14 @@ mod selection_tests {
         PeerNetworkManager, REQUEST_OWED_TIMEOUT, REQUEST_STALL_TIMEOUT,
     };
     use crate::network::reputation::ChangeReason;
+    use crate::network::{NetworkRequest, RequestSender};
     use crate::test_utils::test_socket_address;
     use dashcore::blockdata::block::{Block, Header, Version};
     use dashcore::network::constants::ServiceFlags;
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFHeaders, GetCFilters};
+    use dashcore::network::message_sml::GetMnListDiff;
     use dashcore::{BlockHash, CompactTarget, TxMerkleNode, Txid};
     use dashcore_hashes::Hash;
     use std::collections::HashMap;
@@ -368,6 +370,55 @@ mod selection_tests {
         tokio::time::advance(REQUEST_OWED_TIMEOUT + Duration::from_secs(1)).await;
 
         assert!(peers.contains(&manager.test_route(&get_blocks()).await));
+    }
+
+    /// A request that avoids peers goes to another one while there is one, and
+    /// to an avoided peer only when every connected peer is avoided.
+    #[tokio::test]
+    async fn test_routing_avoids_the_given_peers_while_another_is_connected() {
+        let cf = ServiceFlags::COMPACT_FILTERS;
+        let manager = PeerNetworkManager::new_for_test(cf).await;
+        let peers = [test_socket_address(1), test_socket_address(2), test_socket_address(3)];
+        for addr in peers {
+            manager.insert_test_peer(addr, cf).await;
+        }
+        let request = NetworkMessage::GetMnListD(GetMnListDiff {
+            base_block_hash: BlockHash::all_zeros(),
+            block_hash: BlockHash::all_zeros(),
+        });
+
+        for _ in 0..12 {
+            assert_eq!(manager.test_route_avoiding(&request, &peers[..2]).await, peers[2]);
+        }
+        let mut reached = HashMap::new();
+        for _ in 0..12 {
+            *reached.entry(manager.test_route_avoiding(&request, &peers).await).or_insert(0) += 1;
+        }
+        assert_eq!(reached.len(), peers.len(), "with every peer avoided, all of them still serve");
+    }
+
+    /// A retry that avoids no peer is the plain request, and one that avoids
+    /// peers carries them to the request processor.
+    #[test]
+    fn test_requests_carry_the_peers_to_avoid() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+        let avoid = [test_socket_address(1)];
+
+        requests
+            .request_mnlist_diff_avoiding(BlockHash::all_zeros(), BlockHash::all_zeros(), &[])
+            .unwrap();
+        requests.request_qr_info_avoiding(vec![], BlockHash::all_zeros(), true, &avoid).unwrap();
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(NetworkRequest::SendMessage(NetworkMessage::GetMnListD(_)))
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(NetworkRequest::SendMessageAvoiding(NetworkMessage::GetQRInfo(_), peers))
+                if peers == avoid
+        ));
     }
 
     /// Blocks are routed away from, never penalized for. A block body can be

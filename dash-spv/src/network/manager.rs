@@ -998,6 +998,15 @@ impl PeerNetworkManager {
                                     }
                                 });
                             }
+                            Some(NetworkRequest::SendMessageAvoiding(msg, avoid)) => {
+                                tracing::trace!("Request processor: sending {} avoiding {:?}", msg.cmd(), avoid);
+                                let this = this.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = this.send_distributed_avoiding(msg, &avoid).await {
+                                        tracing::error!("Request processor: failed to send message: {}", e);
+                                    }
+                                });
+                            }
                             Some(NetworkRequest::SendMessageToPeer(msg, peer_address)) => {
                                 tracing::trace!("Request processor: sending {} to peer {}", msg.cmd(), peer_address);
                                 let this = this.clone();
@@ -1486,6 +1495,15 @@ impl PeerNetworkManager {
     /// - Headers (GetHeaders/GetHeaders2): prefers headers2 peers, upgrades GetHeaders if supported
     /// - Other (blocks, masternode data, etc.): uses all connected peers
     async fn send_distributed(&self, message: NetworkMessage) -> NetworkResult<()> {
+        self.send_distributed_avoiding(message, &[]).await
+    }
+
+    /// [`Self::send_distributed`], preferring peers other than those in `avoid`.
+    async fn send_distributed_avoiding(
+        &self,
+        message: NetworkMessage,
+        avoid: &[SocketAddr],
+    ) -> NetworkResult<()> {
         let peers = self.pool.get_all_peers().await;
 
         if peers.is_empty() {
@@ -1526,6 +1544,7 @@ impl PeerNetworkManager {
             };
         }
 
+        let selected_peers = without_avoided(selected_peers, avoid);
         let selected_peers = match tracked_request_kind(&message) {
             Some(kind) => self.without_peers_owing(kind, selected_peers).await,
             None => selected_peers,
@@ -2054,6 +2073,23 @@ fn timed_response_kind(msg: &NetworkMessage) -> Option<RequestKind> {
     }
 }
 
+/// `peers` without those in `avoid`, or all of them if none would be left:
+/// sending to a peer we would rather avoid beats not sending at all.
+fn without_avoided(
+    peers: Vec<(SocketAddr, Arc<RwLock<Peer>>)>,
+    avoid: &[SocketAddr],
+) -> Vec<(SocketAddr, Arc<RwLock<Peer>>)> {
+    if avoid.is_empty() {
+        return peers;
+    }
+    let kept: Vec<_> = peers.iter().filter(|(addr, _)| !avoid.contains(addr)).cloned().collect();
+    if kept.is_empty() {
+        peers
+    } else {
+        kept
+    }
+}
+
 #[cfg(test)]
 impl PeerNetworkManager {
     pub(crate) async fn new_for_test(required_services: ServiceFlags) -> Self {
@@ -2145,7 +2181,16 @@ impl PeerNetworkManager {
     /// Pick the peer `send_distributed` would route `msg` to, including the skip
     /// of peers that still owe a response of that kind.
     pub(crate) async fn test_route(&self, msg: &NetworkMessage) -> SocketAddr {
-        let peers = self.pool.get_all_peers().await;
+        self.test_route_avoiding(msg, &[]).await
+    }
+
+    /// [`Self::test_route`] for a request that prefers peers other than `avoid`.
+    pub(crate) async fn test_route_avoiding(
+        &self,
+        msg: &NetworkMessage,
+        avoid: &[SocketAddr],
+    ) -> SocketAddr {
+        let peers = without_avoided(self.pool.get_all_peers().await, avoid);
         let peers = match tracked_request_kind(msg) {
             Some(kind) => self.without_peers_owing(kind, peers).await,
             None => peers,
