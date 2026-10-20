@@ -19,7 +19,7 @@
 //! transaction shows `sent = 0` because the wallet does not yet recognize the
 //! input as its own, and the funding transaction is then inserted as a fresh,
 //! spendable UTXO. If the guard fails, `key-wallet` can later select that coin
-//! as `require_final_inputs`-eligible funding for an asset-lock transaction the
+//! as final funding for an asset-lock transaction the
 //! network rejects because the input is already spent.
 //!
 //! This test reproduces the same ORDER — process the spending block first, then

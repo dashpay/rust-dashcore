@@ -32,13 +32,6 @@ pub struct Utxo {
     pub is_instantlocked: bool,
     /// Whether this UTXO is locked (not available for spending)
     pub is_locked: bool,
-    /// Whether this UTXO comes from a "trusted" mempool transaction — one we
-    /// created ourselves, recognised because it spends at least one of our
-    /// own UTXOs and pays this output back to one of our addresses. Such a
-    /// UTXO is treated as already-confirmed funds for balance display, since
-    /// it is just our previously-tracked balance returning to us. Mirrors
-    /// Bitcoin Core's `CWalletTx::IsTrusted` concept.
-    pub is_trusted: bool,
 }
 
 impl Utxo {
@@ -59,7 +52,6 @@ impl Utxo {
             is_confirmed: false,
             is_instantlocked: false,
             is_locked: false,
-            is_trusted: false,
         }
     }
 
@@ -79,10 +71,8 @@ impl Utxo {
     /// Check if this UTXO can be spent at the given height.
     ///
     /// A UTXO is spendable unless it is locked or (for coinbase)
-    /// immature. Mempool 0-conf outputs are spendable — callers that
-    /// want to restrict to confirmed/InstantLocked UTXOs (e.g. the
-    /// "spendable" balance bucket or conservative coin selection)
-    /// should check `is_confirmed || is_instantlocked` themselves.
+    /// immature. A transaction builder additionally only spends final
+    /// UTXOs, confirmed or InstantSend-locked.
     pub fn is_spendable(&self, current_height: u32) -> bool {
         if self.is_locked {
             return false;

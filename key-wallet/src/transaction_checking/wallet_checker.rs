@@ -284,15 +284,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             return result;
         }
 
-        // Wallet-wide view of this transaction's input parents, taken while
-        // every account is still readable and before any `update_utxos` call
-        // starts removing spent parents. Without it a pooled self-send — the
-        // normal shape for asset locks, which fund from BIP44 + BIP32 + the
-        // DashPay contact-receiving accounts — is not recognised as ours by
-        // the account holding the change, and that change lands in the
-        // `unconfirmed` bucket.
-        let external_final_parents = self.accounts.final_parents_of(tx);
-
         let txid = tx.txid();
         let is_new = !self.accounts.all_accounts().into_iter().any(|a| a.has_transaction(&txid));
         result.is_new_transaction = is_new;
@@ -349,7 +340,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                             context.clone(),
                             tx_type,
                             &self.observed_spent_outpoints,
-                            &external_final_parents,
                         );
                         account.mark_utxos_instant_send(&txid);
                         result.new_records.push(record);
@@ -383,7 +373,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     context.clone(),
                     tx_type,
                     &self.observed_spent_outpoints,
-                    &external_final_parents,
                 );
                 result.new_records.push(record);
                 result.state_modified = true;
@@ -395,7 +384,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     context.clone(),
                     tx_type,
                     &self.observed_spent_outpoints,
-                    &external_final_parents,
                 ) {
                     result.state_modified = true;
                     if existed_before {
@@ -488,7 +476,7 @@ mod tests {
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
     use dashcore_hashes::Hash;
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
 
     /// Test wallet checker with unrelated transaction
     #[tokio::test]
@@ -1326,10 +1314,10 @@ mod tests {
         let txid = tx.txid();
 
         // Stage 1: mempool (already done in setup). Mempool funds land
-        // in the unconfirmed bucket but are spendable.
+        // in the unconfirmed bucket and are not spendable yet.
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 200_000);
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
-        assert_eq!(ctx.managed_wallet.balance.spendable(), 200_000);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 0);
 
         // Stage 2: IS lock
         let is_lock = InstantLock {
@@ -1725,7 +1713,6 @@ mod tests {
             block_context,
             tx_type,
             &BTreeMap::new(),
-            &BTreeSet::new(),
         );
         assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
 
@@ -1783,7 +1770,6 @@ mod tests {
             block_context,
             tx_type,
             &BTreeMap::new(),
-            &BTreeSet::new(),
         );
         assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
 
@@ -2258,13 +2244,11 @@ mod tests {
         assert_eq!(record.output_details[0].role, OutputRole::Received);
     }
 
-    /// A change output produced by a mempool transaction that also spends one of
-    /// our own UTXOs is just our previously-tracked funds returning. It should
-    /// land in the confirmed balance rather than the unconfirmed balance, so the
-    /// user's confirmed total does not appear to drop by the entire input value
-    /// while the change waits in the mempool.
+    /// The change of our own mempool transaction waits in the unconfirmed
+    /// bucket like any other mempool output: if the network drops the
+    /// transaction, the change never exists, so it must not fund a build.
     #[tokio::test]
-    async fn test_self_send_change_in_mempool_lands_in_confirmed_balance() {
+    async fn test_self_send_change_in_mempool_stays_unconfirmed() {
         let mut ctx = TestWalletContext::new_random();
         let external_address = Address::p2pkh(
             &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
@@ -2330,27 +2314,19 @@ mod tests {
         assert!(!record.is_confirmed());
         assert_eq!(record.direction, TransactionDirection::Outgoing);
 
-        // The change UTXO should be flagged via `is_trusted` so that
-        // `update_balance` credits it to the confirmed bucket, despite the
-        // parent transaction still being in the mempool.
         let change_outpoint = OutPoint {
             txid: spend_tx.txid(),
             vout: 1,
         };
         let change_utxo =
             ctx.bip44_account().utxos.get(&change_outpoint).expect("change UTXO recorded");
-        // The parent transaction is still in the mempool, so `is_confirmed`
-        // stays false; the trust signal is what shifts the UTXO into the
-        // confirmed balance bucket.
         assert!(!change_utxo.is_confirmed);
         assert!(!change_utxo.is_instantlocked);
-        assert!(change_utxo.is_trusted, "self-send change UTXO should be trusted");
         assert_eq!(change_utxo.txout.value, change_amount);
 
-        // Account-level balance: change lives in `confirmed`, not `unconfirmed`.
-        assert_eq!(ctx.managed_wallet.balance.confirmed(), change_amount);
-        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
-        assert_eq!(ctx.managed_wallet.balance.spendable(), change_amount);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), change_amount);
+        assert_eq!(ctx.managed_wallet.balance.spendable(), 0);
     }
 
     /// The rescan recovery above has a boundary: a funding transaction that
@@ -2480,11 +2456,7 @@ mod tests {
             special_transaction_payload: None,
         };
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
-        assert_eq!(
-            ctx.managed_wallet.balance.confirmed(),
-            399_000,
-            "trusted self-send change counts as confirmed"
-        );
+        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 399_000);
 
         // The winner spends the same coin and pays only outside the wallet.
         let winner = Transaction {
@@ -2517,9 +2489,9 @@ mod tests {
             "the loser must be swept even though the winner is irrelevant"
         );
         assert_eq!(
-            ctx.managed_wallet.balance.confirmed(),
+            ctx.managed_wallet.balance.unconfirmed(),
             0,
-            "and its change must stop counting as confirmed money"
+            "and its change must stop counting as money"
         );
         assert!(
             result.released_outpoints.is_empty(),
@@ -3577,15 +3549,12 @@ mod tests {
             );
         }
         assert!(ctx.bip44_account().utxos.is_empty(), "no phantom output may survive the cascade");
-        // The load-bearing assertion. Trusted self-send change is bucketed as
-        // *confirmed*, so `unconfirmed() == 0` holds before the abandon too
-        // and proves nothing on its own.
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
         assert_eq!(
-            ctx.managed_wallet.balance.confirmed(),
+            ctx.managed_wallet.balance.unconfirmed(),
             0,
-            "the phantom counts as confirmed, so that is where its absence must show"
+            "the phantom counts as unconfirmed, so that is where its absence must show"
         );
-        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
 
         // The real coin the chain consumed is released from the spent set, so
         // a rescan can rediscover it — but only while its funding record is
@@ -3715,194 +3684,13 @@ mod tests {
             vout: 1,
         };
         assert!(ctx.bip44_account().utxos.contains_key(&winner_change));
-        // Without the sweep this is 698_000 — the loser's change is trusted
-        // self-send change and lands in the confirmed bucket, so only the
-        // exact total catches a regression.
+        // Without the sweep the loser's change stays in the unconfirmed bucket.
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 299_000);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
     }
 
-    /// Pooled funding spans account families — an asset lock draws from BIP44,
-    /// BIP32 and the DashPay contact-receiving accounts at once — so the
-    /// trusted-self-send check must be answered by the whole wallet, not by
-    /// the single account that happens to hold the change. Here the only input
-    /// belongs to the BIP32 account while the change lands on BIP44: the
-    /// transaction is still entirely ours, and its change must be trusted.
-    #[tokio::test]
-    async fn test_self_send_change_is_trusted_when_parent_is_in_a_sibling_account() {
-        let mut ctx = TestWalletContext::new_random();
-        let external_address = Address::p2pkh(
-            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
-            Network::Testnet,
-        );
-
-        // Fund the *BIP32* account, confirmed in a block.
-        let bip32_xpub = ctx
-            .wallet
-            .accounts
-            .standard_bip32_accounts
-            .get(&0)
-            .expect("BIP32 account")
-            .account_xpub;
-        let bip32_address = ctx
-            .managed_wallet
-            .first_bip32_managed_account_mut()
-            .expect("BIP32 managed account")
-            .next_receive_address(Some(&bip32_xpub), true)
-            .expect("BIP32 receive address");
-
-        let funding_value = 1_000_000u64;
-        let funding_tx = Transaction::dummy(&bip32_address, 0..1, &[funding_value]);
-        let block_context = TransactionContext::InBlock(BlockInfo::new(
-            100,
-            BlockHash::from_slice(&[7u8; 32]).expect("hash"),
-            1_700_000_000,
-        ));
-        ctx.check_transaction(&funding_tx, block_context).await;
-        assert_eq!(ctx.managed_wallet.balance.confirmed(), funding_value);
-
-        // Change goes to the BIP44 account, which holds none of the inputs.
-        let change_address = ctx
-            .managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
-            .expect("change address");
-
-        let send_amount = 600_000u64;
-        let fee = 1_000u64;
-        let change_amount = funding_value - send_amount - fee;
-        let spend_tx = Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: funding_tx.txid(),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
-            }],
-            output: vec![
-                TxOut {
-                    value: send_amount,
-                    script_pubkey: external_address.script_pubkey(),
-                },
-                TxOut {
-                    value: change_amount,
-                    script_pubkey: change_address.script_pubkey(),
-                },
-            ],
-            special_transaction_payload: None,
-        };
-
-        let result = ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
-        assert!(result.is_relevant);
-
-        let change_outpoint = OutPoint {
-            txid: spend_tx.txid(),
-            vout: 1,
-        };
-        let change_utxo =
-            ctx.bip44_account().utxos.get(&change_outpoint).expect("change UTXO recorded");
-        assert!(!change_utxo.is_confirmed);
-        assert!(
-            change_utxo.is_trusted,
-            "change of a wallet-owned transfer must be trusted even when the spent \
-             parent lives in a sibling account"
-        );
-
-        // And therefore it is confirmed, not unconfirmed, in the balance split.
-        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), 0);
-        assert_eq!(ctx.managed_wallet.balance.confirmed(), change_amount);
-    }
-
-    /// Sibling of `test_self_send_change_in_mempool_lands_in_confirmed_balance`:
-    /// a self-send change output is only trusted when the spent parent is
-    /// itself final. `Utxo::is_trusted` mirrors Bitcoin Core's
-    /// `CWalletTx::IsTrusted`, which is recursive: a 0-conf output is trusted
-    /// only if every parent resolves to confirmed, InstantSend-locked, or
-    /// trusted. Change spending an unconfirmed external parent must therefore
-    /// stay in the unconfirmed bucket, otherwise non-final funds surface as
-    /// confirmed/spendable and downstream asset locks get built on them.
-    #[tokio::test]
-    async fn test_self_send_change_with_unconfirmed_parent_is_not_trusted() {
-        let mut ctx = TestWalletContext::new_random();
-        let external_address = Address::p2pkh(
-            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
-            Network::Testnet,
-        );
-
-        // Unconfirmed external funding UTXO: the parent stays in the mempool.
-        let funding_value = 1_000_000u64;
-        let funding_tx = Transaction::dummy(&ctx.receive_address, 0..1, &[funding_value]);
-        ctx.check_transaction(&funding_tx, TransactionContext::Mempool).await;
-        assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
-        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), funding_value);
-
-        let change_address = ctx
-            .managed_wallet
-            .first_bip44_managed_account_mut()
-            .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
-            .expect("change address");
-
-        // Spend the still-unconfirmed funding UTXO: some out, the rest back
-        // to ourselves as change, broadcast into the mempool.
-        let send_amount = 600_000u64;
-        let fee = 1_000u64;
-        let change_amount = funding_value - send_amount - fee;
-        let spend_tx = Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: funding_tx.txid(),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: 0xffffffff,
-                witness: dashcore::Witness::new(),
-            }],
-            output: vec![
-                TxOut {
-                    value: send_amount,
-                    script_pubkey: external_address.script_pubkey(),
-                },
-                TxOut {
-                    value: change_amount,
-                    script_pubkey: change_address.script_pubkey(),
-                },
-            ],
-            special_transaction_payload: None,
-        };
-        ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
-
-        let change_outpoint = OutPoint {
-            txid: spend_tx.txid(),
-            vout: 1,
-        };
-        let change_utxo =
-            ctx.bip44_account().utxos.get(&change_outpoint).expect("change UTXO recorded");
-
-        assert!(
-            !change_utxo.is_trusted,
-            "change spending an unconfirmed parent must not be trusted"
-        );
-        assert_eq!(
-            ctx.managed_wallet.balance.confirmed(),
-            0,
-            "non-final funds must not be counted as confirmed"
-        );
-        assert_eq!(ctx.managed_wallet.balance.unconfirmed(), change_amount);
-    }
-
-    /// Sibling of `test_self_send_change_in_mempool_lands_in_confirmed_balance`:
-    /// when the wallet receives a mempool payment but does not own any of the
-    /// inputs, an output that happens to land on one of our addresses must
-    /// remain in the unconfirmed bucket. The "self-send" carve-out only applies
-    /// when at least one input is one of our own UTXOs.
+    /// A mempool payment to one of our addresses stays in the unconfirmed
+    /// bucket until the network settles it.
     #[tokio::test]
     async fn test_external_mempool_payment_remains_unconfirmed() {
         let mut ctx = TestWalletContext::new_random();
@@ -3915,7 +3703,6 @@ mod tests {
 
         let utxo = ctx.first_utxo();
         assert!(!utxo.is_confirmed, "external mempool payment must stay unconfirmed");
-        assert!(!utxo.is_trusted, "external payment is not a self-send change");
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 0);
         assert_eq!(ctx.managed_wallet.balance.unconfirmed(), payment_value);
     }

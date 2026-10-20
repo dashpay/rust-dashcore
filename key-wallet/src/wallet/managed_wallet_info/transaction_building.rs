@@ -393,11 +393,9 @@ mod tests {
         assert!(change_output.is_some(), "Should have change output");
     }
 
-    /// Ordinary spends deliberately admit unconfirmed inputs: only builders
-    /// that opt in via `require_final_inputs` (e.g. asset locks) restrict
-    /// selection to confirmed or InstantSend-locked UTXOs.
+    /// A spend funded only by an unconfirmed UTXO waits for it to settle.
     #[test]
-    fn test_ordinary_spend_admits_unconfirmed_inputs() {
+    fn test_spend_waits_for_unconfirmed_inputs() {
         let utxos = vec![Utxo::dummy(0, 300000, 100, false, false)];
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -408,15 +406,19 @@ mod tests {
             .require_network(Network::Testnet)
             .unwrap();
 
-        let (tx, _fee, _) = TransactionBuilder::new()
+        let result = TransactionBuilder::new()
             .set_fee_rate(FeeRate::normal())
             .set_current_height(200)
             .set_change_address(change_address)
             .add_output(&recipient_address, 150000)
             .add_inputs(utxos)
-            .build_unsigned_reserved()
-            .expect("ordinary spend of an unconfirmed UTXO must succeed");
-        assert!(!tx.input.is_empty());
+            .build_unsigned_reserved();
+        assert!(matches!(
+            result,
+            Err(BuilderError::FundsAwaitingFinality {
+                waiting: 300000
+            })
+        ));
     }
 
     #[test]
@@ -837,7 +839,6 @@ mod tests {
             is_confirmed: true,
             is_instantlocked: false,
             is_locked: false,
-            is_trusted: false,
         };
         info.accounts
             .standard_bip44_accounts
@@ -1020,7 +1021,6 @@ mod tests {
                 is_confirmed: true,
                 is_instantlocked: false,
                 is_locked: false,
-                is_trusted: false,
             },
         );
         outpoint
