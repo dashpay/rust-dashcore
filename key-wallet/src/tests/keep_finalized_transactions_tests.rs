@@ -35,6 +35,8 @@ use dashcore::ephemerealdata::chain_lock::ChainLock;
 #[cfg(not(feature = "keep-finalized-transactions"))]
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hashes::Hash;
+#[cfg(not(feature = "keep-finalized-transactions"))]
+use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{BlockHash, Transaction};
 
 fn bip44_account_type() -> AccountType {
