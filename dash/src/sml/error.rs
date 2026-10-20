@@ -3,7 +3,7 @@ use bincode::{Decode, Encode};
 use thiserror::Error;
 
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
-use crate::{BlockHash, TxMerkleNode};
+use crate::{BlockHash, QuorumHash, TxMerkleNode};
 
 #[derive(Debug, Error, Clone, PartialEq, Eq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -101,4 +101,9 @@ pub enum SmlError {
         block_hash: BlockHash,
         computed: MerkleRootQuorums,
     },
+
+    /// A QRInfo serves, as the last commitment of a quorum index, a commitment its tip list does
+    /// not hold.
+    #[error("The QRInfo serves a commitment of quorum {0} that its tip list does not hold")]
+    CommitmentNotInTipList(QuorumHash),
 }
