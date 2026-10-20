@@ -43,6 +43,12 @@ mod tests {
     use crate::storage::DiskStorageManager;
     use crate::test_utils::MockNetworkManager;
     use crate::Network;
+    use dashcore::bls_sig_utils::BLSSignature;
+    use dashcore::hash_types::{
+        MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums,
+    };
+    use dashcore::hashes::Hash;
+    use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::WalletManager;
@@ -136,5 +142,60 @@ mod tests {
         // Verify the wallet is accessible
         let wallet_ref = client.wallet();
         let _wallet_guard = wallet_ref.read().await;
+    }
+
+    /// The client reports the coinbase payload the masternode list engine
+    /// kept, and nothing while masternode sync is off.
+    #[tokio::test]
+    async fn latest_coinbase_reports_what_the_masternode_list_engine_kept() {
+        let make_client = |config: ClientConfig| async move {
+            let storage =
+                DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
+            let wallet =
+                Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+            DashSpvClient::new(
+                config,
+                MockNetworkManager::new(),
+                storage,
+                wallet,
+                vec![Arc::new(())],
+            )
+            .await
+            .expect("client construction must succeed")
+        };
+        let storage_dir = TempDir::new().unwrap();
+
+        let without_masternodes = make_client(
+            ClientConfig::mainnet()
+                .without_filters()
+                .without_masternodes()
+                .with_storage_path(storage_dir.path()),
+        )
+        .await;
+        assert_eq!(without_masternodes.latest_coinbase().await, None);
+
+        let with_masternodes = make_client(
+            ClientConfig::mainnet().without_filters().with_storage_path(storage_dir.path()),
+        )
+        .await;
+        assert_eq!(with_masternodes.latest_coinbase().await, None);
+
+        let coinbase = CoinbasePayload {
+            version: 4,
+            height: 2_400_000,
+            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
+            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+            best_cl_height: Some(0),
+            best_cl_signature: Some(BLSSignature::from([0; 96])),
+            asset_locked_amount: Some(0),
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::all_zeros()),
+        };
+        with_masternodes
+            .masternode_list_engine()
+            .expect("masternode sync is on")
+            .write()
+            .await
+            .latest_coinbase = Some(coinbase.clone());
+        assert_eq!(with_masternodes.latest_coinbase().await, Some(coinbase));
     }
 }

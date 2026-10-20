@@ -29,6 +29,8 @@ use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 #[cfg(feature = "quorum_validation")]
 use crate::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
 use crate::sml::quorum_validation_error::QuorumValidationError;
+use crate::transaction::special_transaction::TransactionPayload;
+use crate::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::{BlockHash, QuorumHash};
 #[cfg(feature = "bincode")]
@@ -238,7 +240,6 @@ impl MasternodeListEngineBlockContainer {
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct MasternodeListEngine {
     pub block_container: MasternodeListEngineBlockContainer,
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
@@ -253,6 +254,13 @@ pub struct MasternodeListEngine {
         >,
     >,
     pub network: Network,
+    /// **Not secure, and temporary:** replaced on the `dev` branch by a version
+    /// that keeps only verified coinbases (dashpay/rust-dashcore#1202); see
+    /// [`MasternodeListEngine::latest_coinbase`]. Kept in memory only: serde
+    /// and bincode skip it, so a persisted engine keeps its layout and decodes
+    /// with `None`. It still takes part in `==`.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub latest_coinbase: Option<CoinbasePayload>,
 }
 
 impl Default for MasternodeListEngine {
@@ -264,9 +272,57 @@ impl Default for MasternodeListEngine {
             rotated_quorums_per_cycle: Default::default(),
             quorum_statuses: Default::default(),
             network: Network::Mainnet,
+            latest_coinbase: None,
         }
     }
 }
+
+// Same layout as a derived impl without `latest_coinbase`, which is not
+// persisted, so engines encoded before that field existed keep decoding.
+// The field is temporary; once it is gone, the derive can return.
+#[cfg(feature = "bincode")]
+impl Encode for MasternodeListEngine {
+    fn encode<E: bincode::enc::Encoder>(
+        &self,
+        encoder: &mut E,
+    ) -> Result<(), bincode::error::EncodeError> {
+        let Self {
+            block_container,
+            masternode_lists,
+            known_snapshots,
+            rotated_quorums_per_cycle,
+            quorum_statuses,
+            network,
+            latest_coinbase: _,
+        } = self;
+        block_container.encode(encoder)?;
+        masternode_lists.encode(encoder)?;
+        known_snapshots.encode(encoder)?;
+        rotated_quorums_per_cycle.encode(encoder)?;
+        quorum_statuses.encode(encoder)?;
+        network.encode(encoder)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<C> Decode<C> for MasternodeListEngine {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        Ok(Self {
+            block_container: Decode::decode(decoder)?,
+            masternode_lists: Decode::decode(decoder)?,
+            known_snapshots: Decode::decode(decoder)?,
+            rotated_quorums_per_cycle: Decode::decode(decoder)?,
+            quorum_statuses: Decode::decode(decoder)?,
+            network: Decode::decode(decoder)?,
+            latest_coinbase: None,
+        })
+    }
+}
+
+#[cfg(feature = "bincode")]
+bincode::impl_borrow_decode!(MasternodeListEngine);
 
 /// Builds a per-cycle quorum map keyed by `quorum_index`.
 /// Rejects missing, negative, out-of-range, or duplicate indices. The map may
@@ -324,6 +380,15 @@ fn qr_info_diffs(qr_info: &QRInfo) -> Vec<&MnListDiff> {
     }
     diffs.extend(&qr_info.mn_list_diff_list);
     diffs
+}
+
+/// The coinbase payload (DIP-4) of the block `diff` ends at, if its coinbase
+/// carries one.
+fn coinbase_payload(diff: &MnListDiff) -> Option<CoinbasePayload> {
+    match &diff.coinbase_tx.special_transaction_payload {
+        Some(TransactionPayload::CoinbasePayloadType(payload)) => Some(payload.clone()),
+        _ => None,
+    }
 }
 
 /// Cycle base height, the height of the quorum-index-0 block, for a rotated
@@ -384,9 +449,10 @@ impl MasternodeListEngine {
     ) -> Result<Self, SmlError> {
         let block_hash = masternode_list_diff.block_hash;
         let base_block_hash = masternode_list_diff.base_block_hash;
+        let coinbase = coinbase_payload(&masternode_list_diff);
         let masternode_list = masternode_list_diff
             .try_into_with_block_hash_lookup(|_block_hash| Some(block_height), network)?;
-        Ok(Self {
+        let mut engine = Self {
             block_container: MasternodeListEngineBTreeMapBlockContainer {
                 block_hashes: [(0, base_block_hash), (block_height, block_hash)].into(),
                 block_heights: [(base_block_hash, 0), (block_hash, block_height)].into(),
@@ -397,7 +463,10 @@ impl MasternodeListEngine {
             rotated_quorums_per_cycle: Default::default(),
             quorum_statuses: Default::default(),
             network,
-        })
+            latest_coinbase: None,
+        };
+        engine.record_coinbase(coinbase, block_height);
+        Ok(engine)
     }
 
     /// Gets the most recent masternode list.
@@ -406,6 +475,52 @@ impl MasternodeListEngine {
     /// A reference to the latest masternode list, or `None` if no lists are stored.
     pub fn latest_masternode_list(&self) -> Option<&MasternodeList> {
         self.masternode_lists.last_key_value().map(|(_, list)| list)
+    }
+
+    /// **Not secure, and temporary:** the unverified coinbase payload of the
+    /// highest block an applied masternode list diff carried one for, replaced
+    /// on the `dev` branch by a version that keeps only coinbases verified
+    /// against their block (dashpay/rust-dashcore#1202).
+    ///
+    /// Nothing authenticates the payload. The engine checks neither the diff's
+    /// merkle proof of the coinbase against the block header nor the payload's
+    /// merkle roots against the lists, and quorum verification does not gate
+    /// it: any diff the engine applies sets it, even one from a QRInfo the
+    /// engine then rejects. A single peer can serve a payload of its choosing.
+    ///
+    /// Every `MnListDiff` carries its block's coinbase transaction. Each diff
+    /// the engine applies, including those [`Self::feed_qr_info`] and
+    /// [`Self::initialize_with_diff_to_height`] apply, replaces the kept
+    /// payload unless a higher block's is kept; a diff applied again for the
+    /// same block replaces it, as it does that block's list. A payload whose
+    /// `height` is not the height the diff was applied at is not kept, since
+    /// Core requires the two to match, so the kept payload can be a lower
+    /// block's than the highest list's. `None` until a diff whose coinbase
+    /// carries a payload is applied, and after decoding, since the payload is
+    /// not persisted.
+    pub fn latest_coinbase(&self) -> Option<&CoinbasePayload> {
+        self.latest_coinbase.as_ref()
+    }
+
+    /// Keeps `coinbase`, the coinbase payload of a diff applied at `height`, as
+    /// [`Self::latest_coinbase`] unless it names another height or a higher
+    /// block's payload is already kept.
+    fn record_coinbase(&mut self, coinbase: Option<CoinbasePayload>, height: CoreBlockHeight) {
+        let Some(coinbase) = coinbase else {
+            return;
+        };
+        if coinbase.height != height {
+            tracing::warn!(
+                "Ignoring the coinbase payload of the masternode list diff at height {}: it names height {}",
+                height,
+                coinbase.height
+            );
+            return;
+        }
+        if self.latest_coinbase.as_ref().is_some_and(|latest| latest.height > height) {
+            return;
+        }
+        self.latest_coinbase = Some(coinbase);
     }
 
     /// Gets all quorum hashes from the latest masternode list.
@@ -1490,6 +1605,7 @@ impl MasternodeListEngine {
         verify_quorums: bool,
         previous_chain_lock_sigs: Option<[BLSSignature; 3]>,
     ) -> Result<Option<BLSSignature>, SmlError> {
+        let coinbase = coinbase_payload(&masternode_list_diff);
         if let Some(known_genesis_block_hash) = self
             .network
             .known_genesis_block_hash()
@@ -1516,6 +1632,7 @@ impl MasternodeListEngine {
                 }
             };
             self.masternode_lists.insert(diff_end_height, masternode_list);
+            self.record_coinbase(coinbase, diff_end_height);
             return Ok(None);
         }
 
@@ -1639,6 +1756,7 @@ impl MasternodeListEngine {
             rotation_sig
         };
 
+        self.record_coinbase(coinbase, diff_end_height);
         self.block_container.feed_block_height(diff_end_height, block_hash);
 
         Ok(rotation_sig)
@@ -1799,6 +1917,8 @@ mod tests {
     };
     #[cfg(feature = "quorum_validation")]
     use crate::sml::quorum_validation_error::QuorumValidationError;
+    use crate::transaction::special_transaction::TransactionPayload;
+    use crate::transaction::special_transaction::coinbase::CoinbasePayload;
     use bincode::{Decode, config, decode_from_slice};
     use std::collections::BTreeMap;
     #[cfg(feature = "quorum_validation")]
@@ -3036,5 +3156,188 @@ mod tests {
             Some(&stored_before),
             "a smaller verified set must not shrink a larger stored cycle"
         );
+    }
+
+    /// Real mainnet diffs from genesis to 2227096 and on to 2241332. Their
+    /// coinbases carry version-3 payloads.
+    fn coinbase_fixture_diffs() -> (MnListDiff, MnListDiff) {
+        let to_2227096: MnListDiff = deserialize(include_bytes!(
+            "../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("expected to deserialize");
+        let to_2241332: MnListDiff = deserialize(include_bytes!(
+            "../../../tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin"
+        ))
+        .expect("expected to deserialize");
+        (to_2227096, to_2241332)
+    }
+
+    /// The coinbase payload of `diff`, for tests that tamper with it.
+    fn coinbase_payload_mut(diff: &mut MnListDiff) -> &mut CoinbasePayload {
+        match &mut diff.coinbase_tx.special_transaction_payload {
+            Some(TransactionPayload::CoinbasePayloadType(payload)) => payload,
+            other => panic!("the fixture's coinbase must carry a coinbase payload, got {other:?}"),
+        }
+    }
+
+    /// The height and version of the payload the engine kept.
+    fn latest_coinbase_height_and_version(engine: &MasternodeListEngine) -> Option<(u32, u16)> {
+        engine.latest_coinbase().map(|coinbase| (coinbase.height, coinbase.version))
+    }
+
+    /// Core requires a version-4 coinbase payload once V24 is active, so a
+    /// consumer reads V24 from the coinbase of the newest diff. The engine
+    /// must report the version that diff brought, not the first one it saw.
+    #[test]
+    fn latest_coinbase_reports_the_payload_of_the_newest_diff() {
+        let (to_2227096, mut to_2241332) = coinbase_fixture_diffs();
+        coinbase_payload_mut(&mut to_2241332).version = 4;
+        let mut to_2241332_again = to_2241332.clone();
+        coinbase_payload_mut(&mut to_2241332_again).version = 5;
+
+        let mut engine = MasternodeListEngine::initialize_with_diff_to_height(
+            to_2227096,
+            2227096,
+            Network::Mainnet,
+        )
+        .expect("expected to start engine");
+        assert_eq!(latest_coinbase_height_and_version(&engine), Some((2227096, 3)));
+
+        engine.apply_diff(to_2241332, Some(2241332), false, None).expect("expected to apply diff");
+        assert_eq!(latest_coinbase_height_and_version(&engine), Some((2241332, 4)));
+
+        // A diff applied again for the same block replaces the kept payload,
+        // as it replaces that block's list.
+        engine
+            .apply_diff(to_2241332_again, Some(2241332), false, None)
+            .expect("expected to apply the diff again");
+        assert_eq!(latest_coinbase_height_and_version(&engine), Some((2241332, 5)));
+    }
+
+    /// Diffs are not applied in height order: every QRInfo after the first
+    /// applies diffs for work blocks below the previous QRInfo's tip. Those
+    /// must not hide the coinbase of the highest block.
+    #[test]
+    fn latest_coinbase_keeps_the_highest_block_when_a_lower_diff_applies_later() {
+        let (to_2227096, mut to_2241332) = coinbase_fixture_diffs();
+        coinbase_payload_mut(&mut to_2241332).version = 4;
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+
+        engine
+            .apply_diff(to_2227096.clone(), Some(2227096), false, None)
+            .expect("expected to apply diff");
+        assert_eq!(latest_coinbase_height_and_version(&engine), Some((2227096, 3)));
+        engine.apply_diff(to_2241332, Some(2241332), false, None).expect("expected to apply diff");
+        engine
+            .apply_diff(to_2227096, Some(2227096), false, None)
+            .expect("expected to apply the lower diff again");
+
+        assert_eq!(latest_coinbase_height_and_version(&engine), Some((2241332, 4)));
+    }
+
+    /// Only a coinbase the engine can place at a block it applied replaces
+    /// the kept one: a diff that fails to apply, a coinbase without a
+    /// coinbase payload, and a payload naming another height than the diff's
+    /// block leave it in place. A payload kept for a height above its block's
+    /// would hide every later coinbase.
+    #[test]
+    fn latest_coinbase_ignores_a_coinbase_it_cannot_place() {
+        let (to_2227096, to_2241332) = coinbase_fixture_diffs();
+        let mut engine = MasternodeListEngine::default_for_network(Network::Mainnet);
+
+        engine
+            .apply_diff(to_2241332.clone(), Some(2241332), false, None)
+            .expect_err("the engine holds no list for the diff's base block");
+        assert_eq!(engine.latest_coinbase(), None);
+
+        engine.apply_diff(to_2227096, Some(2227096), false, None).expect("expected to apply diff");
+        let kept = Some((2227096, 3));
+        assert_eq!(latest_coinbase_height_and_version(&engine), kept);
+
+        let mut unsigned = to_2241332.clone();
+        unsigned.quorums_chainlock_signatures.clear();
+        coinbase_payload_mut(&mut unsigned).version = 4;
+        engine
+            .apply_diff(unsigned, Some(2241332), false, None)
+            .expect_err("a diff past V20 must carry its new quorums' ChainLock signatures");
+        assert_eq!(latest_coinbase_height_and_version(&engine), kept);
+
+        let mut without_payload = to_2241332.clone();
+        without_payload.coinbase_tx.special_transaction_payload = None;
+        engine
+            .apply_diff(without_payload, Some(2241332), false, None)
+            .expect("expected to apply diff");
+        assert_eq!(latest_coinbase_height_and_version(&engine), kept);
+
+        for claimed_height in [2241331, 2241333, u32::MAX] {
+            let mut other_height = to_2241332.clone();
+            coinbase_payload_mut(&mut other_height).height = claimed_height;
+            engine
+                .apply_diff(other_height, Some(2241332), false, None)
+                .expect("expected to apply diff");
+            assert_eq!(
+                latest_coinbase_height_and_version(&engine),
+                kept,
+                "a payload claiming height {claimed_height} must not be kept"
+            );
+        }
+
+        engine.apply_diff(to_2241332, Some(2241332), false, None).expect("expected to apply diff");
+        assert_eq!(latest_coinbase_height_and_version(&engine), Some((2241332, 3)));
+    }
+
+    /// A syncing client gets its first lists from a QRInfo, so the diffs
+    /// `feed_qr_info` applies must be recorded too. The tip diff ends
+    /// highest, so its coinbase is the one kept.
+    #[test]
+    #[cfg(feature = "quorum_validation")]
+    fn feed_qr_info_keeps_the_coinbase_of_its_tip_diff() {
+        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+
+        engine.feed_qr_info(qr_info, false, false).expect("expected to feed the QRInfo");
+
+        assert_eq!(latest_coinbase_height_and_version(&engine), Some((2518986, 3)));
+    }
+
+    /// Engines are persisted (the fixture is one), and consumers decode them
+    /// with code that does not know the kept coinbase. Keeping it must not
+    /// change what an engine encodes to, and a decoded engine has none.
+    #[test]
+    fn latest_coinbase_is_not_persisted() {
+        let fixture = hex::decode(include_str!(
+            "../../../tests/data/test_DML_diffs/masternode_list_engine.hex"
+        ))
+        .expect("decode hex");
+        let mut engine: MasternodeListEngine = decode_fixture(&fixture);
+        assert_eq!(engine.latest_coinbase(), None);
+        let encode = |engine: &MasternodeListEngine| {
+            bincode::encode_to_vec(engine, config::standard()).expect("expected to encode")
+        };
+        assert_eq!(encode(&engine), fixture, "a decoded engine must encode back to the fixture");
+
+        let (to_2227096, _) = coinbase_fixture_diffs();
+        engine.latest_coinbase = super::coinbase_payload(&to_2227096);
+        assert!(engine.latest_coinbase().is_some());
+        assert_eq!(encode(&engine), fixture, "the kept coinbase must not be encoded");
+
+        #[cfg(feature = "serde")]
+        {
+            let serde_encode = |engine: &MasternodeListEngine| {
+                bincode::serde::encode_to_vec(engine, config::standard())
+                    .expect("expected to encode with serde")
+            };
+            let with_coinbase = serde_encode(&engine);
+            let mut without_coinbase = engine.clone();
+            without_coinbase.latest_coinbase = None;
+            assert_eq!(
+                with_coinbase,
+                serde_encode(&without_coinbase),
+                "serde must skip the kept coinbase"
+            );
+            let (decoded, _): (MasternodeListEngine, usize) =
+                bincode::serde::decode_from_slice(&with_coinbase, config::standard())
+                    .expect("expected to decode with serde");
+            assert!(decoded == without_coinbase, "serde must decode the engine without a coinbase");
+        }
     }
 }
