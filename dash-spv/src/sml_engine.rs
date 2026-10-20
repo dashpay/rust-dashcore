@@ -696,6 +696,12 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             mn_list_diff_list,
         } = qr_info;
 
+        // Core sends a snapshot with every diff of the list. Pairing them with
+        // `zip` would drop a diff without one unnoticed.
+        if let Some(unpaired) = mn_list_diff_list.get(quorum_snapshot_list.len()) {
+            return Err(QuorumValidationError::RequiredSnapshotNotPresent(unpaired.block_hash));
+        }
+
         let can_verify_previous = quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
         let h_block_hash = mn_list_diff_h.block_hash;
         let rotation_quorum_type = self.rotation_quorum_type(&last_commitment_per_index);
@@ -1424,6 +1430,30 @@ mod tests {
             "a refused QRInfo must leave the lists as they were"
         );
         assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
+    }
+
+    /// Core sends a snapshot for every diff of `mn_list_diff_list`. A diff
+    /// without one fails the QRInfo instead of being skipped unnoticed.
+    #[tokio::test]
+    async fn a_qr_info_with_a_diff_but_no_snapshot_for_it_is_refused() {
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        assert_eq!(qr_info.quorum_snapshot_list.len(), qr_info.mn_list_diff_list.len());
+        let unpaired = MnListDiff {
+            block_hash: BlockHash::dummy(1),
+            ..qr_info.mn_list_diff_at_h_minus_3c.clone()
+        };
+        qr_info.mn_list_diff_list.push(unpaired);
+
+        let result = engine.feed_qr_info(qr_info).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(QuorumValidationError::RequiredSnapshotNotPresent(block_hash))
+                    if block_hash == BlockHash::dummy(1)
+            ),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
