@@ -3,7 +3,8 @@
 //! Each checkpoint holds its block header and the [`CHECKPOINT_HEADERS`] - 1 headers before
 //! it, so the difficulty of the blocks after it can be checked from the first one on. The
 //! checkpoints of mainnet and testnet are generated from the network by the
-//! `generate-checkpoints` binary and embedded from `checkpoints/<network>.checkpoints`.
+//! `generate-checkpoints` binary into `checkpoints/<network>.json`, which `build.rs` encodes
+//! for embedding.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -18,8 +19,8 @@ use crate::types::HashedBlockHeader;
 /// Headers each checkpoint holds, the checkpoint block last.
 pub const CHECKPOINT_HEADERS: usize = 25;
 
-const MAINNET_CHECKPOINTS: &[u8] = include_bytes!("../../checkpoints/mainnet.checkpoints");
-const TESTNET_CHECKPOINTS: &[u8] = include_bytes!("../../checkpoints/testnet.checkpoints");
+const MAINNET_CHECKPOINTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mainnet.checkpoints"));
+const TESTNET_CHECKPOINTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/testnet.checkpoints"));
 
 // The embedded files are decoded and validated by the tests.
 static MAINNET: LazyLock<CheckpointManager> = LazyLock::new(|| {

@@ -51,6 +51,10 @@ rayon = { workspace = true }
 tempfile = { version = "3.0", optional = true }
 dashcore-rpc = { path = "../rpc-client", optional = true }
 
+[build-dependencies]
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = "1.0"
+
 [dev-dependencies]
 bincode = { workspace = true }
 dash-spv = { path = ".", features = ["test-utils"] }

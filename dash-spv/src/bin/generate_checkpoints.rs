@@ -1,7 +1,7 @@
 //! Generate the checkpoints embedded in `dash-spv` from the network.
 //!
 //! Syncs the block headers of a network from genesis without a wallet, then writes a
-//! checkpoint every `--interval` blocks, each validated, to `checkpoints/<network>.checkpoints`.
+//! checkpoint every `--interval` blocks, each validated, to `checkpoints/<network>.json`.
 //!
 //! ```bash
 //! cargo run --release -p dash-spv --bin generate-checkpoints -- -n mainnet -d <dir>
@@ -22,7 +22,6 @@ use dash_spv::validation::{BlockHeaderValidator, Validator};
 use dash_spv::{
     init_console_logging, ClientConfig, DashSpvClient, EventHandler, LevelFilter, Network,
 };
-use dashcore::consensus::Encodable;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 use tokio::sync::{Notify, RwLock};
@@ -53,7 +52,7 @@ struct Args {
     #[arg(short, long, value_name = "PATH")]
     data_dir: PathBuf,
 
-    /// File to write the checkpoints to, `checkpoints/<network>.checkpoints` by default
+    /// File to write the checkpoints to, `checkpoints/<network>.json` by default
     #[arg(short, long, value_name = "PATH")]
     output: Option<PathBuf>,
 
@@ -112,8 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tip = client.tip_header().await.ok_or("no headers synced")?.height();
     tracing::info!("Headers synced up to {}", tip);
 
-    let mut bytes = Vec::new();
-    let mut count = 0;
+    let mut checkpoints = Vec::new();
     let last = tip.saturating_sub(args.min_depth);
 
     for height in (args.interval..=last).step_by(args.interval as usize) {
@@ -126,19 +124,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .validate(&headers)
             .map_err(|e| format!("checkpoint {height} is invalid: {e}"))?;
 
-        Checkpoint::new(height, headers)
-            .ok_or(format!("checkpoint {height} does not fit its headers"))?
-            .consensus_encode(&mut bytes)?;
-        count += 1;
+        let checkpoint = Checkpoint::new(height, headers)
+            .ok_or(format!("checkpoint {height} does not fit its headers"))?;
+
+        checkpoints.push(serde_json::json!({
+            "height": checkpoint.height(),
+            "headers": checkpoint.headers().iter().map(|h| h.header()).collect::<Vec<_>>(),
+        }));
     }
 
     let output = args.output.unwrap_or_else(|| {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("checkpoints")
-            .join(format!("{}.checkpoints", network))
+            .join(format!("{}.json", network))
     });
-    std::fs::write(&output, &bytes)?;
-    tracing::info!("Wrote {} checkpoints up to {} to {}", count, last, output.display());
+    std::fs::write(&output, serde_json::to_string_pretty(&checkpoints)? + "\n")?;
+
+    tracing::info!(
+        "Wrote {} checkpoints up to {} to {}",
+        checkpoints.len(),
+        last,
+        output.display()
+    );
 
     Ok(())
 }
