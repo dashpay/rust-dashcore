@@ -1512,8 +1512,9 @@ impl PeerNetworkManager {
     }
 
     /// The peer [`Self::send_distributed_avoiding`] sends `message` to: one
-    /// eligible for its type, preferably neither in `avoid` nor owing a
-    /// response of its kind, picked by [`Self::next_peer`].
+    /// eligible for its type, preferring peers not in `avoid` and, among
+    /// those, peers not owing a response of its kind; [`Self::next_peer`]
+    /// picks among the rest.
     async fn distributed_peer(
         &self,
         message: &NetworkMessage,

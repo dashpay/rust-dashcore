@@ -49,9 +49,9 @@ pub enum NetworkRequest {
     SendMessage(NetworkMessage),
     /// Send a message to a specific peer.
     SendMessageToPeer(NetworkMessage, SocketAddr),
-    /// Send a request to one of the connected peers, like the requests
+    /// Send a request to one of the peers eligible for it, like the requests
     /// `SendMessage` distributes, preferring any peer not listed. A listed peer
-    /// is used only when every connected peer is listed.
+    /// is used only when every eligible peer is listed.
     SendMessageAvoiding(NetworkMessage, Vec<SocketAddr>),
     /// Broadcast a message to all connected peers.
     BroadcastMessage(NetworkMessage),
@@ -89,7 +89,7 @@ impl RequestSender {
             .map_err(|e| NetworkError::ProtocolError(e.to_string()))
     }
 
-    /// Queue a request for any peer, preferring one not in `avoid`.
+    /// Queue a request for any eligible peer, preferring one not in `avoid`.
     fn send_message_avoiding(
         &self,
         msg: NetworkMessage,
@@ -177,8 +177,8 @@ impl RequestSender {
         self.request_mnlist_diff_avoiding(base_block_hash, block_hash, &[])
     }
 
-    /// [`Self::request_mnlist_diff`] from a peer other than those in `avoid`
-    /// if one is connected.
+    /// [`Self::request_mnlist_diff`], preferring an eligible peer not in
+    /// `avoid` and falling back to one in it.
     pub fn request_mnlist_diff_avoiding(
         &self,
         base_block_hash: BlockHash,
@@ -203,8 +203,8 @@ impl RequestSender {
         self.request_qr_info_avoiding(known_block_hashes, target_block_hash, extra_share, &[])
     }
 
-    /// [`Self::request_qr_info`] from a peer other than those in `avoid` if
-    /// one is connected.
+    /// [`Self::request_qr_info`], preferring an eligible peer not in `avoid`
+    /// and falling back to one in it.
     pub fn request_qr_info_avoiding(
         &self,
         known_block_hashes: Vec<BlockHash>,
