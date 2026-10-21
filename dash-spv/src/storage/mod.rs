@@ -65,6 +65,10 @@ pub trait StorageManager:
     /// Deletes in-disk and in-memory data
     async fn clear(&mut self) -> StorageResult<()>;
 
+    /// Drops the block headers, filter headers, filters, blocks and masternode
+    /// messages above `height`.
+    async fn truncate_above(&mut self, height: u32) -> StorageResult<()>;
+
     /// Starts the background tasks, restarting them after a [`Self::stop`].
     async fn start(&mut self);
 
@@ -241,6 +245,14 @@ impl Drop for DiskStorageManager {
 
 #[async_trait]
 impl StorageManager for DiskStorageManager {
+    async fn truncate_above(&mut self, height: u32) -> StorageResult<()> {
+        BlockHeaderStorage::truncate_above(self, height).await?;
+        FilterHeaderStorage::truncate_above(self, height).await?;
+        FilterStorage::truncate_above(self, height).await?;
+        BlockStorage::truncate_above(self, height).await?;
+        MasternodeStorage::truncate_above(self, height).await
+    }
+
     async fn clear(&mut self) -> StorageResult<()> {
         // First, stop the background worker to avoid races with file deletion
         let worker_was_running = self.worker_handle.is_some();
@@ -485,6 +497,10 @@ impl masternode::MasternodeStorage for DiskStorageManager {
         qr_info: &QRInfo,
     ) -> StorageResult<()> {
         self.masternodes.write().await.store_qr_info(height, qr_info).await
+    }
+
+    async fn truncate_above(&mut self, height: CoreBlockHeight) -> StorageResult<()> {
+        self.masternodes.write().await.truncate_above(height).await
     }
 }
 

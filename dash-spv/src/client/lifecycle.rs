@@ -15,8 +15,7 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::{
-    BlockHeaderStorage, BlockStorage, DiskStorageManager, FilterHeaderStorage, FilterStorage,
-    PersistentBlockHeaderStorage, StorageManager,
+    BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, StorageManager,
 };
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
@@ -282,22 +281,22 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     ///
     /// The wallets go first: a wallet refusing the fork leaves storage as it
     /// is, and storage failing after them keeps the fork unstored, so it is
-    /// detected and retried. The engine goes right after the headers, which it
-    /// looks rotated cycles up in, so it never holds lists above the stored tip.
+    /// detected and retried. The engine goes after the storage, whose headers
+    /// it looks rotated cycles up in, even if the storage fails part way, so it
+    /// never holds lists above the stored tip.
     async fn truncate_chain_above(
         &self,
         height: u32,
     ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.wallet.write().await.truncate_above(height)?;
-        BlockHeaderStorage::truncate_above(&mut *self.storage.lock().await, height).await?;
+        let truncated =
+            StorageManager::truncate_above(&mut *self.storage.lock().await, height).await;
+
         if let Some(engine) = &self.masternode_engine {
             engine.write().await.truncate_above(height).await;
         }
-        let mut storage = self.storage.lock().await;
-        FilterHeaderStorage::truncate_above(&mut *storage, height).await?;
-        FilterStorage::truncate_above(&mut *storage, height).await?;
-        BlockStorage::truncate_above(&mut *storage, height).await?;
-        Ok(())
+
+        Ok(truncated?)
     }
 
     /// Stop `sync_loop` and everything it drives. The caller holds the lock.
