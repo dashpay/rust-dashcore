@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::SyncResult;
-use crate::network::NetworkManager;
+use crate::network::{NetworkManager, SendRequest};
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_sml::{GetMnListDiff, MnListDiff};
 use dashcore::BlockHash;

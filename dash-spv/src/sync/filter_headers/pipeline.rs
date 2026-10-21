@@ -8,7 +8,7 @@ use dashcore::network::message_filter::{CFHeaders, GetCFHeaders};
 use dashcore::BlockHash;
 
 use crate::error::{SyncError, SyncResult};
-use crate::network::NetworkManager;
+use crate::network::{NetworkManager, SendRequest};
 use crate::storage::BlockHeaderStorage;
 
 /// Batch size for filter header requests.
@@ -155,11 +155,11 @@ impl FilterHeadersPipeline {
 
         for (stop_hash, start_height) in &batches {
             network
-                .send(NetworkMessage::GetCFHeaders(GetCFHeaders {
+                .send(GetCFHeaders {
                     filter_type: 0u8,
                     start_height: *start_height,
                     stop_hash: *stop_hash,
-                }))
+                })
                 .await;
         }
 

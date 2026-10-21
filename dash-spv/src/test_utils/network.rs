@@ -134,7 +134,7 @@ impl NetworkManager for MockNetworkManager {
 
     async fn stop(&self) {}
 
-    async fn send(&self, msg: NetworkMessage) {
+    async fn enqueue(&self, _height: u32, msg: NetworkMessage) {
         // Same as the broker: a keyed request in play is dropped until answered;
         // keyless traffic is never de-duplicated.
         let keys = request_keys(&msg);
@@ -195,6 +195,7 @@ impl NetworkManager for MockNetworkManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::SendRequest;
     use dashcore::network::message_filter::GetCFilters;
     use dashcore::BlockHash;
 

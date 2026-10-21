@@ -1,10 +1,7 @@
 use crate::error::{SyncError, SyncResult};
-use crate::network::NetworkManager;
+use crate::network::{HeadersRequest, NetworkManager, SendRequest};
 use crate::types::HashedBlockHeader;
-use dashcore::network::message::NetworkMessage;
-use dashcore::network::message_blockdata::GetHeadersMessage;
 use dashcore::BlockHash;
-use dashcore_hashes::Hash;
 use std::sync::Arc;
 
 /// State for a single download segment between two checkpoints.
@@ -57,10 +54,10 @@ impl SegmentState {
     /// No-op if `RequestKey::Headers(current_tip_hash)` is already in play.
     pub(super) async fn send_request(&mut self, network: &Arc<dyn NetworkManager>) {
         network
-            .send(NetworkMessage::GetHeaders(GetHeadersMessage::new(
-                vec![self.current_tip_hash],
-                BlockHash::all_zeros(),
-            )))
+            .send(HeadersRequest {
+                height: self.current_height,
+                locator: self.current_tip_hash,
+            })
             .await;
         tracing::debug!(
             "Segment {}: declared GetHeaders from height {} hash {}",

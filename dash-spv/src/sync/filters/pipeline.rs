@@ -8,12 +8,11 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_filter::GetCFilters;
 use dashcore::BlockHash;
 
 use crate::error::SyncResult;
-use crate::network::NetworkManager;
+use crate::network::{NetworkManager, SendRequest};
 use crate::storage::BlockHeaderStorage;
 use crate::sync::filters::batch::FiltersBatch;
 use crate::sync::filters::batch_tracker::BatchTracker;
@@ -147,11 +146,11 @@ impl FiltersPipeline {
         let n = ready.len();
         for (start_height, stop_hash) in ready {
             network
-                .send(NetworkMessage::GetCFilters(GetCFilters {
+                .send(GetCFilters {
                     filter_type: 0u8,
                     start_height,
                     stop_hash,
-                }))
+                })
                 .await;
         }
 
@@ -228,6 +227,7 @@ impl FiltersPipeline {
 mod tests {
     use super::*;
     use dashcore::block::Header;
+    use dashcore::network::message::NetworkMessage;
     use dashcore_hashes::Hash;
     use key_wallet_manager::FilterMatchKey;
 

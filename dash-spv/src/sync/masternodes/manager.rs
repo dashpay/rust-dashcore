@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 
 use super::pipeline::MnListDiffPipeline;
 use crate::error::{StorageResult, SyncError, SyncResult};
-use crate::network::NetworkManager;
+use crate::network::{NetworkManager, SendRequest};
 use crate::storage::{BlockHeaderStorage, MasternodeStorage, PersistentMasternodeStorage};
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message::NetworkMessage;

@@ -4,10 +4,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use crate::error::SyncResult;
-use crate::network::NetworkManager;
+use crate::network::{BlockRequest, NetworkManager, SendRequest};
 use crate::types::HashedBlock;
-use dashcore::network::message::NetworkMessage;
-use dashcore::network::message_blockdata::Inventory;
 use dashcore::BlockHash;
 use key_wallet_manager::{FilterMatchKey, WalletId};
 
@@ -93,12 +91,18 @@ impl BlocksPipeline {
         if self.hash_to_height.is_empty() {
             return Ok(0);
         }
-        let hashes: Vec<BlockHash> = self.hash_to_height.keys().copied().collect();
-        for hash in &hashes {
-            network.send(NetworkMessage::GetData(vec![Inventory::Block(*hash)])).await;
+        let wanted: Vec<(u32, BlockHash)> =
+            self.hash_to_height.iter().map(|(hash, height)| (*height, *hash)).collect();
+        for (height, hash) in &wanted {
+            network
+                .send(BlockRequest {
+                    height: *height,
+                    hash: *hash,
+                })
+                .await;
         }
-        tracing::debug!("Declared {} wanted block(s) to the broker", hashes.len());
-        Ok(hashes.len())
+        tracing::debug!("Declared {} wanted block(s) to the broker", wanted.len());
+        Ok(wanted.len())
     }
 
     /// Handle a received block using internal height mapping.

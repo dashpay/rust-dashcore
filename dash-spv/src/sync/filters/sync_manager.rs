@@ -175,12 +175,15 @@ impl<
                 block_hash,
                 height,
                 wallets,
+                new_scripts,
                 ..
             } => {
                 // Record per-wallet processing so a future scan can give a
                 // late-added wallet its own pass at this block via the
                 // `tracker.track` residual.
                 self.tracker.record_processed(*height, *block_hash, wallets);
+
+                let mut events = self.rescan_active_batches(new_scripts).await?;
 
                 // Check if this block is part of our tracked blocks
                 if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash) {
@@ -194,8 +197,9 @@ impl<
                             batch.pending_blocks()
                         );
                     }
-                    return self.try_process_batch().await;
+                    events.extend(self.try_process_batch().await?);
                 }
+                return Ok(events);
             }
 
             _ => {}

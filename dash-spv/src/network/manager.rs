@@ -1,8 +1,8 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet},
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -267,6 +267,8 @@ struct OnWire {
     last_progress: Instant,
     /// Re-queued verbatim on timeout; requests are self-contained, so resending is a valid retry.
     msg: NetworkMessage,
+    /// Queue order of `msg`, kept so a retry goes back to its place.
+    height: u32,
 }
 
 pub struct PeerNetworkManager {
@@ -333,12 +335,18 @@ fn classify(msg: &NetworkMessage) -> MsgClass {
 
 /// One queue per class, each behind its own lock, so a pipeline enqueuing a burst
 /// only contends with itself.
+/// `(height, seq)`: lowest height first, then FIFO. Front inserts take negative seqs so
+/// they go before everything of the same height.
+type QueueKey = (u32, i64);
+
 struct MsgQueue {
-    other: Mutex<VecDeque<NetworkMessage>>,
-    blocks: Mutex<VecDeque<NetworkMessage>>,
-    cfilters: Mutex<VecDeque<NetworkMessage>>,
-    cfheaders: Mutex<VecDeque<NetworkMessage>>,
-    headers: Mutex<VecDeque<NetworkMessage>>,
+    other: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
+    blocks: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
+    cfilters: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
+    cfheaders: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
+    headers: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
+    back_seq: AtomicI64,
+    front_seq: AtomicI64,
     len: AtomicUsize,
     notify: Notify,
 }
@@ -500,10 +508,10 @@ impl NetworkManager for PeerNetworkManager {
     /// queued or on the wire is a no-op, so pipelines can re-declare their whole wanted
     /// set every tick. Keyless messages (tx, mempool, control `getdata`) are queued
     /// untracked.
-    async fn send(&self, msg: NetworkMessage) {
+    async fn enqueue(&self, height: u32, msg: NetworkMessage) {
         let keys = request_keys(&msg);
         if keys.is_empty() {
-            self.msg_queue.push(msg).await;
+            self.msg_queue.push(height, msg).await;
             return;
         }
         {
@@ -515,7 +523,7 @@ impl NetworkManager for PeerNetworkManager {
                 reqs.insert(key, ReqState::Queued);
             }
         }
-        self.msg_queue.push(msg).await;
+        self.msg_queue.push(height, msg).await;
     }
 
     /// Send to one specific peer, bypassing the router. Needed for messages that set
@@ -693,11 +701,11 @@ async fn route_tick(
     let mut sent = 0;
     // Anything popped but not sent goes BACK on the queue: its key is registered, so a
     // dropped message would never be re-sent nor time out and its pipeline would stall.
-    let mut unsent: Vec<NetworkMessage> = Vec::new();
+    let mut unsent: Vec<(u32, NetworkMessage)> = Vec::new();
     // Recorded in the broker under one lock after the send loop.
-    let mut on_wire: Vec<(NetworkMessage, PeerHandle)> = Vec::new();
+    let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle)> = Vec::new();
     let mut msgs = msgs.into_iter();
-    for msg in msgs.by_ref() {
+    for (height, msg) in msgs.by_ref() {
         // Pick the least-loaded peer RELATIVE TO ITS OWN cap. Absolute free room
         // concentrates load: the biggest cap wins every round and keeps growing while the
         // others stay idle and never grow (measured: three identical peers split into one
@@ -708,16 +716,16 @@ async fn route_tick(
             .filter(|p| p.in_flight() < p.cap())
             .min_by(|a, b| (a.in_flight() * b.cap()).cmp(&(b.in_flight() * a.cap())))
         else {
-            unsent.push(msg); // every peer is at its measured cap
+            unsent.push((height, msg)); // every peer is at its measured cap
             break;
         };
         if peer.send(&msg).await.is_ok() {
             sent += 1;
             // Record the peer so the monitor can attribute a stall to it.
-            on_wire.push((msg, peer.clone()));
+            on_wire.push((height, msg, peer.clone()));
         } else {
             tracing::warn!(target: "dash_spv::network", "router: send to {} failed", peer.addr());
-            unsent.push(msg);
+            unsent.push((height, msg));
         }
     }
     unsent.extend(msgs); // whatever the loop never reached
@@ -728,7 +736,7 @@ async fn route_tick(
         let mut refund: Vec<PeerHandle> = Vec::new();
         {
             let mut reqs = requests.lock().await;
-            for (msg, peer) in on_wire {
+            for (height, msg, peer) in on_wire {
                 let mut tracked = false;
                 for key in request_keys(&msg) {
                     // Queued -> OnWire, keeping the message for retry. A key settled while queued is
@@ -737,6 +745,7 @@ async fn route_tick(
                         *slot = ReqState::OnWire(Box::new(OnWire {
                             peer: peer.id(),
                             msg: msg.clone(),
+                            height,
                             last_progress: Instant::now(),
                         }));
                         tracked = true;
@@ -1568,7 +1577,10 @@ fn spawn_peer_supervisor(
 /// the messages to re-queue. Shared by both ways of losing a peer (monitor kick,
 /// socket close); otherwise the request is stranded since the monitor only watches
 /// connected peers. The key stays registered so de-dup still holds while queued.
-async fn requeue_requests_from(requests: &Registry, gone: &HashSet<PeerId>) -> Vec<NetworkMessage> {
+async fn requeue_requests_from(
+    requests: &Registry,
+    gone: &HashSet<PeerId>,
+) -> Vec<(u32, NetworkMessage)> {
     let mut reinject = Vec::new();
     let mut reqs = requests.lock().await;
     let keys: Vec<RequestKey> = reqs
@@ -1580,7 +1592,7 @@ async fn requeue_requests_from(requests: &Registry, gone: &HashSet<PeerId>) -> V
         .collect();
     for key in keys {
         if let Some(ReqState::OnWire(o)) = reqs.insert(key, ReqState::Queued) {
-            reinject.push(o.msg);
+            reinject.push((o.height, o.msg));
         }
     }
     reinject
@@ -1873,11 +1885,13 @@ fn spawn_pump(
 impl MsgQueue {
     fn new() -> Self {
         Self {
-            other: Mutex::new(VecDeque::with_capacity(30)),
-            blocks: Mutex::new(VecDeque::with_capacity(30)),
-            cfilters: Mutex::new(VecDeque::with_capacity(30)),
-            cfheaders: Mutex::new(VecDeque::with_capacity(30)),
-            headers: Mutex::new(VecDeque::with_capacity(30)),
+            other: Mutex::new(BTreeMap::new()),
+            blocks: Mutex::new(BTreeMap::new()),
+            cfilters: Mutex::new(BTreeMap::new()),
+            cfheaders: Mutex::new(BTreeMap::new()),
+            headers: Mutex::new(BTreeMap::new()),
+            back_seq: AtomicI64::new(0),
+            front_seq: AtomicI64::new(-1),
             len: AtomicUsize::new(0),
             notify: Notify::new(),
         }
@@ -1887,7 +1901,7 @@ impl MsgQueue {
         self.len.load(Ordering::SeqCst)
     }
 
-    fn queue(&self, class: MsgClass) -> &Mutex<VecDeque<NetworkMessage>> {
+    fn queue(&self, class: MsgClass) -> &Mutex<BTreeMap<QueueKey, NetworkMessage>> {
         match class {
             MsgClass::Other => &self.other,
             MsgClass::Blocks => &self.blocks,
@@ -1899,39 +1913,41 @@ impl MsgQueue {
 
     /// Take up to `n` messages in strict [`DRAIN_PRIORITY`] order, fully draining a
     /// class (up to the budget) before touching the next.
-    async fn pop_n(&self, n: usize) -> Vec<NetworkMessage> {
+    async fn pop_n(&self, n: usize) -> Vec<(u32, NetworkMessage)> {
         if n == 0 {
             return Vec::new();
         }
-        let mut out: Vec<NetworkMessage> = Vec::with_capacity(n);
+        let mut out: Vec<(u32, NetworkMessage)> = Vec::with_capacity(n);
         for class in DRAIN_PRIORITY {
-            if out.len() >= n {
-                break;
-            }
             let mut q = self.queue(class).lock().await;
-            let take = (n - out.len()).min(q.len());
-            out.extend(q.drain(..take));
+            while out.len() < n {
+                let Some(((height, _), msg)) = q.pop_first() else {
+                    break;
+                };
+                out.push((height, msg));
+            }
         }
         self.len.fetch_sub(out.len(), Ordering::SeqCst);
         out
     }
 
-    async fn push(&self, msg: NetworkMessage) {
-        self.queue(classify(&msg)).lock().await.push_back(msg);
+    async fn push(&self, height: u32, msg: NetworkMessage) {
+        let key = (height, self.back_seq.fetch_add(1, Ordering::SeqCst));
+        self.queue(classify(&msg)).lock().await.insert(key, msg);
         self.len.fetch_add(1, Ordering::SeqCst);
         self.notify.notify_one();
     }
 
-    /// Put messages at the FRONT of their class, preserving order: popped-but-unsent ones
-    /// (dropping one would stall its pipeline forever, see `route_tick`) and retries, which
-    /// would otherwise wait behind the whole backlog while the pipeline blocks on them.
-    async fn push_front_all(&self, msgs: Vec<NetworkMessage>) {
+    /// Put messages first among their height, preserving order: popped-but-unsent ones
+    /// (dropping one would stall its pipeline forever, see `route_tick`) and retries.
+    async fn push_front_all(&self, msgs: Vec<(u32, NetworkMessage)>) {
         if msgs.is_empty() {
             return;
         }
         let n = msgs.len();
-        for msg in msgs.into_iter().rev() {
-            self.queue(classify(&msg)).lock().await.push_front(msg);
+        for (height, msg) in msgs.into_iter().rev() {
+            let key = (height, self.front_seq.fetch_sub(1, Ordering::SeqCst));
+            self.queue(classify(&msg)).lock().await.insert(key, msg);
         }
         self.len.fetch_add(n, Ordering::SeqCst);
         self.notify.notify_one();
@@ -1942,6 +1958,7 @@ impl MsgQueue {
 mod tests {
     use super::*;
     use crate::client::ClientConfig;
+    use crate::network::SendRequest;
     use crate::test_utils::test_socket_address;
     use dashcore::network::message_blockdata::GetHeadersMessage;
     use dashcore::network::message_filter::{CFilter, GetCFHeaders, GetCFilters};
@@ -1998,6 +2015,7 @@ mod tests {
                 peer,
                 last_progress: Instant::now(),
                 msg: msg.clone(),
+                height: 0,
             };
             reqs.insert(key, ReqState::OnWire(Box::new(on_wire)));
         }
@@ -2010,9 +2028,9 @@ mod tests {
         })
     }
 
-    fn start_heights(msgs: &[NetworkMessage]) -> Vec<u32> {
+    fn start_heights(msgs: &[(u32, NetworkMessage)]) -> Vec<u32> {
         msgs.iter()
-            .map(|m| match m {
+            .map(|(_, m)| match m {
                 NetworkMessage::GetCFilters(g) => g.start_height,
                 other => panic!("unexpected {other:?}"),
             })
@@ -2207,13 +2225,13 @@ mod tests {
     #[tokio::test]
     async fn queue_drains_in_strict_priority_order() {
         let q = MsgQueue::new();
-        q.push(get_cfilters(0)).await;
-        q.push(NetworkMessage::GetData(vec![block(1)])).await;
-        q.push(get_cfheaders(1)).await;
-        q.push(get_headers(1)).await;
-        q.push(NetworkMessage::MemPool).await;
+        q.push(0, get_cfilters(0)).await;
+        q.push(0, NetworkMessage::GetData(vec![block(1)])).await;
+        q.push(0, get_cfheaders(1)).await;
+        q.push(0, get_headers(1)).await;
+        q.push(0, NetworkMessage::MemPool).await;
 
-        let drained: Vec<MsgClass> = q.pop_n(5).await.iter().map(classify).collect();
+        let drained: Vec<MsgClass> = q.pop_n(5).await.iter().map(|(_, m)| classify(m)).collect();
         assert_eq!(
             drained,
             [
@@ -2231,7 +2249,7 @@ mod tests {
     async fn pop_n_respects_its_budget_and_unsent_messages_go_back_to_the_front() {
         let q = MsgQueue::new();
         for start in [0, 1000, 2000] {
-            q.push(get_cfilters(start)).await;
+            q.push(start, get_cfilters(start)).await;
         }
 
         let popped = q.pop_n(1).await;

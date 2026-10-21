@@ -44,13 +44,10 @@ struct WalletScanState {
 
 /// Maximum number of batches to scan ahead while waiting for blocks.
 ///
-/// Raising this does not buy more throughput while a batch is stalled on a block.
-/// Every scanned batch queues its matched blocks into one FIFO download window,
-/// so a deeper lookahead fills that window with blocks belonging to batches that
-/// cannot commit for a long time, ahead of the blocks the committing batch is
-/// actually waiting on. Block downloads would have to be ordered by height
-/// before this could go higher.
-const MAX_LOOKAHEAD_BATCHES: usize = 3;
+/// Each commit waits a network round trip for its matched blocks, so the lookahead
+/// is what keeps blocks in flight. Blocks are drained first and in declaration
+/// (height) order, so a deep lookahead no longer delays the committing batch.
+const MAX_LOOKAHEAD_BATCHES: usize = 16;
 
 /// Filters manager for downloading and matching compact block filters.
 ///
@@ -763,6 +760,30 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         );
         // Same accounting as any other newly derived script.
         self.rescan_batch(batch_start, &untested).await
+    }
+
+    /// Match freshly derived scripts against every already-scanned active batch now, so
+    /// their blocks are requested in parallel instead of one batch at a time at commit.
+    pub(super) async fn rescan_active_batches(
+        &mut self,
+        new_scripts: &BTreeMap<WalletId, Vec<ScriptBuf>>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let mut events = Vec::new();
+        let starts: Vec<u32> =
+            self.active_batches.iter().filter(|(_, b)| b.scanned()).map(|(s, _)| *s).collect();
+        for batch_start in starts {
+            let Some(batch) = self.active_batches.get(&batch_start) else {
+                continue;
+            };
+            let untested: HashMap<WalletId, HashSet<ScriptBuf>> = new_scripts
+                .iter()
+                .filter(|(id, _)| batch.scanned_wallets().contains_key(*id))
+                .map(|(id, scripts)| (*id, batch.untested(id, scripts).cloned().collect()))
+                .filter(|(_, scripts): &(WalletId, HashSet<ScriptBuf>)| !scripts.is_empty())
+                .collect();
+            events.extend(self.rescan_batch(batch_start, &untested).await?);
+        }
+        Ok(events)
     }
 
     /// Rescan a specific batch for newly discovered scriptPubKeys, attributed
