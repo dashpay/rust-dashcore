@@ -142,8 +142,12 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         // a deterministically-bad response after MAX_RETRY_ATTEMPTS.
                         // The retries avoid this peer. The blocks a QRInfo
                         // names are the peer's choice, so even one our header
-                        // chain does not hold counts against it.
-                        self.sync_state.qrinfo_refused_by(peer);
+                        // chain does not hold counts against it. Our header
+                        // storage failing to read does not, and the peer's
+                        // next QRInfo for the tip is processed.
+                        if let FeedError::Refused(_) = e {
+                            self.sync_state.qrinfo_refused_by(peer);
+                        }
                         self.sync_state.qrinfo_rejected();
                         return Err(SyncError::MasternodeSyncFailed(e.to_string()));
                     }
@@ -600,11 +604,13 @@ mod tests {
     use super::{
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
+    use crate::error::{StorageError, StorageResult};
     use crate::network::{Message, NetworkRequest, RequestSender};
     use crate::sml_engine::test_support::quorum_entry;
     use crate::sml_engine::MasternodeListEngine;
     use crate::storage::{
-        BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, StorageManager,
+        BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
+        PersistentStorage, StorageManager,
     };
     use crate::sync::{MasternodesManager, SyncEvent, SyncManager, SyncState};
     use crate::test_utils::test_socket_address;
@@ -1413,6 +1419,172 @@ mod tests {
             "the repeat spends nothing"
         );
         assert_eq!(manager.sync_state.qrinfo_retry_count, 1);
+    }
+
+    /// Header storage that defers to `inner`, except that reading a header
+    /// fails while `unreadable` is set, as it does while the segment holding
+    /// it cannot be opened or read.
+    struct UnreadableHeaders {
+        inner: PersistentBlockHeaderStorage,
+        unreadable: bool,
+    }
+
+    impl UnreadableHeaders {
+        fn read<T>(&self, read: StorageResult<T>) -> StorageResult<T> {
+            if self.unreadable {
+                return Err(StorageError::ReadFailed("the header segment is unreadable".into()));
+            }
+            read
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BlockHeaderStorage for UnreadableHeaders {
+        async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()> {
+            self.inner.store_headers(headers).await
+        }
+        async fn store_headers_at_height(
+            &mut self,
+            headers: &[HashedBlockHeader],
+            height: u32,
+        ) -> StorageResult<()> {
+            self.inner.store_headers_at_height(headers, height).await
+        }
+        async fn load_headers(
+            &self,
+            range: std::ops::Range<u32>,
+        ) -> StorageResult<Vec<HashedBlockHeader>> {
+            self.read(self.inner.load_headers(range).await)
+        }
+        async fn get_header(&self, height: u32) -> StorageResult<Option<HashedBlockHeader>> {
+            self.read(self.inner.get_header(height).await)
+        }
+        async fn get_tip_height(&self) -> Option<u32> {
+            self.inner.get_tip_height().await
+        }
+        async fn get_tip(&self) -> Option<BlockHeaderTip> {
+            self.inner.get_tip().await
+        }
+        async fn get_start_height(&self) -> Option<u32> {
+            self.inner.get_start_height().await
+        }
+        async fn get_stored_headers_len(&self) -> u32 {
+            self.inner.get_stored_headers_len().await
+        }
+        async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
+            self.read(self.inner.get_header_height_by_hash(hash).await)
+        }
+        async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
+            self.inner.truncate_above(target_height).await
+        }
+    }
+
+    /// The work blocks a QRInfo for `TIP` builds its cycle lists at, oldest
+    /// first: 8 blocks below the base of the tip's cycle and of each of the
+    /// three cycles before it, 24 blocks apart on regtest.
+    const CYCLE_WORK_BLOCKS: [u32; 4] = [16, 40, 64, 88];
+
+    /// Where the list every diff of [`qr_info_for_tip`] builds on is, below
+    /// every cycle work block.
+    const QR_INFO_BASE: u32 = 8;
+
+    /// A QRInfo for `TIP` whose diffs all build on the list at
+    /// [`QR_INFO_BASE`], one to each of [`CYCLE_WORK_BLOCKS`] and one to the
+    /// tip, given the block hash at each height. Every diff is empty, so an
+    /// engine holding an empty list at `QR_INFO_BASE` applies them all.
+    fn qr_info_for_tip(hashes: &[BlockHash]) -> QRInfo {
+        let diff = |height: u32| MnListDiff {
+            base_block_hash: hashes[QR_INFO_BASE as usize],
+            block_hash: hashes[height as usize],
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let [h_minus_3c, h_minus_2c, h_minus_c, h] = CYCLE_WORK_BLOCKS.map(diff);
+        QRInfo {
+            mn_list_diff_tip: diff(TIP),
+            mn_list_diff_h: h,
+            mn_list_diff_at_h_minus_c: h_minus_c,
+            mn_list_diff_at_h_minus_2c: h_minus_2c,
+            mn_list_diff_at_h_minus_3c: h_minus_3c,
+            ..QRInfo::dummy(0x00)
+        }
+    }
+
+    /// A QRInfo the engine could not judge because our header storage did not
+    /// read is not the peer's fault: the peer is not recorded as a refuser,
+    /// and its QRInfo is processed once the storage reads again. A block the
+    /// header chain does not hold is the peer's choice, so a QRInfo naming one
+    /// still counts against it.
+    #[tokio::test]
+    async fn a_qr_info_our_header_storage_could_not_read_is_not_held_against_its_peer() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut inner = PersistentBlockHeaderStorage::open(dir.path()).await.unwrap();
+        let headers = Header::dummy_batch(0..TIP + 1);
+        inner
+            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        let hashes: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
+        let header_storage = Arc::new(RwLock::new(UnreadableHeaders {
+            inner,
+            unreadable: false,
+        }));
+        let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&header_storage));
+        engine.masternode_lists.insert(
+            QR_INFO_BASE,
+            MasternodeList::empty(hashes[QR_INFO_BASE as usize], QR_INFO_BASE),
+        );
+        let mut manager = MasternodesManager::new(
+            Arc::clone(&header_storage),
+            Arc::new(RwLock::new(engine)),
+            Network::Regtest,
+            None,
+        )
+        .await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+        manager.send_qrinfo_for_tip(&requests).await.expect("the QRInfo is sent");
+        let tip = hashes[TIP as usize];
+        let honest = qr_info_for_tip(&hashes);
+        let response = |peer, qr_info: &QRInfo| {
+            Message::new(peer, NetworkMessage::QRInfo(Box::new(qr_info.clone())))
+        };
+
+        let mut naming_an_unknown_block = honest.clone();
+        naming_an_unknown_block.mn_list_diff_h.block_hash = BlockHash::from_byte_array([0x33; 32]);
+        manager
+            .handle_message(response(peer(2), &naming_an_unknown_block), &requests)
+            .await
+            .expect_err("a QRInfo naming a block the chain does not hold is refused");
+        assert!(manager.sync_state.has_refused_qrinfo(tip, peer(2)));
+        manager.tick(&requests).await.expect("tick retries the refused QRInfo");
+
+        header_storage.write().await.unreadable = true;
+        manager
+            .handle_message(response(peer(1), &honest), &requests)
+            .await
+            .expect_err("a QRInfo is not taken while the header storage cannot be read");
+        assert!(
+            !manager.sync_state.has_refused_qrinfo(tip, peer(1)),
+            "our storage failing is not the peer's refusal"
+        );
+        assert_eq!(manager.state(), SyncState::Syncing);
+
+        header_storage.write().await.unreadable = false;
+        manager.tick(&requests).await.expect("tick retries the QRInfo");
+        while rx.try_recv().is_ok() {}
+        let events = manager
+            .handle_message(response(peer(1), &honest), &requests)
+            .await
+            .expect("the same QRInfo is taken once the storage reads");
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated { height, qr_info_result: Some(_) }]
+                    if *height == TIP
+            ),
+            "the QRInfo completes the sync, got {events:?}"
+        );
+        assert_eq!(manager.state(), SyncState::Synced);
     }
 
     /// When every QRInfo attempt fails before the engine holds any list, the
