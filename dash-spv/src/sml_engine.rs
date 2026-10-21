@@ -2104,6 +2104,31 @@ mod tests {
         }
     }
 
+    /// Following a fork keeps a rotated cycle only when its base shows it was
+    /// mined below the fork. Our header storage failing to read the base shows
+    /// nothing, so the cycle goes rather than answer for blocks that may have
+    /// left the chain.
+    #[tokio::test]
+    async fn a_fork_drops_a_rotated_cycle_whose_base_cannot_be_read() {
+        let fork = 1_000_000;
+        let window_end = Network::Mainnet.isd_llmq_type().params().dkg_params.mining_window_end;
+        let mut engine = TestEngine::dummy_with_lists(&[fork]);
+        let readable = fork - window_end;
+        let unreadable = readable - 24;
+        for base in [readable, unreadable] {
+            engine.feed_block_height(base, BlockHash::dummy(base));
+            engine.rotated_quorums_per_cycle.insert(BlockHash::dummy(base), BTreeMap::new());
+        }
+        let mut failing = with_reads_failing(&engine, BlockHash::dummy(unreadable), 0);
+
+        failing.truncate_above(fork).await;
+
+        assert_eq!(
+            failing.rotated_quorums_per_cycle.keys().collect::<Vec<_>>(),
+            vec![&BlockHash::dummy(readable)]
+        );
+    }
+
     /// The previous-cycle path is best-effort enrichment, so a corrupt
     /// aggregated signature there must only leave that quorum out of the
     /// stored cycle, never abort the whole feed. The rest of the cycle and
