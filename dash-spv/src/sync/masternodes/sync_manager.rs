@@ -271,11 +271,31 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // the QRInfo path does, instead of leaving the quorum
                 // `Skipped(MissedList)` until the next QRInfo, a rotation cycle
                 // later. The pipeline completes only once they are applied.
-                let work_block_lists = if extends_tip {
-                    engine.missing_work_block_list_requests_for(diff).await
-                } else {
-                    Vec::new()
-                };
+                // The work-block lists given up before are asked for again
+                // with each tip update, those a quorum still needs, from the
+                // nearest list the engine still holds.
+                let mut work_block_lists = Vec::new();
+                if extends_tip {
+                    work_block_lists = engine.missing_work_block_list_requests_for(diff).await;
+                    let given_up = std::mem::take(&mut self.sync_state.given_up_work_lists);
+                    if !given_up.is_empty() {
+                        let still_needed =
+                            engine.missing_work_block_list_requests().await.unwrap_or_else(|e| {
+                                tracing::warn!(
+                                    "Could not read the header chain for the work-block lists \
+                                     given up: {e}"
+                                );
+                                Vec::new()
+                            });
+                        for (base, target) in still_needed {
+                            if given_up.contains(&target)
+                                && !work_block_lists.iter().any(|(_, asked)| *asked == target)
+                            {
+                                work_block_lists.push((base, target));
+                            }
+                        }
+                    }
+                }
                 drop(engine);
 
                 if let Err(e) = self.store_diff(target_height, diff).await {
@@ -546,6 +566,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     if Some(base) == newest {
                         gave_up_tip_update = true;
                         self.sync_state.given_up_tip = Some(target);
+                    } else {
+                        self.sync_state.given_up_work_lists.insert(target);
                     }
                 }
             }
@@ -620,7 +642,9 @@ mod tests {
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_qrinfo::QRInfo;
-    use dashcore::network::message_sml::{GetMnListDiff, MnListDiff, QuorumCLSigObject};
+    use dashcore::network::message_sml::{
+        DeletedQuorum, GetMnListDiff, MnListDiff, QuorumCLSigObject,
+    };
     use dashcore::sml::llmq_entry_verification::{
         LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
     };
@@ -1224,6 +1248,168 @@ mod tests {
             ),
             "a given-up work-block list must not hold back the tip update, got {events:?}"
         );
+    }
+
+    /// Gives up the work-block list the tip update to `TIP + 1` asks for,
+    /// after three timeouts or three refusing peers, then has the header tip
+    /// move to `TIP + 2` and returns the tip update to it, which brings no
+    /// quorum.
+    async fn give_up_the_work_block_list_then_move_the_tip(
+        manager: &mut MasternodesManager<PersistentBlockHeaderStorage>,
+        requests: &RequestSender,
+        rx: &mut mpsc::UnboundedReceiver<NetworkRequest>,
+        tip_update: MnListDiff,
+        hashes: &[BlockHash],
+        by_timeouts: bool,
+    ) -> MnListDiff {
+        deliver(manager, requests, tip_update).await;
+        let (base_block_hash, block_hash) =
+            next_diff_request(rx).expect("the work-block list is asked for");
+        let mut events = Vec::new();
+        if by_timeouts {
+            manager.sync_state.mnlistdiff_pipeline.set_timeout(Duration::from_millis(1));
+            for _ in 0..3 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                events = manager.tick(requests).await.expect("tick succeeds");
+            }
+            manager.sync_state.mnlistdiff_pipeline.set_timeout(Duration::from_secs(15));
+        } else {
+            let unusable = MnListDiff {
+                base_block_hash,
+                block_hash,
+                new_quorums: vec![test_quorum(hashes[MINED as usize])],
+                ..MnListDiff::dummy_between(0, 0)
+            };
+            for refusing in [peer(1), peer(2), peer(3)] {
+                events = deliver_from(manager, requests, refusing, unusable.clone()).await;
+            }
+        }
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated { height, .. }] if *height == TIP + 1
+            ),
+            "the tip update completes without its work-block list, got {events:?}"
+        );
+        while rx.try_recv().is_ok() {}
+        for _ in 0..3 {
+            manager.tick(requests).await.expect("tick succeeds");
+        }
+        assert!(rx.try_recv().is_err(), "no tick asks for the work-block list again");
+
+        let next_tip = Header::dummy(TIP + 2);
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(&[HashedBlockHeader::from(&next_tip)])
+            .await
+            .unwrap();
+        manager.progress.update_block_header_tip_height(TIP + 2);
+        manager.tick(requests).await.expect("tick succeeds");
+        assert_eq!(
+            next_diff_request(rx),
+            Some((hashes[TIP as usize + 1], next_tip.block_hash())),
+            "the next header tip is asked for"
+        );
+        MnListDiff {
+            base_block_hash: hashes[TIP as usize + 1],
+            block_hash: next_tip.block_hash(),
+            ..MnListDiff::dummy_between(0, 0)
+        }
+    }
+
+    /// A work-block list no peer answered is given up, and asked for again,
+    /// with fresh attempts, along with the next tip update, though that update
+    /// does not bring the quorum needing it again. Otherwise the quorum would
+    /// stay `Skipped(MissedList)` until the next QRInfo, a rotation cycle
+    /// later.
+    #[tokio::test]
+    async fn a_given_up_work_block_list_is_asked_again_with_the_next_tip_update() {
+        let (mut manager, engine, requests, mut rx, tip_update, hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let work = MINED - QUORUM_MEMBER_LIST_OFFSET;
+        let next_tip_update = give_up_the_work_block_list_then_move_the_tip(
+            &mut manager,
+            &requests,
+            &mut rx,
+            tip_update,
+            &hashes,
+            true,
+        )
+        .await;
+
+        let events = deliver(&mut manager, &requests, next_tip_update).await;
+
+        assert!(events.is_empty(), "the update waits for the work-block list, got {events:?}");
+        let request = next_diff_request_avoiding(&mut rx);
+        assert_eq!(
+            request,
+            Some(((hashes[OLDER as usize], hashes[work as usize]), vec![])),
+            "the work-block list is asked for again, from the list below it, avoiding no one"
+        );
+        let ((base_block_hash, block_hash), _) = request.unwrap();
+        let work_list = MnListDiff {
+            base_block_hash,
+            block_hash,
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let events = deliver(&mut manager, &requests, work_list).await;
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated { height, .. }] if *height == TIP + 2
+            ),
+            "the update completes once the work-block list is applied, got {events:?}"
+        );
+        let engine = engine.read().await;
+        let status = &engine.latest_masternode_list().unwrap().quorums[&LLMQType::LlmqtypeTest]
+            [&quorum_hash_at(&hashes, MINED)]
+            .verified;
+        assert!(
+            matches!(
+                status,
+                LLMQEntryVerificationStatus::Verified | LLMQEntryVerificationStatus::Invalid(_)
+            ),
+            "the quorum is checked against its work-block list, got {status:?}"
+        );
+    }
+
+    /// A work-block list three peers refused is given up, and not asked for
+    /// again once no quorum of the newest list needs it, but forgotten.
+    #[tokio::test]
+    async fn a_given_up_work_block_list_no_quorum_needs_is_forgotten() {
+        let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let next_tip_update = give_up_the_work_block_list_then_move_the_tip(
+            &mut manager,
+            &requests,
+            &mut rx,
+            tip_update,
+            &hashes,
+            false,
+        )
+        .await;
+        let removing_the_quorum = MnListDiff {
+            deleted_quorums: vec![DeletedQuorum {
+                llmq_type: LLMQType::LlmqtypeTest,
+                quorum_hash: quorum_hash_at(&hashes, MINED),
+            }],
+            ..next_tip_update
+        };
+
+        let events = deliver(&mut manager, &requests, removing_the_quorum).await;
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated { height, .. }] if *height == TIP + 2
+            ),
+            "the update completes at once, got {events:?}"
+        );
+        assert!(rx.try_recv().is_err(), "the work-block list is not asked for");
+        assert!(manager.sync_state.given_up_work_lists.is_empty(), "and is forgotten");
     }
 
     /// A work-block list no peer answers is given up after three timeouts,

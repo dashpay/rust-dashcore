@@ -136,6 +136,10 @@ pub(super) struct MasternodeSyncState {
     /// while it is the header tip: the `Synced` tick would otherwise ask for
     /// it on every pass until the next block.
     pub(super) given_up_tip: Option<BlockHash>,
+    /// Targets of the work-block lists given up. The next tip update applied
+    /// asks again, with fresh attempts, for those a quorum of the newest list
+    /// still needs, and forgets the others.
+    pub(super) given_up_work_lists: BTreeSet<BlockHash>,
 }
 
 impl MasternodeSyncState {
@@ -538,6 +542,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 );
                 if tip_update {
                     self.sync_state.given_up_tip = Some(target);
+                } else {
+                    self.sync_state.given_up_work_lists.insert(target);
                 }
                 self.progress.add_diffs_processed(1);
                 self.continue_diff_pipeline(tip_update, requests).await
