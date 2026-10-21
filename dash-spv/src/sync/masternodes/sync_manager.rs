@@ -216,16 +216,16 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             }
 
             NetworkMessage::MnListDiff(diff) => {
+                let peer = msg.peer_address();
                 // Check if this diff matches an in-flight request
                 if !self.sync_state.mnlistdiff_pipeline.match_response(diff) {
                     tracing::debug!(
-                        "Received unexpected MnListDiff for {} from {}",
+                        "Received unexpected MnListDiff for {} on base {} from {peer}",
                         diff.block_hash,
                         diff.base_block_hash
                     );
                     return Ok(vec![]);
                 }
-                let peer = msg.peer_address();
                 if self.sync_state.mnlistdiff_pipeline.has_refused(diff.block_hash, peer) {
                     tracing::debug!(
                         "Ignoring MnListDiff for {} from {peer}, whose earlier one was refused",

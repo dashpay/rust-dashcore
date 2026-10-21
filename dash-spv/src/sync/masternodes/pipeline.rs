@@ -33,7 +33,8 @@ const MNLISTDIFF_LIFETIME: Duration = MNLISTDIFF_TIMEOUT.saturating_mul(MAX_MNLI
 /// What became of a target whose attempt failed.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Attempt {
-    /// Queued again, for a peer that has not sent a refused response.
+    /// Queued again, preferring a peer that has not sent a refused response,
+    /// among those eligible for it.
     Retried,
     /// Out of attempts and dropped from the pipeline.
     GivenUp,
@@ -49,8 +50,8 @@ pub(super) struct MnListDiffPipeline {
     coordinator: DownloadCoordinator<BlockHash>,
     /// Maps target_hash -> base_hash for each request.
     base_hashes: HashMap<BlockHash, BlockHash>,
-    /// Peers whose response for a target the engine refused. Its retries go
-    /// to other peers, and a later response from one of them is ignored.
+    /// Peers whose response for a target the engine refused. Its retries
+    /// prefer other peers, and a later response from one of them is ignored.
     refusers: HashMap<BlockHash, Vec<SocketAddr>>,
     /// When each target was first sent, see [`MNLISTDIFF_LIFETIME`].
     first_sent: HashMap<BlockHash, Instant>,
