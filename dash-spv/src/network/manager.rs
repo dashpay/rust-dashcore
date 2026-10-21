@@ -1504,6 +1504,21 @@ impl PeerNetworkManager {
         message: NetworkMessage,
         avoid: &[SocketAddr],
     ) -> NetworkResult<()> {
+        let (addr, peer) = self.distributed_peer(&message, avoid).await?;
+
+        tracing::trace!("Distributing {} request to peer {}", message.cmd(), addr);
+
+        self.send_message_to_peer(&addr, &peer, message).await
+    }
+
+    /// The peer [`Self::send_distributed_avoiding`] sends `message` to: one
+    /// eligible for its type, preferably neither in `avoid` nor owing a
+    /// response of its kind, picked by [`Self::next_peer`].
+    async fn distributed_peer(
+        &self,
+        message: &NetworkMessage,
+        avoid: &[SocketAddr],
+    ) -> NetworkResult<(SocketAddr, Arc<RwLock<Peer>>)> {
         let peers = self.pool.get_all_peers().await;
 
         if peers.is_empty() {
@@ -1511,7 +1526,7 @@ impl PeerNetworkManager {
         }
 
         // Select eligible peers based on message type
-        let (selected_peers, require_capability) = match &message {
+        let (selected_peers, require_capability) = match message {
             NetworkMessage::GetCFHeaders(_) | NetworkMessage::GetCFilters(_) => {
                 let filter_peers =
                     self.pool.peers_with_service(ServiceFlags::COMPACT_FILTERS).await;
@@ -1545,16 +1560,12 @@ impl PeerNetworkManager {
         }
 
         let selected_peers = without_avoided(selected_peers, avoid);
-        let selected_peers = match tracked_request_kind(&message) {
+        let selected_peers = match tracked_request_kind(message) {
             Some(kind) => self.without_peers_owing(kind, selected_peers).await,
             None => selected_peers,
         };
 
-        let (addr, peer) = self.next_peer(&selected_peers).await;
-
-        tracing::trace!("Distributing {} request to peer {}", message.cmd(), addr);
-
-        self.send_message_to_peer(&addr, &peer, message).await
+        Ok(self.next_peer(&selected_peers).await)
     }
 
     /// Drop peers that already owe us a response of `kind` from the candidates.
@@ -2136,6 +2147,26 @@ impl PeerNetworkManager {
         self.connected_peer_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Connect to a listener standing in for a peer, without a handshake, and
+    /// add the connection to the pool. Returns the peer's address and the
+    /// connection as the peer sees it.
+    pub(crate) async fn test_connect_peer(&self) -> (SocketAddr, tokio::net::TcpStream) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("binds");
+        let addr = listener.local_addr().expect("is bound");
+        let peer = Peer::connect(addr, 5, self.network).await.expect("connects");
+        let (connection, _) = listener.accept().await.expect("accepts");
+        self.pool.add_peer(addr, peer).await.expect("the pool has room");
+        (addr, connection)
+    }
+
+    pub(crate) async fn test_remove_peer(&self, addr: &SocketAddr) {
+        self.pool.remove_peer(addr).await;
+    }
+
+    pub(crate) async fn test_start_request_processor(&self) {
+        self.start_request_processor().await;
+    }
+
     pub(crate) async fn test_peer_count(&self) -> usize {
         self.pool.peer_count().await
     }
@@ -2190,12 +2221,7 @@ impl PeerNetworkManager {
         msg: &NetworkMessage,
         avoid: &[SocketAddr],
     ) -> SocketAddr {
-        let peers = without_avoided(self.pool.get_all_peers().await, avoid);
-        let peers = match tracked_request_kind(msg) {
-            Some(kind) => self.without_peers_owing(kind, peers).await,
-            None => peers,
-        };
-        self.next_peer(&peers).await.0
+        self.distributed_peer(msg, avoid).await.expect("a peer is eligible").0
     }
 
     pub(crate) async fn test_record_latency(&self, addr: SocketAddr, elapsed: Duration) {

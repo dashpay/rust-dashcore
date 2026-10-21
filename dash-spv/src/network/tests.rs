@@ -137,6 +137,8 @@ mod selection_tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::time::Duration;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpStream;
 
     fn get_filter_headers() -> NetworkMessage {
         NetworkMessage::GetCFHeaders(GetCFHeaders {
@@ -395,6 +397,82 @@ mod selection_tests {
             *reached.entry(manager.test_route_avoiding(&request, &peers).await).or_insert(0) += 1;
         }
         assert_eq!(reached.len(), peers.len(), "with every peer avoided, all of them still serve");
+    }
+
+    /// The command of the next message a peer reads from `connection`.
+    async fn next_command(connection: &mut TcpStream) -> String {
+        let mut header = [0u8; 24];
+        connection.read_exact(&mut header).await.expect("a message arrives");
+        let length = u32::from_le_bytes(header[16..20].try_into().expect("4 bytes"));
+        let mut payload = vec![0; length as usize];
+        connection.read_exact(&mut payload).await.expect("its payload arrives");
+        String::from_utf8_lossy(&header[4..16]).trim_end_matches('\0').to_owned()
+    }
+
+    /// The peer of `a` and `b` the next `getmnlistd` goes to.
+    async fn receiver_of_next_diff_request(
+        a: &mut (SocketAddr, TcpStream),
+        b: &mut (SocketAddr, TcpStream),
+    ) -> SocketAddr {
+        let (receiver, command) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                command = next_command(&mut a.1) => (a.0, command),
+                command = next_command(&mut b.1) => (b.0, command),
+            }
+        })
+        .await
+        .expect("the request goes out");
+        assert_eq!(command, "getmnlistd");
+        receiver
+    }
+
+    /// A queued request that avoids a peer goes out, through the request
+    /// processor and the selection every distributed request takes, to a peer
+    /// it does not avoid, even when the avoided one answers far faster. When
+    /// every connected peer is avoided, down to a single one, it still goes
+    /// out, to the fastest.
+    #[tokio::test]
+    async fn test_queued_request_avoiding_a_peer_goes_to_another_through_the_processor() {
+        let manager = PeerNetworkManager::new_for_test(ServiceFlags::NONE).await;
+        let mut fast = manager.test_connect_peer().await;
+        let mut slow = manager.test_connect_peer().await;
+        manager.test_record_latency(fast.0, Duration::from_millis(1)).await;
+        manager.test_record_latency(slow.0, Duration::from_secs(10)).await;
+        manager.test_start_request_processor().await;
+        let requests = manager.request_sender();
+        let ask = |avoid: &[SocketAddr]| {
+            requests
+                .request_mnlist_diff_avoiding(BlockHash::all_zeros(), BlockHash::all_zeros(), avoid)
+                .expect("the request is queued")
+        };
+
+        ask(&[]);
+        assert_eq!(
+            receiver_of_next_diff_request(&mut fast, &mut slow).await,
+            fast.0,
+            "a request avoiding no peer goes to the fastest"
+        );
+        for _ in 0..3 {
+            ask(&[fast.0]);
+            assert_eq!(
+                receiver_of_next_diff_request(&mut fast, &mut slow).await,
+                slow.0,
+                "the avoided peer loses to any other, however much faster it answers"
+            );
+        }
+        ask(&[fast.0, slow.0]);
+        assert_eq!(
+            receiver_of_next_diff_request(&mut fast, &mut slow).await,
+            fast.0,
+            "with every peer avoided, the request still goes out"
+        );
+
+        manager.test_remove_peer(&slow.0).await;
+        ask(&[fast.0]);
+        let command = tokio::time::timeout(Duration::from_secs(5), next_command(&mut fast.1))
+            .await
+            .expect("the request goes out");
+        assert_eq!(command, "getmnlistd", "a single connected peer serves even when avoided");
     }
 
     /// A retry that avoids no peer is the plain request, and one that avoids
