@@ -629,7 +629,7 @@ mod tests {
     use crate::error::{StorageError, StorageResult};
     use crate::network::{Message, NetworkRequest, RequestSender};
     use crate::sml_engine::test_support::quorum_entry;
-    use crate::sml_engine::MasternodeListEngine;
+    use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
     use crate::storage::{
         BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
         PersistentStorage, StorageManager,
@@ -1769,6 +1769,77 @@ mod tests {
                     if *height == TIP
             ),
             "the QRInfo completes the sync, got {events:?}"
+        );
+        assert_eq!(manager.state(), SyncState::Synced);
+    }
+
+    /// An initial sync whose QRInfo was taken ends once the work-block lists
+    /// it asked for are applied or given up: a given-up list must not keep it
+    /// `Syncing`, where the stall watchdog would start the QRInfo over. It
+    /// publishes the newest list with the QRInfo's result.
+    #[test_case(true; "after three timeouts")]
+    #[test_case(false; "after three refusing peers")]
+    #[tokio::test]
+    async fn an_initial_sync_completes_when_a_work_block_list_is_given_up(by_timeouts: bool) {
+        let (mut manager, requests, mut rx, _) = syncing_manager_awaiting_qrinfo(TIP).await;
+        let hashes: Vec<BlockHash> =
+            Header::dummy_batch(0..TIP + 1).iter().map(|header| header.block_hash()).collect();
+        manager.engine.write().await.masternode_lists.insert(
+            QR_INFO_BASE,
+            MasternodeList::empty(hashes[QR_INFO_BASE as usize], QR_INFO_BASE),
+        );
+        let mut qr_info = qr_info_for_tip(&hashes);
+        qr_info.mn_list_diff_tip.new_quorums = vec![test_quorum(hashes[OLD_MINED as usize])];
+        qr_info.mn_list_diff_tip.quorums_chainlock_signatures = vec![QuorumCLSigObject {
+            signature: BLSSignature::from([2; 96]),
+            index_set: vec![0],
+        }];
+        let events = manager
+            .handle_message(
+                Message::new(peer(1), NetworkMessage::QRInfo(Box::new(qr_info))),
+                &requests,
+            )
+            .await
+            .expect("the QRInfo is taken");
+        assert!(events.is_empty(), "the sync waits for the work-block list, got {events:?}");
+        let (base_block_hash, block_hash) =
+            next_diff_request(&mut rx).expect("the work-block list of the new quorum is asked for");
+        assert_eq!(block_hash, hashes[(OLD_MINED - QUORUM_MEMBER_LIST_OFFSET) as usize]);
+
+        let mut events = Vec::new();
+        if by_timeouts {
+            manager.sync_state.mnlistdiff_pipeline.set_timeout(Duration::from_millis(1));
+            for _ in 0..3 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                events = manager.tick(&requests).await.expect("tick succeeds");
+            }
+        } else {
+            let unusable = MnListDiff {
+                base_block_hash,
+                block_hash,
+                new_quorums: vec![test_quorum(hashes[MINED as usize])],
+                ..MnListDiff::dummy_between(0, 0)
+            };
+            for refusing in [peer(1), peer(2), peer(3)] {
+                events = deliver_from(&mut manager, &requests, refusing, unusable.clone()).await;
+            }
+        }
+
+        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated {
+                    height,
+                    qr_info_result: Some(QRInfoFeedResult {
+                        rotated_quorum_count: 0,
+                        fully_verified_count: 0,
+                        stored_cycle_height: None,
+                        ..
+                    }),
+                }] if *height == TIP
+            ),
+            "the sync publishes the tip list with the QRInfo's result, got {events:?}"
         );
         assert_eq!(manager.state(), SyncState::Synced);
     }
