@@ -182,7 +182,10 @@ impl MnListDiffPipeline {
     ) -> Attempt {
         self.coordinator.release(&target);
         if let Some(peer) = refused_by {
-            self.refusers.entry(target).or_default().push(peer);
+            let refusers = self.refusers.entry(target).or_default();
+            if !refusers.contains(&peer) {
+                refusers.push(peer);
+            }
         }
         self.spend_attempt(target)
     }
@@ -523,6 +526,31 @@ mod tests {
         assert_eq!(pipeline.retry_or_give_up(target, None), Attempt::GivenUp);
         assert!(pipeline.is_complete());
         assert!(pipeline.base_hashes.is_empty());
+    }
+
+    /// A peer whose refusal of a target is recorded twice is avoided once.
+    #[test]
+    fn a_peer_refusing_a_target_twice_is_avoided_once() {
+        let mut pipeline = MnListDiffPipeline::new();
+        let base = BlockHash::from_byte_array([0x01; 32]);
+        let target = BlockHash::from_byte_array([0x02; 32]);
+        let refusing: SocketAddr = "127.0.0.1:19999".parse().unwrap();
+        let (tx, mut rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        pipeline.queue_requests(vec![(base, target)]);
+        for _ in 0..2 {
+            pipeline.send_pending(&requests).unwrap();
+            pipeline.retry_or_give_up(target, Some(refusing));
+        }
+        while rx.try_recv().is_ok() {}
+
+        pipeline.send_pending(&requests).unwrap();
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(NetworkRequest::SendMessageAvoiding(NetworkMessage::GetMnListD(_), avoided))
+                if avoided == vec![refusing]
+        ));
     }
 
     /// A peer disconnect requeues every in-flight request, and each one must be
