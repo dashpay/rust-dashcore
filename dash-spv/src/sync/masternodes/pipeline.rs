@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::error::SyncResult;
 use crate::network::RequestSender;
@@ -23,6 +23,12 @@ const MNLISTDIFF_TIMEOUT: Duration = Duration::from_secs(15);
 /// by a block the header chain cannot place, or by a response the engine
 /// refuses from a peer that had not sent a refused one for it.
 pub(super) const MAX_MNLISTDIFF_ATTEMPTS: u32 = 3;
+
+/// How long after its first send a target is given up, whatever attempts it
+/// has left: as long as its attempts take when each one times out. A send cut
+/// short by a peer disconnect spends no attempt, so without this, peers
+/// dropping one after another would keep a target in flight forever.
+const MNLISTDIFF_LIFETIME: Duration = MNLISTDIFF_TIMEOUT.saturating_mul(MAX_MNLISTDIFF_ATTEMPTS);
 
 /// What became of a target whose attempt failed.
 #[derive(Debug, PartialEq, Eq)]
@@ -46,6 +52,10 @@ pub(super) struct MnListDiffPipeline {
     /// Peers whose response for a target the engine refused. Its retries go
     /// to other peers, and a later response from one of them is ignored.
     refusers: HashMap<BlockHash, Vec<SocketAddr>>,
+    /// When each target was first sent, see [`MNLISTDIFF_LIFETIME`].
+    first_sent: HashMap<BlockHash, Instant>,
+    /// How long after its first send a target is given up.
+    lifetime: Duration,
 }
 
 impl Default for MnListDiffPipeline {
@@ -65,6 +75,8 @@ impl MnListDiffPipeline {
             ),
             base_hashes: HashMap::new(),
             refusers: HashMap::new(),
+            first_sent: HashMap::new(),
+            lifetime: MNLISTDIFF_LIFETIME,
         }
     }
 
@@ -73,6 +85,7 @@ impl MnListDiffPipeline {
         self.coordinator.clear();
         self.base_hashes.clear();
         self.refusers.clear();
+        self.first_sent.clear();
     }
 
     /// Queue MnListDiff requests.
@@ -109,6 +122,7 @@ impl MnListDiffPipeline {
             let avoid = self.refusers.get(&target_hash).map_or(&[][..], Vec::as_slice);
             requests.request_mnlist_diff_avoiding(base_hash, target_hash, avoid)?;
             self.coordinator.mark_sent(&[target_hash]);
+            self.first_sent.entry(target_hash).or_insert_with(Instant::now);
 
             tracing::trace!(
                 "Sent GetMnListDiff: base={}, target={} ({} active, {} pending)",
@@ -146,6 +160,7 @@ impl MnListDiffPipeline {
 
         self.base_hashes.remove(&target_hash);
         self.refusers.remove(&target_hash);
+        self.first_sent.remove(&target_hash);
 
         tracing::debug!(
             "Received MnListDiff for {} ({} remaining)",
@@ -176,21 +191,30 @@ impl MnListDiffPipeline {
             self.coordinator.enqueue_retry(target);
             return Attempt::Retried;
         }
-        self.coordinator.cancel_pending(&target);
-        self.base_hashes.remove(&target);
-        self.refusers.remove(&target);
+        self.give_up(target);
         Attempt::GivenUp
     }
 
-    /// Forgets the attempts spent and the refusing peers, for a new set of
-    /// peers.
+    /// Drops `target` from the pipeline, whether in flight or pending.
+    fn give_up(&mut self, target: BlockHash) {
+        self.coordinator.release(&target);
+        self.coordinator.cancel_pending(&target);
+        self.base_hashes.remove(&target);
+        self.refusers.remove(&target);
+        self.first_sent.remove(&target);
+    }
+
+    /// Forgets the attempts spent, the time used and the refusing peers, for a
+    /// new set of peers.
     pub(super) fn forget_attempts(&mut self) {
         self.coordinator.clear_retry_counts();
         self.refusers.clear();
+        self.first_sent.clear();
     }
 
     /// Move in-flight `getmnlistd` requests back to pending after a peer
-    /// disconnect so the next `send_pending` reissues them.
+    /// disconnect so the next `send_pending` reissues them. They keep the
+    /// attempts and the lifetime they have left.
     ///
     /// `base_hashes` must survive, since `send_pending` drops a pending target
     /// hash that has no base hash to pair it with.
@@ -199,7 +223,8 @@ impl MnListDiffPipeline {
     }
 
     /// Spends an attempt of every timed-out request, queuing it again or
-    /// giving it up. Returns the `(base, target)` pairs given up.
+    /// giving it up, and gives up every target past its lifetime. Returns the
+    /// `(base, target)` pairs given up.
     pub(super) fn handle_timeouts(&mut self) -> Vec<(BlockHash, BlockHash)> {
         let mut given_up = Vec::new();
         for target_hash in self.coordinator.check_timeouts() {
@@ -207,6 +232,17 @@ impl MnListDiffPipeline {
             if self.spend_attempt(target_hash) == Attempt::GivenUp {
                 given_up.extend(base_hash.map(|base_hash| (base_hash, target_hash)));
             }
+        }
+        let expired: Vec<BlockHash> = self
+            .first_sent
+            .iter()
+            .filter(|(_, first_sent)| first_sent.elapsed() >= self.lifetime)
+            .map(|(target_hash, _)| *target_hash)
+            .collect();
+        for target_hash in expired {
+            let base_hash = self.base_hashes.get(&target_hash).copied();
+            self.give_up(target_hash);
+            given_up.extend(base_hash.map(|base_hash| (base_hash, target_hash)));
         }
         given_up
     }
@@ -219,6 +255,11 @@ impl MnListDiffPipeline {
     #[cfg(test)]
     pub(super) fn set_timeout(&mut self, timeout: Duration) {
         self.coordinator.set_timeout(timeout);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_lifetime(&mut self, lifetime: Duration) {
+        self.lifetime = lifetime;
     }
 
     /// Get the number of in-flight requests.
@@ -423,6 +464,29 @@ mod tests {
             );
             assert_eq!(pipeline.is_complete(), last, "attempt {attempt}");
         }
+    }
+
+    /// The time a target used up goes with the peers it was sent to: after a
+    /// full disconnect, the new peers give it a whole lifetime again.
+    #[test]
+    fn a_target_gets_a_new_lifetime_from_the_peers_after_a_full_disconnect() {
+        let lifetime = Duration::from_millis(50);
+        let mut pipeline = MnListDiffPipeline::new();
+        pipeline.set_lifetime(lifetime);
+        let base = BlockHash::from_byte_array([0x01; 32]);
+        let target = BlockHash::from_byte_array([0x02; 32]);
+        let (tx, _rx) = unbounded_channel();
+        let requests = RequestSender::new(tx);
+        pipeline.queue_requests(vec![(base, target)]);
+        pipeline.send_pending(&requests).unwrap();
+        std::thread::sleep(lifetime + Duration::from_millis(10));
+
+        pipeline.requeue_in_flight();
+        pipeline.forget_attempts();
+        pipeline.send_pending(&requests).unwrap();
+
+        assert_eq!(pipeline.handle_timeouts(), vec![], "the new peers get a new lifetime");
+        assert!(!pipeline.is_complete());
     }
 
     /// A refused response puts its target back in pending with its base, and
