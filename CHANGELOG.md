@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## 0.45.0 - 2026-10-20
+## 0.45.0 - 2026-10-21
 
 ### Highlights
 
@@ -64,6 +64,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** parse Core v24 masternode lists in `rpc-json`, including nested platform addresses, shared and multi-payout masternodes, non-IP services and partial address diffs (#1093) @shumkov
 - **Breaking:** decode unknown special transaction types as raw payloads (#1136) @ZocoLini
 - **Breaking:** keep special payloads raw when their layout is unknown (#1154) @ZocoLini
+- **Breaking:** temporarily expose the coinbase payload of the newest masternode list diff as `MasternodeListEngine::latest_coinbase()` and `DashSpvClient::latest_coinbase()`. It is not verified, so a single peer can serve any payload, and it is replaced by a verified version in a later release (#1204) @shumkov
 - **Breaking:** name the outpoints a sweep releases (#962) @romchornyi
 - **Breaking:** unify mnemonic parsing on one auto-detecting path (#981) @PastaPastaPasta
 - Move `extended_public_key` out of `Signer` into the `ExtendedPubKeySigner` subtrait (#839) @QuantumExplorer
