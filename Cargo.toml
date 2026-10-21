@@ -28,7 +28,7 @@ edition = "2024"
 license = "CC0-1.0"
 repository = "https://github.com/dashpay/rust-dashcore"
 rust-version = "1.89.0"
-version = "0.45.0"
+version = "0.46.0"
 
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }
