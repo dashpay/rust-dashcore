@@ -19,7 +19,7 @@ use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::BlockHash;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 
 /// Single enum that serves two roles in the masternode-sync flow:
@@ -136,10 +136,39 @@ pub(super) struct MasternodeSyncState {
     /// while it is the header tip: the `Synced` tick would otherwise ask for
     /// it on every pass until the next block.
     pub(super) given_up_tip: Option<BlockHash>,
-    /// Targets of the work-block lists given up. The next tip update applied
-    /// asks again, with fresh attempts, for those a quorum of the newest list
-    /// still needs, and forgets the others.
-    pub(super) given_up_work_lists: BTreeSet<BlockHash>,
+    /// Work-block lists given up, by target, with when each is asked for
+    /// again: see [`WorkListRetry`]. A list is forgotten once it is applied,
+    /// or once no quorum of the newest list needs it when it is due.
+    pub(super) given_up_work_lists: BTreeMap<BlockHash, WorkListRetry>,
+}
+
+/// The most tip updates a given-up work-block list waits for before it is
+/// asked for again.
+const MAX_TIPS_BETWEEN_WORK_LIST_RETRIES: u32 = 32;
+
+/// When a work-block list given up is asked for again, with fresh attempts:
+/// with the next tip update applied after it was first given up, then after
+/// twice as many tip updates each time it is given up again, up to every
+/// [`MAX_TIPS_BETWEEN_WORK_LIST_RETRIES`]th. A list no peer serves would
+/// otherwise hold back every tip update for its whole lifetime.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct WorkListRetry {
+    /// Times the list was given up after the first.
+    given_up_again: u32,
+    /// Tip updates still to apply before the list is asked for again.
+    tips_to_wait: u32,
+}
+
+impl WorkListRetry {
+    /// Whether the list is asked for with the tip update being applied, and
+    /// otherwise counts that update.
+    pub(super) fn due(&mut self) -> bool {
+        if self.tips_to_wait == 0 {
+            return true;
+        }
+        self.tips_to_wait -= 1;
+        false
+    }
 }
 
 impl MasternodeSyncState {
@@ -238,6 +267,20 @@ impl MasternodeSyncState {
     /// Forgets the peers that refused a QRInfo, for a new set of peers.
     pub(super) fn forget_qrinfo_refusers(&mut self) {
         self.qrinfo_refusers = None;
+    }
+
+    /// Records that the work-block list `target` was given up.
+    pub(super) fn work_list_given_up(&mut self, target: BlockHash) {
+        let Some(retry) = self.given_up_work_lists.get_mut(&target) else {
+            self.given_up_work_lists.insert(target, WorkListRetry::default());
+            return;
+        };
+        retry.given_up_again = retry.given_up_again.saturating_add(1);
+        let tips_between = 1u32
+            .checked_shl(retry.given_up_again)
+            .unwrap_or(u32::MAX)
+            .min(MAX_TIPS_BETWEEN_WORK_LIST_RETRIES);
+        retry.tips_to_wait = tips_between - 1;
     }
 
     /// Mark the in-flight QRInfo attempt as answered-but-unusable.
@@ -536,7 +579,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 if tip_update {
                     self.sync_state.given_up_tip = Some(target);
                 } else {
-                    self.sync_state.given_up_work_lists.insert(target);
+                    self.sync_state.work_list_given_up(target);
                 }
                 self.progress.add_diffs_processed(1);
                 self.continue_diff_pipeline(tip_update, requests).await
