@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **GroveDB bincode:** binary serialization moved to `grovedb-bincode` 2.1.0, sharing its traits with Platform (#1005).
 - **Wallet funding and reservations:** UTXO and receive-address reservations, owner-tagged reservations, funding from several account types, a CoinJoin funding account and drain mode for asset locks, and OP_RETURN outputs (#812, #818, #916, #925, #915, #944, #922).
 - **SPV sync reliability:** sync anchored at the wallet birth height, filter sync no longer stalls after a restart or a full sync, peer selection and stall handling reworked, in-flight downloads requeued on peer disconnect, and committed ranges rescanned for newly derived scripts (#848, #835, #816, #943, #941, #866, #989).
+- **Security hardening:** forged ChainLocks are rejected, oversized headers messages are refused, and the RPC client no longer logs request arguments and results, which can carry credentials (#1059, #1140, #1147).
 
 ### Added
 
@@ -140,6 +141,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Only decode a special payload from transaction version 3 (#1155) @ZocoLini
 - Keep the pre-v4 serde shape of `CoinbasePayload` (#1149) @ZocoLini
 - Send the ChainLock block hash in display order to `submitchainlock` (#1148) @ZocoLini
+- Consult every fund-bearing account for provider transactions (#1009) @ZocoLini
+- Extend DIP-15 contact pools as their payments arrive (#1035) @ZocoLini
+- Keep a mined transaction promotable when its IS lock arrives late (#1037) @ZocoLini
+- Re-apply a spend whose coin was funded after it (#1015) @ZocoLini
+- Reject a ChainLock that the masternode list below its signing height refuses (#1059) @ZocoLini
+- Reject headers messages above Core's batch limit (#1140) @ZocoLini
+- Keep RPC request arguments and results out of the logs (#1147) @ZocoLini
+- Sweep a conflict loser's keys-only records too (#1143) @lklimek
+- Set LLMQ params to Dash Core's values (#1187) @ZocoLini
 
 ## 0.44.0 - 2026-07-01
 
