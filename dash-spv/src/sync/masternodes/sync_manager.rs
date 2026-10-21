@@ -142,11 +142,12 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         // consumer with it. Flag the attempt instead: `tick` rotates
                         // to the next peer, and the existing budget still gives up on
                         // a deterministically-bad response after MAX_RETRY_ATTEMPTS.
-                        // The retries avoid this peer. The blocks a QRInfo
-                        // names are the peer's choice, so even one our header
-                        // chain does not hold counts against it. Our header
-                        // storage failing to read does not, and the peer's
-                        // next QRInfo for the tip is processed.
+                        // A refused QRInfo's peer is avoided by the retries:
+                        // the blocks a QRInfo names are the peer's choice, so
+                        // even one our header chain does not hold counts
+                        // against it. A failure to read our header storage
+                        // does not, and the peer's next QRInfo for the tip is
+                        // processed.
                         if let FeedError::Refused(_) = e {
                             self.sync_state.qrinfo_refused_by(peer);
                         }
@@ -539,7 +540,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     if in_flight.rejected {
                         tracing::warn!(
                             retry_count = self.sync_state.qrinfo_retry_count,
-                            "QRInfo response rejected by the engine, retrying against another peer..."
+                            "QRInfo response not taken by the engine, retrying..."
                         );
                     } else {
                         tracing::warn!(
@@ -1426,8 +1427,8 @@ mod tests {
         );
     }
 
-    /// A work-block list three peers refused is given up, and not asked for
-    /// again once no quorum of the newest list needs it, but forgotten.
+    /// A work-block list three peers refused is given up and, once no quorum
+    /// of the newest list needs it, forgotten rather than asked for again.
     #[tokio::test]
     async fn a_given_up_work_block_list_no_quorum_needs_is_forgotten() {
         let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
@@ -2202,7 +2203,7 @@ mod tests {
     }
 
     /// A diff the engine cannot apply for want of our own data, a base block
-    /// our header chain does not hold or a base list the engine does not, is
+    /// our header chain does not hold or a base list the engine lacks, is
     /// asked for again without avoiding the peer that sent it.
     #[test_case(false; "an unknown base block")]
     #[test_case(true; "a missing base list")]
