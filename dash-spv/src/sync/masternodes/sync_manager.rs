@@ -624,12 +624,13 @@ mod tests {
     use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
     use super::super::pipeline::{Attempt, MAX_MNLISTDIFF_ATTEMPTS};
     use super::{
-        qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
+        is_local_gap, qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG,
+        QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
     use crate::error::{StorageError, StorageResult};
     use crate::network::{Message, NetworkRequest, RequestSender};
     use crate::sml_engine::test_support::quorum_entry;
-    use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
+    use crate::sml_engine::{FeedError, MasternodeListEngine, QRInfoFeedResult};
     use crate::storage::{
         BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
         PersistentStorage, StorageManager,
@@ -645,6 +646,7 @@ mod tests {
     use dashcore::network::message_sml::{
         DeletedQuorum, GetMnListDiff, MnListDiff, QuorumCLSigObject,
     };
+    use dashcore::sml::error::SmlError;
     use dashcore::sml::llmq_entry_verification::{
         LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
     };
@@ -1970,7 +1972,7 @@ mod tests {
     /// for a QRInfo, and are asked for the tip update that was given up.
     #[tokio::test]
     async fn a_full_disconnect_forgets_the_refusals_of_the_old_peers() {
-        let (mut manager, requests, _rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
+        let (mut manager, requests, mut rx, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
         let base = BlockHash::from_byte_array([0x11; 32]);
         let target = BlockHash::from_byte_array([0x22; 32]);
         let pipeline = &mut manager.sync_state.mnlistdiff_pipeline;
@@ -1979,6 +1981,7 @@ mod tests {
         pipeline.retry_or_give_up(target, Some(peer(1)));
         manager.sync_state.qrinfo_refused_by(peer(2));
         manager.sync_state.given_up_tip = Some(tip_hash);
+        while rx.try_recv().is_ok() {}
 
         manager.on_disconnect();
 
@@ -1987,6 +1990,11 @@ mod tests {
         for _ in 0..2 {
             pipeline.send_pending(&requests).expect("send succeeds");
             assert_eq!(
+                next_diff_request_avoiding(&mut rx),
+                Some(((base, target), vec![])),
+                "the request goes out to the new peers, avoiding none"
+            );
+            assert_eq!(
                 pipeline.retry_or_give_up(target, None),
                 Attempt::Retried,
                 "the attempt spent before the disconnect no longer counts"
@@ -1994,6 +2002,133 @@ mod tests {
         }
         assert!(!manager.sync_state.has_refused_qrinfo(tip_hash, peer(2)));
         assert_eq!(manager.sync_state.given_up_tip, None);
+    }
+
+    /// A peer disconnect gives no target fresh attempts: those spent before
+    /// it still count, so a target refused by two peers is given up on the
+    /// third refusal though a peer dropped in between.
+    #[tokio::test]
+    async fn a_peer_disconnect_keeps_the_attempts_a_target_spent() {
+        let (mut manager, _engine, requests, mut rx, tip_update, _hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let refused = MnListDiff {
+            quorums_chainlock_signatures: Vec::new(),
+            ..tip_update
+        };
+        for refusing in [peer(1), peer(2)] {
+            deliver_from(&mut manager, &requests, refusing, refused.clone()).await;
+            assert!(next_diff_request(&mut rx).is_some(), "the refused tip update is asked again");
+        }
+
+        manager.on_peer_disconnect();
+        manager.tick(&requests).await.expect("tick succeeds");
+        assert!(next_diff_request(&mut rx).is_some(), "the requeued request goes out again");
+        deliver_from(&mut manager, &requests, peer(3), refused).await;
+
+        assert!(rx.try_recv().is_err(), "the third refusal gives the tip update up");
+        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+    }
+
+    /// A diff the engine cannot apply for want of our own data, a base block
+    /// our header chain does not hold or a base list the engine does not, is
+    /// asked for again without avoiding the peer that sent it.
+    #[test_case(false; "an unknown base block")]
+    #[test_case(true; "a missing base list")]
+    #[tokio::test]
+    async fn an_mnlistdiff_failing_on_our_own_gap_is_not_held_against_its_peer(
+        base_in_chain: bool,
+    ) {
+        let (mut manager, requests, mut rx, _) = syncing_manager_awaiting_qrinfo(200).await;
+        manager.sync_state.qrinfo_received();
+        let hashes: Vec<BlockHash> =
+            Header::dummy_batch(0..201).iter().map(|header| header.block_hash()).collect();
+        let base = if base_in_chain {
+            hashes[150]
+        } else {
+            BlockHash::from_byte_array([0x11; 32])
+        };
+        let target = hashes[160];
+        manager.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base, target)]);
+        manager.sync_state.mnlistdiff_pipeline.send_pending(&requests).unwrap();
+        while rx.try_recv().is_ok() {}
+        let diff = MnListDiff {
+            base_block_hash: base,
+            block_hash: target,
+            ..MnListDiff::dummy_between(0, 0)
+        };
+
+        deliver_from(&mut manager, &requests, peer(1), diff).await;
+
+        assert_eq!(
+            next_diff_request_avoiding(&mut rx),
+            Some(((base, target), vec![])),
+            "the diff is asked for again, avoiding no one"
+        );
+        assert!(!manager.sync_state.mnlistdiff_pipeline.has_refused(target, peer(1)));
+    }
+
+    /// Our header storage failing is a gap of ours like a block or list we
+    /// lack, while a diff the engine refuses for itself is the peer's.
+    #[test]
+    fn a_header_storage_failure_is_a_gap_of_ours() {
+        let unreadable = StorageError::ReadFailed("the header segment is unreadable".into());
+        assert!(is_local_gap(&FeedError::HeaderStorage(unreadable)));
+        assert!(is_local_gap(&FeedError::Refused(SmlError::BlockHashLookupFailed(
+            BlockHash::all_zeros()
+        ))));
+        assert!(!is_local_gap(&FeedError::Refused(SmlError::IncompleteMnListDiff)));
+    }
+
+    /// The peers whose QRInfo for a tip was refused are forgotten once a
+    /// QRInfo for it is taken, and when the tip asked for moves on.
+    #[tokio::test]
+    async fn the_peers_that_refused_a_qr_info_are_forgotten_on_success_and_on_a_new_tip() {
+        let (mut manager, requests, mut rx, tip) = syncing_manager_awaiting_qrinfo(TIP).await;
+        let hashes: Vec<BlockHash> =
+            Header::dummy_batch(0..TIP + 1).iter().map(|header| header.block_hash()).collect();
+        manager.engine.write().await.masternode_lists.insert(
+            QR_INFO_BASE,
+            MasternodeList::empty(hashes[QR_INFO_BASE as usize], QR_INFO_BASE),
+        );
+        let honest = qr_info_for_tip(&hashes);
+        let mut refused = honest.clone();
+        refused.mn_list_diff_h.block_hash = BlockHash::from_byte_array([0x33; 32]);
+        let response = |peer, qr_info: &QRInfo| {
+            Message::new(peer, NetworkMessage::QRInfo(Box::new(qr_info.clone())))
+        };
+
+        manager.handle_message(response(peer(2), &refused), &requests).await.expect_err("refused");
+        manager.tick(&requests).await.expect("tick retries the refused QRInfo");
+        manager.handle_message(response(peer(1), &honest), &requests).await.expect("taken");
+        assert!(
+            !manager.sync_state.has_refused_qrinfo(tip, peer(2)),
+            "a QRInfo taken for the tip forgets who refused one"
+        );
+
+        manager.sync_state.clear_pending();
+        manager.sync_state.last_processed_qrinfo_tip = None;
+        manager.sync_state.qrinfo_retry_count = 0;
+        manager.send_qrinfo_for_tip(&requests).await.expect("the QRInfo is sent");
+        manager.handle_message(response(peer(2), &refused), &requests).await.expect_err("refused");
+        let next_tip = Header::dummy(TIP + 1);
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(&[HashedBlockHeader::from(&next_tip)])
+            .await
+            .unwrap();
+        while rx.try_recv().is_ok() {}
+        manager.tick(&requests).await.expect("tick retries the refused QRInfo");
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Ok(NetworkRequest::SendMessage(NetworkMessage::GetQRInfo(request)))
+                    if request.block_request_hash == next_tip.block_hash()
+            ),
+            "the QRInfo for the next tip avoids no peer"
+        );
+        assert!(!manager.sync_state.has_refused_qrinfo(tip, peer(2)));
     }
 
     /// `tick` must reissue MnListDiff requests that a disconnect moved back to
