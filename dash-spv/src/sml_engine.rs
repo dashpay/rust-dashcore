@@ -194,6 +194,45 @@ fn cycle_quarter_work_heights(
         .map(|cycles_back: u32| cycle_base.checked_sub(cycles_back * interval + WORK_DIFF_DEPTH))
 }
 
+/// An engine's lists and rotated cycles.
+type ListsAndCycles = (
+    BTreeMap<CoreBlockHeight, MasternodeList>,
+    BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
+);
+
+/// The lists and rotated cycles of an engine as a QRInfo feed found them, put
+/// back when this drops unless the feed's changes are kept: a feed that fails
+/// or is dropped part way leaves the engine as it was. The copy shares the
+/// lists' maps; the few stored cycles are copied.
+struct QRInfoRollback<'a, H: BlockHeaderStorage> {
+    engine: &'a mut MasternodeListEngine<H>,
+    saved: Option<ListsAndCycles>,
+}
+
+impl<'a, H: BlockHeaderStorage> QRInfoRollback<'a, H> {
+    fn new(engine: &'a mut MasternodeListEngine<H>) -> Self {
+        let saved = (engine.masternode_lists.clone(), engine.rotated_quorums_per_cycle.clone());
+        Self {
+            engine,
+            saved: Some(saved),
+        }
+    }
+
+    /// Keeps what the feed changed.
+    fn keep(mut self) {
+        self.saved = None;
+    }
+}
+
+impl<H: BlockHeaderStorage> Drop for QRInfoRollback<'_, H> {
+    fn drop(&mut self) {
+        if let Some((masternode_lists, rotated_quorums_per_cycle)) = self.saved.take() {
+            self.engine.masternode_lists = masternode_lists;
+            self.engine.rotated_quorums_per_cycle = rotated_quorums_per_cycle;
+        }
+    }
+}
+
 impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// An empty engine for `network` that looks block heights up in `headers`.
     pub fn new(network: Network, headers: Arc<RwLock<H>>) -> Self {
@@ -779,20 +818,18 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// Applies a QRInfo's diffs, then validates and stores its active rotation
     /// set and the previous cycle's. An invalid current-cycle quorum fails it.
     ///
-    /// A QRInfo that fails leaves the engine as it was: its retry starts from
-    /// the same lists, and no later message builds on lists of a QRInfo that
-    /// was refused, and so never stored for the next start. The copy kept
-    /// meanwhile shares the lists' maps; the few stored cycles are copied.
+    /// A QRInfo that fails, or whose feed is dropped part way as an aborted
+    /// task drops it, leaves the engine as it was: its retry starts from the
+    /// same lists, and no later message builds on lists of a QRInfo that was
+    /// not taken, and so never stored for the next start.
     pub async fn feed_qr_info(
         &mut self,
         qr_info: QRInfo,
     ) -> Result<QRInfoFeedResult, FeedError<QuorumValidationError>> {
-        let masternode_lists = self.masternode_lists.clone();
-        let rotated_quorums_per_cycle = self.rotated_quorums_per_cycle.clone();
-        let result = self.apply_qr_info(qr_info).await;
-        if result.is_err() {
-            self.masternode_lists = masternode_lists;
-            self.rotated_quorums_per_cycle = rotated_quorums_per_cycle;
+        let rollback = QRInfoRollback::new(self);
+        let result = rollback.engine.apply_qr_info(qr_info).await;
+        if result.is_ok() {
+            rollback.keep();
         }
         result
     }
@@ -1208,6 +1245,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
     use tokio::sync::RwLock;
 
     fn make_qualified_quorum_entry(
@@ -1961,19 +1999,28 @@ mod tests {
 
     /// Header storage answering from `inner`, except that reading the block
     /// `unreadable` fails once it has been read `readable` times, as it does
-    /// when its header segment stops reading partway through a feed.
+    /// when its header segment stops reading partway through a feed. When
+    /// `hangs`, that read never completes instead.
     struct FailingFrom {
         inner: MockHeaderStorage,
         unreadable: BlockHash,
         readable: usize,
         reads: AtomicUsize,
+        hangs: bool,
     }
 
     impl FailingFrom {
-        fn read<T>(&self, block_hash: &BlockHash, read: StorageResult<T>) -> StorageResult<T> {
+        async fn read<T>(
+            &self,
+            block_hash: &BlockHash,
+            read: StorageResult<T>,
+        ) -> StorageResult<T> {
             if *block_hash == self.unreadable
                 && self.reads.fetch_add(1, Ordering::Relaxed) >= self.readable
             {
+                if self.hangs {
+                    std::future::pending::<()>().await;
+                }
                 return Err(StorageError::ReadFailed("the header segment is unreadable".into()));
             }
             read
@@ -2006,7 +2053,7 @@ mod tests {
                 .and_then(|header| header.as_ref())
                 .map(|header| *header.hash())
             {
-                Some(block_hash) => self.read(&block_hash, header),
+                Some(block_hash) => self.read(&block_hash, header).await,
                 None => header,
             }
         }
@@ -2023,7 +2070,7 @@ mod tests {
             self.inner.get_stored_headers_len().await
         }
         async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
-            self.read(hash, self.inner.get_header_height_by_hash(hash).await)
+            self.read(hash, self.inner.get_header_height_by_hash(hash).await).await
         }
         async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
             self.inner.truncate_above(target_height).await
@@ -2042,6 +2089,7 @@ mod tests {
             unreadable,
             readable,
             reads: AtomicUsize::new(0),
+            hangs: false,
         }));
         let mut failing = MasternodeListEngine::new(engine.network, headers);
         failing.masternode_lists = engine.masternode_lists.clone();
@@ -2102,6 +2150,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Stopping the client, as following a fork does, aborts a manager task
+    /// still running after a grace period, dropping a QRInfo feed part way.
+    /// That leaves the engine as it was, as a refusal does, so a run started
+    /// again in the same process does not build on a QRInfo never taken.
+    #[tokio::test(start_paused = true)]
+    async fn a_qr_info_feed_dropped_part_way_leaves_the_engine_as_it_was() {
+        let (engine, qr_info) = load_qrinfo_2240504_fixture().await;
+        let quorum_hash = qr_info.last_commitment_per_index[0].quorum_hash;
+        let unreadable = BlockHash::from_byte_array(quorum_hash.to_byte_array());
+        let mut fed = with_reads_failing(&engine, unreadable, usize::MAX);
+        let result = fed.feed_qr_info(qr_info.clone()).await;
+        assert!(result.is_ok(), "the QRInfo feeds while the storage reads, got {result:?}");
+        assert!(fed.masternode_lists != engine.masternode_lists, "a whole feed changes the lists");
+        let reads = fed.headers.read().await.reads.load(Ordering::Relaxed);
+        assert!(reads > 0, "the feed reads the quorum's block");
+        let mut dropped = with_reads_failing(&engine, unreadable, reads - 1);
+        dropped.headers.try_write().expect("unlocked").hangs = true;
+
+        let feed = tokio::time::timeout(Duration::from_secs(5), dropped.feed_qr_info(qr_info));
+        assert!(feed.await.is_err(), "the feed waits on its last read of the quorum's block");
+
+        assert_eq!(dropped.headers.read().await.reads.load(Ordering::Relaxed), reads);
+        assert!(
+            dropped.masternode_lists == engine.masternode_lists,
+            "a dropped feed must leave the lists as they were"
+        );
+        assert!(
+            dropped.rotated_quorums_per_cycle == engine.rotated_quorums_per_cycle,
+            "and the stored cycles"
+        );
     }
 
     /// Following a fork keeps a rotated cycle only when its base shows it was
