@@ -97,6 +97,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         // Nor do the refusals of the old peers count against the new ones.
         self.sync_state.mnlistdiff_pipeline.forget_attempts();
         self.sync_state.forget_qrinfo_refusers();
+        self.sync_state.forget_work_list_waits();
         self.sync_state.given_up_tip = None;
     }
 
@@ -1425,6 +1426,7 @@ mod tests {
             ),
             "the quorum is checked against its work-block list, got {status:?}"
         );
+        assert!(manager.sync_state.given_up_work_lists.is_empty(), "the applied list is forgotten");
     }
 
     /// A work-block list three peers refused is given up and, once no quorum
@@ -1569,6 +1571,38 @@ mod tests {
             next_diff_request(&mut rx).map(|(_, target)| target),
             Some(work_list.1),
             "the list is asked for once the headers read"
+        );
+    }
+
+    /// The wait of a work-block list given up again goes with the peers that
+    /// did not serve it: after a full disconnect, the new peers are asked for
+    /// it with the next tip update.
+    #[tokio::test]
+    async fn a_full_disconnect_has_a_given_up_work_block_list_asked_with_the_next_tip_update() {
+        let (mut manager, _engine, requests, mut rx, tip_update, hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let next_tip_update = give_up_the_work_block_list_then_move_the_tip(
+            &mut manager,
+            &requests,
+            &mut rx,
+            tip_update,
+            &hashes,
+            false,
+        )
+        .await;
+        deliver(&mut manager, &requests, next_tip_update).await;
+        let request = next_diff_request(&mut rx).expect("the work-block list is asked for again");
+        give_up_the_work_block_list(&mut manager, &requests, request, &hashes, false).await;
+        while rx.try_recv().is_ok() {}
+
+        manager.on_disconnect();
+        let next_tip_update = move_the_tip_to(&mut manager, &requests, &mut rx, TIP + 3).await;
+        deliver(&mut manager, &requests, next_tip_update).await;
+
+        assert_eq!(
+            next_diff_request(&mut rx).map(|(_, target)| target),
+            Some(request.1),
+            "the new peers are asked for the list with the next tip update"
         );
     }
 

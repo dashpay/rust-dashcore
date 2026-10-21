@@ -276,6 +276,15 @@ impl MasternodeSyncState {
         self.qrinfo_refusers = None;
     }
 
+    /// Has every work-block list given up asked for again with the next tip
+    /// update, forgetting how often the old peers did not serve it, for a new
+    /// set of peers.
+    pub(super) fn forget_work_list_waits(&mut self) {
+        for retry in self.given_up_work_lists.values_mut() {
+            *retry = WorkListRetry::default();
+        }
+    }
+
     /// Records that the work-block list `target` was given up.
     pub(super) fn work_list_given_up(&mut self, target: BlockHash) {
         let Some(retry) = self.given_up_work_lists.get_mut(&target) else {
