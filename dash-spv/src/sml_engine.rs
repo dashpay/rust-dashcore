@@ -62,7 +62,9 @@ pub enum FeedError<E> {
     /// The fault is ours: the message may well be taken once it reads again.
     #[error("Could not read the header chain: {0}")]
     HeaderStorage(StorageError),
-    /// The message was refused.
+    /// The engine refused the message for the reason given. A reason can be
+    /// a gap of ours rather than a fault of the message: a block our header
+    /// chain does not hold, or a base list the engine lacks.
     #[error(transparent)]
     Refused(#[from] E),
 }
@@ -219,8 +221,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.headers.read().await.get_header_height_by_hash(block_hash).await
     }
 
-    /// [`Self::height_of`] for a lookup that only informs, where a block whose
-    /// height could not be read counts as one the header chain does not hold.
+    /// [`Self::height_of`] for callers that treat a block whose height could
+    /// not be read like one the header chain does not hold. The storage error
+    /// is logged.
     pub(crate) async fn height_if_known(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
         self.height_of(block_hash).await.unwrap_or_else(|e| {
             tracing::warn!("Could not look up the height of {block_hash}: {e}");
@@ -229,13 +232,16 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     }
 
     /// [`Self::height_of`] for a block a diff names and cannot be applied
-    /// without, which refuses the diff when the header chain does not hold it.
+    /// without: refuses the diff when the header chain does not hold the
+    /// block, and fails with [`FeedError::HeaderStorage`] when the chain
+    /// cannot be read.
     async fn required_height_of(
         &self,
         block_hash: &BlockHash,
     ) -> Result<CoreBlockHeight, FeedError<SmlError>> {
         self.height_of(block_hash)
-            .await?
+            .await
+            .inspect_err(|e| tracing::warn!("Could not look up the height of {block_hash}: {e}"))?
             .ok_or(FeedError::Refused(SmlError::BlockHashLookupFailed(*block_hash)))
     }
 

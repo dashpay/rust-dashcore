@@ -201,8 +201,8 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
         for (_, height, kind, path) in plan {
             if let Some(message) = self.read_entry(height, kind, path).await {
                 match message.apply(&mut engine).await {
-                    true => applied += 1,
-                    false => tracing::warn!("Masternode message at {height} does not apply"),
+                    Ok(()) => applied += 1,
+                    Err(e) => tracing::warn!("Masternode message at {height} does not apply: {e}"),
                 }
             }
             visit(&engine);
@@ -272,10 +272,16 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
 }
 
 impl Message {
-    async fn apply<H: BlockHeaderStorage>(self, engine: &mut MasternodeListEngine<H>) -> bool {
+    /// Feeds the message to `engine`, failing with why it was not taken.
+    async fn apply<H: BlockHeaderStorage>(
+        self,
+        engine: &mut MasternodeListEngine<H>,
+    ) -> Result<(), String> {
         match self {
-            Message::QrInfo(qr_info) => engine.feed_qr_info(*qr_info).await.is_ok(),
-            Message::Diff(diff) => engine.apply_diff(*diff).await.is_ok(),
+            Message::QrInfo(qr_info) => {
+                engine.feed_qr_info(*qr_info).await.map(drop).map_err(|e| e.to_string())
+            }
+            Message::Diff(diff) => engine.apply_diff(*diff).await.map_err(|e| e.to_string()),
         }
     }
 
