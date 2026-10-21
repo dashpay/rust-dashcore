@@ -105,7 +105,7 @@ impl LLMQModifierType {
         best_cl_signature: BLSSignature,
         network: Network,
     ) -> Result<LLMQModifierType, QuorumValidationError> {
-        if network.core_v20_is_active_at(work_block_height) {
+        if work_block_height >= network.v20_activation_height() {
             Ok(LLMQModifierType::CoreV20(llmq_type, work_block_height, best_cl_signature))
         } else {
             Ok(LLMQModifierType::PreCoreV20(llmq_type, work_block_hash))

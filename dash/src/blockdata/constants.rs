@@ -22,8 +22,8 @@ use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
+use crate::network::constants::Network;
 use crate::pow::CompactTarget;
-use dash_network::Network;
 
 /// How many satoshis are in "one dash".
 pub const COIN_VALUE: u64 = 100_000_000;
@@ -112,7 +112,7 @@ pub fn genesis_block(network: Network) -> Block {
     let txdata = vec![dash_genesis_tx()];
 
     match network {
-        Network::Dash => {
+        Network::Mainnet => {
             // Mainnet merkle root - Note: bytes are reversed for internal representation
             let merkle_bytes =
                 hex!("c762a6567f3cc092f0684bb62b7e00a84890b990f07cc71a6bb58d64b98e02e0");
@@ -178,16 +178,14 @@ pub fn genesis_block(network: Network) -> Block {
                 txdata,
             }
         }
-        // Any new network variant must be handled explicitly.
-        _ => unreachable!("genesis_block(): unsupported network variant {network:?}"),
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::Network;
     use crate::internal_macros::hex;
-    use dash_network::Network;
 
     #[test]
     fn dash_genesis_first_transaction() {
@@ -223,7 +221,7 @@ mod test {
 
     #[test]
     fn dash_genesis_full_block() {
-        let genesis_block = genesis_block(Network::Dash);
+        let genesis_block = genesis_block(Network::Mainnet);
 
         assert_eq!(genesis_block.header.version, block::Version::ONE);
         assert_eq!(genesis_block.header.prev_blockhash, Hash::all_zeros());

@@ -9,7 +9,6 @@ use crate::seed::Seed;
 use crate::wallet::root_extended_keys::RootExtendedPrivKey;
 use crate::wallet::{Wallet, WalletType};
 use crate::Network;
-use alloc::string::ToString;
 
 /// Known test mnemonic for deterministic testing
 const TEST_MNEMONIC: &str =
@@ -137,49 +136,17 @@ fn test_wallet_creation_watch_only() {
     assert!(!wallet.has_mnemonic());
     assert!(!wallet.is_external_signable());
 
-    // Verify public key is stored
-    match &wallet.wallet_type {
-        WalletType::WatchOnly(_) => {
-            // Check that it's a watch-only wallet type
-            assert!(wallet.is_watch_only());
-        }
-        _ => panic!("Expected watch-only wallet type"),
-    }
-}
+    // The unit variant carries no key material on the WalletType side
+    assert!(matches!(wallet.wallet_type, WalletType::WatchOnly));
+    assert!(wallet.is_watch_only());
+    assert!(wallet.root_extended_pub_key().is_err());
 
-#[test]
-fn test_wallet_creation_with_passphrase() {
-    let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC, Language::English).unwrap();
-    let passphrase = "test_passphrase";
-    let seed = mnemonic.to_seed(passphrase);
-    let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
-    let root_pub_key = root_priv_key.to_root_extended_pub_key();
-
-    let wallet = Wallet::from_mnemonic_with_passphrase(
-        mnemonic.clone(),
-        passphrase.to_string(),
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // Verify wallet properties
-    assert!(wallet.has_mnemonic());
-    assert!(wallet.needs_passphrase());
-    assert!(wallet.can_sign()); // Can sign but needs passphrase
-    assert!(!wallet.is_watch_only());
-
-    // Verify mnemonic and public key are stored
-    match &wallet.wallet_type {
-        WalletType::MnemonicWithPassphrase {
-            mnemonic: wallet_mnemonic,
-            root_extended_public_key,
-        } => {
-            assert_eq!(wallet_mnemonic.to_string(), mnemonic.to_string());
-            assert_eq!(root_extended_public_key.root_public_key, root_pub_key.root_public_key);
-        }
-        _ => panic!("Expected mnemonic with passphrase wallet type"),
-    }
+    // But the wallet id must still equal the hash of the source root xpub
+    // (`from_xpub` derives the id from the xpub at construction time).
+    let expected_id =
+        Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, Some(Network::Testnet));
+    assert_eq!(wallet.wallet_id, expected_id);
+    assert_eq!(wallet.compute_wallet_id(), expected_id);
 }
 
 #[test]
@@ -189,10 +156,12 @@ fn test_wallet_id_computation() {
     let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
 
-    let wallet_id = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+    let wallet_id =
+        Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, Some(Network::Testnet));
 
     // Wallet ID should be deterministic
-    let wallet_id_2 = Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+    let wallet_id_2 =
+        Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, Some(Network::Testnet));
     assert_eq!(wallet_id, wallet_id_2);
 
     // Create wallet and verify ID matches
@@ -401,10 +370,12 @@ fn test_wallet_external_signable() {
     assert!(wallet.can_sign()); // Can sign with external signer
     assert!(!wallet.is_watch_only()); // Not purely watch-only
 
-    match &wallet.wallet_type {
-        WalletType::ExternalSignable(key) => {
-            assert_eq!(key.root_public_key, root_pub_key.root_public_key);
-        }
-        _ => panic!("Expected external signable wallet type"),
-    }
+    // Unit variant carries no root key material; the wallet id is the hash
+    // of the root xpub fed into `from_external_signable`.
+    assert!(matches!(wallet.wallet_type, WalletType::ExternalSignable));
+    assert!(wallet.root_extended_pub_key().is_err());
+    let expected_id =
+        Wallet::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, Some(Network::Testnet));
+    assert_eq!(wallet.wallet_id, expected_id);
+    assert_eq!(wallet.compute_wallet_id(), expected_id);
 }

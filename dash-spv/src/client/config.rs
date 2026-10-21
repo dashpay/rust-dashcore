@@ -1,16 +1,17 @@
 //! Configuration management for the Dash SPV client.
 
+use clap::ValueEnum;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use dashcore::Network;
 // Serialization removed due to complex Address types
 
+use crate::client::devnet::DevnetConfig;
 use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MempoolStrategy {
     /// Fetch all announced transactions (high bandwidth, sees all transactions).
     FetchAll,
@@ -35,26 +36,11 @@ pub struct ClientConfig {
     /// If no peers are configured, no outbound connections will be made.
     pub restrict_to_configured_peers: bool,
 
-    /// Optional path for persistent storage.
-    pub storage_path: Option<PathBuf>,
+    /// Path for persistent storage. Defaults to ./dash-spv-storage
+    pub storage_path: PathBuf,
 
     /// Validation mode.
     pub validation_mode: ValidationMode,
-
-    /// BIP157 filter checkpoint interval.
-    pub filter_checkpoint_interval: u32,
-
-    /// Maximum headers per message.
-    pub max_headers_per_message: u32,
-
-    /// Connection timeout.
-    pub connection_timeout: Duration,
-
-    /// Message timeout.
-    pub message_timeout: Duration,
-
-    /// Sync timeout.
-    pub sync_timeout: Duration,
 
     /// Whether to enable filter syncing.
     pub enable_filters: bool,
@@ -65,21 +51,9 @@ pub struct ClientConfig {
     /// Maximum number of peers to connect to.
     pub max_peers: u32,
 
-    /// Whether to persist state to disk.
-    pub enable_persistence: bool,
-
-    /// Log level for tracing.
-    pub log_level: String,
-
     /// Optional user agent string to advertise in the P2P version message.
     /// If not set, a sensible default is used (includes crate version).
     pub user_agent: Option<String>,
-
-    /// Maximum concurrent filter requests (default: 8).
-    pub max_concurrent_filter_requests: usize,
-
-    /// Delay between filter requests in milliseconds (default: 50).
-    pub filter_request_delay_ms: u64,
 
     // Mempool configuration
     /// Enable tracking of unconfirmed (mempool) transactions.
@@ -91,116 +65,36 @@ pub struct ClientConfig {
     /// Maximum number of unconfirmed transactions to track.
     pub max_mempool_transactions: usize,
 
-    /// Time after which unconfirmed transactions are pruned (seconds).
-    pub mempool_timeout_secs: u64,
-
     /// Whether to fetch transactions from INV messages immediately.
     pub fetch_mempool_transactions: bool,
-
-    /// Whether to persist mempool transactions.
-    pub persist_mempool: bool,
-
-    // Request control configuration
-    /// Maximum concurrent header requests (default: 1).
-    pub max_concurrent_headers_requests: Option<usize>,
-
-    /// Maximum concurrent masternode list requests (default: 1).
-    pub max_concurrent_mnlist_requests: Option<usize>,
-
-    /// Maximum concurrent CF header requests (default: 1).
-    pub max_concurrent_cfheaders_requests: Option<usize>,
-
-    /// Maximum concurrent block requests (default: 5).
-    pub max_concurrent_block_requests: Option<usize>,
-
-    /// Rate limit for header requests per second (default: 10.0).
-    pub headers_request_rate_limit: Option<f64>,
-
-    /// Rate limit for masternode list requests per second (default: 5.0).
-    pub mnlist_request_rate_limit: Option<f64>,
-
-    /// Rate limit for CF header requests per second (default: 10.0).
-    pub cfheaders_request_rate_limit: Option<f64>,
-
-    // CFHeaders flow control configuration
-    /// Maximum concurrent CFHeaders requests for parallel sync (default: 50).
-    pub max_concurrent_cfheaders_requests_parallel: usize,
-
-    /// Timeout for CFHeaders requests in seconds (default: 30).
-    pub cfheaders_request_timeout_secs: u64,
-
-    /// Maximum retry attempts for failed CFHeaders batches (default: 3).
-    pub max_cfheaders_retries: u32,
-
-    /// Rate limit for filter requests per second (default: 50.0).
-    pub filters_request_rate_limit: Option<f64>,
-
-    /// Rate limit for block requests per second (default: 10.0).
-    pub blocks_request_rate_limit: Option<f64>,
 
     /// Start syncing from a specific block height.
     /// The client will use the nearest checkpoint at or before this height.
     pub start_from_height: Option<u32>,
 
-    /// Wallet creation time as Unix timestamp.
-    /// Used to determine appropriate checkpoint for sync.
-    pub wallet_creation_time: Option<u32>,
-
-    // QRInfo configuration (simplified per plan)
-    /// Request extra share data in QRInfo (default: false per DMLviewer.patch).
-    pub qr_info_extra_share: bool,
-
-    /// Timeout for QRInfo requests (default: 30 seconds).
-    pub qr_info_timeout: Duration,
+    /// Devnet-only configuration. Must be `Some` iff `network == Network::Devnet`.
+    pub devnet: Option<DevnetConfig>,
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            network: Network::Dash,
+            network: Network::Mainnet,
             peers: vec![],
             restrict_to_configured_peers: false,
-            storage_path: None,
+            storage_path: PathBuf::from("./dash-spv-storage"),
             validation_mode: ValidationMode::Full,
-            filter_checkpoint_interval: 1000,
-            max_headers_per_message: 2000,
-            connection_timeout: Duration::from_secs(30),
-            message_timeout: Duration::from_secs(60),
-            sync_timeout: Duration::from_secs(300),
             enable_filters: true,
             enable_masternodes: true,
             max_peers: 8,
-            enable_persistence: true,
-            log_level: "info".to_string(),
             user_agent: None,
-            max_concurrent_filter_requests: 16,
-            filter_request_delay_ms: 0,
             // Mempool defaults
             enable_mempool_tracking: true,
             mempool_strategy: MempoolStrategy::FetchAll,
             max_mempool_transactions: 1000,
-            mempool_timeout_secs: 3600, // 1 hour
             fetch_mempool_transactions: true,
-            persist_mempool: false,
-            // Request control defaults
-            max_concurrent_headers_requests: None,
-            max_concurrent_mnlist_requests: None,
-            max_concurrent_cfheaders_requests: None,
-            max_concurrent_block_requests: None,
-            headers_request_rate_limit: None,
-            mnlist_request_rate_limit: None,
-            cfheaders_request_rate_limit: None,
-            filters_request_rate_limit: None,
-            blocks_request_rate_limit: None,
             start_from_height: None,
-            wallet_creation_time: None,
-            // CFHeaders flow control defaults
-            max_concurrent_cfheaders_requests_parallel: 50,
-            cfheaders_request_timeout_secs: 30,
-            max_cfheaders_retries: 3,
-            // QRInfo defaults (simplified per plan)
-            qr_info_extra_share: false, // Matches DMLviewer.patch default
-            qr_info_timeout: Duration::from_secs(30),
+            devnet: None,
         }
     }
 }
@@ -210,7 +104,6 @@ impl ClientConfig {
     pub fn new(network: Network) -> Self {
         Self {
             network,
-            peers: Self::default_peers_for_network(network),
             restrict_to_configured_peers: false,
             ..Self::default()
         }
@@ -218,7 +111,7 @@ impl ClientConfig {
 
     /// Create a configuration for mainnet.
     pub fn mainnet() -> Self {
-        Self::new(Network::Dash)
+        Self::new(Network::Mainnet)
     }
 
     /// Create a configuration for testnet.
@@ -244,9 +137,8 @@ impl ClientConfig {
     }
 
     /// Set storage path.
-    pub fn with_storage_path(mut self, path: PathBuf) -> Self {
-        self.storage_path = Some(path);
-        self.enable_persistence = true;
+    pub fn with_storage_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.storage_path = path.into();
         self
     }
 
@@ -268,34 +160,10 @@ impl ClientConfig {
         self
     }
 
-    /// Set connection timeout.
-    pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
-        self.connection_timeout = timeout;
-        self
-    }
-
-    /// Set log level.
-    pub fn with_log_level(mut self, level: &str) -> Self {
-        self.log_level = level.to_string();
-        self
-    }
-
     /// Set custom user agent string for the P2P handshake.
     /// The library will lightly validate and normalize it during handshake.
     pub fn with_user_agent(mut self, agent: impl Into<String>) -> Self {
         self.user_agent = Some(agent.into());
-        self
-    }
-
-    /// Set maximum concurrent filter requests.
-    pub fn with_max_concurrent_filter_requests(mut self, max_requests: usize) -> Self {
-        self.max_concurrent_filter_requests = max_requests;
-        self
-    }
-
-    /// Set delay between filter requests.
-    pub fn with_filter_request_delay(mut self, delay_ms: u64) -> Self {
-        self.filter_request_delay_ms = delay_ms;
         self
     }
 
@@ -312,33 +180,16 @@ impl ClientConfig {
         self
     }
 
-    /// Set mempool transaction timeout.
-    pub fn with_mempool_timeout(mut self, timeout_secs: u64) -> Self {
-        self.mempool_timeout_secs = timeout_secs;
-        self
-    }
-
-    /// Enable or disable mempool persistence.
-    pub fn with_mempool_persistence(mut self, enabled: bool) -> Self {
-        self.persist_mempool = enabled;
-        self
-    }
-
     /// Set the starting height for synchronization.
     pub fn with_start_height(mut self, height: u32) -> Self {
         self.start_from_height = Some(height);
         self
     }
 
-    /// Set whether to request extra share data in QRInfo.
-    pub fn with_qr_info_extra_share(mut self, enabled: bool) -> Self {
-        self.qr_info_extra_share = enabled;
-        self
-    }
-
-    /// Set QRInfo request timeout.
-    pub fn with_qr_info_timeout(mut self, timeout: Duration) -> Self {
-        self.qr_info_timeout = timeout;
+    /// Attach a [`DevnetConfig`]. The network must be `Network::Devnet`.
+    /// [`validate`](Self::validate) enforces the biconditional.
+    pub fn with_devnet(mut self, devnet: DevnetConfig) -> Self {
+        self.devnet = Some(devnet);
         self
     }
 
@@ -346,56 +197,47 @@ impl ClientConfig {
     pub fn validate(&self) -> Result<(), String> {
         // Note: Empty peers list is now valid - DNS discovery will be used automatically
 
-        if self.max_headers_per_message == 0 {
-            return Err("max_headers_per_message must be > 0".to_string());
-        }
-
-        if self.filter_checkpoint_interval == 0 {
-            return Err("filter_checkpoint_interval must be > 0".to_string());
-        }
-
         if self.max_peers == 0 {
             return Err("max_peers must be > 0".to_string());
         }
 
-        if self.max_concurrent_filter_requests == 0 {
-            return Err("max_concurrent_filter_requests must be > 0".to_string());
+        // Mempool validation
+        if self.enable_mempool_tracking && self.max_mempool_transactions == 0 {
+            return Err(
+                "max_mempool_transactions must be > 0 when mempool tracking is enabled".to_string()
+            );
         }
 
-        // Mempool validation
-        if self.enable_mempool_tracking {
-            if self.max_mempool_transactions == 0 {
-                return Err(
-                    "max_mempool_transactions must be > 0 when mempool tracking is enabled"
-                        .to_string(),
-                );
+        match (self.network == Network::Devnet, &self.devnet) {
+            (true, Some(devnet)) => devnet.validate()?,
+            (true, None) => {
+                return Err("network is Devnet but no DevnetConfig was provided".to_string());
             }
-            if self.mempool_timeout_secs == 0 {
-                return Err("mempool_timeout_secs must be > 0".to_string());
+            (false, Some(_)) => {
+                return Err(format!(
+                    "DevnetConfig is only valid on Devnet, but network is {:?}",
+                    self.network
+                ));
             }
+            (false, None) => {}
         }
+
+        std::fs::create_dir_all(&self.storage_path).map_err(|e| {
+            format!(
+                "A valid storage path must be provided to the ClientConfig {:?}: {e}",
+                self.storage_path
+            )
+        })?;
 
         Ok(())
     }
 
-    /// Get default peers for a network.
-    /// Returns empty vector to enable immediate DNS discovery on startup.
-    /// Explicit peers can still be added via add_peer() or configuration.
-    fn default_peers_for_network(network: Network) -> Vec<SocketAddr> {
-        match network {
-            Network::Dash | Network::Testnet => {
-                // Return empty to trigger immediate DNS discovery
-                // DNS seeds will be used: dnsseed.dash.org (mainnet), testnet-seed.dashdot.io (testnet)
-                vec![]
-            }
-            Network::Regtest => {
-                // Regtest typically uses local peers
-                vec!["127.0.0.1:19899".parse::<SocketAddr>()]
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .collect()
-            }
-            _ => vec![],
+    /// Apply process-wide settings derived from this config. Idempotent for the
+    /// same values, returns an error if a conflicting setting was already applied.
+    pub(crate) fn apply_global_overrides(&self) -> Result<(), String> {
+        if let Some(devnet) = &self.devnet {
+            devnet.apply_global_overrides()?;
         }
+        Ok(())
     }
 }

@@ -114,6 +114,46 @@ pub struct ProviderRegistrationPayload {
 }
 
 impl ProviderRegistrationPayload {
+    /// Latest spec version of the ProRegTx payload.
+    pub const CURRENT_VERSION: u16 = 2;
+
+    /// Create a new ProRegTx payload at [`Self::CURRENT_VERSION`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        masternode_type: ProviderMasternodeType,
+        masternode_mode: u16,
+        collateral_outpoint: OutPoint,
+        service_address: SocketAddr,
+        owner_key_hash: PubkeyHash,
+        operator_public_key: BLSPublicKey,
+        voting_key_hash: PubkeyHash,
+        operator_reward: u16,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        signature: Vec<u8>,
+        platform_node_id: Option<PubkeyHash>,
+        platform_p2p_port: Option<u16>,
+        platform_http_port: Option<u16>,
+    ) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            masternode_type,
+            masternode_mode,
+            collateral_outpoint,
+            service_address,
+            owner_key_hash,
+            operator_public_key,
+            voting_key_hash,
+            operator_reward,
+            script_payout,
+            inputs_hash,
+            signature,
+            platform_node_id,
+            platform_p2p_port,
+            platform_http_port,
+        }
+    }
+
     /// A convenience method to get the address from payout script
     pub fn payout_address(&self, network: Network) -> Result<Address, encode::Error> {
         match Address::from_script(&self.script_payout, network) {

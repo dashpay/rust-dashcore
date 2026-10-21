@@ -22,34 +22,22 @@
 //!
 
 use core::fmt;
-#[cfg(feature = "std")]
 use std::error;
 
 use crate::io;
 
 pub mod constants;
 
-#[cfg(feature = "std")]
 pub mod address;
-#[cfg(feature = "std")]
 pub use self::address::Address;
-#[cfg(feature = "std")]
 pub mod message;
-#[cfg(feature = "std")]
 pub mod message_blockdata;
-#[cfg(feature = "std")]
 pub mod message_bloom;
-#[cfg(feature = "std")]
 pub mod message_compact_blocks;
-#[cfg(feature = "std")]
 pub mod message_filter;
-#[cfg(feature = "std")]
 pub mod message_headers2;
-#[cfg(feature = "std")]
 pub mod message_network;
-#[cfg(feature = "std")]
 pub mod message_qrinfo;
-#[cfg(feature = "std")]
 pub mod message_sml;
 
 /// Network error
@@ -80,7 +68,6 @@ impl From<io::Error> for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {

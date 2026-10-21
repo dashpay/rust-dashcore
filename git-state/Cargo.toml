@@ -1,0 +1,12 @@
+[package]
+name = "git-state"
+version = { workspace = true }
+edition = "2021"
+authors = ["Dash Core Team"]
+description = "Compile-time git repository state as procedural macros"
+license = "MIT"
+repository = "https://github.com/dashpay/rust-dashcore"
+rust-version = "1.89"
+
+[lib]
+proc-macro = true

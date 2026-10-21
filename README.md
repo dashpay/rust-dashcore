@@ -9,13 +9,28 @@
 
   <p>
     <a href="https://crates.io/crates/dash"><img alt="Crate Info" src="https://img.shields.io/crates/v/dash.svg"/></a>
-    <a href="https://github.com/dashevo/rust-dashcore/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
-    <a href="https://github.com/dashevo/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashevo/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
+    <a href="https://github.com/dashpay/rust-dashcore/blob/main/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
+    <a href="https://github.com/dashpay/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashpay/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
+    <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/main"><img alt="Coverage (main)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/main/graph/badge.svg"/></a>
+    <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/dev"><img alt="Coverage (dev)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/dev/graph/badge.svg"/></a>
     <a href="https://docs.rs"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-rust--dashcore-green"/></a>
     <a href="#minimum-supported-rust-version-msrv"><img alt="Rustc Version 1.89+" src="https://img.shields.io/badge/rustc-1.89%2B-lightgrey.svg"/></a>
-    <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/dashevo/rust-dashcore">
+    <img alt="Lines of code" src="https://img.shields.io/tokei/lines/github/dashpay/rust-dashcore">
   </p>
 </div>
+
+<details>
+<summary>Per-crate coverage</summary>
+
+| Group | Crates | Coverage |
+|-------|--------|----------|
+| core | dashcore, dashcore_hashes, dashcore-private | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=core)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=core) |
+| spv | dash-spv | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=spv)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=spv) |
+| wallet | key-wallet | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=wallet)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=wallet) |
+| ffi | dash-spv-ffi, key-wallet-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=ffi)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=ffi) |
+| rpc | dashcore-rpc, dashcore-rpc-json | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=rpc)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=rpc) |
+
+</details>
 
 For contributors: see CONTRIBUTING.md and AGENTS.md for branch policy and commands.
 
@@ -31,8 +46,7 @@ Supports (or should support)
 * Pay-to-contract support as in Appendix A of the [Blockstream sidechains whitepaper](https://www.blockstream.com/sidechains.pdf)
 * JSONRPC interaction with Dash Core
 * FFI bindings for C/Swift integration (dash-spv-ffi, key-wallet-ffi)
-* [Unified SDK](UNIFIED_SDK.md) option for iOS that combines Core and Platform functionality
-* [High-level wallet management](key-wallet-manager/README.md) with transaction building and UTXO management
+* High-level wallet management with transaction building and UTXO management
 
 # Known limitations
 
@@ -84,12 +98,9 @@ See `client/examples/` for more usage examples.
 
 This library provides comprehensive wallet functionality through multiple components:
 
-* **key-wallet**: Low-level cryptographic primitives for HD wallets, mnemonic generation, and key derivation
-* **[key-wallet-manager](key-wallet-manager/README.md)**: High-level wallet management with transaction building, UTXO tracking, and coin selection
+* **key-wallet**: Low-level cryptographic primitives for HD wallets, mnemonic generation, and key derivation; and high-level wallet management with transaction building, UTXO tracking, and coin selection
 * **key-wallet-ffi**: C/Swift FFI bindings for mobile integration
 * **dash-spv**: SPV (Simplified Payment Verification) client implementation
-
-For most applications, start with [key-wallet-manager](key-wallet-manager/README.md) which provides a complete, easy-to-use interface for wallet operations.
 
 # Supported Dash Core Versions
 The following versions are officially supported:
@@ -108,11 +119,6 @@ This workspace compiles on Rust 1.89 or newer. Crates use mixed editions (2021 a
 
 Documentation can be found on [dashcore.readme.io/docs](https://dashcore.readme.io/docs).
 
-## Component Documentation
-
-* **[key-wallet-manager](key-wallet-manager/README.md)** - High-level wallet management guide
-* **[Unified SDK](UNIFIED_SDK.md)** - iOS SDK combining Core and Platform functionality
-
 # Contributing
 
 Contributions are generally welcome. If you intend to make larger changes please
@@ -121,7 +127,7 @@ architectural mismatches.
 
 ## Branching Model
 
-Feature work targets the active `v**-dev` branch. Submit hotfixes and documentation-only changes to `master` unless maintainers direct otherwise.
+Feature work targets the `dev` branch. Submit hotfixes and documentation-only changes to `main` unless maintainers direct otherwise. The `main` branch tracks the latest tagged release. Release branches (`chore/release-vX.Y.Z`) are short-lived, cut from `dev` per release.
 
 ## Installing Rust
 

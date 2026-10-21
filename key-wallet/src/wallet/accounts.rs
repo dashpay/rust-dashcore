@@ -9,8 +9,8 @@ use crate::account::BLSAccount;
 use crate::account::EdDSAAccount;
 use crate::account::{Account, AccountType};
 use crate::bip32::ExtendedPubKey;
-use crate::derivation::HDWallet;
 use crate::error::{Error, Result};
+use secp256k1::Secp256k1;
 
 impl Wallet {
     /// Add a new account to the wallet
@@ -44,8 +44,9 @@ impl Wallet {
             // This will fail if the wallet doesn't have a private key (watch-only or externally managed)
             let root_key = self.root_extended_priv_key()?;
             let master_key = root_key.to_extended_priv_key(self.network);
-            let hd_wallet = HDWallet::new(master_key);
-            let account_xpriv = hd_wallet.derive(&derivation_path)?;
+            let secp = Secp256k1::new();
+            let account_xpriv =
+                master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
             Account::from_xpriv(Some(wallet_id), account_type, account_xpriv, self.network)?
         };
@@ -60,64 +61,6 @@ impl Wallet {
 
         // Insert into the collection
         self.accounts.insert(account).map_err(|e| Error::InvalidParameter(e.to_string()))
-    }
-
-    /// Add a new account to a wallet that requires a passphrase
-    ///
-    /// This function only works with wallets created with a passphrase (MnemonicWithPassphrase type).
-    /// It will fail if called on other wallet types.
-    ///
-    /// # Arguments
-    /// * `account_type` - The type of account to create
-    /// * `passphrase` - The passphrase used when creating the wallet
-    ///
-    /// # Returns
-    /// Ok(()) if the account was successfully added
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - The wallet is not a passphrase wallet
-    /// - The account already exists
-    /// - The passphrase is incorrect (will fail during derivation)
-    pub fn add_account_with_passphrase(
-        &mut self,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Check that this is a passphrase wallet
-        match &self.wallet_type {
-            crate::wallet::WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
-                // Get a unique wallet ID for this wallet first
-                let wallet_id = self.get_wallet_id();
-
-                // Derive the account using the passphrase
-                let derivation_path = account_type.derivation_path(self.network)?;
-
-                // Generate seed with passphrase
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = super::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-                let master_key = root_key.to_extended_priv_key(self.network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_xpriv = hd_wallet.derive(&derivation_path)?;
-
-                let account = Account::from_xpriv(Some(wallet_id), account_type, account_xpriv, self.network)?;
-
-                // Check if account already exists
-                if self.accounts.contains_account_type(&account_type) {
-                    return Err(Error::InvalidParameter(format!(
-                        "Account type {:?} already exists for network {:?}",
-                        account_type, self.network
-                    )));
-                }
-
-                // Insert into the collection
-                self.accounts.insert(account)
-                    .map_err(|e| Error::InvalidParameter(e.to_string()))
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
     }
 
     /// Add a new BLS account to the wallet
@@ -158,8 +101,9 @@ impl Wallet {
             // This will fail if the wallet doesn't have a private key
             let root_key = self.root_extended_priv_key()?;
             let master_key = root_key.to_extended_priv_key(self.network);
-            let hd_wallet = HDWallet::new(master_key);
-            let account_xpriv = hd_wallet.derive(&derivation_path)?;
+            let secp = Secp256k1::new();
+            let account_xpriv =
+                master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
             // Create BLS seed from derived private key
             let seed = account_xpriv.private_key.secret_bytes();
@@ -178,67 +122,6 @@ impl Wallet {
         self.accounts
             .insert_bls_account(bls_account)
             .map_err(|e| Error::InvalidParameter(e.to_string()))
-    }
-
-    /// Add a new BLS account to a wallet that requires a passphrase
-    ///
-    /// This function only works with wallets created with a passphrase (MnemonicWithPassphrase type).
-    ///
-    /// # Arguments
-    /// * `account_type` - The type of account (must be ProviderOperatorKeys)
-    /// * `passphrase` - The passphrase used when creating the wallet
-    ///
-    /// # Returns
-    /// Ok(()) if the account was successfully added
-    #[cfg(feature = "bls")]
-    pub fn add_bls_account_with_passphrase(
-        &mut self,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Validate account type
-        if !matches!(account_type, AccountType::ProviderOperatorKeys) {
-            return Err(Error::InvalidParameter(
-                "BLS accounts can only be ProviderOperatorKeys".to_string(),
-            ));
-        }
-
-        // Check that this is a passphrase wallet
-        match &self.wallet_type {
-            crate::wallet::WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
-                // Get a unique wallet ID for this wallet first
-                let wallet_id = self.get_wallet_id();
-
-                // Derive the account using the passphrase
-                let derivation_path = account_type.derivation_path(self.network)?;
-
-                // Generate seed with passphrase
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = super::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-                let master_key = root_key.to_extended_priv_key(self.network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_xpriv = hd_wallet.derive(&derivation_path)?;
-
-                // Create BLS seed from derived private key
-                let bls_seed = account_xpriv.private_key.secret_bytes();
-                let bls_account = BLSAccount::from_seed(Some(wallet_id.to_vec()), account_type, bls_seed, self.network)?;
-
-                // Check if account already exists
-                if self.accounts.contains_account_type(&account_type) {
-                    return Err(Error::InvalidParameter(format!(
-                        "Account type {:?} already exists for network {:?}",
-                        account_type, self.network
-                    )));
-                }
-
-                // Insert into the collection
-                self.accounts.insert_bls_account(bls_account)
-                    .map_err(|e| Error::InvalidParameter(e.to_string()))
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_bls_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
     }
 
     /// Add a new EdDSA account to the wallet
@@ -279,8 +162,9 @@ impl Wallet {
             // This will fail if the wallet doesn't have a private key
             let root_key = self.root_extended_priv_key()?;
             let master_key = root_key.to_extended_priv_key(self.network);
-            let hd_wallet = HDWallet::new(master_key);
-            let account_xpriv = hd_wallet.derive(&derivation_path)?;
+            let secp = Secp256k1::new();
+            let account_xpriv =
+                master_key.derive_priv(&secp, &derivation_path).map_err(Error::Bip32)?;
 
             // Create Ed25519 seed from derived private key
             let seed = account_xpriv.private_key.secret_bytes();
@@ -299,67 +183,6 @@ impl Wallet {
         self.accounts
             .insert_eddsa_account(eddsa_account)
             .map_err(|e| Error::InvalidParameter(e.to_string()))
-    }
-
-    /// Add a new EdDSA account to a wallet that requires a passphrase
-    ///
-    /// This function only works with wallets created with a passphrase (MnemonicWithPassphrase type).
-    ///
-    /// # Arguments
-    /// * `account_type` - The type of account (must be ProviderPlatformKeys)
-    /// * `passphrase` - The passphrase used when creating the wallet
-    ///
-    /// # Returns
-    /// Ok(()) if the account was successfully added
-    #[cfg(feature = "eddsa")]
-    pub fn add_eddsa_account_with_passphrase(
-        &mut self,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Validate account type
-        if !matches!(account_type, AccountType::ProviderPlatformKeys) {
-            return Err(Error::InvalidParameter(
-                "EdDSA accounts can only be ProviderPlatformKeys".to_string(),
-            ));
-        }
-
-        // Check that this is a passphrase wallet
-        match &self.wallet_type {
-            crate::wallet::WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
-                // Get a unique wallet ID for this wallet first
-                let wallet_id = self.get_wallet_id();
-
-                // Derive the account using the passphrase
-                let derivation_path = account_type.derivation_path(self.network)?;
-
-                // Generate seed with passphrase
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = super::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-                let master_key = root_key.to_extended_priv_key(self.network);
-                let hd_wallet = HDWallet::new(master_key);
-                let account_xpriv = hd_wallet.derive(&derivation_path)?;
-
-                // Create Ed25519 seed from derived private key
-                let ed25519_seed = account_xpriv.private_key.secret_bytes();
-                let eddsa_account = EdDSAAccount::from_seed(Some(wallet_id.to_vec()), account_type, ed25519_seed, self.network)?;
-
-                // Check if account already exists
-                if self.accounts.contains_account_type(&account_type) {
-                    return Err(Error::InvalidParameter(format!(
-                        "Account type {:?} already exists for network {:?}",
-                        account_type, self.network
-                    )));
-                }
-
-                // Insert into the collection
-                self.accounts.insert_eddsa_account(eddsa_account)
-                    .map_err(|e| Error::InvalidParameter(e.to_string()))
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_eddsa_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
     }
 
     /// Get the wallet ID for this wallet

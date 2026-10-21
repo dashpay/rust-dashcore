@@ -1,6 +1,5 @@
 //! Integration tests for QRInfo message handling
 
-use dash_spv::client::ClientConfig;
 use dashcore::{
     bls_sig_utils::{BLSPublicKey, BLSSignature},
     hash_types::QuorumVVecHash,
@@ -8,10 +7,9 @@ use dashcore::{
     network::message_sml::MnListDiff,
     sml::llmq_type::LLMQType,
     transaction::special_transaction::quorum_commitment::QuorumEntry,
-    BlockHash, Network, QuorumHash, Transaction,
+    BlockHash, QuorumHash, Transaction,
 };
 use dashcore_hashes::Hash;
-use std::time::Duration;
 
 /// Helper to generate test QRInfo data
 fn create_test_qr_info(_base_height: u32, tip_height: u32) -> QRInfo {
@@ -115,28 +113,6 @@ async fn test_qrinfo_message_creation() {
     // Verify quorum snapshots have expected properties
     assert_eq!(qr_info.quorum_snapshot_at_h_minus_c.skip_list_mode, MNSkipListMode::NoSkipping);
     assert_eq!(qr_info.quorum_snapshot_at_h_minus_c.active_quorum_members.len(), 3);
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_qrinfo_config_defaults() {
-    // Test default configuration values
-    let config = ClientConfig::default();
-
-    // QR info extra share is disabled by default
-    assert!(!config.qr_info_extra_share);
-    assert_eq!(config.qr_info_timeout, Duration::from_secs(30));
-}
-
-#[tokio::test]
-async fn test_qrinfo_config_builders() {
-    // Test configuration builder methods
-    let config = ClientConfig::new(Network::Testnet)
-        .with_qr_info_extra_share(false)
-        .with_qr_info_timeout(Duration::from_secs(60));
-
-    assert!(!config.qr_info_extra_share);
-    assert_eq!(config.qr_info_timeout, Duration::from_secs(60));
 }
 
 #[tokio::test]

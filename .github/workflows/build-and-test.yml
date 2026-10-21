@@ -1,0 +1,99 @@
+name: Build and Test
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+      coverage:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Keep these defaults in sync with contrib/setup-dashd.py
+env:
+  DASHVERSION: "23.1.0"
+  TEST_DATA_REPO: "dashpay/regtest-blockchain"
+  TEST_DATA_VERSION: "v0.0.4"
+
+jobs:
+  test:
+    name: ${{ matrix.group }}
+    runs-on: ${{ inputs.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ["core", "spv", "wallet", "ffi", "rpc"]
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: ${{ inputs.coverage && 'llvm-tools' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
+          prefix-key: "v1-rust"
+          cache-bin: false
+
+      - name: Install cargo-llvm-cov
+        if: inputs.coverage
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - run: pip install pyyaml
+
+      # Set up dashd and test data for groups that need it
+      - name: Cache dashd and test data
+        if: matrix.group == 'spv' || matrix.group == 'ffi'
+        uses: actions/cache@v5
+        with:
+          path: .rust-dashcore-test
+          key: rust-dashcore-test-${{ inputs.os }}-${{ env.DASHVERSION }}-${{ env.TEST_DATA_REPO }}-${{ env.TEST_DATA_VERSION }}
+
+      - name: Setup dashd for integration tests
+        if: matrix.group == 'spv' || matrix.group == 'ffi'
+        env:
+          CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
+        shell: bash
+        run: python contrib/setup-dashd.py >> "$GITHUB_ENV"
+
+      - name: Run tests
+        id: tests
+        env:
+          DASHD_TEST_RETAIN_DIR: ${{ (matrix.group == 'spv' || matrix.group == 'ffi') && format('{0}/dashd-test-logs', runner.temp) || '' }}
+        run: >
+          python .github/scripts/ci_config.py run-group ${{ matrix.group }}
+          --os ${{ inputs.os }}
+          ${{ inputs.coverage && '--coverage' || '' }}
+
+      - name: Generate coverage report
+        if: inputs.coverage && steps.tests.outputs.crate_flags
+        run: cargo llvm-cov report --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        if: inputs.coverage && steps.tests.outputs.crate_flags
+        uses: codecov/codecov-action@v6
+        with:
+          files: lcov.info
+          flags: ${{ steps.tests.outputs.crate_flags }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+
+      - name: Upload failed dashd test logs
+        if: failure() && (matrix.group == 'spv' || matrix.group == 'ffi')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.group }}-test-logs-${{ inputs.os }}
+          path: ${{ runner.temp }}/dashd-test-logs/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Validate headers
+        if: matrix.group == 'ffi' && inputs.os == 'ubuntu-latest'
+        run: |
+          sudo apt update && sudo apt install -y build-essential
+          bash ffi-c-tests/validate-headers.sh ./target/llvm-cov-target/debug/include

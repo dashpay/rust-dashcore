@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use key_wallet_ffi::FFINetwork;
+    use dash_network::ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_void};
@@ -41,34 +41,6 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_array_memory_lifecycle() {
-        unsafe {
-            // Test with different types and sizes
-            let small_array: Vec<u32> = vec![1, 2, 3, 4, 5];
-            let small_ffi = FFIArray::new(small_array);
-            assert!(!small_ffi.data.is_null());
-            assert_eq!(small_ffi.len, 5);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(small_ffi)));
-
-            // Test with large array
-            let large_array: Vec<u64> = (0..100_000).collect();
-            let large_ffi = FFIArray::new(large_array);
-            assert!(!large_ffi.data.is_null());
-            assert_eq!(large_ffi.len, 100_000);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(large_ffi)));
-
-            // Test with empty array
-            let empty_array: Vec<u8> = vec![];
-            let empty_ffi = FFIArray::new(empty_array);
-            // Even empty arrays have valid pointers
-            assert!(!empty_ffi.data.is_null());
-            assert_eq!(empty_ffi.len, 0);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(empty_ffi)));
-        }
-    }
-
-    #[test]
-    #[serial]
     fn test_client_memory_lifecycle() {
         unsafe {
             let temp_dir = TempDir::new().unwrap();
@@ -78,18 +50,13 @@ mod tests {
 
             // Create and destroy multiple clients
             for _ in 0..10 {
-                let client = dash_spv_ffi_client_new(config);
+                let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
                 assert!(!client.is_null());
 
                 // Perform some operations
                 let progress = dash_spv_ffi_client_get_sync_progress(client);
                 if !progress.is_null() {
                     dash_spv_ffi_sync_progress_destroy(progress);
-                }
-
-                let stats = dash_spv_ffi_client_get_stats(client);
-                if !stats.is_null() {
-                    dash_spv_ffi_spv_stats_destroy(stats);
                 }
 
                 dash_spv_ffi_client_destroy(client);
@@ -121,17 +88,6 @@ mod tests {
 
                         dash_spv_ffi_string_destroy(ffi);
                     }
-
-                    // Each thread creates and destroys arrays
-                    for j in 0..50 {
-                        let array: Vec<u32> = (0..j * 10).collect();
-                        let ffi_array = FFIArray::new(array);
-
-                        // Simulate some work
-                        thread::sleep(Duration::from_micros(10));
-
-                        dash_spv_ffi_array_destroy(Box::into_raw(Box::new(ffi_array)));
-                    }
                 }
             });
             handles.push(handle);
@@ -160,14 +116,6 @@ mod tests {
                 assert_eq!(recovered.len(), size);
 
                 dash_spv_ffi_string_destroy(ffi_string);
-
-                // Array allocation
-                let large_array: Vec<u8> = vec![0xFF; size];
-                let ffi_array = FFIArray::new(large_array);
-                assert!(!ffi_array.data.is_null());
-                assert_eq!(ffi_array.len, size);
-
-                dash_spv_ffi_array_destroy(Box::into_raw(Box::new(ffi_array)));
             }
         }
     }
@@ -190,46 +138,6 @@ mod tests {
                 length: 0,
             };
             dash_spv_ffi_string_destroy(null_string);
-
-            // Test with array
-            let ffi_array = FFIArray::new(vec![1u32, 2, 3]);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(ffi_array)));
-
-            // Destroying with null should be safe
-            let null_array = FFIArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-                capacity: 0,
-                elem_size: 0,
-                elem_align: 1,
-            };
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(null_array)));
-        }
-    }
-
-    #[test]
-    #[serial]
-    fn test_memory_alignment() {
-        unsafe {
-            // Test that memory is properly aligned for different types
-
-            // u8 - 1 byte alignment
-            let u8_array = vec![1u8, 2, 3, 4];
-            let u8_ffi = FFIArray::new(u8_array);
-            assert_eq!(u8_ffi.data as usize % std::mem::align_of::<u8>(), 0);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(u8_ffi)));
-
-            // u32 - 4 byte alignment
-            let u32_array = vec![1u32, 2, 3, 4];
-            let u32_ffi = FFIArray::new(u32_array);
-            assert_eq!(u32_ffi.data as usize % std::mem::align_of::<u32>(), 0);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(u32_ffi)));
-
-            // u64 - 8 byte alignment
-            let u64_array = vec![1u64, 2, 3, 4];
-            let u64_ffi = FFIArray::new(u64_array);
-            assert_eq!(u64_ffi.data as usize % std::mem::align_of::<u64>(), 0);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(u64_ffi)));
         }
     }
 
@@ -272,7 +180,7 @@ mod tests {
             let path = CString::new(temp_dir.path().to_str().unwrap()).unwrap();
             dash_spv_ffi_config_set_data_dir(config, path.as_ptr());
 
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Get structures that contain FFIString and other pointers
@@ -280,12 +188,6 @@ mod tests {
             if !progress.is_null() {
                 // SyncProgress might contain strings or other allocated data
                 dash_spv_ffi_sync_progress_destroy(progress);
-            }
-
-            let stats = dash_spv_ffi_client_get_stats(client);
-            if !stats.is_null() {
-                // Stats might contain strings or other allocated data
-                dash_spv_ffi_spv_stats_destroy(stats);
             }
 
             dash_spv_ffi_client_destroy(client);
@@ -338,13 +240,6 @@ mod tests {
             let recovered = FFIString::from_ptr(empty_string.ptr).unwrap();
             assert_eq!(recovered, "");
             dash_spv_ffi_string_destroy(empty_string);
-
-            // Empty array
-            let empty_vec: Vec<u8> = vec![];
-            let empty_array = FFIArray::new(empty_vec);
-            assert!(!empty_array.data.is_null());
-            assert_eq!(empty_array.len, 0);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(empty_array)));
         }
     }
 
@@ -392,23 +287,12 @@ mod tests {
                     .map(|i| FFIString::new(&format!("Cycle {} String {}", cycle, i)))
                     .collect();
 
-                let arrays: Vec<_> = (0..10)
-                    .map(|i| {
-                        let data: Vec<u32> = (0..i * 10).collect();
-                        FFIArray::new(data)
-                    })
-                    .collect();
-
                 // Do some work
                 thread::sleep(Duration::from_micros(100));
 
                 // Clean up
                 for s in strings {
                     dash_spv_ffi_string_destroy(s);
-                }
-
-                for a in arrays {
-                    dash_spv_ffi_array_destroy(Box::into_raw(Box::new(a)));
                 }
 
                 cycle += 1;
@@ -424,18 +308,13 @@ mod tests {
         // Test that memory allocated in one thread can be safely used in another
         unsafe {
             let string = FFIString::new("Allocated in thread 1");
-            let array = FFIArray::new(vec![1u32, 2, 3, 4, 5]);
 
             // Verify we can read the data
             let s = FFIString::from_ptr(string.ptr).unwrap();
             assert_eq!(s, "Allocated in thread 1");
 
-            let slice = array.as_slice::<u32>();
-            assert_eq!(slice, &[1, 2, 3, 4, 5]);
-
             // Clean up
             dash_spv_ffi_string_destroy(string);
-            dash_spv_ffi_array_destroy(Box::into_raw(Box::new(array)));
         }
     }
 }

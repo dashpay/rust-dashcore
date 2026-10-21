@@ -244,7 +244,6 @@ impl<'de, T: Hash + Deserialize<'de>> Deserialize<'de> for Hmac<T> {
 #[cfg(test)]
 mod tests {
     #[test]
-    #[cfg(feature = "alloc")]
     fn test() {
         use crate::{sha256, Hash, HashEngine, Hmac, HmacEngine};
 

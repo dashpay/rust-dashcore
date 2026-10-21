@@ -26,6 +26,8 @@ coordination.md
 
 # Build artifacts
 **/*.rs.bk
+dash-spv-ffi/include/
+key-wallet-ffi/include/
 *.a
 *.so
 *.dylib
@@ -43,7 +45,8 @@ cobertura.xml
 *.tmp
 .tmp/
 
+# Python
+__pycache__/
+
 # Build scripts artifacts
 *.log
-/dash-spv-ffi/peer_reputation.json
-/dash-spv/peer_reputation.json

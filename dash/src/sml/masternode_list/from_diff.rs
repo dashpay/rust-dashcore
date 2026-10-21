@@ -1,4 +1,6 @@
 use crate::bls_sig_utils::BLSSignature;
+
+use crate::Network;
 use crate::network::constants::NetworkExt;
 use crate::network::message_sml::MnListDiff;
 use crate::sml::error::SmlError;
@@ -11,7 +13,6 @@ use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
 use crate::{BlockHash, QuorumHash};
-use dash_network::Network;
 use hashes::Hash;
 use std::collections::BTreeMap;
 
@@ -107,8 +108,11 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             }
         }
 
-        // Verify all slots have been filled
-        if quorum_sig_lookup.iter().any(Option::is_none) {
+        // quorumsCLSigs only exists after V20 activation (protocol 70230).
+        // Pre-V20 blocks have no chainlock signatures. See DIP-0029.
+        if known_height >= network.v20_activation_height()
+            && quorum_sig_lookup.iter().any(Option::is_none)
+        {
             return Err(SmlError::IncompleteSignatureSet);
         }
 
@@ -127,7 +131,10 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                         ),
                         commitment_hash,
                         entry_hash,
-                        verifying_chain_lock_signature: quorum_sig_lookup[idx]
+                        verifying_chain_lock_signature: quorum_sig_lookup
+                            .get(idx)
+                            .copied()
+                            .flatten()
                             .copied()
                             .map(VerifyingChainLockSignaturesType::NonRotating),
                     }
@@ -145,5 +152,64 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
             masternodes,
             quorums,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::consensus::deserialize;
+
+    #[test]
+    fn post_v20_requires_chainlock_signatures() {
+        let mn_list_diff_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
+        let mut diff: MnListDiff =
+            deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+
+        // Clear signatures to simulate missing data
+        diff.quorums_chainlock_signatures.clear();
+
+        // Height 2227096 is post-V20 on mainnet (1,987,776)
+        let post_v20_height = 2_227_096;
+        assert!(post_v20_height >= Network::Mainnet.v20_activation_height());
+
+        let result = MasternodeList::try_from_with_block_hash_lookup(
+            diff,
+            |_| Some(post_v20_height),
+            Network::Mainnet,
+        );
+
+        assert!(
+            matches!(result, Err(SmlError::IncompleteSignatureSet)),
+            "Post-V20 blocks should require chainlock signatures"
+        );
+    }
+
+    #[test]
+    fn pre_v20_allows_missing_chainlock_signatures() {
+        let mn_list_diff_bytes: &[u8] =
+            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
+        let mut diff: MnListDiff =
+            deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+
+        // Clear signatures to simulate pre-V20 data
+        diff.quorums_chainlock_signatures.clear();
+
+        // Use a pre-V20 height on mainnet (V20 at 1,987,776)
+        let pre_v20_height = 1_900_000;
+        assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
+
+        let result = MasternodeList::try_from_with_block_hash_lookup(
+            diff,
+            |_| Some(pre_v20_height),
+            Network::Mainnet,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Pre-V20 blocks should allow missing chainlock signatures: {:?}",
+            result.err()
+        );
     }
 }

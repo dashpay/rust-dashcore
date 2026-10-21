@@ -19,7 +19,7 @@ fn test_transaction_62364518_net_amount_calculation() {
 
     let watched_address = Address::from_str("XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2")
         .unwrap()
-        .require_network(Network::Dash)
+        .require_network(Network::Mainnet)
         .unwrap();
 
     // Input values (all from the same watched address):
@@ -32,7 +32,7 @@ fn test_transaction_62364518_net_amount_calculation() {
     let output_to_other = 20008i64; // 0.00020008 BTC to different address
     let output_to_watched = 44110147903i64; // 441.10147903 BTC back to watched address (change)
 
-    // Simulate the balance change calculation as done in block_processor.rs
+    // Simulate the balance change calculation
     let mut balance_changes: HashMap<Address, i64> = HashMap::new();
 
     // Process inputs (subtract from balance - spending UTXOs)
@@ -121,7 +121,7 @@ fn test_transaction_62364518_net_amount_calculation() {
 fn test_suspected_bug_only_first_input() {
     let watched_address = Address::from_str("XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2")
         .unwrap()
-        .require_network(Network::Dash)
+        .require_network(Network::Mainnet)
         .unwrap();
 
     // Same transaction data
@@ -179,7 +179,7 @@ fn test_suspected_bug_only_first_input() {
 fn test_multiple_inputs_single_output() {
     let watched_address = Address::from_str("XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2")
         .unwrap()
-        .require_network(Network::Dash)
+        .require_network(Network::Mainnet)
         .unwrap();
 
     // Simpler test case: consolidation transaction
@@ -212,7 +212,7 @@ fn test_multiple_inputs_single_output() {
 fn test_receive_only_transaction() {
     let receiver_address = Address::from_str("XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2")
         .unwrap()
-        .require_network(Network::Dash)
+        .require_network(Network::Mainnet)
         .unwrap();
 
     let mut balance_changes: HashMap<Address, i64> = HashMap::new();
@@ -232,7 +232,7 @@ fn test_receive_only_transaction() {
 fn test_spend_only_transaction() {
     let sender_address = Address::from_str("XjbaGWaGnvEtuQAUoBgDxJWe8ZNv45upG2")
         .unwrap()
-        .require_network(Network::Dash)
+        .require_network(Network::Mainnet)
         .unwrap();
 
     let mut balance_changes: HashMap<Address, i64> = HashMap::new();

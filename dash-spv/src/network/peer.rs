@@ -1,5 +1,6 @@
 //! Dash peer connection management.
 
+use dashcore::network::constants::ServiceFlags;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use dashcore::Network;
 
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::constants::PING_INTERVAL;
-use crate::types::PeerInfo;
+use crate::network::Message;
 
 /// Internal state for the TCP connection
 struct ConnectionState {
@@ -45,8 +46,6 @@ pub struct Peer {
     relay: Option<bool>,
     prefers_headers2: bool,
     sent_sendheaders2: bool,
-    // Basic telemetry for resync events
-    consecutive_resyncs: u32,
 }
 
 impl Peer {
@@ -73,7 +72,6 @@ impl Peer {
             relay: None,
             prefers_headers2: false,
             sent_sendheaders2: false,
-            consecutive_resyncs: 0,
         }
     }
 
@@ -120,8 +118,33 @@ impl Peer {
             relay: None,
             prefers_headers2: false,
             sent_sendheaders2: false,
-            consecutive_resyncs: 0,
         })
+    }
+
+    pub fn version(&self) -> Option<u32> {
+        self.version
+    }
+
+    pub fn best_height(&self) -> Option<u32> {
+        self.best_height
+    }
+
+    /// Check if peer supports compact filters (BIP 157/158).
+    pub fn supports_compact_filters(&self) -> bool {
+        self.has_service(ServiceFlags::COMPACT_FILTERS)
+    }
+
+    /// Check if peer supports headers2 compression (DIP-0025).
+    pub fn supports_headers2(&self) -> bool {
+        self.has_service(ServiceFlags::NODE_HEADERS_COMPRESSED)
+    }
+
+    pub fn has_service(&self, flags: ServiceFlags) -> bool {
+        self.services.map(|s| ServiceFlags::from(s).has(flags)).unwrap_or(false)
+    }
+
+    pub(crate) fn services_known(&self) -> bool {
+        self.services.is_some()
     }
 
     /// Connect to the peer (instance method for compatibility).
@@ -264,7 +287,7 @@ impl Peer {
         );
 
         // Also log with standard logging for debugging
-        log::info!(
+        tracing::info!(
             "PEER_INFO_DEBUG: Updated peer {} with height={}, version={}",
             self.address,
             version_msg.start_height,
@@ -344,12 +367,10 @@ impl Peer {
     }
 
     /// Receive a message from the peer.
-    pub async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
-        // First check if we have a state
-        let state_arc = self
-            .state
-            .as_ref()
-            .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
+    pub async fn receive_message(&mut self) -> NetworkResult<Option<Message>> {
+        // If the state was cleared e.g. by a write-path broken pipe, treat as disconnected
+        // so the reader loop handles it identically to a read-path EOF.
+        let state_arc = self.state.as_ref().ok_or(NetworkError::PeerDisconnected)?;
 
         // Lock the state for the entire read operation
         // This ensures no concurrent access to the socket
@@ -372,12 +393,6 @@ impl Peer {
                             return Err(NetworkError::PeerDisconnected);
                         }
                         Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
                         Err(ref e)
                             if e.kind() == std::io::ErrorKind::ConnectionAborted
                                 || e.kind() == std::io::ErrorKind::ConnectionReset =>
@@ -405,7 +420,6 @@ impl Peer {
                                 self.address,
                                 pos
                             );
-                            self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
                             state.framing_buffer.drain(0..pos);
                             resync_steps += 1;
                             if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
@@ -422,7 +436,6 @@ impl Peer {
                                 self.address,
                                 dropped
                             );
-                            self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
                             state.framing_buffer.drain(0..dropped);
                             resync_steps += 1;
                             if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
@@ -436,12 +449,6 @@ impl Peer {
                                 return Err(NetworkError::PeerDisconnected);
                             }
                             Ok(_) => {}
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                return Ok(None);
-                            }
-                            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                                return Ok(None);
-                            }
                             Err(e) => {
                                 return Err(NetworkError::ConnectionFailed(format!(
                                     "Read failed: {}",
@@ -461,12 +468,6 @@ impl Peer {
                             return Err(NetworkError::PeerDisconnected);
                         }
                         Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
                         Err(e) => {
                             return Err(NetworkError::ConnectionFailed(format!(
                                 "Read failed: {}",
@@ -515,12 +516,6 @@ impl Peer {
                             return Err(NetworkError::PeerDisconnected);
                         }
                         Ok(_) => {}
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            return Ok(None);
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                            return Ok(None);
-                        }
                         Err(e) => {
                             return Err(NetworkError::ConnectionFailed(format!(
                                 "Read failed: {}",
@@ -554,7 +549,6 @@ impl Peer {
                     }
                     // Resync by dropping a byte and retrying
                     state.framing_buffer.drain(0..1);
-                    self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
                     resync_steps += 1;
                     if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
                         return Ok(None);
@@ -568,7 +562,6 @@ impl Peer {
                     Ok(raw_message) => {
                         // Consume bytes
                         state.framing_buffer.drain(0..total_len);
-                        self.consecutive_resyncs = 0;
 
                         // Validate magic matches our network
                         if raw_message.magic != self.network.magic() {
@@ -590,28 +583,7 @@ impl Peer {
                             raw_message.payload.cmd()
                         );
 
-                        if raw_message.payload.cmd() == "headers2" {
-                            tracing::info!("🎉 Received Headers2 message from {}!", self.address);
-                        }
-
-                        if let NetworkMessage::Block(ref block) = raw_message.payload {
-                            let block_hash = block.block_hash();
-                            tracing::info!(
-                                "Successfully decoded block {} from {}",
-                                block_hash,
-                                self.address
-                            );
-                        }
-
-                        if let NetworkMessage::Headers2(ref headers2) = raw_message.payload {
-                            tracing::info!(
-                                "Successfully decoded Headers2 message from {} with {} compressed headers",
-                                self.address,
-                                headers2.headers.len()
-                            );
-                        }
-
-                        return Ok(Some(raw_message.payload));
+                        return Ok(Some(Message::new(self.address, raw_message.payload)));
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -620,7 +592,6 @@ impl Peer {
                             e
                         );
                         state.framing_buffer.drain(0..1);
-                        self.consecutive_resyncs = self.consecutive_resyncs.saturating_add(1);
                         resync_steps += 1;
                         if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
                             return Ok(None);
@@ -682,21 +653,6 @@ impl Peer {
 
         // Connection is healthy
         true
-    }
-
-    /// Get peer information.
-    pub fn peer_info(&self) -> PeerInfo {
-        PeerInfo {
-            address: self.address,
-            connected: self.is_connected(),
-            last_seen: self.connected_at.unwrap_or(SystemTime::UNIX_EPOCH),
-            version: self.version,
-            services: self.services,
-            user_agent: self.user_agent.clone(),
-            best_height: self.best_height,
-            wants_dsq_messages: None, // We don't track this yet
-            has_sent_headers2: false, // Will be tracked by the connection pool
-        }
     }
 
     /// Get connection statistics.
@@ -777,8 +733,9 @@ impl Peer {
         true
     }
 
-    /// Clean up old pending pings that haven't received responses.
-    pub fn cleanup_old_pings(&mut self) {
+    /// Remove pending pings that have timed out.
+    /// Returns `true` if any pings were removed.
+    pub fn remove_expired_pings(&mut self) -> bool {
         const PING_TIMEOUT: Duration = Duration::from_secs(60); // 1 minute timeout for pings
 
         let now = SystemTime::now();
@@ -790,10 +747,13 @@ impl Peer {
             }
         }
 
+        let has_expired = !expired_nonces.is_empty();
         for nonce in expired_nonces {
             self.pending_pings.remove(&nonce);
             tracing::warn!("Ping timeout for {} with nonce {}", self.address, nonce);
         }
+
+        has_expired
     }
 
     /// Get ping/pong statistics.
@@ -841,5 +801,50 @@ impl Peer {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+impl Peer {
+    pub(crate) fn set_services(&mut self, flags: ServiceFlags) {
+        self.services = Some(flags.as_u64());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::time::{Duration, SystemTime};
+
+    use super::Peer;
+
+    #[test]
+    fn remove_expired_pings() {
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let mut peer = Peer::dummy(addr);
+        let now = SystemTime::now();
+        let expired = now - Duration::from_secs(61);
+
+        // No pings at all
+        assert!(!peer.remove_expired_pings());
+
+        // Only recent pings — nothing removed
+        peer.pending_pings.insert(1, now);
+        peer.pending_pings.insert(2, now);
+        assert!(!peer.remove_expired_pings());
+        assert_eq!(peer.pending_pings.len(), 2);
+
+        // Add an expired ping — only it gets removed
+        peer.pending_pings.insert(3, expired);
+        assert!(peer.remove_expired_pings());
+        assert_eq!(peer.pending_pings.len(), 2);
+        assert!(!peer.pending_pings.contains_key(&3));
+
+        // All expired — map ends up empty
+        peer.pending_pings.clear();
+        peer.pending_pings.insert(10, expired);
+        peer.pending_pings.insert(20, expired);
+        assert!(peer.remove_expired_pings());
+        assert!(peer.pending_pings.is_empty());
     }
 }

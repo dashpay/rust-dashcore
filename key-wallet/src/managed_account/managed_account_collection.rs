@@ -3,6 +3,8 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
+use std::collections::BTreeMap;
+
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::account::account_type::AccountType;
 use crate::gap_limit::{
@@ -10,47 +12,68 @@ use crate::gap_limit::{
     DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
 };
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::managed_account::managed_account_ref::{
+    ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount,
+};
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::managed_account::ManagedAccount;
+use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
+use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
+use crate::transaction_checking::account_checker::CoreAccountTypeMatch;
 use crate::{Account, AccountCollection};
 use crate::{KeySource, Network};
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// Collection of managed accounts organized by type
+// Note: `get_by_account_type_match` and `get_by_account_type_match_mut` are
+// defined inline below (rather than via a shared macro) because their match
+// arms now wrap results in different concrete variants of [`ManagedAccountRef`]
+// / [`ManagedAccountRefMut`] depending on whether the account field holds a
+// funds-bearing or keys-only account.
+
+/// Collection of managed accounts organized by type.
+///
+/// Account types that hold and spend funds (Standard, CoinJoin, DashPay) use
+/// the funds-bearing [`ManagedCoreFundsAccount`]. Account types that derive
+/// special-purpose keys but do not track per-account UTXOs (identity,
+/// asset-lock, provider) use the lightweight [`ManagedCoreKeysAccount`] —
+/// avoiding the memory cost of always-empty balance / UTXO state.
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ManagedAccountCollection {
     /// Standard BIP44 accounts by index
-    pub standard_bip44_accounts: BTreeMap<u32, ManagedAccount>,
+    pub standard_bip44_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
     /// Standard BIP32 accounts by index
-    pub standard_bip32_accounts: BTreeMap<u32, ManagedAccount>,
+    pub standard_bip32_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
     /// CoinJoin accounts by index
-    pub coinjoin_accounts: BTreeMap<u32, ManagedAccount>,
+    pub coinjoin_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
     /// Identity registration account (optional)
-    pub identity_registration: Option<ManagedAccount>,
+    pub identity_registration: Option<ManagedCoreKeysAccount>,
     /// Identity top-up accounts by registration index
-    pub identity_topup: BTreeMap<u32, ManagedAccount>,
+    pub identity_topup: BTreeMap<u32, ManagedCoreKeysAccount>,
     /// Identity top-up not bound to identity (optional)
-    pub identity_topup_not_bound: Option<ManagedAccount>,
+    pub identity_topup_not_bound: Option<ManagedCoreKeysAccount>,
     /// Identity invitation account (optional)
-    pub identity_invitation: Option<ManagedAccount>,
+    pub identity_invitation: Option<ManagedCoreKeysAccount>,
+    /// Asset lock address top-up account (optional)
+    pub asset_lock_address_topup: Option<ManagedCoreKeysAccount>,
+    /// Asset lock shielded address top-up account (optional)
+    pub asset_lock_shielded_address_topup: Option<ManagedCoreKeysAccount>,
     /// Provider voting keys (optional)
-    pub provider_voting_keys: Option<ManagedAccount>,
+    pub provider_voting_keys: Option<ManagedCoreKeysAccount>,
     /// Provider owner keys (optional)
-    pub provider_owner_keys: Option<ManagedAccount>,
+    pub provider_owner_keys: Option<ManagedCoreKeysAccount>,
     /// Provider operator keys (optional)
-    pub provider_operator_keys: Option<ManagedAccount>,
+    pub provider_operator_keys: Option<ManagedCoreKeysAccount>,
     /// Provider platform keys (optional)
-    pub provider_platform_keys: Option<ManagedAccount>,
+    pub provider_platform_keys: Option<ManagedCoreKeysAccount>,
     /// DashPay receiving funds accounts keyed by (index, user_id, friend_id)
-    pub dashpay_receival_accounts: BTreeMap<DashpayAccountKey, ManagedAccount>,
+    pub dashpay_receival_accounts: BTreeMap<DashpayAccountKey, ManagedCoreFundsAccount>,
     /// DashPay external accounts keyed by (index, user_id, friend_id)
-    pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, ManagedAccount>,
+    pub dashpay_external_accounts: BTreeMap<DashpayAccountKey, ManagedCoreFundsAccount>,
     /// Platform Payment accounts (DIP-17)
-    pub platform_payment_accounts: BTreeMap<PlatformPaymentAccountKey, ManagedAccount>,
+    /// Uses ManagedPlatformAccount for simplified balance tracking without transactions/UTXOs
+    pub platform_payment_accounts: BTreeMap<PlatformPaymentAccountKey, ManagedPlatformAccount>,
 }
 
 impl ManagedAccountCollection {
@@ -64,6 +87,8 @@ impl ManagedAccountCollection {
             identity_topup: BTreeMap::new(),
             identity_topup_not_bound: None,
             identity_invitation: None,
+            asset_lock_address_topup: None,
+            asset_lock_shielded_address_topup: None,
             provider_voting_keys: None,
             provider_owner_keys: None,
             provider_operator_keys: None,
@@ -108,6 +133,12 @@ impl ManagedAccountCollection {
             ManagedAccountType::IdentityInvitation {
                 ..
             } => self.identity_invitation.is_some(),
+            ManagedAccountType::AssetLockAddressTopUp {
+                ..
+            } => self.asset_lock_address_topup.is_some(),
+            ManagedAccountType::AssetLockShieldedAddressTopUp {
+                ..
+            } => self.asset_lock_shielded_address_topup.is_some(),
             ManagedAccountType::ProviderVotingKeys {
                 ..
             } => self.provider_voting_keys.is_some(),
@@ -160,11 +191,38 @@ impl ManagedAccountCollection {
         }
     }
 
-    /// Insert a managed account into the collection
-    pub fn insert(&mut self, account: ManagedAccount) {
+    /// Insert a managed account into the collection.
+    ///
+    /// Accepts either a [`ManagedCoreFundsAccount`] or a
+    /// [`ManagedCoreKeysAccount`] (via [`From`]) so the caller can pick the
+    /// appropriate variant for the account type. Returns an error if:
+    /// - a [`ManagedAccountType::PlatformPayment`] account is passed (use
+    ///   [`Self::insert_platform_account`] instead), or
+    /// - the variant doesn't match the account type (e.g. a funds account
+    ///   for an identity-registration type).
+    pub fn insert(
+        &mut self,
+        account: impl Into<OwnedManagedCoreAccount>,
+    ) -> Result<(), crate::error::Error> {
+        match account.into() {
+            OwnedManagedCoreAccount::Funds(a) => self.insert_funds_bearing_account(a),
+            OwnedManagedCoreAccount::Keys(a) => self.insert_keys_bearing_account(a),
+        }
+    }
+
+    /// Insert a funds-bearing account.
+    ///
+    /// Errors if the account's [`ManagedAccountType`] does not correspond to
+    /// a funds-bearing variant (Standard / CoinJoin / DashPay) — identity,
+    /// asset-lock, and provider variants must be inserted as
+    /// [`ManagedCoreKeysAccount`] via [`Self::insert_keys_bearing_account`].
+    pub fn insert_funds_bearing_account(
+        &mut self,
+        account: ManagedCoreFundsAccount,
+    ) -> Result<(), crate::error::Error> {
         use crate::account::StandardAccountType;
 
-        match &account.account_type {
+        match account.managed_account_type() {
             ManagedAccountType::Standard {
                 index,
                 standard_account_type,
@@ -182,47 +240,6 @@ impl ManagedAccountCollection {
                 ..
             } => {
                 self.coinjoin_accounts.insert(*index, account);
-            }
-            ManagedAccountType::IdentityRegistration {
-                ..
-            } => {
-                self.identity_registration = Some(account);
-            }
-            ManagedAccountType::IdentityTopUp {
-                registration_index,
-                ..
-            } => {
-                self.identity_topup.insert(*registration_index, account);
-            }
-            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                ..
-            } => {
-                self.identity_topup_not_bound = Some(account);
-            }
-            ManagedAccountType::IdentityInvitation {
-                ..
-            } => {
-                self.identity_invitation = Some(account);
-            }
-            ManagedAccountType::ProviderVotingKeys {
-                ..
-            } => {
-                self.provider_voting_keys = Some(account);
-            }
-            ManagedAccountType::ProviderOwnerKeys {
-                ..
-            } => {
-                self.provider_owner_keys = Some(account);
-            }
-            ManagedAccountType::ProviderOperatorKeys {
-                ..
-            } => {
-                self.provider_operator_keys = Some(account);
-            }
-            ManagedAccountType::ProviderPlatformKeys {
-                ..
-            } => {
-                self.provider_platform_keys = Some(account);
             }
             ManagedAccountType::DashpayReceivingFunds {
                 index,
@@ -251,17 +268,101 @@ impl ManagedAccountCollection {
                 self.dashpay_external_accounts.insert(key, account);
             }
             ManagedAccountType::PlatformPayment {
-                account: acc_index,
-                key_class,
                 ..
             } => {
-                let key = PlatformPaymentAccountKey {
-                    account: *acc_index,
-                    key_class: *key_class,
-                };
-                self.platform_payment_accounts.insert(key, account);
+                return Err(crate::error::Error::InvalidParameter(
+                    "Use insert_platform_account() for Platform Payment accounts".into(),
+                ));
+            }
+            other => {
+                return Err(crate::error::Error::InvalidParameter(format!(
+                    "Account type {:?} cannot be stored as ManagedCoreFundsAccount; use insert_keys_bearing_account instead",
+                    other.to_account_type(),
+                )));
             }
         }
+        Ok(())
+    }
+
+    /// Insert a keys-only account.
+    ///
+    /// Errors if the account's [`ManagedAccountType`] does not correspond to
+    /// a keys-only variant (identity / asset-lock / provider) — Standard,
+    /// CoinJoin, and DashPay variants must be inserted as
+    /// [`ManagedCoreFundsAccount`] via [`Self::insert_funds_bearing_account`].
+    pub fn insert_keys_bearing_account(
+        &mut self,
+        account: ManagedCoreKeysAccount,
+    ) -> Result<(), crate::error::Error> {
+        match account.managed_account_type() {
+            ManagedAccountType::IdentityRegistration {
+                ..
+            } => {
+                self.identity_registration = Some(account);
+            }
+            ManagedAccountType::IdentityTopUp {
+                registration_index,
+                ..
+            } => {
+                self.identity_topup.insert(*registration_index, account);
+            }
+            ManagedAccountType::IdentityTopUpNotBoundToIdentity {
+                ..
+            } => {
+                self.identity_topup_not_bound = Some(account);
+            }
+            ManagedAccountType::IdentityInvitation {
+                ..
+            } => {
+                self.identity_invitation = Some(account);
+            }
+            ManagedAccountType::AssetLockAddressTopUp {
+                ..
+            } => {
+                self.asset_lock_address_topup = Some(account);
+            }
+            ManagedAccountType::AssetLockShieldedAddressTopUp {
+                ..
+            } => {
+                self.asset_lock_shielded_address_topup = Some(account);
+            }
+            ManagedAccountType::ProviderVotingKeys {
+                ..
+            } => {
+                self.provider_voting_keys = Some(account);
+            }
+            ManagedAccountType::ProviderOwnerKeys {
+                ..
+            } => {
+                self.provider_owner_keys = Some(account);
+            }
+            ManagedAccountType::ProviderOperatorKeys {
+                ..
+            } => {
+                self.provider_operator_keys = Some(account);
+            }
+            ManagedAccountType::ProviderPlatformKeys {
+                ..
+            } => {
+                self.provider_platform_keys = Some(account);
+            }
+            other => {
+                return Err(crate::error::Error::InvalidParameter(format!(
+                    "Account type {:?} cannot be stored as ManagedCoreKeysAccount; use insert_funds_bearing_account instead",
+                    other.to_account_type(),
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Insert a managed platform account into the collection
+    pub fn insert_platform_account(&mut self, account: ManagedPlatformAccount) {
+        let key = PlatformPaymentAccountKey {
+            account: account.account,
+            key_class: account.key_class,
+        };
+        self.platform_payment_accounts.insert(key, account);
     }
 
     /// Create a ManagedAccountCollection from an AccountCollection
@@ -271,65 +372,79 @@ impl ManagedAccountCollection {
 
         // Convert standard BIP44 accounts
         for (index, account) in &account_collection.standard_bip44_accounts {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
                 managed_collection.standard_bip44_accounts.insert(*index, managed_account);
             }
         }
 
         // Convert standard BIP32 accounts
         for (index, account) in &account_collection.standard_bip32_accounts {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
                 managed_collection.standard_bip32_accounts.insert(*index, managed_account);
             }
         }
 
         // Convert CoinJoin accounts
         for (index, account) in &account_collection.coinjoin_accounts {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
                 managed_collection.coinjoin_accounts.insert(*index, managed_account);
             }
         }
 
-        // Convert special purpose accounts
+        // Convert special purpose accounts (identity / asset-lock / provider) —
+        // keys-only variants (no balance / UTXO state).
         if let Some(account) = &account_collection.identity_registration {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
                 managed_collection.identity_registration = Some(managed_account);
             }
         }
 
         for (index, account) in &account_collection.identity_topup {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
                 managed_collection.identity_topup.insert(*index, managed_account);
             }
         }
 
         if let Some(account) = &account_collection.identity_topup_not_bound {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
                 managed_collection.identity_topup_not_bound = Some(managed_account);
             }
         }
 
         if let Some(account) = &account_collection.identity_invitation {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
                 managed_collection.identity_invitation = Some(managed_account);
             }
         }
 
+        if let Some(account) = &account_collection.asset_lock_address_topup {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.asset_lock_address_topup = Some(managed_account);
+            }
+        }
+
+        if let Some(account) = &account_collection.asset_lock_shielded_address_topup {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
+                managed_collection.asset_lock_shielded_address_topup = Some(managed_account);
+            }
+        }
+
         if let Some(account) = &account_collection.provider_voting_keys {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
                 managed_collection.provider_voting_keys = Some(managed_account);
             }
         }
 
         if let Some(account) = &account_collection.provider_owner_keys {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_account(account) {
                 managed_collection.provider_owner_keys = Some(managed_account);
             }
         }
 
         #[cfg(feature = "bls")]
         if let Some(account) = &account_collection.provider_operator_keys {
-            if let Ok(managed_account) = Self::create_managed_account_from_bls_account(account) {
+            if let Ok(managed_account) = Self::create_managed_keys_account_from_bls_account(account)
+            {
                 managed_collection.provider_operator_keys = Some(managed_account);
             }
         }
@@ -337,7 +452,7 @@ impl ManagedAccountCollection {
         #[cfg(feature = "eddsa")]
         if let Some(account) = &account_collection.provider_platform_keys {
             if let Ok(managed_account) =
-                Self::create_managed_account_from_eddsa_account(account, None)
+                Self::create_managed_keys_account_from_eddsa_account(account, None)
             {
                 managed_collection.provider_platform_keys = Some(managed_account);
             }
@@ -345,21 +460,23 @@ impl ManagedAccountCollection {
 
         // Convert DashPay receiving accounts
         for (key, account) in &account_collection.dashpay_receival_accounts {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
                 managed_collection.dashpay_receival_accounts.insert(*key, managed_account);
             }
         }
 
         // Convert DashPay external accounts
         for (key, account) in &account_collection.dashpay_external_accounts {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) = Self::create_managed_funds_account_from_account(account) {
                 managed_collection.dashpay_external_accounts.insert(*key, managed_account);
             }
         }
 
         // Convert Platform Payment accounts
         for (key, account) in &account_collection.platform_payment_accounts {
-            if let Ok(managed_account) = Self::create_managed_account_from_account(account) {
+            if let Ok(managed_account) =
+                Self::create_managed_platform_account_from_account(account, key)
+            {
                 managed_collection.platform_payment_accounts.insert(*key, managed_account);
             }
         }
@@ -367,60 +484,63 @@ impl ManagedAccountCollection {
         managed_collection
     }
 
-    /// Create a ManagedAccount from an Account
-    fn create_managed_account_from_account(
+    /// Create a funds-bearing managed account from an [`Account`].
+    fn create_managed_funds_account_from_account(
         account: &Account,
-    ) -> Result<ManagedAccount, crate::error::Error> {
-        // Use the account's existing public key
+    ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
         let key_source = KeySource::Public(account.account_xpub);
-        Self::create_managed_account_from_account_type(
-            account.account_type,
-            account.network,
-            account.is_watch_only,
-            &key_source,
-        )
+        let managed_type =
+            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        Ok(ManagedCoreFundsAccount::new(managed_type, account.network))
     }
 
-    /// Create a ManagedAccount from a BLS Account
+    /// Create a keys-only managed account from an [`Account`].
+    fn create_managed_keys_account_from_account(
+        account: &Account,
+    ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
+        let key_source = KeySource::Public(account.account_xpub);
+        let managed_type =
+            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
+    }
+
+    /// Create a keys-only managed account from a BLS provider-operator-keys
+    /// account. ProviderOperatorKeys is always keys-only.
     #[cfg(feature = "bls")]
-    fn create_managed_account_from_bls_account(
-        account: &super::BLSAccount,
-    ) -> Result<ManagedAccount, crate::error::Error> {
+    fn create_managed_keys_account_from_bls_account(
+        account: &crate::account::BLSAccount,
+    ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
         let key_source = KeySource::BLSPublic(account.bls_public_key.clone());
-        Self::create_managed_account_from_account_type(
-            account.account_type,
-            account.network,
-            account.is_watch_only,
-            &key_source,
-        )
+        let managed_type =
+            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
     }
 
-    /// Create a ManagedAccount from an EdDSA Account
+    /// Create a keys-only managed account from an EdDSA provider-platform-keys
+    /// account. ProviderPlatformKeys is always keys-only.
     #[cfg(feature = "eddsa")]
-    fn create_managed_account_from_eddsa_account(
-        account: &super::EdDSAAccount,
+    fn create_managed_keys_account_from_eddsa_account(
+        account: &crate::account::EdDSAAccount,
         xpriv: Option<crate::derivation_slip10::ExtendedEd25519PrivKey>,
-    ) -> Result<ManagedAccount, crate::error::Error> {
-        // EdDSA requires hardened derivation, so we need the private key to generate addresses
+    ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
         let key_source = match xpriv {
             Some(priv_key) => KeySource::EdDSAPrivate(priv_key),
             None => KeySource::NoKeySource,
         };
-        Self::create_managed_account_from_account_type(
-            account.account_type,
-            account.network,
-            account.is_watch_only,
-            &key_source,
-        )
+        let managed_type =
+            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
     }
 
-    /// Create a ManagedAccount from an Account type with network and watch-only status
-    fn create_managed_account_from_account_type(
+    /// Build the [`ManagedAccountType`] (address pools + variant data) for an
+    /// account type and network. Shared between the funds-bearing and
+    /// keys-only construction helpers above — the wrap into one variant or
+    /// the other happens in the caller.
+    fn build_managed_account_type(
         account_type: AccountType,
         network: Network,
-        is_watch_only: bool,
         key_source: &KeySource,
-    ) -> Result<ManagedAccount, crate::error::Error> {
+    ) -> Result<ManagedAccountType, crate::error::Error> {
         // Get the derivation path for this account type
         let base_path = account_type
             .derivation_path(network)
@@ -434,7 +554,7 @@ impl ManagedAccountCollection {
             } => {
                 // For standard accounts, add the receive/change branch to the path
                 let mut external_path = base_path.clone();
-                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0).unwrap()); // 0 for external
+                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?); // 0 for external
                 let external_pool = AddressPool::new(
                     external_path,
                     AddressPoolType::External,
@@ -444,7 +564,7 @@ impl ManagedAccountCollection {
                 )?;
 
                 let mut internal_path = base_path;
-                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1).unwrap()); // 1 for internal
+                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1)?); // 1 for internal
                 let internal_pool = AddressPool::new(
                     internal_path,
                     AddressPoolType::Internal,
@@ -465,9 +585,13 @@ impl ManagedAccountCollection {
             AccountType::CoinJoin {
                 index,
             } => {
+                // CoinJoin addresses live on the external branch (m/9'/coin'/4'/account'/0/index)
+                // to match Dash Core, so derive through the `External` pool which uses [0, index].
+                let mut coinjoin_path = base_path;
+                coinjoin_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
                 let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
+                    coinjoin_path,
+                    AddressPoolType::External,
                     DEFAULT_COINJOIN_GAP_LIMIT,
                     network,
                     key_source,
@@ -525,6 +649,30 @@ impl ManagedAccountCollection {
                     key_source,
                 )?;
                 ManagedAccountType::IdentityInvitation {
+                    addresses,
+                }
+            }
+            AccountType::AssetLockAddressTopUp => {
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                ManagedAccountType::AssetLockAddressTopUp {
+                    addresses,
+                }
+            }
+            AccountType::AssetLockShieldedAddressTopUp => {
+                let addresses = AddressPool::new(
+                    base_path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+                ManagedAccountType::AssetLockShieldedAddressTopUp {
                     addresses,
                 }
             }
@@ -624,207 +772,405 @@ impl ManagedAccountCollection {
             }
         };
 
-        Ok(ManagedAccount::new(managed_type, network, is_watch_only))
+        Ok(managed_type)
     }
 
-    pub fn get(&self, index: u32) -> Option<&ManagedAccount> {
-        // Try standard BIP44 first
+    /// Create a ManagedPlatformAccount from an Account for Platform Payment accounts
+    fn create_managed_platform_account_from_account(
+        account: &Account,
+        key: &PlatformPaymentAccountKey,
+    ) -> Result<ManagedPlatformAccount, crate::error::Error> {
+        // Use the account's existing public key
+        let key_source = KeySource::Public(account.account_xpub);
+
+        // Get the derivation path for this account type
+        let base_path = account
+            .account_type
+            .derivation_path(account.network)
+            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
+
+        // Create address pool for DIP-17 Platform Payment addresses
+        let addresses = AddressPool::new(
+            base_path,
+            AddressPoolType::Absent,
+            DIP17_GAP_LIMIT,
+            account.network,
+            &key_source,
+        )?;
+
+        Ok(ManagedPlatformAccount::new(
+            key.account,
+            key.key_class,
+            addresses,
+            account.is_watch_only,
+        ))
+    }
+
+    /// Get a funds-bearing account by primary index across Standard BIP44,
+    /// Standard BIP32, and CoinJoin accounts.
+    ///
+    /// Returns only [`ManagedCoreFundsAccount`] entries — keys-only accounts
+    /// (identity / asset-lock / provider) are not reachable via this index
+    /// lookup. Use [`Self::get_by_account_type_match`] or direct field access
+    /// for those.
+    pub fn get(&self, index: u32) -> Option<&ManagedCoreFundsAccount> {
         if let Some(account) = self.standard_bip44_accounts.get(&index) {
             return Some(account);
         }
-
-        // Try standard BIP32
         if let Some(account) = self.standard_bip32_accounts.get(&index) {
             return Some(account);
         }
-
-        // Try CoinJoin
         if let Some(account) = self.coinjoin_accounts.get(&index) {
             return Some(account);
         }
-
-        // For identity top-up with registration index
-        if let Some(account) = self.identity_topup.get(&index) {
-            return Some(account);
-        }
-
         None
     }
 
-    /// Get a mutable account by index
-    pub fn get_mut(&mut self, index: u32) -> Option<&mut ManagedAccount> {
-        // Try standard BIP44 first
+    /// Get a mutable funds-bearing account by primary index. See [`Self::get`]
+    /// for which account types are reachable.
+    pub fn get_mut(&mut self, index: u32) -> Option<&mut ManagedCoreFundsAccount> {
         if let Some(account) = self.standard_bip44_accounts.get_mut(&index) {
             return Some(account);
         }
-
-        // Try standard BIP32
         if let Some(account) = self.standard_bip32_accounts.get_mut(&index) {
             return Some(account);
         }
-
-        // Try CoinJoin
         if let Some(account) = self.coinjoin_accounts.get_mut(&index) {
             return Some(account);
         }
-
-        // For identity top-up with registration index
-        if let Some(account) = self.identity_topup.get_mut(&index) {
-            return Some(account);
-        }
-
         None
     }
 
-    /// Remove an account from the collection
-    pub fn remove(&mut self, index: u32) -> Option<ManagedAccount> {
-        // Try standard BIP44 first
+    /// Get an account reference by [`CoreAccountTypeMatch`]. Returns either
+    /// the funds-bearing or keys-only variant wrapped in
+    /// [`ManagedAccountRef`].
+    pub fn get_by_account_type_match(
+        &self,
+        account_type_match: &CoreAccountTypeMatch,
+    ) -> Option<ManagedAccountRef<'_>> {
+        match account_type_match {
+            CoreAccountTypeMatch::StandardBIP44 {
+                account_index,
+                ..
+            } => self.standard_bip44_accounts.get(account_index).map(ManagedAccountRef::Funds),
+            CoreAccountTypeMatch::StandardBIP32 {
+                account_index,
+                ..
+            } => self.standard_bip32_accounts.get(account_index).map(ManagedAccountRef::Funds),
+            CoreAccountTypeMatch::CoinJoin {
+                account_index,
+                ..
+            } => self.coinjoin_accounts.get(account_index).map(ManagedAccountRef::Funds),
+            CoreAccountTypeMatch::IdentityRegistration {
+                ..
+            } => self.identity_registration.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::IdentityTopUp {
+                account_index,
+                ..
+            } => self.identity_topup.get(account_index).map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::IdentityTopUpNotBound {
+                ..
+            } => self.identity_topup_not_bound.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::IdentityInvitation {
+                ..
+            } => self.identity_invitation.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::AssetLockAddressTopUp {
+                ..
+            } => self.asset_lock_address_topup.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                ..
+            } => self.asset_lock_shielded_address_topup.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::ProviderVotingKeys {
+                ..
+            } => self.provider_voting_keys.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::ProviderOwnerKeys {
+                ..
+            } => self.provider_owner_keys.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::ProviderOperatorKeys {
+                ..
+            } => self.provider_operator_keys.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::ProviderPlatformKeys {
+                ..
+            } => self.provider_platform_keys.as_ref().map(ManagedAccountRef::Keys),
+            CoreAccountTypeMatch::DashpayReceivingFunds {
+                account_index,
+                involved_addresses,
+            } => self
+                .dashpay_receival_accounts
+                .values()
+                .find(|account| match account.managed_account_type() {
+                    ManagedAccountType::DashpayReceivingFunds {
+                        index,
+                        addresses,
+                        ..
+                    } => {
+                        *index == *account_index
+                            && involved_addresses
+                                .iter()
+                                .any(|addr| addresses.contains_address(&addr.address))
+                    }
+                    _ => false,
+                })
+                .map(ManagedAccountRef::Funds),
+            CoreAccountTypeMatch::DashpayExternalAccount {
+                account_index,
+                involved_addresses,
+            } => self
+                .dashpay_external_accounts
+                .values()
+                .find(|account| match account.managed_account_type() {
+                    ManagedAccountType::DashpayExternalAccount {
+                        index,
+                        addresses,
+                        ..
+                    } => {
+                        *index == *account_index
+                            && involved_addresses
+                                .iter()
+                                .any(|addr| addresses.contains_address(&addr.address))
+                    }
+                    _ => false,
+                })
+                .map(ManagedAccountRef::Funds),
+        }
+    }
+
+    /// Get a mutable account reference by [`CoreAccountTypeMatch`]. Returns
+    /// either the funds-bearing or keys-only variant wrapped in
+    /// [`ManagedAccountRefMut`].
+    pub fn get_by_account_type_match_mut(
+        &mut self,
+        account_type_match: &CoreAccountTypeMatch,
+    ) -> Option<ManagedAccountRefMut<'_>> {
+        match account_type_match {
+            CoreAccountTypeMatch::StandardBIP44 {
+                account_index,
+                ..
+            } => {
+                self.standard_bip44_accounts.get_mut(account_index).map(ManagedAccountRefMut::Funds)
+            }
+            CoreAccountTypeMatch::StandardBIP32 {
+                account_index,
+                ..
+            } => {
+                self.standard_bip32_accounts.get_mut(account_index).map(ManagedAccountRefMut::Funds)
+            }
+            CoreAccountTypeMatch::CoinJoin {
+                account_index,
+                ..
+            } => self.coinjoin_accounts.get_mut(account_index).map(ManagedAccountRefMut::Funds),
+            CoreAccountTypeMatch::IdentityRegistration {
+                ..
+            } => self.identity_registration.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::IdentityTopUp {
+                account_index,
+                ..
+            } => self.identity_topup.get_mut(account_index).map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::IdentityTopUpNotBound {
+                ..
+            } => self.identity_topup_not_bound.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::IdentityInvitation {
+                ..
+            } => self.identity_invitation.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::AssetLockAddressTopUp {
+                ..
+            } => self.asset_lock_address_topup.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::AssetLockShieldedAddressTopUp {
+                ..
+            } => self.asset_lock_shielded_address_topup.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::ProviderVotingKeys {
+                ..
+            } => self.provider_voting_keys.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::ProviderOwnerKeys {
+                ..
+            } => self.provider_owner_keys.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::ProviderOperatorKeys {
+                ..
+            } => self.provider_operator_keys.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::ProviderPlatformKeys {
+                ..
+            } => self.provider_platform_keys.as_mut().map(ManagedAccountRefMut::Keys),
+            CoreAccountTypeMatch::DashpayReceivingFunds {
+                account_index,
+                involved_addresses,
+            } => self
+                .dashpay_receival_accounts
+                .values_mut()
+                .find(|account| match account.managed_account_type() {
+                    ManagedAccountType::DashpayReceivingFunds {
+                        index,
+                        addresses,
+                        ..
+                    } => {
+                        *index == *account_index
+                            && involved_addresses
+                                .iter()
+                                .any(|addr| addresses.contains_address(&addr.address))
+                    }
+                    _ => false,
+                })
+                .map(ManagedAccountRefMut::Funds),
+            CoreAccountTypeMatch::DashpayExternalAccount {
+                account_index,
+                involved_addresses,
+            } => self
+                .dashpay_external_accounts
+                .values_mut()
+                .find(|account| match account.managed_account_type() {
+                    ManagedAccountType::DashpayExternalAccount {
+                        index,
+                        addresses,
+                        ..
+                    } => {
+                        *index == *account_index
+                            && involved_addresses
+                                .iter()
+                                .any(|addr| addresses.contains_address(&addr.address))
+                    }
+                    _ => false,
+                })
+                .map(ManagedAccountRefMut::Funds),
+        }
+    }
+
+    /// Remove a funds-bearing account by primary index. Mirrors [`Self::get`]
+    /// in scope: only Standard BIP44, Standard BIP32, and CoinJoin accounts
+    /// are removable through this method.
+    pub fn remove(&mut self, index: u32) -> Option<ManagedCoreFundsAccount> {
         if let Some(account) = self.standard_bip44_accounts.remove(&index) {
             return Some(account);
         }
-
-        // Try standard BIP32
         if let Some(account) = self.standard_bip32_accounts.remove(&index) {
             return Some(account);
         }
-
-        // Try CoinJoin
         if let Some(account) = self.coinjoin_accounts.remove(&index) {
             return Some(account);
         }
-
-        // For identity top-up with registration index
-        if let Some(account) = self.identity_topup.remove(&index) {
-            return Some(account);
-        }
-
         None
     }
 
-    /// Check if an account exists
+    /// Whether a funds-bearing account exists at this primary index. Mirrors
+    /// [`Self::get`] in scope.
     pub fn contains_key(&self, index: u32) -> bool {
-        // Check standard BIP44
-        if self.standard_bip44_accounts.contains_key(&index) {
-            return true;
-        }
-
-        // Check standard BIP32
-        if self.standard_bip32_accounts.contains_key(&index) {
-            return true;
-        }
-
-        // Check CoinJoin
-        if self.coinjoin_accounts.contains_key(&index) {
-            return true;
-        }
-
-        // Check identity top-up with registration index
-        if self.identity_topup.contains_key(&index) {
-            return true;
-        }
-
-        false
+        self.standard_bip44_accounts.contains_key(&index)
+            || self.standard_bip32_accounts.contains_key(&index)
+            || self.coinjoin_accounts.contains_key(&index)
     }
 
-    /// Get all accounts
-    pub fn all_accounts(&self) -> Vec<&ManagedAccount> {
+    /// Get all accounts in the collection as [`ManagedAccountRef`] values.
+    pub fn all_accounts(&self) -> Vec<ManagedAccountRef<'_>> {
         let mut accounts = Vec::new();
 
-        // Add standard BIP44 accounts
-        accounts.extend(self.standard_bip44_accounts.values());
+        accounts.extend(self.standard_bip44_accounts.values().map(ManagedAccountRef::Funds));
+        accounts.extend(self.standard_bip32_accounts.values().map(ManagedAccountRef::Funds));
+        accounts.extend(self.coinjoin_accounts.values().map(ManagedAccountRef::Funds));
 
-        // Add standard BIP32 accounts
-        accounts.extend(self.standard_bip32_accounts.values());
-
-        // Add CoinJoin accounts
-        accounts.extend(self.coinjoin_accounts.values());
-
-        // Add special purpose accounts
         if let Some(account) = &self.identity_registration {
-            accounts.push(account);
+            accounts.push(ManagedAccountRef::Keys(account));
         }
-
-        accounts.extend(self.identity_topup.values());
-
+        accounts.extend(self.identity_topup.values().map(ManagedAccountRef::Keys));
         if let Some(account) = &self.identity_topup_not_bound {
-            accounts.push(account);
+            accounts.push(ManagedAccountRef::Keys(account));
         }
-
         if let Some(account) = &self.identity_invitation {
-            accounts.push(account);
+            accounts.push(ManagedAccountRef::Keys(account));
         }
-
+        if let Some(account) = &self.asset_lock_address_topup {
+            accounts.push(ManagedAccountRef::Keys(account));
+        }
+        if let Some(account) = &self.asset_lock_shielded_address_topup {
+            accounts.push(ManagedAccountRef::Keys(account));
+        }
         if let Some(account) = &self.provider_voting_keys {
-            accounts.push(account);
+            accounts.push(ManagedAccountRef::Keys(account));
         }
-
         if let Some(account) = &self.provider_owner_keys {
-            accounts.push(account);
+            accounts.push(ManagedAccountRef::Keys(account));
         }
-
         if let Some(account) = &self.provider_operator_keys {
-            accounts.push(account);
+            accounts.push(ManagedAccountRef::Keys(account));
         }
-
         if let Some(account) = &self.provider_platform_keys {
-            accounts.push(account);
+            accounts.push(ManagedAccountRef::Keys(account));
         }
 
-        // Add DashPay accounts
-        accounts.extend(self.dashpay_receival_accounts.values());
-        accounts.extend(self.dashpay_external_accounts.values());
+        accounts.extend(self.dashpay_receival_accounts.values().map(ManagedAccountRef::Funds));
+        accounts.extend(self.dashpay_external_accounts.values().map(ManagedAccountRef::Funds));
 
         accounts
     }
 
-    /// Get all accounts mutably
-    pub fn all_accounts_mut(&mut self) -> Vec<&mut ManagedAccount> {
+    /// Get all accounts in the collection as mutable
+    /// [`ManagedAccountRefMut`] values.
+    pub fn all_accounts_mut(&mut self) -> Vec<ManagedAccountRefMut<'_>> {
         let mut accounts = Vec::new();
 
-        // Add standard BIP44 accounts
-        accounts.extend(self.standard_bip44_accounts.values_mut());
+        accounts.extend(self.standard_bip44_accounts.values_mut().map(ManagedAccountRefMut::Funds));
+        accounts.extend(self.standard_bip32_accounts.values_mut().map(ManagedAccountRefMut::Funds));
+        accounts.extend(self.coinjoin_accounts.values_mut().map(ManagedAccountRefMut::Funds));
 
-        // Add standard BIP32 accounts
-        accounts.extend(self.standard_bip32_accounts.values_mut());
-
-        // Add CoinJoin accounts
-        accounts.extend(self.coinjoin_accounts.values_mut());
-
-        // Add special purpose accounts
         if let Some(account) = &mut self.identity_registration {
-            accounts.push(account);
+            accounts.push(ManagedAccountRefMut::Keys(account));
         }
-
-        accounts.extend(self.identity_topup.values_mut());
-
+        accounts.extend(self.identity_topup.values_mut().map(ManagedAccountRefMut::Keys));
         if let Some(account) = &mut self.identity_topup_not_bound {
-            accounts.push(account);
+            accounts.push(ManagedAccountRefMut::Keys(account));
         }
-
         if let Some(account) = &mut self.identity_invitation {
-            accounts.push(account);
+            accounts.push(ManagedAccountRefMut::Keys(account));
         }
-
+        if let Some(account) = &mut self.asset_lock_address_topup {
+            accounts.push(ManagedAccountRefMut::Keys(account));
+        }
+        if let Some(account) = &mut self.asset_lock_shielded_address_topup {
+            accounts.push(ManagedAccountRefMut::Keys(account));
+        }
         if let Some(account) = &mut self.provider_voting_keys {
-            accounts.push(account);
+            accounts.push(ManagedAccountRefMut::Keys(account));
         }
-
         if let Some(account) = &mut self.provider_owner_keys {
-            accounts.push(account);
+            accounts.push(ManagedAccountRefMut::Keys(account));
         }
-
         if let Some(account) = &mut self.provider_operator_keys {
-            accounts.push(account);
+            accounts.push(ManagedAccountRefMut::Keys(account));
         }
-
         if let Some(account) = &mut self.provider_platform_keys {
-            accounts.push(account);
+            accounts.push(ManagedAccountRefMut::Keys(account));
         }
 
-        // Add DashPay accounts
+        accounts
+            .extend(self.dashpay_receival_accounts.values_mut().map(ManagedAccountRefMut::Funds));
+        accounts
+            .extend(self.dashpay_external_accounts.values_mut().map(ManagedAccountRefMut::Funds));
+
+        accounts
+    }
+
+    /// Get all funds-bearing accounts (Standard BIP44/32, CoinJoin, DashPay).
+    ///
+    /// Use this from callsites that operate on balance / UTXO state — keys-only
+    /// accounts (identity, asset-lock, provider) don't track those, so iterating
+    /// [`Self::all_accounts`] and filtering via [`ManagedAccountRef::as_funds`]
+    /// in those callsites is just noise.
+    pub fn all_funding_accounts(&self) -> Vec<&ManagedCoreFundsAccount> {
+        let mut accounts = Vec::new();
+        accounts.extend(self.standard_bip44_accounts.values());
+        accounts.extend(self.standard_bip32_accounts.values());
+        accounts.extend(self.coinjoin_accounts.values());
+        accounts.extend(self.dashpay_receival_accounts.values());
+        accounts.extend(self.dashpay_external_accounts.values());
+        accounts
+    }
+
+    /// Get all funds-bearing accounts mutably. See [`Self::all_funding_accounts`]
+    /// for which account types are visited.
+    pub fn all_funding_accounts_mut(&mut self) -> Vec<&mut ManagedCoreFundsAccount> {
+        let mut accounts = Vec::new();
+        accounts.extend(self.standard_bip44_accounts.values_mut());
+        accounts.extend(self.standard_bip32_accounts.values_mut());
+        accounts.extend(self.coinjoin_accounts.values_mut());
         accounts.extend(self.dashpay_receival_accounts.values_mut());
         accounts.extend(self.dashpay_external_accounts.values_mut());
-
         accounts
     }
 
@@ -861,12 +1207,15 @@ impl ManagedAccountCollection {
             && self.identity_topup.is_empty()
             && self.identity_topup_not_bound.is_none()
             && self.identity_invitation.is_none()
+            && self.asset_lock_address_topup.is_none()
+            && self.asset_lock_shielded_address_topup.is_none()
             && self.provider_voting_keys.is_none()
             && self.provider_owner_keys.is_none()
             && self.provider_operator_keys.is_none()
             && self.provider_platform_keys.is_none()
             && self.dashpay_receival_accounts.is_empty()
             && self.dashpay_external_accounts.is_empty()
+            && self.platform_payment_accounts.is_empty()
     }
 
     /// Clear all accounts
@@ -878,11 +1227,40 @@ impl ManagedAccountCollection {
         self.identity_topup.clear();
         self.identity_topup_not_bound = None;
         self.identity_invitation = None;
+        self.asset_lock_address_topup = None;
+        self.asset_lock_shielded_address_topup = None;
         self.provider_voting_keys = None;
         self.provider_owner_keys = None;
         self.provider_operator_keys = None;
         self.provider_platform_keys = None;
         self.dashpay_receival_accounts.clear();
         self.dashpay_external_accounts.clear();
+        self.platform_payment_accounts.clear();
+    }
+
+    /// Get all platform payment accounts
+    pub fn all_platform_accounts(&self) -> Vec<&ManagedPlatformAccount> {
+        self.platform_payment_accounts.values().collect()
+    }
+
+    /// Get all platform payment accounts mutably
+    pub fn all_platform_accounts_mut(&mut self) -> Vec<&mut ManagedPlatformAccount> {
+        self.platform_payment_accounts.values_mut().collect()
+    }
+
+    /// Get a platform payment account by key
+    pub fn get_platform_account(
+        &self,
+        key: &PlatformPaymentAccountKey,
+    ) -> Option<&ManagedPlatformAccount> {
+        self.platform_payment_accounts.get(key)
+    }
+
+    /// Get a mutable platform payment account by key
+    pub fn get_platform_account_mut(
+        &mut self,
+        key: &PlatformPaymentAccountKey,
+    ) -> Option<&mut ManagedPlatformAccount> {
+        self.platform_payment_accounts.get_mut(key)
     }
 }

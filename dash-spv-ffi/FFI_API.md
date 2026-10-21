@@ -4,18 +4,16 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 **Auto-generated**: This documentation is automatically generated from the source code. Do not edit manually.
 
-**Total Functions**: 70
+**Total Functions**: 39
 
 ## Table of Contents
 
 - [Client Management](#client-management)
 - [Configuration](#configuration)
 - [Synchronization](#synchronization)
-- [Address Monitoring](#address-monitoring)
 - [Transaction Management](#transaction-management)
 - [Mempool Operations](#mempool-operations)
 - [Platform Integration](#platform-integration)
-- [Event Callbacks](#event-callbacks)
 - [Error Handling](#error-handling)
 - [Utility Functions](#utility-functions)
 
@@ -23,80 +21,53 @@ This document provides a comprehensive reference for all FFI (Foreign Function I
 
 ### Client Management
 
-Functions: 4
+Functions: 3
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_destroy` | Destroy the client and free associated resources | client |
 | `dash_spv_ffi_client_new` | Create a new SPV client and return an opaque pointer | client |
-| `dash_spv_ffi_client_start` | Start the SPV client | client |
 | `dash_spv_ffi_client_stop` | Stop the SPV client | client |
 
 ### Configuration
 
-Functions: 27
+Functions: 15
 
 | Function | Description | Module |
 |----------|-------------|--------|
 | `dash_spv_ffi_client_update_config` | Update the running client's configuration | client |
-| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts either a full socket... | config |
+| `dash_spv_ffi_config_add_peer` | Adds a peer address to the configuration  Accepts socket addresses with or... | config |
 | `dash_spv_ffi_config_destroy` | Destroys an FFIClientConfig and frees its memory  # Safety - `config` must... | config |
-| `dash_spv_ffi_config_get_data_dir` | Gets the data directory path from the configuration  # Safety - `config`... | config |
-| `dash_spv_ffi_config_get_mempool_strategy` | Gets the mempool synchronization strategy  # Safety - `config` must be a... | config |
-| `dash_spv_ffi_config_get_mempool_tracking` | Gets whether mempool tracking is enabled  # Safety - `config` must be a... | config |
 | `dash_spv_ffi_config_get_network` | Gets the network type from the configuration  # Safety - `config` must be a... | config |
 | `dash_spv_ffi_config_mainnet` | No description | config |
 | `dash_spv_ffi_config_new` | No description | config |
 | `dash_spv_ffi_config_set_data_dir` | Sets the data directory for storing blockchain data  # Safety - `config`... | config |
 | `dash_spv_ffi_config_set_fetch_mempool_transactions` | Sets whether to fetch full mempool transaction data  # Safety - `config`... | config |
-| `dash_spv_ffi_config_set_filter_load` | Sets whether to load bloom filters  # Safety - `config` must be a valid... | config |
 | `dash_spv_ffi_config_set_masternode_sync_enabled` | Enables or disables masternode synchronization  # Safety - `config` must be... | config |
-| `dash_spv_ffi_config_set_max_mempool_transactions` | Sets the maximum number of mempool transactions to track  # Safety -... | config |
-| `dash_spv_ffi_config_set_max_peers` | Sets the maximum number of peers to connect to  # Safety - `config` must be... | config |
 | `dash_spv_ffi_config_set_mempool_strategy` | Sets the mempool synchronization strategy  # Safety - `config` must be a... | config |
-| `dash_spv_ffi_config_set_mempool_timeout` | Sets the mempool transaction timeout in seconds  # Safety - `config` must be... | config |
 | `dash_spv_ffi_config_set_mempool_tracking` | Enables or disables mempool tracking  # Safety - `config` must be a valid... | config |
-| `dash_spv_ffi_config_set_persist_mempool` | Sets whether to persist mempool state to disk  # Safety - `config` must be a... | config |
-| `dash_spv_ffi_config_set_relay_transactions` | Sets whether to relay transactions (currently a no-op)  # Safety - `config`... | config |
 | `dash_spv_ffi_config_set_restrict_to_configured_peers` | Restrict connections strictly to configured peers (disable DNS discovery and... | config |
 | `dash_spv_ffi_config_set_start_from_height` | Sets the starting block height for synchronization  # Safety - `config` must... | config |
 | `dash_spv_ffi_config_set_user_agent` | Sets the user agent string to advertise in the P2P handshake  # Safety -... | config |
-| `dash_spv_ffi_config_set_validation_mode` | Sets the validation mode for the SPV client  # Safety - `config` must be a... | config |
-| `dash_spv_ffi_config_set_wallet_creation_time` | Sets the wallet creation timestamp for synchronization optimization  #... | config |
-| `dash_spv_ffi_config_set_worker_threads` | Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  #... | config |
 | `dash_spv_ffi_config_testnet` | No description | config |
 
 ### Synchronization
-
-Functions: 7
-
-| Function | Description | Module |
-|----------|-------------|--------|
-| `dash_spv_ffi_client_cancel_sync` | Cancels the sync operation | client |
-| `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
-| `dash_spv_ffi_client_is_filter_sync_available` | Check if compact filter sync is currently available | client |
-| `dash_spv_ffi_client_sync_to_tip` | Sync the SPV client to the chain tip | client |
-| `dash_spv_ffi_client_sync_to_tip_with_progress` | Sync the SPV client to the chain tip with detailed progress updates | client |
-| `dash_spv_ffi_client_test_sync` | Performs a test synchronization of the SPV client  # Parameters - `client`:... | client |
-| `dash_spv_ffi_sync_progress_destroy` | Destroy a `FFISyncProgress` object returned by this crate | client |
-
-### Address Monitoring
-
-Functions: 1
-
-| Function | Description | Module |
-|----------|-------------|--------|
-| `dash_spv_ffi_unconfirmed_transaction_destroy_addresses` | Destroys the addresses array allocated for an FFIUnconfirmedTransaction  #... | types |
-
-### Transaction Management
 
 Functions: 3
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | broadcast |
-| `dash_spv_ffi_unconfirmed_transaction_destroy` | Destroys an FFIUnconfirmedTransaction and all its associated resources  #... | types |
-| `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx` | Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction... | types |
+| `dash_spv_ffi_client_get_manager_sync_progress` | Get the current manager-based sync progress | client |
+| `dash_spv_ffi_client_get_sync_progress` | Get the current sync progress snapshot | client |
+| `dash_spv_ffi_sync_progress_destroy` | Destroy an `FFISyncProgress` object and all its nested pointers | types |
+
+### Transaction Management
+
+Functions: 1
+
+| Function | Description | Module |
+|----------|-------------|--------|
+| `dash_spv_ffi_client_broadcast_transaction` | Broadcasts a transaction to the Dash network via connected peers | client |
 
 ### Mempool Operations
 
@@ -104,60 +75,42 @@ Functions: 1
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_enable_mempool_tracking` | Enable mempool tracking with a given strategy | client |
+| `dash_spv_ffi_mempool_progress_destroy` | Destroy an `FFIMempoolProgress` object | types |
 
 ### Platform Integration
 
-Functions: 4
-
-| Function | Description | Module |
-|----------|-------------|--------|
-| `ffi_dash_spv_get_core_handle` | Creates a CoreSDKHandle from an FFIDashSpvClient  # Safety  This function is... | platform_integration |
-| `ffi_dash_spv_get_platform_activation_height` | Gets the platform activation height from the Core chain  # Safety  This... | platform_integration |
-| `ffi_dash_spv_get_quorum_public_key` | Gets a quorum public key from the Core chain  # Safety  This function is... | platform_integration |
-| `ffi_dash_spv_release_core_handle` | Releases a CoreSDKHandle  # Safety  This function is unsafe because: - The... | platform_integration |
-
-### Event Callbacks
-
 Functions: 2
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_client_drain_events` | Drain pending events and invoke configured callbacks (non-blocking) | client |
-| `dash_spv_ffi_client_set_event_callbacks` | Set event callbacks for the client | client |
+| `ffi_dash_spv_get_platform_activation_height` | Gets the platform activation height from the Core chain  # Safety  This... | platform_integration |
+| `ffi_dash_spv_get_quorum_public_key` | Gets a quorum public key from the Core chain  # Safety  This function is... | platform_integration |
 
 ### Error Handling
 
-Functions: 2
+Functions: 1
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_clear_error` | No description | error |
 | `dash_spv_ffi_get_last_error` | No description | error |
 
 ### Utility Functions
 
-Functions: 19
+Functions: 13
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `dash_spv_ffi_array_destroy` | No description | types |
-| `dash_spv_ffi_checkpoint_before_height` | Get the last checkpoint at or before a given height | checkpoints |
-| `dash_spv_ffi_checkpoint_before_timestamp` | Get the last checkpoint at or before a given UNIX timestamp (seconds) | checkpoints |
-| `dash_spv_ffi_checkpoint_latest` | Get the latest checkpoint for the given network | checkpoints |
-| `dash_spv_ffi_checkpoints_between_heights` | Get all checkpoints between two heights (inclusive) | checkpoints |
+| `dash_spv_ffi_block_headers_progress_destroy` | Destroy an `FFIBlockHeadersProgress` object | types |
+| `dash_spv_ffi_blocks_progress_destroy` | Destroy an `FFIBlocksProgress` object | types |
+| `dash_spv_ffi_chainlock_progress_destroy` | Destroy an `FFIChainLockProgress` object | types |
 | `dash_spv_ffi_client_clear_storage` | Clear all persisted SPV storage (headers, filters, metadata, sync state) | client |
-| `dash_spv_ffi_client_get_stats` | Get current runtime statistics for the SPV client | client |
-| `dash_spv_ffi_client_get_tip_hash` | Get the current chain tip hash (32 bytes) if available | client |
-| `dash_spv_ffi_client_get_tip_height` | Get the current chain tip height (absolute) | client |
 | `dash_spv_ffi_client_get_wallet_manager` | Get the wallet manager from the SPV client  Returns a pointer to an... | client |
-| `dash_spv_ffi_client_record_send` | Record that we attempted to send a transaction by its txid | client |
-| `dash_spv_ffi_client_rescan_blockchain` | Request a rescan of the blockchain from a given height (not yet implemented) | client |
-| `dash_spv_ffi_enable_test_mode` | No description | utils |
+| `dash_spv_ffi_client_run` | Start the SPV client and begin syncing in the background | client |
+| `dash_spv_ffi_filter_headers_progress_destroy` | Destroy an `FFIFilterHeadersProgress` object | types |
+| `dash_spv_ffi_filters_progress_destroy` | Destroy an `FFIFiltersProgress` object | types |
 | `dash_spv_ffi_init_logging` | Initialize logging for the SPV library | utils |
-| `dash_spv_ffi_spv_stats_destroy` | Destroy an `FFISpvStats` object returned by this crate | client |
-| `dash_spv_ffi_string_array_destroy` | Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents | types |
-| `dash_spv_ffi_string_destroy` | No description | types |
+| `dash_spv_ffi_instantsend_progress_destroy` | Destroy an `FFIInstantSendProgress` object | types |
+| `dash_spv_ffi_masternode_progress_destroy` | Destroy an `FFIMasternodesProgress` object | types |
 | `dash_spv_ffi_version` | No description | utils |
 | `dash_spv_ffi_wallet_manager_free` | Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager` | client |
 
@@ -184,30 +137,14 @@ Destroy the client and free associated resources.  # Safety - `client` must be e
 #### `dash_spv_ffi_client_new`
 
 ```c
-dash_spv_ffi_client_new(config: *const FFIClientConfig,) -> *mut FFIDashSpvClient
+dash_spv_ffi_client_new(config: *const FFIClientConfig, callbacks: FFIEventCallbacks,) -> *mut FFIDashSpvClient
 ```
 
 **Description:**
-Create a new SPV client and return an opaque pointer.  # Safety - `config` must be a valid, non-null pointer for the duration of the call. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
+Create a new SPV client and return an opaque pointer.  # Safety - `config` must be a valid, non-null pointer for the duration of the call. - `callbacks` is taken by value (function pointers and `user_data` pointers are copied internally). The struct itself may be dropped after the call, but all `user_data` pointer targets must remain valid until `dash_spv_ffi_client_stop` or `dash_spv_ffi_client_destroy` is called. - Callback functions and `user_data` pointees must be safe to use from background threads; different callback groups may be invoked concurrently. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
 
 **Safety:**
-- `config` must be a valid, non-null pointer for the duration of the call. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_start`
-
-```c
-dash_spv_ffi_client_start(client: *mut FFIDashSpvClient) -> i32
-```
-
-**Description:**
-Start the SPV client.  # Safety - `client` must be a valid, non-null pointer to a created client.
-
-**Safety:**
-- `client` must be a valid, non-null pointer to a created client.
+- `config` must be a valid, non-null pointer for the duration of the call. - `callbacks` is taken by value (function pointers and `user_data` pointers are copied internally). The struct itself may be dropped after the call, but all `user_data` pointer targets must remain valid until `dash_spv_ffi_client_stop` or `dash_spv_ffi_client_destroy` is called. - Callback functions and `user_data` pointees must be safe to use from background threads; different callback groups may be invoked concurrently. - The returned pointer must be freed with `dash_spv_ffi_client_destroy`.
 
 **Module:** `client`
 
@@ -254,7 +191,7 @@ dash_spv_ffi_config_add_peer(config: *mut FFIClientConfig, addr: *const c_char,)
 ```
 
 **Description:**
-Adds a peer address to the configuration  Accepts either a full socket address (e.g., `192.168.1.1:9999` or `[::1]:19999`) or an IP-only string (e.g., "127.0.0.1" or "2001:db8::1"). When an IP-only string is given, the default P2P port for the configured network is used.  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
+Adds a peer address to the configuration  Accepts socket addresses with or without port. When no port is specified, the default P2P port for the configured network is used.  Supported formats: - IP with port: `192.168.1.1:9999`, `[::1]:19999` - IP without port: `127.0.0.1`, `2001:db8::1` - Hostname with port: `node.example.com:9999` - Hostname without port: `node.example.com`  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - `addr` must be a valid null-terminated C string containing a socket address or IP-only string - The caller must ensure both pointers remain valid for the duration of this call
@@ -279,54 +216,6 @@ Destroys an FFIClientConfig and frees its memory  # Safety - `config` must be a 
 
 ---
 
-#### `dash_spv_ffi_config_get_data_dir`
-
-```c
-dash_spv_ffi_config_get_data_dir(config: *const FFIClientConfig,) -> FFIString
-```
-
-**Description:**
-Gets the data directory path from the configuration  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null or no data directory is set, returns an FFIString with null pointer - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig or null - If null or no data directory is set, returns an FFIString with null pointer - The returned FFIString must be freed by the caller using `dash_spv_ffi_string_destroy`
-
-**Module:** `config`
-
----
-
-#### `dash_spv_ffi_config_get_mempool_strategy`
-
-```c
-dash_spv_ffi_config_get_mempool_strategy(config: *const FFIClientConfig,) -> FFIMempoolStrategy
-```
-
-**Description:**
-Gets the mempool synchronization strategy  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::FetchAll as default
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFIMempoolStrategy::FetchAll as default
-
-**Module:** `config`
-
----
-
-#### `dash_spv_ffi_config_get_mempool_tracking`
-
-```c
-dash_spv_ffi_config_get_mempool_tracking(config: *const FFIClientConfig,) -> bool
-```
-
-**Description:**
-Gets whether mempool tracking is enabled  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns false as default
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns false as default
-
-**Module:** `config`
-
----
-
 #### `dash_spv_ffi_config_get_network`
 
 ```c
@@ -334,10 +223,10 @@ dash_spv_ffi_config_get_network(config: *const FFIClientConfig,) -> FFINetwork
 ```
 
 **Description:**
-Gets the network type from the configuration  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFINetwork::Dash as default
+Gets the network type from the configuration  # Safety - `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFINetwork::Mainnet as default
 
 **Safety:**
-- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFINetwork::Dash as default
+- `config` must be a valid pointer to an FFIClientConfig or null - If null, returns FFINetwork::Mainnet as default
 
 **Module:** `config`
 
@@ -395,22 +284,6 @@ Sets whether to fetch full mempool transaction data  # Safety - `config` must be
 
 ---
 
-#### `dash_spv_ffi_config_set_filter_load`
-
-```c
-dash_spv_ffi_config_set_filter_load(config: *mut FFIClientConfig, load_filters: bool,) -> i32
-```
-
-**Description:**
-Sets whether to load bloom filters  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Module:** `config`
-
----
-
 #### `dash_spv_ffi_config_set_masternode_sync_enabled`
 
 ```c
@@ -419,38 +292,6 @@ dash_spv_ffi_config_set_masternode_sync_enabled(config: *mut FFIClientConfig, en
 
 **Description:**
 Enables or disables masternode synchronization  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Module:** `config`
-
----
-
-#### `dash_spv_ffi_config_set_max_mempool_transactions`
-
-```c
-dash_spv_ffi_config_set_max_mempool_transactions(config: *mut FFIClientConfig, max_transactions: u32,) -> i32
-```
-
-**Description:**
-Sets the maximum number of mempool transactions to track  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Module:** `config`
-
----
-
-#### `dash_spv_ffi_config_set_max_peers`
-
-```c
-dash_spv_ffi_config_set_max_peers(config: *mut FFIClientConfig, max_peers: u32,) -> i32
-```
-
-**Description:**
-Sets the maximum number of peers to connect to  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
@@ -475,22 +316,6 @@ Sets the mempool synchronization strategy  # Safety - `config` must be a valid p
 
 ---
 
-#### `dash_spv_ffi_config_set_mempool_timeout`
-
-```c
-dash_spv_ffi_config_set_mempool_timeout(config: *mut FFIClientConfig, timeout_secs: u64,) -> i32
-```
-
-**Description:**
-Sets the mempool transaction timeout in seconds  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Module:** `config`
-
----
-
 #### `dash_spv_ffi_config_set_mempool_tracking`
 
 ```c
@@ -499,38 +324,6 @@ dash_spv_ffi_config_set_mempool_tracking(config: *mut FFIClientConfig, enable: b
 
 **Description:**
 Enables or disables mempool tracking  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Module:** `config`
-
----
-
-#### `dash_spv_ffi_config_set_persist_mempool`
-
-```c
-dash_spv_ffi_config_set_persist_mempool(config: *mut FFIClientConfig, persist: bool,) -> i32
-```
-
-**Description:**
-Sets whether to persist mempool state to disk  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Module:** `config`
-
----
-
-#### `dash_spv_ffi_config_set_relay_transactions`
-
-```c
-dash_spv_ffi_config_set_relay_transactions(config: *mut FFIClientConfig, _relay: bool,) -> i32
-```
-
-**Description:**
-Sets whether to relay transactions (currently a no-op)  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
 
 **Safety:**
 - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
@@ -587,54 +380,6 @@ Sets the user agent string to advertise in the P2P handshake  # Safety - `config
 
 ---
 
-#### `dash_spv_ffi_config_set_validation_mode`
-
-```c
-dash_spv_ffi_config_set_validation_mode(config: *mut FFIClientConfig, mode: FFIValidationMode,) -> i32
-```
-
-**Description:**
-Sets the validation mode for the SPV client  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Module:** `config`
-
----
-
-#### `dash_spv_ffi_config_set_wallet_creation_time`
-
-```c
-dash_spv_ffi_config_set_wallet_creation_time(config: *mut FFIClientConfig, timestamp: u32,) -> i32
-```
-
-**Description:**
-Sets the wallet creation timestamp for synchronization optimization  # Safety - `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig created by dash_spv_ffi_config_new/mainnet/testnet - The caller must ensure the config pointer remains valid for the duration of this call
-
-**Module:** `config`
-
----
-
-#### `dash_spv_ffi_config_set_worker_threads`
-
-```c
-dash_spv_ffi_config_set_worker_threads(config: *mut FFIClientConfig, threads: u32,) -> i32
-```
-
-**Description:**
-Sets the number of Tokio worker threads for the FFI runtime (0 = auto)  # Safety - `config` must be a valid pointer to an FFIClientConfig
-
-**Safety:**
-- `config` must be a valid pointer to an FFIClientConfig
-
-**Module:** `config`
-
----
-
 #### `dash_spv_ffi_config_testnet`
 
 ```c
@@ -647,17 +392,17 @@ dash_spv_ffi_config_testnet() -> *mut FFIClientConfig
 
 ### Synchronization - Detailed
 
-#### `dash_spv_ffi_client_cancel_sync`
+#### `dash_spv_ffi_client_get_manager_sync_progress`
 
 ```c
-dash_spv_ffi_client_cancel_sync(client: *mut FFIDashSpvClient) -> i32
+dash_spv_ffi_client_get_manager_sync_progress(client: *mut FFIDashSpvClient,) -> *mut FFISyncProgress
 ```
 
 **Description:**
-Cancels the sync operation.  This stops the SPV client, clears callbacks, and joins active threads so the sync operation halts immediately.  # Safety The client pointer must be valid and non-null.  # Returns Returns 0 on success, or an error code on failure.
+Get the current manager-based sync progress.  Returns the new parallel sync system's progress with per-manager details. Use `dash_spv_ffi_sync_progress_destroy` to free the returned struct.  # Safety - `client` must be a valid, non-null pointer.
 
 **Safety:**
-The client pointer must be valid and non-null.
+- `client` must be a valid, non-null pointer.
 
 **Module:** `client`
 
@@ -679,70 +424,6 @@ Get the current sync progress snapshot.  # Safety - `client` must be a valid, no
 
 ---
 
-#### `dash_spv_ffi_client_is_filter_sync_available`
-
-```c
-dash_spv_ffi_client_is_filter_sync_available(client: *mut FFIDashSpvClient,) -> bool
-```
-
-**Description:**
-Check if compact filter sync is currently available.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_sync_to_tip`
-
-```c
-dash_spv_ffi_client_sync_to_tip(client: *mut FFIDashSpvClient, completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>, user_data: *mut c_void,) -> i32
-```
-
-**Description:**
-Sync the SPV client to the chain tip.  # Safety  This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - `completion_callback` must be thread-safe and can be called from any thread  # Parameters  - `client`: Pointer to the SPV client - `completion_callback`: Optional callback invoked on completion - `user_data`: Optional user data pointer passed to callbacks  # Returns  0 on success, error code on failure
-
-**Safety:**
-This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - `completion_callback` must be thread-safe and can be called from any thread
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_sync_to_tip_with_progress`
-
-```c
-dash_spv_ffi_client_sync_to_tip_with_progress(client: *mut FFIDashSpvClient, progress_callback: Option<extern "C" fn(*const FFIDetailedSyncProgress, *mut c_void)>, completion_callback: Option<extern "C" fn(bool, *const c_char, *mut c_void)>, user_data: *mut c_void,) -> i32
-```
-
-**Description:**
-Sync the SPV client to the chain tip with detailed progress updates.  # Safety  This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread  # Parameters  - `client`: Pointer to the SPV client - `progress_callback`: Optional callback invoked periodically with sync progress - `completion_callback`: Optional callback invoked on completion - `user_data`: Optional user data pointer passed to all callbacks  # Returns  0 on success, error code on failure
-
-**Safety:**
-This function is unsafe because: - `client` must be a valid pointer to an initialized `FFIDashSpvClient` - `user_data` must satisfy thread safety requirements: - If non-null, it must point to data that is safe to access from multiple threads - The caller must ensure proper synchronization if the data is mutable - The data must remain valid for the entire duration of the sync operation - Both `progress_callback` and `completion_callback` must be thread-safe and can be called from any thread
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_test_sync`
-
-```c
-dash_spv_ffi_client_test_sync(client: *mut FFIDashSpvClient) -> i32
-```
-
-**Description:**
-Performs a test synchronization of the SPV client  # Parameters - `client`: Pointer to an FFIDashSpvClient instance  # Returns - `0` on success - Negative error code on failure  # Safety This function is unsafe because it dereferences a raw pointer. The caller must ensure that the client pointer is valid.
-
-**Safety:**
-This function is unsafe because it dereferences a raw pointer. The caller must ensure that the client pointer is valid.
-
-**Module:** `client`
-
----
-
 #### `dash_spv_ffi_sync_progress_destroy`
 
 ```c
@@ -750,28 +431,10 @@ dash_spv_ffi_sync_progress_destroy(progress: *mut FFISyncProgress) -> ()
 ```
 
 **Description:**
-Destroy a `FFISyncProgress` object returned by this crate.  # Safety - `progress` must be a pointer returned from this crate, or null.
+Destroy an `FFISyncProgress` object and all its nested pointers.  # Safety - `progress` must be a pointer returned from this crate, or null.
 
 **Safety:**
 - `progress` must be a pointer returned from this crate, or null.
-
-**Module:** `client`
-
----
-
-### Address Monitoring - Detailed
-
-#### `dash_spv_ffi_unconfirmed_transaction_destroy_addresses`
-
-```c
-dash_spv_ffi_unconfirmed_transaction_destroy_addresses(addresses: *mut FFIString, addresses_len: usize,) -> ()
-```
-
-**Description:**
-Destroys the addresses array allocated for an FFIUnconfirmedTransaction  # Safety  - `addresses` must be a valid pointer to an array of FFIString objects - `addresses_len` must be the correct length of the array - Each FFIString in the array must be destroyed separately using `dash_spv_ffi_string_destroy` - The pointer must not be used after this function is called - This function should only be called once per allocation
-
-**Safety:**
-- `addresses` must be a valid pointer to an array of FFIString objects - `addresses_len` must be the correct length of the array - Each FFIString in the array must be destroyed separately using `dash_spv_ffi_string_destroy` - The pointer must not be used after this function is called - This function should only be called once per allocation
 
 **Module:** `types`
 
@@ -782,86 +445,38 @@ Destroys the addresses array allocated for an FFIUnconfirmedTransaction  # Safet
 #### `dash_spv_ffi_client_broadcast_transaction`
 
 ```c
-dash_spv_ffi_client_broadcast_transaction(client: *mut FFIDashSpvClient, tx_hex: *const c_char,) -> i32
+dash_spv_ffi_client_broadcast_transaction(client: *mut FFIDashSpvClient, tx_bytes: *const u8, length: usize,) -> i32
 ```
 
 **Description:**
-Broadcasts a transaction to the Dash network via connected peers.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string containing a hex-encoded serialized transaction
+Broadcasts a transaction to the Dash network via connected peers.  # Safety  - `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes
 
 **Safety:**
-- `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_hex` must be a valid, non-null pointer to a NUL-terminated C string containing a hex-encoded serialized transaction
-
-**Module:** `broadcast`
-
----
-
-#### `dash_spv_ffi_unconfirmed_transaction_destroy`
-
-```c
-dash_spv_ffi_unconfirmed_transaction_destroy(tx: *mut FFIUnconfirmedTransaction,) -> ()
-```
-
-**Description:**
-Destroys an FFIUnconfirmedTransaction and all its associated resources  # Safety  - `tx` must be a valid pointer to an FFIUnconfirmedTransaction - All resources (raw_tx, addresses array, and individual FFIStrings) will be freed - The pointer must not be used after this function is called - This function should only be called once per FFIUnconfirmedTransaction
-
-**Safety:**
-- `tx` must be a valid pointer to an FFIUnconfirmedTransaction - All resources (raw_tx, addresses array, and individual FFIStrings) will be freed - The pointer must not be used after this function is called - This function should only be called once per FFIUnconfirmedTransaction
-
-**Module:** `types`
-
----
-
-#### `dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx`
-
-```c
-dash_spv_ffi_unconfirmed_transaction_destroy_raw_tx(raw_tx: *mut u8, raw_tx_len: usize,) -> ()
-```
-
-**Description:**
-Destroys the raw transaction bytes allocated for an FFIUnconfirmedTransaction  # Safety  - `raw_tx` must be a valid pointer to memory allocated by the caller - `raw_tx_len` must be the correct length of the allocated memory - The pointer must not be used after this function is called - This function should only be called once per allocation
-
-**Safety:**
-- `raw_tx` must be a valid pointer to memory allocated by the caller - `raw_tx_len` must be the correct length of the allocated memory - The pointer must not be used after this function is called - This function should only be called once per allocation
-
-**Module:** `types`
-
----
-
-### Mempool Operations - Detailed
-
-#### `dash_spv_ffi_client_enable_mempool_tracking`
-
-```c
-dash_spv_ffi_client_enable_mempool_tracking(client: *mut FFIDashSpvClient, strategy: FFIMempoolStrategy,) -> i32
-```
-
-**Description:**
-Enable mempool tracking with a given strategy.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
+- `client` must be a valid, non-null pointer to an initialized FFIDashSpvClient - `tx_bytes` must be a valid, non-null pointer to the transaction data - `length` must be the length of the transaction data in bytes
 
 **Module:** `client`
 
 ---
 
-### Platform Integration - Detailed
+### Mempool Operations - Detailed
 
-#### `ffi_dash_spv_get_core_handle`
+#### `dash_spv_ffi_mempool_progress_destroy`
 
 ```c
-ffi_dash_spv_get_core_handle(client: *mut FFIDashSpvClient,) -> *mut CoreSDKHandle
+dash_spv_ffi_mempool_progress_destroy(progress: *mut FFIMempoolProgress) -> ()
 ```
 
 **Description:**
-Creates a CoreSDKHandle from an FFIDashSpvClient  # Safety  This function is unsafe because: - The caller must ensure the client pointer is valid - The returned handle must be properly released with ffi_dash_spv_release_core_handle
+Destroy an `FFIMempoolProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
 
 **Safety:**
-This function is unsafe because: - The caller must ensure the client pointer is valid - The returned handle must be properly released with ffi_dash_spv_release_core_handle
+- `progress` must be a pointer returned from this crate, or null.
 
-**Module:** `platform_integration`
+**Module:** `types`
 
 ---
+
+### Platform Integration - Detailed
 
 #### `ffi_dash_spv_get_platform_activation_height`
 
@@ -895,67 +510,7 @@ This function is unsafe because: - The caller must ensure all pointers are valid
 
 ---
 
-#### `ffi_dash_spv_release_core_handle`
-
-```c
-ffi_dash_spv_release_core_handle(handle: *mut CoreSDKHandle) -> ()
-```
-
-**Description:**
-Releases a CoreSDKHandle  # Safety  This function is unsafe because: - The caller must ensure the handle pointer is valid - The handle must not be used after this call
-
-**Safety:**
-This function is unsafe because: - The caller must ensure the handle pointer is valid - The handle must not be used after this call
-
-**Module:** `platform_integration`
-
----
-
-### Event Callbacks - Detailed
-
-#### `dash_spv_ffi_client_drain_events`
-
-```c
-dash_spv_ffi_client_drain_events(client: *mut FFIDashSpvClient) -> i32
-```
-
-**Description:**
-Drain pending events and invoke configured callbacks (non-blocking).  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_set_event_callbacks`
-
-```c
-dash_spv_ffi_client_set_event_callbacks(client: *mut FFIDashSpvClient, callbacks: FFIEventCallbacks,) -> i32
-```
-
-**Description:**
-Set event callbacks for the client.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
 ### Error Handling - Detailed
-
-#### `dash_spv_ffi_clear_error`
-
-```c
-dash_spv_ffi_clear_error() -> ()
-```
-
-**Module:** `error`
-
----
 
 #### `dash_spv_ffi_get_last_error`
 
@@ -969,74 +524,51 @@ dash_spv_ffi_get_last_error() -> *const c_char
 
 ### Utility Functions - Detailed
 
-#### `dash_spv_ffi_array_destroy`
+#### `dash_spv_ffi_block_headers_progress_destroy`
 
 ```c
-dash_spv_ffi_array_destroy(arr: *mut FFIArray) -> ()
+dash_spv_ffi_block_headers_progress_destroy(progress: *mut FFIBlockHeadersProgress,) -> ()
 ```
+
+**Description:**
+Destroy an `FFIBlockHeadersProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
 
 **Module:** `types`
 
 ---
 
-#### `dash_spv_ffi_checkpoint_before_height`
+#### `dash_spv_ffi_blocks_progress_destroy`
 
 ```c
-dash_spv_ffi_checkpoint_before_height(network: FFINetwork, height: u32, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
+dash_spv_ffi_blocks_progress_destroy(progress: *mut FFIBlocksProgress) -> ()
 ```
 
 **Description:**
-Get the last checkpoint at or before a given height.  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+Destroy an `FFIBlocksProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
 
 **Safety:**
-- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+- `progress` must be a pointer returned from this crate, or null.
 
-**Module:** `checkpoints`
+**Module:** `types`
 
 ---
 
-#### `dash_spv_ffi_checkpoint_before_timestamp`
+#### `dash_spv_ffi_chainlock_progress_destroy`
 
 ```c
-dash_spv_ffi_checkpoint_before_timestamp(network: FFINetwork, timestamp: u32, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
+dash_spv_ffi_chainlock_progress_destroy(progress: *mut FFIChainLockProgress,) -> ()
 ```
 
 **Description:**
-Get the last checkpoint at or before a given UNIX timestamp (seconds).  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+Destroy an `FFIChainLockProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
 
 **Safety:**
-- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
+- `progress` must be a pointer returned from this crate, or null.
 
-**Module:** `checkpoints`
-
----
-
-#### `dash_spv_ffi_checkpoint_latest`
-
-```c
-dash_spv_ffi_checkpoint_latest(network: FFINetwork, out_height: *mut u32, out_hash: *mut u8, // expects at least 32 bytes) -> i32
-```
-
-**Description:**
-Get the latest checkpoint for the given network.  # Safety - `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Safety:**
-- `out_height` must be a valid pointer to a `u32`. - `out_hash` must point to at least 32 writable bytes.
-
-**Module:** `checkpoints`
-
----
-
-#### `dash_spv_ffi_checkpoints_between_heights`
-
-```c
-dash_spv_ffi_checkpoints_between_heights(network: FFINetwork, start_height: u32, end_height: u32,) -> FFIArray
-```
-
-**Description:**
-Get all checkpoints between two heights (inclusive).  Returns an `FFIArray` of `FFICheckpoint` items. The caller owns the memory and must free the array buffer using `dash_spv_ffi_array_destroy` when done.
-
-**Module:** `checkpoints`
+**Module:** `types`
 
 ---
 
@@ -1051,54 +583,6 @@ Clear all persisted SPV storage (headers, filters, metadata, sync state).  # Saf
 
 **Safety:**
 - `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_get_stats`
-
-```c
-dash_spv_ffi_client_get_stats(client: *mut FFIDashSpvClient,) -> *mut FFISpvStats
-```
-
-**Description:**
-Get current runtime statistics for the SPV client.  # Safety - `client` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_get_tip_hash`
-
-```c
-dash_spv_ffi_client_get_tip_hash(client: *mut FFIDashSpvClient, out_hash: *mut u8,) -> i32
-```
-
-**Description:**
-Get the current chain tip hash (32 bytes) if available.  # Safety - `client` must be a valid, non-null pointer. - `out_hash` must be a valid pointer to a 32-byte buffer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer. - `out_hash` must be a valid pointer to a 32-byte buffer.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_client_get_tip_height`
-
-```c
-dash_spv_ffi_client_get_tip_height(client: *mut FFIDashSpvClient, out_height: *mut u32,) -> i32
-```
-
-**Description:**
-Get the current chain tip height (absolute).  # Safety - `client` must be a valid, non-null pointer. - `out_height` must be a valid, non-null pointer.
-
-**Safety:**
-- `client` must be a valid, non-null pointer. - `out_height` must be a valid, non-null pointer.
 
 **Module:** `client`
 
@@ -1120,45 +604,51 @@ The caller must ensure that: - The client pointer is valid - The returned pointe
 
 ---
 
-#### `dash_spv_ffi_client_record_send`
+#### `dash_spv_ffi_client_run`
 
 ```c
-dash_spv_ffi_client_record_send(client: *mut FFIDashSpvClient, txid: *const c_char,) -> i32
+dash_spv_ffi_client_run(client: *mut FFIDashSpvClient) -> i32
 ```
 
 **Description:**
-Record that we attempted to send a transaction by its txid.  # Safety - `client` and `txid` must be valid, non-null pointers.
+Start the SPV client and begin syncing in the background.  Uses the event callbacks provided at client creation time. Returns immediately after spawning the sync task.  # Safety - `client` must be a valid, non-null pointer to a created client.  # Returns 0 on success, error code on failure.
 
 **Safety:**
-- `client` and `txid` must be valid, non-null pointers.
+- `client` must be a valid, non-null pointer to a created client.
 
 **Module:** `client`
 
 ---
 
-#### `dash_spv_ffi_client_rescan_blockchain`
+#### `dash_spv_ffi_filter_headers_progress_destroy`
 
 ```c
-dash_spv_ffi_client_rescan_blockchain(client: *mut FFIDashSpvClient, _from_height: u32,) -> i32
+dash_spv_ffi_filter_headers_progress_destroy(progress: *mut FFIFilterHeadersProgress,) -> ()
 ```
 
 **Description:**
-Request a rescan of the blockchain from a given height (not yet implemented).  # Safety - `client` must be a valid, non-null pointer.
+Destroy an `FFIFilterHeadersProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
 
 **Safety:**
-- `client` must be a valid, non-null pointer.
+- `progress` must be a pointer returned from this crate, or null.
 
-**Module:** `client`
+**Module:** `types`
 
 ---
 
-#### `dash_spv_ffi_enable_test_mode`
+#### `dash_spv_ffi_filters_progress_destroy`
 
 ```c
-dash_spv_ffi_enable_test_mode() -> ()
+dash_spv_ffi_filters_progress_destroy(progress: *mut FFIFiltersProgress) -> ()
 ```
 
-**Module:** `utils`
+**Description:**
+Destroy an `FFIFiltersProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
+
+**Module:** `types`
 
 ---
 
@@ -1178,40 +668,33 @@ Initialize logging for the SPV library.  # Arguments - `level`: Log level string
 
 ---
 
-#### `dash_spv_ffi_spv_stats_destroy`
+#### `dash_spv_ffi_instantsend_progress_destroy`
 
 ```c
-dash_spv_ffi_spv_stats_destroy(stats: *mut FFISpvStats) -> ()
+dash_spv_ffi_instantsend_progress_destroy(progress: *mut FFIInstantSendProgress,) -> ()
 ```
 
 **Description:**
-Destroy an `FFISpvStats` object returned by this crate.  # Safety - `stats` must be a pointer returned from this crate, or null.
+Destroy an `FFIInstantSendProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
 
 **Safety:**
-- `stats` must be a pointer returned from this crate, or null.
-
-**Module:** `client`
-
----
-
-#### `dash_spv_ffi_string_array_destroy`
-
-```c
-dash_spv_ffi_string_array_destroy(arr: *mut FFIArray) -> ()
-```
-
-**Description:**
-Destroy an array of FFIString pointers (Vec<*mut FFIString>) and their contents.  This function: - Iterates the array elements as pointers to FFIString and destroys each via dash_spv_ffi_string_destroy - Frees the underlying vector buffer stored in FFIArray - Does not free the FFIArray struct itself (safe for both stack- and heap-allocated structs)
+- `progress` must be a pointer returned from this crate, or null.
 
 **Module:** `types`
 
 ---
 
-#### `dash_spv_ffi_string_destroy`
+#### `dash_spv_ffi_masternode_progress_destroy`
 
 ```c
-dash_spv_ffi_string_destroy(s: FFIString) -> ()
+dash_spv_ffi_masternode_progress_destroy(progress: *mut FFIMasternodesProgress,) -> ()
 ```
+
+**Description:**
+Destroy an `FFIMasternodesProgress` object.  # Safety - `progress` must be a pointer returned from this crate, or null.
+
+**Safety:**
+- `progress` must be a pointer returned from this crate, or null.
 
 **Module:** `types`
 
@@ -1251,7 +734,6 @@ Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
 - `FFIClientConfig` - Client configuration
 - `FFISyncProgress` - Synchronization progress
 - `FFIDetailedSyncProgress` - Detailed sync progress
-- `FFISpvStats` - SPV statistics
 - `FFITransaction` - Transaction information
 - `FFIUnconfirmedTransaction` - Unconfirmed transaction
 - `FFIEventCallbacks` - Event callback structure
@@ -1259,10 +741,9 @@ Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
 
 ### Enumerations
 
-- `FFINetwork` - Network type (Dash, Testnet, Regtest, Devnet)
+- `FFINetwork` - Network type (Mainnet, Testnet, Regtest, Devnet)
 - `FFIValidationMode` - Validation mode (None, Basic, Full)
 - `FFIMempoolStrategy` - Mempool strategy (FetchAll, BloomFilter, Selective)
-- `FFISyncStage` - Synchronization stage
 
 ## Memory Management
 
@@ -1282,18 +763,18 @@ Release a wallet manager obtained from `dash_spv_ffi_client_get_wallet_manager`.
 // Create configuration
 FFIClientConfig* config = dash_spv_ffi_config_testnet();
 
-// Create client
-FFIDashSpvClient* client = dash_spv_ffi_client_new(config);
+// Build event callbacks (zero-init for no-op defaults)
+FFIEventCallbacks callbacks = { 0 };
 
-// Start the client
-int32_t result = dash_spv_ffi_client_start(client);
+// Create client with callbacks
+FFIDashSpvClient* client = dash_spv_ffi_client_new(config, callbacks);
+
+// Start syncing (uses callbacks provided at creation)
+int32_t result = dash_spv_ffi_client_run(client);
 if (result != 0) {
     const char* error = dash_spv_ffi_get_last_error();
     // Handle error
 }
-
-// Sync to chain tip
-dash_spv_ffi_client_sync_to_tip(client, NULL, NULL);
 
 // Get wallet manager (shares ownership with the client)
 FFIWalletManager* wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
@@ -1306,22 +787,22 @@ dash_spv_ffi_config_destroy(config);
 ### Event Callbacks
 
 ```c
-void on_block(uint32_t height, const uint8_t (*hash)[32], void* user_data) {
-    printf("New block at height %u\n", height);
+void on_headers(uint32_t tip_height, void* user_data) {
+    printf("Headers stored up to height %u\n", tip_height);
 }
 
-void on_transaction(const uint8_t (*txid)[32], bool confirmed, 
-                    int64_t amount, const char* addresses, 
-                    uint32_t block_height, void* user_data) {
-    printf("Transaction: %lld duffs\n", amount);
+void on_tx(const char* wallet_id, uint32_t account_index,
+           const uint8_t (*txid)[32], int64_t amount,
+           const char* addresses, void* user_data) {
+    printf("Transaction: %lld duffs\n", (long long)amount);
 }
 
-// Set up callbacks
-FFIEventCallbacks callbacks = {
-    .on_block = on_block,
-    .on_transaction = on_transaction,
-    .user_data = NULL
-};
+// Build callbacks struct and pass to client_new()
+FFIEventCallbacks callbacks = { 0 };
+callbacks.sync.on_block_headers_stored = on_headers;
+callbacks.wallet.on_transaction_received = on_tx;
+FFIDashSpvClient* client = dash_spv_ffi_client_new(config, callbacks);
 
-dash_spv_ffi_client_set_event_callbacks(client, callbacks);
+// Start syncing (uses callbacks provided at creation)
+dash_spv_ffi_client_run(client);
 ```

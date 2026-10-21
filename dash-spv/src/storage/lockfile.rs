@@ -1,6 +1,6 @@
 //! Lock file implementation and related unit tests.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -14,7 +14,12 @@ pub(super) struct LockFile {
 
 impl LockFile {
     pub(super) fn new(path: PathBuf) -> StorageResult<Self> {
-        let mut file = File::create(&path)
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
             .map_err(|e| StorageError::WriteFailed(format!("Failed to create lock file: {}", e)))?;
 
         file.try_lock().map_err(|e| match e {
@@ -49,7 +54,21 @@ impl Drop for LockFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Seek, SeekFrom};
     use tempfile::TempDir;
+
+    impl LockFile {
+        /// Reads the PID from the lock file.
+        fn read_pid(&mut self) -> std::io::Result<u32> {
+            self._file.seek(SeekFrom::Start(0))?;
+            let mut content = String::new();
+            self._file.read_to_string(&mut content)?;
+            content
+                .trim()
+                .parse()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        }
+    }
 
     #[test]
     fn test_lock_file_creation() {
@@ -67,11 +86,8 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let lock_path = temp_dir.path().join(".lock");
 
-        let _lock = LockFile::new(lock_path.clone()).unwrap();
-
-        let content = std::fs::read_to_string(&lock_path).expect("Should read lock file");
-        let pid: u32 = content.trim().parse().expect("Lock file should contain valid PID");
-        assert_eq!(pid, std::process::id());
+        let mut lock = LockFile::new(lock_path.clone()).unwrap();
+        assert_eq!(lock.read_pid().unwrap(), std::process::id());
     }
 
     #[test]

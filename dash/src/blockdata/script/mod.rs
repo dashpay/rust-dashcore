@@ -48,14 +48,11 @@
 //! At the time of writing there's only one operation using the cache - `push_verify`, so the cache
 //! is minimal but we may extend it in the future if needed.
 
-use alloc::rc::Rc;
-#[cfg(all(not(feature = "std"), not(test), target_has_atomic = "ptr"))]
-use alloc::sync::Arc;
 use core::borrow::{Borrow, BorrowMut};
 use core::cmp::Ordering;
 use core::fmt;
 use core::ops::{Deref, DerefMut};
-#[cfg(feature = "std")]
+use std::rc::Rc;
 use std::sync::Arc;
 
 #[cfg(feature = "serde")]
@@ -787,7 +784,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::Error::*;

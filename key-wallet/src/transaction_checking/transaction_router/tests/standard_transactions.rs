@@ -4,13 +4,16 @@ use super::helpers::*;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
+use dashcore::blockdata::transaction::Transaction;
 
 #[test]
 fn test_single_input_two_outputs_payment() {
     // Typical payment: 1 input -> payment + change
-    let tx = create_test_transaction(
-        1,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..1,
+        &[
             25_000_000, // Payment amount
             74_900_000, // Change (minus fee)
         ],
@@ -27,9 +30,11 @@ fn test_single_input_two_outputs_payment() {
 #[test]
 fn test_multiple_inputs_single_output_consolidation() {
     // Consolidation: multiple inputs -> single output
-    let tx = create_test_transaction(
-        5,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..5,
+        &[
             499_900_000, // Consolidated amount minus fee
         ],
     );
@@ -47,9 +52,11 @@ fn test_multiple_inputs_single_output_consolidation() {
 fn test_many_inputs_same_account() {
     // Spending many small UTXOs from same account
     // 10 small inputs -> payment + change
-    let tx = create_test_transaction(
-        10,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..10,
+        &[
             75_000_000, // Payment
             24_950_000, // Change
         ],
@@ -67,9 +74,11 @@ fn test_many_inputs_same_account() {
 #[test]
 fn test_payment_to_multiple_recipients() {
     // Batch payment: 1 input -> multiple recipients + change
-    let tx = create_test_transaction(
-        1,
-        vec![
+    let addr = test_addr();
+    let tx = Transaction::dummy(
+        &addr,
+        0..1,
+        &[
             10_000_000, // Recipient 1
             15_000_000, // Recipient 2
             20_000_000, // Recipient 3

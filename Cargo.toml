@@ -1,12 +1,14 @@
 [workspace]
-members = ["dash", "dash-network", "dash-network-ffi", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test", "key-wallet", "key-wallet-ffi", "key-wallet-manager", "dash-spv", "dash-spv-ffi", "test-utils"]
+members = ["dash", "dash-network", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test", "key-wallet", "key-wallet-manager", "key-wallet-ffi", "dash-spv", "dash-spv-ffi", "git-state", "dash-network-seeds", "masternode-seeds-fetcher"]
 resolver = "2"
 
 [workspace.package]
-version = "0.41.1"
+version = "0.44.0"
 
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }
+# Use directly from GitHub while we don't have ownership of the crate on crates.io
+rs-x11-hash = { git = "https://github.com/dashpay/rs-x11-hash", tag = "0.1.9" }
 
 [profile.release]
 # Default to unwinding for most crates
@@ -14,6 +16,7 @@ panic = "unwind"
 
 [profile.release.package.dash-fuzz]
 # Disable LTO and keep debuginfo for honggfuzz to avoid link GC issues
+codegen-units = 16
 debug = 1
 
 [profile.dev]

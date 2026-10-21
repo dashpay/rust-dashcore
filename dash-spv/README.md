@@ -58,15 +58,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ClientConfig::mainnet()
         .with_storage_path("/path/to/data".into());
 
-    // Create and start client
-    let mut client = DashSpvClient::new(config).await?;
-    client.start().await?;
-
-    // Synchronize to tip
-    let progress = client.sync_to_tip().await?;
-    println!("Synced to height {}", progress.header_height);
-
-    client.stop().await?;
+    // Create and run the client
+    let client = DashSpvClient::new(config).await?;
+    let shutdown_token = CancellationToken::new();
+    client.run(shutdown_token).await?;
+    
     Ok(())
 }
 ```

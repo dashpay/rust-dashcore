@@ -50,23 +50,26 @@ impl BloomFilter {
             return Err(BloomError::InvalidFalsePositiveRate(false_positive_rate));
         }
 
-        // Calculate optimal filter size and hash count
+        // Calculate optimal filter size and hash count matching the Dash Core implementation:
+        // https://github.com/dashpay/dash/blob/1c9809f1c6b917a88e466e2e059e0594afb04a59/src/common/bloom.cpp#L29-L45
         let ln2 = std::f64::consts::LN_2;
         let ln2_squared = ln2 * ln2;
 
-        let filter_size =
-            (-(elements as f64) * false_positive_rate.ln() / ln2_squared).ceil() as usize;
-        let filter_size = filter_size.clamp(1, MAX_BLOOM_FILTER_SIZE * 8);
+        let filter_bits =
+            (-1.0 / ln2_squared * elements as f64 * false_positive_rate.ln()) as usize;
+        let filter_bits = filter_bits.min(MAX_BLOOM_FILTER_SIZE * 8);
+        let filter_bytes = filter_bits / 8;
 
-        let n_hash_funcs = (filter_size as f64 / elements as f64 * ln2).ceil() as u32;
-        let n_hash_funcs = n_hash_funcs.clamp(1, MAX_HASH_FUNCS);
-
-        let filter_bytes = filter_size.div_ceil(8);
         if filter_bytes > MAX_BLOOM_FILTER_SIZE {
             return Err(BloomError::FilterTooLarge(filter_bytes));
         }
 
-        let filter = bitvec![u8, Lsb0; 0; filter_size];
+        let aligned_bits = filter_bytes * 8;
+
+        let n_hash_funcs = (aligned_bits as f64 / elements as f64 * ln2) as u32;
+        let n_hash_funcs = n_hash_funcs.clamp(1, MAX_HASH_FUNCS);
+
+        let filter = bitvec![u8, Lsb0; 0; aligned_bits];
 
         Ok(BloomFilter {
             filter,
@@ -206,6 +209,7 @@ impl Decodable for BloomFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::key::{PrivateKey, secp256k1};
 
     #[test]
     fn test_bloom_filter_basic() {
@@ -279,6 +283,10 @@ mod tests {
             BloomFilter::new(10, 1.0, 0, BloomFlags::None),
             Err(BloomError::InvalidFalsePositiveRate(_))
         ));
+
+        // Extreme false positive rate near 1.0 produces a zero-byte filter, matching Dash Core
+        let filter = BloomFilter::new(1, 0.999, 0, BloomFlags::None).unwrap();
+        assert_eq!(filter.size(), 0);
     }
 
     #[test]
@@ -293,5 +301,114 @@ mod tests {
         let decoded = BloomFilter::consensus_decode(&mut &encoded[..]).unwrap();
 
         assert_eq!(filter, decoded);
+    }
+
+    /// Verify serialized output matches Dash Core's bloom_create_insert_serialize test vector:
+    /// https://github.com/dashpay/dash/blob/b66b56c3019fe7ab0c9f35dd9894c0ded4d9d420/src/test/bloom_tests.cpp#L24-L49
+    ///
+    /// Filter: 3 elements, 0.01 fp rate, tweak 0, BLOOM_UPDATE_ALL.
+    /// Data inserted: three 20-byte hashes from the C++ test.
+    /// Expected serialized bytes: "03614e9b050000000000000001"
+    #[test]
+    fn test_bloom_filter_dash_core_compatibility() {
+        let mut filter = BloomFilter::new(3, 0.01, 0, BloomFlags::All).unwrap();
+
+        let data1 = hex::decode("99108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap();
+        let data2 = hex::decode("b5a2c786d9ef4658287ced5914b37a1b4aa32eee").unwrap();
+        let data3 = hex::decode("b9300670b4c5366e95b2699e8b18bc75e5f729c5").unwrap();
+
+        assert!(!filter.contains(&data1));
+
+        filter.insert(&data1);
+        assert!(filter.contains(&data1));
+        assert!(
+            !filter.contains(&hex::decode("19108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap())
+        );
+
+        filter.insert(&data2);
+        assert!(filter.contains(&data2));
+
+        filter.insert(&data3);
+        assert!(filter.contains(&data3));
+
+        let mut encoded = Vec::new();
+        filter.consensus_encode(&mut encoded).unwrap();
+
+        let expected = hex::decode("03614e9b050000000000000001").unwrap();
+        assert_eq!(encoded, expected, "Serialized bloom filter must match Dash Core test vector");
+    }
+
+    /// Verify bloom filter with pubkey and pubkey hash insertion matches Dash Core's
+    /// bloom_create_insert_key test:
+    /// https://github.com/dashpay/dash/blob/b66b56c3019fe7ab0c9f35dd9894c0ded4d9d420/src/test/bloom_tests.cpp#L76-L95
+    ///
+    /// Filter: 2 elements, 0.001 fp rate, tweak 0, BLOOM_UPDATE_ALL.
+    /// Data inserted: uncompressed pubkey bytes and Hash160(pubkey) bytes.
+    /// Expected serialized bytes: "038fc16b080000000000000001"
+    #[test]
+    fn test_bloom_create_insert_key() {
+        let secp = secp256k1::Secp256k1::new();
+
+        // Private key from Dash Core test WIF: 7sQb6QHALg4XyHsJHsSNXnEHGhZfzTTUPJXJqaqK7CavQkiL9Ms
+        let privkey_bytes: [u8; 32] =
+            hex::decode("f49addfd726a59abde172c86452f5f73038a02f4415878dc14934175e8418aff")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let secret_key = secp256k1::SecretKey::from_byte_array(&privkey_bytes).unwrap();
+        let privkey =
+            PrivateKey::new_uncompressed(secret_key, crate::network::constants::Network::Mainnet);
+        let pubkey = privkey.public_key(&secp);
+
+        let mut filter = BloomFilter::new(2, 0.001, 0, BloomFlags::All).unwrap();
+
+        // Insert serialized uncompressed public key
+        let pubkey_bytes = pubkey.to_bytes();
+        filter.insert(&pubkey_bytes);
+
+        // Insert pubkey hash (Hash160 of the serialized pubkey)
+        let pubkey_hash = pubkey.pubkey_hash();
+        filter.insert(pubkey_hash.as_ref());
+
+        let mut encoded = Vec::new();
+        filter.consensus_encode(&mut encoded).unwrap();
+
+        let expected = hex::decode("038fc16b080000000000000001").unwrap();
+        assert_eq!(
+            encoded, expected,
+            "Serialized bloom filter must match Dash Core bloom_create_insert_key test vector"
+        );
+    }
+
+    /// Verify with tweak = 2147483649 from Dash Core's bloom_create_insert_serialize_with_tweak:
+    /// https://github.com/dashpay/dash/blob/b66b56c3019fe7ab0c9f35dd9894c0ded4d9d420/src/test/bloom_tests.cpp#L51-L74
+    #[test]
+    fn test_bloom_filter_dash_core_compatibility_with_tweak() {
+        let mut filter = BloomFilter::new(3, 0.01, 2147483649, BloomFlags::All).unwrap();
+
+        let data1 = hex::decode("99108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap();
+        let data2 = hex::decode("b5a2c786d9ef4658287ced5914b37a1b4aa32eee").unwrap();
+        let data3 = hex::decode("b9300670b4c5366e95b2699e8b18bc75e5f729c5").unwrap();
+
+        filter.insert(&data1);
+        assert!(filter.contains(&data1));
+        assert!(
+            !filter.contains(&hex::decode("19108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap())
+        );
+
+        filter.insert(&data2);
+        assert!(filter.contains(&data2));
+
+        filter.insert(&data3);
+        assert!(filter.contains(&data3));
+
+        let mut encoded = Vec::new();
+        filter.consensus_encode(&mut encoded).unwrap();
+
+        let expected = hex::decode("03ce4299050000000100008001").unwrap();
+        assert_eq!(
+            encoded, expected,
+            "Serialized bloom filter must match Dash Core test vector (with tweak)"
+        );
     }
 }

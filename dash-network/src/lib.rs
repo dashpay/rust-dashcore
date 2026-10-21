@@ -1,42 +1,62 @@
-//! Dash network types shared across Dash crates
+//! The Dash [`Network`] enum and its pure helpers, extracted from the main
+//! `dashcore` crate so that lightweight consumers can depend on it without
+//! pulling in the full protocol library.
+//!
+//! This crate carries **no** dependencies beyond its optional `serde` /
+//! `bincode` impls. If you need Network::known_genesis_block_hash — which
+//! returns a `BlockHash` — use the extension trait provided by `dashcore`.
+//!
+//! # Example
+//!
+//! ```rust
+//! use dash_network::Network;
+//!
+//! assert_eq!(Network::Mainnet.magic(), 0xBD6B0CBF);
+//! assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Mainnet));
+//! assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
+//! assert_eq!(Network::Mainnet.default_p2p_port(), 9999);
+//! ```
+
+use core::fmt;
+
+#[cfg(feature = "ffi")]
+pub mod ffi;
 
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use std::fmt;
 
-/// The cryptocurrency network to act on.
+/// The Dash network to act on.
 #[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-#[non_exhaustive]
-#[repr(u8)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[repr(u8)]
 pub enum Network {
-    /// Classic Dash Core Payment Chain
-    Dash,
-    /// Dash's testnet network.
+    /// Dash mainnet, the production network for real transactions.
+    Mainnet,
+    /// Dash public test network for protocol-level testing without real funds.
     Testnet,
-    /// Dash's devnet network.
+    /// Dash development network, an isolated environment for feature development and testing.
     Devnet,
-    /// Bitcoin's regtest network.
+    /// Local regression testing network for deterministic, offline testing with instant block generation.
     Regtest,
 }
 
 impl Network {
-    /// Creates a `Network` from the magic bytes.
+    /// Creates a `Network` from the network magic bytes.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use dash_network::Network;
     ///
-    /// assert_eq!(Some(Network::Dash), Network::from_magic(0xBD6B0CBF));
+    /// assert_eq!(Some(Network::Mainnet), Network::from_magic(0xBD6B0CBF));
     /// assert_eq!(None, Network::from_magic(0xFFFFFFFF));
     /// ```
-    pub fn from_magic(magic: u32) -> Option<Network> {
-        // Note: any new entries here must be added to `magic` below
+    pub const fn from_magic(magic: u32) -> Option<Network> {
+        // Note: any new entries here must be added to `magic` below.
         match magic {
-            0xBD6B0CBF => Some(Network::Dash),
+            0xBD6B0CBF => Some(Network::Mainnet),
             0xFFCAE2CE => Some(Network::Testnet),
             0xCEFFCAE2 => Some(Network::Devnet),
             0xDCB7C1FC => Some(Network::Regtest),
@@ -52,100 +72,158 @@ impl Network {
     /// ```rust
     /// use dash_network::Network;
     ///
-    /// let network = Network::Dash;
+    /// let network = Network::Mainnet;
     /// assert_eq!(network.magic(), 0xBD6B0CBF);
     /// ```
-    pub fn magic(self) -> u32 {
-        // Note: any new entries here must be added to `from_magic` above
+    pub const fn magic(self) -> u32 {
+        // Note: any new entries here must be added to `from_magic` above.
         match self {
-            Network::Dash => 0xBD6B0CBF,
+            Network::Mainnet => 0xBD6B0CBF,
             Network::Testnet => 0xFFCAE2CE,
             Network::Devnet => 0xCEFFCAE2,
             Network::Regtest => 0xDCB7C1FC,
         }
     }
 
-    /// The known activation height of core v20
-    pub fn core_v20_activation_height(&self) -> u32 {
+    /// The block height at which Dash consensus version 20 activates.
+    ///
+    /// Devnet and regtest activate V20 immediately (height 0).
+    pub const fn v20_activation_height(self) -> u32 {
         match self {
-            Network::Dash => 1987776,
-            Network::Testnet => 905100,
-            Network::Devnet => 1,  // v20 active from genesis on devnet
-            Network::Regtest => 1, // v20 active from genesis on regtest
-            #[allow(unreachable_patterns)]
-            other => panic!("Unknown activation height for network {:?}", other),
+            Network::Mainnet => 1_987_776,
+            Network::Testnet => 905_100,
+            // Devnet and regtest activate V20 immediately.
+            Network::Devnet | Network::Regtest => 0,
         }
     }
 
-    /// Helper method to know if core v20 was active
-    pub fn core_v20_is_active_at(&self, core_block_height: u32) -> bool {
-        core_block_height >= self.core_v20_activation_height()
+    /// The default P2P port for this network.
+    ///
+    /// Regtest's default is the typical Dash Core regtest value; devnets can
+    /// vary and should usually come from configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dash_network::Network;
+    ///
+    /// assert_eq!(Network::Mainnet.default_p2p_port(), 9999);
+    /// assert_eq!(Network::Testnet.default_p2p_port(), 19999);
+    /// ```
+    pub const fn default_p2p_port(self) -> u16 {
+        match self {
+            Network::Mainnet => 9999,
+            Network::Testnet => 19999,
+            Network::Devnet => 19799,
+            Network::Regtest => 19899,
+        }
+    }
+
+    /// DNS seed hostnames for this network. Empty for networks without
+    /// public DNS seeds (Devnet, Regtest).
+    pub const fn dns_seeds(self) -> &'static [&'static str] {
+        match self {
+            Network::Mainnet => &["dnsseed.dash.org"],
+            Network::Testnet => &["testnet-seed.dashdot.io"],
+            Network::Devnet | Network::Regtest => &[],
+        }
     }
 }
 
 impl fmt::Display for Network {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Network::Dash => write!(f, "dash"),
-            Network::Testnet => write!(f, "testnet"),
-            Network::Devnet => write!(f, "devnet"),
-            Network::Regtest => write!(f, "regtest"),
-        }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Network::Mainnet => "mainnet",
+            Network::Testnet => "testnet",
+            Network::Devnet => "devnet",
+            Network::Regtest => "regtest",
+        })
     }
 }
 
-impl std::str::FromStr for Network {
-    type Err = String;
+impl core::str::FromStr for Network {
+    type Err = ParseNetworkError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "dash" | "mainnet" => Ok(Network::Dash),
+            "mainnet" | "main" => Ok(Network::Mainnet),
             "testnet" | "test" => Ok(Network::Testnet),
             "devnet" | "dev" => Ok(Network::Devnet),
             "regtest" => Ok(Network::Regtest),
-            _ => Err(format!("Unknown network type: {}", s)),
+            _ => Err(ParseNetworkError(s.to_string())),
         }
     }
 }
+
+/// Error returned from Network::from_str when the input doesn't name a
+/// known network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseNetworkError(pub String);
+
+impl fmt::Display for ParseNetworkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown network type: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParseNetworkError {}
+
+// ---------- Tests ----------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_network_magic() {
-        assert_eq!(Network::Dash.magic(), 0xBD6B0CBF);
-        assert_eq!(Network::Testnet.magic(), 0xFFCAE2CE);
-        assert_eq!(Network::Devnet.magic(), 0xCEFFCAE2);
-        assert_eq!(Network::Regtest.magic(), 0xDCB7C1FC);
+    fn magic_round_trip_covers_all_variants() {
+        for n in [Network::Mainnet, Network::Testnet, Network::Devnet, Network::Regtest] {
+            let magic = n.magic();
+            assert_eq!(Network::from_magic(magic), Some(n), "round-trip failed for {:?}", n);
+        }
     }
 
     #[test]
-    fn test_network_from_magic() {
-        assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Dash));
-        assert_eq!(Network::from_magic(0xFFCAE2CE), Some(Network::Testnet));
-        assert_eq!(Network::from_magic(0xCEFFCAE2), Some(Network::Devnet));
-        assert_eq!(Network::from_magic(0xDCB7C1FC), Some(Network::Regtest));
-        assert_eq!(Network::from_magic(0x12345678), None);
+    fn from_magic_unknown_is_none() {
+        assert_eq!(Network::from_magic(0), None);
+        assert_eq!(Network::from_magic(0xFFFFFFFF), None);
     }
 
     #[test]
-    fn test_network_display() {
-        assert_eq!(Network::Dash.to_string(), "dash");
+    fn from_str_accepts_aliases_and_is_case_insensitive() {
+        assert_eq!("MAINNET".parse::<Network>().unwrap(), Network::Mainnet);
+        assert_eq!("main".parse::<Network>().unwrap(), Network::Mainnet);
+        assert_eq!("Testnet".parse::<Network>().unwrap(), Network::Testnet);
+        assert_eq!("test".parse::<Network>().unwrap(), Network::Testnet);
+        assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
+        assert_eq!("dev".parse::<Network>().unwrap(), Network::Devnet);
+        assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
+    }
+
+    #[test]
+    fn from_str_rejects_nonsense() {
+        let err = "bogus".parse::<Network>().unwrap_err();
+        assert_eq!(err.0, "bogus");
+    }
+
+    #[test]
+    fn display_matches_canonical_lowercase() {
+        assert_eq!(Network::Mainnet.to_string(), "mainnet");
         assert_eq!(Network::Testnet.to_string(), "testnet");
         assert_eq!(Network::Devnet.to_string(), "devnet");
         assert_eq!(Network::Regtest.to_string(), "regtest");
     }
 
     #[test]
-    fn test_network_from_str() {
-        assert_eq!("dash".parse::<Network>().unwrap(), Network::Dash);
-        assert_eq!("mainnet".parse::<Network>().unwrap(), Network::Dash);
-        assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
-        assert_eq!("test".parse::<Network>().unwrap(), Network::Testnet);
-        assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
-        assert_eq!("dev".parse::<Network>().unwrap(), Network::Devnet);
-        assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
-        assert!("invalid".parse::<Network>().is_err());
+    fn activation_heights_are_stable() {
+        assert_eq!(Network::Mainnet.v20_activation_height(), 1_987_776);
+        assert_eq!(Network::Testnet.v20_activation_height(), 905_100);
+        assert_eq!(Network::Devnet.v20_activation_height(), 0);
+        assert_eq!(Network::Regtest.v20_activation_height(), 0);
+    }
+
+    #[test]
+    fn default_p2p_ports_match_conventions() {
+        assert_eq!(Network::Mainnet.default_p2p_port(), 9999);
+        assert_eq!(Network::Testnet.default_p2p_port(), 19999);
     }
 }

@@ -8,270 +8,229 @@
 //! - Genesis block initialization
 //! - Wallet data loading
 
-use std::collections::HashSet;
-use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
-
-use crate::chain::ChainLockManager;
+use super::{ClientConfig, DashSpvClient, EventHandler};
+use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints, CheckpointManager};
 use crate::error::{Result, SpvError};
-use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
-use crate::sync::SyncManager;
-use crate::types::{ChainState, MempoolState, SpvStats};
+use crate::storage::{
+    PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
+    PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
+};
+use crate::sync::{
+    BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
+    InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
+};
 use dashcore::network::constants::NetworkExt;
+use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore_hashes::Hash;
-use key_wallet_manager::wallet_interface::WalletInterface;
+use key_wallet_manager::WalletInterface;
+use std::sync::Arc;
+use tokio::sync::{watch, Mutex, RwLock};
 
-use super::{BlockProcessor, ClientConfig, DashSpvClient};
-
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     /// Create a new SPV client with the given configuration, network, storage, and wallet.
     pub async fn new(
         config: ClientConfig,
         network: N,
-        storage: S,
+        mut storage: S,
         wallet: Arc<RwLock<W>>,
+        event_handlers: Vec<Arc<dyn EventHandler>>,
     ) -> Result<Self> {
+        tracing::info!("{}", crate::version_info());
+
         // Validate configuration
         config.validate().map_err(SpvError::Config)?;
+        config.apply_global_overrides().map_err(SpvError::Config)?;
 
-        // Initialize state for the network
-        let state = Arc::new(RwLock::new(ChainState::new_for_network(config.network)));
-        let stats = Arc::new(RwLock::new(SpvStats::default()));
+        // Initialize genesis block or checkpoint before creating managers,
+        // so they can read the tip from storage during construction.
+        Self::initialize_genesis_block(&config, &mut storage).await?;
+
+        let masternode_engine = {
+            if config.enable_masternodes {
+                Some(Arc::new(RwLock::new(MasternodeListEngine::default_for_network(
+                    config.network,
+                ))))
+            } else {
+                None
+            }
+        };
+
+        let mut managers: Managers<
+            PersistentBlockHeaderStorage,
+            PersistentFilterHeaderStorage,
+            PersistentFilterStorage,
+            PersistentBlockStorage,
+            PersistentMetadataStorage,
+            W,
+        > = Managers::default();
+
+        let checkpoints = match config.network {
+            dashcore::Network::Mainnet => mainnet_checkpoints(),
+            dashcore::Network::Testnet => testnet_checkpoints(),
+            _ => Vec::new(),
+        };
+        let checkpoint_manager = Arc::new(CheckpointManager::new(checkpoints));
+        managers.block_headers = Some(
+            BlockHeadersManager::new(
+                storage.block_headers(),
+                storage.metadata(),
+                checkpoint_manager,
+            )
+            .await?,
+        );
+
+        if config.enable_filters {
+            managers.filter_headers = Some(
+                FilterHeadersManager::new(storage.block_headers(), storage.filter_headers())
+                    .await?,
+            );
+            managers.filters = Some(
+                FiltersManager::new(
+                    wallet.clone(),
+                    storage.block_headers(),
+                    storage.filter_headers(),
+                    storage.filters(),
+                )
+                .await,
+            );
+            managers.blocks = Some(
+                BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()).await,
+            );
+        }
+
+        // Build masternode manager if enabled
+        if config.enable_masternodes {
+            let masternode_list_engine = masternode_engine
+                .clone()
+                .expect("Masternode list engine must exist if masternodes are enabled");
+            managers.masternode = Some(
+                MasternodesManager::new(
+                    storage.block_headers(),
+                    masternode_list_engine.clone(),
+                    config.network,
+                )
+                .await,
+            );
+            managers.chainlock = Some(
+                ChainLockManager::new(
+                    storage.block_headers(),
+                    storage.metadata(),
+                    masternode_list_engine.clone(),
+                )
+                .await,
+            );
+            managers.instantsend = Some(InstantSendManager::new(masternode_list_engine.clone()));
+        }
+
+        // Build mempool manager if tracking is enabled
+        if config.enable_mempool_tracking {
+            let initial_revision = wallet.read().await.monitor_revision();
+            managers.mempool = Some(MempoolManager::new(
+                wallet.clone(),
+                config.mempool_strategy,
+                config.max_mempool_transactions,
+                initial_revision,
+            ));
+        }
+
+        let sync_coordinator = SyncCoordinator::new(managers).await;
 
         // Wrap storage in Arc<Mutex>
         let storage = Arc::new(Mutex::new(storage));
 
-        // Create sync manager
-        let received_filter_heights = stats.read().await.received_filter_heights.clone();
-        tracing::info!("Creating sequential sync manager");
-        let sync_manager = SyncManager::new(
-            &config,
-            received_filter_heights,
-            wallet.clone(),
-            state.clone(),
-            stats.clone(),
-        )
-        .map_err(SpvError::Sync)?;
-
-        // Create ChainLock manager
-        let chainlock_manager = Arc::new(ChainLockManager::new(true));
-
-        // Create block processing channel
-        let (block_processor_tx, _block_processor_rx) = mpsc::unbounded_channel();
-
-        // Create progress channels
-        let (progress_sender, progress_receiver) = mpsc::unbounded_channel();
-
-        // Create event channels
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-
-        // Create mempool state
-        let mempool_state = Arc::new(RwLock::new(MempoolState::default()));
-
-        Ok(Self {
-            config,
-            state,
-            stats,
-            network,
+        let client = Self {
+            config: Arc::new(RwLock::new(config)),
+            network: Arc::new(Mutex::new(network)),
             storage,
             wallet,
-            sync_manager,
-            chainlock_manager,
-            running: Arc::new(RwLock::new(false)),
-            #[cfg(feature = "terminal-ui")]
-            terminal_ui: None,
-            filter_processor: None,
-            block_processor_tx,
-            progress_sender: Some(progress_sender),
-            progress_receiver: Some(progress_receiver),
-            event_tx,
-            event_rx: Some(event_rx),
-            mempool_state,
-            mempool_filter: None,
-        })
-    }
-
-    /// Start the SPV client.
-    pub async fn start(&mut self) -> Result<()> {
-        {
-            let running = self.running.read().await;
-            if *running {
-                return Err(SpvError::Config("Client already running".to_string()));
-            }
-        }
+            masternode_engine,
+            sync_coordinator: Arc::new(Mutex::new(sync_coordinator)),
+            running: Arc::new(watch::Sender::new(false)),
+            event_handlers: Arc::new(event_handlers),
+        };
 
         // Load wallet data from storage
-        self.load_wallet_data().await?;
+        client.load_wallet_data().await?;
 
-        // Initialize mempool filter if mempool tracking is enabled
-        if self.config.enable_mempool_tracking {
-            // TODO: Get monitored addresses from wallet
-            self.mempool_filter = Some(Arc::new(MempoolFilter::new(
-                self.config.mempool_strategy,
-                self.config.max_mempool_transactions,
-                self.mempool_state.clone(),
-                HashSet::new(), // Will be populated from wallet's monitored addresses
-                self.config.network,
-            )));
-
-            // Load mempool state from storage if persistence is enabled
-            if self.config.persist_mempool {
-                if let Some(state) = self
-                    .storage
-                    .lock()
-                    .await
-                    .load_mempool_state()
-                    .await
-                    .map_err(SpvError::Storage)?
-                {
-                    *self.mempool_state.write().await = state;
-                }
-            }
+        // Emit initial progress so callers get immediate feedback
+        let initial_progress = client.sync_coordinator.lock().await.progress().clone();
+        for event_handler in client.event_handlers.iter() {
+            event_handler.on_progress(&initial_progress);
         }
 
-        // Spawn block processor worker now that all dependencies are ready
-        let (new_tx, block_processor_rx) = mpsc::unbounded_channel();
-        let old_tx = std::mem::replace(&mut self.block_processor_tx, new_tx);
-        drop(old_tx); // Drop the old sender to avoid confusion
+        Ok(client)
+    }
 
-        // Use the shared wallet instance for the block processor
-        let block_processor = BlockProcessor::new(
-            block_processor_rx,
-            self.wallet.clone(),
-            self.storage.clone(),
-            self.stats.clone(),
-            self.event_tx.clone(),
-        );
-
-        tokio::spawn(async move {
-            tracing::info!("🏭 Starting block processor worker task");
-            block_processor.run().await;
-            tracing::info!("🏭 Block processor worker task completed");
-        });
-
-        // For sequential sync, filter processor is handled internally
-        if self.config.enable_filters && self.filter_processor.is_none() {
-            tracing::info!("📊 Sequential sync mode: filter processing handled internally");
+    /// Start the SPV client: spawn sync tasks and connect to the network.
+    pub(super) async fn start(&self) -> Result<()> {
+        if self.is_running() {
+            return Err(SpvError::Config("Client already running".to_string()));
         }
 
-        // Initialize genesis block if not already present
-        self.initialize_genesis_block().await?;
-
-        // Load headers from storage if they exist
-        // This ensures the ChainState has headers loaded for both checkpoint and normal sync
-        let tip_height = {
-            let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0)
-        };
-        if tip_height > 0 {
-            tracing::info!("Found {} headers in storage, loading into sync manager...", tip_height);
-            let loaded_count = {
-                let storage = self.storage.lock().await;
-                self.sync_manager.load_headers_from_storage(&storage).await
-            };
-
-            match loaded_count {
-                Ok(loaded_count) => {
-                    tracing::info!("✅ Sync manager loaded {} headers from storage", loaded_count);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load headers into sync manager: {}", e);
-                    // For checkpoint sync, this is critical
-                    let state = self.state.read().await;
-                    if state.synced_from_checkpoint() {
-                        return Err(SpvError::Sync(e));
-                    }
-                    // For normal sync, we can continue as headers will be re-synced
-                    tracing::warn!("Continuing without pre-loaded headers for normal sync");
-                }
-            }
+        // Start all sync tasks before connecting to the network to make sure initial connection
+        // events are handled correctly in the sync coordinator.
+        if let Err(e) =
+            self.sync_coordinator.lock().await.start(&mut *self.network.lock().await).await
+        {
+            tracing::error!("Failed to start sync coordinator: {}", e);
+            return Err(SpvError::Sync(e));
         }
 
         // Connect to network
-        self.network.connect().await?;
+        self.network.lock().await.connect().await?;
 
-        {
-            let mut running = self.running.write().await;
-            *running = true;
-        }
-
-        // Update terminal UI after connection with initial data
-        #[cfg(feature = "terminal-ui")]
-        if let Some(ui) = &self.terminal_ui {
-            // Get initial header count from storage
-            let (header_height, filter_height) = {
-                let storage = self.storage.lock().await;
-                let h_height =
-                    storage.get_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
-                let f_height =
-                    storage.get_filter_tip_height().await.map_err(SpvError::Storage)?.unwrap_or(0);
-                (h_height, f_height)
-            };
-
-            let _ = ui
-                .update_status(|status| {
-                    status.peer_count = 1; // Connected to one peer
-                    status.headers = header_height;
-                    status.filter_headers = filter_height;
-                })
-                .await;
-        }
+        // Only mark as running after all startup operations succeed.
+        // `send_replace` always stores the value regardless of receiver count,
+        // so this is correct even when `run()` has not subscribed yet.
+        self.running.send_replace(true);
 
         Ok(())
     }
 
     /// Stop the SPV client.
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&self) -> Result<()> {
         // Check if already stopped
-        {
-            let running = self.running.read().await;
-            if !*running {
-                return Ok(());
-            }
+        if !*self.running.borrow() {
+            return Ok(());
+        }
+
+        // Flip the running state before tearing anything down so a concurrent
+        // `run()` loop wakes immediately and breaks out before it can lock the
+        // sync coordinator again. This prevents a tick from racing against the
+        // shutdown below.
+        self.running.send_replace(false);
+
+        // Shut down sync coordinator: signals cancellation and waits for manager
+        // tasks to drain before we tear down the network and storage layers.
+        if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
+            tracing::warn!("Error shutting down sync coordinator: {}", e);
         }
 
         // Disconnect from network
-        self.network.disconnect().await?;
+        self.network.lock().await.disconnect().await?;
 
         // Shutdown storage to ensure all data is persisted
         {
             let mut storage = self.storage.lock().await;
-            storage.shutdown().await.map_err(SpvError::Storage)?;
+            storage.shutdown().await;
             tracing::info!("Storage shutdown completed - all data persisted");
         }
-
-        // Mark as stopped
-        let mut running = self.running.write().await;
-        *running = false;
 
         Ok(())
     }
 
     /// Shutdown the SPV client (alias for stop).
-    pub async fn shutdown(&mut self) -> Result<()> {
+    pub async fn shutdown(&self) -> Result<()> {
         self.stop().await
     }
 
-    /// Start synchronization (alias for sync_to_tip).
-    pub async fn start_sync(&mut self) -> Result<()> {
-        self.sync_to_tip().await?;
-        Ok(())
-    }
-
-    /// Initialize genesis block or checkpoint.
-    pub(super) async fn initialize_genesis_block(&mut self) -> Result<()> {
+    /// Initialize genesis block or checkpoint in storage.
+    ///
+    /// Called before creating managers so they can read the tip during construction.
+    async fn initialize_genesis_block(config: &ClientConfig, storage: &mut S) -> Result<()> {
         // Check if we already have any headers in storage
-        let current_tip = {
-            let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?
-        };
+        let current_tip = storage.get_tip_height().await;
 
         if current_tip.is_some() {
             // We already have headers, genesis block should be at height 0
@@ -280,10 +239,10 @@ impl<
         }
 
         // Check if we should use a checkpoint instead of genesis
-        if let Some(start_height) = self.config.start_from_height {
+        if let Some(start_height) = config.start_from_height {
             // Get checkpoints for this network
-            let checkpoints = match self.config.network {
-                dashcore::Network::Dash => crate::chain::checkpoints::mainnet_checkpoints(),
+            let checkpoints = match config.network {
+                dashcore::Network::Mainnet => crate::chain::checkpoints::mainnet_checkpoints(),
                 dashcore::Network::Testnet => crate::chain::checkpoints::testnet_checkpoints(),
                 _ => vec![],
             };
@@ -300,9 +259,6 @@ impl<
                         checkpoint.height,
                         start_height
                     );
-
-                    // Initialize chain state with checkpoint
-                    let mut chain_state = self.state.write().await;
 
                     // Build header from checkpoint
                     use dashcore::{
@@ -334,40 +290,14 @@ impl<
                             calculated_hash
                         );
                     } else {
-                        // Initialize chain state from checkpoint
-                        chain_state.init_from_checkpoint(
-                            checkpoint.height,
-                            checkpoint_header,
-                            self.config.network,
-                        );
-
-                        // Clone the chain state for storage
-                        let chain_state_for_storage = (*chain_state).clone();
-                        let headers_len = chain_state_for_storage.headers.len() as u32;
-                        drop(chain_state);
-
-                        // Update storage with chain state including sync_base_height
-                        {
-                            let mut storage = self.storage.lock().await;
-                            storage
-                                .store_chain_state(&chain_state_for_storage)
-                                .await
-                                .map_err(SpvError::Storage)?;
-                        }
-
-                        // Don't store the checkpoint header itself - we'll request headers from peers
-                        // starting from this checkpoint
+                        storage
+                            .store_headers_at_height(&[checkpoint_header], checkpoint.height)
+                            .await?;
 
                         tracing::info!(
                             "✅ Initialized from checkpoint at height {}, skipping {} headers",
                             checkpoint.height,
                             checkpoint.height
-                        );
-
-                        // Update the sync manager's cached flags from the checkpoint-initialized state
-                        self.sync_manager.update_chain_state_cache(checkpoint.height, headers_len);
-                        tracing::info!(
-                            "Updated sync manager with checkpoint-initialized chain state"
                         );
 
                         return Ok(());
@@ -377,20 +307,18 @@ impl<
         }
 
         // Get the genesis block hash for this network
-        let genesis_hash = self
-            .config
+        let genesis_hash = config
             .network
             .known_genesis_block_hash()
             .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
 
         tracing::info!(
             "Initializing genesis block for network {:?}: {}",
-            self.config.network,
+            config.network,
             genesis_hash
         );
 
-        let genesis_header =
-            dashcore::blockdata::constants::genesis_block(self.config.network).header;
+        let genesis_header = dashcore::blockdata::constants::genesis_block(config.network).header;
 
         // Verify the header produces the expected genesis hash
         let calculated_hash = genesis_header.block_hash();
@@ -404,17 +332,10 @@ impl<
         tracing::debug!("Using genesis block header with hash: {}", calculated_hash);
 
         // Store the genesis header at height 0
-        let genesis_headers = vec![genesis_header];
-        {
-            let mut storage = self.storage.lock().await;
-            storage.store_headers(&genesis_headers).await.map_err(SpvError::Storage)?;
-        }
+        storage.store_headers(&[genesis_header]).await.map_err(SpvError::Storage)?;
 
         // Verify it was stored correctly
-        let stored_height = {
-            let storage = self.storage.lock().await;
-            storage.get_tip_height().await.map_err(SpvError::Storage)?
-        };
+        let stored_height = storage.get_tip_height().await;
         tracing::info!(
             "✅ Genesis block initialized at height 0, storage reports tip height: {:?}",
             stored_height

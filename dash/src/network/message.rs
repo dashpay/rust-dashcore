@@ -41,7 +41,7 @@ use crate::{ChainLock, InstantLock};
 pub const MAX_INV_SIZE: usize = 50_000;
 
 /// Maximum size, in bytes, of an encoded message
-/// This by necessity should be larger tham `MAX_VEC_SIZE`
+/// This by necessity should be larger than `MAX_VEC_SIZE`
 pub const MAX_MSG_SIZE: usize = 5_000_000;
 
 /// Serializer for command string
@@ -488,7 +488,7 @@ impl Decodable for RawNetworkMessage {
                 actual,
             }) => {
                 // Include message command and magic in logging to aid diagnostics
-                log::warn!(
+                tracing::warn!(
                     "Invalid payload checksum for network message '{}' (magic {:#x}): expected {:02x?}, actual {:02x?}",
                     cmd.0,
                     magic,
@@ -1001,7 +1001,7 @@ mod test {
         // Test encoding and decoding SendDsq(true)
         let msg_true = NetworkMessage::SendDsq(true);
         let raw_msg = RawNetworkMessage {
-            magic: crate::Network::Dash.magic(),
+            magic: crate::Network::Mainnet.magic(),
             payload: msg_true,
         };
 
@@ -1022,7 +1022,7 @@ mod test {
         // Test encoding and decoding SendDsq(false)
         let msg_false = NetworkMessage::SendDsq(false);
         let raw_msg = RawNetworkMessage {
-            magic: crate::Network::Dash.magic(),
+            magic: crate::Network::Mainnet.magic(),
             payload: msg_false,
         };
 

@@ -59,7 +59,7 @@ fn test_separate_wallets_per_network() {
 
     let mut mainnet_wallet = Wallet::from_mnemonic(
         mnemonic.clone(),
-        Network::Dash,
+        Network::Mainnet,
         crate::wallet::initialization::WalletAccountCreationOptions::None,
     )
     .unwrap();
@@ -109,15 +109,17 @@ fn test_separate_wallets_per_network() {
     assert_eq!(testnet_wallet.network, Network::Testnet);
     assert_eq!(testnet_wallet.accounts.standard_bip44_accounts.len(), 3);
 
-    assert_eq!(mainnet_wallet.network, Network::Dash);
+    assert_eq!(mainnet_wallet.network, Network::Mainnet);
     assert_eq!(mainnet_wallet.accounts.standard_bip44_accounts.len(), 2);
 
     assert_eq!(devnet_wallet.network, Network::Devnet);
     assert_eq!(devnet_wallet.accounts.standard_bip44_accounts.len(), 2);
 
-    // All share the same wallet_id
-    assert_eq!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
-    assert_eq!(testnet_wallet.wallet_id, devnet_wallet.wallet_id);
+    // The wallet id is network-scoped, so the same mnemonic yields a distinct
+    // wallet_id on each network.
+    assert_ne!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
+    assert_ne!(testnet_wallet.wallet_id, devnet_wallet.wallet_id);
+    assert_ne!(mainnet_wallet.wallet_id, devnet_wallet.wallet_id);
 }
 
 #[test]
@@ -129,6 +131,7 @@ fn test_wallet_with_all_account_types() {
             [0].into(),
             [0, 1].into(),
             [0, 1].into(),
+            std::collections::BTreeSet::new(), // PlatformPayment accounts
         ),
     )
     .unwrap();

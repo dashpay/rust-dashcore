@@ -68,6 +68,7 @@ pub unsafe extern "C" fn dash_spv_ffi_init_logging(
         level: level_filter,
         console: enable_console,
         file: file_config,
+        thread_local: false,
     };
 
     match dash_spv::init_logging(config) {
@@ -89,9 +90,4 @@ pub unsafe extern "C" fn dash_spv_ffi_init_logging(
 #[no_mangle]
 pub extern "C" fn dash_spv_ffi_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
-}
-
-#[no_mangle]
-pub extern "C" fn dash_spv_ffi_enable_test_mode() {
-    std::env::set_var("DASH_SPV_TEST_MODE", "1");
 }

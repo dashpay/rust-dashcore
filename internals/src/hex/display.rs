@@ -9,8 +9,6 @@ use core::fmt;
 use super::Case;
 use super::buf_encoder::{BufEncoder, OutBytes};
 use crate::hex::buf_encoder::FixedLenBuf;
-#[cfg(feature = "alloc")]
-use crate::prelude::*;
 
 /// Extension trait for types that can be displayed as hex.
 ///
@@ -34,7 +32,6 @@ pub trait DisplayHex: Copy + sealed::IsRef {
     /// A shorthand for `to_hex_string(Case::Lower)`, so that `Case` doesn't need to be imported.
     ///
     /// This may be faster than `.display_hex().to_string()` because it uses `reserve_suggestion`.
-    #[cfg(feature = "alloc")]
     fn to_lower_hex_string(self) -> String {
         self.to_hex_string(Case::Lower)
     }
@@ -44,7 +41,6 @@ pub trait DisplayHex: Copy + sealed::IsRef {
     /// A shorthand for `to_hex_string(Case::Upper)`, so that `Case` doesn't need to be imported.
     ///
     /// This may be faster than `.display_hex().to_string()` because it uses `reserve_suggestion`.
-    #[cfg(feature = "alloc")]
     fn to_upper_hex_string(self) -> String {
         self.to_hex_string(Case::Upper)
     }
@@ -52,7 +48,6 @@ pub trait DisplayHex: Copy + sealed::IsRef {
     /// Create a hex-encoded string.
     ///
     /// This may be faster than `.display_hex().to_string()` because it uses `reserve_suggestion`.
-    #[cfg(feature = "alloc")]
     fn to_hex_string(self, case: Case) -> String {
         let mut string = String::new();
         self.append_hex_to_string(case, &mut string);
@@ -63,7 +58,6 @@ pub trait DisplayHex: Copy + sealed::IsRef {
     ///
     /// This may be faster than `write!(string, "{:x}", self.display_hex())` because it uses
     /// `reserve_suggestion`.
-    #[cfg(feature = "alloc")]
     fn append_hex_to_string(self, case: Case, string: &mut String) {
         use fmt::Write;
 
@@ -117,8 +111,7 @@ impl<'a> DisplayHex for &'a [u8] {
     }
 }
 
-#[cfg(feature = "alloc")]
-impl<'a> DisplayHex for &'a alloc::vec::Vec<u8> {
+impl<'a> DisplayHex for &'a Vec<u8> {
     type Display = DisplayByteSlice<'a>;
 
     #[inline]
@@ -274,67 +267,59 @@ where
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "alloc")]
     use super::*;
 
-    #[cfg(feature = "alloc")]
-    mod alloc {
-        use super::*;
+    fn check_encoding(bytes: &[u8]) {
+        use core::fmt::Write;
 
-        fn check_encoding(bytes: &[u8]) {
-            use core::fmt::Write;
+        let s1 = bytes.to_lower_hex_string();
+        let mut s2 = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s2, "{:02x}", b).unwrap();
+        }
+        assert_eq!(s1, s2);
+    }
 
-            let s1 = bytes.to_lower_hex_string();
-            let mut s2 = String::with_capacity(bytes.len() * 2);
-            for b in bytes {
-                write!(s2, "{:02x}", b).unwrap();
+    #[test]
+    fn empty() {
+        check_encoding(b"");
+    }
+
+    #[test]
+    fn single() {
+        check_encoding(b"*");
+    }
+
+    #[test]
+    fn two() {
+        check_encoding(b"*x");
+    }
+
+    #[test]
+    fn just_below_boundary() {
+        check_encoding(&[42; 512]);
+    }
+
+    #[test]
+    fn just_above_boundary() {
+        check_encoding(&[42; 513]);
+    }
+
+    #[test]
+    fn just_above_double_boundary() {
+        check_encoding(&[42; 1025]);
+    }
+
+    #[test]
+    fn fmt_exact_macro() {
+        struct Dummy([u8; 32]);
+
+        impl fmt::Display for Dummy {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                fmt_hex_exact!(f, 32, &self.0, Case::Lower)
             }
-            assert_eq!(s1, s2);
         }
 
-        #[test]
-        fn empty() {
-            check_encoding(b"");
-        }
-
-        #[test]
-        fn single() {
-            check_encoding(b"*");
-        }
-
-        #[test]
-        fn two() {
-            check_encoding(b"*x");
-        }
-
-        #[test]
-        fn just_below_boundary() {
-            check_encoding(&[42; 512]);
-        }
-
-        #[test]
-        fn just_above_boundary() {
-            check_encoding(&[42; 513]);
-        }
-
-        #[test]
-        fn just_above_double_boundary() {
-            check_encoding(&[42; 1025]);
-        }
-
-        #[test]
-        fn fmt_exact_macro() {
-            use crate::alloc::string::ToString;
-
-            struct Dummy([u8; 32]);
-
-            impl fmt::Display for Dummy {
-                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                    fmt_hex_exact!(f, 32, &self.0, Case::Lower)
-                }
-            }
-
-            assert_eq!(Dummy([42; 32]).to_string(), "2a".repeat(32));
-        }
+        assert_eq!(Dummy([42; 32]).to_string(), "2a".repeat(32));
     }
 }

@@ -640,7 +640,6 @@ impl core::fmt::Display for IncompleteBuilder {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for IncompleteBuilder {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::IncompleteBuilder::*;
@@ -679,7 +678,6 @@ impl core::fmt::Display for HiddenNodes {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for HiddenNodes {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::HiddenNodes::*;
@@ -1604,7 +1602,6 @@ impl fmt::Display for TaprootBuilderError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for TaprootBuilderError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::TaprootBuilderError::*;
@@ -1666,7 +1663,6 @@ impl fmt::Display for TaprootError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for TaprootError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::TaprootError::*;
@@ -2200,7 +2196,7 @@ mod test {
 
             let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
             let (output_key, _parity) = internal_key.tap_tweak(secp, merkle_root);
-            let addr = Address::p2tr(secp, internal_key, merkle_root, Network::Dash);
+            let addr = Address::p2tr(secp, internal_key, merkle_root, Network::Mainnet);
             let spk = addr.script_pubkey();
 
             assert_eq!(expected_output_key, output_key.to_inner());

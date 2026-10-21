@@ -13,7 +13,6 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 use super::serialize::{self, Deserialize, Serialize};
 use crate::psbt::Error;
-use alloc::vec::Vec;
 use dashcore::consensus::encode::{
     self, deserialize, serialize, Decodable, Encodable, ReadExt, VarInt, WriteExt, MAX_VEC_SIZE,
 };

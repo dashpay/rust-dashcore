@@ -41,7 +41,7 @@ The function may set the following error codes:
 ## Usage Example
 
 ```c
-#include "key_wallet_ffi.h"
+#include "key-wallet-ffi.h"
 
 // Load wallet bytes from file or network
 uint8_t *wallet_bytes = load_wallet_bytes();

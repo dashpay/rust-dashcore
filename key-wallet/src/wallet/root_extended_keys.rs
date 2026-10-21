@@ -1,9 +1,10 @@
+use std::borrow::Cow;
+
 use crate::bip32::{ChainCode, ChildNumber, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPrivKey;
 use crate::wallet::WalletType;
 use crate::{Error, Network, Wallet};
-use alloc::borrow::Cow;
 #[cfg(feature = "bincode")]
 use bincode::{BorrowDecode, Decode, Encode};
 #[cfg(feature = "bls")]
@@ -12,6 +13,7 @@ use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
 use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -20,10 +22,16 @@ pub struct RootExtendedPrivKey {
     pub root_chain_code: ChainCode,
 }
 
-impl zeroize::Zeroize for RootExtendedPrivKey {
+impl Zeroize for RootExtendedPrivKey {
     fn zeroize(&mut self) {
         self.root_private_key.non_secure_erase();
         self.root_chain_code.zeroize();
+    }
+}
+
+impl Drop for RootExtendedPrivKey {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -351,51 +359,54 @@ impl FromOnNetwork<RootExtendedPubKey> for ExtendedPubKey {
 }
 
 impl Wallet {
-    /// Get the root extended public key from the wallet type
-    pub fn root_extended_pub_key(&self) -> RootExtendedPubKey {
+    /// Get the root extended public key from the wallet type.
+    ///
+    /// The [`WalletType::WatchOnly`] and [`WalletType::ExternalSignable`] unit
+    /// variants carry no key material — they return an error here because there
+    /// is nothing to return. The wallet's identity is available via
+    /// [`Wallet::wallet_id`] for those cases.
+    pub fn root_extended_pub_key(&self) -> crate::Result<RootExtendedPubKey> {
         match &self.wallet_type {
             WalletType::Mnemonic {
                 root_extended_private_key,
                 ..
-            } => root_extended_private_key.to_root_extended_pub_key(),
-            WalletType::MnemonicWithPassphrase {
-                root_extended_public_key,
-                ..
-            } => root_extended_public_key.clone(),
+            } => Ok(root_extended_private_key.to_root_extended_pub_key()),
             WalletType::Seed {
                 root_extended_private_key,
                 ..
-            } => root_extended_private_key.to_root_extended_pub_key(),
-            WalletType::ExtendedPrivKey(key) => key.to_root_extended_pub_key(),
-            WalletType::ExternalSignable(key) => key.clone(),
-            WalletType::WatchOnly(key) => key.clone(),
+            } => Ok(root_extended_private_key.to_root_extended_pub_key()),
+            WalletType::ExtendedPrivKey(key) => Ok(key.to_root_extended_pub_key()),
+            WalletType::ExternalSignable | WalletType::WatchOnly => Err(Error::InvalidParameter(
+                "Root extended public key is not available for watch-only or \
+                     external-signable wallets; use wallet.wallet_id for identity and \
+                     per-account xpubs for derivation"
+                    .into(),
+            )),
         }
     }
 
-    /// Get the root extended public key from the wallet type as Cow
-    pub fn root_extended_pub_key_cow(&self) -> Cow<'_, RootExtendedPubKey> {
+    /// Get the root extended public key from the wallet type as Cow.
+    ///
+    /// See [`Wallet::root_extended_pub_key`] for the unit-variant behavior.
+    pub fn root_extended_pub_key_cow(&self) -> crate::Result<Cow<'_, RootExtendedPubKey>> {
         match &self.wallet_type {
             WalletType::Mnemonic {
                 root_extended_private_key,
                 ..
-            } => Cow::Owned(root_extended_private_key.to_root_extended_pub_key()),
-            WalletType::MnemonicWithPassphrase {
-                root_extended_public_key,
-                ..
-            } => Cow::Borrowed(root_extended_public_key),
+            } => Ok(Cow::Owned(root_extended_private_key.to_root_extended_pub_key())),
             WalletType::Seed {
                 root_extended_private_key,
                 ..
-            } => Cow::Owned(root_extended_private_key.to_root_extended_pub_key()),
+            } => Ok(Cow::Owned(root_extended_private_key.to_root_extended_pub_key())),
             WalletType::ExtendedPrivKey(root_extended_priv_key) => {
-                Cow::Owned(root_extended_priv_key.to_root_extended_pub_key())
+                Ok(Cow::Owned(root_extended_priv_key.to_root_extended_pub_key()))
             }
-            WalletType::ExternalSignable(root_extended_public_key) => {
-                Cow::Borrowed(root_extended_public_key)
-            }
-            WalletType::WatchOnly(root_extended_public_key) => {
-                Cow::Borrowed(root_extended_public_key)
-            }
+            WalletType::ExternalSignable | WalletType::WatchOnly => Err(Error::InvalidParameter(
+                "Root extended public key is not available for watch-only or \
+                     external-signable wallets; use wallet.wallet_id for identity and \
+                     per-account xpubs for derivation"
+                    .into(),
+            )),
         }
     }
 
@@ -406,56 +417,15 @@ impl Wallet {
                 root_extended_private_key,
                 ..
             } => Ok(root_extended_private_key),
-            WalletType::MnemonicWithPassphrase {
-                ..
-            } => Err(Error::InvalidParameter(
-                "Mnemonic with passphrase requires passphrase to derive private key".into(),
-            )),
             WalletType::Seed {
                 root_extended_private_key,
                 ..
             } => Ok(root_extended_private_key),
             WalletType::ExtendedPrivKey(key) => Ok(key),
-            WalletType::ExternalSignable(_) => {
+            WalletType::ExternalSignable => {
                 Err(Error::InvalidParameter("External signable wallet has no private key".into()))
             }
-            WalletType::WatchOnly(_) => {
-                Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
-            }
-        }
-    }
-
-    /// Get the root extended private key with passphrase callback for MnemonicWithPassphrase
-    pub fn root_extended_priv_key_with_callback<F>(
-        &self,
-        passphrase_callback: F,
-    ) -> crate::Result<RootExtendedPrivKey>
-    where
-        F: FnOnce() -> Result<String, Error>,
-    {
-        match &self.wallet_type {
-            WalletType::Mnemonic {
-                root_extended_private_key,
-                ..
-            } => Ok(root_extended_private_key.clone()),
-            WalletType::MnemonicWithPassphrase {
-                mnemonic,
-                ..
-            } => {
-                // Request passphrase via callback
-                let passphrase = passphrase_callback()?;
-                let seed = mnemonic.to_seed(&passphrase);
-                Ok(RootExtendedPrivKey::new_master(&seed)?)
-            }
-            WalletType::Seed {
-                root_extended_private_key,
-                ..
-            } => Ok(root_extended_private_key.clone()),
-            WalletType::ExtendedPrivKey(key) => Ok(key.clone()),
-            WalletType::ExternalSignable(_) => {
-                Err(Error::InvalidParameter("External signable wallet has no private key".into()))
-            }
-            WalletType::WatchOnly(_) => {
+            WalletType::WatchOnly => {
                 Err(Error::InvalidParameter("Watch-only wallet has no private key".into()))
             }
         }

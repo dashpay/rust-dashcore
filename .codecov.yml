@@ -1,0 +1,55 @@
+codecov:
+  notify:
+    # Must match the number of coverage-uploading groups (core, spv, wallet, ffi, rpc)
+    after_n_builds: 5
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 2%
+    patch:
+      default:
+        target: 0%
+
+comment:
+  layout: "diff, flags, files"
+  behavior: default
+  require_changes: true
+  show_carryforward_flags: true
+
+flag_management:
+  default_rules:
+    carryforward: false
+
+flags:
+  core:
+    paths:
+      - dash/src/
+      - hashes/src/
+      - internals/src/
+  spv:
+    paths:
+      - dash-spv/src/
+  wallet:
+    paths:
+      - key-wallet/src/
+      - key-wallet-manager/src/
+  ffi:
+    paths:
+      - dash-spv-ffi/src/
+      - key-wallet-ffi/src/
+  rpc:
+    paths:
+      - rpc-client/src/
+      - rpc-json/src/
+
+ignore:
+  - "**/tests/**"
+  - "**/tests.rs"
+  - "**/test_utils/**"
+  - "**/test_utils.rs"
+  - "**/examples/**"
+  - "fuzz/**"
+  - "contrib/**"

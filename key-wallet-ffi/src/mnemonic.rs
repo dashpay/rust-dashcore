@@ -11,6 +11,7 @@ use std::ptr;
 use key_wallet::Mnemonic;
 
 use crate::error::{FFIError, FFIErrorCode};
+use crate::{check_ptr, deref_ptr, unwrap_or_return};
 
 /// Language enumeration for mnemonic generation
 ///
@@ -69,8 +70,16 @@ impl From<key_wallet::mnemonic::Language> for FFILanguage {
 }
 
 /// Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)
+///
+/// # Safety
+///
+/// `error` must be a valid pointer to an `FFIError`. The returned string must be
+/// freed with `mnemonic_free`.
 #[no_mangle]
-pub extern "C" fn mnemonic_generate(word_count: c_uint, error: *mut FFIError) -> *mut c_char {
+pub unsafe extern "C" fn mnemonic_generate(
+    word_count: c_uint,
+    error: *mut FFIError,
+) -> *mut c_char {
     let entropy_bits = match word_count {
         12 => 128,
         15 => 160,
@@ -78,10 +87,9 @@ pub extern "C" fn mnemonic_generate(word_count: c_uint, error: *mut FFIError) ->
         21 => 224,
         24 => 256,
         _ => {
-            FFIError::set_error(
-                error,
+            (*error).set(
                 FFIErrorCode::InvalidInput,
-                format!("Invalid word count: {}. Must be 12, 15, 18, 21, or 24", word_count),
+                &format!("Invalid word count: {}. Must be 12, 15, 18, 21, or 24", word_count),
             );
             return ptr::null_mut();
         }
@@ -96,35 +104,18 @@ pub extern "C" fn mnemonic_generate(word_count: c_uint, error: *mut FFIError) ->
         256 => 24,
         _ => 12,
     };
-    match Mnemonic::generate(word_count, Language::English) {
-        Ok(mnemonic) => {
-            FFIError::set_success(error);
-            match CString::new(mnemonic.to_string()) {
-                Ok(c_str) => c_str.into_raw(),
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::AllocationFailed,
-                        "Failed to allocate string".to_string(),
-                    );
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidMnemonic,
-                format!("Failed to generate mnemonic: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let mnemonic = unwrap_or_return!(Mnemonic::generate(word_count, Language::English), error);
+    unwrap_or_return!(CString::new(mnemonic.to_string()), error).into_raw()
 }
 
 /// Generate a new mnemonic with specified language and word count
+///
+/// # Safety
+///
+/// `error` must be a valid pointer to an `FFIError`. The returned string must be
+/// freed with `mnemonic_free`.
 #[no_mangle]
-pub extern "C" fn mnemonic_generate_with_language(
+pub unsafe extern "C" fn mnemonic_generate_with_language(
     word_count: c_uint,
     language: FFILanguage,
     error: *mut FFIError,
@@ -136,16 +127,14 @@ pub extern "C" fn mnemonic_generate_with_language(
         21 => 224,
         24 => 256,
         _ => {
-            FFIError::set_error(
-                error,
+            (*error).set(
                 FFIErrorCode::InvalidInput,
-                format!("Invalid word count: {}. Must be 12, 15, 18, 21, or 24", word_count),
+                &format!("Invalid word count: {}. Must be 12, 15, 18, 21, or 24", word_count),
             );
             return ptr::null_mut();
         }
     };
 
-    // Convert FFILanguage to key_wallet Language
     use key_wallet::mnemonic::Language;
     let lang: Language = language.into();
     let word_count = match entropy_bits {
@@ -156,30 +145,8 @@ pub extern "C" fn mnemonic_generate_with_language(
         256 => 24,
         _ => 12,
     };
-    match Mnemonic::generate(word_count, lang) {
-        Ok(mnemonic) => {
-            FFIError::set_success(error);
-            match CString::new(mnemonic.to_string()) {
-                Ok(c_str) => c_str.into_raw(),
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::AllocationFailed,
-                        "Failed to allocate string".to_string(),
-                    );
-                    ptr::null_mut()
-                }
-            }
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidMnemonic,
-                format!("Failed to generate mnemonic: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let mnemonic = unwrap_or_return!(Mnemonic::generate(word_count, lang), error);
+    unwrap_or_return!(CString::new(mnemonic.to_string()), error).into_raw()
 }
 
 /// Validate a mnemonic phrase
@@ -190,24 +157,8 @@ pub extern "C" fn mnemonic_generate_with_language(
 /// - `error` must be a valid pointer to an FFIError
 #[no_mangle]
 pub unsafe extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut FFIError) -> bool {
-    if mnemonic.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Mnemonic is null".to_string());
-        return false;
-    }
-
-    let mnemonic_str = unsafe {
-        match CStr::from_ptr(mnemonic).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in mnemonic".to_string(),
-                );
-                return false;
-            }
-        }
-    };
+    let mnemonic = deref_ptr!(mnemonic, error);
+    let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
 
     use key_wallet::mnemonic::Language;
 
@@ -227,16 +178,12 @@ pub unsafe extern "C" fn mnemonic_validate(mnemonic: *const c_char, error: *mut 
 
     for language in languages.iter() {
         if Mnemonic::validate(mnemonic_str, *language) {
-            FFIError::set_success(error);
             return true;
         }
     }
-
-    // If no language validates, return error
-    FFIError::set_error(
-        error,
+    (*error).set(
         FFIErrorCode::InvalidMnemonic,
-        "Invalid mnemonic: does not match any supported language".to_string(),
+        "Invalid mnemonic: does not match any supported language",
     );
     false
 }
@@ -258,75 +205,31 @@ pub unsafe extern "C" fn mnemonic_to_seed(
     seed_len: *mut usize,
     error: *mut FFIError,
 ) -> bool {
-    if mnemonic.is_null() || seed_out.is_null() || seed_len.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let mnemonic_str = unsafe {
-        match CStr::from_ptr(mnemonic).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in mnemonic".to_string(),
-                );
-                return false;
-            }
-        }
-    };
+    let mnemonic = deref_ptr!(mnemonic, error);
+    check_ptr!(seed_out, error);
+    check_ptr!(seed_len, error);
+    let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
 
     let passphrase_str = if passphrase.is_null() {
         ""
     } else {
-        unsafe {
-            match CStr::from_ptr(passphrase).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in passphrase".to_string(),
-                    );
-                    return false;
-                }
-            }
-        }
+        unwrap_or_return!(CStr::from_ptr(passphrase).to_str(), error)
     };
 
     use key_wallet::mnemonic::Language;
-    match Mnemonic::from_phrase(mnemonic_str, Language::English) {
-        Ok(m) => {
-            let seed = m.to_seed(passphrase_str);
-            let seed_bytes: &[u8] = seed.as_ref();
+    let m = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str, Language::English), error);
+    let seed = m.to_seed(passphrase_str);
+    let seed_bytes: &[u8] = seed.as_ref();
 
-            unsafe {
-                *seed_len = seed_bytes.len();
-                if *seed_len > 64 {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidState,
-                        "Seed too large".to_string(),
-                    );
-                    return false;
-                }
-
-                std::ptr::copy_nonoverlapping(seed_bytes.as_ptr(), seed_out, seed_bytes.len());
-            }
-
-            FFIError::set_success(error);
-            true
+    unsafe {
+        *seed_len = seed_bytes.len();
+        if *seed_len > 64 {
+            (*error).set(FFIErrorCode::InvalidState, "Seed too large");
+            return false;
         }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidMnemonic,
-                format!("Invalid mnemonic: {}", e),
-            );
-            false
-        }
+        std::ptr::copy_nonoverlapping(seed_bytes.as_ptr(), seed_out, seed_bytes.len());
     }
+    true
 }
 
 /// Get word count from mnemonic
@@ -340,28 +243,9 @@ pub unsafe extern "C" fn mnemonic_word_count(
     mnemonic: *const c_char,
     error: *mut FFIError,
 ) -> c_uint {
-    if mnemonic.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Mnemonic is null".to_string());
-        return 0;
-    }
-
-    let mnemonic_str = unsafe {
-        match CStr::from_ptr(mnemonic).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in mnemonic".to_string(),
-                );
-                return 0;
-            }
-        }
-    };
-
-    let word_count = mnemonic_str.split_whitespace().count() as c_uint;
-    FFIError::set_success(error);
-    word_count
+    let mnemonic = deref_ptr!(mnemonic, error);
+    let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
+    mnemonic_str.split_whitespace().count() as c_uint
 }
 
 /// Free a mnemonic string

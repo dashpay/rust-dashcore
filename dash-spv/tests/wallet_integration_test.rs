@@ -3,6 +3,7 @@
 //! These tests validate end-to-end wallet operations through the SPVWalletManager.
 
 use std::sync::Arc;
+use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
 
@@ -11,25 +12,27 @@ use dash_spv::storage::DiskStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient};
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::WalletManager;
+use key_wallet_manager::WalletManager;
 /// Create a test SPV client with memory storage for integration testing.
 async fn create_test_client(
 ) -> DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager> {
-    let config = ClientConfig::testnet().without_filters().without_masternodes();
+    let config = ClientConfig::testnet()
+        .without_filters()
+        .with_storage_path(TempDir::new().unwrap().path())
+        .without_masternodes()
+        // Ensure DNS discovery isn't used since it's causing flakiness in CI and not needed for these tests.
+        .with_restrict_to_configured_peers(true);
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
-    let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await
-            .expect("Failed to create tmp storage");
+    let storage_manager = DiskStorageManager::new(&config).await.expect("Failed to create storage");
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap()
+    DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap()
 }
 
 #[tokio::test]
@@ -38,27 +41,40 @@ async fn test_spv_client_creation() {
     let client = create_test_client().await;
 
     // Verify client is created
-    assert_eq!(client.network(), Network::Testnet);
+    assert_eq!(client.network().await, Network::Testnet);
 }
 
 #[tokio::test]
-async fn test_spv_client_start_stop() {
-    // Test starting and stopping the client
-    let mut client = create_test_client().await;
+async fn test_spv_client_run_stop() {
+    let client = create_test_client().await;
 
-    // Start the client
-    client.start().await.unwrap();
+    // Run twice on the same instance: the watch must re-arm after stop(), so a
+    // second run() succeeds.
+    for _ in 0..2 {
+        let run_client = client.clone();
+        let handle = tokio::spawn(async move { run_client.run().await });
 
-    // Verify client is running
-    let running = client.is_running().await;
-    assert!(running);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !client.is_running() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("client failed to start");
 
-    // Stop the client
-    client.stop().await.unwrap();
+        client.stop().await.unwrap();
 
-    // Verify client is stopped
-    let running = client.is_running().await;
-    assert!(!running);
+        // stop() wakes the run loop immediately via the watch rather than only
+        // on the next 100ms coordinator tick, so the join completes far inside
+        // this bound. A hang (e.g. a missed wakeup) would trip the timeout.
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("run task did not exit promptly after stop")
+            .unwrap()
+            .unwrap();
+
+        assert!(!client.is_running());
+    }
 }
 
 #[tokio::test]
@@ -75,6 +91,3 @@ async fn test_wallet_manager_basic_operations() {
     let balance = wallet_manager.get_total_balance();
     assert_eq!(balance, 0);
 }
-
-// Note: More comprehensive wallet tests should be in the key-wallet-manager crate
-// since that's where the wallet logic now resides

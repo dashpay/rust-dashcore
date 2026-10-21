@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""CI configuration management script.
+
+Used by GitHub Actions workflows for test management.
+
+Subcommands:
+    verify-groups    Check all workspace crates are assigned to test groups
+    run-group        Run tests for all crates in a group
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def get_workspace_metadata():
+    """Get workspace metadata from cargo."""
+    result = subprocess.run(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(result.stdout)
+
+
+def load_yaml(path: Path):
+    """Load YAML file with error handling."""
+    try:
+        with open(path) as f:
+            content = yaml.safe_load(f)
+            return content if content is not None else {}
+    except FileNotFoundError:
+        github_error(f"Configuration file not found: {path}")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        github_error(f"Invalid YAML in {path}: {e}")
+        sys.exit(1)
+
+
+def github_error(msg: str):
+    """Print GitHub Actions error annotation."""
+    print(f"::error::{msg}")
+
+
+def github_notice(msg: str):
+    """Print GitHub Actions notice annotation."""
+    print(f"::notice::{msg}")
+
+
+def github_group_start(name: str):
+    """Start a GitHub Actions log group."""
+    print(f"::group::{name}", flush=True)
+
+
+def github_group_end():
+    """End a GitHub Actions log group."""
+    print("::endgroup::", flush=True)
+
+
+def github_output(name: str, value: str):
+    """Write a GitHub Actions output variable."""
+    output_file = os.environ.get("GITHUB_OUTPUT")
+    if output_file:
+        with open(output_file, "a") as f:
+            f.write(f"{name}={value}\n")
+
+
+def verify_groups(args):
+    """Verify all workspace crates are assigned to test groups."""
+    metadata = get_workspace_metadata()
+    workspace_crates = {pkg["name"] for pkg in metadata["packages"]}
+
+    config = load_yaml(args.groups_file)
+    groups = config.get("groups", {})
+
+    assigned = set()
+    for group_crates in groups.values():
+        if group_crates:
+            assigned.update(group_crates)
+    assigned.update(config.get("excluded", []) or [])
+
+    unassigned = workspace_crates - assigned
+    if unassigned:
+        github_error(
+            f"Crates not assigned to any test group: {', '.join(sorted(unassigned))}"
+        )
+        print("\nPlease add them to a group or 'excluded' section in ci-groups.yml")
+        return 1
+
+    print(f"All {len(workspace_crates)} workspace crates are assigned to test groups")
+
+    # Verify the hardcoded matrix in build-and-test.yml matches ci-groups.yml
+    workflow_file = Path(".github/workflows/build-and-test.yml")
+    expected = sorted(groups.keys())
+
+    try:
+        with open(workflow_file) as f:
+            content = f.read()
+    except FileNotFoundError:
+        github_error(f"Workflow file not found: {workflow_file}")
+        return 1
+
+    match = re.search(r'group:\s*\[([^\]]+)\]', content)
+    if not match:
+        github_error(f"No hardcoded group matrix found in {workflow_file}")
+        return 1
+
+    actual = sorted(
+        name.strip().strip('"').strip("'") for name in match.group(1).split(",")
+    )
+
+    if actual != expected:
+        github_error(
+            f"Hardcoded matrix {actual} does not match ci-groups.yml {expected}. "
+            f"Update the group list in {workflow_file}."
+        )
+        return 1
+
+    print(f"Hardcoded matrix matches ci-groups.yml: {expected}")
+    return 0
+
+
+def run_group_tests(args):
+    """Run tests for all crates in a group."""
+    config = load_yaml(args.groups_file)
+    groups = config.get("groups", {})
+
+    if args.group not in groups:
+        github_error(f"Unknown group: {args.group}")
+        return 1
+
+    crates = groups[args.group] or []
+    failed = []
+    coverage = getattr(args, "coverage", False)
+
+    if coverage:
+        github_output("crate_flags", args.group)
+
+    for crate in crates:
+        github_group_start(f"Testing {crate}")
+
+        try:
+            if coverage:
+                cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
+            else:
+                cmd = ["cargo", "test", "-p", crate, "--all-features"]
+            result = subprocess.run(cmd)
+
+            if result.returncode != 0:
+                failed.append(crate)
+                github_error(f"Test failed for {crate} on {args.os}")
+        finally:
+            github_group_end()
+
+    if failed:
+        print("\n" + "=" * 40)
+        print(f"FAILED TESTS ({args.group} on {args.os}):")
+        for f in failed:
+            print(f"  - {f}")
+        print("=" * 40)
+        return 1
+
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description="CI configuration management")
+    parser.add_argument(
+        "--groups-file",
+        type=Path,
+        default=Path(".github/ci-groups.yml"),
+        help="Path to ci-groups.yml",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("verify-groups", help="Verify all crates assigned to groups")
+
+    run_group_parser = subparsers.add_parser("run-group", help="Run tests for a group")
+    run_group_parser.add_argument("group", help="Group name")
+    run_group_parser.add_argument("--os", default="ubuntu-latest", help="OS name")
+    run_group_parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Use cargo-llvm-cov for coverage collection",
+    )
+
+    args = parser.parse_args()
+
+    commands = {
+        "verify-groups": verify_groups,
+        "run-group": run_group_tests,
+    }
+
+    return commands[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

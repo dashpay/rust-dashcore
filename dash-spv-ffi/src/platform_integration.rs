@@ -28,41 +28,6 @@ impl FFIResult {
     }
 }
 
-/// Creates a CoreSDKHandle from an FFIDashSpvClient
-///
-/// # Safety
-///
-/// This function is unsafe because:
-/// - The caller must ensure the client pointer is valid
-/// - The returned handle must be properly released with ffi_dash_spv_release_core_handle
-#[no_mangle]
-pub unsafe extern "C" fn ffi_dash_spv_get_core_handle(
-    client: *mut FFIDashSpvClient,
-) -> *mut CoreSDKHandle {
-    if client.is_null() {
-        set_last_error("Null client pointer");
-        return ptr::null_mut();
-    }
-
-    Box::into_raw(Box::new(CoreSDKHandle {
-        client,
-    }))
-}
-
-/// Releases a CoreSDKHandle
-///
-/// # Safety
-///
-/// This function is unsafe because:
-/// - The caller must ensure the handle pointer is valid
-/// - The handle must not be used after this call
-#[no_mangle]
-pub unsafe extern "C" fn ffi_dash_spv_release_core_handle(handle: *mut CoreSDKHandle) {
-    if !handle.is_null() {
-        let _ = Box::from_raw(handle);
-    }
-}
-
 /// Gets a quorum public key from the Core chain
 ///
 /// # Safety
@@ -110,22 +75,7 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
 
     // Get the client reference
     let client = &*client;
-
-    // Access the inner client through the mutex
-    let inner_guard = match client.inner.lock() {
-        Ok(guard) => guard,
-        Err(_) => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Failed to lock client mutex");
-        }
-    };
-
-    // Get the SPV client
-    let spv_client = match inner_guard.as_ref() {
-        Some(client) => client,
-        None => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Client not initialized");
-        }
-    };
+    let spv_client = &client.inner;
 
     // Read the quorum hash from the input pointer
     let quorum_hash_bytes = std::slice::from_raw_parts(quorum_hash, 32);
@@ -138,60 +88,68 @@ pub unsafe extern "C" fn ffi_dash_spv_get_quorum_public_key(
 
     // Get the masternode list engine directly for efficient access
     let engine = match spv_client.masternode_list_engine() {
-        Some(engine) => engine,
-        None => {
+        Ok(engine) => engine,
+        Err(e) => {
             return FFIResult::error(
                 FFIErrorCode::RuntimeError,
-                "Masternode list engine not initialized. Core SDK may still be syncing.",
+                &format!(
+                    "Masternode list engine not initialized: {}. Core SDK may still be syncing.",
+                    e
+                ),
             );
         }
     };
 
-    // Use the global quorum status index for efficient lookup
-    match engine.quorum_statuses.get(&llmq_type).and_then(|type_map| type_map.get(&quorum_hash)) {
-        Some((heights, public_key, _status)) => {
-            // Check if the requested height is one of the heights where this quorum exists
-            if !heights.contains(&core_chain_locked_height) {
-                // Quorum exists but not at requested height - provide helpful info
-                let height_list: Vec<u32> = heights.iter().copied().collect();
-                return FFIResult::error(
-                    FFIErrorCode::ValidationError,
-                    &format!(
-                        "Quorum type {} with hash {:x} exists but not at height {}. Available at heights: {:?}",
-                        quorum_type, quorum_hash, core_chain_locked_height, height_list
-                    ),
-                );
-            }
-
-            // Get the public key's canonical 48-byte representation safely
-            let pubkey_bytes: &[u8; 48] = public_key.as_ref();
-            std::ptr::copy_nonoverlapping(pubkey_bytes.as_ptr(), out_pubkey, QUORUM_PUBKEY_SIZE);
-
-            // Return success
-            FFIResult {
-                error_code: 0,
-                error_message: ptr::null(),
-            }
-        }
+    let engine_guard = engine.blocking_read();
+    let (before, _after) = engine_guard.masternode_lists_around_height(core_chain_locked_height);
+    let ml = match before {
+        Some(ml) => ml,
         None => {
-            // Quorum not found in global index - provide diagnostic info
-            let total_lists = engine.masternode_lists.len();
-            let (min_height, max_height) = if total_lists > 0 {
-                let min = engine.masternode_lists.keys().min().copied().unwrap_or(0);
-                let max = engine.masternode_lists.keys().max().copied().unwrap_or(0);
-                (min, max)
-            } else {
-                (0, 0)
-            };
-
-            FFIResult::error(
+            return FFIResult::error(
                 FFIErrorCode::ValidationError,
                 &format!(
-                    "Quorum not found: type={}, hash={:x}. Core SDK has {} masternode lists ranging from height {} to {}. The quorum may not exist or the Core SDK may still be syncing.",
-                    quorum_type, quorum_hash, total_lists, min_height, max_height
+                    "No masternode list found at or before height {}",
+                    core_chain_locked_height
                 ),
-            )
+            );
         }
+    };
+
+    let list_height = ml.known_height;
+    match ml.quorums.get(&llmq_type) {
+        Some(quorums) => match quorums.get(&quorum_hash) {
+            Some(quorum) => {
+                let pubkey_bytes: &[u8; 48] = quorum.quorum_entry.quorum_public_key.as_ref();
+                std::ptr::copy_nonoverlapping(
+                    pubkey_bytes.as_ptr(),
+                    out_pubkey,
+                    QUORUM_PUBKEY_SIZE,
+                );
+
+                FFIResult {
+                    error_code: 0,
+                    error_message: ptr::null(),
+                }
+            }
+            None => FFIResult::error(
+                FFIErrorCode::ValidationError,
+                &format!(
+                    "Quorum not found: type {} at list height {} (requested {}) with hash {:x} (masternode list exists with {} quorums of this type)",
+                    quorum_type,
+                    list_height,
+                    core_chain_locked_height,
+                    quorum_hash,
+                    quorums.len()
+                ),
+            ),
+        },
+        None => FFIResult::error(
+            FFIErrorCode::ValidationError,
+            &format!(
+                "No quorums of type {} found at list height {} (requested {})",
+                quorum_type, list_height, core_chain_locked_height
+            ),
+        ),
     }
 }
 
@@ -220,28 +178,15 @@ pub unsafe extern "C" fn ffi_dash_spv_get_platform_activation_height(
     // Get the client reference
     let client = &*client;
 
-    // Access the inner client through the mutex
-    let inner_guard = match client.inner.lock() {
-        Ok(guard) => guard,
-        Err(_) => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Failed to lock client mutex");
-        }
-    };
-
     // Get the network from the client config
-    let height = match inner_guard.as_ref() {
-        Some(spv_client) => {
-            // Platform activation heights per network
-            match spv_client.network() {
-                dashcore::Network::Dash => 1_888_888, // Mainnet (placeholder - needs verification)
-                dashcore::Network::Testnet => 1_289_520, // Testnet confirmed height
-                dashcore::Network::Devnet => 1,       // Devnet starts immediately
-                _ => 0,                               // Unknown network
-            }
-        }
-        None => {
-            return FFIResult::error(FFIErrorCode::RuntimeError, "Client not initialized");
-        }
+    let network = client.runtime.block_on(async { client.inner.network().await });
+
+    // Platform activation heights per network
+    let height = match network {
+        dashcore::Network::Mainnet => 1_888_888, // Mainnet (placeholder - needs verification)
+        dashcore::Network::Testnet => 1_289_520, // Testnet confirmed height
+        dashcore::Network::Devnet => 1,          // Devnet starts immediately
+        _ => 0,                                  // Unknown network
     };
 
     // Set the output value

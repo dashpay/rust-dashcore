@@ -1,10 +1,11 @@
 //! Integration tests for account collection FFI functions
 
+use dash_network::ffi::FFINetwork;
 use key_wallet_ffi::account::account_free;
 use key_wallet_ffi::account_collection::*;
 use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
 use key_wallet_ffi::wallet::{wallet_create_from_mnemonic_with_options, wallet_free};
-use key_wallet_ffi::FFINetwork;
+use key_wallet_ffi::FFIError;
 use std::ffi::CString;
 use std::ptr;
 
@@ -15,6 +16,7 @@ fn test_account_collection_comprehensive() {
         let mnemonic = CString::new(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
         ).unwrap();
+        let error = &mut FFIError::default();
 
         // Create wallet with various account types
         let account_options = FFIWalletAccountCreationOptions {
@@ -27,21 +29,22 @@ fn test_account_collection_comprehensive() {
             coinjoin_count: 2,
             topup_indices: [0, 1, 2].as_ptr(),
             topup_count: 3,
+            platform_payment_specs: ptr::null(),
+            platform_payment_count: 0,
             special_account_types: ptr::null(),
             special_account_types_count: 0,
         };
 
         let wallet = wallet_create_from_mnemonic_with_options(
             mnemonic.as_ptr(),
-            ptr::null(),
             FFINetwork::Testnet,
             &account_options,
-            ptr::null_mut(),
+            error,
         );
         assert!(!wallet.is_null());
 
         // Get account collection for testnet
-        let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+        let collection = wallet_get_account_collection(wallet, error);
         assert!(!collection.is_null());
 
         // Test account count
@@ -146,19 +149,19 @@ fn test_account_collection_minimal() {
         let mnemonic = CString::new(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
         ).unwrap();
+        let test = &mut FFIError::default();
 
         // Create wallet with minimal accounts (default)
         let wallet = wallet_create_from_mnemonic_with_options(
             mnemonic.as_ptr(),
-            ptr::null(),
             FFINetwork::Testnet,
             ptr::null(), // Use default options
-            ptr::null_mut(),
+            test,
         );
         assert!(!wallet.is_null());
 
         // Get account collection
-        let collection = wallet_get_account_collection(wallet, ptr::null_mut());
+        let collection = wallet_get_account_collection(wallet, test);
         assert!(!collection.is_null());
 
         // Should have at least some default accounts

@@ -47,6 +47,29 @@ pub struct CoinbasePayload {
 }
 
 impl CoinbasePayload {
+    /// Latest spec version of the Coinbase payload.
+    pub const CURRENT_VERSION: u16 = 3;
+
+    /// Create a new Coinbase payload at [`Self::CURRENT_VERSION`].
+    pub fn new(
+        height: u32,
+        merkle_root_masternode_list: MerkleRootMasternodeList,
+        merkle_root_quorums: MerkleRootQuorums,
+        best_cl_height: Option<u32>,
+        best_cl_signature: Option<BLSSignature>,
+        asset_locked_amount: Option<u64>,
+    ) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            height,
+            merkle_root_masternode_list,
+            merkle_root_quorums,
+            best_cl_height,
+            best_cl_signature,
+            asset_locked_amount,
+        }
+    }
+
     /// The size of the payload in bytes.
     /// version(2) + height(4) + merkle_root_masternode_list(32) + merkle_root_quorums(32)
     /// in addition to the above, if version >= 3: asset_locked_amount(8) + best_cl_height(compact_size) +

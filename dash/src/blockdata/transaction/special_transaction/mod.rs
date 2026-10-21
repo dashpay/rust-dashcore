@@ -27,14 +27,16 @@ use core::fmt::{Debug, Display, Formatter};
 use bincode::{Decode, Encode};
 
 use crate::blockdata::transaction::special_transaction::TransactionPayload::{
-    AssetLockPayloadType, AssetUnlockPayloadType, CoinbasePayloadType, MnhfSignalPayloadType,
-    ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
+    AssetLockPayloadType, AssetUnlockPayloadType,
+    ClassicalWithNonStandardVersionTypeBytesPayloadType, CoinbasePayloadType,
+    MnhfSignalPayloadType, ProviderRegistrationPayloadType, ProviderUpdateRegistrarPayloadType,
     ProviderUpdateRevocationPayloadType, ProviderUpdateServicePayloadType,
     QuorumCommitmentPayloadType,
 };
 use crate::blockdata::transaction::special_transaction::TransactionType::{
-    AssetLock, AssetUnlock, Classic, Coinbase, MnhfSignal, ProviderRegistration,
-    ProviderUpdateRegistrar, ProviderUpdateRevocation, ProviderUpdateService, QuorumCommitment,
+    AssetLock, AssetUnlock, Classic, ClassicalWithNonStandardVersionTypeBytes, Coinbase,
+    MnhfSignal, ProviderRegistration, ProviderUpdateRegistrar, ProviderUpdateRevocation,
+    ProviderUpdateService, QuorumCommitment,
 };
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
@@ -84,6 +86,12 @@ pub enum TransactionPayload {
     AssetLockPayloadType(AssetLockPayload),
     /// A wrapper for an Asset Unlock payload
     AssetUnlockPayloadType(AssetUnlockPayload),
+    /// A pseudo-payload that carries the raw `nTxType` u16 read from a pre-DIP-0002
+    /// transaction (`version == 0`). Older transactions on the chain were free to put
+    /// arbitrary bytes in the type slot; we keep the original value here so that
+    /// `consensus_encode` and `txid` continue to round-trip the on-wire bytes faithfully.
+    /// This variant has no payload section on the wire.
+    ClassicalWithNonStandardVersionTypeBytesPayloadType(u16),
 }
 
 impl Encodable for TransactionPayload {
@@ -98,6 +106,7 @@ impl Encodable for TransactionPayload {
             MnhfSignalPayloadType(p) => p.consensus_encode(w),
             AssetLockPayloadType(p) => p.consensus_encode(w),
             AssetUnlockPayloadType(p) => p.consensus_encode(w),
+            ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => Ok(0),
         }
     }
 }
@@ -115,23 +124,28 @@ impl TransactionPayload {
             MnhfSignalPayloadType(_) => MnhfSignal,
             AssetLockPayloadType(_) => AssetLock,
             AssetUnlockPayloadType(_) => AssetUnlock,
+            ClassicalWithNonStandardVersionTypeBytesPayloadType(raw) => {
+                ClassicalWithNonStandardVersionTypeBytes(*raw)
+            }
         }
     }
 
     /// Gets the size of the special transaction payload
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
-        // 1 byte is the size of the special transaction type
-        1 + match self {
-            ProviderRegistrationPayloadType(p) => p.size(),
-            ProviderUpdateServicePayloadType(p) => p.size(),
-            ProviderUpdateRegistrarPayloadType(p) => p.size(),
-            ProviderUpdateRevocationPayloadType(p) => p.size(),
-            CoinbasePayloadType(p) => p.size(),
-            QuorumCommitmentPayloadType(p) => p.size(),
-            MnhfSignalPayloadType(p) => p.size(),
-            AssetLockPayloadType(p) => p.size(),
-            AssetUnlockPayloadType(p) => p.size(),
+        match self {
+            // 1 byte is the size of the special transaction type
+            ProviderRegistrationPayloadType(p) => 1 + p.size(),
+            ProviderUpdateServicePayloadType(p) => 1 + p.size(),
+            ProviderUpdateRegistrarPayloadType(p) => 1 + p.size(),
+            ProviderUpdateRevocationPayloadType(p) => 1 + p.size(),
+            CoinbasePayloadType(p) => 1 + p.size(),
+            QuorumCommitmentPayloadType(p) => 1 + p.size(),
+            MnhfSignalPayloadType(p) => 1 + p.size(),
+            AssetLockPayloadType(p) => 1 + p.size(),
+            AssetUnlockPayloadType(p) => 1 + p.size(),
+            // Pre-DIP-0002 transactions have no payload section on the wire.
+            ClassicalWithNonStandardVersionTypeBytesPayloadType(_) => 0,
         }
     }
 
@@ -273,29 +287,37 @@ impl TransactionPayload {
 /// The first part for the version and the second part for the transaction
 /// type.
 ///
+/// Pre-DIP-0002 transactions on Dash mainnet (`version == 0`) were free to put
+/// arbitrary bytes in the type slot. The [`ClassicalWithNonStandardVersionTypeBytes`]
+/// variant preserves the raw u16 read from the wire so that those transactions can
+/// still round-trip through `consensus_encode` / `txid` without altering the on-chain
+/// bytes or hashes. Logically these transactions behave as Classic.
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
 pub enum TransactionType {
     /// A Classic transaction
-    Classic = 0,
+    Classic,
     /// A Masternode Registration Transaction
-    ProviderRegistration = 1,
+    ProviderRegistration,
     /// A Masternode Update Service Transaction, used by the operator to signal changes to service
-    ProviderUpdateService = 2,
+    ProviderUpdateService,
     /// A Masternode Update Registrar Transaction, used by the owner to signal base changes
-    ProviderUpdateRegistrar = 3,
+    ProviderUpdateRegistrar,
     /// A Masternode Update Revocation Transaction, used by the operator to signal termination of service
-    ProviderUpdateRevocation = 4,
+    ProviderUpdateRevocation,
     /// A Coinbase Transaction, contained as the first transaction in each block
-    Coinbase = 5,
+    Coinbase,
     /// A Quorum Commitment Transaction, used to save quorum information to the state
-    QuorumCommitment = 6,
+    QuorumCommitment,
     /// A MNHF Signal Transaction, used by masternodes to signal consensus for hard fork activations
-    MnhfSignal = 7,
+    MnhfSignal,
     /// An Asset Lock Transaction, used to transfer credits to Dash Platform, by locking them until withdrawals occur
-    AssetLock = 8,
+    AssetLock,
     /// An Asset Unlock Transaction, used to withdraw credits from Dash Platform, by unlocking them
-    AssetUnlock = 9,
+    AssetUnlock,
+    /// A pre-DIP-0002 Classic transaction (`version == 0`) whose on-wire `nTxType`
+    /// bytes were non-zero. The wrapped value is the original u16 read from the wire,
+    /// which must be re-emitted verbatim during serialization to preserve the txid.
+    ClassicalWithNonStandardVersionTypeBytes(u16),
 }
 
 impl Debug for TransactionType {
@@ -311,6 +333,9 @@ impl Debug for TransactionType {
             MnhfSignal => write!(f, "MNHF Signal Transaction"),
             AssetLock => write!(f, "Asset Lock Transaction"),
             AssetUnlock => write!(f, "Asset Unlock Transaction"),
+            ClassicalWithNonStandardVersionTypeBytes(raw) => {
+                write!(f, "Classic Transaction (pre-DIP-0002, raw type bytes 0x{raw:04x})")
+            }
         }
     }
 }
@@ -328,6 +353,9 @@ impl Display for TransactionType {
             MnhfSignal => write!(f, "MNHF Signal"),
             AssetLock => write!(f, "Asset Lock"),
             AssetUnlock => write!(f, "Asset Unlock"),
+            ClassicalWithNonStandardVersionTypeBytes(raw) => {
+                write!(f, "Classic (pre-DIP-0002, raw 0x{raw:04x})")
+            }
         }
     }
 }
@@ -369,18 +397,44 @@ impl TransactionType {
         }
     }
 
+    /// Returns the on-wire `u16` representation of the transaction type.
+    ///
+    /// For pre-DIP-0002 [`ClassicalWithNonStandardVersionTypeBytes`] this returns the
+    /// original raw bytes that were read from the chain so that re-encoding/hashing the
+    /// transaction reproduces the on-chain bytes verbatim.
+    pub fn to_u16(self) -> u16 {
+        match self {
+            Classic => 0,
+            ProviderRegistration => 1,
+            ProviderUpdateService => 2,
+            ProviderUpdateRegistrar => 3,
+            ProviderUpdateRevocation => 4,
+            Coinbase => 5,
+            QuorumCommitment => 6,
+            MnhfSignal => 7,
+            AssetLock => 8,
+            AssetUnlock => 9,
+            ClassicalWithNonStandardVersionTypeBytes(raw) => raw,
+        }
+    }
+
     /// Decodes the payload based on the transaction type.
     pub fn consensus_decode<R: io::Read + ?Sized>(
         self,
         d: &mut R,
     ) -> Result<Option<TransactionPayload>, encode::Error> {
+        // Pre-DIP-0002 transactions and Classic transactions have no payload section
+        // on the wire — there isn't even a length prefix to consume.
         let _len = match self {
-            Classic => VarInt(0),
+            Classic | ClassicalWithNonStandardVersionTypeBytes(_) => VarInt(0),
             _ => VarInt::consensus_decode(d)?,
         };
 
         Ok(match self {
             Classic => None,
+            ClassicalWithNonStandardVersionTypeBytes(raw) => {
+                Some(ClassicalWithNonStandardVersionTypeBytesPayloadType(raw))
+            }
             ProviderRegistration => Some(ProviderRegistrationPayloadType(
                 ProviderRegistrationPayload::consensus_decode(d)?,
             )),

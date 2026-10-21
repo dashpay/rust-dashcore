@@ -1,10 +1,11 @@
 //! Tests for provider/masternode transaction handling
 
 use super::helpers::*;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
+use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
@@ -15,14 +16,16 @@ use dashcore::blockdata::transaction::special_transaction::provider_update_regis
 use dashcore::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{BlockHash, OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 
 #[test]
 fn test_provider_update_registrar_classification() {
     // Test ProviderUpdateRegistrar classification
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     let payload = ProviderUpdateRegistrarPayload {
         version: 1,
@@ -50,7 +53,8 @@ fn test_provider_update_registrar_classification() {
 #[test]
 fn test_provider_update_service_classification() {
     // Test ProviderUpdateService classification
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     let payload = ProviderUpdateServicePayload {
         version: 1,
@@ -81,7 +85,8 @@ fn test_provider_update_service_classification() {
 #[test]
 fn test_provider_update_revocation_classification() {
     // Test ProviderUpdateRevocation classification
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     let payload = ProviderUpdateRevocationPayload {
         version: 1,
@@ -132,10 +137,10 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string(), 0);
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from provider accounts
     let managed_owner = managed_wallet_info
@@ -169,7 +174,7 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         });
 
     // Create a ProRegTx transaction
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -221,15 +226,14 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result: is_relevant={}, received={}",
@@ -268,10 +272,10 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string(), 0);
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
@@ -305,7 +309,7 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         });
 
     // Create a ProRegTx transaction
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -357,15 +361,14 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (voting): is_relevant={}, received={}",
@@ -404,10 +407,10 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string(), 0);
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
@@ -442,7 +445,7 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         });
 
     // Create a ProRegTx transaction
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -494,15 +497,14 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (operator): is_relevant={}, received={}",
@@ -586,10 +588,10 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         .expect("Failed to create wallet with default options");
 
     let mut other_managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&other_wallet, "Other".to_string(), 0);
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from provider accounts
     let owner_address = other_managed_wallet_info
@@ -641,7 +643,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         });
 
     // Create a ProRegTx transaction with platform fields (HighPerformance/EvoNode)
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -698,15 +700,14 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Provider registration transaction result (platform): is_relevant={}, received={}",
@@ -735,7 +736,8 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
 
 #[test]
 fn test_provider_update_service_with_operator_key() {
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     // Create provider update service payload
     use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
@@ -784,7 +786,7 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get voting address
     let voting_address = managed_wallet_info
@@ -800,7 +802,8 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         .next_bls_operator_key(None, true)
         .expect("expected operator key");
 
-    let mut tx = create_test_transaction(1, vec![100_000_000]);
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
 
     // Create provider update registrar payload
     use dashcore::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
@@ -821,13 +824,14 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
     tx.special_transaction_payload =
         Some(TransactionPayload::ProviderUpdateRegistrarPayloadType(payload));
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash")),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash"),
+        1234567890,
+    ));
 
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // Should be recognized as relevant due to voting and operator keys
     assert!(result.is_relevant, "Provider update registrar should be relevant");
@@ -855,7 +859,7 @@ async fn test_provider_revocation_classification_and_routing() {
         .expect("Failed to create wallet with default options");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get a standard address for collateral return
     let account = wallet
@@ -873,7 +877,8 @@ async fn test_provider_revocation_classification_and_routing() {
         .next_receive_address(Some(&xpub), true)
         .expect("Failed to generate receive address");
 
-    let mut tx = create_test_transaction(1, vec![1_000_000_000]); // 10 DASH returned collateral
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[1_000_000_000]); // 10 DASH returned collateral
 
     // Add output for returned collateral
     tx.output.push(TxOut {
@@ -914,13 +919,14 @@ async fn test_provider_revocation_classification_and_routing() {
         "Should NOT route to provider owner keys"
     );
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash")),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash"),
+        1234567890,
+    ));
 
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     // Should be recognized as relevant due to collateral return
     assert!(result.is_relevant, "Provider revocation with collateral return should be relevant");

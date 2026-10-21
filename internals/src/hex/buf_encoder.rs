@@ -36,7 +36,7 @@ pub trait AsOutBytes: out_bytes::Sealed {
 pub trait FixedLenBuf: Sized + AsOutBytes {
     /// Creates an uninitialized buffer.
     ///
-    /// The current implementtions initialize the buffer with zeroes but it should be treated a
+    /// The current implementations initialize the buffer with zeroes but it should be treated a
     /// uninitialized anyway.
     fn uninit() -> Self;
 }

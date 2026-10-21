@@ -7,7 +7,6 @@ use crate::bip32::DerivationPath;
 use crate::dip9::DerivationPathReference;
 use crate::error::Result;
 use crate::Network;
-use alloc::vec::Vec;
 
 /// Common trait for all account types
 pub trait AccountTrait {

@@ -16,14 +16,7 @@
 //!
 
 use core::{fmt, str};
-#[cfg(feature = "std")]
 use std::io;
-
-#[cfg(all(feature = "core2", not(feature = "std")))]
-use core2::io;
-
-#[cfg(all(feature = "alloc", not(feature = "std")))]
-use crate::alloc::vec::Vec;
 
 /// Hex decoding error.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -48,7 +41,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::Error::*;
@@ -119,7 +111,6 @@ impl<'a> Iterator for HexIterator<'a> {
     }
 }
 
-#[cfg(any(feature = "std", feature = "core2"))]
 impl<'a> io::Read for HexIterator<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut bytes_read = 0usize;
@@ -146,7 +137,6 @@ impl<'a> DoubleEndedIterator for HexIterator<'a> {
 
 impl<'a> ExactSizeIterator for HexIterator<'a> {}
 
-#[cfg(any(test, feature = "std", feature = "alloc"))]
 impl FromHex for Vec<u8> {
     fn from_byte_iter<I>(iter: I) -> Result<Self, Error>
     where
@@ -200,7 +190,6 @@ impl_fromhex_array!(384);
 impl_fromhex_array!(512);
 
 #[cfg(test)]
-#[cfg(feature = "alloc")]
 mod tests {
     use internals::hex::exts::DisplayHex;
 

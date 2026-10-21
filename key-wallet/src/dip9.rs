@@ -2,7 +2,7 @@ use crate::bip32::{ChildNumber, DerivationPath, Error, ExtendedPrivKey, Extended
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use bitflags::bitflags;
-use dash_network::Network;
+use dashcore::Network;
 use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,8 @@ pub enum DerivationPathReference {
     ProviderPlatformNodeKeys = 14,
     CoinJoin = 15,
     PlatformPayment = 16,
+    BlockchainAssetLockAddressTopupFunding = 17,
+    BlockchainAssetLockShieldedAddressTopupFunding = 18,
     Root = 255,
 }
 
@@ -131,6 +133,8 @@ pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_AUTHENTICATION: u32 = 0;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_REGISTRATION: u32 = 1;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_TOPUP: u32 = 2;
 pub const FEATURE_PURPOSE_IDENTITIES_SUBFEATURE_INVITATIONS: u32 = 3;
+pub const FEATURE_PURPOSE_ASSET_LOCK_SUBFEATURE_ADDRESS_TOPUP: u32 = 4;
+pub const FEATURE_PURPOSE_ASSET_LOCK_SUBFEATURE_SHIELDED_ADDRESS_TOPUP: u32 = 5;
 pub const FEATURE_PURPOSE_DASHPAY: u32 = 15;
 /// DIP-17: Platform Payment Addresses feature index
 pub const FEATURE_PURPOSE_PLATFORM_PAYMENT: u32 = 17;
@@ -338,6 +342,84 @@ pub const IDENTITY_INVITATION_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
         },
     ],
     reference: DerivationPathReference::BlockchainIdentityCreditInvitationFunding,
+    path_type: DerivationPathType::CREDIT_FUNDING,
+};
+
+// Asset Lock Address Top-Up Paths
+pub const ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_ASSET_LOCK_SUBFEATURE_ADDRESS_TOPUP,
+        },
+    ],
+    reference: DerivationPathReference::BlockchainAssetLockAddressTopupFunding,
+    path_type: DerivationPathType::CREDIT_FUNDING,
+};
+
+pub const ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_ASSET_LOCK_SUBFEATURE_ADDRESS_TOPUP,
+        },
+    ],
+    reference: DerivationPathReference::BlockchainAssetLockAddressTopupFunding,
+    path_type: DerivationPathType::CREDIT_FUNDING,
+};
+
+// Asset Lock Shielded Address Top-Up Paths
+pub const ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET: IndexConstPath<4> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_ASSET_LOCK_SUBFEATURE_SHIELDED_ADDRESS_TOPUP,
+        },
+    ],
+    reference: DerivationPathReference::BlockchainAssetLockShieldedAddressTopupFunding,
+    path_type: DerivationPathType::CREDIT_FUNDING,
+};
+
+pub const ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET: IndexConstPath<4> = IndexConstPath {
+    indexes: [
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE,
+        },
+        ChildNumber::Hardened {
+            index: DASH_TESTNET_COIN_TYPE,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_IDENTITIES,
+        },
+        ChildNumber::Hardened {
+            index: FEATURE_PURPOSE_ASSET_LOCK_SUBFEATURE_SHIELDED_ADDRESS_TOPUP,
+        },
+    ],
+    reference: DerivationPathReference::BlockchainAssetLockShieldedAddressTopupFunding,
     path_type: DerivationPathType::CREDIT_FUNDING,
 };
 

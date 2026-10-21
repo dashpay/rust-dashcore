@@ -73,26 +73,6 @@ When adding new FFI functions:
 4. Run `make update-docs` to regenerate documentation
 5. Commit both the code changes and updated `FFI_API.md`
 
-## Example FFI Function
-
-```rust
-/// Sync the SPV client to the chain tip
-///
-/// # Safety
-///
-/// - `client` must be a valid pointer to an FFIDashSpvClient
-/// - `on_progress` callback may be invoked from any thread
-/// - `on_completion` will be called exactly once
-#[no_mangle]
-pub unsafe extern "C" fn dash_spv_ffi_client_sync_to_tip(
-    client: *mut FFIDashSpvClient,
-    on_progress: Option<SyncProgressCallback>,
-    on_completion: Option<CompletionCallback>,
-) -> i32 {
-    // Implementation
-}
-```
-
 ## CI/CD Integration
 
 The documentation verification is integrated into the CI pipeline:

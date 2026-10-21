@@ -18,7 +18,7 @@ The project follows a layered, trait-based architecture with clear separation of
 - **`sync/sequential/`**: Sequential sync manager that handles all synchronization phases
 - **`validation/`**: Header validation, ChainLock, and InstantLock verification
 - **`wallet/`**: UTXO tracking, balance calculation, and transaction processing
-- **`types.rs`**: Common data structures (`SyncProgress`, `ValidationMode`, `WatchItem`, etc.)
+- **`types.rs`**: Common data structures
 - **`error.rs`**: Unified error handling with domain-specific error types
 
 ### Key Design Patterns
@@ -54,33 +54,18 @@ cargo run --example filter_sync
 cargo test
 
 # Run specific test files
-cargo test --test handshake_test
 cargo test --test header_sync_test
 cargo test --test storage_test
-cargo test --test integration_real_node_test
 
 # Run individual test functions
-cargo test --test handshake_test test_handshake_with_mainnet_peer
+cargo test --test peer_test test_peer_connection
 
 # Run tests with output
 cargo test -- --nocapture
 
 # Run single test with debug output
-cargo test --test handshake_test test_handshake_with_mainnet_peer -- --nocapture
+cargo test --test peer_test test_peer_connection -- --nocapture
 ```
-
-**Integration Tests with Real Node:**
-The integration tests in `tests/integration_real_node_test.rs` connect to a live Dash Core node at `127.0.0.1:9999`. These tests gracefully skip if no node is available.
-
-```bash
-# Run real node integration tests
-cargo test --test integration_real_node_test -- --nocapture
-
-# Test specific real node functionality
-cargo test --test integration_real_node_test test_real_header_sync_genesis_to_1000 -- --nocapture
-```
-
-See `run_integration_tests.md` for detailed setup instructions.
 
 ### Code Quality
 ```bash
@@ -117,7 +102,7 @@ TCP-based networking with proper Dash protocol implementation:
 - **Exclusive mode**: When explicit peers are provided, uses only those peers (no DNS discovery)
 - Connection management via `Peer`
 - Handshake handling via `HandshakeManager`
-- Message routing via `MessageHandler`
+- Message routing via `MessageDispatcher`
 - Peer support via `PeerNetworkManager`
 
 ### Validation Modes
@@ -201,10 +186,10 @@ Use domain-specific error types:
 **Common Debug Commands:**
 ```bash
 # Run with tracing output
-RUST_LOG=debug cargo test --test integration_real_node_test -- --nocapture
+RUST_LOG=debug cargo test --test peer_test test_peer_connection -- --nocapture
 
-# Run specific test with verbose output  
-cargo test --test handshake_test test_handshake_with_mainnet_peer -- --nocapture --test-threads=1
+# Run specific test with verbose output
+cargo test --test peer_test test_peer_connection -- --nocapture --test-threads=1
 
 # Check storage state
 ls -la data*/headers/

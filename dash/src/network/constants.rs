@@ -18,32 +18,17 @@
 //! Dash network constants.
 //!
 //! This module provides various constants relating to the Dash network
-//! protocol, such as protocol versioning and magic header bytes.
-//!
-//! The [`Network`][1] type is now provided by the `dash_network` crate.
-//!
-//! [1]: https://docs.rs/dash-network/latest/dash_network/enum.Network.html
-//!
-//! # Example: encoding a network's magic bytes
-//!
-//! ```rust
-//! use dash_network::Network;
-//! use dashcore::consensus::encode::serialize;
-//!
-//! let network = Network::Dash;
-//! let bytes = serialize(&network.magic());
-//!
-//! assert_eq!(&bytes[..], &[0xBF, 0x0C, 0x6B, 0xBD]);
-//! ```
+//! protocol.
 
 use core::convert::From;
 use core::{fmt, ops};
 
 use hashes::Hash;
 
+pub use dash_network::{Network, ParseNetworkError};
+
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::{BlockHash, io};
-use dash_network::Network;
 
 // Re-export NODE_HEADERS_COMPRESSED for convenience
 pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COMPRESSED;
@@ -65,16 +50,15 @@ pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COM
 /// 60001 - Support `pong` message and nonce in `ping` message
 pub const PROTOCOL_VERSION: u32 = 70237;
 
-/// Extension trait for Network to add dash-specific methods
 pub trait NetworkExt {
-    /// The known dash genesis block hash for mainnet and testnet
+    /// Returns the known genesis block hash for `network`, if one is hardcoded.
     fn known_genesis_block_hash(&self) -> Option<BlockHash>;
 }
 
 impl NetworkExt for Network {
     fn known_genesis_block_hash(&self) -> Option<BlockHash> {
         match self {
-            Network::Dash => {
+            Network::Mainnet => {
                 let mut block_hash =
                     hex::decode("00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6")
                         .expect("expected valid hex");
@@ -88,7 +72,13 @@ impl NetworkExt for Network {
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
-            Network::Devnet => None,
+            Network::Devnet => {
+                let mut block_hash =
+                    hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
+                        .expect("expected valid hex");
+                block_hash.reverse();
+                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
+            }
             Network::Regtest => {
                 let mut block_hash =
                     hex::decode("000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e")
@@ -96,11 +86,9 @@ impl NetworkExt for Network {
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
-            _ => None,
         }
     }
 }
-
 /// Flags to indicate which network services a node supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ServiceFlags(u64);
@@ -278,34 +266,56 @@ impl Decodable for ServiceFlags {
 #[cfg(test)]
 mod tests {
     use super::ServiceFlags;
+    use crate::Network;
     use crate::consensus::encode::{deserialize, serialize};
-    use dash_network::Network;
+
+    #[test]
+    fn test_network_magic() {
+        assert_eq!(Network::Mainnet.magic(), 0xBD6B0CBF);
+        assert_eq!(Network::Testnet.magic(), 0xFFCAE2CE);
+        assert_eq!(Network::Devnet.magic(), 0xCEFFCAE2);
+        assert_eq!(Network::Regtest.magic(), 0xDCB7C1FC);
+    }
+
+    #[test]
+    fn test_network_from_magic() {
+        assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Mainnet));
+        assert_eq!(Network::from_magic(0xFFCAE2CE), Some(Network::Testnet));
+        assert_eq!(Network::from_magic(0xCEFFCAE2), Some(Network::Devnet));
+        assert_eq!(Network::from_magic(0xDCB7C1FC), Some(Network::Regtest));
+        assert_eq!(Network::from_magic(0x12345678), None);
+    }
+
+    #[test]
+    fn test_network_display() {
+        assert_eq!(Network::Mainnet.to_string(), "mainnet");
+        assert_eq!(Network::Testnet.to_string(), "testnet");
+        assert_eq!(Network::Devnet.to_string(), "devnet");
+        assert_eq!(Network::Regtest.to_string(), "regtest");
+    }
+
+    #[test]
+    fn test_network_from_str() {
+        assert_eq!("mainnet".parse::<Network>().unwrap(), Network::Mainnet);
+        assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
+        assert_eq!("test".parse::<Network>().unwrap(), Network::Testnet);
+        assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
+        assert_eq!("dev".parse::<Network>().unwrap(), Network::Devnet);
+        assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
+        assert!("invalid".parse::<Network>().is_err());
+    }
 
     #[test]
     fn serialize_test() {
-        assert_eq!(serialize(&Network::Dash.magic()), &[0xbf, 0x0c, 0x6b, 0xbd]);
+        assert_eq!(serialize(&Network::Mainnet.magic()), &[0xbf, 0x0c, 0x6b, 0xbd]);
         assert_eq!(serialize(&Network::Testnet.magic()), &[0xce, 0xe2, 0xca, 0xff]);
         assert_eq!(serialize(&Network::Devnet.magic()), &[0xe2, 0xca, 0xff, 0xce]);
         assert_eq!(serialize(&Network::Regtest.magic()), &[0xfc, 0xc1, 0xb7, 0xdc]);
 
-        assert_eq!(deserialize(&[0xbf, 0x0c, 0x6b, 0xbd]).ok(), Some(Network::Dash.magic()));
+        assert_eq!(deserialize(&[0xbf, 0x0c, 0x6b, 0xbd]).ok(), Some(Network::Mainnet.magic()));
         assert_eq!(deserialize(&[0xce, 0xe2, 0xca, 0xff]).ok(), Some(Network::Testnet.magic()));
         assert_eq!(deserialize(&[0xe2, 0xca, 0xff, 0xce]).ok(), Some(Network::Devnet.magic()));
         assert_eq!(deserialize(&[0xfc, 0xc1, 0xb7, 0xdc]).ok(), Some(Network::Regtest.magic()));
-    }
-
-    #[test]
-    fn string_test() {
-        assert_eq!(Network::Dash.to_string(), "dash");
-        assert_eq!(Network::Testnet.to_string(), "testnet");
-        assert_eq!(Network::Regtest.to_string(), "regtest");
-        assert_eq!(Network::Devnet.to_string(), "devnet");
-
-        assert_eq!("dash".parse::<Network>().unwrap(), Network::Dash);
-        assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
-        assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
-        assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
-        assert!("fakenet".parse::<Network>().is_err());
     }
 
     #[test]

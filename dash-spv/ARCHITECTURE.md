@@ -1,16 +1,10 @@
 # Dash SPV Client - Comprehensive Code Guide
 
-**Version:** 0.41.1
-
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)
 2. [Architecture Overview](#architecture-overview)
 3. [Module Analysis](#module-analysis)
-4. [Critical Assessment](#critical-assessment)
-5. [Recommendations](#recommendations)
-6. [Complexity Metrics](#complexity-metrics)
-7. [Security Considerations](#security-considerations)
 
 ---
 
@@ -29,33 +23,33 @@
 ### Current State: Production-Ready Structure ✅
 
 **Code Organization: EXCELLENT (A+)**
-- ✅ All major modules refactored into focused components
-- ✅ sync/filters/: 10 modules (4,281 lines)
-- ✅ sync/sequential/: 11 modules (4,785 lines)
+- ✅ Parallel event-driven sync architecture with 8 independent managers
+- ✅ SyncManager trait with standard event loop pattern
+- ✅ SyncEvent broadcast channel for inter-manager communication
 - ✅ client/: 8 modules (2,895 lines)
 - ✅ storage/disk/: 7 modules (2,458 lines)
 - ✅ All files under 1,500 lines (most under 500)
 
 **Critical Remaining Work:**
-- 🚨 **Security**: BLS signature validation (ChainLocks + InstantLocks) - 1-2 weeks effort
+- 🚨 **Security**: BLS signature validation (ChainLocks + InstantLocks)
 
 ### Key Architectural Strengths
 
 **EXCELLENT DESIGN:**
-- ✅ **Trait-based abstractions** (NetworkManager, StorageManager, WalletInterface)
-- ✅ **Sequential sync manager** with clear phase transitions
+- ✅ **Trait-based abstractions** (NetworkManager, StorageManager, WalletInterface, SyncManager)
+- ✅ **Parallel sync managers** running in independent tokio tasks
+- ✅ **Event-driven coordination** via typed SyncEvent broadcast channel
+- ✅ **Topic-based message routing** filters network messages by type
+- ✅ **Reactive progress aggregation** via watch channel streams
 - ✅ **Modular organization** with focused responsibilities
-- ✅ **Comprehensive error types** with clear categorization
 - ✅ **External wallet integration** with clean interface boundaries
-- ✅ **Lock ordering documented** to prevent deadlocks
-- ✅ **Performance optimizations** (cached headers, segmented storage, flow control)
-- ✅ **Strong test coverage** (242/243 tests passing)
+- ✅ **Performance optimizations** (parallel sync, cached headers, segmented storage)
 
 **AREAS FOR IMPROVEMENT:**
 - ⚠️ **BLS validation** required for mainnet security
 - ⚠️ **Integration tests** could be more comprehensive
 - ⚠️ **Resource limits** not yet enforced (connections, bandwidth)
-- ℹ️ **Type aliases** could improve ergonomics (optional - generic design is intentional and beneficial)
+- ℹ️ See `TODO_SYNC_ISSUES.md` for tracked sync-related issues
 
 ### Statistics
 
@@ -63,10 +57,9 @@
 |----------|-------|-------|
 | Total Files | 110+ | Well-organized module structure |
 | Total Lines | ~40,000 | All files appropriately sized |
+| Sync Managers | 8 | Block headers, filter headers, filters, blocks, masternodes, chainlock, instantsend, mempool |
 | Largest File | network/manager.rs | 1,322 lines - Acceptable complexity |
 | Module Count | 10+ | Well-separated concerns |
-| Test Coverage | 242/243 passing | 99.6% pass rate |
-| Major Modules Refactored | 4 | sync/filters/, sync/sequential/, client/, storage/disk/ |
 
 ---
 
@@ -77,7 +70,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     DashSpvClient<W,N,S>                    │
-│  (Main Orchestrator - 2,819 lines)                          │
+│  (Main Entry Point)                                         │
 └─────────────────────────────────────────────────────────────┘
            │              │              │
            ▼              ▼              ▼
@@ -87,44 +80,81 @@
     └───────────┘  └───────────┘  └───────────┘
            │
            ▼
-    ┌─────────────────────────────────────────┐
-    │     SyncManager               │
-    │  - HeadersSync                          │
-    │  - MasternodeSync                       │
-    │  - FilterSync (4,027 lines - TOO BIG)   │
-    └─────────────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────────┐
+    │                    SyncCoordinator                      │
+    │  - Spawns managers in parallel tokio tasks              │
+    │  - Aggregates progress reactively via watch channels    │
+    │  - Coordinates graceful shutdown                        │
+    └─────────────────────────────────────────────────────────┘
            │
            ▼
-    ┌──────────────┬──────────────┬──────────────┐
-    │  Validation  │  ChainLock   │    Bloom     │
-    │   Manager    │   Manager    │   Manager    │
-    └──────────────┴──────────────┴──────────────┘
+    ┌─────────────────────────────────────────────────────────┐
+    │              Parallel Sync Managers (8)                 │
+    ├──────────────┬──────────────┬──────────────┬────────────┤
+    │ BlockHeaders │ FilterHeaders│   Filters    │   Blocks   │
+    │   Manager    │   Manager    │   Manager    │   Manager  │
+    ├──────────────┼──────────────┼──────────────┼────────────┤
+    │  Masternodes │  ChainLock   │ InstantSend  │  Mempool   │
+    │   Manager    │   Manager    │   Manager    │  Manager   │
+    └──────────────┴──────────────┴──────────────┴────────────┘
+           │
+           ▼
+    ┌─────────────────────────────────────────────────────────┐
+    │              SyncEvent Broadcast Channel                │
+    │  Inter-manager communication via typed events           │
+    └─────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow
 
 ```
-Network Messages → MessageHandler → SyncManager
-                                          │
-                                          ▼
-                              ┌─────────────────────┐
-                              │  Validation Manager │
-                              └─────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────┐
-                              │  Storage Manager    │
-                              └─────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────┐
-                              │  ChainState Update  │
-                              └─────────────────────┘
-                                          │
-                                          ▼
-                              ┌─────────────────────┐
-                              │    Event Emission   │
-                              └─────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          Network Layer                                    │
+│  - Topic-based message routing to subscribed managers                    │
+│  - NetworkEvent broadcast for peer connection changes                    │
+└──────────────────────────────────────────────────────────────────────────┘
+                    │                           │
+                    │ Messages                  │ NetworkEvents
+                    ▼                           ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                      Manager Event Loop (per manager)                     │
+│  tokio::select! {                                                        │
+│    message = receiver.recv()  => handle_message()                        │
+│    event = sync_events.recv() => handle_sync_event()                     │
+│    network = network_rx.recv()=> handle_network_event()                  │
+│    _ = tick_interval.tick()   => tick() // timeouts, retries             │
+│  }                                                                       │
+└──────────────────────────────────────────────────────────────────────────┘
+                    │
+                    │ SyncEvents (broadcast)
+                    ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                       Event Flow Between Managers                         │
+│                                                                          │
+│  BlockHeadersManager ──BlockHeadersStored──> FilterHeadersManager        │
+│                      ──BlockHeaderSyncComplete──> MasternodesManager     │
+│                                                                          │
+│  FilterHeadersManager ──FilterHeadersStored──> FiltersManager            │
+│                                                                          │
+│  FiltersManager ──BlocksNeeded──> BlocksManager                          │
+│                                                                          │
+│  BlocksManager ──BlockProcessed──> FiltersManager (for gap limit rescan) │
+│                 ──BlockProcessed──> MempoolManager (confirmed tx removal)│
+│                                                                          │
+│  InstantSendManager ──InstantLockReceived──> MempoolManager              │
+│                                                                          │
+│  SyncCoordinator ──SyncComplete──> MempoolManager (activation trigger)   │
+│                  ──SyncComplete──> External listeners                    │
+└──────────────────────────────────────────────────────────────────────────┘
+                    │
+                    │ Progress (watch channels)
+                    ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    Progress Aggregation Task                              │
+│  - Merges progress from all manager watch channels                       │
+│  - Updates SyncProgress reactively when any manager changes              │
+│  - Emits SyncComplete when all managers reach Synced state               │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -199,17 +229,6 @@ Network Messages → MessageHandler → SyncManager
    - **GOOD**: Checkpoint sync support
    - **BAD**: No documentation on thread-safety assumptions
 
-4. **`DetailedSyncProgress`** (lines 138-213)
-   - Performance metrics and ETA calculation
-   - **GOOD**: Useful for UX
-   - **ISSUE**: Tight coupling to specific sync stages
-
-5. **Custom serde for `AddressBalance`** (lines 707-804)
-   - **WHY**: dashcore::Amount doesn't derive Serialize
-   - **COMPLEXITY**: Manual Visitor pattern
-   - **JUSTIFIED**: Necessary for persistence
-   - **ISSUE**: Verbose - consider upstream fix
-
 **Analysis**:
 - **GOOD**: Comprehensive type coverage
 - **ISSUE**: File is becoming a dumping ground (1,065 lines)
@@ -219,8 +238,7 @@ Network Messages → MessageHandler → SyncManager
 **Refactoring needed**:
 - ⚠️ **HIGH PRIORITY**: Split into multiple files:
   - `types/chain.rs` - ChainState, CachedHeader
-  - `types/sync.rs` - SyncProgress, SyncStage, DetailedSyncProgress
-  - `types/events.rs` - SpvEvent, MempoolRemovalReason
+  - `types/events.rs` - MempoolRemovalReason
   - `types/stats.rs` - SpvStats, PeerInfo
   - `types/balances.rs` - AddressBalance, MempoolBalance, UnconfirmedTransaction
 - ⚠️ **MEDIUM**: Add documentation on thread-safety for ChainState
@@ -524,7 +542,6 @@ client/
 ├── events.rs (46 lines) - Event handling
 ├── queries.rs (173 lines) - Peer/masternode/balance queries
 ├── chainlock.rs (150 lines) - ChainLock processing
-├── block_processor.rs (649 lines) - Block processing
 ├── config.rs (484 lines) - Configuration
 ├── filter_sync.rs (171 lines) - Filter coordination
 ├── message_handler.rs (585 lines) - Message routing
@@ -556,31 +573,6 @@ client/
 - **GOOD**: Well-documented fields
 
 **Refactoring needed**: ❌ None - this is exemplary
-
-#### `src/client/block_processor.rs` (649 lines) ⚠️ COMPLEX
-
-**Purpose**: Processes full blocks downloaded after filter matches.
-
-**What it does**:
-- Downloads full blocks for filter matches
-- Extracts relevant transactions
-- Updates wallet state
-- Emits transaction events
-
-**Complex Types Used**:
-- `mpsc::UnboundedSender<BlockProcessingTask>` - **JUSTIFIED**: Task queue pattern
-- Async task spawning - **JUSTIFIED**: Parallel block processing
-
-**Analysis**:
-- **GOOD**: Proper separation from main client
-- **GOOD**: Async task management
-- **ISSUE**: Could benefit from retry logic for failed downloads
-- **ISSUE**: No priority queue (all blocks treated equally)
-
-**Refactoring needed**:
-- ⚠️ **MEDIUM**: Add retry logic with exponential backoff
-- ⚠️ **MEDIUM**: Add priority queue (recent blocks first)
-- ✅ **LOW**: Add timeout configuration
 
 #### `src/client/filter_sync.rs` (289 lines) ✅ GOOD
 
@@ -982,632 +974,293 @@ storage/disk/
 
 ---
 
-### 7. SYNC MODULE (16 files, ~12,000 lines) 🚨 **NEEDS MAJOR REFACTORING**
+### 7. SYNC MODULE - Parallel Event-Driven Architecture ✅ **PRODUCTION READY**
 
 #### Overview
-The sync module coordinates all blockchain synchronization. This is the most complex part of the codebase.
 
-#### `src/sync/mod.rs` (167 lines) ✅ GOOD
+The sync module uses a parallel, event-driven architecture where 8 independent managers run concurrently in their own tokio tasks, communicating via a broadcast event channel.
 
-**Purpose**: Module exports and common sync utilities.
+#### Architecture Summary
 
-**Analysis**:
-- **GOOD**: Clean module organization
-
-#### `src/sync/sequential/` (Module - Refactored) ✅ **COMPLETE**
-
-**Purpose**: Sequential synchronization manager - coordinates all sync phases.
-
-**REFACTORING STATUS**: Complete (2025-01-21)
-- ✅ Converted from single 2,246-line file to 11 focused modules
-- ✅ All 242 tests passing
-- ✅ Production ready
-
-**Module Structure**:
 ```
-sync/sequential/ (4,785 lines total across 11 modules)
-├── mod.rs (52 lines) - Module coordinator and re-exports
-├── manager.rs (234 lines) - Core SyncManager struct and accessors
-├── lifecycle.rs (225 lines) - Initialization, startup, and shutdown
-├── phase_execution.rs (519 lines) - Phase execution, transitions, timeout handling
-├── message_handlers.rs (808 lines) - Handlers for sync phase messages
-├── post_sync.rs (530 lines) - Handlers for post-sync messages (after initial sync)
-├── phases.rs (621 lines) - SyncPhase enum and phase-related types
-├── progress.rs (369 lines) - Progress tracking utilities
-├── recovery.rs (559 lines) - Recovery and error handling logic
-├── request_control.rs (410 lines) - Request flow control
-└── transitions.rs (458 lines) - Phase transition management
+SyncCoordinator
+├── BlockHeadersManager   - Downloads and validates block headers via checkpoints
+├── FilterHeadersManager  - Downloads BIP158 filter headers
+├── FiltersManager        - Downloads filters, matches against wallet
+├── BlocksManager         - Downloads matched blocks, processes through wallet
+├── MasternodesManager    - Synchronizes masternode list via QRInfo/MnListDiff
+├── ChainLockManager      - Receives and validates ChainLocks
+├── InstantSendManager    - Receives and validates InstantLocks
+└── MempoolManager        - Tracks unconfirmed wallet transactions via BIP37 or full-fetch
 ```
 
-**What it does**:
-- Coordinates header sync (via `HeaderSyncManagerWithReorg`)
-- Coordinates masternode list sync (via `MasternodeSyncManager`)
-- Coordinates filter sync (via `FilterSyncManager`)
-- Manages sync state machine through SyncPhase enum
-- Handles phase transitions with validation
-- Implements error recovery and retry logic
-- Tracks progress across all sync phases
-- Routes network messages to appropriate handlers
-- Handles post-sync maintenance (new blocks, filters, etc.)
+#### Core Components
 
-**Complex Types Used**:
-- **Generic constraints**: `<S: StorageManager, N: NetworkManager, W: WalletInterface>`
-- **State machine**: SyncPhase enum with strict sequential transitions
-- **Shared state**: Arc<RwLock<>> for wallet and stats
-- **Sub-managers**: Delegates to specialized sync managers
+##### `src/sync/sync_coordinator.rs` - Parallel Orchestration
 
-**Strengths**:
-- ✅ **EXCELLENT**: Clean module separation by responsibility
-- ✅ **EXCELLENT**: Sequential approach simplifies reasoning
-- ✅ **GOOD**: Clear phase boundaries and transitions
-- ✅ **GOOD**: Comprehensive error recovery
-- ✅ **GOOD**: All phases well-documented
-- ✅ **GOOD**: Lock ordering documented to prevent deadlocks
+The `SyncCoordinator` spawns each manager in its own tokio task for true parallel processing:
 
-#### `src/sync/filters/` (Module - Phase 1 Complete) ✅ **REFACTORED**
+- **Task spawning**: Each manager runs independently via `JoinSet`
+- **Progress aggregation**: Reactive progress updates via merged watch channel streams
+- **Event bus**: Broadcast channel for inter-manager communication
+- **Shutdown**: Graceful termination via `CancellationToken`
 
-**Purpose**: Compact filter synchronization logic.
+##### `src/sync/sync_manager.rs` - Manager Trait
 
-**REFACTORING STATUS**: Phase 1 Complete (2025-01-XX)
-- ✅ Converted from single 4,060-line file to module directory
-- ✅ Extracted types and constants to `types.rs` (89 lines)
-- ✅ Main logic in `manager_full.rs` (4,027 lines - awaiting Phase 2)
-- ✅ All 243 tests passing
+The `SyncManager` trait defines the interface all managers implement:
 
-**Previous state**: Single file with 4,027 lines - UNACCEPTABLE
-**Current state**: Module structure established - Phase 2 extraction needed
+```rust
+#[async_trait]
+pub trait SyncManager: Send + Sync + Debug {
+    fn identifier(&self) -> ManagerIdentifier;
+    fn state(&self) -> SyncState;
+    fn wanted_message_types(&self) -> &'static [MessageType];
 
-**What it does**:
-- Filter header sync (CFHeaders)
-- Compact filter download (CFilters)
-- Filter matching against wallet addresses
-- Gap detection and recovery
-- Request batching and flow control
-- Timeout and retry logic
-- Progress tracking and statistics
-- Peer selection and routing
+    async fn start_sync(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    async fn handle_message(&mut self, msg: Message, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    async fn handle_sync_event(&mut self, event: &SyncEvent, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>>;
+    fn progress(&self) -> SyncManagerProgress;
 
-**Phase 2 Accomplishment (2025-01-21)**:
-- ✅ All 8 modules successfully extracted
-- ✅ `manager.rs` - Core coordinator (342 lines)
-- ✅ `headers.rs` - CFHeaders sync (1,345 lines)
-- ✅ `download.rs` - CFilter download (659 lines)
-- ✅ `matching.rs` - Filter matching (454 lines)
-- ✅ `gaps.rs` - Gap detection (490 lines)
-- ✅ `retry.rs` - Retry logic (381 lines)
-- ✅ `stats.rs` - Statistics (234 lines)
-- ✅ `requests.rs` - Request management (248 lines)
-- ✅ `types.rs` - Type definitions (86 lines)
-- ✅ `mod.rs` - Module coordinator (42 lines)
-- ✅ `manager_full.rs` deleted
-- ✅ All 243 tests passing
-- ✅ Compilation successful
-
-**Final Module Structure:**
-```
-sync/filters/
-├── mod.rs (42 lines) - Module coordinator
-├── types.rs (86 lines) - Type definitions
-├── manager.rs (342 lines) - Core coordinator
-├── stats.rs (234 lines) - Statistics tracking
-├── retry.rs (381 lines) - Timeout/retry logic
-├── requests.rs (248 lines) - Request queues
-├── gaps.rs (490 lines) - Gap detection
-├── headers.rs (1,345 lines) - CFHeaders sync
-├── download.rs (659 lines) - CFilter download
-└── matching.rs (454 lines) - Filter matching
+    // Default implementation provides the main event loop
+    async fn run(mut self, context: SyncManagerTaskContext) -> SyncResult<ManagerIdentifier>;
+}
 ```
 
-**Analysis**:
-- ✅ **COMPLETE**: All refactoring objectives met
-- ✅ **MAINTAINABLE**: Clear module boundaries and responsibilities
-- ✅ **TESTABLE**: Each module can be tested independently
-- ✅ **DOCUMENTED**: Each module has focused documentation
-- ✅ **PRODUCTION READY**: All tests passing, no regressions
+The trait provides a default `run()` implementation with the standard event loop pattern:
+- Process incoming network messages
+- Handle sync events from other managers
+- React to network events (peer changes)
+- Periodic tick for timeouts and retries
 
-#### `src/sync/headers.rs` (705 lines) ⚠️ LARGE
+##### `src/sync/events.rs` - Event Types
 
-**Purpose**: Header synchronization logic.
+`SyncEvent` enables loose coupling between managers:
 
-**What it does**:
-- Downloads headers from peers
-- Validates header chain
-- Handles headers2 compression
-- Detects reorgs
+| Event | Emitter | Consumers |
+|-------|---------|-----------|
+| `BlockHeadersStored` | BlockHeadersManager | FilterHeadersManager, MasternodesManager |
+| `BlockHeaderSyncComplete` | BlockHeadersManager | MasternodesManager |
+| `FilterHeadersStored` | FilterHeadersManager | FiltersManager |
+| `FiltersSyncComplete` | FiltersManager | BlocksManager |
+| `BlocksNeeded` | FiltersManager | BlocksManager |
+| `BlockProcessed` | BlocksManager | FiltersManager (gap limit rescan), MempoolManager (confirmed tx removal) |
+| `ChainLockReceived` | ChainLockManager | External listeners |
+| `InstantLockReceived` | InstantSendManager | MempoolManager (IS lock association) |
+| `SyncComplete` | Coordinator | MempoolManager (activation trigger), External listeners |
 
-**Analysis**:
-- **GOOD**: Comprehensive header sync
-- **GOOD**: Headers2 support
-- **ISSUE**: Could be split into headers1 and headers2 modules
+##### `src/sync/progress.rs` - Aggregate Progress
 
-**Refactoring needed**:
-- ⚠️ **MEDIUM**: Split headers1 and headers2 into separate files
-- ⚠️ **LOW**: Add more documentation
+`SyncProgress` aggregates progress from all managers with type-safe accessors for each manager's progress type.
 
-#### `src/sync/headers_with_reorg.rs` (1,148 lines) 🚨 **TOO LARGE**
+#### Manager Modules
 
-**Purpose**: Header sync with reorganization detection.
+Each manager follows a consistent structure:
 
-**Analysis**:
-- **ISSUE**: 1,148 lines is too large
-- **GOOD**: Handles complex reorg scenarios
-- **ISSUE**: Overlaps with sync/headers.rs
+```
+sync/<manager>/
+├── mod.rs           - Module exports
+├── manager.rs       - Manager struct and core logic
+├── sync_manager.rs  - SyncManager trait implementation
+├── pipeline.rs      - Download pipeline (if applicable)
+└── progress.rs      - Progress tracking types
+```
 
-**Refactoring needed**:
-- ⚠️ **HIGH**: Merge with headers.rs or clearly separate concerns
-- ⚠️ **HIGH**: Split into smaller modules
+##### `src/sync/block_headers/` - Block Header Sync
 
-#### `src/sync/masternodes.rs` (775 lines) ⚠️ LARGE
+- Downloads headers in parallel using checkpoint-based segments
+- Pipeline buffers out-of-order responses and commits in order
+- Handles both initial sync and post-sync new block announcements
+- Emits `BlockHeadersStored` events as headers are committed
 
-**Purpose**: Masternode list synchronization.
+##### `src/sync/filter_headers/` - Filter Header Sync
 
-**What it does**:
-- Downloads masternode diffs
-- Updates masternode list engine
-- Validates quorums
+- Listens for `BlockHeadersStored` events to know download range
+- Downloads BIP158 filter headers in batches
+- Validates filter header chain continuity
+- Emits `FilterHeadersStored` events
 
-**Analysis**:
-- **GOOD**: Dash-specific functionality
-- **GOOD**: Proper validation
-- **ISSUE**: Could be split
+##### `src/sync/filters/` - Filter Download and Matching
 
-**Refactoring needed**:
-- ⚠️ **MEDIUM**: Split diff download and validation
+- Listens for `FilterHeadersStored` to know available filter headers
+- Downloads compact block filters
+- Matches filters against wallet addresses
+- Emits `BlocksNeeded` when matches found
+- Handles gap limit rescanning when wallet discovers new addresses
 
-#### Other sync files:
-- `chainlock_validation.rs` (231 lines) ✅ **GOOD**
-- `discovery.rs` (98 lines) ✅ **GOOD**
-- `embedded_data.rs` (118 lines) ✅ **GOOD**
-- `state.rs` (157 lines) ✅ **GOOD**
-- `validation.rs` (283 lines) ✅ **GOOD**
+##### `src/sync/blocks/` - Block Download and Processing
 
-**Overall Sync Module Assessment**:
-- ✅ **EXCELLENT**: sync/filters/ fully refactored (10 modules, 4,281 lines)
-- ✅ **EXCELLENT**: sync/sequential/ fully refactored (11 modules, 4,785 lines)
-- ✅ **EXCELLENT**: State machine clearly modeled in phases.rs
-- ✅ **EXCELLENT**: Error recovery consolidated in recovery.rs
-- ✅ **GOOD**: Sequential approach is sound
-- ✅ **GOOD**: Individual algorithms appear correct
+- Listens for `BlocksNeeded` events from FiltersManager
+- Downloads full blocks for matched heights
+- Processes blocks through wallet for transaction extraction
+- Emits `BlockProcessed` with any new addresses discovered
+
+##### `src/sync/masternodes/` - Masternode List Sync
+
+- Waits for `BlockHeaderSyncComplete` before starting
+- Uses QRInfo for quorum-based sync or MnListDiff for incremental updates
+- Updates masternode list engine with validated diffs
+- Emits `MasternodeStateUpdated` events
+
+##### `src/sync/chainlock/` - ChainLock Processing
+
+- Listens for ChainLock messages from network
+- Validates signatures (requires quorum data from masternodes)
+- Emits `ChainLockReceived` events
+
+##### `src/sync/instantsend/` - InstantSend Processing
+
+- Listens for InstantLock messages from network
+- Validates signatures
+- Emits `InstantLockReceived` events
+
+##### `src/sync/mempool/` - Mempool Transaction Tracking
+
+Tracks unconfirmed transactions relevant to the wallet in real time after chain sync completes. Unlike other managers that participate in the initial sync pipeline, the mempool manager is purely post-sync: it activates only after `SyncComplete` and runs continuously until shutdown.
+
+**Module structure:**
+```text
+sync/mempool/
+├── mod.rs           - Module exports, bloom filter false-positive rate constant
+├── manager.rs       - Core state machine and transaction processing
+├── sync_manager.rs  - SyncManager trait implementation (event routing, tick logic)
+├── bloom.rs         - BIP37 bloom filter construction from wallet addresses/outpoints
+└── progress.rs      - Progress tracking (received, relevant, tracked, removed)
+```
+
+**Multi-peer activation:**
+
+The manager activates mempool relay on all connected peers simultaneously. When `SyncComplete` arrives, `activate_all_peers()` enables relay on every peer that has completed handshake. Peers connecting after activation are activated immediately if the manager is already in `Synced` state.
+
+Since the client connects with `relay=false`, peers won't send transaction INVs until explicitly enabled. Two strategies control how relay is enabled:
+
+- **BloomFilter**: Sends a BIP37 bloom filter containing wallet address hashes (P2PKH/P2SH hash160) and UTXO outpoints via `filterload` (which implicitly enables filtered relay), then `mempool`. The peer filters INV messages server-side, reducing bandwidth. The filter is rebuilt on all activated peers when new addresses are discovered during block processing.
+- **FetchAll**: Sends `filterclear` (which enables unfiltered relay), then `mempool`. The manager checks wallet relevance locally. Higher bandwidth but no address leakage to peers.
+
+**Transaction processing pipeline:**
+
+```text
+Peer INV(tx)
+  │
+  ▼
+handle_inv()
+  ├─ Skip if: in seen_txids (180s dedup window), pending, queued, or in mempool state
+  ├─ Skip if: at capacity (max_transactions)
+  └─ Enqueue to announcing peer's queue
+       │
+       ▼
+send_queued()  (up to 100 in-flight getdata requests)
+       │
+       ▼
+Peer TX
+  │
+  ▼
+handle_tx()
+  ├─ Add txid to seen_txids (prevents re-download from other peers)
+  ├─ Check for pre-arrived InstantSend lock in pending_is_locks
+  ├─ wallet.process_mempool_transaction(tx, is_locked)
+  │    ├─ Not relevant → discard
+  │    └─ Relevant → store in MempoolState
+  │         ├─ Wallet emits BalanceUpdated event
+  │         └─ New addresses discovered → flag filter rebuild
+  └─ Return MempoolTransactionResult { is_relevant, net_amount, is_outgoing, addresses, new_addresses }
+```
+
+The `seen_txids` map provides a 180-second deduplication window to handle the case where multiple peers respond to the initial `mempool` request with overlapping INVs.
+
+**Events consumed:**
+
+| Event | Action |
+|-------|--------|
+| `SyncComplete` | Activate mempool relay on all connected peers (transitions to `Synced`) |
+| `BlockProcessed` | Remove confirmed txids from mempool state; immediately rebuild bloom filter if new addresses |
+| `InstantLockReceived` | Mark transaction as IS-locked, or store in pending_is_locks if TX not yet received |
+| `PeerConnected` | Activate on new peer immediately if already synced |
+| `PeerDisconnected` | Remove peer; redistribute its queued txids to a random activated peer |
+| `PeersUpdated(0)` | All peers lost: call `stop_sync()`, transition to `WaitingForConnections` |
+
+**InstantSend lock handling:**
+
+IS locks can arrive before or after their corresponding transaction. Both orderings are handled:
+- Lock after TX: set `is_instant_send` flag on stored transaction, notify wallet via `process_instant_send_lock`
+- Lock before TX: store lock in `pending_is_locks` map; when the TX arrives via `handle_tx()`, it is processed with the IS flag already set
+
+Pending IS locks are pruned after 24 hours alongside expired transactions.
+
+**Bloom filter lifecycle:**
+
+Rebuilds happen immediately when the wallet state changes:
+- On `handle_tx()` when a wallet-relevant transaction is received (new UTXOs, spent inputs, potentially new addresses from gap limit maintenance)
+- On `BlockProcessed` with confirmed txids or new addresses, if the sync state is `Synced` (during initial sync, filter rebuilds are deferred until sync completes)
+
+The rebuild sequence on each activated peer is: `filterclear` → `filterload` (with updated wallet data) → `mempool` (re-request inventory with the new filter).
+
+**Periodic maintenance (tick):**
+
+| Action | Trigger |
+|--------|---------|
+| Prune expired transactions | Transactions older than 24 hours |
+| Requeue timed-out requests | Getdata requests unanswered for 120s |
+| Drain queued txids | Send getdata up to 100 in-flight limit |
+
+**Peer failover:**
+
+Each peer has its own txid queue (`None` = connected but inactive, `Some(VecDeque)` = activated). On disconnect:
+- Peer with queued txids: redistribute to a random activated peer
+- No activated peers remaining: queued items dropped with warning
+- All peers lost (`PeersUpdated` with count 0): manager transitions to `WaitingForConnections`, then re-activates via `start_sync()` when peers return
+
+**Wallet integration:**
+
+The `WalletInterface` trait provides four methods for mempool support:
+
+| Method | Purpose |
+|--------|---------|
+| `process_mempool_transaction(tx, is_instant_send)` | Check relevance across all accounts, return net amount and new addresses |
+| `monitored_addresses()` | All watched addresses for bloom filter construction |
+| `watched_outpoints()` | All owned UTXOs for bloom filter spend detection |
+| `process_instant_send_lock(txid)` | Mark UTXOs as IS-locked, transition balance to spendable |
+
+**Balance semantics:**
+
+`MempoolState` tracks two pending balance categories:
+- `pending_balance`: regular unconfirmed transactions
+- `pending_instant_balance`: IS-locked transactions (immediately spendable)
+
+The wallet emits `BalanceUpdated` events only when balance actually changes, with four categories: spendable, unconfirmed, immature, locked.
+
+**Capacity and limits:**
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `max_mempool_transactions` | configurable (default 1000) | Cap on tracked transactions |
+| `MAX_IN_FLIGHT` | 100 | Max concurrent getdata requests |
+| `MEMPOOL_TX_EXPIRY` | 24 hours | Auto-prune for unconfirmed transactions |
+| `PENDING_REQUEST_TIMEOUT` | 120 seconds | Requeue unanswered getdata |
+| `SEEN_TXID_EXPIRY` | 180 seconds | Dedup window for multi-peer INV overlap |
+| `BLOOM_FALSE_POSITIVE_RATE` | 0.0005 (0.05%) | BIP37 filter false-positive rate |
+
+#### Design Strengths
+
+- **True parallelism**: Headers, filters, and masternodes sync concurrently
+- **Loose coupling**: Managers communicate only via typed events
+- **Independent progress**: Each manager tracks its own state
+- **Graceful recovery**: Managers handle their own timeouts and retries
+- **Type-safe events**: Compile-time verification of event contracts
+- **Topic-based routing**: Network messages filtered by type before reaching managers
 
 ---
 
-### 8. VALIDATION MODULE (6 files, ~2,000 lines)
 
-#### Overview
-Validation module handles header validation, ChainLock verification, and InstantLock verification.
-
-#### `src/validation/mod.rs` (264 lines) ✅ GOOD
-
-**Purpose**: ValidationManager orchestration.
-
-**What it does**:
-- Coordinates header validation
-- Coordinates ChainLock validation
-- Coordinates InstantLock validation
-- Configurable validation modes
-
-**Analysis**:
-- **GOOD**: Clean orchestration
-- **GOOD**: Mode-based validation
-- **EXCELLENT**: Well-tested
-
-**Refactoring needed**: ❌ None
-
-#### `src/validation/headers.rs` (418 lines) ✅ GOOD
-
-**Purpose**: Header chain validation.
-
-**What it does**:
-- Validates PoW
-- Validates timestamps
-- Validates difficulty transitions
-- Validates block linking
-
-**Analysis**:
-- **GOOD**: Correct validation rules
-- **GOOD**: Proper Dash-specific rules
-- **EXCELLENT**: Comprehensive tests (headers_test.rs, headers_edge_test.rs)
-
-**Refactoring needed**: ❌ None - well-crafted
-
-#### `src/validation/quorum.rs` (248 lines) ✅ GOOD
-
-**Purpose**: Quorum validation for ChainLocks and InstantLocks.
-
-**What it does**:
-- Validates quorum membership
-- Validates BLS signatures
-- Tracks active quorums
-
-**Analysis**:
-- **GOOD**: Dash-specific functionality
-- **ISSUE**: TODO comments indicate incomplete implementation
-
-**Refactoring needed**:
-- ⚠️ **HIGH**: Complete TODO items for signature validation
-
-#### `src/validation/instantlock.rs` (87 lines) ⚠️ INCOMPLETE
-
-**Purpose**: InstantLock validation.
-
-**Analysis**:
-- **ISSUE**: Contains TODO for actual signature validation
-- **CRITICAL**: Validation is stubbed out
-
-**Refactoring needed**:
-- 🚨 **CRITICAL**: Implement actual InstantLock signature validation
-
-**Overall Validation Module Assessment**:
-- ✅ **GOOD**: Header validation is solid
-- 🚨 **CRITICAL**: BLS signature validation incomplete (security risk)
-- ✅ **EXCELLENT**: Test coverage for headers
-- ⚠️ **HIGH PRIORITY**: Complete Dash-specific validation features
-
----
-
-### 9. MEMPOOL_FILTER.RS (793 lines) ✅ GOOD
-
-**Purpose**: Filters mempool transactions based on wallet addresses.
-
-**What it does**:
-- Receives mempool transactions
-- Checks against watched addresses
-- Emits events for relevant txns
-- Manages mempool state
-
-**Complex Types Used**:
-- `Arc<RwLock<MempoolState>>` - **JUSTIFIED**: Shared between sync and mempool tasks
-
-**Analysis**:
-- **GOOD**: Clean implementation
-- **GOOD**: Proper async handling
-- **GOOD**: Event emission
-
-**Refactoring needed**:
-- ✅ **LOW**: Could extract to mempool/ module directory
-
----
-
-### 10. TERMINAL.RS (223 lines) ✅ EXCELLENT
-
-**Purpose**: Terminal UI for CLI binary (optional feature).
-
-**What it does**:
-- Renders status bar
-- Updates sync progress
-- Displays peer count
-
-**Analysis**:
-- **EXCELLENT**: Properly feature-gated
-- **EXCELLENT**: Clean implementation
-- **GOOD**: Uses crossterm effectively
-
-**Refactoring needed**: ❌ None - this is well-done
-
----
-
-## Critical Assessment
-
-### 🏆 STRENGTHS
-
-1. **Excellent Architecture Principles**
-   - Trait-based abstraction (NetworkManager, StorageManager)
-   - Dependency injection enables testing
-   - Clear module boundaries
-
-2. **Comprehensive Functionality**
-   - Full SPV implementation
-   - Dash-specific features (ChainLocks, InstantLocks, Masternodes)
-   - BIP157 compact filters
-   - Robust reorg handling
-
-3. **Good Testing Culture**
-   - Mock network implementation
-   - Comprehensive header validation tests
-   - Unit tests for critical components
-
-4. **Modern Rust**
-   - Async/await throughout
-   - Proper error handling with thiserror
-   - Good use of type system
-
-5. **Performance Optimizations**
-   - CachedHeader for X11 hash caching
-   - Segmented storage for efficient I/O
-   - Bloom filters for transaction filtering
-
-### 🚨 CRITICAL PROBLEMS
-
-1. **INCOMPLETE SECURITY FEATURES** 🔥🔥
-   - ChainLock signature validation stubbed (chainlock_manager.rs:127)
-   - InstantLock signature validation incomplete
-   - **SECURITY RISK**: Could accept invalid ChainLocks/InstantLocks
-   - **PRIORITY**: Must be completed before mainnet production use
-   - **EFFORT**: 1-2 weeks
-
-### ⚠️ AREAS FOR IMPROVEMENT
-
-1. **Testing Coverage**
-   - Network layer could use more integration tests
-   - End-to-end sync cycle testing would increase confidence
-   - Property-based testing could validate invariants
-
-2. **Resource Management**
-   - Connection limits not enforced
-   - No bandwidth throttling
-   - Peer ban list not persisted across restarts
-
-3. **Code Duplication**
-   - Some overlap between headers.rs and headers_with_reorg.rs
-   - Validation logic could be further consolidated
-
-5. **Error Recovery**
-   - Retry strategies could be more consistent
-   - Some edge cases may lack retry logic
-
-### ✅ MINOR ISSUES
-
-1. **Dead Code**
-   - bloom/stats.rs not used
-   - Some deprecated error variants still present
-
-2. **Hardcoded Values**
-   - Checkpoints in code rather than data file
-   - Timeout values not configurable
-
-3. **Missing Features**
-   - No compression in storage
-   - No checksums for corruption detection
-   - Peer ban list not persisted
-
----
-
-## Recommendations
-
-### 🚨 CRITICAL PRIORITY (Do First)
-
-1. **Implement BLS Signature Validation**
-   - **Why**: Security vulnerability - could accept invalid ChainLocks/InstantLocks
-   - **Impact**: 🔥🔥🔥 CRITICAL SECURITY
-   - **Effort**: 1-2 weeks (requires BLS library integration)
-   - **Benefit**: Production-ready security for mainnet
-
-### ⚠️ HIGH PRIORITY (Do Soon)
-
-2. **Add Comprehensive Integration Tests**
-   - **Why**: Increase confidence in network layer and sync pipeline
-   - **Impact**: 🔥🔥 HIGH
-   - **Effort**: 1 week
-   - **Benefit**: Catch regressions, validate end-to-end behavior
-
-3. **Document Lock Ordering More Prominently**
-   - **Why**: Prevent deadlocks
-   - **Impact**: 🔥🔥 HIGH (correctness)
-   - **Effort**: 1 day
-   - **Benefit**: Correctness, debugging
-
-7. **Add Comprehensive Integration Tests**
-   - **Why**: Network layer undertested
-   - **Impact**: 🔥🔥 HIGH
-   - **Effort**: 1 week
-   - **Benefit**: Confidence, regression prevention
-
-### ✅ MEDIUM PRIORITY (Plan For)
-
-8. **Extract Checkpoint Data to Config File**
-   - **Impact**: 🔥 MEDIUM
-   - **Effort**: 1 day
-
-9. **Add Resource Limits**
-   - Connection limits
-   - Bandwidth throttling
-   - Memory limits
-   - **Impact**: 🔥 MEDIUM (DoS protection)
-   - **Effort**: 3-4 days
-
-10. **Improve Error Recovery**
-    - Consolidate retry logic
-    - Consistent backoff strategies
-    - **Impact**: 🔥 MEDIUM
-    - **Effort**: 1 week
-
-11. **Add Property-Based Tests**
-    - Use proptest for filter properties
-    - Test reorg handling
-    - **Impact**: 🔥 MEDIUM
-    - **Effort**: 1 week
-
-### ✅ LOW PRIORITY (Nice to Have)
-
-12. **Type Aliases for Common Configurations** (Ergonomics Only)
-    - Generic design is intentional and excellent for library flexibility
-    - Type aliases just provide convenience without losing flexibility
-    ```rust
-    type StandardSpvClient = DashSpvClient<
-        WalletManager,
-        PeerNetworkManager,
-        DiskStorageManager
-    >;
-    ```
-
-13. **Consider Embedded DB for Storage**
-    - RocksDB or Sled
-    - Better concurrency
-    - Compression built-in
-
-14. **Add Compression to Storage**
-    - Filters compress well
-    - Save disk space
-
-15. **Persist Peer Ban List**
-    - Survives restarts
-
----
-
-## Complexity Metrics
-
-### File Complexity (Largest Files)
-
-| File | Lines | Complexity | Notes |
-|------|-------|------------|-------|
-| sync/filters/ | 10 modules (4,281 total) | ✅ EXCELLENT | Well-organized filter sync modules |
-| sync/sequential/ | 11 modules (4,785 total) | ✅ EXCELLENT | Sequential sync pipeline modules |
-| client/ | 8 modules (2,895 total) | ✅ EXCELLENT | Client functionality modules |
-| storage/disk/ | 7 modules (2,458 total) | ✅ EXCELLENT | Persistent storage modules |
-| network/manager.rs | 1,322 | ✅ ACCEPTABLE | Complex peer management logic |
-| sync/headers_with_reorg.rs | 1,148 | ✅ ACCEPTABLE | Reorg handling complexity justified |
-| types.rs | 1,064 | ✅ ACCEPTABLE | Core type definitions |
-| mempool_filter.rs | 793 | ✅ GOOD | Mempool management |
-| bloom/tests.rs | 799 | ✅ GOOD | Comprehensive bloom tests |
-| sync/masternodes.rs | 775 | ✅ GOOD | Masternode sync logic |
-
-**Note:** All files are now at acceptable complexity levels. The 1,000-1,500 line files contain inherently complex logic that justifies their size.
-
-### Module Health
-
-| Module | Files | Lines | Health | Characteristics |
-|--------|-------|-------|--------|-----------------|
-| sync/ | 37 | ~12,000 | ✅ EXCELLENT | Filters and sequential both fully modularized |
-| client/ | 8 | ~2,895 | ✅ EXCELLENT | Clean separation: lifecycle, sync, progress, mempool, events |
-| storage/ | 13 | ~3,500 | ✅ EXCELLENT | Disk storage split into focused modules |
-| network/ | 14 | ~5,000 | ✅ GOOD | Handles peer management, connections, message routing |
-| chain/ | 10 | ~3,500 | ✅ GOOD | ChainLock, checkpoint, orphan pool management |
-| bloom/ | 6 | ~2,000 | ✅ GOOD | Bloom filter implementation for transaction filtering |
-| validation/ | 6 | ~2,000 | ⚠️ FAIR | Needs BLS validation implementation (security) |
-| error/ | 1 | 303 | ✅ EXCELLENT | Clean error hierarchy with thiserror |
-| types/ | 1 | 1,065 | ✅ ACCEPTABLE | Core type definitions, reasonable size |
-
----
-
-## Security Considerations
-
-### 🚨 CRITICAL SECURITY ISSUES
-
-1. **Incomplete ChainLock Validation**
-   - File: `chain/chainlock_manager.rs:127`
-   - Issue: Signature validation stubbed out
-   - Risk: Could accept invalid ChainLocks
-   - Fix: Implement BLS signature verification
-
-2. **Incomplete InstantLock Validation**
-   - File: `validation/instantlock.rs`
-   - Issue: Validation incomplete
-   - Risk: Could accept invalid InstantLocks
-   - Fix: Complete InstantLock validation
-
-### ⚠️ POTENTIAL RISKS
-
-3. **No Checksums on Stored Data**
-   - File: `storage/disk.rs`
-   - Risk: Silent corruption
-   - Fix: Add checksums
-
-4. **No Connection Limits**
-   - File: `network/manager.rs`
-   - Risk: DoS via connection exhaustion
-   - Fix: Add configurable limits
-
-5. **Peer Ban List Not Persisted**
-   - File: `network/reputation.rs`
-   - Risk: Misbehaving peers reconnect after restart
-   - Fix: Persist ban list
-
----
-
-## Performance Considerations
-
-### ✅ OPTIMIZATIONS PRESENT
-
-1. **CachedHeader** - Excellent X11 hash caching
-2. **Segmented Storage** - Good I/O patterns
-3. **Bloom Filters** - Efficient transaction filtering
-4. **Async/Await** - Non-blocking operations
-
-### 🔧 POTENTIAL IMPROVEMENTS
-
-1. **Add Compression** - Filters compress ~70%
-2. **Connection Pooling** - Reuse TCP connections
-3. **Batch Storage Writes** - Reduce fsync calls
-4. **RocksDB** - Better than file-based storage
-
----
-
-## Maintainability Score
-
-### By Module
-
-| Module | Maintainability | Reasoning |
-|--------|----------------|-----------|
-| error | 95/100 ✅ | Perfect design |
-| terminal | 90/100 ✅ | Small, focused |
-| bloom | 85/100 ✅ | Well-organized |
-| chain | 80/100 ✅ | Good structure |
-| validation | 70/100 ⚠️ | Incomplete features |
-| network | 65/100 ⚠️ | Large files |
-| storage | 60/100 ⚠️ | disk.rs too large |
-| client | 45/100 🔥 | God object |
-| sync | 30/100 🔥🔥🔥 | Massive files |
-
-### Overall: **55/100** ⚠️ NEEDS IMPROVEMENT
-
-**Primary Blockers**:
-1. File size issues (sync/filters.rs especially)
-2. God objects
-3. Missing security features
-
-**After Refactoring Estimate**: **75-80/100** ✅
-
----
-
-## Conclusion
-
-### The Good
-
-This is a **comprehensive, feature-rich SPV client** with:
-- Excellent architectural foundations
-- Good use of Rust's type system
-- Comprehensive Dash-specific features
-- Solid testing culture
-
-### The Bad
-
-The codebase suffers from **maintainability crisis**:
-- Several files exceed 2,000 lines (one is 4,027!)
-- God objects violate Single Responsibility Principle
-- Critical security features incomplete
-
-### The Path Forward
-
-**Phase 1 (2-3 weeks)**: Critical refactoring
-1. Split sync/filters.rs
-2. Implement BLS signature validation
-3. Split client/mod.rs
-
-**Phase 2 (2-3 weeks)**: High-priority improvements
-4. Split remaining large files
-5. Document lock ordering
-6. Add integration tests
-
-**Phase 3 (Ongoing)**: Incremental improvements
-7. Resource limits
-8. Enhanced error recovery
-9. Performance optimizations
-
-### Final Verdict
-
-**Rating**: ⚠️ **B- (Good but Needs Work)**
-
-- **Architecture**: A- (excellent design)
-- **Functionality**: A (comprehensive features)
-- **Code Quality**: C+ (too many large files)
-- **Security**: C (critical features incomplete)
-- **Testing**: B- (good but gaps)
-- **Documentation**: C+ (incomplete)
-
-**Recommendation**: This codebase is **production-capable** for its current feature set, but **REQUIRES IMMEDIATE REFACTORING** before adding major new features. The file size issues will cause serious problems for collaboration and maintenance. The incomplete signature validation is a security concern that must be addressed before production use on mainnet.
-
-**With the recommended refactorings**, this could easily become an **A-grade codebase** - the foundations are solid.
-
----
-
-*End of Architectural Analysis*
+### Sync Module Structure
+
+| Manager | Module Path | Key Files | Description |
+|---------|-------------|-----------|-------------|
+| BlockHeadersManager | sync/block_headers/ | manager.rs, pipeline.rs, sync_manager.rs | Parallel header sync via checkpoints |
+| FilterHeadersManager | sync/filter_headers/ | manager.rs, pipeline.rs, sync_manager.rs | BIP158 filter header sync |
+| FiltersManager | sync/filters/ | manager.rs, pipeline.rs, sync_manager.rs | Filter download and wallet matching |
+| BlocksManager | sync/blocks/ | manager.rs, pipeline.rs, sync_manager.rs | Block download for matched heights |
+| MasternodesManager | sync/masternodes/ | manager.rs, pipeline.rs, sync_manager.rs | Masternode list via QRInfo/MnListDiff |
+| ChainLockManager | sync/chainlock/ | manager.rs, sync_manager.rs | ChainLock message handling |
+| InstantSendManager | sync/instantsend/ | manager.rs, sync_manager.rs | InstantLock message handling |
+| MempoolManager | sync/mempool/ | manager.rs, sync_manager.rs, bloom.rs, progress.rs | Post-sync mempool transaction tracking via BIP37 or full-fetch |

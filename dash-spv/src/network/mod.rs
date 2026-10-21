@@ -3,34 +3,199 @@
 pub mod addrv2;
 pub mod constants;
 pub mod discovery;
+mod event;
 pub mod handshake;
 pub mod manager;
+mod message_dispatcher;
 pub mod peer;
-pub mod persist;
 pub mod pool;
 pub mod reputation;
 
+mod message_type;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-pub mod mock;
+pub use event::NetworkEvent;
 
 use async_trait::async_trait;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::error::NetworkResult;
+use crate::NetworkError;
 use dashcore::network::message::NetworkMessage;
+use dashcore::network::message_blockdata::{GetHeadersMessage, Inventory};
+use dashcore::network::message_bloom::FilterLoad;
+use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
+use dashcore::network::message_qrinfo::GetQRInfo;
+use dashcore::network::message_sml::GetMnListDiff;
 use dashcore::BlockHash;
-
+use dashcore_hashes::Hash;
 pub use handshake::{HandshakeManager, HandshakeState};
 pub use manager::PeerNetworkManager;
+pub use message_dispatcher::{Message, MessageDispatcher};
+pub use message_type::MessageType;
 pub use peer::Peer;
+use std::net::SocketAddr;
+use tokio::sync::mpsc::UnboundedReceiver;
+
+const FILTER_TYPE_DEFAULT: u8 = 0;
+
+/// Request to send to network.
+#[derive(Debug)]
+pub enum NetworkRequest {
+    /// Send a message to the network.
+    SendMessage(NetworkMessage),
+    /// Send a message to a specific peer.
+    SendMessageToPeer(NetworkMessage, SocketAddr),
+    /// Broadcast a message to all connected peers.
+    BroadcastMessage(NetworkMessage),
+}
+
+/// Handle for managers to queue outgoing network requests.
+#[derive(Clone)]
+pub struct RequestSender {
+    tx: mpsc::UnboundedSender<NetworkRequest>,
+}
+
+impl RequestSender {
+    /// Create a new RequestSender.
+    pub fn new(tx: mpsc::UnboundedSender<NetworkRequest>) -> Self {
+        Self {
+            tx,
+        }
+    }
+
+    /// Queue a message to be sent to the network.
+    fn send_message(&self, msg: NetworkMessage) -> NetworkResult<()> {
+        self.tx
+            .send(NetworkRequest::SendMessage(msg))
+            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
+    /// Queue a message to be sent to a specific peer.
+    fn send_message_to_peer(
+        &self,
+        msg: NetworkMessage,
+        peer_address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.tx
+            .send(NetworkRequest::SendMessageToPeer(msg, peer_address))
+            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
+    /// Queue a message to be broadcast to all connected peers.
+    pub(crate) fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()> {
+        self.tx
+            .send(NetworkRequest::BroadcastMessage(msg))
+            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
+    /// Request inventory from a specific peer.
+    pub fn request_inventory(
+        &self,
+        inventory: Vec<Inventory>,
+        peer_address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::GetData(inventory), peer_address)
+    }
+
+    pub fn request_block_headers(&self, start_hash: BlockHash) -> NetworkResult<()> {
+        self.send_message(NetworkMessage::GetHeaders(GetHeadersMessage::new(
+            vec![start_hash],
+            BlockHash::all_zeros(),
+        )))
+    }
+
+    pub fn request_block_headers_from_peer(
+        &self,
+        start_hash: BlockHash,
+        address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(
+            NetworkMessage::GetHeaders(GetHeadersMessage::new(
+                vec![start_hash],
+                BlockHash::all_zeros(),
+            )),
+            address,
+        )
+    }
+
+    pub fn request_filter_headers(
+        &self,
+        start_height: u32,
+        stop_hash: BlockHash,
+    ) -> NetworkResult<()> {
+        self.send_message(NetworkMessage::GetCFHeaders(GetCFHeaders {
+            filter_type: FILTER_TYPE_DEFAULT,
+            start_height,
+            stop_hash,
+        }))
+    }
+
+    pub fn request_filters(&self, start_height: u32, stop_hash: BlockHash) -> NetworkResult<()> {
+        self.send_message(NetworkMessage::GetCFilters(GetCFilters {
+            filter_type: FILTER_TYPE_DEFAULT,
+            start_height,
+            stop_hash,
+        }))
+    }
+
+    pub fn request_mnlist_diff(
+        &self,
+        base_block_hash: BlockHash,
+        block_hash: BlockHash,
+    ) -> NetworkResult<()> {
+        self.send_message(NetworkMessage::GetMnListD(GetMnListDiff {
+            base_block_hash,
+            block_hash,
+        }))
+    }
+
+    pub fn request_qr_info(
+        &self,
+        known_block_hashes: Vec<BlockHash>,
+        target_block_hash: BlockHash,
+        extra_share: bool,
+    ) -> NetworkResult<()> {
+        self.send_message(NetworkMessage::GetQRInfo(GetQRInfo {
+            base_block_hashes: known_block_hashes,
+            block_request_hash: target_block_hash,
+            extra_share,
+        }))
+    }
+
+    pub fn request_blocks(&self, hashes: Vec<BlockHash>) -> NetworkResult<()> {
+        self.send_message(NetworkMessage::GetData(
+            hashes.into_iter().map(Inventory::Block).collect(),
+        ))
+    }
+
+    /// Send a filterload message to a specific peer.
+    pub fn send_filter_load(&self, filter_load: FilterLoad, peer: SocketAddr) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::FilterLoad(filter_load), peer)
+    }
+
+    /// Send a filterclear message to a specific peer.
+    pub fn send_filter_clear(&self, peer: SocketAddr) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::FilterClear, peer)
+    }
+
+    /// Send a mempool message to request inventory from a specific peer.
+    pub fn request_mempool(&self, peer: SocketAddr) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::MemPool, peer)
+    }
+}
 
 /// Network manager trait for abstracting network operations.
 #[async_trait]
-pub trait NetworkManager: Send + Sync {
-    /// Convert to Any for downcasting.
-    fn as_any(&self) -> &dyn std::any::Any;
+pub trait NetworkManager: Send + Sync + 'static {
+    /// Creates and returns a receiver that yields only messages of the matching the provided message types.
+    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message>;
+
+    /// Get a sender for queuing outgoing network requests.
+    ///
+    /// Messages sent via this sender are delivered to the network asynchronously.
+    fn request_sender(&self) -> RequestSender;
 
     /// Connect to the network.
     async fn connect(&mut self) -> NetworkResult<()>;
@@ -41,56 +206,8 @@ pub trait NetworkManager: Send + Sync {
     /// Send a message to a peer.
     async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()>;
 
-    /// Receive a message from a peer.
-    async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>>;
-
-    /// Check if connected to any peers.
-    fn is_connected(&self) -> bool;
-
     /// Get the number of connected peers.
     fn peer_count(&self) -> usize;
-
-    /// Get peer information.
-    fn peer_info(&self) -> Vec<crate::types::PeerInfo>;
-
-    /// Get the best block height reported by connected peers.
-    async fn get_peer_best_height(&self) -> NetworkResult<Option<u32>>;
-
-    /// Check if any connected peer supports a specific service.
-    async fn has_peer_with_service(
-        &self,
-        service_flags: dashcore::network::constants::ServiceFlags,
-    ) -> bool;
-
-    /// Check if any connected peer supports headers2 compression.
-    async fn has_headers2_peer(&self) -> bool {
-        self.has_peer_with_service(dashcore::network::constants::NODE_HEADERS_COMPRESSED).await
-    }
-
-    /// Get the peer ID of the last peer that sent us a message.
-    /// Returns PeerId(0) if no message has been received yet.
-    async fn get_last_message_peer_id(&self) -> crate::types::PeerId {
-        crate::types::PeerId(0) // Default implementation
-    }
-
-    /// Get the socket address of the last peer that sent us a message.
-    /// Default implementation returns None; implementations with peer tracking can override.
-    async fn get_last_message_peer_addr(&self) -> Option<std::net::SocketAddr> {
-        None
-    }
-
-    /// Update the DSQ (CoinJoin queue) message preference for the current peer.
-    async fn update_peer_dsq_preference(&mut self, wants_dsq: bool) -> NetworkResult<()>;
-
-    /// Mark that the current peer has sent us Headers2 messages.
-    async fn mark_peer_sent_headers2(&mut self) -> NetworkResult<()> {
-        Ok(()) // Default implementation
-    }
-
-    /// Check if the current peer has sent us Headers2 messages.
-    async fn peer_has_sent_headers2(&self) -> bool {
-        false // Default implementation
-    }
 
     /// Request QRInfo from the network.
     ///
@@ -126,37 +243,20 @@ pub trait NetworkManager: Send + Sync {
         Ok(())
     }
 
-    /// Penalize the last peer that sent us a message by adjusting reputation.
-    /// Default implementation is a no-op for managers without reputation.
-    async fn penalize_last_message_peer(
-        &self,
-        _score_change: i32,
-        _reason: &str,
-    ) -> NetworkResult<()> {
-        Ok(())
-    }
+    /// Broadcast a message to all connected peers.
+    async fn broadcast(&self, _message: NetworkMessage) -> NetworkResult<()>;
 
-    /// Convenience: penalize last peer for an invalid ChainLock.
-    async fn penalize_last_message_peer_invalid_chainlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        self.penalize_last_message_peer(
-            crate::network::reputation::misbehavior_scores::INVALID_CHAINLOCK,
-            reason,
-        )
-        .await
-    }
+    /// Inject a message into the local message dispatcher as if received from a peer.
+    ///
+    /// Used for locally-originated messages (e.g., self-broadcast transactions) that
+    /// should be processed through the same pipeline as peer-received messages.
+    async fn dispatch_local(&self, message: NetworkMessage);
 
-    /// Convenience: penalize last peer for an invalid InstantLock.
-    async fn penalize_last_message_peer_invalid_instantlock(
-        &self,
-        reason: &str,
-    ) -> NetworkResult<()> {
-        self.penalize_last_message_peer(
-            crate::network::reputation::misbehavior_scores::INVALID_INSTANTLOCK,
-            reason,
-        )
-        .await
-    }
+    /// Disconnect a specific peer by address.
+    async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()>;
+
+    /// Subscribe to network events (peer connections, disconnections).
+    ///
+    /// Returns a broadcast receiver for network events.
+    fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent>;
 }

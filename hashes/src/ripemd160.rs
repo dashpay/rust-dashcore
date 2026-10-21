@@ -405,7 +405,6 @@ impl HashEngine {
 #[cfg(test)]
 mod tests {
     #[test]
-    #[cfg(feature = "alloc")]
     fn test() {
         use std::convert::TryFrom;
 

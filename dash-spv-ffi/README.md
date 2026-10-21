@@ -2,8 +2,6 @@
 
 This crate provides C-compatible FFI bindings for the Dash SPV client library.
 
-> **Note**: This library can be used standalone or as part of the [Unified SDK](../../platform-ios/packages/rs-sdk-ffi/UNIFIED_SDK_ARCHITECTURE.md) which combines both Core (SPV) and Platform functionality into a single optimized binary. The Unified SDK is recommended for iOS applications as it eliminates duplicate symbols and reduces binary size by 79.4%.
-
 ## Features
 
 - Complete FFI wrapper for DashSpvClient
@@ -25,17 +23,6 @@ This will generate:
 - Static library: `target/release/libdash_spv_ffi.a`
 - Dynamic library: `target/release/libdash_spv_ffi.so` (or `.dylib` on macOS)
 - C header: `include/dash_spv_ffi.h`
-
-### Unified SDK Build (Recommended for iOS)
-
-For iOS applications, use the Unified SDK which includes this library:
-
-```bash
-cd ../../platform-ios/packages/rs-sdk-ffi
-./build_ios.sh
-```
-
-This creates `DashUnifiedSDK.xcframework` containing both Core (SPV) and Platform symbols.
 
 ## Usage
 
@@ -60,8 +47,8 @@ if (client == NULL) {
     // Handle error
 }
 
-// Start the client
-if (dash_spv_ffi_client_start(client) != 0) {
+// Start the client and begin syncing in the background
+if (dash_spv_ffi_client_run(client) != 0) {
     // Handle error
 }
 
@@ -88,9 +75,8 @@ dash_spv_ffi_config_destroy(config);
 ### Client Operations
 
 - `dash_spv_ffi_client_new(config)` - Create new client
-- `dash_spv_ffi_client_start(client)` - Start the client
+- `dash_spv_ffi_client_run(client)` - Start the client and begin syncing in the background
 - `dash_spv_ffi_client_stop(client)` - Stop the client
-- `dash_spv_ffi_client_sync_to_tip(client, callbacks)` - Sync to chain tip
 - `dash_spv_ffi_client_get_sync_progress(client)` - Get sync progress
 - `dash_spv_ffi_client_get_stats(client)` - Get client statistics
 - `dash_spv_ffi_client_destroy(client)` - Free client memory

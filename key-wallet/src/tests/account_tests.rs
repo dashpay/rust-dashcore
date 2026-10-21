@@ -4,7 +4,8 @@
 
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
-use crate::derivation::HDWallet;
+use crate::managed_account::address_pool::KeySource;
+use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::Network;
 use secp256k1::Secp256k1;
@@ -28,7 +29,7 @@ fn create_test_extended_priv_key(network: Network) -> ExtendedPrivKey {
 fn test_bip44_account_creation() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     // Create multiple BIP44 accounts with different indices
     for index in 0..10 {
@@ -38,7 +39,7 @@ fn test_bip44_account_creation() {
         };
 
         let derivation_path = account_type.derivation_path(network).unwrap();
-        let account_key = hd_wallet.derive(&derivation_path).unwrap();
+        let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
         let account = Account::from_xpriv(
             Some([0u8; 32]), // wallet_id
@@ -69,7 +70,7 @@ fn test_bip44_account_creation() {
 fn test_bip32_account_creation() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     // Create multiple BIP32 accounts with different indices
     for index in 0..5 {
@@ -79,7 +80,7 @@ fn test_bip32_account_creation() {
         };
 
         let derivation_path = account_type.derivation_path(network).unwrap();
-        let account_key = hd_wallet.derive(&derivation_path).unwrap();
+        let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
         let account =
             Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -105,7 +106,7 @@ fn test_bip32_account_creation() {
 fn test_coinjoin_account_creation() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     // Create CoinJoin accounts
     for index in 0..3 {
@@ -114,7 +115,7 @@ fn test_coinjoin_account_creation() {
         };
 
         let derivation_path = account_type.derivation_path(network).unwrap();
-        let account_key = hd_wallet.derive(&derivation_path).unwrap();
+        let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
         let account =
             Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -129,8 +130,28 @@ fn test_coinjoin_account_creation() {
             _ => panic!("Expected CoinJoin account type"),
         }
 
-        // Verify derivation path for CoinJoin: m/9'/1'/index' (testnet coin type)
-        assert_eq!(derivation_path.to_string(), format!("m/9'/1'/{}'", index));
+        // Verify the CoinJoin account derivation path matches Dash Core:
+        // m/9'/1'/4'/account' (testnet coin type, FEATURE_PURPOSE_COINJOIN = 4').
+        assert_eq!(derivation_path.to_string(), format!("m/9'/1'/4'/{}'", index));
+
+        // The managed CoinJoin pool must derive addresses on the external (`/0`)
+        // branch, so the first address sits at m/9'/1'/4'/account'/0/0.
+        let key_source = KeySource::Public(account.account_xpub);
+        let managed_type =
+            ManagedAccountType::from_account_type(account.account_type, network, &key_source)
+                .unwrap();
+        let pool = match &managed_type {
+            ManagedAccountType::CoinJoin {
+                addresses,
+                ..
+            } => addresses,
+            _ => panic!("Expected CoinJoin managed account type"),
+        };
+        let first_address =
+            pool.address_at_index(0).expect("CoinJoin pool should pre-generate address 0");
+        let first_info =
+            pool.address_info(&first_address).expect("address info for index 0 should exist");
+        assert_eq!(first_info.path.to_string(), format!("m/9'/1'/4'/{}'/0/0", index));
     }
 }
 
@@ -138,12 +159,12 @@ fn test_coinjoin_account_creation() {
 fn test_identity_registration_account() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::IdentityRegistration;
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
@@ -158,7 +179,7 @@ fn test_identity_registration_account() {
 fn test_identity_topup_account() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     // Test multiple identity topup accounts with different registration indices
     for registration_index in 0..3 {
@@ -167,7 +188,7 @@ fn test_identity_topup_account() {
         };
 
         let derivation_path = account_type.derivation_path(network).unwrap();
-        let account_key = hd_wallet.derive(&derivation_path).unwrap();
+        let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
         let account =
             Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -191,12 +212,12 @@ fn test_identity_topup_account() {
 fn test_identity_topup_not_bound_account() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::IdentityTopUpNotBoundToIdentity;
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
@@ -211,12 +232,12 @@ fn test_identity_topup_not_bound_account() {
 fn test_identity_invitation_account() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::IdentityInvitation;
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
@@ -231,12 +252,12 @@ fn test_identity_invitation_account() {
 fn test_provider_voting_keys_account() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::ProviderVotingKeys;
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
@@ -251,12 +272,12 @@ fn test_provider_voting_keys_account() {
 fn test_provider_owner_keys_account() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::ProviderOwnerKeys;
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
@@ -271,12 +292,12 @@ fn test_provider_owner_keys_account() {
 fn test_provider_operator_keys_account() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::ProviderOperatorKeys;
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
@@ -291,12 +312,12 @@ fn test_provider_operator_keys_account() {
 fn test_provider_platform_keys_account() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::ProviderPlatformKeys;
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
@@ -311,7 +332,7 @@ fn test_provider_platform_keys_account() {
 fn test_account_extended_key_generation() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::Standard {
         index: 0,
@@ -319,13 +340,12 @@ fn test_account_extended_key_generation() {
     };
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
     // Verify extended public key can be derived
     let xpub = account.extended_public_key();
-    let secp = secp256k1::Secp256k1::new();
     let expected_xpub = ExtendedPubKey::from_priv(&secp, &account_key);
     assert_eq!(xpub, expected_xpub);
 
@@ -370,7 +390,7 @@ fn test_watch_only_account_creation() {
 fn test_account_network_consistency() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
 
     let account_type = AccountType::Standard {
         index: 0,
@@ -378,7 +398,7 @@ fn test_account_network_consistency() {
     };
 
     let derivation_path = account_type.derivation_path(network).unwrap();
-    let account_key = hd_wallet.derive(&derivation_path).unwrap();
+    let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
@@ -387,7 +407,6 @@ fn test_account_network_consistency() {
 
     // Test that wrong network would be rejected when deriving addresses
     // The account should generate addresses for the network it was created with
-    let secp = Secp256k1::new();
 
     // Derive a child key for address generation (m/44'/1'/0'/0/0 for first receive address)
     let receive_path = [
@@ -406,7 +425,7 @@ fn test_account_network_consistency() {
     );
 
     // Test creating account with different network
-    let dash_mainnet = Network::Dash;
+    let dash_mainnet = Network::Mainnet;
     let mainnet_account =
         Account::from_xpriv(Some([0u8; 32]), account_type, account_key, dash_mainnet).unwrap();
 
@@ -419,7 +438,7 @@ fn test_account_network_consistency() {
 fn test_multiple_account_types_same_wallet() {
     let network = Network::Testnet;
     let master = create_test_extended_priv_key(network);
-    let hd_wallet = HDWallet::new(master);
+    let secp = Secp256k1::new();
     let wallet_id = [1u8; 32];
 
     // Create one of each account type
@@ -451,7 +470,7 @@ fn test_multiple_account_types_same_wallet() {
 
     for account_type in account_types {
         let derivation_path = account_type.derivation_path(network).unwrap();
-        let account_key = hd_wallet.derive(&derivation_path).unwrap();
+        let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
         let account =
             Account::from_xpriv(Some(wallet_id), account_type, account_key, network).unwrap();
@@ -501,7 +520,7 @@ fn test_account_derivation_path_uniqueness() {
             AccountType::CoinJoin {
                 index: 0,
             },
-            "m/9'/1'/0'".to_string(),
+            "m/9'/1'/4'/0'".to_string(),
         ),
         (AccountType::IdentityRegistration, "m/9'/1'/5'/1'".to_string()),
         (

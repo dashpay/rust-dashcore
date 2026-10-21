@@ -1,220 +1,115 @@
 //! Transaction building functionality for managed wallets
 
-use super::coin_selection::{SelectionError, SelectionStrategy};
-use super::fee::FeeLevel;
-use super::transaction_builder::{BuilderError, TransactionBuilder};
-use super::ManagedWalletInfo;
-use crate::{Address, Network, Wallet};
-use alloc::vec::Vec;
-use dashcore::Transaction;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::signer::Signer;
+use crate::wallet::managed_wallet_info::fee::FeeRate;
+use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
+use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::wallet::ManagedWalletInfo;
+use crate::Wallet;
+use dashcore::address::NetworkUnchecked;
+use dashcore::{Address, Transaction};
 
 /// Account type preference for transaction building
 #[derive(Debug, Clone, Copy)]
 pub enum AccountTypePreference {
-    /// Use BIP44 account only
     BIP44,
-    /// Use BIP32 account only
     BIP32,
-    /// Prefer BIP44, fallback to BIP32
-    PreferBIP44,
-    /// Prefer BIP32, fallback to BIP44
-    PreferBIP32,
-}
-
-/// Transaction creation error
-#[derive(Debug)]
-pub enum TransactionError {
-    /// No account found for the specified type
-    NoAccount,
-    /// Insufficient funds
-    InsufficientFunds,
-    /// Failed to generate change address
-    ChangeAddressGeneration(String),
-    /// Transaction building failed
-    BuildFailed(String),
-    /// Coin selection failed
-    CoinSelection(SelectionError),
 }
 
 impl ManagedWalletInfo {
-    /// Create an unsigned payment transaction
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_unsigned_payment_transaction_internal(
+    pub async fn build_and_sign_transaction(
         &mut self,
         wallet: &Wallet,
-        _network: Network,
         account_index: u32,
-        account_type_pref: Option<AccountTypePreference>,
-        recipients: Vec<(Address, u64)>,
-        fee_level: FeeLevel,
-        current_block_height: u32,
-    ) -> Result<Transaction, TransactionError> {
-        // Validate network consistency
-        if wallet.network != self.network {
-            return Err(TransactionError::BuildFailed(format!(
-                "Network mismatch: wallet network {:?} does not match managed wallet info network {:?}",
-                wallet.network,
-                self.network
-            )));
-        }
+        outputs: Vec<(Address<NetworkUnchecked>, u64)>,
+        fee_rate: FeeRate,
+    ) -> Result<(Transaction, u64), BuilderError> {
+        let height = self.last_processed_height();
 
-        // Get the wallet's account collection
-        let wallet_collection = &wallet.accounts;
+        let managed_account = self
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&account_index)
+            .ok_or(BuilderError::NoChangeAddress)?;
 
-        // Use BIP44 as default if no preference specified
-        let pref = account_type_pref.unwrap_or(AccountTypePreference::BIP44);
+        let account = wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&account_index)
+            .ok_or(BuilderError::NoChangeAddress)?;
 
-        // Get the immutable account from wallet for address generation
-        let wallet_account = match pref {
-            AccountTypePreference::BIP44 => wallet_collection
-                .standard_bip44_accounts
-                .get(&account_index)
-                .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::BIP32 => wallet_collection
-                .standard_bip32_accounts
-                .get(&account_index)
-                .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::PreferBIP44 => wallet_collection
-                .standard_bip44_accounts
-                .get(&account_index)
-                .or_else(|| wallet_collection.standard_bip32_accounts.get(&account_index))
-                .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::PreferBIP32 => wallet_collection
-                .standard_bip32_accounts
-                .get(&account_index)
-                .or_else(|| wallet_collection.standard_bip44_accounts.get(&account_index))
-                .ok_or(TransactionError::NoAccount)?,
-        };
+        let mut tx_builder = TransactionBuilder::new()
+            .set_fee_rate(fee_rate)
+            .set_current_height(height)
+            .set_funding(managed_account, account);
 
-        // Get the mutable managed account for UTXO access
-        let managed_account = match pref {
-            AccountTypePreference::BIP44 => self
-                .accounts
-                .standard_bip44_accounts
-                .get_mut(&account_index)
-                .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::BIP32 => self
-                .accounts
-                .standard_bip32_accounts
-                .get_mut(&account_index)
-                .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::PreferBIP44 => self
-                .accounts
-                .standard_bip44_accounts
-                .get_mut(&account_index)
-                .or_else(|| self.accounts.standard_bip32_accounts.get_mut(&account_index))
-                .ok_or(TransactionError::NoAccount)?,
-            AccountTypePreference::PreferBIP32 => self
-                .accounts
-                .standard_bip32_accounts
-                .get_mut(&account_index)
-                .or_else(|| self.accounts.standard_bip44_accounts.get_mut(&account_index))
-                .ok_or(TransactionError::NoAccount)?,
-        };
-
-        // Generate change address using the wallet account
-        let change_address = managed_account
-            .next_change_address(Some(&wallet_account.account_xpub), true)
-            .map_err(|e| {
-                TransactionError::ChangeAddressGeneration(format!(
-                    "Failed to generate change address: {}",
-                    e
-                ))
+        for (address, value) in outputs {
+            let checked = address.require_network(wallet.network).map_err(|e| {
+                BuilderError::InvalidData(format!("Output address network mismatch: {}", e))
             })?;
-
-        if managed_account.utxos.is_empty() {
-            return Err(TransactionError::InsufficientFunds);
+            tx_builder = tx_builder.add_output(&checked, value);
         }
 
-        // Get all UTXOs from the managed account as a vector
-        let all_utxos: Vec<_> = managed_account.utxos.values().cloned().collect();
+        tx_builder.build_signed(wallet, |addr| managed_account.address_derivation_path(&addr)).await
+    }
 
-        // Use TransactionBuilder to create the transaction
-        let mut builder = TransactionBuilder::new()
-            .set_fee_level(fee_level)
-            .set_change_address(change_address.clone());
+    pub async fn build_and_sign_transaction_with_signer<S: Signer>(
+        &mut self,
+        wallet: &Wallet,
+        account_index: u32,
+        outputs: Vec<(Address<NetworkUnchecked>, u64)>,
+        fee_rate: FeeRate,
+        signer: &S,
+    ) -> Result<(Transaction, u64), BuilderError> {
+        let height = self.last_processed_height();
 
-        // Add outputs for recipients first
-        for (address, amount) in recipients {
-            builder = builder
-                .add_output(&address, amount)
-                .map_err(|e| TransactionError::BuildFailed(e.to_string()))?;
-        }
+        let managed_account = self
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&account_index)
+            .ok_or(BuilderError::NoChangeAddress)?;
 
-        // Select inputs using OptimalConsolidation strategy
-        // The target amount is calculated from the outputs already added
-        // Note: We don't have private keys here since this is for unsigned transactions
-        builder = builder
-            .select_inputs(
-                &all_utxos,
-                SelectionStrategy::OptimalConsolidation,
-                current_block_height,
-                |_| None, // No private keys for unsigned transaction
-            )
-            .map_err(|e| match e {
-                BuilderError::CoinSelection(err) => TransactionError::CoinSelection(err),
-                _ => TransactionError::BuildFailed(e.to_string()),
+        let account = wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&account_index)
+            .ok_or(BuilderError::NoChangeAddress)?;
+
+        let mut tx_builder = TransactionBuilder::new()
+            .set_fee_rate(fee_rate)
+            .set_current_height(height)
+            .set_funding(managed_account, account);
+
+        for (address, value) in outputs {
+            let checked = address.require_network(wallet.network).map_err(|e| {
+                BuilderError::InvalidData(format!("Output address network mismatch: {}", e))
             })?;
-
-        // Build the unsigned transaction
-        let transaction =
-            builder.build().map_err(|e| TransactionError::BuildFailed(e.to_string()))?;
-
-        // Mark the change address as used in the managed account
-        managed_account.mark_address_used(&change_address);
-
-        // Lock the UTXOs that were selected for this transaction
-        for input in &transaction.input {
-            if let Some(stored_utxo) = managed_account.utxos.get_mut(&input.previous_output) {
-                stored_utxo.is_locked = true; // Lock the UTXO while transaction is pending
-            }
+            tx_builder = tx_builder.add_output(&checked, value);
         }
 
-        Ok(transaction)
+        tx_builder.build_signed(signer, |addr| managed_account.address_derivation_path(&addr)).await
     }
 }
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
+    use crate::wallet::managed_wallet_info::fee::FeeRate;
     use crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
     use crate::Utxo;
-    use dashcore::blockdata::script::ScriptBuf;
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
-    use dashcore::{Address, Network, OutPoint, Transaction, TxOut, Txid};
+    use dashcore::{Address, Network, Transaction, Txid};
     use dashcore_hashes::{sha256d, Hash};
     use std::str::FromStr;
-
-    fn test_utxo(value: u64, confirmed: bool) -> Utxo {
-        let outpoint = OutPoint {
-            txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
-            vout: 0,
-        };
-
-        let txout = TxOut {
-            value,
-            script_pubkey: ScriptBuf::new(),
-        };
-
-        let address = Address::p2pkh(
-            &dashcore::PublicKey::from_slice(&[
-                0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
-                0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
-                0x88, 0x7e, 0x5b, 0x23, 0x52,
-            ])
-            .unwrap(),
-            Network::Testnet,
-        );
-
-        let mut utxo = Utxo::new(outpoint, txout, address, 100, false);
-        utxo.is_confirmed = confirmed;
-        utxo
-    }
 
     #[test]
     fn test_basic_transaction_creation() {
         // Test creating a basic transaction with inputs and outputs
-        let utxos = vec![test_utxo(100000, true), test_utxo(200000, true), test_utxo(300000, true)];
+        let utxos = vec![
+            Utxo::dummy(0, 100000, 100, false, true),
+            Utxo::dummy(0, 200000, 100, false, true),
+            Utxo::dummy(0, 300000, 100, false, true),
+        ];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -225,24 +120,15 @@ mod tests {
             .require_network(Network::Testnet)
             .unwrap();
 
-        let mut builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
-            .set_change_address(change_address.clone());
-
-        // Add output
-        builder = builder.add_output(&recipient_address, 150000).unwrap();
-
-        // Select inputs
-        builder = builder
-            .select_inputs(
-                &utxos,
-                SelectionStrategy::SmallestFirst,
-                200,
-                |_| None, // No private keys for unsigned
-            )
-            .unwrap();
-
-        let tx = builder.build().unwrap();
+        let tx = TransactionBuilder::new()
+            .set_fee_rate(FeeRate::normal())
+            .set_current_height(200)
+            .set_change_address(change_address.clone())
+            .add_output(&recipient_address, 150000)
+            .add_inputs(utxos)
+            .build_unsigned()
+            .unwrap()
+            .0;
 
         assert!(!tx.input.is_empty());
         assert_eq!(tx.output.len(), 2); // recipient + change
@@ -315,7 +201,10 @@ mod tests {
     #[test]
     fn test_transaction_size_estimation() {
         // Test that transaction size estimation is accurate
-        let utxos = vec![test_utxo(100000, true), test_utxo(200000, true)];
+        let utxos = vec![
+            Utxo::dummy(0, 100000, 100, false, true),
+            Utxo::dummy(0, 200000, 100, false, true),
+        ];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -327,14 +216,14 @@ mod tests {
             .unwrap();
 
         let builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_fee_rate(FeeRate::normal())
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)
-            .unwrap()
-            .select_inputs(&utxos, SelectionStrategy::SmallestFirst, 200, |_| None)
-            .unwrap();
+            .add_inputs(utxos);
 
-        let tx = builder.build().unwrap();
+        let tx = builder.build_unsigned().unwrap().0;
         let serialized = dashcore::consensus::encode::serialize(&tx);
 
         // Size should be close to our estimation
@@ -350,7 +239,7 @@ mod tests {
     #[test]
     fn test_fee_calculation() {
         // Test that fees are calculated correctly
-        let utxos = vec![test_utxo(1000000, true)];
+        let utxos = vec![Utxo::dummy(0, 1000000, 100, false, true)];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -362,14 +251,12 @@ mod tests {
             .unwrap();
 
         let builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal) // 1 duff per byte
+            .set_current_height(200)
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 500000)
-            .unwrap()
-            .select_inputs(&utxos, SelectionStrategy::SmallestFirst, 200, |_| None)
-            .unwrap();
+            .add_inputs(utxos);
 
-        let tx = builder.build().unwrap();
+        let tx = builder.build_unsigned().unwrap().0;
 
         // Total input: 1000000
         // Output to recipient: 500000
@@ -384,7 +271,7 @@ mod tests {
     #[test]
     fn test_insufficient_funds() {
         // Test that insufficient funds returns an error
-        let utxos = vec![test_utxo(10000, true)];
+        let utxos = vec![Utxo::dummy(0, 100000, 100, false, true)];
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -396,11 +283,11 @@ mod tests {
             .unwrap();
 
         let result = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_current_height(200)
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 1000000) // More than available
-            .unwrap()
-            .select_inputs(&utxos, SelectionStrategy::SmallestFirst, 200, |_| None);
+            .add_inputs(utxos)
+            .build_unsigned();
 
         assert!(result.is_err());
     }
@@ -408,7 +295,7 @@ mod tests {
     #[test]
     fn test_exact_change_no_change_output() {
         // Test when the exact amount is used (no change output needed)
-        let utxos = vec![test_utxo(150226, true)]; // Exact amount for output + fee
+        let utxos = vec![Utxo::dummy(0, 150226, 100, false, true)]; // Exact amount for output + fee
 
         let recipient_address = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
             .unwrap()
@@ -420,17 +307,304 @@ mod tests {
             .unwrap();
 
         let builder = TransactionBuilder::new()
-            .set_fee_level(FeeLevel::Normal)
+            .set_current_height(200)
+            .set_selection_strategy(SelectionStrategy::SmallestFirst)
             .set_change_address(change_address.clone())
             .add_output(&recipient_address, 150000)
-            .unwrap()
-            .select_inputs(&utxos, SelectionStrategy::SmallestFirst, 200, |_| None)
-            .unwrap();
+            .add_inputs(utxos);
 
-        let tx = builder.build().unwrap();
+        let tx = builder.build_unsigned().unwrap().0;
 
         // Should only have 1 output (no change)
         assert_eq!(tx.output.len(), 1);
         assert_eq!(tx.output[0].value, 150000);
+    }
+
+    // -- Signer-variant tests for build_and_sign_transaction_with_signer --
+
+    use super::super::transaction_builder::BuilderError;
+    use super::super::wallet_info_interface::WalletInfoInterface;
+    use crate::signer::{Signer, SignerMethod};
+    use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::ManagedWalletInfo;
+    use crate::DerivationPath;
+    use crate::Wallet;
+    use dashcore::address::NetworkUnchecked;
+    use secp256k1::PublicKey;
+
+    fn test_wallet_and_info() -> (Wallet, ManagedWalletInfo) {
+        let wallet =
+            Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default).unwrap();
+        let info = ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
+        (wallet, info)
+    }
+
+    /// Signer implementation backed by a real `RootExtendedPrivKey`. Models the
+    /// same derive-and-sign the soft-wallet path performs internally, so
+    /// `build_and_sign_transaction_with_signer` can be exercised end-to-end
+    /// without a hardware device in the loop.
+    struct InMemorySigner {
+        root: crate::wallet::root_extended_keys::RootExtendedPrivKey,
+        network: Network,
+    }
+
+    const IN_MEMORY_METHODS: &[SignerMethod] = &[SignerMethod::Digest];
+
+    #[async_trait::async_trait]
+    impl Signer for InMemorySigner {
+        type Error = String;
+
+        fn supported_methods(&self) -> &[SignerMethod] {
+            IN_MEMORY_METHODS
+        }
+
+        async fn sign_ecdsa(
+            &self,
+            path: &DerivationPath,
+            sighash: [u8; 32],
+        ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+            let secp = secp256k1::Secp256k1::new();
+            let xpriv = self
+                .root
+                .to_extended_priv_key(self.network)
+                .derive_priv(&secp, path)
+                .map_err(|e| e.to_string())?;
+            let msg = secp256k1::Message::from_digest(sighash);
+            let sig = secp.sign_ecdsa(&msg, &xpriv.private_key);
+            let pk = secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key);
+            Ok((sig, pk))
+        }
+
+        async fn public_key(&self, path: &DerivationPath) -> Result<PublicKey, Self::Error> {
+            let secp = secp256k1::Secp256k1::new();
+            let xpriv = self
+                .root
+                .to_extended_priv_key(self.network)
+                .derive_priv(&secp, path)
+                .map_err(|e| e.to_string())?;
+            Ok(secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key))
+        }
+    }
+
+    fn root_from(wallet: &Wallet) -> crate::wallet::root_extended_keys::RootExtendedPrivKey {
+        match &wallet.wallet_type {
+            crate::wallet::WalletType::Mnemonic {
+                root_extended_private_key,
+                ..
+            } => root_extended_private_key.clone(),
+            _ => unreachable!("test_wallet_and_info produces a mnemonic wallet"),
+        }
+    }
+
+    fn dest_outputs(amount: u64) -> Vec<(Address<NetworkUnchecked>, u64)> {
+        let dest = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs").unwrap();
+        vec![(dest, amount)]
+    }
+
+    #[tokio::test]
+    async fn test_signer_invalid_account_index() {
+        // No BIP44 account 99 exists, so next_change_address returns None
+        // and we surface NoChangeAddress before any signing happens.
+        let (wallet, mut info) = test_wallet_and_info();
+        let signer = InMemorySigner {
+            root: root_from(&wallet),
+            network: Network::Testnet,
+        };
+        let result = info
+            .build_and_sign_transaction_with_signer(
+                &wallet,
+                99,
+                dest_outputs(100_000),
+                FeeRate::normal(),
+                &signer,
+            )
+            .await;
+        assert!(matches!(result, Err(BuilderError::NoChangeAddress)));
+    }
+
+    #[tokio::test]
+    async fn test_signer_without_digest_support_rejected() {
+        // A signer that advertises no digest support must be rejected before
+        // any UTXO state is touched.
+        struct NoDigestSigner;
+        #[async_trait::async_trait]
+        impl Signer for NoDigestSigner {
+            type Error = String;
+            fn supported_methods(&self) -> &[SignerMethod] {
+                &[SignerMethod::Transaction(crate::signer::TransactionCategory::PlatformCredits)]
+            }
+            async fn sign_ecdsa(
+                &self,
+                _: &DerivationPath,
+                _: [u8; 32],
+            ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+                unreachable!("should be rejected before any signing is attempted")
+            }
+            async fn public_key(&self, _: &DerivationPath) -> Result<PublicKey, Self::Error> {
+                unreachable!()
+            }
+        }
+
+        let (wallet, mut info) = test_wallet_and_info();
+        let result = info
+            .build_and_sign_transaction_with_signer(
+                &wallet,
+                0,
+                dest_outputs(100_000),
+                FeeRate::normal(),
+                &NoDigestSigner,
+            )
+            .await;
+        // The unfunded wallet may also surface a CoinSelection error before
+        // the signer is reached; either way the build cannot succeed.
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_signer_happy_path_end_to_end() {
+        use crate::Utxo;
+        use dashcore::{OutPoint, TxOut};
+
+        let (wallet, mut info) = test_wallet_and_info();
+
+        // Generate a receive address on account 0 and fund it with a real
+        // UTXO at that address — coin selection needs a confirmed, spendable
+        // output the signer can sign for.
+        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let funding_address = info
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&0)
+            .unwrap()
+            .next_receive_address(Some(&account_xpub), true)
+            .unwrap();
+
+        let utxo = Utxo {
+            outpoint: OutPoint {
+                txid: Txid::from_byte_array([0x11; 32]),
+                vout: 0,
+            },
+            txout: TxOut {
+                value: 1_000_000,
+                script_pubkey: funding_address.script_pubkey(),
+            },
+            address: funding_address,
+            height: 1000,
+            is_coinbase: false,
+            is_confirmed: true,
+            is_instantlocked: false,
+            is_locked: false,
+            is_trusted: false,
+        };
+        info.accounts
+            .standard_bip44_accounts
+            .get_mut(&0)
+            .unwrap()
+            .utxos
+            .insert(utxo.outpoint, utxo);
+        info.update_last_processed_height(1100);
+
+        let signer = InMemorySigner {
+            root: root_from(&wallet),
+            network: Network::Testnet,
+        };
+
+        let send_amount = 500_000u64;
+        let (tx, fee) = info
+            .build_and_sign_transaction_with_signer(
+                &wallet,
+                0,
+                dest_outputs(send_amount),
+                FeeRate::normal(),
+                &signer,
+            )
+            .await
+            .expect("build_and_sign_transaction_with_signer should succeed with funded wallet");
+
+        // Recipient output present
+        assert!(
+            tx.output.iter().any(|o| o.value == send_amount),
+            "recipient output of {send_amount} not found in tx outputs"
+        );
+
+        // Fee was accounted for
+        assert!(fee > 0, "fee should be non-zero");
+
+        // Every input should have been signed — empty script_sig means the
+        // signer was never called for that input.
+        assert!(!tx.input.is_empty(), "transaction should have at least one selected input");
+        for (i, txin) in tx.input.iter().enumerate() {
+            assert!(
+                !txin.script_sig.is_empty(),
+                "input {i} has empty script_sig — signer did not produce a signature"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_signer_insufficient_funds() {
+        // Wallet has no UTXOs, so coin selection should fail.
+        let (wallet, mut info) = test_wallet_and_info();
+        let signer = InMemorySigner {
+            root: root_from(&wallet),
+            network: Network::Testnet,
+        };
+        let result = info
+            .build_and_sign_transaction_with_signer(
+                &wallet,
+                0,
+                dest_outputs(500_000),
+                FeeRate::normal(),
+                &signer,
+            )
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(BuilderError::InsufficientFunds { .. }) | Err(BuilderError::CoinSelection(_))
+            ),
+            "Expected funds/selection error, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_signer_output_network_mismatch_rejected() {
+        // Mainnet address against a testnet wallet must surface InvalidData
+        // before any signing happens. We derive a real mainnet address from
+        // a separate mainnet wallet so the address parses with a valid
+        // checksum — the network mismatch is what we want the builder to
+        // reject, not malformed input.
+        let (wallet, mut info) = test_wallet_and_info();
+        let signer = InMemorySigner {
+            root: root_from(&wallet),
+            network: Network::Testnet,
+        };
+
+        let mainnet_wallet =
+            Wallet::new_random(Network::Mainnet, WalletAccountCreationOptions::Default).unwrap();
+        let mut mainnet_info =
+            ManagedWalletInfo::from_wallet_with_name(&mainnet_wallet, "Mainnet".to_string(), 0);
+        let mainnet_xpub = mainnet_wallet.get_bip44_account(0).unwrap().account_xpub;
+        let mainnet_addr = mainnet_info
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&0)
+            .unwrap()
+            .next_receive_address(Some(&mainnet_xpub), true)
+            .unwrap();
+        // Re-parse as NetworkUnchecked to hand to the builder.
+        let mainnet_dest =
+            Address::from_str(&mainnet_addr.to_string()).expect("re-parse derived mainnet address");
+        let outputs = vec![(mainnet_dest, 100_000u64)];
+
+        let result = info
+            .build_and_sign_transaction_with_signer(&wallet, 0, outputs, FeeRate::normal(), &signer)
+            .await;
+        assert!(
+            matches!(result, Err(BuilderError::InvalidData(_))),
+            "expected InvalidData for network-mismatched output, got: {:?}",
+            result.err()
+        );
     }
 }

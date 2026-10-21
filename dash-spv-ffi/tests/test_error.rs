@@ -21,26 +21,6 @@ mod tests {
             let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
             assert_eq!(error_str, "Test error message");
         }
-
-        dash_spv_ffi_clear_error();
-        let error_ptr = dash_spv_ffi_get_last_error();
-        assert!(error_ptr.is_null());
-    }
-
-    #[test]
-    #[serial]
-    fn test_error_codes() {
-        assert_eq!(FFIErrorCode::Success as i32, 0);
-        assert_eq!(FFIErrorCode::NullPointer as i32, 1);
-        assert_eq!(FFIErrorCode::InvalidArgument as i32, 2);
-        assert_eq!(FFIErrorCode::NetworkError as i32, 3);
-        assert_eq!(FFIErrorCode::StorageError as i32, 4);
-        assert_eq!(FFIErrorCode::ValidationError as i32, 5);
-        assert_eq!(FFIErrorCode::SyncError as i32, 6);
-        assert_eq!(FFIErrorCode::WalletError as i32, 7);
-        assert_eq!(FFIErrorCode::ConfigError as i32, 8);
-        assert_eq!(FFIErrorCode::RuntimeError as i32, 9);
-        assert_eq!(FFIErrorCode::Unknown as i32, 99);
     }
 
     #[test]

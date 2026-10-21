@@ -3,7 +3,6 @@
 //! This module provides key derivation functionality with a builder pattern
 //! for flexible path construction and derivation strategies.
 
-use alloc::vec::Vec;
 use secp256k1::Secp256k1;
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
@@ -43,150 +42,6 @@ impl KeyDerivation for ExtendedPrivKey {
     ) -> Result<ExtendedPubKey> {
         let priv_key = self.derive_priv(secp, path)?;
         Ok(ExtendedPubKey::from_priv(secp, &priv_key))
-    }
-}
-
-/// HD Wallet implementation
-#[derive(Clone)]
-pub struct HDWallet {
-    master_key: ExtendedPrivKey,
-    secp: Secp256k1<secp256k1::All>,
-}
-
-impl core::fmt::Debug for HDWallet {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("HDWallet").field("master_key", &"<hidden>").finish()
-    }
-}
-
-impl HDWallet {
-    /// Create a new HD wallet from a master key
-    pub fn new(master_key: ExtendedPrivKey) -> Self {
-        Self {
-            master_key,
-            secp: Secp256k1::new(),
-        }
-    }
-
-    /// Create from a seed
-    pub fn from_seed(seed: &[u8], network: crate::Network) -> Result<Self> {
-        let master_key = ExtendedPrivKey::new_master(network, seed)?;
-        Ok(Self::new(master_key))
-    }
-
-    /// Get the master extended private key
-    pub fn master_key(&self) -> &ExtendedPrivKey {
-        &self.master_key
-    }
-
-    /// Get the master extended public key
-    pub fn master_pub_key(&self) -> ExtendedPubKey {
-        ExtendedPubKey::from_priv(&self.secp, &self.master_key)
-    }
-
-    /// Derive a key at the given path
-    pub fn derive(&self, path: &DerivationPath) -> Result<ExtendedPrivKey> {
-        self.master_key.derive_priv(&self.secp, path).map_err(Error::Bip32)
-    }
-
-    /// Derive a public key at the given path
-    pub fn derive_pub(&self, path: &DerivationPath) -> Result<ExtendedPubKey> {
-        let priv_key = self.derive(path)?;
-        Ok(ExtendedPubKey::from_priv(&self.secp, &priv_key))
-    }
-
-    /// Get a standard BIP44 account key
-    pub fn bip44_account(&self, account: u32) -> Result<ExtendedPrivKey> {
-        let path = match self.master_key.network {
-            crate::Network::Dash => crate::dip9::DASH_BIP44_PATH_MAINNET,
-            Network::Testnet | Network::Devnet | Network::Regtest => {
-                crate::dip9::DASH_BIP44_PATH_TESTNET
-            }
-            _ => return Err(Error::InvalidNetwork),
-        };
-
-        // Convert to DerivationPath and append account index
-        let mut full_path = crate::bip32::DerivationPath::from(path);
-        let child_number = crate::bip32::ChildNumber::from_hardened_idx(account)
-            .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
-        full_path.push(child_number);
-
-        self.derive(&full_path)
-    }
-
-    /// Get a CoinJoin account key
-    pub fn coinjoin_account(&self, account: u32) -> Result<ExtendedPrivKey> {
-        let path = match self.master_key.network {
-            crate::Network::Dash => crate::dip9::COINJOIN_PATH_MAINNET,
-            Network::Testnet | Network::Devnet | Network::Regtest => {
-                crate::dip9::COINJOIN_PATH_TESTNET
-            }
-            _ => return Err(Error::InvalidNetwork),
-        };
-
-        // Convert to DerivationPath and append account index
-        let mut full_path = crate::bip32::DerivationPath::from(path);
-        let child_number = crate::bip32::ChildNumber::from_hardened_idx(account)
-            .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
-        full_path.push(child_number);
-
-        self.derive(&full_path)
-    }
-
-    /// Get an identity authentication key
-    pub fn identity_authentication_key(
-        &self,
-        identity_index: u32,
-        key_index: u32,
-    ) -> Result<ExtendedPrivKey> {
-        let path = match self.master_key.network {
-            crate::Network::Dash => crate::dip9::IDENTITY_AUTHENTICATION_PATH_MAINNET,
-            Network::Testnet | Network::Devnet | Network::Regtest => {
-                crate::dip9::IDENTITY_AUTHENTICATION_PATH_TESTNET
-            }
-            _ => return Err(Error::InvalidNetwork),
-        };
-
-        // Convert to DerivationPath and append indices
-        let mut full_path = crate::bip32::DerivationPath::from(path);
-        full_path.push(crate::bip32::ChildNumber::from_hardened_idx(identity_index).unwrap());
-        full_path.push(crate::bip32::ChildNumber::from_hardened_idx(key_index).unwrap());
-
-        self.derive(&full_path)
-    }
-}
-
-/// Address derivation for a specific account
-pub struct AccountDerivation {
-    account_key: ExtendedPrivKey,
-    secp: Secp256k1<secp256k1::All>,
-}
-
-impl AccountDerivation {
-    /// Create a new account derivation
-    pub fn new(account_key: ExtendedPrivKey) -> Self {
-        Self {
-            account_key,
-            secp: Secp256k1::new(),
-        }
-    }
-
-    /// Derive an external (receive) address at index
-    pub fn receive_address(&self, index: u32) -> Result<ExtendedPubKey> {
-        let path = format!("m/0/{}", index)
-            .parse::<DerivationPath>()
-            .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
-        let priv_key = self.account_key.derive_priv(&self.secp, &path).map_err(Error::Bip32)?;
-        Ok(ExtendedPubKey::from_priv(&self.secp, &priv_key))
-    }
-
-    /// Derive an internal (change) address at index
-    pub fn change_address(&self, index: u32) -> Result<ExtendedPubKey> {
-        let path = format!("m/1/{}", index)
-            .parse::<DerivationPath>()
-            .map_err(|e| Error::InvalidDerivationPath(e.to_string()))?;
-        let priv_key = self.account_key.derive_priv(&self.secp, &path).map_err(Error::Bip32)?;
-        Ok(ExtendedPubKey::from_priv(&self.secp, &priv_key))
     }
 }
 
@@ -337,9 +192,8 @@ impl DerivationPathBuilder {
         // For now, just use BIP44 derivation
         // m/44'/coin_type'/account'/0/0
         let coin_type = match network {
-            Network::Dash => 5,
+            Network::Mainnet => 5,
             Network::Testnet | Network::Devnet | Network::Regtest => 1,
-            _ => 5, // Default to Dash
         };
 
         self.purpose(44)
@@ -444,23 +298,8 @@ impl DerivationStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mnemonic::{Language, Mnemonic};
+    use crate::mnemonic::Mnemonic;
     use dashcore_hashes::Hash;
-
-    #[test]
-    fn test_hd_wallet_derivation() {
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            Language::English
-        ).unwrap();
-
-        let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::Network::Dash).unwrap();
-
-        // Test BIP44 account derivation
-        let account0 = wallet.bip44_account(0).unwrap();
-        assert_ne!(&account0.private_key[..], &wallet.master_key().private_key[..]);
-    }
 
     // ✓ Test BIP32 derivation with exact DashSync test vectors
     #[test]
@@ -472,7 +311,7 @@ mod tests {
         let secp = secp256k1::Secp256k1::new();
 
         // Create master key
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Dash, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
 
         // Test m/0'/1/2' path (from DashSync test)
         let path = DerivationPath::from(vec![
@@ -529,7 +368,7 @@ mod tests {
         let secp = secp256k1::Secp256k1::new();
 
         // Test master key serialization (m)
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Dash, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
         let master_xprv = master_key.to_string();
         let master_xpub = ExtendedPubKey::from_priv(&secp, &master_key).to_string();
 
@@ -596,7 +435,7 @@ mod tests {
         ).unwrap();
 
         let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::Network::Dash).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
         let secp = secp256k1::Secp256k1::new();
 
         // Test identity authentication derivation (purpose 9' for Dash Platform)
@@ -616,8 +455,8 @@ mod tests {
             }, // Key index
         ]);
 
-        let identity_key = wallet.master_key().derive_priv(&secp, &identity_auth_path).unwrap();
-        assert_ne!(&identity_key.private_key[..], &wallet.master_key().private_key[..]);
+        let identity_key = master_key.derive_priv(&secp, &identity_auth_path).unwrap();
+        assert_ne!(&identity_key.private_key[..], &master_key.private_key[..]);
 
         // Test identity registration derivation
         // m/9'/5'/1'/1 (DIP-9: Identity Registration)
@@ -636,7 +475,7 @@ mod tests {
             },
         ]);
 
-        let reg_key = wallet.master_key().derive_priv(&secp, &identity_reg_path).unwrap();
+        let reg_key = master_key.derive_priv(&secp, &identity_reg_path).unwrap();
         assert_ne!(&reg_key.private_key[..], &identity_key.private_key[..]);
 
         // Test identity top-up derivation
@@ -656,7 +495,7 @@ mod tests {
             },
         ]);
 
-        let topup_key = wallet.master_key().derive_priv(&secp, &identity_topup_path).unwrap();
+        let topup_key = master_key.derive_priv(&secp, &identity_topup_path).unwrap();
         assert_ne!(&topup_key.private_key[..], &reg_key.private_key[..]);
         assert_ne!(&topup_key.private_key[..], &identity_key.private_key[..]);
 
@@ -674,7 +513,7 @@ mod tests {
             }, // Provider index
         ]);
 
-        let voting_key = wallet.master_key().derive_priv(&secp, &provider_voting_path).unwrap();
+        let voting_key = master_key.derive_priv(&secp, &provider_voting_path).unwrap();
         assert_ne!(&voting_key.private_key[..], &topup_key.private_key[..]);
 
         // Test provider operator derivation
@@ -691,7 +530,7 @@ mod tests {
             }, // Provider index
         ]);
 
-        let operator_key = wallet.master_key().derive_priv(&secp, &provider_op_path).unwrap();
+        let operator_key = master_key.derive_priv(&secp, &provider_op_path).unwrap();
         assert_ne!(&operator_key.private_key[..], &voting_key.private_key[..]);
     }
 
@@ -704,7 +543,7 @@ mod tests {
         ).unwrap();
 
         let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::Network::Testnet).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
 
         // Test builder for BIP44 path
         let bip44_path = DerivationPathBuilder::new()
@@ -738,8 +577,8 @@ mod tests {
 
         // Test derivation with the built path
         let secp = secp256k1::Secp256k1::new();
-        let derived = wallet.master_key().derive_priv(&secp, &bip44_path).unwrap();
-        assert_ne!(&derived.private_key[..], &wallet.master_key().private_key[..]);
+        let derived = master_key.derive_priv(&secp, &bip44_path).unwrap();
+        assert_ne!(&derived.private_key[..], &master_key.private_key[..]);
     }
 
     // ✓ Test key signing and verification
@@ -751,14 +590,14 @@ mod tests {
         ).unwrap();
 
         let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::Network::Testnet).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
         let secp = secp256k1::Secp256k1::new();
 
         // Derive a key for signing
         let path = DerivationPath::from(vec![ChildNumber::Hardened {
             index: 0,
         }]);
-        let signing_key = wallet.master_key().derive_priv(&secp, &path).unwrap();
+        let signing_key = master_key.derive_priv(&secp, &path).unwrap();
 
         // Test message
         let message = b"Hello Dash!";
@@ -796,14 +635,14 @@ mod tests {
         ).unwrap();
 
         let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::Network::Testnet).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
         let secp = secp256k1::Secp256k1::new();
 
         // Derive a key for signing
         let path = DerivationPath::from(vec![ChildNumber::Normal {
             index: 0,
         }]);
-        let signing_key = wallet.master_key().derive_priv(&secp, &path).unwrap();
+        let signing_key = master_key.derive_priv(&secp, &path).unwrap();
         let public_key = ExtendedPubKey::from_priv(&secp, &signing_key);
 
         // Test message
@@ -842,7 +681,7 @@ mod tests {
         .unwrap();
 
         let seed = mnemonic.to_seed("");
-        let wallet = HDWallet::from_seed(&seed, crate::Network::Testnet).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
         let secp = secp256k1::Secp256k1::new();
 
         // Test DashPay contact derivation path: m/9'/5'/15'/0'
@@ -862,7 +701,7 @@ mod tests {
             }, // account 0
         ]);
 
-        let dashpay_key = wallet.master_key().derive_priv(&secp, &dashpay_path).unwrap();
+        let dashpay_key = master_key.derive_priv(&secp, &dashpay_path).unwrap();
         let dashpay_pubkey = ExtendedPubKey::from_priv(&secp, &dashpay_key);
 
         // Verify this produces a different key than other special paths
@@ -881,7 +720,7 @@ mod tests {
                 index: 0,
             },
         ]);
-        let auth_key = wallet.master_key().derive_priv(&secp, &auth_path).unwrap();
+        let auth_key = master_key.derive_priv(&secp, &auth_path).unwrap();
 
         // Keys should be different
         assert_ne!(dashpay_key.private_key, auth_key.private_key);
@@ -906,7 +745,7 @@ mod tests {
             }, // account 1
         ]);
 
-        let dashpay_key_1 = wallet.master_key().derive_priv(&secp, &dashpay_account_1).unwrap();
+        let dashpay_key_1 = master_key.derive_priv(&secp, &dashpay_account_1).unwrap();
 
         // Different accounts should have different keys
         assert_ne!(dashpay_key.private_key, dashpay_key_1.private_key);

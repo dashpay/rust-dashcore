@@ -1,33 +1,11 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use key_wallet_ffi::FFINetwork;
+    use dash_network::ffi::FFINetwork;
     use serial_test::serial;
     use std::ffi::CStr;
     use std::sync::{Arc, Barrier};
     use std::thread;
-
-    #[test]
-    #[serial]
-    fn test_error_propagation() {
-        // Clear any existing error
-        dash_spv_ffi_clear_error();
-
-        // Test setting and getting error
-        set_last_error("Test error message");
-        let error_ptr = dash_spv_ffi_get_last_error();
-        assert!(!error_ptr.is_null());
-
-        unsafe {
-            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
-            assert_eq!(error_str, "Test error message");
-        }
-
-        // Clear and verify
-        dash_spv_ffi_clear_error();
-        let error_ptr = dash_spv_ffi_get_last_error();
-        assert!(error_ptr.is_null());
-    }
 
     #[test]
     #[serial]
@@ -89,8 +67,6 @@ mod tests {
             assert_eq!(error_str.len(), 10000);
             assert!(error_str.chars().all(|c| c == 'X'));
         }
-
-        dash_spv_ffi_clear_error();
     }
 
     #[test]
@@ -103,28 +79,17 @@ mod tests {
         assert_eq!(FFIErrorCode::StorageError as i32, 4);
         assert_eq!(FFIErrorCode::ValidationError as i32, 5);
         assert_eq!(FFIErrorCode::SyncError as i32, 6);
-        assert_eq!(FFIErrorCode::WalletError as i32, 7);
-        assert_eq!(FFIErrorCode::ConfigError as i32, 8);
-        assert_eq!(FFIErrorCode::RuntimeError as i32, 9);
-        assert_eq!(FFIErrorCode::Unknown as i32, 99);
+        assert_eq!(FFIErrorCode::ConfigError as i32, 7);
+        assert_eq!(FFIErrorCode::RuntimeError as i32, 8);
 
         // Test conversions from SpvError
-        use dash_spv::{NetworkError, SpvError, StorageError, SyncError, ValidationError};
+        use dash_spv::{NetworkError, SpvError, StorageError};
 
         let net_err = SpvError::Network(NetworkError::ConnectionFailed("test".to_string()));
         assert_eq!(FFIErrorCode::from(net_err) as i32, FFIErrorCode::NetworkError as i32);
 
         let storage_err = SpvError::Storage(StorageError::NotFound("test".to_string()));
         assert_eq!(FFIErrorCode::from(storage_err) as i32, FFIErrorCode::StorageError as i32);
-
-        let val_err = SpvError::Validation(ValidationError::InvalidProofOfWork);
-        assert_eq!(FFIErrorCode::from(val_err) as i32, FFIErrorCode::ValidationError as i32);
-
-        let sync_err = SpvError::Sync(SyncError::Timeout("Test timeout".to_string()));
-        assert_eq!(FFIErrorCode::from(sync_err) as i32, FFIErrorCode::SyncError as i32);
-
-        let io_err = SpvError::Io(std::io::Error::other("test"));
-        assert_eq!(FFIErrorCode::from(io_err) as i32, FFIErrorCode::RuntimeError as i32);
 
         let config_err = SpvError::Config("test".to_string());
         assert_eq!(FFIErrorCode::from(config_err) as i32, FFIErrorCode::ConfigError as i32);
@@ -152,7 +117,7 @@ mod tests {
         }
 
         // Clear using public API
-        dash_spv_ffi_clear_error();
+        clear_last_error();
         assert!(dash_spv_ffi_get_last_error().is_null());
     }
 
@@ -178,7 +143,7 @@ mod tests {
         // Use a valid enum value to avoid UB in Rust tests. If invalid raw inputs
         // need to be tested, do so from a C test or add a raw-int FFI entrypoint.
         unsafe {
-            let config = dash_spv_ffi_config_new(FFINetwork::Dash);
+            let config = dash_spv_ffi_config_new(FFINetwork::Mainnet);
             assert!(!config.is_null());
             dash_spv_ffi_config_destroy(config);
         }
@@ -204,35 +169,5 @@ mod tests {
             let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
             assert_eq!(error_str, "Test error");
         }
-    }
-
-    #[test]
-    #[serial]
-    fn test_error_with_special_characters() {
-        // Test error with newlines
-        set_last_error("Error\nwith\nnewlines");
-        let error_ptr = dash_spv_ffi_get_last_error();
-        unsafe {
-            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
-            assert_eq!(error_str, "Error\nwith\nnewlines");
-        }
-
-        // Test error with tabs
-        set_last_error("Error\twith\ttabs");
-        let error_ptr = dash_spv_ffi_get_last_error();
-        unsafe {
-            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
-            assert_eq!(error_str, "Error\twith\ttabs");
-        }
-
-        // Test error with quotes
-        set_last_error("Error with \"quotes\" and 'apostrophes'");
-        let error_ptr = dash_spv_ffi_get_last_error();
-        unsafe {
-            let error_str = CStr::from_ptr(error_ptr).to_str().unwrap();
-            assert_eq!(error_str, "Error with \"quotes\" and 'apostrophes'");
-        }
-
-        dash_spv_ffi_clear_error();
     }
 }

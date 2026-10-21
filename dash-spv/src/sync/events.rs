@@ -1,0 +1,265 @@
+use crate::sync::ManagerIdentifier;
+use dashcore::ephemerealdata::chain_lock::ChainLock;
+use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::sml::masternode_list_engine::QRInfoFeedResult;
+use dashcore::{BlockHash, ScriptBuf, Txid};
+use key_wallet_manager::{FilterMatchKey, WalletId};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+/// Events that managers can emit and subscribe to.
+///
+/// Each event represents a meaningful state change that other managers
+/// may need to react to.
+#[derive(Debug, Clone)]
+pub enum SyncEvent {
+    /// A sync manager has started a sync operation.
+    ///
+    /// Emitted by: any sync manager via its `start()` implementation
+    SyncStart {
+        /// Identifies which manager started syncing.
+        identifier: ManagerIdentifier,
+    },
+    /// New block headers have been stored.
+    ///
+    /// Emitted by: `BlockHeadersManager`
+    /// Consumed by: `MasternodesManager`, `FilterHeadersManager`
+    BlockHeadersStored {
+        /// New tip height after storage
+        tip_height: u32,
+    },
+
+    /// Headers have reached the chain tip (initial sync complete).
+    ///
+    /// Emitted by: `BlockHeadersManager`
+    /// Consumed by: `MasternodesManager` (to start masternode sync)
+    BlockHeaderSyncComplete {
+        /// Tip height when sync completed
+        tip_height: u32,
+    },
+
+    /// New filter headers have been stored.
+    ///
+    /// Emitted by: `FilterHeadersManager`
+    /// Consumed by: `FiltersManager`
+    FilterHeadersStored {
+        /// Lowest height stored in this batch
+        start_height: u32,
+        /// Highest height stored in this batch
+        end_height: u32,
+        /// New tip height after storage
+        tip_height: u32,
+    },
+
+    /// Filter headers have reached the chain tip (initial sync complete).
+    ///
+    /// Emitted by: `FilterHeadersManager`
+    /// Consumed by: `FiltersManager`
+    FilterHeadersSyncComplete {
+        /// Tip height when sync completed
+        tip_height: u32,
+    },
+
+    /// Filters have been stored and are ready for matching.
+    ///
+    /// Emitted by: `FiltersManager`
+    /// Consumed by: (informational, used for progress tracking)
+    FiltersStored {
+        /// Lowest height stored
+        start_height: u32,
+        /// Highest height stored
+        end_height: u32,
+    },
+
+    /// Filter sync has reached the chain tip (all filters processed).
+    ///
+    /// Emitted by: `FiltersManager`
+    /// Consumed by: `BlocksManager` (to transition to Synced)
+    FiltersSyncComplete {
+        /// Tip height when sync completed
+        tip_height: u32,
+    },
+
+    /// Filters matched the wallet, blocks need downloading.
+    ///
+    /// Each block is tagged with the wallets whose addresses matched its filter,
+    /// so the block is processed only for those wallets.
+    ///
+    /// Emitted by: `FiltersManager`
+    /// Consumed by: `BlocksManager`
+    BlocksNeeded {
+        /// Blocks to download (height-ordered by `FilterMatchKey`), each
+        /// associated with the wallet ids that need it.
+        blocks: BTreeMap<FilterMatchKey, BTreeSet<WalletId>>,
+    },
+
+    /// Block downloaded and processed through wallet.
+    ///
+    /// Emitted by: `BlocksManager`
+    /// Consumed by: `FiltersManager` (for gap limit rescanning),
+    ///              `MempoolManager` (to remove confirmed txs)
+    BlockProcessed {
+        /// Hash of the processed block
+        block_hash: BlockHash,
+        /// Height of the processed block
+        height: u32,
+        /// Wallets the block was actually processed for.
+        wallets: BTreeSet<WalletId>,
+        /// Cached scriptPubKeys for addresses freshly derived via wallet
+        /// gap-limit maintenance, attributed to the wallet that produced them.
+        new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
+        /// Transaction IDs confirmed in this block that are relevant to the wallet
+        confirmed_txids: Vec<Txid>,
+    },
+
+    /// Masternode state updated to a new height.
+    ///
+    /// Emitted by: `MasternodesManager`
+    /// Consumed by: (informational, may be used for ChainLock validation)
+    MasternodeStateUpdated {
+        /// New masternode state height
+        height: u32,
+        /// QRInfo processing result when this update came through the
+        /// QuorumValidation pipeline. `None` for Incremental (MnListDiff-only)
+        /// updates. Consumers that care about rotation cycle storage (e.g.
+        /// IS lock verification across rotation) can gate on
+        /// `result.all_fully_verified()` together with
+        /// `result.stored_cycle_height` to know which cycle was fully
+        /// verified and stored in `rotated_quorums_per_cycle` by this update.
+        qr_info_result: Option<QRInfoFeedResult>,
+    },
+
+    /// A manager encountered a recoverable error.
+    ///
+    /// Emitted by: Any manager
+    /// Consumed by: Coordinator (for logging/monitoring)
+    ManagerError {
+        /// Which manager encountered the error
+        manager: ManagerIdentifier,
+        /// Error description
+        error: String,
+    },
+
+    /// ChainLock received and processed.
+    ///
+    /// Emitted by: `ChainLockManager`
+    /// Consumed by: External listeners, wallet state updates
+    ChainLockReceived {
+        /// The complete ChainLock data
+        chain_lock: ChainLock,
+        /// Whether the BLS signature was validated
+        validated: bool,
+    },
+
+    /// InstantSend lock received and processed.
+    ///
+    /// Emitted by: `InstantSendManager`
+    /// Consumed by: External listeners, mempool state updates
+    InstantLockReceived {
+        /// The complete InstantLock data
+        instant_lock: InstantLock,
+        /// Whether the BLS signature was validated
+        validated: bool,
+    },
+
+    /// Sync has reached the chain tip (all managers idle).
+    ///
+    /// Emitted on every not-synced to synced transition. Cycle 0 is the
+    /// initial sync while subsequent cycles are incremental syncs triggered by
+    /// new blocks arriving from the network.
+    ///
+    /// Emitted by: Coordinator
+    /// Consumed by: External listeners
+    SyncComplete {
+        /// Final header tip height
+        header_tip: u32,
+        /// Sync cycle (0 = initial, 1+ = incremental)
+        cycle: u32,
+    },
+}
+
+impl fmt::Display for SyncEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SyncEvent::SyncStart {
+                identifier,
+            } => write!(f, "SyncStart(identifier={})", identifier),
+            SyncEvent::BlockHeadersStored {
+                tip_height,
+            } => write!(f, "BlockHeadersStored(tip={})", tip_height),
+            SyncEvent::BlockHeaderSyncComplete {
+                tip_height,
+            } => write!(f, "BlockHeaderSyncComplete(tip={})", tip_height),
+            SyncEvent::FilterHeadersStored {
+                start_height,
+                end_height,
+                tip_height,
+            } => write!(
+                f,
+                "FilterHeadersStored({}-{}, tip={})",
+                start_height, end_height, tip_height
+            ),
+            SyncEvent::FilterHeadersSyncComplete {
+                tip_height,
+            } => write!(f, "FilterHeadersSyncComplete(tip={})", tip_height),
+            SyncEvent::FiltersStored {
+                start_height,
+                end_height,
+            } => write!(f, "FiltersStored({}-{})", start_height, end_height),
+            SyncEvent::FiltersSyncComplete {
+                tip_height,
+            } => write!(f, "FiltersSyncComplete(tip={})", tip_height),
+            SyncEvent::BlocksNeeded {
+                blocks,
+            } => write!(f, "BlocksNeeded(count={})", blocks.len()),
+            SyncEvent::BlockProcessed {
+                height,
+                new_scripts,
+                ..
+            } => {
+                let total: usize = new_scripts.values().map(|v| v.len()).sum();
+                write!(f, "BlockProcessed(height={}, new_scripts={})", height, total)
+            }
+            SyncEvent::MasternodeStateUpdated {
+                height,
+                qr_info_result,
+            } => match qr_info_result {
+                Some(s) => write!(
+                    f,
+                    "MasternodeStateUpdated(height={}, qr_info={{stored_cycle_height={:?}, verified={}/{}, newly_qualified={}}})",
+                    height,
+                    s.stored_cycle_height,
+                    s.fully_verified_count,
+                    s.rotated_quorum_count,
+                    s.newly_qualified_count,
+                ),
+                None => write!(f, "MasternodeStateUpdated(height={})", height),
+            },
+            SyncEvent::ManagerError {
+                manager,
+                error,
+                ..
+            } => write!(f, "ManagerError({}, {})", manager, error),
+            SyncEvent::ChainLockReceived {
+                chain_lock,
+                validated,
+            } => write!(
+                f,
+                "ChainLockReceived(height={}, validated={})",
+                chain_lock.block_height, validated
+            ),
+            SyncEvent::InstantLockReceived {
+                instant_lock,
+                validated,
+            } => write!(
+                f,
+                "InstantLockReceived(txid={}, validated={})",
+                instant_lock.txid, validated
+            ),
+            SyncEvent::SyncComplete {
+                header_tip,
+                cycle,
+            } => write!(f, "SyncComplete(tip={}, cycle={})", header_tip, cycle),
+        }
+    }
+}

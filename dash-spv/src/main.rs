@@ -1,16 +1,169 @@
 //! Command-line interface for the Dash SPV client.
 
-// Removed unused import
 use std::path::PathBuf;
 use std::process;
 use std::sync::Arc;
 
-use clap::{Arg, Command};
-use dash_spv::terminal::TerminalGuard;
-use dash_spv::{ClientConfig, DashSpvClient, LevelFilter, Network};
+use clap::{Parser, ValueEnum};
+use dash_spv::{
+    ClientConfig, DashSpvClient, DevnetConfig, LevelFilter, LlmqDevnetParams, MempoolStrategy,
+    Network, ValidationMode,
+};
+use dashcore::sml::llmq_type::devnet_llmq_type_from_name;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::WalletManager;
-use tokio_util::sync::CancellationToken;
+use key_wallet_manager::WalletManager;
+
+/// Network selection for CLI
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum NetworkArg {
+    Mainnet,
+    Testnet,
+    Devnet,
+    Regtest,
+}
+
+impl From<NetworkArg> for Network {
+    fn from(arg: NetworkArg) -> Self {
+        match arg {
+            NetworkArg::Mainnet => Network::Mainnet,
+            NetworkArg::Testnet => Network::Testnet,
+            NetworkArg::Devnet => Network::Devnet,
+            NetworkArg::Regtest => Network::Regtest,
+        }
+    }
+}
+
+/// Validation mode selection for CLI
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ValidationModeArg {
+    None,
+    Basic,
+    Full,
+}
+
+impl From<ValidationModeArg> for dash_spv::ValidationMode {
+    fn from(arg: ValidationModeArg) -> Self {
+        match arg {
+            ValidationModeArg::None => dash_spv::ValidationMode::None,
+            ValidationModeArg::Basic => dash_spv::ValidationMode::Basic,
+            ValidationModeArg::Full => dash_spv::ValidationMode::Full,
+        }
+    }
+}
+
+/// Log level selection for CLI
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "lowercase")]
+enum LogLevelArg {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl From<LogLevelArg> for LevelFilter {
+    fn from(arg: LogLevelArg) -> Self {
+        match arg {
+            LogLevelArg::Error => LevelFilter::ERROR,
+            LogLevelArg::Warn => LevelFilter::WARN,
+            LogLevelArg::Info => LevelFilter::INFO,
+            LogLevelArg::Debug => LevelFilter::DEBUG,
+            LogLevelArg::Trace => LevelFilter::TRACE,
+        }
+    }
+}
+
+/// Dash SPV (Simplified Payment Verification) client
+#[derive(Parser, Debug)]
+#[command(name = "dash-spv", version = dash_spv::VERSION, about)]
+struct Args {
+    /// Network to connect to
+    #[arg(short, long, value_enum, default_value = "mainnet")]
+    network: NetworkArg,
+
+    /// Data directory for storage (default: unique directory in /tmp)
+    #[arg(short, long)]
+    data_dir: Option<PathBuf>,
+
+    /// Peer address to connect to (can be used multiple times)
+    #[arg(short, long, value_name = "ADDRESS")]
+    peer: Vec<String>,
+
+    /// Log level (CLI overrides RUST_LOG env var)
+    #[arg(short, long, value_enum, env = "RUST_LOG", default_value = "info")]
+    log_level: LogLevelArg,
+
+    /// Disable BIP157 filter synchronization
+    #[arg(long)]
+    no_filters: bool,
+
+    /// Disable masternode list synchronization
+    #[arg(long)]
+    no_masternodes: bool,
+
+    /// Disable mempool transaction tracking
+    #[arg(long)]
+    no_mempool: bool,
+
+    /// Mempool strategy: fetch-all (higher bandwidth / more privacy) or bloom-filter (efficient / less privacy)
+    #[arg(long, value_enum, default_value = "bloom-filter")]
+    mempool_strategy: MempoolStrategy,
+
+    /// Validation mode
+    #[arg(long, value_enum, default_value = "full")]
+    validation_mode: ValidationModeArg,
+
+    /// Start syncing from a specific block height using the nearest checkpoint.
+    /// Use 'now' for the latest checkpoint.
+    #[arg(short, long, value_name = "HEIGHT")]
+    start_height: Option<String>,
+
+    /// Disable log file output (enables console logging as fallback)
+    #[arg(long)]
+    no_log_file: bool,
+
+    /// Print logs to the console
+    #[arg(long)]
+    print_to_console: bool,
+
+    /// Directory for log files (default: <data-dir>/logs)
+    #[arg(long)]
+    log_dir: Option<PathBuf>,
+
+    /// Maximum number of archived log files to keep
+    #[arg(long, default_value = "20")]
+    max_log_files: usize,
+
+    /// Path to file containing BIP39 mnemonic phrase
+    #[arg(long, value_name = "PATH")]
+    mnemonic_file: String,
+
+    /// Devnet name (required when --network=devnet). Embedded in user agent so devnet peers accept the connection.
+    #[arg(long, value_name = "NAME")]
+    devnet_name: Option<String>,
+
+    /// Override `LLMQ_DEVNET` size and threshold (matches Dash Core's `-llmqdevnetparams=<size>:<threshold>`).
+    #[arg(long, value_name = "SIZE:THRESHOLD")]
+    llmq_devnet_params: Option<String>,
+
+    /// Reroute ChainLocks onto the given devnet quorum (matches Dash Core's
+    /// `-llmqchainlocks=<quorum name>`). Type must be devnet-registered and
+    /// non-rotating.
+    #[arg(long, value_name = "QUORUM_NAME")]
+    llmq_chainlocks: Option<String>,
+
+    /// Reroute InstantSend DIP24 onto the given devnet quorum (matches Dash Core's
+    /// `-llmqinstantsenddip0024=<quorum name>`). Type must be devnet-registered
+    /// and rotating.
+    #[arg(long, value_name = "QUORUM_NAME")]
+    llmq_instantsend_dip0024: Option<String>,
+
+    /// Reroute Platform quorums onto the given devnet quorum (matches Dash Core's
+    /// `-llmqplatform=<quorum name>`). Type must be devnet-registered.
+    #[arg(long, value_name = "QUORUM_NAME")]
+    llmq_platform: Option<String>,
+}
 
 #[tokio::main]
 async fn main() {
@@ -22,9 +175,7 @@ async fn main() {
             match spv_error {
                 dash_spv::SpvError::Network(_) => 1,
                 dash_spv::SpvError::Storage(_) => 2,
-                dash_spv::SpvError::Validation(_) => 3,
-                dash_spv::SpvError::Config(_) => 4,
-                dash_spv::SpvError::Parse(_) => 5,
+                dash_spv::SpvError::Config(_) => 3,
                 _ => 255,
             }
         } else {
@@ -36,168 +187,19 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = Command::new("dash-spv")
-        .version(dash_spv::VERSION)
-        .about("Dash SPV (Simplified Payment Verification) client")
-        .arg(
-            Arg::new("network")
-                .short('n')
-                .long("network")
-                .value_name("NETWORK")
-                .help("Network to connect to")
-                .value_parser(["mainnet", "testnet", "regtest"])
-                .default_value("mainnet"),
-        )
-        .arg(
-            Arg::new("data-dir")
-                .short('d')
-                .long("data-dir")
-                .value_name("DIR")
-                .help("Data directory for storage (default: unique directory in /tmp)"),
-        )
-        .arg(
-            Arg::new("peer")
-                .short('p')
-                .long("peer")
-                .value_name("ADDRESS")
-                .help("Peer address to connect to (can be used multiple times)")
-                .action(clap::ArgAction::Append),
-        )
-        .arg(
-            Arg::new("log-level")
-                .short('l')
-                .long("log-level")
-                .env("RUST_LOG")
-                .default_value("info")
-                .value_name("LEVEL")
-                .help("Log level (CLI overrides RUST_LOG env var)")
-                .value_parser(["error", "warn", "info", "debug", "trace"]),
-        )
-        .arg(
-            Arg::new("no-filters")
-                .long("no-filters")
-                .help("Disable BIP157 filter synchronization")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("no-masternodes")
-                .long("no-masternodes")
-                .help("Disable masternode list synchronization")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("no-mempool")
-                .long("no-mempool")
-                .help("Disable mempool transaction tracking")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("validation-mode")
-                .long("validation-mode")
-                .value_name("MODE")
-                .help("Validation mode")
-                .value_parser(["none", "basic", "full"])
-                .default_value("full"),
-        )
-        .arg(
-            Arg::new("watch-address")
-                .short('w')
-                .long("watch-address")
-                .value_name("ADDRESS")
-                .help("Dash address to watch for transactions (can be used multiple times)")
-                .action(clap::ArgAction::Append),
-        )
-        .arg(
-            Arg::new("add-example-addresses")
-                .long("add-example-addresses")
-                .help("Add some example Dash addresses to watch for testing")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("terminal-ui")
-                .long("terminal-ui")
-                .help("Enable terminal UI status bar")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("start-height")
-                .long("start-height")
-                .short('s')
-                .help("Start syncing from a specific block height using the nearest checkpoint. Use 'now' for the latest checkpoint")
-                .value_name("HEIGHT"),
-        )
-        .arg(
-            Arg::new("no-log-file")
-                .long("no-log-file")
-                .help("Disable log file output (enables console logging as fallback)")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("print-to-console")
-                .long("print-to-console")
-                .help("Print logs to the console")
-                .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("log-dir")
-                .long("log-dir")
-                .value_name("DIR")
-                .help("Directory for log files (default: <data-dir>/logs)"),
-        )
-        .arg(
-            Arg::new("max-log-files")
-                .long("max-log-files")
-                .help("Maximum number of archived log files to keep")
-                .value_name("COUNT")
-                .default_value("20")
-                .value_parser(clap::value_parser!(usize)),
-        )
-        .arg(
-            Arg::new("mnemonic-file")
-                .long("mnemonic-file")
-                .value_name("PATH")
-                .help("Path to file containing BIP39 mnemonic phrase")
-                .required(true),
-        )
-        .get_matches();
+    let args = Args::parse();
 
-    let log_level: LevelFilter = matches
-        .get_one::<String>("log-level")
-        .expect("log-level has default value")
-        .parse()
-        .expect("log-level value_parser ensures valid level");
+    let network: Network = args.network.into();
+    let validation_mode: dash_spv::ValidationMode = args.validation_mode.into();
+    let log_level: LevelFilter = args.log_level.into();
 
-    // Parse network
-    let network_str = matches.get_one::<String>("network").ok_or("Missing network argument")?;
-    let network = match network_str.as_str() {
-        "mainnet" => Network::Dash,
-        "testnet" => Network::Testnet,
-        "regtest" => Network::Regtest,
-        n => return Err(format!("Invalid network: {}", n).into()),
-    };
-
-    let mnemonic_path =
-        matches.get_one::<String>("mnemonic-file").ok_or("Missing mnemonic-file argument")?;
-    let mnemonic_phrase = std::fs::read_to_string(mnemonic_path)
-        .map_err(|e| format!("Failed to read mnemonic file '{}': {}", mnemonic_path, e))?
+    let mnemonic_phrase = std::fs::read_to_string(&args.mnemonic_file)
+        .map_err(|e| format!("Failed to read mnemonic file '{}': {}", args.mnemonic_file, e))?
         .trim()
         .to_string();
 
-    // Parse validation mode
-    let validation_str =
-        matches.get_one::<String>("validation-mode").ok_or("Missing validation-mode argument")?;
-    let validation_mode = match validation_str.as_str() {
-        "none" => dash_spv::ValidationMode::None,
-        "basic" => dash_spv::ValidationMode::Basic,
-        "full" => dash_spv::ValidationMode::Full,
-        v => return Err(format!("Invalid validation mode: {}", v).into()),
-    };
-
-    // Create configuration
-    let data_dir = if let Some(data_dir_str) = matches.get_one::<String>("data-dir") {
-        PathBuf::from(data_dir_str)
-    } else {
-        // Create a unique temp directory with timestamp and process ID
+    // Create data directory
+    let data_dir = args.data_dir.clone().unwrap_or_else(|| {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -205,39 +207,27 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let pid = std::process::id();
         let dir_name = format!("dash-spv-{}-{}", timestamp, pid);
         std::env::temp_dir().join(dir_name)
-    };
+    });
 
-    // Parse logging flags and initialize logging early
-    let no_log_file = matches.get_flag("no-log-file");
-    let print_to_console = matches.get_flag("print-to-console");
-    let enable_terminal_ui = matches.get_flag("terminal-ui");
-    let max_log_files = *matches.get_one::<usize>("max-log-files").unwrap();
-    let log_dir = matches
-        .get_one::<String>("log-dir")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| data_dir.join("logs"));
+    // Configure logging
+    let log_dir = args.log_dir.clone().unwrap_or_else(|| data_dir.join("logs"));
 
-    // When terminal UI is enabled, force file logging and disable console to avoid mixing
-    let file_config = if !no_log_file || enable_terminal_ui {
+    let file_config = if !args.no_log_file {
         Some(dash_spv::LogFileConfig {
             log_dir,
-            max_files: max_log_files,
+            max_files: args.max_log_files,
         })
     } else {
         None
     };
 
-    // Disable console logging when terminal UI is enabled
-    let console_enabled = if enable_terminal_ui {
-        false
-    } else {
-        no_log_file || print_to_console
-    };
+    let console_enabled = args.no_log_file || args.print_to_console;
 
     let logging_config = dash_spv::LoggingConfig {
         level: Some(log_level),
         console: console_enabled,
         file: file_config,
+        thread_local: false,
     };
 
     // Initialize logging, keep guard alive for the duration of run()
@@ -248,64 +238,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Data directory: {}", data_dir.display());
     tracing::info!("Validation mode: {:?}", validation_mode);
 
-    // Create configuration
-    let mut config = ClientConfig::new(network)
-        .with_storage_path(data_dir.clone())
-        .with_validation_mode(validation_mode);
-
-    // Add custom peers if specified
-    if let Some(peers) = matches.get_many::<String>("peer") {
-        config.peers.clear();
-        for peer in peers {
-            match peer.parse() {
-                Ok(addr) => config.add_peer(addr),
-                Err(e) => {
-                    tracing::error!("Invalid peer address '{}': {}", peer, e);
-                    process::exit(1);
-                }
-            };
-        }
-    }
-
-    // Configure features
-    if matches.get_flag("no-filters") {
-        config = config.without_filters();
-    }
-    if matches.get_flag("no-masternodes") {
-        config = config.without_masternodes();
-    }
-    if matches.get_flag("no-mempool") {
-        config.enable_mempool_tracking = false;
-    }
-
-    // Set start height if specified
-    if let Some(start_height_str) = matches.get_one::<String>("start-height") {
-        if start_height_str == "now" {
-            // Use a very high number to get the latest checkpoint
-            config.start_from_height = Some(u32::MAX);
-            tracing::info!("Will start syncing from the latest available checkpoint");
-        } else {
-            let start_height = start_height_str
-                .parse::<u32>()
-                .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
-            config.start_from_height = Some(start_height);
-            tracing::info!("Will start syncing from height: {}", start_height);
-        }
-    }
-
-    // Validate configuration
+    let mut config = build_client_config(&args, data_dir.clone())?;
     if let Err(e) = config.validate() {
         tracing::error!("Configuration error: {}", e);
         process::exit(1);
     }
-
-    tracing::info!("Sync strategy: Sequential");
+    if let Some(devnet) = &config.devnet {
+        let user_agent = devnet.user_agent(dash_spv::VERSION);
+        tracing::info!("Devnet user agent: {}", user_agent);
+        config = config.with_user_agent(user_agent);
+    }
 
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
-    let wallet_id = wallet_manager.create_wallet_from_mnemonic(
+    wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
-        "",
         0,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;
@@ -320,49 +267,134 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let path = if let Some(path) = &config.storage_path {
-        path.clone()
-    } else {
-        "./.tmp/main-exec-storage".into()
-    };
-
-    let storage_manager = match dash_spv::storage::DiskStorageManager::new(path.clone()).await {
+    let storage_manager = match dash_spv::storage::DiskStorageManager::new(&config).await {
         Ok(sm) => sm,
         Err(e) => {
             eprintln!("Failed to create disk storage manager: {}", e);
             process::exit(1);
         }
     };
-    run_client(
-        config,
-        network_manager,
-        storage_manager,
-        wallet,
-        enable_terminal_ui,
-        &matches,
-        wallet_id,
-    )
-    .await?;
+    run_client(config, network_manager, storage_manager, wallet).await?;
 
     Ok(())
 }
 
-async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static>(
+fn build_client_config(args: &Args, data_dir: PathBuf) -> Result<ClientConfig, String> {
+    let network: Network = args.network.into();
+    let validation_mode: ValidationMode = args.validation_mode.into();
+
+    let mut config = ClientConfig::new(network)
+        .with_storage_path(data_dir)
+        .with_validation_mode(validation_mode);
+
+    let devnet = build_devnet_config(args, network)?;
+    if let Some(devnet) = devnet {
+        config = config.with_devnet(devnet);
+    }
+
+    if !args.peer.is_empty() {
+        config.peers.clear();
+        for peer in &args.peer {
+            let addr =
+                peer.parse().map_err(|e| format!("Invalid peer address '{}': {}", peer, e))?;
+            config.add_peer(addr);
+        }
+    }
+
+    if args.no_filters {
+        config = config.without_filters();
+    }
+    if args.no_masternodes {
+        config = config.without_masternodes();
+    }
+    if args.no_mempool {
+        config.enable_mempool_tracking = false;
+    } else {
+        config = config.with_mempool_tracking(args.mempool_strategy);
+    }
+
+    if let Some(ref start_height_str) = args.start_height {
+        if start_height_str == "now" {
+            config.start_from_height = Some(u32::MAX);
+        } else {
+            let start_height = start_height_str
+                .parse::<u32>()
+                .map_err(|e| format!("Invalid start height '{}': {}", start_height_str, e))?;
+            config.start_from_height = Some(start_height);
+        }
+    }
+
+    Ok(config)
+}
+
+fn build_devnet_config(args: &Args, network: Network) -> Result<Option<DevnetConfig>, String> {
+    if network != Network::Devnet {
+        if args.devnet_name.is_some() {
+            return Err("--devnet-name is only valid with --network=devnet".into());
+        }
+        if args.llmq_devnet_params.is_some() {
+            return Err("--llmq-devnet-params is only valid with --network=devnet".into());
+        }
+        if args.llmq_chainlocks.is_some() {
+            return Err("--llmq-chainlocks is only valid with --network=devnet".into());
+        }
+        if args.llmq_instantsend_dip0024.is_some() {
+            return Err("--llmq-instantsend-dip0024 is only valid with --network=devnet".into());
+        }
+        if args.llmq_platform.is_some() {
+            return Err("--llmq-platform is only valid with --network=devnet".into());
+        }
+        return Ok(None);
+    }
+
+    let name = args.devnet_name.clone().ok_or("--devnet-name is required when --network=devnet")?;
+    let mut devnet = DevnetConfig::new(name);
+
+    if let Some(raw) = args.llmq_devnet_params.as_deref() {
+        devnet = devnet.with_llmq_params(parse_llmq_devnet_params(raw)?);
+    }
+    if let Some(name) = args.llmq_chainlocks.as_deref() {
+        devnet = devnet.with_chainlocks_type(devnet_llmq_type_from_name(name)?);
+    }
+    if let Some(name) = args.llmq_instantsend_dip0024.as_deref() {
+        devnet = devnet.with_instantsend_dip0024_type(devnet_llmq_type_from_name(name)?);
+    }
+    if let Some(name) = args.llmq_platform.as_deref() {
+        devnet = devnet.with_platform_type(devnet_llmq_type_from_name(name)?);
+    }
+    Ok(Some(devnet))
+}
+
+fn parse_llmq_devnet_params(raw: &str) -> Result<LlmqDevnetParams, String> {
+    let (size_str, threshold_str) = raw
+        .split_once(':')
+        .ok_or_else(|| format!("--llmq-devnet-params expects SIZE:THRESHOLD, got '{}'", raw))?;
+    let size: u32 =
+        size_str.parse().map_err(|e| format!("invalid LLMQ_DEVNET size '{}': {}", size_str, e))?;
+    let threshold: u32 = threshold_str
+        .parse()
+        .map_err(|e| format!("invalid LLMQ_DEVNET threshold '{}': {}", threshold_str, e))?;
+    Ok(LlmqDevnetParams {
+        size,
+        threshold,
+    })
+}
+
+async fn run_client<S: dash_spv::storage::StorageManager>(
     config: ClientConfig,
     network_manager: dash_spv::network::manager::PeerNetworkManager,
     storage_manager: S,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
-    enable_terminal_ui: bool,
-    matches: &clap::ArgMatches,
-    wallet_id: [u8; 32],
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
-    let mut client =
+    let client =
         match DashSpvClient::<
             WalletManager<ManagedWalletInfo>,
             dash_spv::network::manager::PeerNetworkManager,
             S,
-        >::new(config.clone(), network_manager, storage_manager, wallet.clone())
+        >::new(
+            config.clone(), network_manager, storage_manager, wallet.clone(), Vec::new()
+        )
         .await
         {
             Ok(client) => client,
@@ -372,277 +404,143 @@ async fn run_client<S: dash_spv::storage::StorageManager + Send + Sync + 'static
             }
         };
 
-    // Enable terminal UI in the client if requested
-    let _terminal_guard = if enable_terminal_ui {
-        client.enable_terminal_ui();
-
-        // Get the terminal UI from the client and initialize it
-        if let Some(ui) = client.get_terminal_ui() {
-            match TerminalGuard::new(ui.clone()) {
-                Ok(guard) => {
-                    // Initial update with network info
-                    let network_name = format!("{:?}", config.network);
-                    let _ = ui
-                        .update_status(|status| {
-                            status.network = network_name;
-                            status.peer_count = 0; // Will be updated when connected
-                        })
-                        .await;
-
-                    Some(guard)
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to initialize terminal UI: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if let Err(e) = client.start().await {
-        eprintln!("Failed to start SPV client: {}", e);
-        process::exit(1);
-    }
-
-    tracing::info!("SPV client started successfully");
-
-    // Set up event logging: count detected transactions and log wallet balances periodically
-    // Take the client's event receiver and spawn a logger task
-    if let Some(mut event_rx) = client.take_event_receiver() {
-        let wallet_for_logger = wallet.clone();
-        let wallet_id_for_logger = wallet_id;
-        tokio::spawn(async move {
-            use dash_spv::types::SpvEvent;
-            let mut total_detected_block_txs: u64 = 0;
-            let mut total_detected_mempool_txs: u64 = 0;
-            let mut last_snapshot = std::time::Instant::now();
-            let snapshot_interval = std::time::Duration::from_secs(10);
-
-            loop {
-                tokio::select! {
-                    maybe_event = event_rx.recv() => {
-                        match maybe_event {
-                            Some(SpvEvent::BlockProcessed { relevant_transactions, .. }) => {
-                                if relevant_transactions > 0 {
-                                    total_detected_block_txs = total_detected_block_txs.saturating_add(relevant_transactions as u64);
-                                    tracing::info!(
-                                        "Detected {} wallet-relevant tx(s) in block; cumulative (blocks): {}",
-                                        relevant_transactions,
-                                        total_detected_block_txs
-                                    );
-                                }
-                            }
-                            Some(SpvEvent::MempoolTransactionAdded { .. }) => {
-                                total_detected_mempool_txs = total_detected_mempool_txs.saturating_add(1);
-                                tracing::info!(
-                                    "Detected wallet-relevant mempool tx; cumulative (mempool): {}",
-                                    total_detected_mempool_txs
-                                );
-                            }
-                            Some(_) => { /* ignore other events */ }
-                            None => break, // sender closed
-                        }
-                    }
-                    // Also do a periodic snapshot while events are flowing
-                    _ = tokio::time::sleep(snapshot_interval) => {
-                        // Log snapshot if interval has elapsed
-                        if last_snapshot.elapsed() >= snapshot_interval {
-                            let (tx_count, confirmed, unconfirmed, locked, total) = {
-                                let mgr = wallet_for_logger.read().await;
-
-                                // Count wallet-affecting transactions from wallet transaction history
-                                let tx_count = mgr
-                                    .wallet_transaction_history(&wallet_id_for_logger)
-                                    .map(|v| v.len())
-                                    .unwrap_or(0);
-
-                                // Read wallet balance from the managed wallet info
-                                let wb = mgr.get_wallet_balance(&wallet_id_for_logger).ok();
-                                let (c, u, l, t) = wb.map(|b| (b.confirmed, b.unconfirmed, b.locked, b.total)).unwrap_or((0, 0, 0, 0));
-
-                                (tx_count, c, u, l, t)
-                            };
-                            tracing::info!(
-                                "Wallet tx summary: tx_count={} (blocks={} + mempool={}), balances: confirmed={} unconfirmed={} locked={} total={}",
-                                tx_count,
-                                total_detected_block_txs,
-                                total_detected_mempool_txs,
-                                confirmed,
-                                unconfirmed,
-                                locked,
-                                total,
-                            );
-                            last_snapshot = std::time::Instant::now();
-                        }
-                    }
-                }
-            }
-        });
-    } else {
-        tracing::warn!("Event channel not available; transaction/balance logging disabled");
-    }
-
-    // Add watch addresses if specified
-    if let Some(addresses) = matches.get_many::<String>("watch-address") {
-        for addr_str in addresses {
-            match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
-                Ok(addr) => {
-                    let network = config.network;
-                    let checked_addr = addr.require_network(network).map_err(|_| {
-                        format!("Address '{}' is not valid for network {:?}", addr_str, network)
-                    });
-                    match checked_addr {
-                        Ok(valid_addr) => {
-                            // TODO: Add address to wallet for monitoring
-                            // For now, just log that we would watch this address
-                            tracing::info!(
-                                "Would watch address: {} (wallet integration pending)",
-                                valid_addr
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!("Invalid address for network: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Invalid address format '{}': {}", addr_str, e);
-                }
+    let stop_client = client.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            tracing::debug!("Shutdown signal received");
+            if let Err(e) = stop_client.stop().await {
+                tracing::warn!("Error during ctrl-c stop: {}", e);
             }
         }
-    }
+    });
 
-    // Add example addresses for testing if requested
-    if matches.get_flag("add-example-addresses") {
-        let network = config.network;
-        let example_addresses = match network {
-            dashcore::Network::Dash => vec![
-                // Some example mainnet addresses (these are from block explorers/faucets)
-                "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3", // Crowdnode
-            ],
-            dashcore::Network::Testnet => vec![
-                // Testnet addresses
-                "yNEr8u4Kx8PTH9A9G3P7NwkJRmqFD7tKSj", // Example testnet address
-                "yMGqjKTqr2HKKV6zqSg5vTPQUzJNt72h8h", // Another testnet example
-            ],
-            dashcore::Network::Regtest => vec![
-                // Regtest addresses (these would be from local testing)
-                "yQ9J8qK3nNW8JL8h5T6tB3VZwwH9h5T6tB", // Example regtest address
-                "yeRZBWYfeNE4yVUHV4ZLs83Ppn9aMRH57A", // Another regtest example
-            ],
-            _ => vec![],
-        };
-
-        for addr_str in example_addresses {
-            match addr_str.parse::<dashcore::Address<dashcore::address::NetworkUnchecked>>() {
-                Ok(addr) => {
-                    if let Ok(_valid_addr) = addr.require_network(network) {
-                        // TODO: In the future, we could add these example addresses to the wallet
-                        // For now, just log that we would monitor them
-                        let height_info = if network == dashcore::Network::Dash
-                            && addr_str == "Xesjop7V9xLndFMgZoCrckJ5ZPgJdJFbA3"
-                        {
-                            " (from height 200,000)"
-                        } else {
-                            ""
-                        };
-                        tracing::info!(
-                            "Would monitor example address: {}{}",
-                            addr_str,
-                            height_info
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Example address '{}' failed to parse: {}", addr_str, e);
-                }
-            }
-        }
-    }
-
-    // Display current wallet addresses
-    {
-        let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.monitored_addresses();
-        if !monitored.is_empty() {
-            tracing::info!("Wallet monitoring {} addresses:", monitored.len());
-            for (i, addr) in monitored.iter().take(10).enumerate() {
-                tracing::info!("  {}: {}", i + 1, addr);
-            }
-            if monitored.len() > 10 {
-                tracing::info!("  ... and {} more addresses", monitored.len() - 10);
-            }
-        } else {
-            tracing::info!("No addresses being monitored by wallet. The wallet will generate addresses as needed.");
-        }
-    }
-
-    // Wait for at least one peer to connect before attempting sync
-    tracing::info!("Waiting for peers to connect...");
-    let mut wait_time = 0;
-    const MAX_WAIT_TIME: u64 = 60; // Wait up to 60 seconds for peers
-
-    loop {
-        let peer_count = client.get_peer_count().await;
-        if peer_count > 0 {
-            tracing::info!("Connected to {} peer(s), starting synchronization", peer_count);
-            break;
-        }
-
-        if wait_time >= MAX_WAIT_TIME {
-            tracing::error!("No peers connected after {} seconds", MAX_WAIT_TIME);
-            return Err("SPV client failed to connect to any peers".into());
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        wait_time += 1;
-
-        if wait_time % 5 == 0 {
-            tracing::info!("Still waiting for peers... ({}s elapsed)", wait_time);
-        }
-    }
-
-    // Check filters for matches if wallet has addresses before starting monitoring
-    let should_check_filters = {
-        let wallet_lock = wallet.read().await;
-        let monitored = wallet_lock.monitored_addresses();
-        !monitored.is_empty() && !matches.get_flag("no-filters")
-    };
-
-    // Start synchronization first, then monitoring immediately
-    // The key is to minimize the gap between sync requests and monitoring startup
-    tracing::info!("Starting synchronization to tip...");
-    match client.sync_to_tip().await {
-        Ok(progress) => {
-            tracing::info!("Synchronization requests sent! (actual sync happens asynchronously)");
-            tracing::info!("Current Header height: {}", progress.header_height);
-            tracing::info!("Current Filter header height: {}", progress.filter_header_height);
-            tracing::info!("Current Masternode height: {}", progress.masternode_height);
-        }
-        Err(e) => {
-            tracing::error!("Synchronization startup failed: {}", e);
-            return Err(format!("SPV client synchronization startup failed: {}", e).into());
-        }
-    }
-
-    // Start monitoring immediately after sync requests are sent
-    tracing::info!("Starting network monitoring...");
-
-    // For now, just focus on the core fix - getting headers to sync properly
-    // Filter checking can be done manually later
-    if should_check_filters {
-        tracing::info!("Filter checking will be available after headers sync completes");
-        tracing::info!("You can manually trigger filter sync later if needed");
-    }
-
-    let (_command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
-    let shutdown_token = CancellationToken::new();
-
-    client.run(command_receiver, shutdown_token).await?;
+    client.run().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dash_spv::LLMQType;
+    use tempfile::TempDir;
+
+    fn parse(argv: &[&str]) -> Result<Args, clap::Error> {
+        let mut full = vec!["dash-spv"];
+        full.extend_from_slice(argv);
+        Args::try_parse_from(full)
+    }
+
+    fn args(extra: &[&str]) -> Args {
+        let mut argv = vec!["--mnemonic-file", "/dev/null"];
+        argv.extend_from_slice(extra);
+        parse(&argv).expect("parse")
+    }
+
+    #[test]
+    fn devnet_requires_name() {
+        let args = args(&["--network", "devnet"]);
+        let err = build_devnet_config(&args, Network::Devnet).expect_err("must require name");
+        assert!(err.contains("--devnet-name is required"), "got: {}", err);
+    }
+
+    #[test]
+    fn devnet_flags_rejected_on_non_devnet_networks() {
+        for flag in &[
+            "--devnet-name",
+            "--llmq-devnet-params",
+            "--llmq-chainlocks",
+            "--llmq-instantsend-dip0024",
+            "--llmq-platform",
+        ] {
+            let value = if *flag == "--llmq-devnet-params" {
+                "8:5"
+            } else if *flag == "--devnet-name" {
+                "alpha"
+            } else {
+                "llmq_devnet"
+            };
+            for network in [Network::Mainnet, Network::Testnet, Network::Regtest] {
+                let args = args(&[flag, value]);
+                let err = build_devnet_config(&args, network)
+                    .expect_err("non-devnet network must reject the flag");
+                assert!(err.contains(flag), "expected error to name flag {}, got: {}", flag, err);
+            }
+        }
+    }
+
+    #[test]
+    fn devnet_minimal_builds_config_with_no_overrides() {
+        let args = args(&["--network", "devnet", "--devnet-name", "alpha"]);
+        let devnet =
+            build_devnet_config(&args, Network::Devnet).expect("must succeed").expect("some");
+        assert_eq!(devnet.name, "alpha");
+        assert!(devnet.llmq_params.is_none());
+        assert!(devnet.llmq_chainlocks_type.is_none());
+        assert!(devnet.llmq_instantsend_dip0024_type.is_none());
+        assert!(devnet.llmq_platform_type.is_none());
+    }
+
+    #[test]
+    fn devnet_full_compose() {
+        let args = args(&[
+            "--network",
+            "devnet",
+            "--devnet-name",
+            "alpha",
+            "--llmq-devnet-params",
+            "8:5",
+            "--llmq-chainlocks",
+            "llmq_devnet",
+            "--llmq-instantsend-dip0024",
+            "llmq_devnet_dip0024",
+            "--llmq-platform",
+            "llmq_devnet_platform",
+        ]);
+        let devnet =
+            build_devnet_config(&args, Network::Devnet).expect("must succeed").expect("some");
+        assert_eq!(devnet.name, "alpha");
+        assert_eq!(
+            devnet.llmq_params,
+            Some(LlmqDevnetParams {
+                size: 8,
+                threshold: 5
+            })
+        );
+        assert_eq!(devnet.llmq_chainlocks_type, Some(LLMQType::LlmqtypeDevnet));
+        assert_eq!(devnet.llmq_instantsend_dip0024_type, Some(LLMQType::LlmqtypeDevnetDIP0024));
+        assert_eq!(devnet.llmq_platform_type, Some(LLMQType::LlmqtypeDevnetPlatform));
+    }
+
+    #[test]
+    fn llmq_devnet_params_parse_errors() {
+        assert!(parse_llmq_devnet_params("8").is_err(), "missing colon");
+        assert!(parse_llmq_devnet_params("abc:5").is_err(), "non-numeric size");
+        assert!(parse_llmq_devnet_params("8:abc").is_err(), "non-numeric threshold");
+        assert!(parse_llmq_devnet_params(":").is_err(), "empty parts");
+    }
+
+    #[test]
+    fn unknown_quorum_name_is_rejected() {
+        let args = args(&[
+            "--network",
+            "devnet",
+            "--devnet-name",
+            "alpha",
+            "--llmq-chainlocks",
+            "not_a_quorum",
+        ]);
+        let err = build_devnet_config(&args, Network::Devnet).expect_err("must reject");
+        assert!(err.contains("Invalid LLMQ type"), "got: {}", err);
+    }
+
+    #[test]
+    fn build_client_config_returns_devnet_on_devnet() {
+        let args = args(&["--network", "devnet", "--devnet-name", "alpha"]);
+        let tmp = TempDir::new().unwrap();
+        let config = build_client_config(&args, tmp.path().to_path_buf()).expect("ok");
+        let devnet = config.devnet.as_ref().expect("devnet must be set");
+        assert_eq!(devnet.name, "alpha");
+        assert_eq!(config.network, Network::Devnet);
+    }
 }

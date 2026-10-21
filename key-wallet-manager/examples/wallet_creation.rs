@@ -10,7 +10,8 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::{AccountType, Network};
-use key_wallet_manager::wallet_manager::WalletManager;
+use key_wallet_manager::WalletInterface;
+use key_wallet_manager::WalletManager;
 
 fn main() {
     println!("=== Wallet Creation Example ===\n");
@@ -42,7 +43,6 @@ fn main() {
 
     let result = manager.create_wallet_from_mnemonic(
         test_mnemonic,
-        "", // No passphrase
         100_000,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::Default,
     );
@@ -89,30 +89,17 @@ fn main() {
     // Example 4: Generate addresses
     println!("\n4. Generating addresses...");
 
-    // Note: This might fail with InvalidNetwork error if the account collection
-    // isn't properly initialized in the managed wallet info
-    let address_result = manager.get_receive_address(
+    let address = manager.next_receive_address(
         &wallet_id,
         0, // Account index
         AccountTypePreference::BIP44,
         false, // Don't advance index
     );
 
-    match address_result {
-        Ok(result) => {
-            if let Some(address) = result.address {
-                println!("✅ Receive address: {}", address);
-                if let Some(account_type) = result.account_type_used {
-                    println!("   Account type used: {:?}", account_type);
-                }
-            } else {
-                println!("⚠️  No address generated");
-            }
-        }
-        Err(e) => {
-            println!("⚠️  Could not get address: {:?}", e);
-            println!("   (This is expected with the current implementation)");
-        }
+    if let Some(address) = address {
+        println!("✅ Receive address: {}", address);
+    } else {
+        println!("⚠️ No address generated");
     }
 
     // Example 5: WalletManager now includes SPV functionality
@@ -127,7 +114,7 @@ fn main() {
     for (i, wallet_id) in [wallet_id, wallet_id2].iter().enumerate() {
         match manager.get_wallet_balance(wallet_id) {
             Ok(balance) => {
-                println!("   Wallet {}: {} satoshis", i + 1, balance.total);
+                println!("   Wallet {}: {} satoshis", i + 1, balance.total());
             }
             Err(e) => {
                 println!("   Wallet {}: Error - {:?}", i + 1, e);
@@ -141,11 +128,14 @@ fn main() {
     // Example 7: Block height tracking
     println!("\n7. Block height tracking...");
 
-    println!("   Current height (Testnet): {}", manager.current_height());
+    println!("   Current last-processed height (Testnet): {:?}", manager.last_processed_height());
 
-    // Update height
-    manager.update_height(850_000);
-    println!("   Updated height to: {}", manager.current_height());
+    // Advance every wallet's last-processed height through the per-wallet API.
+    let wallet_ids: Vec<_> = manager.list_wallets().into_iter().copied().collect();
+    for wallet_id in &wallet_ids {
+        manager.update_wallet_last_processed_height(wallet_id, 850_000);
+    }
+    println!("   Updated last-processed height to: {:?}", manager.last_processed_height());
 
     println!("\n=== Summary ===");
     println!("Total wallets created: {}", manager.wallet_count());

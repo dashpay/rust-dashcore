@@ -7,10 +7,34 @@ use super::{managed_account_operations::ManagedAccountOperations, ManagedWalletI
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
-use crate::account::{Account, AccountType, ManagedAccount};
+use crate::account::{Account, AccountType, ManagedCoreFundsAccount};
 use crate::bip32::ExtendedPubKey;
 use crate::error::{Error, Result};
-use crate::wallet::{Wallet, WalletType};
+#[cfg(any(feature = "bls", feature = "eddsa"))]
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::managed_account::{ManagedCoreKeysAccount, OwnedManagedCoreAccount};
+use crate::wallet::Wallet;
+
+/// Wrap an [`Account`] as the right [`OwnedManagedCoreAccount`] variant for
+/// its [`AccountType`] — funds-bearing for Standard / CoinJoin / DashPay,
+/// keys-only for identity / asset-lock / provider variants.
+fn owned_from_account(account: &Account) -> OwnedManagedCoreAccount {
+    match account.account_type {
+        AccountType::Standard {
+            ..
+        }
+        | AccountType::CoinJoin {
+            ..
+        }
+        | AccountType::DashpayReceivingFunds {
+            ..
+        }
+        | AccountType::DashpayExternalAccount {
+            ..
+        } => ManagedCoreFundsAccount::from_account(account).into(),
+        _ => ManagedCoreKeysAccount::from_account(account).into(),
+    }
+}
 
 impl ManagedAccountOperations for ManagedWalletInfo {
     /// Add a new managed account from an existing wallet account
@@ -41,11 +65,11 @@ impl ManagedAccountOperations for ManagedWalletInfo {
             ))
         })?;
 
-        // Create the ManagedAccount from the Account
-        let managed_account = ManagedAccount::from_account(account);
+        // Wrap as the right managed-account variant for the account type.
+        let managed_account = owned_from_account(account);
 
         // Check if managed account already exists
-        if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
+        if self.accounts.contains_managed_account_type(managed_account.managed_account_type()) {
             return Err(Error::InvalidParameter(format!(
                 "Managed account type {:?} already exists for network {:?}",
                 account_type, self.network
@@ -53,52 +77,8 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
-    }
-
-    /// Add a new managed account with passphrase verification
-    ///
-    /// This function verifies the passphrase and creates a ManagedAccount.
-    /// It only works with wallets created with a passphrase.
-    ///
-    /// # Arguments
-    /// * `wallet` - The wallet containing the account (must be MnemonicWithPassphrase type)
-    /// * `account_type` - The type of account to manage
-    /// * `passphrase` - The passphrase to verify
-    ///
-    /// # Returns
-    /// Ok(()) if the managed account was successfully added
-    fn add_managed_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Verify this is a passphrase wallet
-        match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
-                // Verify the passphrase by deriving and comparing
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-
-                // Compare with wallet's stored public key
-                let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
-
-                if derived_pub.root_public_key != wallet_pub.root_public_key {
-                    return Err(Error::InvalidParameter(
-                        "Invalid passphrase".to_string()
-                    ));
-                }
-
-                // Passphrase is valid, proceed with adding the managed account
-                self.add_managed_account(wallet, account_type)
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_managed_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
     }
 
     fn add_managed_account_from_xpub(
@@ -117,11 +97,11 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         // Create an Account with no wallet ID (standalone managed account)
         let account = Account::new(None, account_type, account_xpub, self.network)?;
 
-        // Create the ManagedAccount from the Account
-        let managed_account = ManagedAccount::from_account(&account);
+        // Wrap as the right managed-account variant for the account type.
+        let managed_account = owned_from_account(&account);
 
         // Check if managed account already exists
-        if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
+        if self.accounts.contains_managed_account_type(managed_account.managed_account_type()) {
             return Err(Error::InvalidParameter(format!(
                 "Managed account type {:?} already exists for network {:?}",
                 account_type, self.network
@@ -129,7 +109,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 
@@ -162,8 +142,8 @@ impl ManagedAccountOperations for ManagedWalletInfo {
             ))
         })?;
 
-        // Create the ManagedAccount from the BLS Account
-        let managed_account = ManagedAccount::from_bls_account(bls_account);
+        // ProviderOperatorKeys is always a keys-only variant.
+        let managed_account = ManagedCoreKeysAccount::from_bls_account(bls_account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -174,48 +154,8 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
-    }
-
-    #[cfg(feature = "bls")]
-    fn add_managed_bls_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Validate account type
-        if !matches!(account_type, AccountType::ProviderOperatorKeys) {
-            return Err(Error::InvalidParameter(
-                "BLS accounts can only be ProviderOperatorKeys".to_string(),
-            ));
-        }
-
-        // Verify this is a passphrase wallet
-        match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
-                // Verify the passphrase by deriving and comparing
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-
-                // Compare with wallet's stored public key
-                let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
-
-                if derived_pub.root_public_key != wallet_pub.root_public_key {
-                    return Err(Error::InvalidParameter(
-                        "Invalid passphrase".to_string()
-                    ));
-                }
-
-                // Passphrase is valid, proceed with adding the managed BLS account
-                self.add_managed_bls_account(wallet, account_type)
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_managed_bls_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
     }
 
     #[cfg(feature = "bls")]
@@ -235,8 +175,8 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         let bls_account =
             BLSAccount::from_public_key_bytes(None, account_type, bls_public_key, self.network)?;
 
-        // Create the ManagedAccount from the BLS Account
-        let managed_account = ManagedAccount::from_bls_account(&bls_account);
+        // ProviderOperatorKeys is always a keys-only variant.
+        let managed_account = ManagedCoreKeysAccount::from_bls_account(&bls_account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -247,7 +187,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 
@@ -281,8 +221,8 @@ impl ManagedAccountOperations for ManagedWalletInfo {
                 ))
             })?;
 
-        // Create the ManagedAccount from the EdDSA Account
-        let managed_account = ManagedAccount::from_eddsa_account(eddsa_account);
+        // ProviderPlatformKeys is always a keys-only variant.
+        let managed_account = ManagedCoreKeysAccount::from_eddsa_account(eddsa_account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -293,48 +233,8 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
-    }
-
-    #[cfg(feature = "eddsa")]
-    fn add_managed_eddsa_account_with_passphrase(
-        &mut self,
-        wallet: &Wallet,
-        account_type: AccountType,
-        passphrase: &str,
-    ) -> Result<()> {
-        // Validate account type
-        if !matches!(account_type, AccountType::ProviderPlatformKeys) {
-            return Err(Error::InvalidParameter(
-                "EdDSA accounts can only be ProviderPlatformKeys".to_string(),
-            ));
-        }
-
-        // Verify this is a passphrase wallet
-        match &wallet.wallet_type {
-            WalletType::MnemonicWithPassphrase { mnemonic, .. } => {
-                // Verify the passphrase by deriving and comparing
-                let seed = mnemonic.to_seed(passphrase);
-                let root_key = crate::wallet::root_extended_keys::RootExtendedPrivKey::new_master(&seed)?;
-
-                // Compare with wallet's stored public key
-                let derived_pub = root_key.to_root_extended_pub_key();
-                let wallet_pub = wallet.root_extended_pub_key();
-
-                if derived_pub.root_public_key != wallet_pub.root_public_key {
-                    return Err(Error::InvalidParameter(
-                        "Invalid passphrase".to_string()
-                    ));
-                }
-
-                // Passphrase is valid, proceed with adding the managed EdDSA account
-                self.add_managed_eddsa_account(wallet, account_type)
-            }
-            _ => Err(Error::InvalidParameter(
-                "add_managed_eddsa_account_with_passphrase can only be used with wallets created with a passphrase".to_string()
-            )),
-        }
     }
 
     #[cfg(feature = "eddsa")]
@@ -359,7 +259,8 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         )?;
 
         // Create the ManagedAccount from the EdDSA Account
-        let managed_account = ManagedAccount::from_eddsa_account(&eddsa_account);
+        // ProviderPlatformKeys is always a keys-only variant.
+        let managed_account = ManagedCoreKeysAccount::from_eddsa_account(&eddsa_account);
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -370,7 +271,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         }
 
         // Insert into the collection
-        self.accounts.insert(managed_account);
+        self.accounts.insert(managed_account)?;
         Ok(())
     }
 }

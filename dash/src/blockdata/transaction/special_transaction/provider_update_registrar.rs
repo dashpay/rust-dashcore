@@ -58,6 +58,31 @@ pub struct ProviderUpdateRegistrarPayload {
 }
 
 impl ProviderUpdateRegistrarPayload {
+    /// Latest spec version of the ProUpRegTx payload.
+    pub const CURRENT_VERSION: u16 = 2;
+
+    /// Create a new ProUpRegTx payload at [`Self::CURRENT_VERSION`].
+    pub fn new(
+        pro_tx_hash: Txid,
+        provider_mode: u16,
+        operator_public_key: BLSPublicKey,
+        voting_key_hash: PubkeyHash,
+        script_payout: ScriptBuf,
+        inputs_hash: InputsHash,
+        payload_sig: Vec<u8>,
+    ) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            pro_tx_hash,
+            provider_mode,
+            operator_public_key,
+            voting_key_hash,
+            script_payout,
+            inputs_hash,
+            payload_sig,
+        }
+    }
+
     /// The size of the payload in bytes.
     pub fn size(&self) -> usize {
         let mut size = 2 + 32 + 2 + 48 + 20 + 32; // 136

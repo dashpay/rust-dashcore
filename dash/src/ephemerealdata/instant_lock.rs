@@ -2,13 +2,11 @@
 //! confirm transaction within 1 or 2 seconds. This data structure
 //! represents a p2p message containing a data to verify such a lock.
 
-#[cfg(all(not(feature = "std"), not(test)))]
-use alloc::vec::Vec;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use core::fmt::{Debug, Formatter};
 use hashes::{Hash, HashEngine};
-#[cfg(any(feature = "std", test))]
+#[cfg(test)]
 pub use std::vec::Vec;
 
 use crate::bls_sig_utils::BLSSignature;

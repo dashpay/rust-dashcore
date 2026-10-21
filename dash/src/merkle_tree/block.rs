@@ -521,7 +521,6 @@ impl fmt::Display for MerkleBlockError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for MerkleBlockError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::MerkleBlockError::*;

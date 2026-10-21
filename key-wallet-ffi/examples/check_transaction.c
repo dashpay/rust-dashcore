@@ -15,9 +15,10 @@ typedef enum {
 
 typedef enum {
     Mempool = 0,
-    InBlock = 1,
-    InChainLockedBlock = 2
-} FFITransactionContext;
+    InstantSend = 1,
+    InBlock = 2,
+    InChainLockedBlock = 3
+} FFITransactionContextType;
 
 typedef struct {
     bool is_relevant;
@@ -34,7 +35,6 @@ typedef struct {
 // External function declarations
 extern void* wallet_create_from_mnemonic(
     const char* mnemonic,
-    const char* passphrase,
     FFINetwork network,
     FFIError* error
 );
@@ -44,7 +44,7 @@ extern bool wallet_check_transaction(
     FFINetwork network,
     const uint8_t* tx_bytes,
     size_t tx_len,
-    FFITransactionContext context_type,
+    FFITransactionContextType context_type,
     uint32_t block_height,
     const uint8_t* block_hash,  // 32 bytes if not null
     uint64_t timestamp,
@@ -63,7 +63,7 @@ int main() {
     FFINetwork network = Testnet;
 
     // Create wallet
-    void* wallet = wallet_create_from_mnemonic(mnemonic, NULL, network, &error);
+    void* wallet = wallet_create_from_mnemonic(mnemonic, network, &error);
     if (!wallet) {
         printf("Failed to create wallet: %s\n", error.message);
         return 1;

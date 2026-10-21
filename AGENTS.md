@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Workspace with crates: `dash`, `hashes`, `internals`, `dash-network`, `dash-spv`, `key-wallet`, `rpc-*`, utilities (`fuzz`, `test-utils`), and FFI crates (`*-ffi`).
+- Workspace with crates: `dash`, `hashes`, `internals`, `dash-spv`, `key-wallet`, `rpc-*`, utilities (`fuzz`, `test-utils`), and FFI crates (`*-ffi`).
 - Each crate keeps sources in `src/`; unit tests live alongside code with `#[cfg(test)]`. Integration tests use `tests/` (e.g., `rpc-integration-test`).
 - FFI bindings are in `*-ffi`. Shared helpers in `internals/` and `test-utils/`.
 
@@ -9,7 +9,6 @@
 - MSRV: 1.89. Build all: `cargo build --workspace --all-features`
 - Test all: `cargo test --workspace --all-features` or `./contrib/test.sh` (set `DO_COV=true`, `DO_LINT=true`, `DO_FMT=true` as needed)
 - Targeted tests: `cargo test -p dash-spv --all-features`
-- Integration RPC: `cd dash-spv && DASH_SPV_IP=<node-ip> cargo test --test integration_real_node_test -- --nocapture`
 - FFI iOS builds: `cd key-wallet-ffi && ./build-ios.sh`
 - Lint/format: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all`
 - Docs: `cargo doc --workspace` (add `--open` locally)
@@ -27,7 +26,7 @@
 
 ## Commit & Pull Request Guidelines
 - Prefer Conventional Commits: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`. Keep subject ≤72 chars with clear scope and rationale.
-- Target branches: feature work to `v**-dev` (development), hotfixes/docs to `master` unless directed otherwise.
+- Target branches: feature work to `dev` (development), hotfixes/docs to `main` unless directed otherwise.
 - Pre‑PR checks: `cargo fmt`, `cargo clippy`, `cargo test` (workspace). Update docs/CHANGELOG if user-facing.
 - Include in PRs: description, linked issues, test evidence (commands/output), and notes on features/FFI impacts.
 

@@ -2,6 +2,7 @@
 
 use super::helpers::*;
 use crate::account::AccountType;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
@@ -12,30 +13,9 @@ use crate::Network;
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
+use dashcore::blockdata::transaction::Transaction;
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, Transaction, TxIn, TxOut, Txid};
-
-/// Helper to create a basic transaction
-fn create_basic_transaction() -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 100000,
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    }
-}
+use dashcore::{OutPoint, TxIn, TxOut, Txid};
 
 #[test]
 fn test_identity_registration() {
@@ -65,7 +45,7 @@ async fn test_identity_registration_account_routing() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get the identity registration account
     let account = wallet
@@ -86,7 +66,7 @@ async fn test_identity_registration_account_routing() {
     use dashcore::opcodes;
     use dashcore::script::Builder;
 
-    let tx = Transaction {
+    let tx = dashcore::Transaction {
         version: 3, // Version 3 for special transactions
         lock_time: 0,
         input: vec![TxIn {
@@ -135,16 +115,11 @@ async fn test_identity_registration_account_routing() {
         )),
     };
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // First check without updating state
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
     println!(
         "Identity registration transaction result: is_relevant={}, received={}, credit_conversion={}",
@@ -181,7 +156,7 @@ async fn test_normal_payment_to_identity_address_not_detected() {
     let mut wallet = Wallet::new_random(network, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     let account = wallet
         .accounts
@@ -204,27 +179,23 @@ async fn test_normal_payment_to_identity_address_not_detected() {
         )
     });
 
-    // Create a NORMAL transaction (not a special transaction) to the identity address
-    let mut normal_tx = create_basic_transaction();
+    // Create a normal transaction (not a special transaction) to the identity address
+    let addr = test_addr();
+    let mut normal_tx = Transaction::dummy(&addr, 0..1, &[100_000]);
     normal_tx.output.push(TxOut {
         value: 50000,
         script_pubkey: address.script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     let result = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &normal_tx,
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -271,9 +242,11 @@ fn test_identity_topup() {
 #[test]
 fn test_multiple_topups_single_transaction() {
     // Asset lock with multiple outputs for bulk top-ups
-    let mut tx = create_test_transaction(
-        2,
-        vec![
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(
+        &addr,
+        0..2,
+        &[
             25_000_000, // Top-up 1
             25_000_000, // Top-up 2
             25_000_000, // Top-up 3

@@ -26,7 +26,7 @@ mod tests {
         let compressed = false;
 
         // Encrypt the private key
-        let encrypted = encrypt_private_key(&private_key, password, compressed, Network::Dash)
+        let encrypted = encrypt_private_key(&private_key, password, compressed, Network::Mainnet)
             .expect("Encryption should succeed");
 
         // The encrypted key should start with "6" in base58 (BIP38 encrypted keys)
@@ -59,7 +59,7 @@ mod tests {
         let password = "Satoshi";
         let compressed = true;
 
-        let encrypted = encrypt_private_key(&private_key, password, compressed, Network::Dash)
+        let encrypted = encrypt_private_key(&private_key, password, compressed, Network::Mainnet)
             .expect("Encryption should succeed");
 
         let encrypted_str = encrypted.to_base58();
@@ -107,7 +107,7 @@ mod tests {
 
         // Encrypt with correct password
         let encrypted =
-            encrypt_private_key(&private_key, correct_password, compressed, Network::Dash)
+            encrypt_private_key(&private_key, correct_password, compressed, Network::Mainnet)
                 .expect("Encryption should succeed");
 
         // Try to decrypt with wrong password
@@ -148,7 +148,7 @@ mod tests {
             // Test both compressed and uncompressed
             for compressed in [true, false] {
                 let encrypted =
-                    encrypt_private_key(&private_key, password, compressed, Network::Dash)
+                    encrypt_private_key(&private_key, password, compressed, Network::Mainnet)
                         .expect("Encryption should succeed");
 
                 // Verify the encrypted key format
@@ -179,7 +179,7 @@ mod tests {
         ];
 
         for password in unicode_passwords {
-            let encrypted = encrypt_private_key(&private_key, password, false, Network::Dash)
+            let encrypted = encrypt_private_key(&private_key, password, false, Network::Mainnet)
                 .expect("Encryption with Unicode password should succeed");
 
             let decrypted = encrypted
@@ -200,7 +200,7 @@ mod tests {
         let compressed = false;
 
         let encrypted_mainnet =
-            encrypt_private_key(&private_key, password, compressed, Network::Dash)
+            encrypt_private_key(&private_key, password, compressed, Network::Mainnet)
                 .expect("Mainnet encryption should succeed");
 
         let encrypted_testnet =
@@ -230,7 +230,7 @@ mod tests {
 
         // Empty password (should work but not recommended)
         let private_key = SecretKey::from_slice(&[0x99u8; 32]).unwrap();
-        let encrypted = encrypt_private_key(&private_key, "", false, Network::Dash)
+        let encrypted = encrypt_private_key(&private_key, "", false, Network::Mainnet)
             .expect("Empty password should work");
         let decrypted = encrypted.decrypt("").unwrap();
         assert_eq!(decrypted, private_key);
@@ -238,7 +238,7 @@ mod tests {
         // Very long password
         let long_password = "a".repeat(1000);
         let encrypted_long =
-            encrypt_private_key(&private_key, &long_password, false, Network::Dash)
+            encrypt_private_key(&private_key, &long_password, false, Network::Mainnet)
                 .expect("Long password should work");
         let decrypted_long = encrypted_long.decrypt(&long_password).unwrap();
         assert_eq!(decrypted_long, private_key);
@@ -246,7 +246,7 @@ mod tests {
         // Password with special characters
         let special_password = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~";
         let encrypted_special =
-            encrypt_private_key(&private_key, special_password, false, Network::Dash)
+            encrypt_private_key(&private_key, special_password, false, Network::Mainnet)
                 .expect("Special characters should work");
         let decrypted_special = encrypted_special.decrypt(special_password).unwrap();
         assert_eq!(decrypted_special, private_key);
@@ -283,8 +283,9 @@ mod tests {
                     let compressed = rng.gen_bool(0.5);
 
                     // Encrypt
-                    let encrypted = encrypt_private_key(&key, &password, compressed, Network::Dash)
-                        .expect("Encryption should succeed");
+                    let encrypted =
+                        encrypt_private_key(&key, &password, compressed, Network::Mainnet)
+                            .expect("Encryption should succeed");
 
                     // Decrypt
                     let decrypted =
@@ -326,7 +327,7 @@ mod tests {
         let password = "PerformanceTest";
 
         let start = Instant::now();
-        let encrypted = encrypt_private_key(&private_key, password, false, Network::Dash)
+        let encrypted = encrypt_private_key(&private_key, password, false, Network::Mainnet)
             .expect("Encryption should succeed");
         let encrypt_duration = start.elapsed();
 

@@ -21,16 +21,9 @@
 use core::ops::Index;
 use core::slice::SliceIndex;
 use core::str;
-#[cfg(feature = "std")]
 use std::io;
-#[cfg(feature = "std")]
 use std::vec::Vec;
 
-#[cfg(all(feature = "core2", not(feature = "std")))]
-use core2::io;
-
-#[cfg(all(feature = "alloc", not(feature = "std")))]
-use crate::alloc::vec::Vec;
 use crate::{hex, Error, HashEngine as _};
 
 crate::internal_macros::hash_type! {

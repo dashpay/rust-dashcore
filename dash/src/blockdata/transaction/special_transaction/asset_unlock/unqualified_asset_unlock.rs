@@ -138,7 +138,7 @@ impl Encodable for AssetUnlockBaseTransactionInfo {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(w)?;
-        len += (AssetUnlock as u16).consensus_encode(w)?;
+        len += AssetUnlock.to_u16().consensus_encode(w)?;
         len += Vec::<TxIn>::new().consensus_encode(w)?;
         len += self.output.consensus_encode(w)?;
         len += self.lock_time.consensus_encode(w)?;

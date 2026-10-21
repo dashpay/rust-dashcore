@@ -12,7 +12,7 @@ fn test_debug_address() {
 
             // Try different networks
             for network in &[
-                dashcore::Network::Dash,
+                dashcore::Network::Mainnet,
                 dashcore::Network::Testnet,
                 dashcore::Network::Regtest,
                 dashcore::Network::Devnet,

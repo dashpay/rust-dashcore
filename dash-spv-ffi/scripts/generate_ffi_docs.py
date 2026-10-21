@@ -29,7 +29,7 @@ def extract_ffi_functions(file_path: Path) -> List[FFIFunction]:
     """
     functions: List[FFIFunction] = []
 
-    with open(file_path, 'r') as f:
+    with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
     # Iterate over all #[no_mangle] attribute occurrences
@@ -268,7 +268,6 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("- `FFIClientConfig` - Client configuration")
     md.append("- `FFISyncProgress` - Synchronization progress")
     md.append("- `FFIDetailedSyncProgress` - Detailed sync progress")
-    md.append("- `FFISpvStats` - SPV statistics")
     md.append("- `FFITransaction` - Transaction information")
     md.append("- `FFIUnconfirmedTransaction` - Unconfirmed transaction")
     md.append("- `FFIEventCallbacks` - Event callback structure")
@@ -277,10 +276,9 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
 
     md.append("### Enumerations")
     md.append("")
-    md.append("- `FFINetwork` - Network type (Dash, Testnet, Regtest, Devnet)")
+    md.append("- `FFINetwork` - Network type (Mainnet, Testnet, Regtest, Devnet)")
     md.append("- `FFIValidationMode` - Validation mode (None, Basic, Full)")
     md.append("- `FFIMempoolStrategy` - Mempool strategy (FetchAll, BloomFilter, Selective)")
-    md.append("- `FFISyncStage` - Synchronization stage")
     md.append("")
 
     # Memory Management
@@ -307,18 +305,18 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("// Create configuration")
     md.append("FFIClientConfig* config = dash_spv_ffi_config_testnet();")
     md.append("")
-    md.append("// Create client")
-    md.append("FFIDashSpvClient* client = dash_spv_ffi_client_new(config);")
+    md.append("// Build event callbacks (zero-init for no-op defaults)")
+    md.append("FFIEventCallbacks callbacks = { 0 };")
     md.append("")
-    md.append("// Start the client")
-    md.append("int32_t result = dash_spv_ffi_client_start(client);")
+    md.append("// Create client with callbacks")
+    md.append("FFIDashSpvClient* client = dash_spv_ffi_client_new(config, callbacks);")
+    md.append("")
+    md.append("// Start syncing (uses callbacks provided at creation)")
+    md.append("int32_t result = dash_spv_ffi_client_run(client);")
     md.append("if (result != 0) {")
     md.append("    const char* error = dash_spv_ffi_get_last_error();")
     md.append("    // Handle error")
     md.append("}")
-    md.append("")
-    md.append("// Sync to chain tip")
-    md.append("dash_spv_ffi_client_sync_to_tip(client, NULL, NULL);")
     md.append("")
     md.append("// Get wallet manager (shares ownership with the client)")
     md.append("FFIWalletManager* wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);")
@@ -332,24 +330,24 @@ def generate_markdown(functions: List[FFIFunction]) -> str:
     md.append("### Event Callbacks")
     md.append("")
     md.append("```c")
-    md.append("void on_block(uint32_t height, const uint8_t (*hash)[32], void* user_data) {")
-    md.append("    printf(\"New block at height %u\\n\", height);")
+    md.append("void on_headers(uint32_t tip_height, void* user_data) {")
+    md.append("    printf(\"Headers stored up to height %u\\n\", tip_height);")
     md.append("}")
     md.append("")
-    md.append("void on_transaction(const uint8_t (*txid)[32], bool confirmed, ")
-    md.append("                    int64_t amount, const char* addresses, ")
-    md.append("                    uint32_t block_height, void* user_data) {")
-    md.append("    printf(\"Transaction: %lld duffs\\n\", amount);")
+    md.append("void on_tx(const char* wallet_id, uint32_t account_index,")
+    md.append("           const uint8_t (*txid)[32], int64_t amount,")
+    md.append("           const char* addresses, void* user_data) {")
+    md.append("    printf(\"Transaction: %lld duffs\\n\", (long long)amount);")
     md.append("}")
     md.append("")
-    md.append("// Set up callbacks")
-    md.append("FFIEventCallbacks callbacks = {")
-    md.append("    .on_block = on_block,")
-    md.append("    .on_transaction = on_transaction,")
-    md.append("    .user_data = NULL")
-    md.append("};")
+    md.append("// Build callbacks struct and pass to client_new()")
+    md.append("FFIEventCallbacks callbacks = { 0 };")
+    md.append("callbacks.sync.on_block_headers_stored = on_headers;")
+    md.append("callbacks.wallet.on_transaction_received = on_tx;")
+    md.append("FFIDashSpvClient* client = dash_spv_ffi_client_new(config, callbacks);")
     md.append("")
-    md.append("dash_spv_ffi_client_set_event_callbacks(client, callbacks);")
+    md.append("// Start syncing (uses callbacks provided at creation)")
+    md.append("dash_spv_ffi_client_run(client);")
     md.append("```")
     md.append("")
 
@@ -370,7 +368,7 @@ def main():
 
     # Write to file
     output_file = Path(__file__).parent.parent / "FFI_API.md"
-    with open(output_file, 'w') as f:
+    with open(output_file, 'w', encoding='utf-8') as f:
         f.write(markdown)
 
     print(f"Generated FFI documentation with {len(all_functions)} functions")

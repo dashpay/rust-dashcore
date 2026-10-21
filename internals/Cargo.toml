@@ -14,8 +14,6 @@ exclude = ["tests", "contrib"]
 
 [features]
 default = []
-std = ["alloc"]
-alloc = []
 
 [package.metadata.docs.rs]
 all-features = true

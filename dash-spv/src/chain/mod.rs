@@ -8,7 +8,6 @@
 
 pub mod chain_tip;
 pub mod chain_work;
-pub mod chainlock_manager;
 pub mod checkpoints;
 
 #[cfg(test)]
@@ -16,5 +15,4 @@ mod checkpoint_test;
 
 pub use chain_tip::{ChainTip, ChainTipManager};
 pub use chain_work::ChainWork;
-pub use chainlock_manager::{ChainLockEntry, ChainLockManager};
 pub use checkpoints::{Checkpoint, CheckpointManager};

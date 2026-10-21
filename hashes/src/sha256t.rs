@@ -184,7 +184,6 @@ macro_rules! sha256t_hash_newtype_tag_constructor {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "alloc")]
     use crate::Hash;
     use crate::{sha256, sha256t};
 
@@ -206,7 +205,6 @@ mod tests {
     }
 
     /// A hash tagged with `$name`.
-    #[cfg(feature = "alloc")]
     pub type TestHash = sha256t::Hash<TestHashTag>;
 
     sha256t_hash_newtype! {
@@ -219,7 +217,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn test_sha256t() {
         assert_eq!(
             TestHash::hash(&[0]).to_string(),

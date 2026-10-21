@@ -1,18 +1,18 @@
 //! Tests for coinbase transaction handling
 
+use super::helpers::test_addr;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
-use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
-use crate::wallet::initialization::WalletAccountCreationOptions;
-use crate::wallet::{ManagedWalletInfo, Wallet};
-use crate::Network;
+use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use dashcore::blockdata::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
+use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
 
 /// Helper to create a coinbase transaction
 fn create_coinbase_transaction() -> Transaction {
@@ -38,53 +38,14 @@ fn create_coinbase_transaction() -> Transaction {
     }
 }
 
-/// Helper to create a basic transaction
-fn create_basic_transaction() -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 100000,
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    }
-}
-
 #[tokio::test]
 async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
-    // Create a wallet with a BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with BIP44 account for coinbase test");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get the account's xpub for address derivation from the wallet's first BIP44 account
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Failed to get BIP44 account at index 0");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    // Get a receive address from the BIP44 account
-    let receive_address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address from BIP44 account");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create a coinbase transaction that pays to our receive address
     let mut coinbase_tx = create_coinbase_transaction();
@@ -96,22 +57,21 @@ async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
     };
 
     // Check the transaction using the wallet's managed info
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32])
-                .expect("Failed to create block hash for transaction context"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32])
+            .expect("Failed to create block hash for transaction context"),
+        1234567890,
+    ));
 
     // Check the coinbase transaction
     let result = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &coinbase_tx,
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -136,27 +96,17 @@ async fn test_coinbase_transaction_routing_to_bip44_receive_address() {
 
 #[tokio::test]
 async fn test_coinbase_transaction_routing_to_bip44_change_address() {
-    // Create a wallet with a BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with BIP44 account for coinbase change test");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get the account's xpub for address derivation
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Failed to get BIP44 account at index 0");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        xpub,
+        ..
+    } = TestWalletContext::new_random();
 
     // Get a change address from the BIP44 account
-    let change_address = managed_account
+    let change_address = managed_wallet_info
+        .first_bip44_managed_account_mut()
+        .expect("Failed to get first BIP44 managed account")
         .next_change_address(Some(&xpub), true)
         .expect("Failed to generate change address from BIP44 account");
 
@@ -170,22 +120,21 @@ async fn test_coinbase_transaction_routing_to_bip44_change_address() {
     };
 
     // Check the transaction using the wallet's managed info
-    let context = TransactionContext::InBlock {
-        height: 100001,
-        block_hash: Some(
-            BlockHash::from_slice(&[1u8; 32])
-                .expect("Failed to create block hash for transaction context"),
-        ),
-        timestamp: Some(1234567900),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100001,
+        BlockHash::from_slice(&[1u8; 32])
+            .expect("Failed to create block hash for transaction context"),
+        1234567900,
+    ));
 
     // Check the coinbase transaction
     let result = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &coinbase_tx,
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -210,48 +159,39 @@ async fn test_coinbase_transaction_routing_to_bip44_change_address() {
 
 #[tokio::test]
 async fn test_update_state_flag_behavior() {
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with default options");
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Expected BIP44 account at index 0 to exist");
-    let xpub = account.account_xpub;
-
-    // Get an address and initial state
-    let (address, initial_balance, initial_tx_count) = {
+    // Capture initial state
+    let (initial_balance, initial_tx_count) = {
         let managed_account = managed_wallet_info
             .first_bip44_managed_account_mut()
             .expect("Failed to get first BIP44 managed account");
-        let address = managed_account
-            .next_receive_address(Some(&xpub), true)
-            .expect("Failed to generate receive address");
-        let balance = managed_account.balance.confirmed;
-        let tx_count = managed_account.transactions.len();
-        (address, balance, tx_count)
+        (managed_account.balance.spendable(), managed_account.transactions().len())
     };
 
     // Create a test transaction
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
     tx.output.push(TxOut {
         value: 75000,
         script_pubkey: address.script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
+        1234567890,
+    ));
 
     // First check with update_state = false
-    let result1 = managed_wallet_info.check_transaction(&tx, context, &mut wallet, false).await;
+    let result1 = managed_wallet_info
+        .check_core_transaction(&tx, context.clone(), &mut wallet, false, true)
+        .await;
 
     assert!(result1.is_relevant);
 
@@ -261,11 +201,12 @@ async fn test_update_state_flag_behavior() {
             .first_bip44_managed_account_mut()
             .expect("Failed to get first BIP44 managed account");
         assert_eq!(
-            managed_account.balance.confirmed, initial_balance,
+            managed_account.balance.spendable(),
+            initial_balance,
             "Balance should not change when update_state=false"
         );
         assert_eq!(
-            managed_account.transactions.len(),
+            managed_account.transactions().len(),
             initial_tx_count,
             "Transaction count should not change when update_state=false"
         );
@@ -273,11 +214,12 @@ async fn test_update_state_flag_behavior() {
 
     // Now check with update_state = true
     let result2 = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &tx,
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -296,8 +238,8 @@ async fn test_update_state_flag_behavior() {
             .expect("Failed to get first BIP44 managed account");
         println!(
             "After update_state=true: balance={}, tx_count={}",
-            managed_account.balance.confirmed,
-            managed_account.transactions.len()
+            managed_account.balance.spendable(),
+            managed_account.transactions().len()
         );
     }
 }
@@ -305,7 +247,8 @@ async fn test_update_state_flag_behavior() {
 #[test]
 fn test_coinbase_classification() {
     // Test that coinbase transactions are properly classified
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Create a coinbase payload
     let payload = CoinbasePayload {
@@ -343,25 +286,12 @@ fn test_coinbase_routing() {
 
 #[tokio::test]
 async fn test_coinbase_transaction_with_payload_routing() {
-    // Test coinbase with special payload routing to BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get address from BIP44 account
-    let account =
-        wallet.accounts.standard_bip44_accounts.get(&0).expect("Expected BIP44 account at index 0");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    let address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create coinbase transaction with special payload
     let mut coinbase_tx = create_coinbase_transaction();
@@ -387,14 +317,15 @@ async fn test_coinbase_transaction_with_payload_routing() {
     let tx_type = TransactionRouter::classify_transaction(&coinbase_tx);
     assert_eq!(tx_type, TransactionType::Coinbase);
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash")),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(BlockInfo::new(
+        100000,
+        BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash"),
+        1234567890,
+    ));
 
-    let result =
-        managed_wallet_info.check_transaction(&coinbase_tx, context, &mut wallet, true).await;
+    let result = managed_wallet_info
+        .check_core_transaction(&coinbase_tx, context, &mut wallet, true, true)
+        .await;
 
     assert!(result.is_relevant, "Coinbase with payload should be relevant");
     assert_eq!(result.total_received, 5000000000, "Should have received block reward");

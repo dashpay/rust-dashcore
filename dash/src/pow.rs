@@ -104,7 +104,6 @@ impl Work {
     /// The result inherently suffers from a loss of precision and is, therefore, meant to be
     /// used mainly for informative and displaying purposes, similarly to Bitcoin Core's
     /// `log2_work` output in its logs.
-    #[cfg(feature = "std")]
     pub fn log2(self) -> f64 {
         self.0.to_f64().log2()
     }
@@ -731,7 +730,6 @@ impl fmt::Display for TryFromError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for TryFromError {}
 
 impl Add for U256 {
@@ -1649,7 +1647,6 @@ mod tests {
         assert_eq!(back, target)
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn work_log2() {
         // Compare work log2 to historical Bitcoin Core values found in Core logs.

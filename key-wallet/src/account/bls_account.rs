@@ -9,7 +9,6 @@ use crate::derivation_bls_bip32::{ExtendedBLSPrivKey, ExtendedBLSPubKey};
 use crate::error::{Error, Result};
 use crate::managed_account::address_pool::AddressPoolType;
 use crate::{ChildNumber, DerivationPath, Network};
-use alloc::vec::Vec;
 use core::fmt;
 use dashcore::Address;
 
@@ -507,6 +506,6 @@ mod tests {
 
         let address = result.expect("Failed to derive BLS address");
         // Verify it's a valid testnet address
-        assert_eq!(address.network(), &Network::Testnet);
+        assert!(address.as_unchecked().is_valid_for_network(Network::Testnet));
     }
 }

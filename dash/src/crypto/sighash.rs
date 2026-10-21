@@ -278,7 +278,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use Error::*;
@@ -633,7 +632,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
         self.tx.borrow().version.consensus_encode(&mut writer)?;
 
         // nTransactionType (2): the nTxType of the transaction.
-        (self.tx.borrow().tx_type() as u16).consensus_encode(&mut writer)?;
+        self.tx.borrow().tx_type().to_u16().consensus_encode(&mut writer)?;
 
         // nLockTime (4): the nLockTime of the transaction.
         self.tx.borrow().lock_time.consensus_encode(&mut writer)?;
@@ -1178,13 +1177,13 @@ mod tests {
     use hashes::HashEngine;
 
     use super::*;
+    use crate::Network;
     use crate::address::Address;
     use crate::consensus::deserialize;
     use crate::crypto::key::PublicKey;
     use crate::crypto::sighash::{LegacySighash, TapSighash};
     use crate::internal_macros::hex;
     use crate::taproot::TapLeafHash;
-    use dash_network::Network;
 
     #[test]
     fn sighash_single_bug() {
@@ -1755,7 +1754,7 @@ mod tests {
 
     fn p2pkh_hex(pk: &str) -> ScriptBuf {
         let pk: PublicKey = PublicKey::from_str(pk).unwrap();
-        Address::p2pkh(&pk, Network::Dash).script_pubkey()
+        Address::p2pkh(&pk, Network::Mainnet).script_pubkey()
     }
 
     #[test]

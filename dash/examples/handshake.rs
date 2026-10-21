@@ -30,7 +30,7 @@ fn main() {
     let version_message = build_version_message(address);
 
     let first_message = message::RawNetworkMessage {
-        magic: Network::Dash.magic(),
+        magic: Network::Mainnet.magic(),
         payload: version_message,
     };
 
@@ -50,7 +50,7 @@ fn main() {
                     println!("Received version message: {:?}", reply.payload);
 
                     let second_message = message::RawNetworkMessage {
-                        magic: Network::Dash.magic(),
+                        magic: Network::Mainnet.magic(),
                         payload: message::NetworkMessage::Verack,
                     };
 

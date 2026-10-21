@@ -2,6 +2,8 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::storage::{PersistentPeerStorage, PersistentStorage};
+
     use super::super::*;
     use std::net::SocketAddr;
 
@@ -61,11 +63,14 @@ mod tests {
         manager.update_reputation(peer2, 50, "Bad peer").await;
 
         // Save and load
-        let temp_file = tempfile::NamedTempFile::new().unwrap();
-        manager.save_to_storage(temp_file.path()).await.unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let peer_storage = PersistentPeerStorage::open(temp_dir.path())
+            .await
+            .expect("Failed to open PersistentPeerStorage");
+        manager.save_to_storage(&peer_storage).await.unwrap();
 
         let new_manager = PeerReputationManager::new();
-        new_manager.load_from_storage(temp_file.path()).await.unwrap();
+        new_manager.load_from_storage(&peer_storage).await.unwrap();
 
         // Verify scores were preserved
         assert_eq!(new_manager.get_score(&peer1).await, -10);
@@ -76,22 +81,22 @@ mod tests {
     async fn test_peer_selection() {
         let manager = PeerReputationManager::new();
 
-        let good_peer: SocketAddr = "1.1.1.1:8333".parse().unwrap();
-        let neutral_peer: SocketAddr = "2.2.2.2:8333".parse().unwrap();
-        let bad_peer: SocketAddr = "3.3.3.3:8333".parse().unwrap();
+        let good_peer = AddrV2Message::dummy(0, "1.1.1.1".parse().unwrap(), 8333);
+        let neutral_peer = AddrV2Message::dummy(0, "2.2.2.2".parse().unwrap(), 8333);
+        let bad_peer = AddrV2Message::dummy(0, "3.3.3.3".parse().unwrap(), 8333);
 
         // Set different reputations
-        manager.update_reputation(good_peer, -20, "Very good").await;
-        manager.update_reputation(bad_peer, 80, "Very bad").await;
+        manager.update_reputation(good_peer.socket_addr().unwrap(), -20, "Very good").await;
+        manager.update_reputation(bad_peer.socket_addr().unwrap(), 80, "Very bad").await;
         // neutral_peer has default score of 0
 
-        let all_peers = vec![good_peer, neutral_peer, bad_peer];
+        let all_peers = vec![good_peer.clone(), neutral_peer.clone(), bad_peer.clone()];
         let selected = manager.select_best_peers(all_peers, 2).await;
 
         // Should select good_peer first, then neutral_peer
         assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0], good_peer);
-        assert_eq!(selected[1], neutral_peer);
+        assert_eq!(selected[0], good_peer.socket_addr().unwrap());
+        assert_eq!(selected[1], neutral_peer.socket_addr().unwrap());
     }
 
     #[tokio::test]

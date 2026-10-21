@@ -10,7 +10,7 @@ fn test_extended_key_derivation() {
 
     // Test vector from BIP32
     let seed = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
-    let master = ExtendedPrivKey::new_master(Network::Dash, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
     // m/0'
     let child = master.ckd_priv(&secp, ChildNumber::from_hardened_idx(0).unwrap()).unwrap();
@@ -39,7 +39,7 @@ fn test_derivation_path_parsing() {
 #[test]
 fn test_extended_key_serialization() {
     let seed = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
-    let master = ExtendedPrivKey::new_master(Network::Dash, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
     // Serialize and deserialize
     let serialized = master.to_string();
@@ -57,7 +57,7 @@ fn test_extended_key_serialization() {
 fn test_public_key_derivation() {
     let secp = Secp256k1::new();
     let seed = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
-    let master = ExtendedPrivKey::new_master(Network::Dash, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
     let master_pub = ExtendedPubKey::from_priv(&secp, &master);
 
     // Can derive non-hardened child from public key
@@ -74,7 +74,7 @@ fn test_public_key_derivation() {
 fn test_fingerprint_calculation() {
     let secp = Secp256k1::new();
     let seed = hex::decode("000102030405060708090a0b0c0d0e0f").unwrap();
-    let master = ExtendedPrivKey::new_master(Network::Dash, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
     let child = master.ckd_priv(&secp, ChildNumber::from_normal_idx(0).unwrap()).unwrap();
     let master_fingerprint = master.fingerprint(&secp);

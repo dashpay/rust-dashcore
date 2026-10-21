@@ -2,11 +2,17 @@
 
 REPO_DIR=$(git rev-parse --show-toplevel)
 
-listTargetFiles() {
+listAllTargetFiles() {
   pushd "$REPO_DIR/fuzz" > /dev/null || exit 1
-  find fuzz_targets -type f -name "*.rs" \
-    | grep -v 'deserialize_transaction\|deserialize_prefilled_transaction\|deserialize_psbt'
+  # List dash targets first, then hashes
+  find fuzz_targets/dash -type f -name "*.rs" 2>/dev/null
+  find fuzz_targets/hashes -type f -name "*.rs" 2>/dev/null
   popd > /dev/null || exit 1
+}
+
+listTargetFiles() {
+  # Exclude targets that don't work in CI
+  listAllTargetFiles | grep -v 'deserialize_transaction\|deserialize_prefilled_transaction\|deserialize_psbt'
 }
 
 targetFileToName() {

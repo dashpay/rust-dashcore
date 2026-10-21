@@ -1,6 +1,7 @@
-//! Masternode synchronization and embedded data.
-
-pub mod embedded_data;
 mod manager;
+mod pipeline;
+mod progress;
+mod sync_manager;
 
-pub use manager::MasternodeSyncManager;
+pub use manager::MasternodesManager;
+pub use progress::MasternodesProgress;

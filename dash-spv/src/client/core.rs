@@ -8,23 +8,28 @@
 //! - Configuration updates
 //! - Terminal UI accessors
 
+use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 
-#[cfg(feature = "terminal-ui")]
-use crate::terminal::TerminalUI;
-
-use crate::chain::ChainLockManager;
+use super::ClientConfig;
 use crate::error::{Result, SpvError};
-use crate::mempool_filter::MempoolFilter;
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
-use crate::sync::filters::FilterNotificationSender;
-use crate::sync::SyncManager;
-use crate::types::{ChainState, DetailedSyncProgress, MempoolState, SpvEvent, SpvStats};
-use key_wallet_manager::wallet_interface::WalletInterface;
+use crate::storage::{
+    PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
+    PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
+};
+use crate::sync::SyncCoordinator;
+use key_wallet_manager::WalletInterface;
 
-use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
+pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
+    PersistentBlockHeaderStorage,
+    PersistentFilterHeaderStorage,
+    PersistentFilterStorage,
+    PersistentBlockStorage,
+    PersistentMetadataStorage,
+    W,
+>;
 
 /// Main Dash SPV client with generic trait-based architecture.
 ///
@@ -67,6 +72,7 @@ use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
 /// - `W: WalletInterface` - Handles UTXO tracking, address management, transaction processing
 /// - `N: NetworkManager` - Manages peer connections, message routing, network protocol
 /// - `S: StorageManager` - Persistent storage for headers, filters, chain state
+/// - Event handlers are stored as `Vec<Arc<dyn EventHandler>>`
 ///
 /// ## Common Configurations
 ///
@@ -98,60 +104,35 @@ use super::{BlockProcessingTask, ClientConfig, StatusDisplay};
 ///
 /// The generic design is an intentional, beneficial architectural choice for a library.
 pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
-    pub(super) config: ClientConfig,
-    pub(super) state: Arc<RwLock<ChainState>>,
-    pub(super) stats: Arc<RwLock<SpvStats>>,
-    pub(super) network: N,
+    pub(super) config: Arc<RwLock<ClientConfig>>,
+    pub(super) network: Arc<Mutex<N>>,
     pub(super) storage: Arc<Mutex<S>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
-    /// Synchronization manager for coordinating blockchain sync operations.
-    ///
-    /// # Architectural Design
-    ///
-    /// The sync manager is stored as a non-shared field (not wrapped in `Arc<Mutex<T>>`)
-    /// for the following reasons:
-    ///
-    /// 1. **Single Owner Pattern**: The sync manager is exclusively owned by the client,
-    ///    ensuring clear ownership and preventing concurrent access issues.
-    ///
-    /// 2. **Sequential Operations**: Blockchain synchronization is inherently sequential -
-    ///    headers must be validated in order, and sync phases must complete before
-    ///    progressing to the next phase.
-    ///
-    /// 3. **Simplified State Management**: Avoiding shared ownership eliminates complex
-    ///    synchronization issues and makes the sync state machine easier to reason about.
-    ///
-    /// ## Future Considerations
-    ///
-    /// If concurrent access becomes necessary (e.g., for monitoring sync progress from
-    /// multiple threads), consider:
-    /// - Using interior mutability patterns (`Arc<Mutex<SyncManager>>`)
-    /// - Extracting read-only state into a separate shared structure
-    /// - Implementing a message-passing architecture for sync commands
-    ///
-    /// The current design prioritizes simplicity and correctness over concurrent access.
-    pub(super) sync_manager: SyncManager<S, N, W>,
-    pub(super) chainlock_manager: Arc<ChainLockManager>,
-    pub(super) running: Arc<RwLock<bool>>,
-    #[cfg(feature = "terminal-ui")]
-    pub(super) terminal_ui: Option<Arc<TerminalUI>>,
-    pub(super) filter_processor: Option<FilterNotificationSender>,
-    pub(super) block_processor_tx: mpsc::UnboundedSender<BlockProcessingTask>,
-    pub(super) progress_sender: Option<mpsc::UnboundedSender<DetailedSyncProgress>>,
-    pub(super) progress_receiver: Option<mpsc::UnboundedReceiver<DetailedSyncProgress>>,
-    pub(super) event_tx: mpsc::UnboundedSender<SpvEvent>,
-    pub(super) event_rx: Option<mpsc::UnboundedReceiver<SpvEvent>>,
-    pub(super) mempool_state: Arc<RwLock<MempoolState>>,
-    pub(super) mempool_filter: Option<Arc<MempoolFilter>>,
+    pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
+    pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
+    /// `true` while running, `false` once a stop is requested. Stored as a
+    /// `watch` so a stop is observed immediately rather than polled.
+    pub(super) running: Arc<watch::Sender<bool>>,
+    pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
-impl<
-        W: WalletInterface + Send + Sync + 'static,
-        N: NetworkManager + Send + Sync + 'static,
-        S: StorageManager + Send + Sync + 'static,
-    > DashSpvClient<W, N, S>
-{
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpvClient<W, N, S> {
+    fn clone(&self) -> Self {
+        Self {
+            config: Arc::clone(&self.config),
+            network: Arc::clone(&self.network),
+            storage: Arc::clone(&self.storage),
+            wallet: Arc::clone(&self.wallet),
+            masternode_engine: self.masternode_engine.clone(),
+            sync_coordinator: Arc::clone(&self.sync_coordinator),
+            running: Arc::clone(&self.running),
+            event_handlers: Arc::clone(&self.event_handlers),
+        }
+    }
+}
+
+impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
     // ============ Simple Getters ============
 
     /// Get a reference to the wallet.
@@ -160,8 +141,8 @@ impl<
     }
 
     /// Get the network configuration.
-    pub fn network(&self) -> dashcore::Network {
-        self.config.network
+    pub async fn network(&self) -> dashcore::Network {
+        self.config.read().await.network
     }
 
     /// Get access to storage manager (requires locking).
@@ -169,104 +150,33 @@ impl<
         self.storage.clone()
     }
 
-    /// Get reference to chainlock manager.
-    pub fn chainlock_manager(&self) -> &Arc<ChainLockManager> {
-        &self.chainlock_manager
-    }
-
-    /// Get mutable reference to sync manager (for testing).
-    #[cfg(test)]
-    pub fn sync_manager_mut(&mut self) -> &mut SyncManager<S, N, W> {
-        &mut self.sync_manager
-    }
-
     // ============ State Queries ============
 
     /// Check if the client is running.
-    pub async fn is_running(&self) -> bool {
-        *self.running.read().await
+    pub fn is_running(&self) -> bool {
+        *self.running.borrow()
     }
 
     /// Returns the current chain tip hash if available.
     pub async fn tip_hash(&self) -> Option<dashcore::BlockHash> {
-        let state = self.state.read().await;
-        state.tip_hash()
+        let storage = self.storage.lock().await;
+        storage.get_tip().await.map(|tip| *tip.hash())
     }
 
     /// Returns the current chain tip height (absolute), accounting for checkpoint base.
     pub async fn tip_height(&self) -> u32 {
-        let state = self.state.read().await;
-        state.tip_height()
-    }
-
-    /// Get current chain state (read-only).
-    pub async fn chain_state(&self) -> ChainState {
-        let display = self.create_status_display().await;
-        display.chain_state().await
+        self.storage.lock().await.get_tip_height().await.unwrap_or(0)
     }
 
     // ============ Storage Operations ============
 
     /// Clear all persisted storage (headers, filters, state, sync state) and reset in-memory state.
-    pub async fn clear_storage(&mut self) -> Result<()> {
+    pub async fn clear_storage(&self) -> Result<()> {
         // Wipe on-disk persistence fully
         {
             let mut storage = self.storage.lock().await;
             storage.clear().await.map_err(SpvError::Storage)?;
         }
-
-        // Reset in-memory chain state to a clean baseline for the current network
-        {
-            let mut state = self.state.write().await;
-            *state = ChainState::new_for_network(self.config.network);
-        }
-
-        // Reset sync manager filter state (headers/filters progress trackers)
-        self.sync_manager.filter_sync_mut().clear_filter_state().await;
-
-        // Reset in-memory statistics and received filter height tracking without
-        // replacing the SharedFilterHeights Arc (to keep existing references valid)
-        let received_heights = {
-            let stats = self.stats.read().await;
-            stats.received_filter_heights.clone()
-        };
-
-        {
-            use std::time::Duration;
-            let mut stats = self.stats.write().await;
-            stats.connected_peers = 0;
-            stats.total_peers = 0;
-            stats.header_height = 0;
-            stats.filter_height = 0;
-            stats.headers_downloaded = 0;
-            stats.filter_headers_downloaded = 0;
-            stats.filters_downloaded = 0;
-            stats.filters_matched = 0;
-            stats.blocks_with_relevant_transactions = 0;
-            stats.blocks_requested = 0;
-            stats.blocks_processed = 0;
-            stats.masternode_diffs_processed = 0;
-            stats.bytes_received = 0;
-            stats.bytes_sent = 0;
-            stats.uptime = Duration::default();
-            stats.filters_requested = 0;
-            stats.filters_received = 0;
-            stats.filter_sync_start_time = None;
-            stats.last_filter_received_time = None;
-            stats.active_filter_requests = 0;
-            stats.pending_filter_requests = 0;
-            stats.filter_request_timeouts = 0;
-            stats.filter_requests_retried = 0;
-        }
-
-        received_heights.lock().await.clear();
-
-        // Reset mempool tracking (state and bloom filter)
-        {
-            let mut mempool_state = self.mempool_state.write().await;
-            *mempool_state = MempoolState::default();
-        }
-        self.mempool_filter = None;
 
         Ok(())
     }
@@ -274,67 +184,20 @@ impl<
     // ============ Configuration ============
 
     /// Update the client configuration.
-    pub async fn update_config(&mut self, new_config: ClientConfig) -> Result<()> {
+    pub async fn update_config(&self, new_config: ClientConfig) -> Result<()> {
         // Validate new configuration
         new_config.validate().map_err(SpvError::Config)?;
 
+        let mut config = self.config.write().await;
+
         // Ensure network hasn't changed
-        if new_config.network != self.config.network {
+        if new_config.network != config.network {
             return Err(SpvError::Config("Cannot change network on running client".to_string()));
         }
 
         // Update configuration
-        self.config = new_config;
+        *config = new_config;
 
         Ok(())
-    }
-
-    // ============ Terminal UI ============
-
-    /// Enable terminal UI for status display.
-    #[cfg(feature = "terminal-ui")]
-    pub fn enable_terminal_ui(&mut self) {
-        let ui = Arc::new(TerminalUI::new(true));
-        self.terminal_ui = Some(ui);
-    }
-
-    /// Get the terminal UI handle.
-    #[cfg(feature = "terminal-ui")]
-    pub fn get_terminal_ui(&self) -> Option<Arc<TerminalUI>> {
-        self.terminal_ui.clone()
-    }
-
-    // ============ Internal Helpers ============
-
-    /// Helper to create a StatusDisplay instance.
-    #[cfg(feature = "terminal-ui")]
-    pub(super) async fn create_status_display(&self) -> StatusDisplay<'_, S, W> {
-        StatusDisplay::new(
-            &self.state,
-            &self.stats,
-            self.storage.clone(),
-            Some(&self.wallet),
-            &self.terminal_ui,
-            &self.config,
-        )
-    }
-
-    /// Helper to create a StatusDisplay instance (without terminal UI).
-    #[cfg(not(feature = "terminal-ui"))]
-    pub(super) async fn create_status_display(&self) -> StatusDisplay<'_, S, W> {
-        StatusDisplay::new(
-            &self.state,
-            &self.stats,
-            self.storage.clone(),
-            Some(&self.wallet),
-            &None,
-            &self.config,
-        )
-    }
-
-    /// Update the status display.
-    pub(super) async fn update_status_display(&self) {
-        let display = self.create_status_display().await;
-        display.update_status_display().await;
     }
 }

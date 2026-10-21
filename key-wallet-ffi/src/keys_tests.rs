@@ -5,115 +5,105 @@
 mod tests {
     use crate::error::{FFIError, FFIErrorCode};
     use crate::keys::*;
-    use crate::types::FFINetwork;
     use crate::wallet;
     use std::ffi::{CStr, CString};
     use std::ptr;
 
     #[test]
     fn test_extended_key_string_conversion() {
-        unsafe {
-            let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
-            // Create a wallet to get extended keys from
-            let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-            let passphrase = CString::new("").unwrap();
-            let wallet = wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            );
-            assert!(!wallet.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Create a wallet to get extended keys from
+        let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
+        };
+        assert!(!wallet.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            // Derive an extended private key
-            let path = CString::new("m/44'/1'/0'").unwrap();
-            let ext_priv = wallet_derive_extended_private_key(wallet, path.as_ptr(), &mut error);
-            assert!(!ext_priv.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Derive an extended private key
+        let path = CString::new("m/44'/1'/0'").unwrap();
+        let ext_priv =
+            unsafe { wallet_derive_extended_private_key(wallet, path.as_ptr(), &mut error) };
+        assert!(!ext_priv.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            // Test extended_private_key_to_string
-            let xprv_str =
-                extended_private_key_to_string(ext_priv, FFINetwork::Testnet, &mut error);
-            assert!(!xprv_str.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Test extended_private_key_to_string
+        let xprv_str =
+            unsafe { extended_private_key_to_string(ext_priv, FFINetwork::Testnet, &mut error) };
+        assert!(!xprv_str.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            let xprv = CStr::from_ptr(xprv_str).to_str().unwrap();
-            assert!(xprv.starts_with("tprv")); // Testnet extended private key
-            crate::utils::string_free(xprv_str);
+        let xprv = unsafe { CStr::from_ptr(xprv_str) }.to_str().unwrap();
+        assert!(xprv.starts_with("tprv")); // Testnet extended private key
+        unsafe { crate::utils::string_free(xprv_str) };
 
-            // Test extended_private_key_get_private_key
-            let priv_key = extended_private_key_get_private_key(ext_priv, &mut error);
-            assert!(!priv_key.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Test extended_private_key_get_private_key
+        let priv_key = unsafe { extended_private_key_get_private_key(ext_priv, &mut error) };
+        assert!(!priv_key.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            // Get WIF from the extracted private key
-            let wif = private_key_to_wif(priv_key, FFINetwork::Testnet, &mut error);
-            assert!(!wif.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Get WIF from the extracted private key
+        let wif = unsafe { private_key_to_wif(priv_key, FFINetwork::Testnet, &mut error) };
+        assert!(!wif.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            let wif_str = CStr::from_ptr(wif).to_str().unwrap();
-            // Assert testnet WIF prefix (compressed or uncompressed)
-            assert!(wif_str.starts_with('c') || wif_str.starts_with('9'));
-            crate::utils::string_free(wif);
+        let wif_str = unsafe { CStr::from_ptr(wif) }.to_str().unwrap();
+        // Assert testnet WIF prefix (compressed or uncompressed)
+        assert!(wif_str.starts_with('c') || wif_str.starts_with('9'));
+        unsafe { crate::utils::string_free(wif) };
 
-            // Clean up
-            private_key_free(priv_key);
-            extended_private_key_free(ext_priv);
+        // Clean up
+        unsafe { private_key_free(priv_key) };
+        unsafe { extended_private_key_free(ext_priv) };
 
-            // Now test extended public key
-            let ext_pub = wallet_derive_extended_public_key(wallet, path.as_ptr(), &mut error);
-            assert!(!ext_pub.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Now test extended public key
+        let ext_pub =
+            unsafe { wallet_derive_extended_public_key(wallet, path.as_ptr(), &mut error) };
+        assert!(!ext_pub.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            // Test extended_public_key_to_string
-            let xpub_str = extended_public_key_to_string(ext_pub, FFINetwork::Testnet, &mut error);
-            assert!(!xpub_str.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Test extended_public_key_to_string
+        let xpub_str =
+            unsafe { extended_public_key_to_string(ext_pub, FFINetwork::Testnet, &mut error) };
+        assert!(!xpub_str.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            let xpub = CStr::from_ptr(xpub_str).to_str().unwrap();
-            assert!(xpub.starts_with("tpub")); // Testnet extended public key
-            crate::utils::string_free(xpub_str);
+        let xpub = unsafe { CStr::from_ptr(xpub_str) }.to_str().unwrap();
+        assert!(xpub.starts_with("tpub")); // Testnet extended public key
+        unsafe { crate::utils::string_free(xpub_str) };
 
-            // Test extended_public_key_get_public_key
-            let pub_key = extended_public_key_get_public_key(ext_pub, &mut error);
-            assert!(!pub_key.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Test extended_public_key_get_public_key
+        let pub_key = unsafe { extended_public_key_get_public_key(ext_pub, &mut error) };
+        assert!(!pub_key.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            // Get hex from the extracted public key
-            let hex = public_key_to_hex(pub_key, &mut error);
-            assert!(!hex.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Get hex from the extracted public key
+        let hex = unsafe { public_key_to_hex(pub_key, &mut error) };
+        assert!(!hex.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            let hex_str = CStr::from_ptr(hex).to_str().unwrap();
-            assert_eq!(hex_str.len(), 66); // 33 bytes = 66 hex chars
-            crate::utils::string_free(hex);
+        let hex_str = unsafe { CStr::from_ptr(hex) }.to_str().unwrap();
+        assert_eq!(hex_str.len(), 66); // 33 bytes = 66 hex chars
+        unsafe { crate::utils::string_free(hex) };
 
-            // Clean up
-            public_key_free(pub_key);
-            extended_public_key_free(ext_pub);
-            wallet::wallet_free(wallet);
-        }
+        // Clean up
+        unsafe { public_key_free(pub_key) };
+        unsafe { extended_public_key_free(ext_pub) };
+        unsafe { wallet::wallet_free(wallet) };
     }
 
     // Note: wallet_get_account_xpriv is not implemented for security reasons
     // The function always returns null to prevent private key extraction
     #[test]
     fn test_wallet_get_account_xpriv_not_implemented() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
         assert!(!wallet.is_null());
 
@@ -122,7 +112,7 @@ mod tests {
 
         // Should return null (not implemented for security)
         assert!(xpriv_str.is_null());
-        assert_eq!(error.code, FFIErrorCode::WalletError);
+        assert_eq!(error.code, FFIErrorCode::InternalError);
 
         // Clean up
         unsafe {
@@ -132,19 +122,13 @@ mod tests {
 
     #[test]
     fn test_wallet_get_account_xpub() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
         assert!(!wallet.is_null());
 
@@ -159,7 +143,6 @@ mod tests {
         // Clean up
         unsafe {
             crate::utils::string_free(xpub_str);
-
             wallet::wallet_free(wallet);
         }
     }
@@ -167,19 +150,13 @@ mod tests {
     // wallet_derive_private_key is now implemented
     #[test]
     fn test_wallet_derive_private_key_now_implemented() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
 
         // Try to derive private key - should now succeed (44'/1'/0'/0/0 for Dash)
@@ -207,27 +184,19 @@ mod tests {
         }
         unsafe {
             private_key_free(privkey_ptr);
-        }
-        unsafe {
             wallet::wallet_free(wallet);
         }
     }
 
     #[test]
     fn test_wallet_derive_public_key() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
 
         // Ensure wallet was created successfully
@@ -270,41 +239,35 @@ mod tests {
 
     #[test]
     fn test_wallet_derive_public_key_as_hex() {
-        unsafe {
-            let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
-            // Create a wallet
-            let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-            let passphrase = CString::new("").unwrap();
-            let wallet = wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            );
-            assert!(!wallet.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Create a wallet
+        let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
+        let wallet = unsafe {
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
+        };
+        assert!(!wallet.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            // Derive public key as hex directly
-            let path = CString::new("m/44'/1'/0'/0/0").unwrap();
-            let hex_str = wallet_derive_public_key_as_hex(wallet, path.as_ptr(), &mut error);
-            assert!(!hex_str.is_null());
-            assert_eq!(error.code, FFIErrorCode::Success);
+        // Derive public key as hex directly
+        let path = CString::new("m/44'/1'/0'/0/0").unwrap();
+        let hex_str = unsafe { wallet_derive_public_key_as_hex(wallet, path.as_ptr(), &mut error) };
+        assert!(!hex_str.is_null());
+        assert_eq!(error.code, FFIErrorCode::Success);
 
-            let hex = CStr::from_ptr(hex_str).to_str().unwrap();
-            // Public key should start with 02 or 03 (compressed)
-            assert!(hex.starts_with("02") || hex.starts_with("03"));
-            assert_eq!(hex.len(), 66); // 33 bytes * 2 hex chars
+        let hex = unsafe { CStr::from_ptr(hex_str) }.to_str().unwrap();
+        // Public key should start with 02 or 03 (compressed)
+        assert!(hex.starts_with("02") || hex.starts_with("03"));
+        assert_eq!(hex.len(), 66); // 33 bytes * 2 hex chars
 
-            // Clean up
-            crate::utils::string_free(hex_str);
-            wallet::wallet_free(wallet);
-        }
+        // Clean up
+        unsafe { crate::utils::string_free(hex_str) };
+        unsafe { wallet::wallet_free(wallet) };
     }
 
     #[test]
     fn test_derivation_path_parse() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Parse a BIP44 path
         let path = CString::new("m/44'/1'/0'/0/5").unwrap();
@@ -351,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_derivation_path_parse_root() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Parse root path
         let path = CString::new("m").unwrap();
@@ -381,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_error_handling() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with null wallet
         let xpriv = unsafe { wallet_get_account_xpriv(ptr::null(), 0, &mut error) };
@@ -409,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_wallet_derive_public_key_null_inputs() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with null wallet (44'/1'/0'/0/0 for Dash)
         let path = CString::new("m/44'/1'/0'/0/0").unwrap();
@@ -421,15 +384,9 @@ mod tests {
 
         // Create a wallet for subsequent tests
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
 
         // Test with null path
@@ -446,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_derivation_path_parse_null_inputs() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test with null path
         let mut indices_out: *mut u32 = ptr::null_mut();
@@ -484,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_derivation_path_complex_cases() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Test single hardened index
         let path = CString::new("m/44'").unwrap();
@@ -551,19 +508,13 @@ mod tests {
 
     #[test]
     fn test_wallet_get_account_xpub_edge_cases() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
         assert!(!wallet.is_null());
 
@@ -596,19 +547,13 @@ mod tests {
 
     #[test]
     fn test_wallet_derive_public_key_different_paths() {
-        let mut error = FFIError::success();
+        let mut error = FFIError::default();
 
         // Create a wallet
         let mnemonic = CString::new("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-        let passphrase = CString::new("").unwrap();
 
         let wallet = unsafe {
-            wallet::wallet_create_from_mnemonic(
-                mnemonic.as_ptr(),
-                passphrase.as_ptr(),
-                FFINetwork::Testnet,
-                &mut error,
-            )
+            wallet::wallet_create_from_mnemonic(mnemonic.as_ptr(), FFINetwork::Testnet, &mut error)
         };
 
         // Test different derivation paths (Dash coin type 5)

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use dash_network::ffi::FFINetwork;
     use dash_spv_ffi::*;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -8,10 +9,11 @@ mod tests {
             wallet_manager_free_wallet_ids, wallet_manager_get_wallet_ids,
             wallet_manager_import_wallet_from_bytes, wallet_manager_wallet_count,
         },
-        FFIError, FFINetwork, FFIWalletManager,
+        FFIError, FFIWalletManager,
     };
-    use key_wallet_manager::wallet_manager::WalletManager;
-    use std::ffi::CStr;
+    use key_wallet_manager::WalletManager;
+    use std::ffi::{CStr, CString};
+    use tempfile::TempDir;
 
     #[test]
     fn test_get_wallet_manager() {
@@ -20,8 +22,14 @@ mod tests {
             let config = dash_spv_ffi_config_testnet();
             assert!(!config.is_null());
 
+            let temp_dir = TempDir::new().unwrap();
+            dash_spv_ffi_config_set_data_dir(
+                config,
+                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+            );
+
             // Create a client
-            let client = dash_spv_ffi_client_new(config);
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             // Get wallet manager
@@ -31,7 +39,7 @@ mod tests {
             assert_eq!((*wallet_manager_ptr).network(), FFINetwork::Testnet);
 
             // Get wallet count (should be 0 initially)
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
             let count = wallet_manager_wallet_count(
                 wallet_manager as *const FFIWalletManager,
                 &mut error as *mut FFIError,
@@ -51,7 +59,13 @@ mod tests {
             let config = dash_spv_ffi_config_testnet();
             assert!(!config.is_null());
 
-            let client = dash_spv_ffi_client_new(config);
+            let temp_dir = TempDir::new().unwrap();
+            dash_spv_ffi_config_set_data_dir(
+                config,
+                CString::new(temp_dir.path().to_str().unwrap()).unwrap().as_ptr(),
+            );
+
+            let client = dash_spv_ffi_client_new(config, FFIEventCallbacks::default());
             assert!(!client.is_null());
 
             let wallet_manager = dash_spv_ffi_client_get_wallet_manager(client);
@@ -65,7 +79,6 @@ mod tests {
             let (serialized_wallet, expected_wallet_id) = native_manager
                 .create_wallet_from_mnemonic_return_serialized_bytes(
                     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-                    "",
                     0,
                     WalletAccountCreationOptions::Default,
                     false,
@@ -74,7 +87,7 @@ mod tests {
                 .expect("wallet serialization should succeed");
 
             // Import the serialized wallet through the FFI pointer we retrieved from the client
-            let mut error = FFIError::success();
+            let mut error = FFIError::default();
             let mut imported_wallet_id = [0u8; 32];
             let import_ok = wallet_manager_import_wallet_from_bytes(
                 wallet_manager_ptr,
@@ -104,7 +117,7 @@ mod tests {
             wallet_manager_free_wallet_ids(ids_ptr, id_count);
 
             // Call the describe helper through FFI to ensure the shared instance reports correctly
-            let mut description_error = FFIError::success();
+            let mut description_error = FFIError::default();
             let description_ptr = key_wallet_ffi::wallet_manager_describe(
                 wallet_manager_ptr as *const FFIWalletManager,
                 &mut description_error as *mut FFIError,

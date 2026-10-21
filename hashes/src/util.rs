@@ -229,9 +229,9 @@ macro_rules! hash_newtype {
             /// Reverses the bytes of the hash
             #[allow(unused)]
             pub fn reverse(&self) -> Self {
-                let mut reversed_bytes = self.0.to_byte_array();
+                let mut reversed_bytes = <$hash as $crate::Hash>::to_byte_array(self.0);
                 reversed_bytes.reverse();
-                Self::from_byte_array(reversed_bytes)
+                <Self as $crate::Hash>::from_byte_array(reversed_bytes)
             }
         }
 
@@ -275,17 +275,17 @@ macro_rules! hash_newtype {
 
             #[inline]
             fn to_byte_array(self) -> Self::Bytes {
-                self.0.to_byte_array()
+                <$hash as $crate::Hash>::to_byte_array(self.0)
             }
 
             #[inline]
             fn as_byte_array(&self) -> &Self::Bytes {
-                self.0.as_byte_array()
+                <$hash as $crate::Hash>::as_byte_array(&self.0)
             }
 
             #[inline]
             fn all_zeros() -> Self {
-                let zeros = <$hash>::all_zeros();
+                let zeros = <$hash as $crate::Hash>::all_zeros();
                 $newtype(zeros)
             }
         }
@@ -294,14 +294,13 @@ macro_rules! hash_newtype {
             type Err = $crate::hex::Error;
             fn from_str(s: &str) -> $crate::_export::_core::result::Result<$newtype, Self::Err> {
                 use $crate::hex::{HexIterator, FromHex};
-                use $crate::Hash;
 
-                let inner: <$hash as Hash>::Bytes = if <Self as $crate::Hash>::DISPLAY_BACKWARD {
+                let inner: <$hash as $crate::Hash>::Bytes = if <Self as $crate::Hash>::DISPLAY_BACKWARD {
                     FromHex::from_byte_iter(HexIterator::new(s)?.rev())?
                 } else {
                     FromHex::from_byte_iter(HexIterator::new(s)?)?
                 };
-                Ok($newtype(<$hash>::from_byte_array(inner)))
+                Ok($newtype(<$hash as $crate::Hash>::from_byte_array(inner)))
             }
         }
 
@@ -321,7 +320,7 @@ macro_rules! hash_newtype {
         }
 
         impl From<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
-            fn from(bytes: [u8; <$hash as Hash>::LEN]) -> Self {
+            fn from(bytes: [u8; <$hash as $crate::Hash>::LEN]) -> Self {
                 $newtype(<$hash as $crate::Hash>::from_byte_array(bytes))
             }
         }
@@ -410,17 +409,17 @@ macro_rules! hash_newtype_no_ord {
 
             #[inline]
             fn to_byte_array(self) -> Self::Bytes {
-                self.0.to_byte_array()
+                <$hash as $crate::Hash>::to_byte_array(self.0)
             }
 
             #[inline]
             fn as_byte_array(&self) -> &Self::Bytes {
-                self.0.as_byte_array()
+                <$hash as $crate::Hash>::as_byte_array(&self.0)
             }
 
             #[inline]
             fn all_zeros() -> Self {
-                let zeros = <$hash>::all_zeros();
+                let zeros = <$hash as $crate::Hash>::all_zeros();
                 $newtype(zeros)
             }
         }
@@ -429,14 +428,13 @@ macro_rules! hash_newtype_no_ord {
             type Err = $crate::hex::Error;
             fn from_str(s: &str) -> $crate::_export::_core::result::Result<$newtype, Self::Err> {
                 use $crate::hex::{HexIterator, FromHex};
-                use $crate::Hash;
 
-                let inner: <$hash as Hash>::Bytes = if <Self as $crate::Hash>::DISPLAY_BACKWARD {
+                let inner: <$hash as $crate::Hash>::Bytes = if <Self as $crate::Hash>::DISPLAY_BACKWARD {
                     FromHex::from_byte_iter(HexIterator::new(s)?.rev())?
                 } else {
                     FromHex::from_byte_iter(HexIterator::new(s)?)?
                 };
-                Ok($newtype(<$hash>::from_byte_array(inner)))
+                Ok($newtype(<$hash as $crate::Hash>::from_byte_array(inner)))
             }
         }
 
@@ -456,7 +454,7 @@ macro_rules! hash_newtype_no_ord {
         }
 
         impl From<[u8; <$hash as $crate::Hash>::LEN]> for $newtype {
-            fn from(bytes: [u8; <$hash as Hash>::LEN]) -> Self {
+            fn from(bytes: [u8; <$hash as $crate::Hash>::LEN]) -> Self {
                 $newtype(<$hash as $crate::Hash>::from_byte_array(bytes))
             }
         }

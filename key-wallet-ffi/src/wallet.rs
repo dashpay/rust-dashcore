@@ -4,18 +4,18 @@
 #[path = "wallet_tests.rs"]
 mod tests;
 
+use crate::types::FFIAccountResult;
+use dash_network::ffi::FFINetwork;
+use key_wallet::wallet::initialization::WalletAccountCreationOptions;
+use key_wallet::{Mnemonic, Seed, Wallet};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::slice;
 
-use crate::types::FFIAccountResult;
-use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-use key_wallet::{Mnemonic, Seed, Wallet};
-
 use crate::error::{FFIError, FFIErrorCode};
 use crate::types::{FFIWallet, FFIWalletAccountCreationOptions};
-use crate::FFINetwork;
+use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use key_wallet::Network;
 
 /// Create a new wallet from mnemonic with options
@@ -23,112 +23,34 @@ use key_wallet::Network;
 /// # Safety
 ///
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
-/// - `passphrase` must be a valid pointer to a null-terminated C string or null
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned pointer must be freed with `wallet_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
     mnemonic: *const c_char,
-    passphrase: *const c_char,
     network: FFINetwork,
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
-    if mnemonic.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Mnemonic is null".to_string());
-        return ptr::null_mut();
-    }
-
-    let mnemonic_str = unsafe {
-        match CStr::from_ptr(mnemonic).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::InvalidInput,
-                    "Invalid UTF-8 in mnemonic".to_string(),
-                );
-                return ptr::null_mut();
-            }
-        }
-    };
-
-    let passphrase_str = if passphrase.is_null() {
-        ""
-    } else {
-        unsafe {
-            match CStr::from_ptr(passphrase).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    FFIError::set_error(
-                        error,
-                        FFIErrorCode::InvalidInput,
-                        "Invalid UTF-8 in passphrase".to_string(),
-                    );
-                    return ptr::null_mut();
-                }
-            }
-        }
-    };
-
     use key_wallet::mnemonic::Language;
-    let mnemonic = match Mnemonic::from_phrase(mnemonic_str, Language::English) {
-        Ok(m) => m,
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::InvalidMnemonic,
-                format!("Invalid mnemonic: {}", e),
-            );
-            return ptr::null_mut();
-        }
-    };
+
+    let mnemonic = deref_ptr!(mnemonic, error);
+    let mnemonic_str = unwrap_or_return!(CStr::from_ptr(mnemonic).to_str(), error);
+
+    let mnemonic = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str, Language::English), error);
 
     let network_rust: Network = network.into();
-
-    // Convert account creation options
     let creation_options = if account_options.is_null() {
         WalletAccountCreationOptions::Default
     } else {
-        unsafe { (*account_options).to_wallet_options() }
+        (*account_options).to_wallet_options()
     };
 
-    let wallet = if passphrase_str.is_empty() {
-        match Wallet::from_mnemonic(mnemonic, network_rust, creation_options) {
-            Ok(w) => w,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to create wallet: {}", e),
-                );
-                return ptr::null_mut();
-            }
-        }
-    } else {
-        // For wallets with passphrase, we need to handle account creation differently
-        // First create the wallet without accounts
-        match Wallet::from_mnemonic_with_passphrase(
-            mnemonic,
-            passphrase_str.to_string(),
-            network_rust,
-            creation_options,
-        ) {
-            Ok(w) => w,
-            Err(e) => {
-                FFIError::set_error(
-                    error,
-                    FFIErrorCode::WalletError,
-                    format!("Failed to create wallet with passphrase: {}", e),
-                );
-                return ptr::null_mut();
-            }
-        }
-    };
+    let wallet =
+        unwrap_or_return!(Wallet::from_mnemonic(mnemonic, network_rust, creation_options), error);
 
-    FFIError::set_success(error);
     Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
 
@@ -137,20 +59,17 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic_with_options(
 /// # Safety
 ///
 /// - `mnemonic` must be a valid pointer to a null-terminated C string
-/// - `passphrase` must be a valid pointer to a null-terminated C string or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned pointer must be freed with `wallet_free` when no longer needed
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_mnemonic(
     mnemonic: *const c_char,
-    passphrase: *const c_char,
     network: FFINetwork,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
     wallet_create_from_mnemonic_with_options(
         mnemonic,
-        passphrase,
         network,
         ptr::null(), // Use default options
         error,
@@ -163,7 +82,7 @@ pub unsafe extern "C" fn wallet_create_from_mnemonic(
 ///
 /// - `seed` must be a valid pointer to a byte array of `seed_len` length
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_seed_with_options(
@@ -173,16 +92,11 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     account_options: *const FFIWalletAccountCreationOptions,
     error: *mut FFIError,
 ) -> *mut FFIWallet {
-    if seed.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Seed is null".to_string());
-        return ptr::null_mut();
-    }
-
+    let _seed_byte = deref_ptr!(seed, error);
     if seed_len != 64 {
-        FFIError::set_error(
-            error,
+        (*error).set(
             FFIErrorCode::InvalidInput,
-            format!("Invalid seed length: {}, expected 64", seed_len),
+            &format!("Invalid seed length: {}, expected 64", seed_len),
         );
         return ptr::null_mut();
     }
@@ -193,28 +107,14 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
     let seed = Seed::new(seed_array);
 
     let network_rust: Network = network.into();
-
-    // Convert account creation options
     let creation_options = if account_options.is_null() {
         WalletAccountCreationOptions::Default
     } else {
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::from_seed(seed, network_rust, creation_options) {
-        Ok(wallet) => {
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIWallet::new(wallet)))
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to create wallet from seed: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let wallet = unwrap_or_return!(Wallet::from_seed(seed, network_rust, creation_options), error);
+    Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
 
 /// Create a new wallet from seed (backward compatibility)
@@ -222,7 +122,7 @@ pub unsafe extern "C" fn wallet_create_from_seed_with_options(
 /// # Safety
 ///
 /// - `seed` must be a valid pointer to a byte array of `seed_len` length
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_from_seed(
@@ -245,7 +145,7 @@ pub unsafe extern "C" fn wallet_create_from_seed(
 /// # Safety
 ///
 /// - `account_options` must be a valid pointer to FFIWalletAccountCreationOptions or null
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random_with_options(
@@ -262,27 +162,15 @@ pub unsafe extern "C" fn wallet_create_random_with_options(
         (*account_options).to_wallet_options()
     };
 
-    match Wallet::new_random(network_rust, creation_options) {
-        Ok(wallet) => {
-            FFIError::set_success(error);
-            Box::into_raw(Box::new(FFIWallet::new(wallet)))
-        }
-        Err(e) => {
-            FFIError::set_error(
-                error,
-                FFIErrorCode::WalletError,
-                format!("Failed to create random wallet: {}", e),
-            );
-            ptr::null_mut()
-        }
-    }
+    let wallet = unwrap_or_return!(Wallet::new_random(network_rust, creation_options), error);
+    Box::into_raw(Box::new(FFIWallet::new(wallet)))
 }
 
 /// Create a new random wallet (backward compatibility)
 ///
 /// # Safety
 ///
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure the pointer remains valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_create_random(
@@ -302,7 +190,7 @@ pub unsafe extern "C" fn wallet_create_random(
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet
 /// - `id_out` must be a valid pointer to a 32-byte buffer
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_get_id(
@@ -310,16 +198,10 @@ pub unsafe extern "C" fn wallet_get_id(
     id_out: *mut u8,
     error: *mut FFIError,
 ) -> bool {
-    if wallet.is_null() || id_out.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Null pointer provided".to_string());
-        return false;
-    }
-
-    let wallet = &*wallet;
+    let wallet = deref_ptr!(wallet, error);
+    check_ptr!(id_out, error);
     let wallet_id = wallet.inner().wallet_id;
-
     ptr::copy_nonoverlapping(wallet_id.as_ptr(), id_out, 32);
-    FFIError::set_success(error);
     true
 }
 
@@ -328,23 +210,15 @@ pub unsafe extern "C" fn wallet_get_id(
 /// # Safety
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet instance
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_has_mnemonic(
     wallet: *const FFIWallet,
     error: *mut FFIError,
 ) -> bool {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return false;
-    }
-
-    unsafe {
-        let wallet = &*wallet;
-        FFIError::set_success(error);
-        wallet.inner().has_mnemonic()
-    }
+    let wallet = deref_ptr!(wallet, error);
+    wallet.inner().has_mnemonic()
 }
 
 /// Check if wallet is watch-only
@@ -352,23 +226,15 @@ pub unsafe extern "C" fn wallet_has_mnemonic(
 /// # Safety
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet instance
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 #[no_mangle]
 pub unsafe extern "C" fn wallet_is_watch_only(
     wallet: *const FFIWallet,
     error: *mut FFIError,
 ) -> bool {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return false;
-    }
-
-    unsafe {
-        let wallet = &*wallet;
-        FFIError::set_success(error);
-        wallet.inner().is_watch_only()
-    }
+    let wallet = deref_ptr!(wallet, error);
+    wallet.inner().is_watch_only()
 }
 
 /// Get extended public key for account
@@ -376,7 +242,7 @@ pub unsafe extern "C" fn wallet_is_watch_only(
 /// # Safety
 ///
 /// - `wallet` must be a valid pointer to an FFIWallet instance
-/// - `error` must be a valid pointer to an FFIError structure or null
+/// - `error` must be a valid pointer to an FFIError structure
 /// - The caller must ensure all pointers remain valid for the duration of this call
 /// - The returned C string must be freed by the caller when no longer needed
 #[no_mangle]
@@ -385,36 +251,9 @@ pub unsafe extern "C" fn wallet_get_xpub(
     account_index: c_uint,
     error: *mut FFIError,
 ) -> *mut c_char {
-    if wallet.is_null() {
-        FFIError::set_error(error, FFIErrorCode::InvalidInput, "Wallet is null".to_string());
-        return ptr::null_mut();
-    }
-
-    unsafe {
-        let wallet = &*wallet;
-
-        match wallet.inner().get_bip44_account(account_index) {
-            Some(account) => {
-                let xpub = account.extended_public_key();
-                FFIError::set_success(error);
-                match CString::new(xpub.to_string()) {
-                    Ok(c_str) => c_str.into_raw(),
-                    Err(_) => {
-                        FFIError::set_error(
-                            error,
-                            FFIErrorCode::AllocationFailed,
-                            "Failed to allocate string".to_string(),
-                        );
-                        ptr::null_mut()
-                    }
-                }
-            }
-            None => {
-                FFIError::set_error(error, FFIErrorCode::NotFound, "Account not found".to_string());
-                ptr::null_mut()
-            }
-        }
-    }
+    let wallet = deref_ptr!(wallet, error);
+    let account = unwrap_or_return!(wallet.inner().get_bip44_account(account_index), error);
+    unwrap_or_return!(CString::new(account.extended_public_key().to_string()), error).into_raw()
 }
 
 /// Free a wallet
@@ -464,17 +303,55 @@ pub unsafe extern "C" fn wallet_free_const(wallet: *const FFIWallet) {
 /// The caller must ensure that:
 /// - The wallet pointer is either null or points to a valid FFIWallet
 /// - The FFIWallet remains valid for the duration of this call
+///
+/// # Note
+///
+/// This function does NOT support the following account types:
+/// - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+/// - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+/// - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account(
     wallet: *mut FFIWallet,
-    account_type: crate::types::FFIAccountType,
+    account_type: crate::types::FFIAccountKind,
     account_index: c_uint,
 ) -> crate::types::FFIAccountResult {
+    use crate::types::FFIAccountKind;
+
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
             FFIErrorCode::InvalidInput,
             "Wallet is null".to_string(),
         );
+    }
+
+    // Check for account types that require special handling
+    match account_type {
+        FFIAccountKind::PlatformPayment => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "PlatformPayment accounts require account and key_class indices. \
+                 Use wallet_add_platform_payment_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountKind::DashpayReceivingFunds => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayReceivingFunds accounts require identity IDs. \
+                 Use wallet_add_dashpay_receiving_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountKind::DashpayExternalAccount => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayExternalAccount accounts require identity IDs. \
+                 Use wallet_add_dashpay_external_account_with_xpub_bytes() instead."
+                    .to_string(),
+            );
+        }
+        _ => {} // Other types are supported
     }
 
     let wallet = &mut *wallet;
@@ -644,14 +521,23 @@ pub unsafe extern "C" fn wallet_add_dashpay_external_account_with_xpub_bytes(
 /// - The wallet pointer is either null or points to a valid FFIWallet
 /// - The xpub_bytes pointer is either null or points to at least xpub_len bytes
 /// - The FFIWallet remains valid for the duration of this call
+///
+/// # Note
+///
+/// This function does NOT support the following account types:
+/// - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+/// - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+/// - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
     wallet: *mut FFIWallet,
-    account_type: crate::types::FFIAccountType,
+    account_type: crate::types::FFIAccountKind,
     account_index: c_uint,
     xpub_bytes: *const u8,
     xpub_len: usize,
 ) -> crate::types::FFIAccountResult {
+    use crate::types::FFIAccountKind;
+
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
             FFIErrorCode::InvalidInput,
@@ -664,6 +550,35 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
             FFIErrorCode::InvalidInput,
             "Xpub bytes are null".to_string(),
         );
+    }
+
+    // Check for account types that require special handling
+    match account_type {
+        FFIAccountKind::PlatformPayment => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "PlatformPayment accounts require account and key_class indices. \
+                 Use wallet_add_platform_payment_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountKind::DashpayReceivingFunds => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayReceivingFunds accounts require identity IDs. \
+                 Use wallet_add_dashpay_receiving_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountKind::DashpayExternalAccount => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayExternalAccount accounts require identity IDs. \
+                 Use wallet_add_dashpay_external_account_with_xpub_bytes() instead."
+                    .to_string(),
+            );
+        }
+        _ => {} // Other types are supported
     }
 
     let wallet = &mut *wallet;
@@ -730,13 +645,22 @@ pub unsafe extern "C" fn wallet_add_account_with_xpub_bytes(
 /// - The wallet pointer is either null or points to a valid FFIWallet
 /// - The xpub_string pointer is either null or points to a valid null-terminated C string
 /// - The FFIWallet remains valid for the duration of this call
+///
+/// # Note
+///
+/// This function does NOT support the following account types:
+/// - `PlatformPayment`: Use `wallet_add_platform_payment_account()` instead
+/// - `DashpayReceivingFunds`: Use `wallet_add_dashpay_receiving_account()` instead
+/// - `DashpayExternalAccount`: Use `wallet_add_dashpay_external_account_with_xpub_bytes()` instead
 #[no_mangle]
 pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
     wallet: *mut FFIWallet,
-    account_type: crate::types::FFIAccountType,
+    account_type: crate::types::FFIAccountKind,
     account_index: c_uint,
     xpub_string: *const c_char,
 ) -> crate::types::FFIAccountResult {
+    use crate::types::FFIAccountKind;
+
     if wallet.is_null() {
         return crate::types::FFIAccountResult::error(
             FFIErrorCode::InvalidInput,
@@ -749,6 +673,35 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
             FFIErrorCode::InvalidInput,
             "Xpub string is null".to_string(),
         );
+    }
+
+    // Check for account types that require special handling
+    match account_type {
+        FFIAccountKind::PlatformPayment => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "PlatformPayment accounts require account and key_class indices. \
+                 Use wallet_add_platform_payment_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountKind::DashpayReceivingFunds => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayReceivingFunds accounts require identity IDs. \
+                 Use wallet_add_dashpay_receiving_account() instead."
+                    .to_string(),
+            );
+        }
+        FFIAccountKind::DashpayExternalAccount => {
+            return crate::types::FFIAccountResult::error(
+                FFIErrorCode::InvalidInput,
+                "DashpayExternalAccount accounts require identity IDs. \
+                 Use wallet_add_dashpay_external_account_with_xpub_bytes() instead."
+                    .to_string(),
+            );
+        }
+        _ => {} // Other types are supported
     }
 
     let wallet = &mut *wallet;
@@ -798,6 +751,74 @@ pub unsafe extern "C" fn wallet_add_account_with_string_xpub(
                 format!("Failed to add account with xpub: {}", e),
             ),
         },
+        None => crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidState,
+            "Cannot modify wallet".to_string(),
+        ),
+    }
+}
+
+/// Add a Platform Payment account (DIP-17) to the wallet
+///
+/// Platform Payment accounts use the derivation path:
+/// `m/9'/coin_type'/17'/account'/key_class'/index`
+///
+/// # Arguments
+/// * `wallet` - Pointer to the wallet
+/// * `account_index` - The account index (hardened) in the derivation path
+/// * `key_class` - The key class (hardened) - typically 0' for main addresses
+///
+/// # Safety
+///
+/// This function dereferences a raw pointer to FFIWallet.
+/// The caller must ensure that:
+/// - The wallet pointer is either null or points to a valid FFIWallet
+/// - The FFIWallet remains valid for the duration of this call
+#[no_mangle]
+pub unsafe extern "C" fn wallet_add_platform_payment_account(
+    wallet: *mut FFIWallet,
+    account_index: c_uint,
+    key_class: c_uint,
+) -> crate::types::FFIAccountResult {
+    use key_wallet::account::AccountType;
+
+    if wallet.is_null() {
+        return crate::types::FFIAccountResult::error(
+            FFIErrorCode::InvalidInput,
+            "Wallet is null".to_string(),
+        );
+    }
+
+    let wallet = &mut *wallet;
+
+    let account_type = AccountType::PlatformPayment {
+        account: account_index,
+        key_class,
+    };
+
+    match wallet.inner_mut() {
+        Some(w) => {
+            // Use the proper add_account method
+            match w.add_account(account_type, None) {
+                Ok(()) => {
+                    // Get the account we just added
+                    if let Some(account) = w.accounts.account_of_type(account_type) {
+                        let ffi_account = crate::types::FFIAccount::new(account);
+                        return crate::types::FFIAccountResult::success(Box::into_raw(Box::new(
+                            ffi_account,
+                        )));
+                    }
+                    crate::types::FFIAccountResult::error(
+                        FFIErrorCode::WalletError,
+                        "Failed to retrieve account after adding".to_string(),
+                    )
+                }
+                Err(e) => crate::types::FFIAccountResult::error(
+                    FFIErrorCode::WalletError,
+                    format!("Failed to add platform payment account: {}", e),
+                ),
+            }
+        }
         None => crate::types::FFIAccountResult::error(
             FFIErrorCode::InvalidState,
             "Cannot modify wallet".to_string(),

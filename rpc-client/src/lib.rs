@@ -17,8 +17,6 @@
 #![crate_type = "rlib"]
 #![allow(unused)]
 
-#[macro_use]
-extern crate log;
 #[macro_use] // `macro_use` is needed for v1.24.0 compilation.
 extern crate serde;
 extern crate serde_json;

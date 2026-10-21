@@ -5,7 +5,9 @@ use std::{fmt, io};
 use bincode::{Decode, Encode};
 
 use crate::BlockHash;
-use crate::consensus::encode::{read_compact_size, read_fixed_bitset, write_fixed_bitset};
+use crate::consensus::encode::{
+    read_compact_size, read_fixed_bitset, write_compact_size, write_fixed_bitset,
+};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::message_sml::MnListDiff;
@@ -186,10 +188,11 @@ impl Encodable for QuorumSnapshot {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.skip_list_mode.consensus_encode(w)?;
+        len += write_compact_size(w, self.active_quorum_members.len() as u32)?;
         len += write_fixed_bitset(
             w,
             self.active_quorum_members.as_slice(),
-            self.active_quorum_members.iter().len(),
+            self.active_quorum_members.len(),
         )?;
         len += self.skip_list.consensus_encode(w)?;
         Ok(len)
@@ -299,8 +302,28 @@ impl Decodable for MNSkipListMode {
 
 #[cfg(test)]
 mod tests {
-    use crate::consensus::deserialize;
+    use hashes::{Hash, sha256};
+
+    use super::{MNSkipListMode, QRInfo, QuorumSnapshot};
+    use crate::consensus::{deserialize, serialize};
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
+    use crate::sml::masternode_list_entry::{EntryMasternodeType, MasternodeNetInfo};
+
+    #[test]
+    fn quorum_snapshot_encode_decode_roundtrip() {
+        let snapshot = QuorumSnapshot {
+            skip_list_mode: MNSkipListMode::SkipFirst,
+            active_quorum_members: vec![
+                true, false, true, true, false, false, false, true, true, false,
+            ],
+            skip_list: vec![3, -1, 7],
+        };
+
+        let bytes = serialize(&snapshot);
+        let decoded: QuorumSnapshot = deserialize(&bytes).expect("deserialize QuorumSnapshot");
+
+        assert_eq!(snapshot, decoded);
+    }
 
     #[test]
     fn deserialize_qr_info() {
@@ -316,5 +339,66 @@ mod tests {
             panic!("expected qr_info message");
         };
         assert_eq!(magic, 3177909439);
+    }
+
+    fn load_v3_qrinfo_bytes() -> Vec<u8> {
+        let hex = include_str!("../../tests/data/test_DML_diffs/qrinfo_core231_paloma.hex");
+        let data = hex::decode(hex.trim()).expect("decode hex");
+        assert_eq!(data.len(), 20064);
+        assert_eq!(
+            sha256::Hash::hash(&data).to_string(),
+            "2811689d4bca44b17a881fc799a563d9ac78c3b7a4b8395a67bb0d857eb61eec"
+        );
+        data
+    }
+
+    #[test]
+    fn deserialize_v3_qrinfo_extnetinfo() {
+        let data = load_v3_qrinfo_bytes();
+        let _qr_info: QRInfo = deserialize(&data).expect("deserialize v3 QRInfo");
+    }
+
+    #[test]
+    fn v3_qrinfo_wire_roundtrip() {
+        let data = load_v3_qrinfo_bytes();
+        let qr_info: QRInfo = deserialize(&data).expect("deserialize v3 QRInfo");
+        let reencoded = serialize(&qr_info);
+        assert_eq!(reencoded, data, "v3 QRInfo did not round-trip byte-exact");
+    }
+
+    #[test]
+    fn v3_evo_entry_sources_platform_port_from_extnetinfo() {
+        let data = load_v3_qrinfo_bytes();
+        let qr_info: QRInfo = deserialize(&data).expect("deserialize v3 QRInfo");
+
+        let mut saw_v3_evo = false;
+        let extra = qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_ref().map(|(_, d)| d);
+        let mut all_diffs = vec![
+            &qr_info.mn_list_diff_tip,
+            &qr_info.mn_list_diff_h,
+            &qr_info.mn_list_diff_at_h_minus_c,
+            &qr_info.mn_list_diff_at_h_minus_2c,
+            &qr_info.mn_list_diff_at_h_minus_3c,
+        ];
+        all_diffs.extend(extra);
+        for diff in all_diffs {
+            for entry in &diff.new_masternodes {
+                if entry.version < 3 {
+                    continue;
+                }
+                let MasternodeNetInfo::Extended(info) = &entry.service_address else {
+                    panic!("v3 entry must carry an extended service address");
+                };
+                if let EntryMasternodeType::HighPerformance {
+                    platform_http_port,
+                    ..
+                } = &entry.mn_type
+                {
+                    saw_v3_evo = true;
+                    assert_eq!(Some(*platform_http_port), info.platform_https_port());
+                }
+            }
+        }
+        assert!(saw_v3_evo, "fixture should contain at least one v3 Evo entry");
     }
 }

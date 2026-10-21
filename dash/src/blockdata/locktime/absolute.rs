@@ -588,7 +588,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::Error::*;
@@ -655,7 +654,6 @@ impl fmt::Display for ConversionError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for ConversionError {}
 
 /// Describes the two types of locking, lock-by-blockheight and lock-by-blocktime.
@@ -698,7 +696,6 @@ impl fmt::Display for OperationError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for OperationError {}
 
 #[cfg(test)]

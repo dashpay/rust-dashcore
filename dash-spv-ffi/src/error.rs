@@ -16,11 +16,8 @@ pub enum FFIErrorCode {
     StorageError = 4,
     ValidationError = 5,
     SyncError = 6,
-    WalletError = 7,
-    ConfigError = 8,
-    RuntimeError = 9,
-    NotImplemented = 10,
-    Unknown = 99,
+    ConfigError = 7,
+    RuntimeError = 8,
 }
 
 pub fn set_last_error(err: &str) {
@@ -44,26 +41,15 @@ pub extern "C" fn dash_spv_ffi_get_last_error() -> *const c_char {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn dash_spv_ffi_clear_error() {
-    clear_last_error();
-}
-
 impl From<SpvError> for FFIErrorCode {
     fn from(err: SpvError) -> Self {
         match err {
             SpvError::ChannelFailure(_, _) => FFIErrorCode::RuntimeError,
             SpvError::Network(_) => FFIErrorCode::NetworkError,
             SpvError::Storage(_) => FFIErrorCode::StorageError,
-            SpvError::Validation(_) => FFIErrorCode::ValidationError,
             SpvError::Sync(_) => FFIErrorCode::SyncError,
-            SpvError::Io(_) => FFIErrorCode::RuntimeError,
             SpvError::Config(_) => FFIErrorCode::ConfigError,
-            SpvError::Parse(_) => FFIErrorCode::ValidationError,
-            SpvError::Logging(_) => FFIErrorCode::RuntimeError,
-            SpvError::Wallet(_) => FFIErrorCode::WalletError,
             SpvError::QuorumLookupError(_) => FFIErrorCode::ValidationError,
-            SpvError::General(_) => FFIErrorCode::Unknown,
         }
     }
 }

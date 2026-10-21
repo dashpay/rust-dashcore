@@ -4,13 +4,8 @@
 //! including BIP32 hierarchical deterministic wallets, BIP39 mnemonic support,
 //! and Dash-specific derivation paths (DIP9).
 
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
-
-extern crate core;
-#[cfg(feature = "std")]
-extern crate std;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 #[cfg(test)]
 #[macro_use]
@@ -43,6 +38,7 @@ pub mod managed_account;
 pub mod mnemonic;
 pub mod psbt;
 pub mod seed;
+pub mod signer;
 pub mod transaction_checking;
 pub(crate) mod utils;
 pub mod utxo;
@@ -54,7 +50,7 @@ pub use account::{Account, AccountCollection, AccountType};
 pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 #[cfg(feature = "bip38")]
 pub use bip38::{encrypt_private_key, generate_intermediate_code, Bip38EncryptedKey, Bip38Mode};
-pub use dash_network::Network;
+pub use dashcore::Network;
 pub use dashcore::{Address, AddressType};
 pub use derivation::{DerivationPathBuilder, DerivationStrategy, KeyDerivation};
 pub use dip9::{DerivationPathReference, DerivationPathType};
@@ -62,19 +58,19 @@ pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};
 pub use managed_account::address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
 pub use managed_account::managed_account_type::ManagedAccountType;
-pub use mnemonic::Mnemonic;
+pub use managed_account::managed_platform_account::ManagedPlatformAccount;
+pub use managed_account::platform_address::PlatformP2PKHAddress;
+pub use mnemonic::{Language, Mnemonic};
 pub use seed::Seed;
-pub use utxo::{Utxo, UtxoSet};
-pub use wallet::{
-    balance::{BalanceError, WalletBalance},
-    Wallet,
-};
+pub use signer::{Signer, SignerMethod, TransactionCategory};
+pub use utxo::Utxo;
+pub use wallet::{balance::WalletCoreBalance, Wallet};
 
 /// Re-export commonly used types
 pub mod prelude {
     pub use super::{
         Address, AddressType, ChildNumber, DerivationPath, Error, ExtendedPrivKey, ExtendedPubKey,
-        KeyDerivation, Mnemonic, Result,
+        KeyDerivation, Language, Mnemonic, Result,
     };
     pub use dashcore::prelude::*;
 }

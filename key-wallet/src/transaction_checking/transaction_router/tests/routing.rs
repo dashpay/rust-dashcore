@@ -1,8 +1,11 @@
 //! Tests for transaction routing logic
 
+use super::helpers::{test_addr, test_block_info};
 use crate::account::{AccountType, StandardAccountType};
 use crate::managed_account::address_pool::KeySource;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
@@ -10,30 +13,8 @@ use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
-use dashcore::hashes::Hash;
-use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
-
-/// Helper to create a basic transaction
-fn create_basic_transaction() -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: dashcore::Witness::default(),
-        }],
-        output: vec![TxOut {
-            value: 100000,
-            script_pubkey: ScriptBuf::new(),
-        }],
-        special_transaction_payload: None,
-    }
-}
+use dashcore::blockdata::transaction::Transaction;
+use dashcore::TxOut;
 
 #[test]
 fn test_standard_transaction_routing() {
@@ -42,36 +23,24 @@ fn test_standard_transaction_routing() {
 
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
     assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
+    // A standard-shaped tx can still spend or fund a CoinJoin UTXO (small denomination spends
+    // classify as Standard), so the CoinJoin account must be checked too. Discovery is
+    // membership-based, like Dash Core's `IsMine`, not gated on the tx shape.
+    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
 }
 
 #[tokio::test]
 async fn test_transaction_routing_to_bip44_account() {
-    // Create a wallet with a BIP44 account
-    let mut wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
-        .expect("Failed to create wallet with default options");
-
-    let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
-
-    // Get the account's xpub for address derivation from the wallet's first BIP44 account
-    let account = wallet
-        .accounts
-        .standard_bip44_accounts
-        .get(&0)
-        .expect("Expected BIP44 account at index 0 to exist");
-    let xpub = account.account_xpub;
-
-    let managed_account = managed_wallet_info
-        .first_bip44_managed_account_mut()
-        .expect("Failed to get first BIP44 managed account");
-
-    // Get an address from the BIP44 account
-    let address = managed_account
-        .next_receive_address(Some(&xpub), true)
-        .expect("Failed to generate receive address");
+    let TestWalletContext {
+        managed_wallet: mut managed_wallet_info,
+        mut wallet,
+        receive_address: address,
+        ..
+    } = TestWalletContext::new_random();
 
     // Create a transaction that sends to this address
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add an output to our address
     tx.output.push(TxOut {
@@ -80,21 +49,16 @@ async fn test_transaction_routing_to_bip44_account() {
     });
 
     // Check the transaction using the wallet's managed info
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check the transaction using the managed wallet info
     let result = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &tx,
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -118,7 +82,7 @@ async fn test_transaction_routing_to_bip32_account() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get the account's xpub for address derivation
     let account = wallet
@@ -139,7 +103,8 @@ async fn test_transaction_routing_to_bip32_account() {
     };
 
     // Create a transaction that sends to this address
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add an output to our address
     tx.output.push(TxOut {
@@ -148,16 +113,12 @@ async fn test_transaction_routing_to_bip32_account() {
     });
 
     // Check the transaction using the managed wallet info
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check with update_state = false
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, false).await;
+    let result = managed_wallet_info
+        .check_core_transaction(&tx, context.clone(), &mut wallet, false, true)
+        .await;
 
     // The transaction should be recognized as relevant
     assert!(result.is_relevant, "Transaction should be relevant to the BIP32 account");
@@ -169,18 +130,20 @@ async fn test_transaction_routing_to_bip32_account() {
             .first_bip32_managed_account_mut()
             .expect("Failed to get first BIP32 managed account");
         assert_eq!(
-            managed_account.balance.confirmed, 0,
+            managed_account.balance.spendable(),
+            0,
             "Balance should not be updated when update_state is false"
         );
     }
 
     // Now check with update_state = true
     let result = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &tx,
             context,
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -201,7 +164,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get the account's xpub
     let account = wallet
@@ -211,75 +174,57 @@ async fn test_transaction_routing_to_coinjoin_account() {
         .expect("Expected CoinJoin account at index 0 to exist");
     let xpub = account.account_xpub;
 
-    let managed_account = managed_wallet_info
-        .first_coinjoin_managed_account_mut()
-        .expect("Failed to get first CoinJoin managed account");
-
-    // Get an address from the CoinJoin account
-    // Note: CoinJoin accounts may have special address generation logic
-    // This might fail if next_receive_address is not supported for CoinJoin accounts
-    let address = match managed_account.get_next_address_index() {
-        Some(_) => {
-            // For CoinJoin accounts, we might need different address generation
-            // Let's try to get an address from the pool directly
-            if let ManagedAccountType::CoinJoin {
-                addresses,
-                ..
-            } = &mut managed_account.account_type
-            {
-                addresses.next_unused(&KeySource::Public(xpub), true).unwrap_or_else(|_| {
-                    // If that fails, generate a dummy address for testing
-                    dashcore::Address::p2pkh(
-                        &dashcore::PublicKey::from_slice(&[0x02; 33])
-                            .expect("Failed to create public key from bytes"),
-                        Network::Testnet,
-                    )
-                })
-            } else {
-                panic!("Expected CoinJoin account type");
-            }
-        }
-        None => {
-            // Generate a dummy address for testing
-            dashcore::Address::p2pkh(
-                &dashcore::PublicKey::from_slice(&[0x02; 33])
-                    .expect("Failed to create public key from bytes"),
-                Network::Testnet,
-            )
-        }
+    // Derive a real address owned by the CoinJoin account so ownership is genuine.
+    let address = {
+        let managed_account = managed_wallet_info
+            .first_coinjoin_managed_account_mut()
+            .expect("Failed to get first CoinJoin managed account");
+        let ManagedAccountType::CoinJoin {
+            addresses,
+            ..
+        } = managed_account.managed_account_type_mut()
+        else {
+            panic!("Expected CoinJoin account type");
+        };
+        addresses
+            .next_unused(&KeySource::Public(xpub), true)
+            .expect("Failed to derive CoinJoin address")
     };
 
-    // Create a CoinJoin-like transaction (multiple inputs/outputs with same denominations)
-    let mut tx = create_basic_transaction();
-
-    // Add multiple outputs with CoinJoin denominations
+    // A small 2-in/2-out CoinJoin denomination spend classifies as `Standard` (the CoinJoin
+    // heuristic needs >= 3 inputs and outputs), yet one output pays our CoinJoin address. Routing
+    // must still attribute it to the CoinJoin account because discovery is membership-based.
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..2, &[100_001]);
+    tx.output.clear();
     tx.output.push(TxOut {
-        value: 100_000, // 0.001 DASH (standard CoinJoin denomination)
+        value: 100_001, // 0.001 DASH + per-round fee, paid to our CoinJoin address
         script_pubkey: address.script_pubkey(),
     });
     tx.output.push(TxOut {
-        value: 100_000, // Same denomination for other participants
-        script_pubkey: ScriptBuf::new(),
-    });
-    tx.output.push(TxOut {
-        value: 100_000,
-        script_pubkey: ScriptBuf::new(),
+        value: 100_001, // counterparty output, not ours
+        script_pubkey: test_addr().script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    assert_eq!(
+        TransactionRouter::classify_transaction(&tx),
+        TransactionType::Standard,
+        "2-in/2-out denomination spend should classify as Standard"
+    );
 
-    let result = managed_wallet_info.check_transaction(&tx, context, &mut wallet, true).await;
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
-    // This test may fail if CoinJoin detection is not properly implemented
-    println!(
-        "CoinJoin transaction result: is_relevant={}, received={}",
-        result.is_relevant, result.total_received
+    let result =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+
+    assert!(result.is_relevant, "CoinJoin spend paying our CoinJoin address should be relevant");
+
+    let coinjoin_account = managed_wallet_info
+        .first_coinjoin_managed_account()
+        .expect("CoinJoin managed account should exist");
+    assert!(
+        coinjoin_account.transactions().contains_key(&tx.txid()),
+        "tx should be attributed to the CoinJoin account"
     );
 }
 
@@ -304,7 +249,7 @@ async fn test_transaction_affects_multiple_accounts() {
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Get addresses from different accounts
 
@@ -351,7 +296,8 @@ async fn test_transaction_affects_multiple_accounts() {
         .expect("Failed to generate receive address for BIP32 account");
 
     // Create a transaction that sends to multiple accounts
-    let mut tx = create_basic_transaction();
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000]);
 
     // Add outputs to different accounts
     tx.output.push(TxOut {
@@ -367,21 +313,16 @@ async fn test_transaction_affects_multiple_accounts() {
         script_pubkey: address2.script_pubkey(),
     });
 
-    let context = TransactionContext::InBlock {
-        height: 100000,
-        block_hash: Some(
-            BlockHash::from_slice(&[0u8; 32]).expect("Failed to create block hash from bytes"),
-        ),
-        timestamp: Some(1234567890),
-    };
+    let context = TransactionContext::InBlock(test_block_info(100000));
 
     // Check the transaction
     let result = managed_wallet_info
-        .check_transaction(
+        .check_core_transaction(
             &tx,
-            context,
+            context.clone(),
             &mut wallet,
             true, // update state
+            true, // update balance
         )
         .await;
 
@@ -398,7 +339,8 @@ async fn test_transaction_affects_multiple_accounts() {
     println!("Multi-account transaction result: accounts_affected={:?}", result.affected_accounts);
 
     // Test with update_state = false to ensure state isn't modified
-    let result2 = managed_wallet_info.check_transaction(&tx, context, &mut wallet, false).await;
+    let result2 =
+        managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, false, true).await;
 
     assert_eq!(
         result2.total_received, result.total_received,
@@ -411,7 +353,7 @@ fn test_next_address_method_restrictions() {
     let wallet = Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default)
         .expect("Failed to create wallet with default options");
     let mut managed_wallet_info =
-        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string());
+        ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
     // Test that standard BIP44 accounts reject next_address
     {
@@ -476,8 +418,13 @@ fn test_coinjoin_transaction_routing() {
     let tx_type = TransactionType::CoinJoin;
     let accounts = TransactionRouter::get_relevant_account_types(&tx_type);
 
-    assert_eq!(accounts.len(), 1);
-    assert_eq!(accounts[0], AccountTypeToCheck::CoinJoin);
+    // A CoinJoin tx checks every fund-bearing account, since it can also touch standard funds
+    // (collateral, funding/change). Discovery is membership-based, not gated on the tx shape.
+    assert!(accounts.contains(&AccountTypeToCheck::CoinJoin));
+    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP44));
+    assert!(accounts.contains(&AccountTypeToCheck::StandardBIP32));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayReceivingFunds));
+    assert!(accounts.contains(&AccountTypeToCheck::DashpayExternalAccount));
 }
 
 #[test]

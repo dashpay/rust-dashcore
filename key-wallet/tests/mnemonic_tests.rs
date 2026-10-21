@@ -45,8 +45,8 @@ fn test_mnemonic_to_extended_key() {
     let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     let mnemonic = Mnemonic::from_phrase(phrase, Language::English).unwrap();
 
-    let xprv = mnemonic.to_extended_key("", Network::Dash).unwrap();
-    assert_eq!(xprv.network, Network::Dash);
+    let xprv = mnemonic.to_extended_key("", Network::Mainnet).unwrap();
+    assert_eq!(xprv.network, Network::Mainnet);
     assert_eq!(xprv.depth, 0);
 }
 

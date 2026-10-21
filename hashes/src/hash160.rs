@@ -49,12 +49,10 @@ fn from_engine(e: HashEngine) -> Hash {
 #[cfg(test)]
 mod tests {
     #[test]
-    #[cfg(feature = "alloc")]
     fn test() {
         use crate::{hash160, Hash, HashEngine};
 
         #[derive(Clone)]
-        #[cfg(feature = "alloc")]
         struct Test {
             input: Vec<u8>,
             output: Vec<u8>,

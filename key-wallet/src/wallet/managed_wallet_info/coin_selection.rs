@@ -5,7 +5,6 @@
 
 use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::Utxo;
-use alloc::vec::Vec;
 use core::cmp::Reverse;
 
 /// UTXO selection strategy
@@ -80,32 +79,15 @@ pub struct SelectionResult {
 /// - High-frequency receivers: **SmallestFirstTill(10)** (balanced approach)
 pub struct CoinSelector {
     strategy: SelectionStrategy,
-    min_confirmations: u32,
-    include_unconfirmed: bool,
     dust_threshold: u64,
 }
 
 impl CoinSelector {
-    /// Create a new coin selector
     pub fn new(strategy: SelectionStrategy) -> Self {
         Self {
             strategy,
-            min_confirmations: 1,
-            include_unconfirmed: false,
             dust_threshold: 546, // Standard dust threshold
         }
-    }
-
-    /// Set minimum confirmations required
-    pub fn with_min_confirmations(mut self, confirmations: u32) -> Self {
-        self.min_confirmations = confirmations;
-        self
-    }
-
-    /// Include unconfirmed UTXOs
-    pub fn include_unconfirmed(mut self) -> Self {
-        self.include_unconfirmed = true;
-        self
     }
 
     /// Set dust threshold
@@ -160,15 +142,8 @@ impl CoinSelector {
             | SelectionStrategy::BranchAndBound
             | SelectionStrategy::OptimalConsolidation => {
                 // These strategies need all UTXOs to sort/analyze
-                let mut available: Vec<&'a Utxo> = utxos
-                    .into_iter()
-                    .filter(|u| {
-                        u.is_spendable(current_height)
-                            && (self.include_unconfirmed || u.is_confirmed || u.is_instantlocked)
-                            && (current_height.saturating_sub(u.height) >= self.min_confirmations
-                                || u.height == 0)
-                    })
-                    .collect();
+                let mut available: Vec<&'a Utxo> =
+                    utxos.into_iter().filter(|u| u.is_spendable(current_height)).collect();
 
                 if available.is_empty() {
                     return Err(SelectionError::NoUtxosAvailable);
@@ -262,12 +237,7 @@ impl CoinSelector {
             }
             SelectionStrategy::Random => {
                 // Random can work with iterators directly
-                let filtered = utxos.into_iter().filter(|u| {
-                    u.is_spendable(current_height)
-                        && (self.include_unconfirmed || u.is_confirmed || u.is_instantlocked)
-                        && (current_height.saturating_sub(u.height) >= self.min_confirmations
-                            || u.height == 0)
-                });
+                let filtered = utxos.into_iter().filter(|u| u.is_spendable(current_height));
 
                 // For Random (currently just uses accumulate as-is)
                 // TODO: Implement proper random selection for privacy
@@ -684,50 +654,19 @@ impl core::fmt::Display for SelectionError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for SelectionError {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Utxo;
-    use dashcore::blockdata::script::ScriptBuf;
-    use dashcore::{Address, Network, OutPoint, TxOut, Txid};
-    use dashcore_hashes::{sha256d, Hash};
-
-    fn test_utxo(value: u64, confirmed: bool) -> Utxo {
-        let outpoint = OutPoint {
-            txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
-            vout: 0,
-        };
-
-        let txout = TxOut {
-            value,
-            script_pubkey: ScriptBuf::new(),
-        };
-
-        let address = Address::p2pkh(
-            &dashcore::PublicKey::from_slice(&[
-                0x02, 0x50, 0x86, 0x3a, 0xd6, 0x4a, 0x87, 0xae, 0x8a, 0x2f, 0xe8, 0x3c, 0x1a, 0xf1,
-                0xa8, 0x40, 0x3c, 0xb5, 0x3f, 0x53, 0xe4, 0x86, 0xd8, 0x51, 0x1d, 0xad, 0x8a, 0x04,
-                0x88, 0x7e, 0x5b, 0x23, 0x52,
-            ])
-            .unwrap(),
-            Network::Testnet,
-        );
-
-        let mut utxo = Utxo::new(outpoint, txout, address, 100, false);
-        utxo.is_confirmed = confirmed;
-        utxo
-    }
 
     #[test]
     fn test_smallest_first_selection() {
         let utxos = vec![
-            test_utxo(10000, true),
-            test_utxo(20000, true),
-            test_utxo(30000, true),
-            test_utxo(40000, true),
+            Utxo::dummy(0, 10000, 100, false, true),
+            Utxo::dummy(0, 20000, 100, false, true),
+            Utxo::dummy(0, 30000, 100, false, true),
+            Utxo::dummy(0, 40000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::SmallestFirst);
@@ -742,10 +681,10 @@ mod tests {
     #[test]
     fn test_largest_first_selection() {
         let utxos = vec![
-            test_utxo(10000, true),
-            test_utxo(20000, true),
-            test_utxo(30000, true),
-            test_utxo(40000, true),
+            Utxo::dummy(0, 10000, 100, false, true),
+            Utxo::dummy(0, 20000, 100, false, true),
+            Utxo::dummy(0, 30000, 100, false, true),
+            Utxo::dummy(0, 40000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::LargestFirst);
@@ -758,7 +697,8 @@ mod tests {
 
     #[test]
     fn test_insufficient_funds() {
-        let utxos = vec![test_utxo(10000, true), test_utxo(20000, true)];
+        let utxos =
+            vec![Utxo::dummy(0, 10000, 100, false, true), Utxo::dummy(0, 20000, 100, false, true)];
 
         let selector = CoinSelector::new(SelectionStrategy::LargestFirst);
         let result = selector.select_coins(&utxos, 50000, FeeRate::new(1000), 200);
@@ -770,12 +710,12 @@ mod tests {
     fn test_optimal_consolidation_strategy() {
         // Test that OptimalConsolidation strategy works correctly
         let utxos = vec![
-            test_utxo(100, true),
-            test_utxo(200, true),
-            test_utxo(300, true),
-            test_utxo(500, true),
-            test_utxo(1000, true),
-            test_utxo(2000, true),
+            Utxo::dummy(0, 100, 100, false, true),
+            Utxo::dummy(0, 200, 100, false, true),
+            Utxo::dummy(0, 300, 100, false, true),
+            Utxo::dummy(0, 500, 100, false, true),
+            Utxo::dummy(0, 1000, 100, false, true),
+            Utxo::dummy(0, 2000, 100, false, true),
         ];
 
         let selector = CoinSelector::new(SelectionStrategy::OptimalConsolidation);

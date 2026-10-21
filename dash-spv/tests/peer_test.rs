@@ -13,17 +13,22 @@ use dash_spv::storage::DiskStorageManager;
 use dash_spv::types::ValidationMode;
 use dashcore::Network;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::wallet_manager::WalletManager;
+use key_wallet_manager::WalletManager;
+
+fn init_test_tracing() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+}
+
 /// Create a test configuration with the given network
-fn create_test_config(network: Network, data_dir: Option<TempDir>) -> ClientConfig {
+fn create_test_config(network: Network) -> ClientConfig {
     let mut config = ClientConfig::new(network);
-    config.storage_path = data_dir.map(|d| d.path().to_path_buf());
+
+    config.storage_path = TempDir::new().unwrap().path().to_path_buf();
+
     config.validation_mode = ValidationMode::Basic;
     config.enable_filters = false;
     config.enable_masternodes = false;
     config.max_peers = 3;
-    config.connection_timeout = Duration::from_secs(10);
-    config.message_timeout = Duration::from_secs(30);
     config.peers = vec![]; // Will be populated by DNS discovery
     config
 }
@@ -31,121 +36,110 @@ fn create_test_config(network: Network, data_dir: Option<TempDir>) -> ClientConf
 #[tokio::test]
 #[ignore] // Requires network access
 async fn test_peer_connection() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
-    let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path().to_path_buf();
-    let config = create_test_config(Network::Testnet, Some(temp_dir));
+    let config = create_test_config(Network::Testnet);
 
     // Create network manager
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
-    let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
+    let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-    let mut client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
+    let client =
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
 
-    // Start the client
-    client.start().await.unwrap();
+    let run_client = client.clone();
+    let handle = tokio::spawn(async move { run_client.run().await });
 
     // Give it time to connect to peers
     time::sleep(Duration::from_secs(5)).await;
 
     // Check that we have connected to at least one peer
-    let peer_count = client.peer_count();
+    let peer_count = client.peer_count().await;
     assert!(peer_count > 0, "Should have connected to at least one peer");
 
-    // Get peer info
-    let peer_info = client.peer_info();
-    assert_eq!(peer_info.len(), peer_count);
-
-    println!("Connected to {} peers:", peer_count);
-    for info in peer_info {
-        println!("  - {} (version: {:?})", info.address, info.version);
-    }
-
-    // Stop the client
-    client.stop().await.unwrap();
+    client.stop().await.expect("Should stop");
+    let _ = handle.await;
 }
 
 #[tokio::test]
 #[ignore] // Requires network access
 async fn test_peer_persistence() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
-    let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path().to_path_buf();
+    let config = create_test_config(Network::Testnet);
 
     // First run: connect and save peers
     {
-        let config = create_test_config(Network::Testnet, Some(temp_dir));
-
         // Create network manager
         let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
         // Create storage manager
-        let storage_manager = DiskStorageManager::new(temp_path.clone()).await.unwrap();
+        let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let mut client =
-            DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
+        let client =
+            DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![])
+                .await
+                .unwrap();
 
-        client.start().await.unwrap();
+        let run_client = client.clone();
+        let handle = tokio::spawn(async move { run_client.run().await });
+
         time::sleep(Duration::from_secs(5)).await;
 
-        let peer_count = client.peer_count();
+        let peer_count = client.peer_count().await;
         assert!(peer_count > 0, "Should have connected to peers");
 
-        client.stop().await.unwrap();
+        client.stop().await.expect("Should stop");
+        let _ = handle.await;
     }
 
     // Second run: should load saved peers
     {
-        let mut config = create_test_config(Network::Testnet, None);
-        config.storage_path = Some(temp_path.clone());
-
         // Create network manager
         let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
         // Create storage manager - reuse same path
-        let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
+        let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
         // Create wallet manager
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let mut client =
-            DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
+        let client = DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![])
+            .await
+            .unwrap();
 
         // Should connect faster due to saved peers
+        let run_client = client.clone();
         let start = tokio::time::Instant::now();
-        client.start().await.unwrap();
+        let handle = tokio::spawn(async move { run_client.run().await });
 
         // Wait for connection but with shorter timeout
         time::sleep(Duration::from_secs(3)).await;
 
-        let peer_count = client.peer_count();
+        let peer_count = client.peer_count().await;
         assert!(peer_count > 0, "Should have connected using saved peers");
 
         let elapsed = start.elapsed();
         println!("Connected to {} peers in {:?} (using saved peers)", peer_count, elapsed);
 
-        client.stop().await.unwrap();
+        client.stop().await.expect("Should stop");
+        let _ = handle.await;
     }
 }
 
 #[tokio::test]
 async fn test_peer_disconnection() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    init_test_tracing();
 
-    let temp_dir = TempDir::new().unwrap();
-    let temp_path = temp_dir.path().to_path_buf();
-    let mut config = create_test_config(Network::Regtest, Some(temp_dir));
+    let mut config = create_test_config(Network::Regtest);
 
     // Add manual test peers (would need actual regtest nodes running)
     config.peers = vec!["127.0.0.1:19899".parse().unwrap(), "127.0.0.1:19898".parse().unwrap()];
@@ -154,13 +148,13 @@ async fn test_peer_disconnection() {
     let network_manager = PeerNetworkManager::new(&config).await.unwrap();
 
     // Create storage manager
-    let storage_manager = DiskStorageManager::new(temp_path).await.unwrap();
+    let storage_manager = DiskStorageManager::new(&config).await.unwrap();
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     let client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
+        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await.unwrap();
 
     // Note: This test would require actual regtest nodes running
     // For now, we just test that the API works
@@ -171,39 +165,6 @@ async fn test_peer_disconnection() {
         Ok(_) => println!("Disconnected peer {}", test_addr),
         Err(e) => println!("Expected error disconnecting non-existent peer: {}", e),
     }
-}
-
-#[tokio::test]
-async fn test_max_peer_limit() {
-    use dash_spv::network::constants::MAX_PEERS;
-
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    let temp_dir = TempDir::new().unwrap();
-    let mut config = create_test_config(Network::Testnet, Some(temp_dir));
-
-    // Add at least one peer to avoid "No peers specified" error
-    config.peers = vec!["127.0.0.1:19999".parse().unwrap()];
-
-    // Create network manager
-    let network_manager = PeerNetworkManager::new(&config).await.unwrap();
-
-    // Create storage manager
-    let storage_manager =
-        DiskStorageManager::new(TempDir::new().expect("Failed to create tmp dir").path().into())
-            .await
-            .expect("Failed to create tmp storage");
-
-    // Create wallet manager
-    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
-
-    let _client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet).await.unwrap();
-
-    // The client should never connect to more than MAX_PEERS
-    // This is enforced in the PeerPool
-    println!("Maximum peer limit is set to: {}", MAX_PEERS);
-    assert_eq!(MAX_PEERS, 3, "Default max peers should be 12");
 }
 
 #[cfg(test)]
@@ -240,10 +201,10 @@ mod unit_tests {
         assert!(handler.peer_supports_addrv2(&peer).await);
 
         // Test adding addresses
-        handler.add_known_address(peer, ServiceFlags::from(1)).await;
+        handler.add_known_address(peer, ServiceFlags::NETWORK).await;
         let known = handler.get_known_addresses().await;
         assert_eq!(known.len(), 1);
-        assert_eq!(known[0], peer);
+        assert_eq!(known[0].socket_addr().unwrap(), peer);
 
         // Test getting addresses for sharing
         let to_share = handler.get_addresses_for_peer(10).await;
@@ -253,10 +214,10 @@ mod unit_tests {
     #[tokio::test]
     #[ignore] // Requires network access
     async fn test_dns_discovery() {
-        let discovery = DnsDiscovery::new().await.unwrap();
+        let discovery = DnsDiscovery::new();
 
         // Test mainnet discovery
-        let peers = discovery.discover_peers(Network::Dash).await;
+        let peers = discovery.discover_peers(Network::Mainnet).await;
         assert!(!peers.is_empty(), "Should discover mainnet peers");
 
         // All peers should use correct port
@@ -265,7 +226,7 @@ mod unit_tests {
         }
 
         // Test limited discovery
-        let limited = discovery.discover_peers_limited(Network::Dash, 5).await;
+        let limited = discovery.discover_peers_limited(Network::Mainnet, 5).await;
         assert!(limited.len() <= 5);
     }
 }

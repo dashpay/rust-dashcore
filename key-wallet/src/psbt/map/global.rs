@@ -5,14 +5,12 @@ use core::convert::TryFrom;
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPubKey, Fingerprint};
 use crate::psbt::map::Map;
 use crate::psbt::{raw, Error, PartiallySignedTransaction};
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::consensus::encode::MAX_VEC_SIZE;
 use dashcore::consensus::{encode, Decodable, Encodable};
 use dashcore::io::{Cursor, Read};
 use dashcore::transaction::special_transaction::TransactionType;
-use std::collections::btree_map;
+use std::collections::{btree_map, BTreeMap};
 
 /// Type: Unsigned Transaction PSBT_GLOBAL_UNSIGNED_TX = 0x00
 const PSBT_GLOBAL_UNSIGNED_TX: u8 = 0x00;
@@ -37,7 +35,9 @@ impl Map for PartiallySignedTransaction {
                 // without witnesses.
                 let mut ret = Vec::new();
                 ret.extend(encode::serialize(&self.unsigned_tx.version));
-                (self.unsigned_tx.tx_type() as u16)
+                self.unsigned_tx
+                    .tx_type()
+                    .to_u16()
                     .consensus_encode(&mut ret)
                     .expect("can't encode tx type");
                 let input = encode::serialize(&self.unsigned_tx.input);

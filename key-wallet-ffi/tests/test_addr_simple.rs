@@ -1,9 +1,10 @@
+use dash_network::ffi::FFINetwork;
+
 #[test]
 fn test_address_simple() {
     use key_wallet_ffi::error::FFIError;
-    use key_wallet_ffi::FFINetwork;
 
-    let mut error = FFIError::success();
+    let mut error = FFIError::default();
     let error = &mut error as *mut FFIError;
 
     // Create a wallet to get a valid address

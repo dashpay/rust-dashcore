@@ -30,10 +30,10 @@ use internals::write_err;
 pub use secp256k1::{self, Keypair, Parity, Secp256k1, Verification, XOnlyPublicKey, constants};
 
 use crate::hash_types::{PubkeyHash, WPubkeyHash};
+use crate::network::constants::Network;
 use crate::prelude::*;
 use crate::taproot::{TapNodeHash, TapTweakHash};
 use crate::{base58, io};
-use dash_network::Network;
 
 /// A key-related error.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -80,7 +80,6 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use self::Error::*;
@@ -194,17 +193,7 @@ impl PublicKey {
 
         reader.read_exact(&mut bytes[1..])?;
         Self::from_slice(bytes).map_err(|e| {
-            // Need a static string for core2
-            #[cfg(feature = "std")]
             let reason = e;
-            #[cfg(not(feature = "std"))]
-            let reason = match e {
-                Error::Base58(_) => "base58 error",
-                Error::Secp256k1(_) => "secp256k1 error",
-                Error::InvalidKeyPrefix(_) => "invalid key prefix",
-                Error::Hex(_) => "hex decoding error",
-                Error::InvalidHexLength(_) => "invalid hex string length",
-            };
             io::Error::new(io::ErrorKind::InvalidData, reason)
         })
     }
@@ -345,8 +334,7 @@ impl From<PublicKey> for PubkeyHash {
 }
 
 /// A Dash ECDSA private key
-#[derive(Copy, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PrivateKey {
     /// Whether this private key should be serialized as compressed
     pub compressed: bool,
@@ -405,9 +393,8 @@ impl PrivateKey {
     pub fn fmt_wif(&self, fmt: &mut dyn Write) -> fmt::Result {
         let mut ret = [0; 34];
         ret[0] = match self.network {
-            Network::Dash => 204,
+            Network::Mainnet => 204,
             Network::Testnet | Network::Devnet | Network::Regtest => 239,
-            _ => 239,
         };
         ret[1..33].copy_from_slice(&self.inner[..]);
         let privkey = if self.compressed {
@@ -440,7 +427,7 @@ impl PrivateKey {
         };
 
         let network = match data[0] {
-            204 => Network::Dash,
+            204 => Network::Mainnet,
             239 => Network::Testnet,
             x => {
                 return Err(Error::Base58(base58::Error::InvalidAddressVersion(x)));
@@ -460,13 +447,6 @@ impl PrivateKey {
 impl fmt::Display for PrivateKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_wif(f)
-    }
-}
-
-#[cfg(not(feature = "std"))]
-impl fmt::Debug for PrivateKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "[private key data]")
     }
 }
 
@@ -820,9 +800,9 @@ mod tests {
     use secp256k1::Secp256k1;
 
     use super::*;
+    use crate::Network::{Mainnet, Testnet};
     use crate::address::Address;
     use crate::io;
-    use dash_network::Network::{Dash, Testnet};
 
     #[test]
     fn test_key_derivation() {
@@ -846,7 +826,7 @@ mod tests {
         // mainnet uncompressed
         let sk =
             PrivateKey::from_wif("7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c").unwrap();
-        assert_eq!(sk.network, Dash);
+        assert_eq!(sk.network, Mainnet);
         assert!(!sk.compressed);
         assert_eq!(&sk.to_wif(), "7sU7MdjMtaLYxC4ec2z1zkhzZVBwRzZUcU6gJRzJ94s6UzAwA8c");
 

@@ -1,6 +1,5 @@
 extern crate dashcore_rpc;
 extern crate dashcore_rpc_json;
-extern crate log;
 
 use dashcore_rpc::{Auth, Client, RpcApi};
 use dashcore_rpc_json::{ProTxListType, QuorumType};

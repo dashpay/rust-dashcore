@@ -1,5 +1,8 @@
-use crate::sml::llmq_type::{DKGWindow, LLMQType};
-use dash_network::Network;
+use crate::Network;
+use crate::sml::llmq_type::{
+    DKGWindow, LLMQType, devnet_chain_locks_type_override, devnet_isd_type_override,
+    devnet_platform_type_override,
+};
 use std::collections::BTreeMap;
 
 /// Extension trait for Network to add LLMQ-specific methods
@@ -16,48 +19,50 @@ pub trait NetworkLLMQExt {
 impl NetworkLLMQExt for Network {
     fn is_llmq_type(&self) -> LLMQType {
         match self {
-            Network::Dash => LLMQType::Llmqtype50_60,
+            Network::Mainnet => LLMQType::Llmqtype50_60,
             Network::Testnet => LLMQType::Llmqtype50_60,
             Network::Devnet => LLMQType::LlmqtypeDevnet,
             Network::Regtest => LLMQType::LlmqtypeTestInstantSend,
-            other => unreachable!("Unsupported network variant {other:?}"),
         }
     }
 
     fn isd_llmq_type(&self) -> LLMQType {
         match self {
-            Network::Dash => LLMQType::Llmqtype60_75,
+            Network::Mainnet => LLMQType::Llmqtype60_75,
             Network::Testnet => LLMQType::Llmqtype60_75,
-            Network::Devnet => LLMQType::LlmqtypeDevnetDIP0024,
+            Network::Devnet => {
+                devnet_isd_type_override().unwrap_or(LLMQType::LlmqtypeDevnetDIP0024)
+            }
             Network::Regtest => LLMQType::LlmqtypeTestDIP0024,
-            other => unreachable!("Unsupported network variant {other:?}"),
         }
     }
 
     fn chain_locks_type(&self) -> LLMQType {
         match self {
-            Network::Dash => LLMQType::Llmqtype400_60,
+            Network::Mainnet => LLMQType::Llmqtype400_60,
             Network::Testnet => LLMQType::Llmqtype50_60,
-            Network::Devnet => LLMQType::LlmqtypeDevnet,
+            Network::Devnet => {
+                devnet_chain_locks_type_override().unwrap_or(LLMQType::LlmqtypeDevnet)
+            }
             Network::Regtest => LLMQType::LlmqtypeTest,
-            other => unreachable!("Unsupported network variant {other:?}"),
         }
     }
 
     fn platform_type(&self) -> LLMQType {
         match self {
-            Network::Dash => LLMQType::Llmqtype100_67,
+            Network::Mainnet => LLMQType::Llmqtype100_67,
             Network::Testnet => LLMQType::Llmqtype25_67,
-            Network::Devnet => LLMQType::LlmqtypeDevnet,
-            Network::Regtest => LLMQType::LlmqtypeTest,
-            other => unreachable!("Unsupported network variant {other:?}"),
+            Network::Devnet => {
+                devnet_platform_type_override().unwrap_or(LLMQType::LlmqtypeDevnetPlatform)
+            }
+            Network::Regtest => LLMQType::LlmqtypeTestnetPlatform,
         }
     }
 
     /// Get all enabled LLMQ types for this network
     fn enabled_llmq_types(&self) -> Vec<LLMQType> {
         match self {
-            Network::Dash => vec![
+            Network::Mainnet => vec![
                 LLMQType::Llmqtype50_60,  // InstantSend
                 LLMQType::Llmqtype60_75,  // InstantSend DIP24 (rotating)
                 LLMQType::Llmqtype400_60, // ChainLocks
@@ -71,6 +76,11 @@ impl NetworkLLMQExt for Network {
                 LLMQType::Llmqtype25_67, // Platform consensus (smaller for testnet)
             ],
             Network::Devnet => vec![
+                LLMQType::Llmqtype50_60,
+                LLMQType::Llmqtype60_75,
+                LLMQType::Llmqtype400_60,
+                LLMQType::Llmqtype400_85,
+                LLMQType::Llmqtype100_67,
                 LLMQType::LlmqtypeDevnet,
                 LLMQType::LlmqtypeDevnetDIP0024,
                 LLMQType::LlmqtypeDevnetPlatform,
@@ -80,7 +90,6 @@ impl NetworkLLMQExt for Network {
                 LLMQType::LlmqtypeTestDIP0024,
                 LLMQType::LlmqtypeTestInstantSend,
             ],
-            other => unreachable!("Unsupported network variant {other:?}"),
         }
     }
 
@@ -88,7 +97,7 @@ impl NetworkLLMQExt for Network {
     fn get_all_dkg_windows(&self, start: u32, end: u32) -> BTreeMap<u32, Vec<DKGWindow>> {
         let mut windows_by_height: BTreeMap<u32, Vec<DKGWindow>> = BTreeMap::new();
 
-        log::debug!(
+        tracing::debug!(
             "get_all_dkg_windows: Calculating DKG windows for range {}-{} on network {:?}",
             start,
             end,
@@ -97,7 +106,7 @@ impl NetworkLLMQExt for Network {
 
         for llmq_type in self.enabled_llmq_types() {
             let type_windows = llmq_type.get_dkg_windows_in_range(start, end);
-            log::debug!(
+            tracing::debug!(
                 "LLMQ type {:?}: found {} DKG windows in range {}-{}",
                 llmq_type,
                 type_windows.len(),
@@ -108,7 +117,7 @@ impl NetworkLLMQExt for Network {
             for window in type_windows {
                 // Skip platform quorums before activation if needed
                 if self.should_skip_quorum_type(&llmq_type, window.mining_start) {
-                    log::trace!(
+                    tracing::trace!(
                         "Skipping {:?} for height {} (activation threshold not met)",
                         llmq_type,
                         window.mining_start
@@ -121,7 +130,7 @@ impl NetworkLLMQExt for Network {
             }
         }
 
-        log::info!(
+        tracing::info!(
             "get_all_dkg_windows: Total {} unique mining heights with DKG windows for range {}-{}",
             windows_by_height.len(),
             start,
@@ -134,7 +143,7 @@ impl NetworkLLMQExt for Network {
     /// Check if a quorum type should be skipped at the given height
     fn should_skip_quorum_type(&self, llmq_type: &LLMQType, height: u32) -> bool {
         match (self, llmq_type) {
-            (Network::Dash, LLMQType::Llmqtype100_67) => height < 1_888_888, // Platform activation on mainnet
+            (Network::Mainnet, LLMQType::Llmqtype100_67) => height < 1_888_888, // Platform activation on mainnet
             (Network::Testnet, LLMQType::Llmqtype25_67) => height < 1_289_520, // Platform activation on testnet
             _ => false,
         }
@@ -147,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_enabled_llmq_types_mainnet() {
-        let network = Network::Dash;
+        let network = Network::Mainnet;
         let types = network.enabled_llmq_types();
 
         assert!(types.contains(&LLMQType::Llmqtype50_60));
@@ -160,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_should_skip_platform_quorum() {
-        let network = Network::Dash;
+        let network = Network::Mainnet;
 
         // Platform quorum should be skipped before activation height
         assert!(network.should_skip_quorum_type(&LLMQType::Llmqtype100_67, 1_888_887));

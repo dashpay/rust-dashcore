@@ -58,6 +58,18 @@ pub enum ManagedAccountType {
         /// Identity invitation address pool
         addresses: AddressPool,
     },
+    /// Asset lock address top-up funding (subfeature 4)
+    /// Path: m/9'/coinType'/5'/4'/index'
+    AssetLockAddressTopUp {
+        /// Asset lock address top-up address pool
+        addresses: AddressPool,
+    },
+    /// Asset lock shielded address top-up funding (subfeature 5)
+    /// Path: m/9'/coinType'/5'/5'/index'
+    AssetLockShieldedAddressTopUp {
+        /// Asset lock shielded address top-up address pool
+        addresses: AddressPool,
+    },
     /// Provider voting keys (DIP-3)
     /// Path: `m/9'/5'/3'/1'/[key_index]`
     ProviderVotingKeys {
@@ -143,6 +155,12 @@ impl ManagedAccountType {
             | Self::IdentityInvitation {
                 ..
             }
+            | Self::AssetLockAddressTopUp {
+                ..
+            }
+            | Self::AssetLockShieldedAddressTopUp {
+                ..
+            }
             | Self::ProviderVotingKeys {
                 ..
             }
@@ -216,6 +234,14 @@ impl ManagedAccountType {
                 addresses,
                 ..
             }
+            | Self::AssetLockAddressTopUp {
+                addresses,
+                ..
+            }
+            | Self::AssetLockShieldedAddressTopUp {
+                addresses,
+                ..
+            }
             | Self::ProviderVotingKeys {
                 addresses,
                 ..
@@ -276,6 +302,14 @@ impl ManagedAccountType {
                 ..
             }
             | Self::IdentityInvitation {
+                addresses,
+                ..
+            }
+            | Self::AssetLockAddressTopUp {
+                addresses,
+                ..
+            }
+            | Self::AssetLockShieldedAddressTopUp {
                 addresses,
                 ..
             }
@@ -360,6 +394,11 @@ impl ManagedAccountType {
         self.address_pools().iter().flat_map(|pool| pool.all_addresses()).collect()
     }
 
+    /// Get cached scriptPubKey bytes for every address across all pools.
+    pub fn all_script_pubkeys(&self) -> Vec<ScriptBuf> {
+        self.address_pools().iter().flat_map(|pool| pool.all_script_pubkeys()).collect()
+    }
+
     /// Get the account type as the original enum
     pub fn to_account_type(&self) -> AccountType {
         match self {
@@ -392,6 +431,12 @@ impl ManagedAccountType {
             Self::IdentityInvitation {
                 ..
             } => AccountType::IdentityInvitation,
+            Self::AssetLockAddressTopUp {
+                ..
+            } => AccountType::AssetLockAddressTopUp,
+            Self::AssetLockShieldedAddressTopUp {
+                ..
+            } => AccountType::AssetLockShieldedAddressTopUp,
             Self::ProviderVotingKeys {
                 ..
             } => AccountType::ProviderVotingKeys,
@@ -484,12 +529,15 @@ impl ManagedAccountType {
             AccountType::CoinJoin {
                 index,
             } => {
-                let path = account_type
+                // CoinJoin addresses live on the external branch (m/9'/coin'/4'/account'/0/index)
+                // to match Dash Core, so derive through the `External` pool which uses [0, index].
+                let mut path = account_type
                     .derivation_path(network)
                     .unwrap_or_else(|_| DerivationPath::master());
+                path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
                 let pool = AddressPool::new(
                     path,
-                    AddressPoolType::Absent,
+                    AddressPoolType::External,
                     DEFAULT_COINJOIN_GAP_LIMIT,
                     network,
                     key_source,
@@ -564,6 +612,38 @@ impl ManagedAccountType {
                 )?;
 
                 Ok(Self::IdentityInvitation {
+                    addresses: pool,
+                })
+            }
+            AccountType::AssetLockAddressTopUp => {
+                let path = account_type
+                    .derivation_path(network)
+                    .unwrap_or_else(|_| DerivationPath::master());
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+
+                Ok(Self::AssetLockAddressTopUp {
+                    addresses: pool,
+                })
+            }
+            AccountType::AssetLockShieldedAddressTopUp => {
+                let path = account_type
+                    .derivation_path(network)
+                    .unwrap_or_else(|_| DerivationPath::master());
+                let pool = AddressPool::new(
+                    path,
+                    AddressPoolType::Absent,
+                    DEFAULT_SPECIAL_GAP_LIMIT,
+                    network,
+                    key_source,
+                )?;
+
+                Ok(Self::AssetLockShieldedAddressTopUp {
                     addresses: pool,
                 })
             }

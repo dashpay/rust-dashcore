@@ -92,17 +92,18 @@ fn test_network_mismatch_handling() {
     // Create wallet for mainnet with same mnemonic
     let mainnet_wallet = Wallet::from_mnemonic(
         mnemonic,
-        Network::Dash,
+        Network::Mainnet,
         crate::wallet::initialization::WalletAccountCreationOptions::Default,
     )
     .unwrap();
 
-    // Wallet IDs should be the same (derived from same root key)
-    assert_eq!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
+    // Wallet IDs are network-scoped, so the same mnemonic yields different ids
+    // on different networks.
+    assert_ne!(testnet_wallet.wallet_id, mainnet_wallet.wallet_id);
 
-    // But networks should be different
+    // And networks should be different
     assert_eq!(testnet_wallet.network, Network::Testnet);
-    assert_eq!(mainnet_wallet.network, Network::Dash);
+    assert_eq!(mainnet_wallet.network, Network::Mainnet);
 }
 
 #[test]
@@ -269,48 +270,6 @@ fn test_concurrent_access_simulation() {
     // Wallet should still be in valid state
     let wallet = wallet.lock().unwrap();
     assert_ne!(wallet.wallet_id, [0u8; 32]);
-}
-
-#[test]
-fn test_passphrase_edge_cases() {
-    let mnemonic = Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    )
-    .unwrap();
-
-    // Test with empty passphrase - use regular from_mnemonic for empty passphrase
-    let wallet1 = Wallet::from_mnemonic(
-        mnemonic.clone(),
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // Test with very long passphrase
-    let long_passphrase = "a".repeat(1000);
-    let wallet2 = Wallet::from_mnemonic_with_passphrase(
-        mnemonic.clone(),
-        long_passphrase,
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // Test with special characters
-    let special_passphrase = "!@#$%^&*()_+-=[]{}|;':\",./<>?";
-    let wallet3 = Wallet::from_mnemonic_with_passphrase(
-        mnemonic,
-        special_passphrase.to_string(),
-        Network::Testnet,
-        crate::wallet::initialization::WalletAccountCreationOptions::None,
-    )
-    .unwrap();
-
-    // All wallets should have different IDs due to different passphrases
-    assert_ne!(wallet1.wallet_id, wallet2.wallet_id);
-    assert_ne!(wallet2.wallet_id, wallet3.wallet_id);
-    assert_ne!(wallet1.wallet_id, wallet3.wallet_id);
 }
 
 #[test]

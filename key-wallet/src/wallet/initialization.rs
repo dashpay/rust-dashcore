@@ -11,7 +11,6 @@ use crate::error::Result;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::seed::Seed;
 use crate::Network;
-use alloc::string::String;
 use std::collections::BTreeSet;
 
 /// Set of BIP44 account indices to create
@@ -25,6 +24,21 @@ pub type WalletAccountCreationCoinjoinAccounts = BTreeSet<u32>;
 
 /// Set of identity top-up account registration indices to create
 pub type WalletAccountCreationTopUpAccounts = BTreeSet<u32>;
+
+/// Specification for a PlatformPayment account to create
+///
+/// PlatformPayment accounts (DIP-17) use the derivation path:
+/// `m/9'/coin_type'/17'/account'/key_class'/index`
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PlatformPaymentAccountSpec {
+    /// Account index (hardened) - the account' level in the derivation path
+    pub account: u32,
+    /// Key class (hardened) - defaults to 0', 1' is reserved for change-like segregation
+    pub key_class: u32,
+}
+
+/// Set of PlatformPayment account specs to create
+pub type WalletAccountCreationPlatformPaymentAccounts = BTreeSet<PlatformPaymentAccountSpec>;
 
 /// Options for specifying which accounts to create when initializing a wallet
 #[derive(Debug, Clone, Default)]
@@ -42,11 +56,13 @@ pub enum WalletAccountCreationOptions {
     /// * Second parameter: Set of BIP32 account indices to create
     /// * Third parameter: Set of CoinJoin account indices to create
     /// * Fourth parameter: Set of identity top-up registration indices to create
+    /// * Fifth parameter: Set of PlatformPayment account specs to create
     AllAccounts(
         WalletAccountCreationBIP44Accounts,
         WalletAccountCreationBIP32Accounts,
         WalletAccountCreationCoinjoinAccounts,
         WalletAccountCreationTopUpAccounts,
+        WalletAccountCreationPlatformPaymentAccounts,
     ),
 
     /// Create only BIP44 accounts (no CoinJoin or special accounts), with optional
@@ -63,12 +79,14 @@ pub enum WalletAccountCreationOptions {
     /// * Second: Set of BIP32 account indices
     /// * Third: Set of CoinJoin account indices
     /// * Fourth: Set of identity top-up registration indices
-    /// * Fifth: Additional special account type to create (e.g., IdentityRegistration)
+    /// * Fifth: Set of PlatformPayment account specs to create
+    /// * Sixth: Additional special account types to create (e.g., IdentityRegistration)
     SpecificAccounts(
         WalletAccountCreationBIP44Accounts,
         WalletAccountCreationBIP32Accounts,
         WalletAccountCreationCoinjoinAccounts,
         WalletAccountCreationTopUpAccounts,
+        WalletAccountCreationPlatformPaymentAccounts,
         Option<Vec<AccountType>>,
     ),
 
@@ -103,7 +121,16 @@ impl Wallet {
         Ok(wallet)
     }
 
-    /// Create a wallet from a specific wallet type with no accounts
+    /// Create a wallet from a signing wallet type with no accounts.
+    ///
+    /// This derives the wallet id from the root public key carried by the
+    /// variant. The [`WalletType::WatchOnly`] and [`WalletType::ExternalSignable`]
+    /// unit variants have no root key to derive from — use
+    /// [`Wallet::new_watch_only`] or [`Wallet::new_external_signable`] for those.
+    ///
+    /// # Panics
+    /// Panics if `wallet_type` is `WalletType::WatchOnly` or
+    /// `WalletType::ExternalSignable`.
     pub fn from_wallet_type(network: Network, wallet_type: WalletType) -> Self {
         // Compute wallet ID from root public key
         let root_pub_key = match &wallet_type {
@@ -118,20 +145,69 @@ impl Wallet {
             | WalletType::ExtendedPrivKey(root_extended_private_key) => {
                 root_extended_private_key.to_root_extended_pub_key()
             }
-            WalletType::MnemonicWithPassphrase {
-                root_extended_public_key,
-                ..
+            WalletType::ExternalSignable | WalletType::WatchOnly => {
+                panic!(
+                    "Wallet::from_wallet_type cannot be used with WalletType::WatchOnly or \
+                     WalletType::ExternalSignable — use Wallet::new_watch_only or \
+                     Wallet::new_external_signable instead"
+                );
             }
-            | WalletType::ExternalSignable(root_extended_public_key)
-            | WalletType::WatchOnly(root_extended_public_key) => root_extended_public_key.clone(),
         };
-        let wallet_id = Self::compute_wallet_id_from_root_extended_pub_key(&root_pub_key);
+        let wallet_id =
+            Self::compute_wallet_id_from_root_extended_pub_key(&root_pub_key, Some(network));
 
         Self {
             network,
             wallet_id,
             wallet_type,
             accounts: AccountCollection::new(),
+        }
+    }
+
+    /// Build a watch-only wallet from its known id + pre-built accounts.
+    ///
+    /// Watch-only wallets carry no root key material. Every Dash derivation path
+    /// (BIP44, DIP-9 identity, DIP-15 DashPay, DIP-17 platform payment) hits a
+    /// hardened level before the account index, so a host-side root xpub cannot
+    /// be used to expand account coverage. Supply the accounts you want to track
+    /// directly via `accounts`.
+    ///
+    /// `wallet_id` is the stable identifier for this wallet (typically a hash
+    /// derived when the wallet was first created, persisted by the caller, and
+    /// fed back in at restore time).
+    pub fn new_watch_only(
+        network: Network,
+        wallet_id: [u8; 32],
+        accounts: AccountCollection,
+    ) -> Self {
+        Self {
+            network,
+            wallet_id,
+            wallet_type: WalletType::WatchOnly,
+            accounts,
+        }
+    }
+
+    /// Build an external-signable wallet from its known id + pre-built accounts.
+    ///
+    /// The external device (hardware wallet, remote signer, …) holds all key
+    /// material. The host only needs per-account xpubs (for address generation)
+    /// and derivation paths (to request signatures). Both are carried by
+    /// `accounts`.
+    ///
+    /// `wallet_id` is the stable identifier for this wallet (typically a hash
+    /// derived when the wallet was first created, persisted by the caller, and
+    /// fed back in at restore time).
+    pub fn new_external_signable(
+        network: Network,
+        wallet_id: [u8; 32],
+        accounts: AccountCollection,
+    ) -> Self {
+        Self {
+            network,
+            wallet_id,
+            wallet_type: WalletType::ExternalSignable,
+            accounts,
         }
     }
 
@@ -162,126 +238,64 @@ impl Wallet {
         Ok(wallet)
     }
 
-    /// Create a wallet from a mnemonic phrase with passphrase
-    /// The passphrase is used only to derive the master public key, then discarded
+    /// Create a watch-only or externally signable wallet from an extended public key.
+    ///
+    /// This is a thin adapter that hashes `master_xpub` into a stable wallet id
+    /// and delegates to [`Wallet::new_watch_only`] or
+    /// [`Wallet::new_external_signable`]. The xpub itself is **not** retained on
+    /// the wallet — watch-only and external-signable wallets do not need a root
+    /// key at rest (see the rationale on [`WalletType::WatchOnly`]).
+    ///
+    /// Prefer the new `new_*` constructors when you already know the wallet id
+    /// (e.g. restoring from persistence).
     ///
     /// # Arguments
-    /// * `mnemonic` - The mnemonic phrase
-    /// * `passphrase` - The BIP39 passphrase
-    /// * `network` - Network to create accounts for
-    /// * `account_creation_options` - Specifies which accounts to create during initialization
-    pub fn from_mnemonic_with_passphrase(
-        mnemonic: Mnemonic,
-        passphrase: String,
-        network: Network,
-        account_creation_options: WalletAccountCreationOptions,
-    ) -> Result<Self> {
-        let seed = mnemonic.to_seed(&passphrase);
-        let root_extended_private_key = RootExtendedPrivKey::new_master(&seed)?;
-        let root_extended_public_key = root_extended_private_key.to_root_extended_pub_key();
-
-        // Store only mnemonic and public key, not the passphrase or private key
-        let mut wallet = Self::from_wallet_type(
-            network,
-            WalletType::MnemonicWithPassphrase {
-                mnemonic,
-                root_extended_public_key,
-            },
-        );
-
-        wallet.create_accounts_with_passphrase_from_options(
-            account_creation_options.clone(),
-            passphrase.as_str(),
-        )?;
-
-        Ok(wallet)
-    }
-
-    /// Create a watch-only or externally signable wallet from extended public key
-    ///
-    /// Watch-only wallets can generate addresses and monitor transactions but cannot sign.
-    /// Externally signable wallets can also create unsigned transactions that can be signed by
-    /// external devices (hardware wallets, remote signing services, etc.).
-    ///
-    /// # Arguments
-    /// * `master_xpub` - The master extended public key for the wallet
-    /// * `accounts` - Pre-created account collections. Since watch-only wallets cannot derive
-    ///   private keys, all accounts must be provided with their extended public keys already
-    ///   initialized.
-    /// * `can_sign_externally` - If true, creates an externally signable wallet that supports
-    ///   transaction creation for external signing. If false, creates a pure watch-only wallet.
-    ///
-    /// # Returns
-    /// A new watch-only or externally signable wallet instance
-    ///
-    /// # Examples
-    /// ```ignore
-    /// // Create a pure watch-only wallet
-    /// let watch_wallet = Wallet::from_xpub(master_xpub, account_collection, false)?;
-    ///
-    /// // Create an externally signable wallet (e.g., for hardware wallet)
-    /// let hw_wallet = Wallet::from_xpub(master_xpub, accounts, true)?;
-    /// ```
+    /// * `master_xpub` - The master extended public key. Used only to derive the
+    ///   wallet id; not retained.
+    /// * `accounts` - Pre-created account collections. Since these wallet types
+    ///   cannot derive private keys, all accounts must be provided with their
+    ///   extended public keys already initialized.
+    /// * `can_sign_externally` - If true, builds an externally signable wallet
+    ///   (signing delegated to a hardware device or remote signer). If false,
+    ///   builds a pure watch-only wallet.
     pub fn from_xpub(
         master_xpub: ExtendedPubKey,
         accounts: AccountCollection,
         can_sign_externally: bool,
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
-        let wallet_type = if can_sign_externally {
-            WalletType::ExternalSignable(root_extended_public_key)
+        let wallet_id = Self::compute_wallet_id_from_root_extended_pub_key(
+            &root_extended_public_key,
+            Some(master_xpub.network),
+        );
+        let wallet = if can_sign_externally {
+            Self::new_external_signable(master_xpub.network, wallet_id, accounts)
         } else {
-            WalletType::WatchOnly(root_extended_public_key)
+            Self::new_watch_only(master_xpub.network, wallet_id, accounts)
         };
-        let mut wallet = Self::from_wallet_type(master_xpub.network, wallet_type);
-
-        wallet.accounts = accounts;
-
         Ok(wallet)
     }
 
-    /// Create an external signable wallet from extended public key
+    /// Create an external signable wallet from an extended public key.
     ///
-    /// External signable wallets support transaction signing through external devices or services.
-    /// Unlike watch-only wallets which cannot sign at all, these wallets delegate signing to
-    /// hardware wallets, remote signing services, or other external signing mechanisms.
+    /// Thin adapter around [`Wallet::new_external_signable`] that derives the
+    /// wallet id from `master_xpub`. The xpub itself is not retained.
     ///
     /// # Arguments
-    /// * `master_xpub` - The master extended public key from the external signing device.
-    /// * `accounts` - Pre-created account collections. Since external signable wallets cannot
-    ///   derive private keys, all accounts must be provided with their extended public keys
-    ///   already initialized from the external device.
-    ///
-    /// # Returns
-    /// A new external signable wallet instance that can create transactions but requires
-    /// the external device/service for signing
-    ///
-    /// # Examples
-    /// ```ignore
-    /// // Get master xpub from hardware wallet
-    /// let master_xpub = hardware_wallet.get_master_xpub()?;
-    ///
-    /// // Create accounts with xpubs from hardware wallet
-    /// let accounts = create_accounts_from_hardware_wallet(&hardware_wallet)?;
-    ///
-    /// let wallet = Wallet::from_external_signable(master_xpub, accounts)?;
-    ///
-    /// // Later, when signing is needed:
-    /// // let signature = hardware_wallet.sign_transaction(&tx)?;
-    /// ```
+    /// * `master_xpub` - The master extended public key. Used only to derive the
+    ///   wallet id; not retained.
+    /// * `accounts` - Pre-created account collections with xpubs from the
+    ///   external signing device.
     pub fn from_external_signable(
         master_xpub: ExtendedPubKey,
         accounts: AccountCollection,
     ) -> Result<Self> {
         let root_extended_public_key = RootExtendedPubKey::from_extended_pub_key(&master_xpub);
-        let mut wallet = Self::from_wallet_type(
-            master_xpub.network,
-            WalletType::ExternalSignable(root_extended_public_key),
+        let wallet_id = Self::compute_wallet_id_from_root_extended_pub_key(
+            &root_extended_public_key,
+            Some(master_xpub.network),
         );
-
-        wallet.accounts = accounts;
-
-        Ok(wallet)
+        Ok(Self::new_external_signable(master_xpub.network, wallet_id, accounts))
     }
 
     /// Create a wallet from seed bytes
