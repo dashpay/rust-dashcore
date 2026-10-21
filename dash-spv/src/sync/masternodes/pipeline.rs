@@ -25,10 +25,12 @@ const MNLISTDIFF_TIMEOUT: Duration = Duration::from_secs(15);
 pub(super) const MAX_MNLISTDIFF_ATTEMPTS: u32 = 3;
 
 /// How long after its first send a target is given up, whatever attempts it
-/// has left: as long as its attempts take when each one times out. A send cut
-/// short by a peer disconnect spends no attempt, so without this, peers
-/// dropping one after another would keep a target in flight forever.
-const MNLISTDIFF_LIFETIME: Duration = MNLISTDIFF_TIMEOUT.saturating_mul(MAX_MNLISTDIFF_ATTEMPTS);
+/// has left: as long as its attempts take when each one times out, and one
+/// timeout more for the retries, which go out a tick after the timeout. A
+/// send cut short by a peer disconnect spends no attempt, so without this,
+/// peers dropping one after another would keep a target in flight forever.
+const MNLISTDIFF_LIFETIME: Duration =
+    MNLISTDIFF_TIMEOUT.saturating_mul(MAX_MNLISTDIFF_ATTEMPTS + 1);
 
 /// What became of a target whose attempt failed.
 #[derive(Debug, PartialEq, Eq)]
@@ -261,6 +263,14 @@ impl MnListDiffPipeline {
         self.lifetime = lifetime;
     }
 
+    /// Has every target sent been sent first `by` earlier.
+    #[cfg(test)]
+    pub(super) fn age_first_sends(&mut self, by: Duration) {
+        for first_sent in self.first_sent.values_mut() {
+            *first_sent = first_sent.checked_sub(by).expect("the clock reaches back that far");
+        }
+    }
+
     /// Get the number of in-flight requests.
     #[cfg(test)]
     pub(super) fn active_count(&self) -> usize {
@@ -465,27 +475,41 @@ mod tests {
         }
     }
 
+    /// A target's lifetime outlasts its attempts when each one times out,
+    /// with time to spare for retries that go out a tick late, so it only
+    /// ever cuts short sends that a peer disconnect restarted.
+    #[test]
+    fn a_target_s_lifetime_outlasts_its_attempts() {
+        let late_retries = Duration::from_secs(1);
+        assert!(
+            MNLISTDIFF_LIFETIME
+                >= (MNLISTDIFF_TIMEOUT + late_retries).saturating_mul(MAX_MNLISTDIFF_ATTEMPTS)
+        );
+    }
+
     /// The time a target used up goes with the peers it was sent to: after a
     /// full disconnect, the new peers give it a whole lifetime again.
     #[test]
     fn a_target_gets_a_new_lifetime_from_the_peers_after_a_full_disconnect() {
-        let lifetime = Duration::from_millis(50);
-        let mut pipeline = MnListDiffPipeline::new();
-        pipeline.set_lifetime(lifetime);
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
         let (tx, _rx) = unbounded_channel();
         let requests = RequestSender::new(tx);
-        pipeline.queue_requests(vec![(base, target)]);
-        pipeline.send_pending(&requests).unwrap();
-        std::thread::sleep(lifetime + Duration::from_millis(10));
+        let sent_a_lifetime_ago = |full_disconnect: bool| {
+            let mut pipeline = MnListDiffPipeline::new();
+            pipeline.queue_requests(vec![(base, target)]);
+            pipeline.send_pending(&requests).unwrap();
+            pipeline.age_first_sends(MNLISTDIFF_LIFETIME);
+            pipeline.requeue_in_flight();
+            if full_disconnect {
+                pipeline.forget_attempts();
+            }
+            pipeline.send_pending(&requests).unwrap();
+            pipeline.handle_timeouts()
+        };
 
-        pipeline.requeue_in_flight();
-        pipeline.forget_attempts();
-        pipeline.send_pending(&requests).unwrap();
-
-        assert_eq!(pipeline.handle_timeouts(), vec![], "the new peers get a new lifetime");
-        assert!(!pipeline.is_complete());
+        assert_eq!(sent_a_lifetime_ago(false), vec![(base, target)], "a peer drop keeps it");
+        assert_eq!(sent_a_lifetime_ago(true), vec![], "the new peers get a new lifetime");
     }
 
     /// A refused response puts its target back in pending with its base, and

@@ -1189,14 +1189,14 @@ mod tests {
     async fn a_tip_update_whose_peers_keep_dropping_is_given_up_within_its_lifetime() {
         let (mut manager, engine, requests, mut rx, _tip_update, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
-        let lifetime = Duration::from_millis(300);
+        let lifetime = Duration::from_secs(1);
         manager.sync_state.mnlistdiff_pipeline.set_lifetime(lifetime);
         let started = Instant::now();
 
         let mut sends = 1;
         while !manager.sync_state.mnlistdiff_pipeline.is_complete() {
             assert!(
-                started.elapsed() < lifetime * 10,
+                started.elapsed() < lifetime * 3,
                 "sent {sends} times and still not given up after {:?}",
                 started.elapsed()
             );
