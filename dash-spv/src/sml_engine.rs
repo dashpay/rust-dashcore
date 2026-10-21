@@ -67,6 +67,18 @@ pub enum FeedError<E> {
     Refused(#[from] E),
 }
 
+impl From<StorageError> for FeedError<SmlError> {
+    fn from(error: StorageError) -> Self {
+        FeedError::HeaderStorage(error)
+    }
+}
+
+impl From<StorageError> for FeedError<QuorumValidationError> {
+    fn from(error: StorageError) -> Self {
+        FeedError::HeaderStorage(error)
+    }
+}
+
 impl From<FeedError<SmlError>> for FeedError<QuorumValidationError> {
     fn from(error: FeedError<SmlError>) -> Self {
         match error {
@@ -223,20 +235,14 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         block_hash: &BlockHash,
     ) -> Result<CoreBlockHeight, FeedError<SmlError>> {
         self.height_of(block_hash)
-            .await
-            .map_err(FeedError::HeaderStorage)?
+            .await?
             .ok_or(FeedError::Refused(SmlError::BlockHashLookupFailed(*block_hash)))
     }
 
-    /// The hash of the block at `height` in the header chain.
-    async fn hash_at(&self, height: CoreBlockHeight) -> Option<BlockHash> {
-        match self.headers.read().await.get_header(height).await {
-            Ok(header) => header.map(|header| *header.hash()),
-            Err(e) => {
-                tracing::warn!("Could not look up the block at {height}: {e}");
-                None
-            }
-        }
+    /// The hash of the block at `height` in the header chain, `None` when the
+    /// chain holds none there. Fails when the header storage cannot be read.
+    async fn hash_at(&self, height: CoreBlockHeight) -> StorageResult<Option<BlockHash>> {
+        Ok(self.headers.read().await.get_header(height).await?.map(|header| *header.hash()))
     }
 
     pub fn network(&self) -> Network {
@@ -275,9 +281,12 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// The `(base, target)` diffs that bring the work-block list of every
     /// non-rotating quorum of the newest list still to validate, oldest first.
-    /// A retired quorum type is never validated, so it needs none.
-    pub async fn missing_work_block_list_requests(&self) -> Vec<(BlockHash, BlockHash)> {
-        let work_heights = self.work_heights_awaiting_validation(|_, _| true).await;
+    /// A retired quorum type is never validated, so it needs none. Fails when
+    /// the header storage cannot be read.
+    pub async fn missing_work_block_list_requests(
+        &self,
+    ) -> StorageResult<Vec<(BlockHash, BlockHash)>> {
+        let work_heights = self.work_heights_awaiting_validation(|_, _| true).await?;
         self.work_block_list_requests(work_heights.into_keys()).await
     }
 
@@ -290,14 +299,14 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     pub(crate) async fn missing_work_block_list_requests_for(
         &self,
         diff: &MnListDiff,
-    ) -> Vec<(BlockHash, BlockHash)> {
+    ) -> StorageResult<Vec<(BlockHash, BlockHash)>> {
         let added: BTreeSet<(LLMQType, QuorumHash)> =
             diff.new_quorums.iter().map(|quorum| (quorum.llmq_type, quorum.quorum_hash)).collect();
         let mut work_heights = self
             .work_heights_awaiting_validation(|llmq_type, quorum_hash| {
                 added.contains(&(*llmq_type, *quorum_hash))
             })
-            .await;
+            .await?;
         let blocks = match (
             self.height_if_known(&diff.base_block_hash).await,
             self.height_if_known(&diff.block_hash).await,
@@ -334,10 +343,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn work_heights_awaiting_validation(
         &self,
         wanted: impl Fn(&LLMQType, &QuorumHash) -> bool,
-    ) -> BTreeMap<CoreBlockHeight, BTreeSet<(LLMQType, QuorumHash)>> {
+    ) -> StorageResult<BTreeMap<CoreBlockHeight, BTreeSet<(LLMQType, QuorumHash)>>> {
         let mut work_heights: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
         let Some(newest) = self.latest_masternode_list() else {
-            return work_heights;
+            return Ok(work_heights);
         };
         for (llmq_type, quorums) in newest.quorums.iter() {
             if llmq_type.is_rotating_quorum_type()
@@ -353,7 +362,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 if !awaits_validation || !wanted(llmq_type, quorum_hash) {
                     continue;
                 }
-                match self.height_if_known(quorum_hash).await {
+                match self.height_of(quorum_hash).await? {
                     Some(height) => {
                         work_heights
                             .entry(height.saturating_sub(QUORUM_MEMBER_LIST_OFFSET))
@@ -364,7 +373,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 }
             }
         }
-        work_heights
+        Ok(work_heights)
     }
 
     /// The `(base, target)` diffs that bring the lists at
@@ -373,13 +382,13 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn work_block_list_requests(
         &self,
         work_heights: impl IntoIterator<Item = CoreBlockHeight>,
-    ) -> Vec<(BlockHash, BlockHash)> {
+    ) -> StorageResult<Vec<(BlockHash, BlockHash)>> {
         let mut requests = Vec::new();
         for height in work_heights {
             if self.masternode_lists.contains_key(&height) {
                 continue;
             }
-            let Some(target) = self.hash_at(height).await else {
+            let Some(target) = self.hash_at(height).await? else {
                 tracing::warn!("No block at work height {height}, skipping it");
                 continue;
             };
@@ -390,7 +399,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 .map_or(BlockHash::all_zeros(), |(_, list)| list.block_hash);
             requests.push((base, target));
         }
-        requests
+        Ok(requests)
     }
 
     /// The stored rotated quorum `quorum_entry` commits to, if any.
@@ -412,37 +421,38 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// Stores the previous cycle, the active set of the list at the h work
     /// block, so IS locks of that cycle verify after a fresh sync. Best effort:
     /// a quorum that does not verify is left out on its own, and bad data is
-    /// only rejected on the current-cycle path.
+    /// only rejected on the current-cycle path. Fails only when the header
+    /// storage cannot be read.
     async fn validate_and_store_previous_cycle_quorums(
         &mut self,
         work_height: CoreBlockHeight,
         sigs_by_work_height: &BTreeMap<CoreBlockHeight, BLSSignature>,
         inferred_work_heights: &BTreeSet<CoreBlockHeight>,
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
-    ) {
+    ) -> StorageResult<()> {
         let isd_type = self.network.isd_llmq_type();
         let Some(quorums_of_type) =
             self.masternode_lists.get(&work_height).and_then(|list| list.quorums.get(&isd_type))
         else {
-            return;
+            return Ok(());
         };
         let Some(cycle_hash) =
-            self.active_set_cycle_hash(quorums_of_type.values().map(|q| &**q).collect()).await
+            self.active_set_cycle_hash(quorums_of_type.values().map(|q| &**q).collect()).await?
         else {
-            return;
+            return Ok(());
         };
         if self.is_cycle_fully_verified(&cycle_hash) {
-            return;
+            return Ok(());
         }
         let mut entries = Vec::with_capacity(quorums_of_type.len());
         for quorum in quorums_of_type.values() {
             let mut entry = (**quorum).clone();
             entry.verifying_chain_lock_signature =
-                self.quarter_sigs(sigs_by_work_height, &entry.quorum_entry).await;
+                self.quarter_sigs(sigs_by_work_height, &entry.quorum_entry).await?;
             entries.push(entry);
         }
 
-        self.settle_rotated_quorums(&mut entries, inferred_work_heights, snapshots).await;
+        self.settle_rotated_quorums(&mut entries, inferred_work_heights, snapshots).await?;
         entries.retain(|entry| {
             let verified = entry.verified == LLMQEntryVerificationStatus::Verified;
             if !verified {
@@ -455,14 +465,19 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             verified
         });
         if entries.is_empty() {
-            return;
+            return Ok(());
         }
         for entry in &entries {
             self.set_quorum_status(isd_type, entry.quorum_entry.quorum_hash, &entry.verified);
         }
-        if let Err(e) = self.store_cycle_if_fully_verified(cycle_hash, entries, isd_type).await {
-            tracing::warn!("Previous cycle {cycle_hash} could not be stored: {e}");
+        match self.store_cycle_if_fully_verified(cycle_hash, entries, isd_type).await {
+            Err(FeedError::HeaderStorage(e)) => return Err(e),
+            Err(FeedError::Refused(e)) => {
+                tracing::warn!("Previous cycle {cycle_hash} could not be stored: {e}")
+            }
+            Ok(_) => {}
         }
+        Ok(())
     }
 
     /// `true` when the stored cycle has a `Verified` quorum for every active
@@ -483,17 +498,18 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         cycle_key: BlockHash,
         qualified_last_commitment_per_index: Vec<QualifiedQuorumEntry>,
         rotation_quorum_type: LLMQType,
-    ) -> Result<Option<CoreBlockHeight>, QuorumValidationError> {
+    ) -> Result<Option<CoreBlockHeight>, FeedError<QuorumValidationError>> {
         let all_entries_verified = qualified_last_commitment_per_index
             .iter()
             .all(|q| q.verified == LLMQEntryVerificationStatus::Verified);
         if !all_entries_verified || self.is_cycle_fully_verified(&cycle_key) {
             return Ok(None);
         }
+        let height = self.height_of(&cycle_key).await?;
         let cycle_map =
             build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
         self.rotated_quorums_per_cycle.entry(cycle_key).or_default().extend(cycle_map);
-        Ok(self.height_if_known(&cycle_key).await)
+        Ok(height)
     }
 
     /// The ChainLock signature of each rotation work block, from the
@@ -508,10 +524,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn rotation_cl_sigs_by_work_height(
         &self,
         diffs: Vec<&MnListDiff>,
-    ) -> (BTreeMap<CoreBlockHeight, BLSSignature>, BTreeSet<CoreBlockHeight>) {
+    ) -> StorageResult<(BTreeMap<CoreBlockHeight, BLSSignature>, BTreeSet<CoreBlockHeight>)> {
         let mut diffs_by_end_height = Vec::new();
         for diff in diffs {
-            diffs_by_end_height.push((self.height_if_known(&diff.block_hash).await, diff));
+            diffs_by_end_height.push((self.height_of(&diff.block_hash).await?, diff));
         }
         diffs_by_end_height.sort_by_key(|(end_height, _)| *end_height);
 
@@ -521,7 +537,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 for quorum in signed_rotated_quorums(diff, sig_obj) {
                     if let Some(work_height) = self
                         .rotated_quorum_cycle_base(quorum)
-                        .await
+                        .await?
                         .and_then(|cycle_base| cycle_base.checked_sub(WORK_DIFF_DEPTH))
                     {
                         sigs_by_work_height.insert(work_height, sig_obj.signature);
@@ -546,7 +562,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 let mut group_has_unresolved_rotated = false;
                 let mut hypothesis_mismatch = false;
                 for quorum in signed_rotated_quorums(diff, sig_obj) {
-                    if self.rotated_quorum_cycle_base(quorum).await.is_some() {
+                    if self.rotated_quorum_cycle_base(quorum).await?.is_some() {
                         group_resolved = true;
                         continue;
                     }
@@ -566,7 +582,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                     };
                     if self
                         .hash_at(presumed_height)
-                        .await
+                        .await?
                         .is_some_and(|block_hash| block_hash != quorum.quorum_hash)
                     {
                         hypothesis_mismatch = true;
@@ -589,7 +605,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 inferred_work_heights.insert(newest_work_height);
             }
         }
-        (sigs_by_work_height, inferred_work_heights)
+        Ok((sigs_by_work_height, inferred_work_heights))
     }
 
     /// For a diff ending at a work block, the work block of the newest cycle
@@ -601,40 +617,54 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .flatten()
     }
 
-    async fn rotated_quorum_cycle_base(&self, quorum: &QuorumEntry) -> Option<CoreBlockHeight> {
-        rotated_cycle_base_height(quorum, self.height_if_known(&quorum.quorum_hash).await?)
+    async fn rotated_quorum_cycle_base(
+        &self,
+        quorum: &QuorumEntry,
+    ) -> StorageResult<Option<CoreBlockHeight>> {
+        let height = self.height_of(&quorum.quorum_hash).await?;
+        Ok(height.and_then(|height| rotated_cycle_base_height(quorum, height)))
     }
 
-    async fn quarter_work_heights(&self, quorum: &QuorumEntry) -> Option<[CoreBlockHeight; 4]> {
-        let cycle_base = self.rotated_quorum_cycle_base(quorum).await?;
+    async fn quarter_work_heights(
+        &self,
+        quorum: &QuorumEntry,
+    ) -> StorageResult<Option<[CoreBlockHeight; 4]>> {
+        let Some(cycle_base) = self.rotated_quorum_cycle_base(quorum).await? else {
+            return Ok(None);
+        };
         let interval = quorum.llmq_type.params().dkg_params.interval;
-        let [h3, h2, h1, h0] = cycle_quarter_work_heights(cycle_base, interval);
-        Some([h3?, h2?, h1?, h0?])
+        let [Some(h3), Some(h2), Some(h1), Some(h0)] =
+            cycle_quarter_work_heights(cycle_base, interval)
+        else {
+            return Ok(None);
+        };
+        Ok(Some([h3, h2, h1, h0]))
     }
 
     async fn quarter_sigs(
         &self,
         sigs_by_work_height: &BTreeMap<CoreBlockHeight, BLSSignature>,
         quorum: &QuorumEntry,
-    ) -> Option<VerifyingChainLockSignaturesType> {
-        let [h3, h2, h1, h0] = self.quarter_work_heights(quorum).await?;
-        let sig_at = |work_height: CoreBlockHeight| sigs_by_work_height.get(&work_height).copied();
-        Some(VerifyingChainLockSignaturesType::Rotating([
-            sig_at(h3)?,
-            sig_at(h2)?,
-            sig_at(h1)?,
-            sig_at(h0)?,
-        ]))
+    ) -> StorageResult<Option<VerifyingChainLockSignaturesType>> {
+        let Some(work_heights) = self.quarter_work_heights(quorum).await? else {
+            return Ok(None);
+        };
+        let [Some(h3), Some(h2), Some(h1), Some(h0)] =
+            work_heights.map(|work_height| sigs_by_work_height.get(&work_height).copied())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(VerifyingChainLockSignaturesType::Rotating([h3, h2, h1, h0])))
     }
 
     async fn quarter_sigs_are_inferred(
         &self,
         inferred_work_heights: &BTreeSet<CoreBlockHeight>,
         quorum: &QuorumEntry,
-    ) -> bool {
-        self.quarter_work_heights(quorum).await.is_some_and(|work_heights| {
+    ) -> StorageResult<bool> {
+        Ok(self.quarter_work_heights(quorum).await?.is_some_and(|work_heights| {
             work_heights.iter().any(|work_height| inferred_work_heights.contains(work_height))
-        })
+        }))
     }
 
     /// The configured rotation type, or on a devnet without an override, the
@@ -657,31 +687,37 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn active_set_cycle_hash(
         &self,
         entries: Vec<&QualifiedQuorumEntry>,
-    ) -> Option<QuorumHash> {
+    ) -> StorageResult<Option<QuorumHash>> {
         let mut newest_cycle_base = None;
         for entry in entries {
-            let cycle_base = self.rotated_quorum_cycle_base(&entry.quorum_entry).await;
+            let cycle_base = self.rotated_quorum_cycle_base(&entry.quorum_entry).await?;
             newest_cycle_base = newest_cycle_base.max(cycle_base);
         }
-        self.hash_at(newest_cycle_base?).await
+        match newest_cycle_base {
+            Some(cycle_base) => self.hash_at(cycle_base).await,
+            None => Ok(None),
+        }
     }
 
     /// Sets each rotated quorum's status. A quarter signature keyed by
     /// elimination may be another cycle's, so a quorum failing under one is
-    /// skipped rather than invalid.
+    /// skipped rather than invalid. Fails when the header storage cannot be
+    /// read, which would otherwise leave such a quorum invalid.
     async fn settle_rotated_quorums(
         &self,
         quorums: &mut [QualifiedQuorumEntry],
         inferred_work_heights: &BTreeSet<CoreBlockHeight>,
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
-    ) {
+    ) -> StorageResult<()> {
         let statuses =
             self.rotated_quorum_statuses(&quorums.iter().collect::<Vec<_>>(), snapshots).await;
         for quorum in quorums.iter_mut() {
             let quorum_hash = quorum.quorum_entry.quorum_hash;
             quorum.verified = statuses.get(&quorum_hash).cloned().unwrap_or_default();
             if matches!(quorum.verified, LLMQEntryVerificationStatus::Invalid(_))
-                && self.quarter_sigs_are_inferred(inferred_work_heights, &quorum.quorum_entry).await
+                && self
+                    .quarter_sigs_are_inferred(inferred_work_heights, &quorum.quorum_entry)
+                    .await?
             {
                 tracing::warn!(
                     "Rotated quorum {quorum_hash} failed validation ({}) under inferred quarter signatures, skipping it",
@@ -692,6 +728,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 );
             }
         }
+        Ok(())
     }
 
     /// Applies a QRInfo's diffs, then validates and stores its active rotation
@@ -720,7 +757,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         qr_info: QRInfo,
     ) -> Result<QRInfoFeedResult, FeedError<QuorumValidationError>> {
         let (rotation_sigs_by_work_height, inferred_work_heights) =
-            self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info)).await;
+            self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info)).await?;
 
         let QRInfo {
             quorum_snapshot_at_h_minus_c,
@@ -768,8 +805,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.apply_and_prune(mn_list_diff_tip).await?;
 
         // Only the h-4c share brings the oldest quarters of the list at h.
-        if let Some(h_height) =
-            self.height_if_known(&h_block_hash).await.filter(|_| can_verify_previous)
+        if let Some(h_height) = self.height_of(&h_block_hash).await?.filter(|_| can_verify_previous)
         {
             self.validate_and_store_previous_cycle_quorums(
                 h_height,
@@ -777,7 +813,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 &inferred_work_heights,
                 &snapshots,
             )
-            .await;
+            .await?;
         }
 
         let mut qualified_last_commitment_per_index =
@@ -788,14 +824,15 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 continue;
             }
             let quarter_sigs =
-                self.quarter_sigs(&rotation_sigs_by_work_height, &quorum_entry).await;
+                self.quarter_sigs(&rotation_sigs_by_work_height, &quorum_entry).await?;
             let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
             qualified_quorum_entry.verifying_chain_lock_signature = quarter_sigs;
             qualified_last_commitment_per_index.push(qualified_quorum_entry);
         }
 
-        let cycle_key =
-            self.active_set_cycle_hash(qualified_last_commitment_per_index.iter().collect()).await;
+        let cycle_key = self
+            .active_set_cycle_hash(qualified_last_commitment_per_index.iter().collect())
+            .await?;
         if cycle_key.is_none() && rotated_quorum_count > 0 {
             tracing::warn!(
                 "None of the {} rotated quorums served resolves a cycle base, so the cycle cannot be stored under any key",
@@ -808,7 +845,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             &inferred_work_heights,
             &snapshots,
         )
-        .await;
+        .await?;
         if let Some(LLMQEntryVerificationStatus::Invalid(e)) = qualified_last_commitment_per_index
             .iter()
             .map(|quorum| &quorum.verified)
@@ -1094,7 +1131,13 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
-    use super::{build_cycle_quorum_map, FeedError, WORK_DIFF_DEPTH};
+    use super::{
+        build_cycle_quorum_map, FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH,
+    };
+    use crate::error::{StorageError, StorageResult};
+    use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
+    use crate::test_utils::MockHeaderStorage;
+    use crate::types::HashedBlockHeader;
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -1117,7 +1160,9 @@ mod tests {
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::{BlockHash, Network, QuorumHash};
     use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use tokio::sync::RwLock;
 
     fn make_qualified_quorum_entry(
         llmq_type: LLMQType,
@@ -1188,7 +1233,8 @@ mod tests {
 
         // A known quorum height keys the signature exactly, no inference.
         let engine = engine_knowing_blocks(&[(diff_end, end_hash), (cycle_base + 3, quorum_hash)]);
-        let (sigs, inferred) = engine.rotation_cl_sigs_by_work_height(vec![&diff]).await;
+        let (sigs, inferred) =
+            engine.rotation_cl_sigs_by_work_height(vec![&diff]).await.expect("the headers read");
         assert_eq!(sigs, BTreeMap::from([(work_height, sig)]));
         assert!(inferred.is_empty(), "a known quorum height must key exactly");
 
@@ -1203,7 +1249,10 @@ mod tests {
                 vec![quorum_entry(isd_type, quorum_hash, Some(shifted_index))],
                 vec![(sig, vec![0])],
             );
-            let (sigs, inferred) = engine.rotation_cl_sigs_by_work_height(vec![&shifted]).await;
+            let (sigs, inferred) = engine
+                .rotation_cl_sigs_by_work_height(vec![&shifted])
+                .await
+                .expect("the headers read");
             assert_eq!(
                 sigs,
                 BTreeMap::from([(work_height, sig)]),
@@ -1220,7 +1269,8 @@ mod tests {
         // Without that height the only remaining group is keyed by
         // elimination, and the caller is told the key was inferred.
         let engine = engine_knowing_blocks(&[(diff_end, end_hash)]);
-        let (sigs, inferred) = engine.rotation_cl_sigs_by_work_height(vec![&diff]).await;
+        let (sigs, inferred) =
+            engine.rotation_cl_sigs_by_work_height(vec![&diff]).await.expect("the headers read");
         assert_eq!(sigs, BTreeMap::from([(work_height, sig)]));
         assert_eq!(inferred, BTreeSet::from([work_height]));
 
@@ -1233,7 +1283,10 @@ mod tests {
             ],
             vec![(sig, vec![0]), (other_sig, vec![1])],
         );
-        let (sigs, inferred) = engine.rotation_cl_sigs_by_work_height(vec![&ambiguous]).await;
+        let (sigs, inferred) = engine
+            .rotation_cl_sigs_by_work_height(vec![&ambiguous])
+            .await
+            .expect("the headers read");
         assert!(
             sigs.is_empty() && inferred.is_empty(),
             "two unresolved groups must resolve to nothing"
@@ -1255,8 +1308,10 @@ mod tests {
             vec![quorum_entry(isd_type, quorum_hash, Some(3))],
             vec![(zero_sig, vec![0])],
         );
-        let (sigs, inferred) =
-            engine.rotation_cl_sigs_by_work_height(vec![&older_zeroed, &newer_zeroed]).await;
+        let (sigs, inferred) = engine
+            .rotation_cl_sigs_by_work_height(vec![&older_zeroed, &newer_zeroed])
+            .await
+            .expect("the headers read");
         assert_eq!(
             sigs,
             BTreeMap::from([(older_work_height, zero_sig), (work_height, zero_sig)]),
@@ -1279,7 +1334,10 @@ mod tests {
             ],
             vec![(sig, vec![0]), (other_sig, vec![1])],
         );
-        let (sigs, _) = engine.rotation_cl_sigs_by_work_height(vec![&older, &newer]).await;
+        let (sigs, _) = engine
+            .rotation_cl_sigs_by_work_height(vec![&older, &newer])
+            .await
+            .expect("the headers read");
         assert_eq!(
             sigs,
             BTreeMap::from([(older_work_height, sig), (work_height, other_sig)]),
@@ -1389,6 +1447,7 @@ mod tests {
         engine
             .active_set_cycle_hash(entries.iter().collect())
             .await
+            .expect("the headers read")
             .expect("fixture must resolve the cycle key of its active set")
     }
 
@@ -1515,7 +1574,8 @@ mod tests {
         let current_cycle_base = 2518848;
         let mut mixed_cycle_bases = BTreeSet::new();
         for quorum in &qr_info.last_commitment_per_index {
-            mixed_cycle_bases.extend(engine.rotated_quorum_cycle_base(quorum).await);
+            mixed_cycle_bases
+                .extend(engine.rotated_quorum_cycle_base(quorum).await.expect("the headers read"));
         }
         assert!(
             mixed_cycle_bases.len() > 1 && mixed_cycle_bases.contains(&current_cycle_base),
@@ -1853,6 +1913,141 @@ mod tests {
         );
     }
 
+    /// Header storage answering from `inner`, except that reading the block
+    /// `unreadable` fails once it has been read `readable` times, as it does
+    /// when its header segment stops reading partway through a feed.
+    struct FailingFrom {
+        inner: MockHeaderStorage,
+        unreadable: BlockHash,
+        readable: usize,
+        reads: AtomicUsize,
+    }
+
+    impl FailingFrom {
+        fn read<T>(&self, block_hash: &BlockHash, read: StorageResult<T>) -> StorageResult<T> {
+            if *block_hash == self.unreadable
+                && self.reads.fetch_add(1, Ordering::Relaxed) >= self.readable
+            {
+                return Err(StorageError::ReadFailed("the header segment is unreadable".into()));
+            }
+            read
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BlockHeaderStorage for FailingFrom {
+        async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()> {
+            self.inner.store_headers(headers).await
+        }
+        async fn store_headers_at_height(
+            &mut self,
+            headers: &[HashedBlockHeader],
+            height: u32,
+        ) -> StorageResult<()> {
+            self.inner.store_headers_at_height(headers, height).await
+        }
+        async fn load_headers(
+            &self,
+            range: std::ops::Range<u32>,
+        ) -> StorageResult<Vec<HashedBlockHeader>> {
+            self.inner.load_headers(range).await
+        }
+        async fn get_header(&self, height: u32) -> StorageResult<Option<HashedBlockHeader>> {
+            let header = self.inner.get_header(height).await;
+            match header
+                .as_ref()
+                .ok()
+                .and_then(|header| header.as_ref())
+                .map(|header| *header.hash())
+            {
+                Some(block_hash) => self.read(&block_hash, header),
+                None => header,
+            }
+        }
+        async fn get_tip_height(&self) -> Option<u32> {
+            self.inner.get_tip_height().await
+        }
+        async fn get_tip(&self) -> Option<BlockHeaderTip> {
+            self.inner.get_tip().await
+        }
+        async fn get_start_height(&self) -> Option<u32> {
+            self.inner.get_start_height().await
+        }
+        async fn get_stored_headers_len(&self) -> u32 {
+            self.inner.get_stored_headers_len().await
+        }
+        async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
+            self.read(hash, self.inner.get_header_height_by_hash(hash).await)
+        }
+        async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
+            self.inner.truncate_above(target_height).await
+        }
+    }
+
+    /// Feeds `qr_info` to an engine holding `engine`'s lists and cycles over
+    /// its header chain, whose reads of `unreadable` fail once it was read
+    /// `readable` times. Returns the result and how often it was read.
+    async fn feed_with_reads_failing(
+        engine: &TestEngine,
+        qr_info: &QRInfo,
+        unreadable: BlockHash,
+        readable: usize,
+    ) -> (Result<QRInfoFeedResult, FeedError<QuorumValidationError>>, usize) {
+        let headers = Arc::new(RwLock::new(FailingFrom {
+            inner: MockHeaderStorage(engine.headers().try_read().expect("unlocked").0.clone()),
+            unreadable,
+            readable,
+            reads: AtomicUsize::new(0),
+        }));
+        let mut failing = MasternodeListEngine::new(engine.network, Arc::clone(&headers));
+        failing.masternode_lists = engine.masternode_lists.clone();
+        failing.rotated_quorums_per_cycle = engine.rotated_quorums_per_cycle.clone();
+        let result = failing.feed_qr_info(qr_info.clone()).await;
+        let reads = headers.read().await.reads.load(Ordering::Relaxed);
+        (result, reads)
+    }
+
+    /// Our header storage failing, at whichever read of a QRInfo's feed, never
+    /// refuses the QRInfo, which would pass our failure off as the message's:
+    /// the feed fails with `HeaderStorage`, or the read only informed
+    /// and the feed goes on without it. That holds on the path a rotated
+    /// quorum takes when it fails under a quarter signature keyed by
+    /// elimination, which is skipped rather than invalid, and for the blocks
+    /// a diff is applied from and to.
+    #[tokio::test]
+    async fn a_header_storage_failure_never_refuses_a_qr_info() {
+        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture().await;
+        for height in 2239488..2239488 + 32 {
+            if let Some(block_hash) = engine.block_hash_at(height) {
+                engine.forget_block(&block_hash);
+            }
+        }
+        let target = qr_info.last_commitment_per_index[0].quorum_hash;
+        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
+            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        let blocks = [
+            BlockHash::from_byte_array(target.to_byte_array()),
+            qr_info.mn_list_diff_h.block_hash,
+            qr_info.mn_list_diff_h.base_block_hash,
+        ];
+
+        for unreadable in blocks {
+            let (result, reads) =
+                feed_with_reads_failing(&engine, &qr_info, unreadable, usize::MAX).await;
+            assert!(result.is_ok(), "the QRInfo feeds while the storage reads, got {result:?}");
+            assert!(reads > 0, "the feed reads {unreadable}");
+            for readable in 0..reads {
+                let (result, _) =
+                    feed_with_reads_failing(&engine, &qr_info, unreadable, readable).await;
+                assert!(
+                    !matches!(result, Err(FeedError::Refused(_))),
+                    "reading {unreadable} failing from its read {readable} on refused the \
+                     QRInfo: {result:?}"
+                );
+            }
+        }
+    }
+
     /// The previous-cycle path is best-effort enrichment, so a corrupt
     /// aggregated signature there must only leave that quorum out of the
     /// stored cycle, never abort the whole feed. The rest of the cycle and
@@ -1872,6 +2067,7 @@ mod tests {
         let cycle_base = engine
             .rotated_quorum_cycle_base(&qr_info.mn_list_diff_h.new_quorums[corrupt_position])
             .await
+            .expect("the headers read")
             .expect("fixture must carry the corrupted quorum's cycle base");
         let previous_cycle_key =
             engine.block_hash_at(cycle_base).expect("expected cycle base hash");
@@ -2058,7 +2254,10 @@ mod tests {
         .map(|height| (height, BlockHash::dummy(height)))
         .collect();
         let mut engine = engine_knowing_blocks(&blocks);
-        assert!(engine.missing_work_block_list_requests().await.is_empty(), "no list, no request");
+        assert!(
+            engine.missing_work_block_list_requests().await.expect("the headers read").is_empty(),
+            "no list, no request"
+        );
 
         let quorum = |llmq_type, block_hash, verified| {
             let mut entry: QualifiedQuorumEntry = quorum_entry(llmq_type, block_hash, None).into();
@@ -2103,7 +2302,7 @@ mod tests {
         );
 
         assert_eq!(
-            engine.missing_work_block_list_requests().await,
+            engine.missing_work_block_list_requests().await.expect("the headers read"),
             vec![
                 (BlockHash::all_zeros(), BlockHash::dummy(work(first))),
                 (BlockHash::dummy(work(held)), BlockHash::dummy(work(second))),
@@ -2204,7 +2403,10 @@ mod tests {
         );
 
         assert_eq!(
-            engine.missing_work_block_list_requests_for(&tip_update(one_block, tip, &added)).await,
+            engine
+                .missing_work_block_list_requests_for(&tip_update(one_block, tip, &added))
+                .await
+                .expect("the headers read"),
             vec![
                 (BlockHash::dummy(older_list), BlockHash::dummy(work(mined[0]))),
                 (BlockHash::dummy(older_list), BlockHash::dummy(work(other_type))),
@@ -2216,7 +2418,8 @@ mod tests {
         assert_eq!(
             engine
                 .missing_work_block_list_requests_for(&tip_update(two_intervals, tip, &added))
-                .await,
+                .await
+                .expect("the headers read"),
             vec![
                 (BlockHash::dummy(older_list), BlockHash::dummy(work(mined[2]))),
                 (BlockHash::dummy(held), BlockHash::dummy(work(mined[0]))),
@@ -2226,7 +2429,8 @@ mod tests {
         );
         let requests = engine
             .missing_work_block_list_requests_for(&tip_update(ten_intervals, tip, &added))
-            .await;
+            .await
+            .expect("the headers read");
         assert_eq!(
             requests.len(),
             4,
@@ -2300,7 +2504,8 @@ mod tests {
                     tip,
                     &[(llmq_type, mined)]
                 ))
-                .await,
+                .await
+                .expect("the headers read"),
             vec![(BlockHash::dummy(older_list), BlockHash::dummy(work))]
         );
         engine.apply_diff(MnListDiff::dummy_between(older_list, work)).await.expect("work list");

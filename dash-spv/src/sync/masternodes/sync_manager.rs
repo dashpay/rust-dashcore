@@ -119,7 +119,14 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     }
                 };
 
-                let request_pairs = engine.missing_work_block_list_requests().await;
+                let request_pairs =
+                    engine.missing_work_block_list_requests().await.unwrap_or_else(|e| {
+                        tracing::warn!(
+                            "Could not read the header chain for the work-block lists the \
+                             QRInfo's quorums need, the next QRInfo asks for them: {e}"
+                        );
+                        Vec::new()
+                    });
                 let tip_height = engine.height_if_known(&qr_info.mn_list_diff_tip.block_hash).await;
                 drop(engine);
 
@@ -227,7 +234,13 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // `Skipped(MissedList)` until the next QRInfo, a rotation cycle
                 // later. The pipeline completes only once they are applied.
                 let work_block_lists = if apply_ok && extends_tip {
-                    engine.missing_work_block_list_requests_for(diff).await
+                    engine.missing_work_block_list_requests_for(diff).await.unwrap_or_else(|e| {
+                        tracing::warn!(
+                            "Could not read the header chain for the work-block lists the tip \
+                             update's quorums need: {e}"
+                        );
+                        Vec::new()
+                    })
                 } else {
                     Vec::new()
                 };
