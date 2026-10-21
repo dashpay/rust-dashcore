@@ -1,5 +1,4 @@
 use super::manager::PipelineMode;
-use super::pipeline::MAX_MNLISTDIFF_ATTEMPTS;
 use crate::error::SyncResult;
 use crate::network::{Message, MessageType, RequestSender};
 use crate::sml_engine::FeedError;
@@ -536,8 +535,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     self.engine.read().await.latest_masternode_list().map(|list| list.block_hash);
                 for (base, target) in given_up {
                     tracing::warn!(
-                        "Giving up on the MnListDiff for {target}: no answer to \
-                         {MAX_MNLISTDIFF_ATTEMPTS} requests"
+                        "Giving up on the MnListDiff for {target}: its last attempt timed \
+                         out or its lifetime ran out"
                     );
                     self.progress.add_diffs_processed(1);
                     if Some(base) == newest {
@@ -597,7 +596,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 #[cfg(test)]
 mod tests {
     use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
-    use super::super::pipeline::Attempt;
+    use super::super::pipeline::{Attempt, MAX_MNLISTDIFF_ATTEMPTS};
     use super::{
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
@@ -1127,6 +1126,43 @@ mod tests {
         }
 
         assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+        assert_eq!(manager.sync_state.given_up_tip, Some(hashes[TIP as usize + 1]));
+        manager.tick(&requests).await.expect("tick succeeds");
+        assert!(rx.try_recv().is_err(), "the given-up tip update is not asked again");
+        assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
+    }
+
+    /// A peer dropping before the request times out spends no attempt of it,
+    /// so the request goes to another peer at once. Peers dropping one after
+    /// another still cannot keep the target in flight, and every tip update
+    /// and QRInfo behind it waiting, for longer than its attempts take when
+    /// each one times out.
+    #[tokio::test]
+    async fn a_tip_update_whose_peers_keep_dropping_is_given_up_within_its_lifetime() {
+        let (mut manager, engine, requests, mut rx, _tip_update, hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let lifetime = Duration::from_millis(300);
+        manager.sync_state.mnlistdiff_pipeline.set_lifetime(lifetime);
+        let started = Instant::now();
+
+        let mut sends = 1;
+        while !manager.sync_state.mnlistdiff_pipeline.is_complete() {
+            assert!(
+                started.elapsed() < lifetime * 10,
+                "sent {sends} times and still not given up after {:?}",
+                started.elapsed()
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            manager.on_peer_disconnect();
+            let events = manager.tick(&requests).await.expect("tick succeeds");
+            assert!(events.is_empty(), "a tip update no peer answers publishes nothing");
+            sends += usize::from(next_diff_request(&mut rx).is_some());
+        }
+
+        assert!(
+            sends > MAX_MNLISTDIFF_ATTEMPTS as usize,
+            "a dropping peer spends no attempt, sent only {sends} times"
+        );
         assert_eq!(manager.sync_state.given_up_tip, Some(hashes[TIP as usize + 1]));
         manager.tick(&requests).await.expect("tick succeeds");
         assert!(rx.try_recv().is_err(), "the given-up tip update is not asked again");
