@@ -124,10 +124,14 @@ async fn test_sync_with_multiple_restarts() {
         return;
     };
 
+    // Restarting on every 2nd progress event until completion takes hundreds of cycles.
+    const MAX_RESTARTS: usize = 8;
+
     let mut restart_count = 0;
     let final_progress = loop {
         tracing::info!("Starting sync (restart count: {})", restart_count);
         let mut client_handle = ctx.spawn_new_client().await;
+        let final_run = restart_count >= MAX_RESTARTS;
 
         // Wait for either sync completion or the 2nd matching event
         let mut events_seen = 0;
@@ -148,7 +152,7 @@ async fn test_sync_with_multiple_restarts() {
                     match result {
                         Ok(ref event) if is_progress_event(event) => {
                             events_seen += 1;
-                            if events_seen % 2 == 0 {
+                            if !final_run && events_seen % 2 == 0 {
                                 tracing::info!("Restarting on: {}", event);
                                 should_restart = true;
                                 break;

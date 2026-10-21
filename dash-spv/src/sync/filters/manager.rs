@@ -14,7 +14,7 @@ use super::batch::FiltersBatch;
 use super::block_match_tracker::{BlockMatchTracker, BlockTrackResult};
 use super::pipeline::FiltersPipeline;
 use crate::error::SyncResult;
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
 use crate::sync::filters::util::get_prev_filter_header;
 use crate::sync::{FiltersProgress, SyncEvent, SyncManager, SyncState};
@@ -188,7 +188,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     /// Initialize the filter download state and begin downloading from the current position.
     pub(super) async fn start_download(
         &mut self,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         debug_assert!(self.is_idle(), "manager should have no in-flight state on start");
 
@@ -335,7 +335,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         if download_start <= self.progress.filter_header_tip_height() {
             self.filter_pipeline.init(download_start, self.progress.filter_header_tip_height());
             let header_storage = self.header_storage.read().await;
-            self.filter_pipeline.send_pending(requests, &*header_storage).await?;
+            self.filter_pipeline.send_pending(network, &*header_storage).await?;
             drop(header_storage);
         } else {
             // No new filters to download, scanning stored filters only
@@ -805,33 +805,21 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let batch_filters = batch.filters();
 
         // Per-wallet `synced_height` snapshot so heights below the wallet's
-        // own progress are skipped during the rescan, plus the bare
-        // owner/voting filter elements a compact filter carries beyond the
-        // wallet's scriptPubKeys.
-        let mut synced_heights: HashMap<WalletId, u32> = HashMap::new();
-        let mut filter_elements: HashMap<WalletId, Vec<Vec<u8>>> = HashMap::new();
-        {
+        // own progress are skipped during the rescan.
+        let synced_heights: HashMap<WalletId, u32> = {
             let wallet = self.wallet.read().await;
-            for id in new_scripts.keys() {
-                synced_heights.insert(*id, wallet.wallet_synced_height(id));
-                filter_elements.insert(*id, wallet.monitored_filter_elements_for(id));
-            }
-        }
+            new_scripts.keys().map(|id| (*id, wallet.wallet_synced_height(id))).collect()
+        };
 
         let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
         for (wallet_id, scripts) in new_scripts {
-            let elements = filter_elements.get(wallet_id).map(Vec::as_slice).unwrap_or(&[]);
-            if scripts.is_empty() && elements.is_empty() {
+            if scripts.is_empty() {
                 continue;
             }
             let scripts_vec: Vec<ScriptBuf> = scripts.iter().cloned().collect();
             let min_synced = synced_heights.get(wallet_id).copied().unwrap_or(0);
-            let matches = check_compact_filters_for_elements(
-                batch_filters,
-                &scripts_vec,
-                elements,
-                min_synced,
-            );
+            let matches =
+                check_compact_filters_for_elements(batch_filters, &scripts_vec, &[], min_synced);
             for key in matches {
                 block_to_wallets.entry(key).or_default().insert(*wallet_id);
             }
@@ -959,17 +947,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
 
         // Single-pass union-then-attribute: build the union of all scripts
-        // and bare elements across behind wallets, run the filters once, then
-        // for each matched block re-test per-wallet queries to attribute the
-        // match correctly.
+        // across behind wallets, run the filters once, then for each matched
+        // block re-test per-wallet scripts to attribute the match correctly.
         let union_scripts: Vec<ScriptBuf> =
             wallet_states.iter().flat_map(|s| s.scripts.iter().cloned()).collect();
         let union_elements: Vec<Vec<u8>> =
             wallet_states.iter().flat_map(|s| s.elements.iter().cloned()).collect();
         let min_synced = wallet_states.iter().map(|s| s.synced).min().unwrap_or(0);
 
-        // Pre-group each wallet's scripts and bare elements by length once;
-        // reused across every matched filter.
+        // Pre-group each wallet's scripts by length once; reused across every matched filter.
         let wallet_queries: Vec<(WalletId, u32, FilterQuery)> = wallet_states
             .iter()
             .map(|s| {
@@ -1084,7 +1070,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     pub(super) async fn handle_new_filter_headers(
         &mut self,
         tip_height: u32,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         self.progress.update_filter_header_tip_height(tip_height);
         self.update_target_height(tip_height);
@@ -1102,7 +1088,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 self.filter_pipeline.extend_target(tip_height);
                 if self.progress.stored_height() < self.progress.filter_header_tip_height() {
                     let header_storage = self.header_storage.read().await;
-                    self.filter_pipeline.send_pending(requests, &*header_storage).await?;
+                    self.filter_pipeline.send_pending(network, &*header_storage).await?;
                 }
 
                 // Extend the processing boundary to the new tip whether or not a
@@ -1136,7 +1122,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     self.filter_pipeline.extend_target(tip_height);
                     return Ok(vec![]);
                 }
-                return self.start_download(requests).await;
+                return self.start_download(network).await;
             }
             _ => {}
         }
@@ -1158,12 +1144,13 @@ mod coinjoin_gap_discovery_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{Message, MessageType, NetworkRequest, RequestSender};
+    use crate::network::MessageType;
     use crate::storage::{
         BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage,
         PersistentFilterHeaderStorage, PersistentFilterStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use crate::test_utils::MockNetworkManager;
     use crate::types::HashedBlockHeader;
     use dashcore::bip158::BlockFilter;
     use dashcore::network::message::NetworkMessage;
@@ -1175,7 +1162,6 @@ mod tests {
         MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };
     use std::net::SocketAddr;
-    use tokio::sync::mpsc::unbounded_channel;
 
     type TestFiltersManager = FiltersManager<
         PersistentBlockHeaderStorage,
@@ -1274,17 +1260,14 @@ mod tests {
             .unwrap();
     }
 
-    /// Drain every `GetCFilters` request queued on `rx`.
-    fn drain_getcfilters(rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>) -> usize {
-        let mut count = 0;
-        while let Ok(request) = rx.try_recv() {
-            let (NetworkRequest::SendMessage(msg)
-            | NetworkRequest::SendMessageToPeer(msg, _)
-            | NetworkRequest::BroadcastMessage(msg)) = request;
-            if matches!(msg, NetworkMessage::GetCFilters(_)) {
-                count += 1;
-            }
-        }
+    /// Drain every `GetCFilters` request sent on `mock`.
+    fn drain_getcfilters(mock: &MockNetworkManager) -> usize {
+        let count = mock
+            .sent_messages()
+            .iter()
+            .filter(|msg| matches!(msg, NetworkMessage::GetCFilters(_)))
+            .count();
+        mock.clear_sent();
         count
     }
 
@@ -2546,8 +2529,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, _rx) = unbounded_channel();
-        let _ = manager.tick(&RequestSender::new(tx)).await.unwrap();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let _ = manager.tick(&requests).await.unwrap();
 
         // Batch must start at 151, not at 0.
         assert!(manager.active_batches.contains_key(&151));
@@ -2845,8 +2828,8 @@ mod tests {
         // Chain tip higher so the Synced early-return is not taken
         manager.progress.update_target_height(1000);
 
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.start_download(&requests).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitForEvents);
@@ -2874,8 +2857,8 @@ mod tests {
         manager.progress.update_filter_header_tip_height(100);
         manager.progress.update_target_height(1000);
 
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.start_download(&requests).await.unwrap();
 
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(!manager.is_idle());
@@ -2926,8 +2909,9 @@ mod tests {
         // Wallet committed far below the stored region, so scan_start = 100.
         manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 99);
 
-        let (tx, mut rx) = unbounded_channel();
-        let events = manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        let events = manager.start_download(&requests).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::Syncing);
@@ -2949,8 +2933,8 @@ mod tests {
         // ...and both the store cursor and the download restart from
         // scan_start rather than stored_filters_tip + 1.
         assert_eq!(manager.next_batch_to_store, 100);
-        match rx.try_recv().expect("a filter request must have been sent") {
-            NetworkRequest::SendMessage(NetworkMessage::GetCFilters(gcf)) => {
+        match mock.sent_messages().first().expect("a filter request must have been sent") {
+            NetworkMessage::GetCFilters(gcf) => {
                 assert_eq!(gcf.start_height, 100);
             }
             other => panic!("Expected GetCFilters, got {:?}", other),
@@ -2988,8 +2972,9 @@ mod tests {
 
         manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 99);
 
-        let (tx, mut rx) = unbounded_channel();
-        manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        manager.start_download(&requests).await.unwrap();
 
         assert_eq!(manager.state(), SyncState::Syncing);
 
@@ -3008,7 +2993,7 @@ mod tests {
         // Nothing left to download: everything through the filter header tip
         // is already stored.
         assert_eq!(manager.next_batch_to_store, 1001);
-        assert!(rx.try_recv().is_err(), "no filter request expected");
+        assert!(mock.sent_messages().is_empty(), "no filter request expected");
     }
 
     /// Genesis-only storage: a single filter at height 0, scanning from 0.
@@ -3043,8 +3028,9 @@ mod tests {
         manager.progress.update_target_height(0);
         // Wallet at genesis: scan_start = 0.
 
-        let (tx, mut rx) = unbounded_channel();
-        manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        manager.start_download(&requests).await.unwrap();
 
         // The lone filter was NOT discarded...
         assert_eq!(manager.filter_storage.read().await.filter_tip_height().await.unwrap(), 0);
@@ -3061,7 +3047,10 @@ mod tests {
         // ...and the download frontier sits above the stored tip, so no
         // filter request goes out for the already-stored genesis height.
         assert_eq!(manager.next_batch_to_store, 1);
-        assert!(rx.try_recv().is_err(), "no filter request expected for the genesis-only store");
+        assert!(
+            mock.sent_messages().is_empty(),
+            "no filter request expected for the genesis-only store"
+        );
     }
 
     #[tokio::test]
@@ -3082,8 +3071,7 @@ mod tests {
         // stops it before creating any batch or emitting an event.
         manager.active_batches.insert(101, FiltersBatch::new(101, 200, HashMap::new()));
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // New filter headers arrive at 150: committed(100) < tip(150)
         let events = manager.handle_new_filter_headers(150, &requests).await.unwrap();
@@ -3118,8 +3106,7 @@ mod tests {
         manager.progress.update_filter_header_tip_height(100);
         manager.progress.update_target_height(100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
 
@@ -3167,8 +3154,7 @@ mod tests {
         manager.progress.update_filter_header_tip_height(100);
         manager.progress.update_target_height(100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Boot already synced: start_download detects the synced state and
         // returns early, but must still advance the scan frontier.
@@ -3205,8 +3191,7 @@ mod tests {
         assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
 
         manager.set_state(SyncState::WaitForEvents);
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Must extend the target and leave the surviving work alone.
         let events = manager.handle_new_filter_headers(200, &requests).await.unwrap();
@@ -3248,8 +3233,7 @@ mod tests {
         assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
 
         manager.set_state(SyncState::WaitingForConnections);
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Must resume rather than start a fresh download over the top of it.
         let events = manager.start_sync(&requests).await.unwrap();
@@ -3284,8 +3268,7 @@ mod tests {
         // Fully-synced restart: `start_sync` requires `WaitingForConnections`.
         manager.set_state(SyncState::WaitingForConnections);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Reconnect: the already-synced branch reports completion and anchors the
         // store/processing cursors at the frontier.
@@ -3320,7 +3303,7 @@ mod tests {
             filter: boundary_filter.content.clone(),
         };
         manager
-            .handle_message(Message::new(peer, NetworkMessage::CFilter(cfilter)), &requests)
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
             .await
             .unwrap();
 
@@ -3344,8 +3327,7 @@ mod tests {
         assert_eq!(manager.wallet.read().await.last_processed_height(), 0);
 
         manager.set_state(SyncState::WaitingForConnections);
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
         manager.start_sync(&requests).await.unwrap();
 
         assert_eq!(manager.state(), SyncState::Synced);
@@ -3367,8 +3349,8 @@ mod tests {
         // Fully-synced boot leaves the manager in its default state.
         assert_eq!(manager.state(), SyncState::WaitForEvents);
 
-        let (tx, mut rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
 
         // Filter header sync completing at the stored tip reports Synced via
         // `start_download`'s early return, anchoring the frontier cursors.
@@ -3405,10 +3387,7 @@ mod tests {
 
         // Only the boundary body may be requested: a pipeline left unparked
         // would re-request every filter from height 1 here.
-        while let Ok(request) = rx.try_recv() {
-            let (NetworkRequest::SendMessage(msg)
-            | NetworkRequest::SendMessageToPeer(msg, _)
-            | NetworkRequest::BroadcastMessage(msg)) = request;
+        for msg in mock.sent_messages() {
             if let NetworkMessage::GetCFilters(get) = msg {
                 assert_eq!(get.start_height, 101, "unexpected filter re-download");
             }
@@ -3422,7 +3401,7 @@ mod tests {
             filter: boundary_filter.content.clone(),
         };
         manager
-            .handle_message(Message::new(peer, NetworkMessage::CFilter(cfilter)), &requests)
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
             .await
             .unwrap();
 
@@ -3448,8 +3427,8 @@ mod tests {
         manager.progress.update_filter_header_tip_height(101);
         manager.set_state(SyncState::WaitingForConnections);
 
-        let (tx, mut rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
 
         // Reconnect delegates to the download path, which must request the
         // boundary body at 101 rather than parking without asking for it.
@@ -3459,10 +3438,7 @@ mod tests {
         assert!(manager.active_batches.contains_key(&101));
 
         let mut requested_boundary = false;
-        while let Ok(request) = rx.try_recv() {
-            let (NetworkRequest::SendMessage(msg)
-            | NetworkRequest::SendMessageToPeer(msg, _)
-            | NetworkRequest::BroadcastMessage(msg)) = request;
+        for msg in mock.sent_messages() {
             if let NetworkMessage::GetCFilters(get) = msg {
                 assert_eq!(get.start_height, 101, "unexpected filter re-download");
                 requested_boundary = true;
@@ -3478,7 +3454,7 @@ mod tests {
             filter: boundary_filter.content.clone(),
         };
         manager
-            .handle_message(Message::new(peer, NetworkMessage::CFilter(cfilter)), &requests)
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
             .await
             .unwrap();
 
@@ -3502,8 +3478,7 @@ mod tests {
         manager.progress.update_target_height(100);
         manager.filter_pipeline.init(101, 100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
 
@@ -3576,8 +3551,7 @@ mod tests {
         // MockWallet defaults to synced_height=0, so wallets_behind(100) = {MOCK_WALLET_ID}.
         assert_eq!(manager.wallet.read().await.synced_height(), 0);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Sanity: the pre-populated stale processed record is present, so
         // `track` for the same wallet would short-circuit to AlreadyProcessed.
@@ -3638,8 +3612,7 @@ mod tests {
         manager.progress.update_filter_header_tip_height(200);
         manager.progress.update_target_height(200);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.tick(&requests).await.unwrap();
 
@@ -3684,8 +3657,7 @@ mod tests {
         manager.wallet.write().await.set_addresses(vec![Address::dummy(Network::Regtest, 7)]);
         assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 0);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
         assert!(
@@ -3722,22 +3694,38 @@ mod tests {
         manager.filter_storage.write().await.clear_filters().await.unwrap();
         manager.progress.update_stored_height(0);
 
-        let (tx, mut rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
 
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
 
         assert_eq!(
-            drain_getcfilters(&mut rx),
+            drain_getcfilters(&mock),
             1,
             "the initial download issues exactly one getcfilters"
         );
 
+        // The mock drops duplicate requests, so check the in-flight receipts survive instead.
+        let headers =
+            manager.header_storage.read().await.load_headers(200_000..200_011).await.unwrap();
+        let filter = BlockFilter::new(&[0u8; 32]);
+        for (idx, header) in headers.iter().enumerate().take(10) {
+            manager.filter_pipeline.receive_with_data(
+                200_000 + idx as u32,
+                *header.hash(),
+                &filter.content,
+            );
+        }
+
         manager.tick(&requests).await.unwrap();
 
         assert_eq!(
-            drain_getcfilters(&mut rx),
-            0,
+            manager.filter_pipeline.receive_with_data(
+                200_010,
+                *headers[10].hash(),
+                &filter.content
+            ),
+            Some(200_000),
             "a tick re-requested filters that were still in flight"
         );
     }
@@ -3761,8 +3749,7 @@ mod tests {
         let mut manager = create_multi_test_manager(multi.clone()).await;
         seed_anchored_storage(&manager, 200_000, 10).await;
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Reach the frontier with only wallet A present.
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
@@ -3801,8 +3788,7 @@ mod tests {
         assert_eq!(manager.progress.committed_height(), 0);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.tick(&requests).await.unwrap();
 
@@ -3822,8 +3808,7 @@ mod tests {
         // Wallet behind committed — would normally trip the trigger.
         assert!(!manager.wallet.read().await.wallets_behind(100).is_empty());
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.tick(&requests).await.unwrap();
 
@@ -3912,8 +3897,7 @@ mod tests {
         manager.progress.update_target_height(1000);
         manager.filter_pipeline.init(101, 100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // committed(0) < tip(100) fires the guard even though stored == tip.
         // Because stored >= tip, send_pending is skipped (no downloads needed).
@@ -3964,8 +3948,7 @@ mod tests {
         manager.progress.update_target_height(101);
         manager.active_batches.insert(0, FiltersBatch::new(0, 100, HashMap::new()));
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // New block 101 arrives: tip grows past the in-flight rescan boundary.
         manager.handle_new_filter_headers(101, &requests).await.unwrap();
@@ -3990,8 +3973,7 @@ mod tests {
         manager.progress.update_target_height(1000);
         manager.filter_pipeline.init(101, 100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
 

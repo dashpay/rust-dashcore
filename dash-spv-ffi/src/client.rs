@@ -75,7 +75,7 @@ pub unsafe extern "C" fn dash_spv_ffi_client_new(
         >::new(client_config.network);
         let wallet = std::sync::Arc::new(tokio::sync::RwLock::new(wallet));
 
-        DashSpvClient::new(client_config, network?, wallet, vec![Arc::new(callbacks)]).await
+        DashSpvClient::new(client_config, network, wallet, vec![Arc::new(callbacks)]).await
     });
 
     match client_result {

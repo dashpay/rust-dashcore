@@ -344,19 +344,19 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for ChainLockMan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, RequestSender};
+    use crate::network::{MessageType, NetworkManager};
     use crate::sml_engine::test_support::TestEngine;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
+    use crate::test_utils::MockNetworkManager;
     use crate::Network;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hashes::Hash;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::BlockHash;
     use test_case::test_case;
-    use tokio::sync::mpsc::unbounded_channel;
 
     type TestChainLockManager =
         ChainLockManager<PersistentBlockHeaderStorage, PersistentMetadataStorage>;
@@ -393,7 +393,7 @@ mod tests {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::ChainLock);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
-        assert_eq!(manager.wanted_message_types(), vec![MessageType::CLSig, MessageType::Inv]);
+        assert_eq!(manager.wanted_message_types(), [MessageType::ChainLock, MessageType::Inv]);
     }
 
     /// Buffered `MasternodeStateUpdated` events delivered during
@@ -409,8 +409,8 @@ mod tests {
             height: 100,
             qr_info_result: None,
         };
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.handle_sync_event(&event, &RequestSender::new(tx)).await.unwrap();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
@@ -551,9 +551,8 @@ mod tests {
             height: 500,
             qr_info_result: None,
         };
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
-        assert!(manager.handle_sync_event(&event, &requests).await.unwrap().is_empty());
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        assert!(manager.handle_sync_event(&event, &network).await.unwrap().is_empty());
         assert_eq!(manager.progress.invalid(), 0);
         assert!(manager.pending_validation.is_some());
 
@@ -567,7 +566,7 @@ mod tests {
             height: 1_000,
             qr_info_result: None,
         };
-        assert!(manager.handle_sync_event(&event, &requests).await.unwrap().is_empty());
+        assert!(manager.handle_sync_event(&event, &network).await.unwrap().is_empty());
         assert_eq!(manager.progress.invalid(), 1);
         assert!(manager.pending_validation.is_none());
         assert!(manager.best_chainlock().is_none());
@@ -632,8 +631,8 @@ mod tests {
         let event = SyncEvent::BlockHeadersStored {
             tip_height: chain_lock.block_height,
         };
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.handle_sync_event(&event, &RequestSender::new(tx)).await.unwrap();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(manager.pending_validation.is_none());
         if header_matches {

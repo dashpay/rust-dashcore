@@ -76,7 +76,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
         let client = Self {
             config: Arc::new(RwLock::new(config)),
-            network: Arc::new(Mutex::new(network)),
+            network: Arc::new(network),
             storage,
             wallet,
             masternode_engine,
@@ -208,24 +208,13 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
         // Start all sync tasks before connecting to the network to make sure initial connection
         // events are handled correctly in the sync coordinator.
-        if let Err(e) = self
-            .sync_coordinator
-            .lock()
-            .await
-            .start(managers, &mut *self.network.lock().await)
-            .await
-        {
+        let network: Arc<dyn NetworkManager> = self.network.clone();
+        if let Err(e) = self.sync_coordinator.lock().await.start(managers, &network).await {
             tracing::error!("Failed to start sync coordinator: {}", e);
             return Err(SpvError::Sync(e));
         }
 
-        // Start the network
-        if let Err(e) = self.network.lock().await.start().await {
-            if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
-                tracing::warn!("Error shutting down sync coordinator: {}", e);
-            }
-            return Err(e.into());
-        }
+        self.network.start().await;
 
         // Start persisting last, so a failed start leaves nothing to stop.
         self.storage.lock().await.start().await;
@@ -323,7 +312,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         }
 
         // Stop the network
-        self.network.lock().await.stop().await;
+        self.network.stop().await;
 
         // Stop storage to ensure all data is persisted
         {
