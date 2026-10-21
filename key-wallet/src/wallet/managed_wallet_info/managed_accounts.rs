@@ -78,6 +78,9 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Insert into the collection
         self.accounts.insert(managed_account)?;
+        // A newly added account has no filter coverage, so the sync certificate
+        // must be invalidated or pruning could reopen #649 for its coins.
+        self.rewind_sync_checkpoint_for_new_account();
         Ok(())
     }
 
@@ -110,6 +113,9 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Insert into the collection
         self.accounts.insert(managed_account)?;
+        // A newly added account has no filter coverage, so the sync certificate
+        // must be invalidated or pruning could reopen #649 for its coins.
+        self.rewind_sync_checkpoint_for_new_account();
         Ok(())
     }
 
@@ -155,6 +161,9 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Insert into the collection
         self.accounts.insert(managed_account)?;
+        // A newly added account has no filter coverage, so the sync certificate
+        // must be invalidated or pruning could reopen #649 for its coins.
+        self.rewind_sync_checkpoint_for_new_account();
         Ok(())
     }
 
@@ -188,6 +197,9 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Insert into the collection
         self.accounts.insert(managed_account)?;
+        // A newly added account has no filter coverage, so the sync certificate
+        // must be invalidated or pruning could reopen #649 for its coins.
+        self.rewind_sync_checkpoint_for_new_account();
         Ok(())
     }
 
@@ -234,6 +246,9 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Insert into the collection
         self.accounts.insert(managed_account)?;
+        // A newly added account has no filter coverage, so the sync certificate
+        // must be invalidated or pruning could reopen #649 for its coins.
+        self.rewind_sync_checkpoint_for_new_account();
         Ok(())
     }
 
@@ -272,6 +287,9 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Insert into the collection
         self.accounts.insert(managed_account)?;
+        // A newly added account has no filter coverage, so the sync certificate
+        // must be invalidated or pruning could reopen #649 for its coins.
+        self.rewind_sync_checkpoint_for_new_account();
         Ok(())
     }
 }

@@ -43,6 +43,7 @@ hex = "0.4"
 cbindgen = "0.29"
 
 [dev-dependencies]
+dashcore = { path = "../dash", features = ["test-utils"] }
 key-wallet = { path = "../key-wallet", features = ["test-utils"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
 hex = "0.4"

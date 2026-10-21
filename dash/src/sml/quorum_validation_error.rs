@@ -93,6 +93,9 @@ pub enum QuorumValidationError {
         index: i16,
     },
 
+    #[error("Cycle base height {0} is below the history a rotated quorum reconstruction needs")]
+    CycleBaseHeightTooLow(CoreBlockHeight),
+
     #[error("Corrupted code execution: {0}")]
     CorruptedCodeExecution(String),
     #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]

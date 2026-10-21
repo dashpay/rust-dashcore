@@ -25,8 +25,23 @@ pub use dashcore::ed25519_dalek::VerifyingKey as Ed25519PublicKey;
 // Use DerivationPath from bip32
 pub use crate::bip32::DerivationPath;
 
+/// Compute the Tenderdash/CometBFT node ID for an Ed25519 public key: the
+/// first 20 bytes of a single SHA-256 of the 32-byte public key.
+///
+/// This is the canonical value of the `platform_node_id` field in ProRegTx /
+/// ProUpServTx payloads for evonodes: it is what dashmate derives from
+/// `node_key.json` and what Tenderdash announces on the platform P2P network,
+/// so it is the only value that can match an on-chain registration.
+///
+/// Note this is **not** `hash160` (SHA-256 + RIPEMD-160). Dash uses hash160
+/// for the ECDSA owner/voting key hashes in the same payload, but the
+/// platform node id follows the CometBFT node-ID convention.
+pub fn tenderdash_node_id(ed25519_public_key_bytes: &[u8; 32]) -> [u8; 20] {
+    dashcore::PlatformNodeId::from_ed25519_public_key(ed25519_public_key_bytes).to_byte_array()
+}
+
 /// Extended Ed25519 private key for SLIP-0010
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ExtendedEd25519PrivKey {
     /// Network this key is for
     pub network: Network,
@@ -40,6 +55,52 @@ pub struct ExtendedEd25519PrivKey {
     pub private_key: [u8; 32],
     /// Chain code for derivation
     pub chain_code: ChainCode,
+}
+
+// Hand-written instead of derived so the raw secret bytes are compared in
+// constant time (a derived `==` on `[u8; 32]` short-circuits on the first
+// differing byte, leaking how much of the secret matches).
+impl PartialEq for ExtendedEd25519PrivKey {
+    fn eq(&self, other: &Self) -> bool {
+        let mut diff = 0u8;
+        for (a, b) in self.private_key.iter().zip(other.private_key.iter()) {
+            diff |= a ^ b;
+        }
+        // black_box keeps the compiler from turning the fold back into an
+        // early-exit comparison.
+        core::hint::black_box(diff) == 0
+            && self.network == other.network
+            && self.depth == other.depth
+            && self.parent_fingerprint == other.parent_fingerprint
+            && self.child_number == other.child_number
+            && self.chain_code == other.chain_code
+    }
+}
+
+impl Eq for ExtendedEd25519PrivKey {}
+
+// `Drop` (below) calls this, so the key is wiped automatically on scope exit
+// with no caller action required. Cf. `ExtendedPrivKey` in `bip32`.
+impl zeroize::Zeroize for ExtendedEd25519PrivKey {
+    fn zeroize(&mut self) {
+        // Secret key material.
+        self.private_key.zeroize();
+        self.chain_code.zeroize();
+        // Derivation metadata — cleared too so the whole value is wiped.
+        self.depth.zeroize();
+        self.parent_fingerprint.zeroize();
+        self.child_number = ChildNumber::Normal {
+            index: 0,
+        };
+        self.network = Network::Mainnet; // repr(u8)=0 discriminant, the "zero" value
+    }
+}
+
+impl Drop for ExtendedEd25519PrivKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.zeroize();
+    }
 }
 
 impl ExtendedEd25519PrivKey {
@@ -740,5 +801,38 @@ mod test {
         let private_key = derive_ed25519_private_key(&seed, indexes);
 
         hex::encode(private_key)
+    }
+
+    #[test]
+    fn test_zeroize_clears_key_material() {
+        use zeroize::Zeroize;
+
+        let seed = hex::decode(CASE_1_SEED).unwrap();
+        let mut key = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
+        assert_ne!(key.private_key, [0u8; 32]);
+        assert_ne!(key.chain_code.as_ref(), &[0u8; 32]);
+
+        key.zeroize();
+
+        assert_eq!(key.private_key, [0u8; 32]);
+        assert_eq!(key.chain_code.as_ref(), &[0u8; 32]);
+        assert_eq!(key.depth, 0);
+        assert_eq!(key.parent_fingerprint, Fingerprint::default());
+    }
+
+    #[test]
+    fn test_partial_eq_matches_field_equality() {
+        let seed = hex::decode(CASE_1_SEED).unwrap();
+        let master = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
+
+        assert_eq!(master, master.clone());
+
+        let child = master.ckd_priv(ChildNumber::from_hardened_idx(0).unwrap()).unwrap();
+        assert_ne!(master, child);
+
+        // Same secret but different metadata must not compare equal
+        let mut other_network = master.clone();
+        other_network.network = Network::Testnet;
+        assert_ne!(master, other_network);
     }
 }

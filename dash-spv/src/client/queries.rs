@@ -12,6 +12,7 @@ use crate::storage::StorageManager;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::QuorumHash;
 use key_wallet_manager::WalletInterface;
 use std::sync::Arc;
@@ -43,6 +44,20 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         }
     }
 
+    /// **Not secure, and temporary:** the unverified coinbase payload of the
+    /// highest block an applied masternode list diff carried one for, replaced
+    /// on the `dev` branch by a version that keeps only coinbases verified
+    /// against their block (dashpay/rust-dashcore#1202).
+    ///
+    /// Nothing authenticates the payload, so a single peer can serve one of its
+    /// choosing; see [`MasternodeListEngine::latest_coinbase`]. `None` while
+    /// masternode sync is off, and after a restart until a diff whose coinbase
+    /// carries one is applied.
+    pub async fn latest_coinbase(&self) -> Option<CoinbasePayload> {
+        let engine = self.masternode_engine.as_ref()?;
+        engine.read().await.latest_coinbase().cloned()
+    }
+
     /// Get a quorum entry by type and hash at a specific block height.
     /// Returns `SpvError::QuorumLookupError` if the quorum is not found.
     pub async fn get_quorum_at_height(
@@ -53,56 +68,31 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     ) -> Result<QualifiedQuorumEntry> {
         let masternode_engine = self.masternode_list_engine()?;
         let masternode_engine_guard = masternode_engine.read().await;
-        let (before, _after) = masternode_engine_guard.masternode_lists_around_height(height);
-        if let Some(ml) = before {
-            let list_height = ml.known_height;
-            match ml.quorums.get(&quorum_type) {
-                Some(quorums) => match quorums.get(&quorum_hash) {
-                    Some(quorum) => {
-                        tracing::debug!(
-                            "Found quorum type {} at list height {} (requested {}) with hash {}",
-                            quorum_type,
-                            list_height,
-                            height,
-                            hex::encode(quorum_hash)
-                        );
-                        return Ok(quorum.clone());
-                    }
-                    None => {
-                        let message = format!(
-                            "Quorum not found: type {} at list height {} (requested {}) with hash {} (masternode list exists with {} quorums of this type)",
-                            quorum_type,
-                            list_height,
-                            height,
-                            hex::encode(quorum_hash),
-                            quorums.len()
-                        );
-                        tracing::warn!(message);
-                        return Err(SpvError::QuorumLookupError(message));
-                    }
-                },
-                None => {
-                    tracing::warn!(
-                        "No quorums of type {} found at list height {} (requested {}) (masternode list exists)",
-                        quorum_type,
-                        list_height,
-                        height
-                    );
-                    return Err(SpvError::QuorumLookupError(format!(
-                        "No quorums of type {} found at list height {} (requested {})",
-                        quorum_type, list_height, height
-                    )));
-                }
+        match masternode_engine_guard.quorum_entry_for_hash_at_or_before_height(
+            quorum_type,
+            quorum_hash,
+            height,
+        ) {
+            Some((list_height, quorum)) => {
+                tracing::debug!(
+                    "Found quorum type {} at list height {} (requested {}) with hash {}",
+                    quorum_type,
+                    list_height,
+                    height,
+                    hex::encode(quorum_hash)
+                );
+                Ok(quorum.clone())
+            }
+            None => {
+                let message = format!(
+                    "Quorum not found: type {} at or before height {} with hash {}",
+                    quorum_type,
+                    height,
+                    hex::encode(quorum_hash)
+                );
+                tracing::warn!("{}", message);
+                Err(SpvError::QuorumLookupError(message))
             }
         }
-
-        tracing::warn!(
-            "No masternode list found at or before height {} - cannot retrieve quorum",
-            height
-        );
-        Err(SpvError::QuorumLookupError(format!(
-            "No masternode list found at or before height {}",
-            height
-        )))
     }
 }

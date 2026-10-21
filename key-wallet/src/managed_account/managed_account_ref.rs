@@ -20,8 +20,10 @@ use crate::transaction_checking::account_checker::AccountMatch;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::TransactionContext;
 use crate::Network;
+use dashcore::blockdata::transaction::OutPoint;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, ScriptBuf, Transaction, Txid};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Immutable reference to a managed core account, either funds-bearing or
 /// keys-only.
@@ -104,6 +106,14 @@ impl<'a> ManagedAccountRef<'a> {
         match self {
             ManagedAccountRef::Funds(a) => a.has_transaction(txid),
             ManagedAccountRef::Keys(a) => a.has_transaction(txid),
+        }
+    }
+
+    /// See [`ManagedAccountTrait::tx_count`].
+    pub fn tx_count(self) -> usize {
+        match self {
+            ManagedAccountRef::Funds(a) => a.tx_count(),
+            ManagedAccountRef::Keys(a) => a.tx_count(),
         }
     }
 
@@ -293,6 +303,12 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// Funds variants update UTXO state and balance; keys variants update
     /// only the transaction history. Both are subject to the
     /// `keep-finalized-transactions` Cargo feature for chainlocked records.
+    ///
+    /// This public entry point records with no observed-spend context — the
+    /// pre-#649 behavior, appropriate for callers driving an account directly
+    /// without wallet-level block processing. The wallet checker uses
+    /// `Self::record_transaction_with_observed_spends` instead, which
+    /// reconciles the record against the wallet-level observed-spent set.
     pub fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -300,10 +316,41 @@ impl<'a> ManagedAccountRefMut<'a> {
         context: TransactionContext,
         transaction_type: TransactionType,
     ) -> TransactionRecord {
+        self.record_transaction_with_observed_spends(
+            tx,
+            account_match,
+            context,
+            transaction_type,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+        )
+    }
+
+    /// Record a new transaction, reconciling it against `observed_spent` —
+    /// the wallet-level `observed_spent_outpoints` view
+    /// (dashpay/rust-dashcore#649); only the funds variant consults it (keys
+    /// accounts track no UTXOs/output details).
+    ///
+    /// `external_final_parents` is the wallet-level view of input parents held
+    /// by sibling accounts, used for the trusted-self-send determination.
+    pub(crate) fn record_transaction_with_observed_spends(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        external_final_parents: &BTreeSet<OutPoint>,
+    ) -> TransactionRecord {
         match self {
-            ManagedAccountRefMut::Funds(a) => {
-                a.record_transaction(tx, account_match, context, transaction_type)
-            }
+            ManagedAccountRefMut::Funds(a) => a.record_transaction(
+                tx,
+                account_match,
+                context,
+                transaction_type,
+                observed_spent,
+                external_final_parents,
+            ),
             ManagedAccountRefMut::Keys(a) => {
                 a.record_transaction(tx, account_match, context, transaction_type)
             }
@@ -314,6 +361,11 @@ impl<'a> ManagedAccountRefMut<'a> {
     ///
     /// Funds variants additionally refresh UTXO state. Returns the updated
     /// record only when confirmation status actually changes.
+    ///
+    /// This public entry point confirms with no observed-spend context — the
+    /// pre-#649 behavior, appropriate for callers driving an account directly
+    /// without wallet-level block processing. The wallet checker uses
+    /// `Self::confirm_transaction_with_observed_spends` instead.
     pub fn confirm_transaction(
         &mut self,
         tx: &Transaction,
@@ -321,10 +373,40 @@ impl<'a> ManagedAccountRefMut<'a> {
         context: TransactionContext,
         transaction_type: TransactionType,
     ) -> Option<TransactionRecord> {
+        self.confirm_transaction_with_observed_spends(
+            tx,
+            account_match,
+            context,
+            transaction_type,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+        )
+    }
+
+    /// Re-process an existing transaction, reconciling refreshed UTXO state
+    /// against `observed_spent` — the wallet-level `observed_spent_outpoints`
+    /// view (dashpay/rust-dashcore#649); only the funds variant consults it.
+    ///
+    /// `external_final_parents` is the wallet-level view of input parents held
+    /// by sibling accounts, used for the trusted-self-send determination.
+    pub(crate) fn confirm_transaction_with_observed_spends(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: TransactionContext,
+        transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        external_final_parents: &BTreeSet<OutPoint>,
+    ) -> Option<TransactionRecord> {
         match self {
-            ManagedAccountRefMut::Funds(a) => {
-                a.confirm_transaction(tx, account_match, context, transaction_type)
-            }
+            ManagedAccountRefMut::Funds(a) => a.confirm_transaction(
+                tx,
+                account_match,
+                context,
+                transaction_type,
+                observed_spent,
+                external_final_parents,
+            ),
             ManagedAccountRefMut::Keys(a) => {
                 a.confirm_transaction(tx, account_match, context, transaction_type)
             }

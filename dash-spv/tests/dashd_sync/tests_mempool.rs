@@ -570,3 +570,132 @@ async fn test_broadcast_transaction_local_detection() {
     bf.stop().await;
     tracing::info!("test_broadcast_transaction_local_detection passed");
 }
+
+/// Verify network acceptance detection with two dashd nodes.
+///
+/// The SPV client connects to both nodes. A broadcast is sent to only a
+/// subset of peers (half, per `BroadcastHoldout::Half`), so with two peers
+/// exactly one node receives it directly. Acceptance is proven when the
+/// withheld node — which can only learn the transaction through node-to-node
+/// relay — announces the txid back to the SPV client via `inv`.
+#[tokio::test]
+async fn test_broadcast_transaction_network_acceptance() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    // Second dashd node on the same chain, connected to the first so
+    // transactions relay between them.
+    let Some(dashd2) = DashdTestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    dashd2.node.connect_to_node(ctx.dashd.addr).await;
+
+    // SPV client connected to BOTH nodes.
+    let storage = tempfile::TempDir::new().expect("Failed to create client temp dir");
+    let mut config = dash_spv::ClientConfig::regtest()
+        .with_storage_path(storage.path().to_path_buf())
+        .without_masternodes();
+    config.add_peer(ctx.dashd.addr);
+    config.add_peer(dashd2.addr);
+    let (wallet, _) = create_test_wallet(&ctx.dashd.wallet.mnemonic, dash_spv::Network::Regtest);
+    let mut handle = create_and_start_client(&config, wallet).await;
+
+    super::helpers::wait_for_sync(&mut handle.progress_receiver, ctx.dashd.initial_height).await;
+    assert!(
+        super::helpers::wait_for_mempool_synced(&mut handle.progress_receiver).await,
+        "expected mempool to reach Synced state"
+    );
+
+    // Wait until the network layer reports both peers connected — with a
+    // single peer no holdout is possible and the echo can never arrive.
+    let both_connected = wait_for_network_event(
+        &mut handle.network_event_receiver,
+        |event| {
+            matches!(event, NetworkEvent::PeersUpdated { connected_count, .. } if *connected_count >= 2)
+        },
+        MEMPOOL_TIMEOUT,
+    )
+    .await;
+    assert!(both_connected, "expected the SPV client to connect to both dashd nodes");
+
+    // Fund the SPV wallet and confirm the funding.
+    let receive_address = ctx.receive_address().await;
+    let funding_txid =
+        ctx.dashd.node.send_to_address(&receive_address, Amount::from_sat(200_000_000));
+    super::helpers::wait_for_mempool_tx(&mut handle.wallet_event_receiver, MEMPOOL_TIMEOUT)
+        .await
+        .expect("Expected mempool event for funding tx");
+
+    let miner_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    ctx.dashd.node.generate_blocks(1, &miner_address);
+    super::helpers::wait_for_sync(&mut handle.progress_receiver, ctx.dashd.initial_height + 1)
+        .await;
+
+    // Create a signed transaction without broadcasting it via dashd.
+    let wallet_name = &ctx.dashd.wallet.wallet_name;
+    let utxos = ctx.dashd.node.list_unspent_from_wallet(wallet_name);
+    let utxo =
+        utxos.iter().find(|u| u.txid == funding_txid).expect("Funding tx UTXO not found in wallet");
+    let external_address = ctx.dashd.node.get_new_address_from_wallet("default");
+    let signed_tx = ctx.dashd.node.create_signed_transaction(
+        wallet_name,
+        utxo.txid,
+        utxo.vout,
+        utxo.amount,
+        &external_address,
+        Amount::from_sat(10_000),
+    );
+    let txid = signed_tx.txid();
+
+    // Broadcast through the SPV client and await the network outcome: the tx
+    // goes to one node, relays to the other, and the other's inv proves
+    // acceptance.
+    let result = handle
+        .client
+        .broadcast_transaction_and_wait(&signed_tx, Some(Duration::from_secs(45)))
+        .await
+        .expect("broadcast_transaction_and_wait failed");
+    tracing::info!("Broadcast {} outcome: {}", txid, result);
+    match result {
+        dash_spv::BroadcastResult::Accepted {
+            relayed_by,
+        } => {
+            assert!(relayed_by >= 1, "acceptance requires at least one echoing peer")
+        }
+        other => panic!("expected network acceptance for {}, got {}", txid, other),
+    }
+
+    // Negative leg: a double-spend of the same UTXO must NOT be reported as
+    // accepted. The receiving node refuses it (mempool conflict), so it never
+    // relays to the holdout peer and no echo arrives. Modern dashd sends no
+    // BIP61 reject, so the outcome resolves Uncertain via the timeout.
+    let double_spend = ctx.dashd.node.create_signed_transaction(
+        wallet_name,
+        utxo.txid,
+        utxo.vout,
+        utxo.amount,
+        &external_address,
+        Amount::from_sat(20_000),
+    );
+    let ds_txid = double_spend.txid();
+    assert_ne!(ds_txid, txid, "double spend must have a distinct txid");
+    let ds_result = handle
+        .client
+        .broadcast_transaction_and_wait(&double_spend, Some(Duration::from_secs(10)))
+        .await
+        .expect("broadcast_transaction_and_wait failed for double spend");
+    tracing::info!("Double-spend {} outcome: {}", ds_txid, ds_result);
+    assert!(
+        matches!(ds_result, dash_spv::BroadcastResult::Uncertain),
+        "double spend must resolve uncertain (no echo, no BIP61 reject), got {}",
+        ds_result
+    );
+
+    handle.stop().await;
+    tracing::info!("test_broadcast_transaction_network_acceptance passed");
+}

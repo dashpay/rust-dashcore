@@ -351,7 +351,7 @@ impl Peer {
                     tracing::warn!("Failed to flush socket {}: {}", self.address, e);
                 }
                 self.bytes_sent += serialized.len() as u64;
-                tracing::debug!("Sent message to {}: {:?}", self.address, raw_message.payload);
+                tracing::trace!("Sent message to {}: {:?}", self.address, raw_message.payload);
                 Ok(())
             }
             Err(e) => {
@@ -681,7 +681,7 @@ impl Peer {
         let pong_message = NetworkMessage::Pong(nonce);
         self.send_message(pong_message).await?;
 
-        tracing::debug!("Responded to ping from {} with pong nonce {}", self.address, nonce);
+        tracing::trace!("Responded to ping from {} with pong nonce {}", self.address, nonce);
 
         Ok(())
     }

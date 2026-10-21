@@ -97,7 +97,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_seed(
 /// it with `string_free`.
 ///
 /// Notes:
-/// - Uses the English wordlist for parsing the mnemonic.
+/// - Accepts a mnemonic in any supported BIP-39 language (detected automatically).
 /// - Chain-agnostic; may return an error for accounts with internal/external chains.
 ///
 /// # Safety
@@ -124,12 +124,7 @@ pub unsafe extern "C" fn bls_account_derive_private_key_from_mnemonic(
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
     let sk = unwrap_or_return!(
-        account.inner().derive_from_mnemonic_private_key_at(
-            mnemonic_str,
-            passphrase_str,
-            key_wallet::mnemonic::Language::English,
-            index,
-        ),
+        account.inner().derive_from_mnemonic_private_key_at(mnemonic_str, passphrase_str, index,),
         error
     );
     unwrap_or_return!(CString::new(hex::encode(sk.to_be_bytes())), error).into_raw()
@@ -175,7 +170,7 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_seed(
 /// it with `string_free`.
 ///
 /// Notes:
-/// - Uses the English wordlist for parsing the mnemonic.
+/// - Accepts a mnemonic in any supported BIP-39 language (detected automatically).
 ///
 /// # Safety
 /// - `account` must be a valid, non-null pointer to an `FFIEdDSAAccount` (only when `eddsa` feature is enabled).
@@ -201,12 +196,7 @@ pub unsafe extern "C" fn eddsa_account_derive_private_key_from_mnemonic(
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
     let sk = unwrap_or_return!(
-        account.inner().derive_from_mnemonic_private_key_at(
-            mnemonic_str,
-            passphrase_str,
-            key_wallet::mnemonic::Language::English,
-            index,
-        ),
+        account.inner().derive_from_mnemonic_private_key_at(mnemonic_str, passphrase_str, index,),
         error
     );
     unwrap_or_return!(CString::new(hex::encode(sk.to_bytes())), error).into_raw()
@@ -332,6 +322,8 @@ pub unsafe extern "C" fn account_derive_private_key_from_seed(
 /// Derive an extended private key from a mnemonic + optional passphrase at the given index.
 /// Returns an opaque FFIExtendedPrivKey pointer that must be freed with `extended_private_key_free`.
 ///
+/// Accepts a mnemonic in any supported BIP-39 language (detected automatically).
+///
 /// # Safety
 /// - `account` must be a valid pointer to an FFIAccount
 /// - `mnemonic` must be a valid, null-terminated C string
@@ -354,12 +346,9 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_mnemonic(
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
     let derived = unwrap_or_return!(
-        account.inner().derive_from_mnemonic_extended_xpriv_at(
-            mnemonic_str,
-            passphrase_str,
-            key_wallet::mnemonic::Language::English,
-            index,
-        ),
+        account
+            .inner()
+            .derive_from_mnemonic_extended_xpriv_at(mnemonic_str, passphrase_str, index,),
         error
     );
     Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(derived)))
@@ -367,6 +356,8 @@ pub unsafe extern "C" fn account_derive_extended_private_key_from_mnemonic(
 
 /// Derive a private key from a mnemonic + optional passphrase at the given index.
 /// Returns an opaque FFIPrivateKey pointer that must be freed with `private_key_free`.
+///
+/// Accepts a mnemonic in any supported BIP-39 language (detected automatically).
 ///
 /// # Safety
 /// - `account` must be a valid pointer to an FFIAccount
@@ -390,12 +381,9 @@ pub unsafe extern "C" fn account_derive_private_key_from_mnemonic(
         Some(unwrap_or_return!(std::ffi::CStr::from_ptr(passphrase).to_str(), error))
     };
     let derived = unwrap_or_return!(
-        account.inner().derive_from_mnemonic_extended_xpriv_at(
-            mnemonic_str,
-            passphrase_str,
-            key_wallet::mnemonic::Language::English,
-            index,
-        ),
+        account
+            .inner()
+            .derive_from_mnemonic_extended_xpriv_at(mnemonic_str, passphrase_str, index,),
         error
     );
     Box::into_raw(Box::new(FFIPrivateKey::from_secret(derived.private_key)))

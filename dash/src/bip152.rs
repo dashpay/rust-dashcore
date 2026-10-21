@@ -123,11 +123,11 @@ impl ShortId {
     pub fn with_siphash_keys<T: AsRef<[u8]>>(txid: &T, siphash_keys: (u64, u64)) -> ShortId {
         // 2. Running SipHash-2-4 with the input being the transaction ID and the keys (k0/k1)
         // set to the first two little-endian 64-bit integers from the above hash, respectively.
-        let hash = siphash24::Hash::hash_with_keys(siphash_keys.0, siphash_keys.1, txid.as_ref());
+        let hash = siphash24::siphash(siphash_keys.0, siphash_keys.1, txid.as_ref());
 
         // 3. Dropping the 2 most significant bytes from the SipHash output to make it 6 bytes.
         let mut id = ShortId([0; 6]);
-        id.0.copy_from_slice(&hash[0..6]);
+        id.0.copy_from_slice(&hash.to_le_bytes()[0..6]);
         id
     }
 }

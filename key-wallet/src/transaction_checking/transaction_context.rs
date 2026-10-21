@@ -11,6 +11,15 @@ pub struct BlockInfo {
     pub(crate) height: CoreBlockHeight,
     pub(crate) block_hash: BlockHash,
     pub(crate) timestamp: u32,
+    /// The transaction's index within `block.txdata` (`block.vtx` order),
+    /// when known. Same-block ordering matters for consumers that must
+    /// replay Core's apply-order semantics — e.g. multiple provider
+    /// special transactions for one masternode in a single block resolve
+    /// latest-wins by this position in `RebuildListFromBlock`. `None`
+    /// when the context was built without access to the containing block
+    /// (FFI-supplied contexts, legacy persisted records).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) position: Option<u32>,
 }
 
 impl BlockInfo {
@@ -19,7 +28,17 @@ impl BlockInfo {
             height,
             block_hash,
             timestamp,
+            position: None,
         }
+    }
+
+    /// Attach the transaction's in-block position (its index within
+    /// `block.txdata`). Chainlock promotion copies the whole `BlockInfo`,
+    /// so a position set at block-processing time survives context
+    /// transitions.
+    pub fn with_position(mut self, position: u32) -> Self {
+        self.position = Some(position);
+        self
     }
 
     pub fn height(&self) -> CoreBlockHeight {
@@ -32,6 +51,12 @@ impl BlockInfo {
 
     pub fn timestamp(&self) -> u32 {
         self.timestamp
+    }
+
+    /// The transaction's index within its block (`block.vtx` order), when
+    /// it was recorded at block-processing time.
+    pub fn position(&self) -> Option<u32> {
+        self.position
     }
 }
 

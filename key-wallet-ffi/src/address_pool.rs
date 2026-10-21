@@ -198,10 +198,6 @@ pub struct FFIAddressInfo {
     pub path: *mut c_char,
     /// Whether address has been used
     pub used: bool,
-    /// When generated (timestamp)
-    pub generated_at: u64,
-    /// When first used (0 if never)
-    pub used_at: u64,
     /// Transaction count
     pub tx_count: u32,
     /// Total received
@@ -264,9 +260,7 @@ fn address_info_to_ffi(info: &AddressInfo) -> FFIAddressInfo {
         public_key_len,
         index: info.index,
         path: path_str,
-        used: info.used,
-        generated_at: info.generated_at,
-        used_at: info.used_at.unwrap_or(0),
+        used: info.is_used(),
         tx_count: info.tx_count,
         total_received: info.total_received,
         total_sent: info.total_sent,
@@ -879,6 +873,7 @@ pub unsafe extern "C" fn address_info_array_free(infos: *mut *mut FFIAddressInfo
 mod tests {
     use super::*;
     use dash_network::ffi::FFINetwork;
+    use key_wallet::managed_account::address_pool::AddressState;
 
     #[test]
     fn test_address_pool_type_values() {
@@ -914,9 +909,7 @@ mod tests {
             public_key: Some(PublicKeyType::ECDSA(vec![0x02, 0x03, 0x04])),
             index: 0,
             path: test_path,
-            used: false,
-            generated_at: 1234567890,
-            used_at: None,
+            state: AddressState::Available,
             tx_count: 0,
             total_received: 0,
             total_sent: 0,
@@ -931,8 +924,6 @@ mod tests {
         // Verify basic fields
         assert_eq!(ffi_info.index, 0);
         assert!(!ffi_info.used);
-        assert_eq!(ffi_info.generated_at, 1234567890);
-        assert_eq!(ffi_info.used_at, 0);
         assert_eq!(ffi_info.public_key_len, 3);
         assert!(ffi_info.script_pubkey_len > 0);
 

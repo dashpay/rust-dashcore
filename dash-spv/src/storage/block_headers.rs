@@ -42,20 +42,9 @@ impl BlockHeaderTip {
 
 #[async_trait]
 pub trait BlockHeaderStorage: Send + Sync + 'static {
-    async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()>;
+    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()>;
 
     async fn store_headers_at_height(
-        &mut self,
-        headers: &[BlockHeader],
-        height: u32,
-    ) -> StorageResult<()>;
-
-    //TODO - change API of the BlockHeaderStorage trait to accept (store) and return (load)
-    //      HashedBlockHeaders instead of BlockHeaders to avoid unnecessary hashing and remove
-    //      the two store_hashed_headers methods below.
-    async fn store_hashed_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()>;
-
-    async fn store_hashed_headers_at_height(
         &mut self,
         headers: &[HashedBlockHeader],
         height: u32,
@@ -66,9 +55,9 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
     /// Returns `StorageError::InvalidArgument` when the range extends into a
     /// segment queued for deletion by a prior `truncate_above` (before the next
     /// `persist`). Callers must clamp the range to at most `get_tip_height`.
-    async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>>;
+    async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<HashedBlockHeader>>;
 
-    async fn get_header(&self, height: u32) -> StorageResult<Option<BlockHeader>> {
+    async fn get_header(&self, height: u32) -> StorageResult<Option<HashedBlockHeader>> {
         if let Some(tip_height) = self.get_tip_height().await {
             if height > tip_height {
                 return Ok(None);
@@ -85,7 +74,7 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
             return Ok(None);
         }
 
-        Ok(self.load_headers(height..height + 1).await?.first().copied())
+        Ok(self.load_headers(height..height + 1).await?.into_iter().next())
     }
 
     async fn get_tip_height(&self) -> Option<u32>;
@@ -161,27 +150,12 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
 
 #[async_trait]
 impl BlockHeaderStorage for PersistentBlockHeaderStorage {
-    async fn store_headers(&mut self, headers: &[BlockHeader]) -> StorageResult<()> {
+    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()> {
         let height = self.block_headers.read().await.next_height();
         self.store_headers_at_height(headers, height).await
     }
 
     async fn store_headers_at_height(
-        &mut self,
-        headers: &[BlockHeader],
-        height: u32,
-    ) -> StorageResult<()> {
-        let headers =
-            headers.iter().map(HashedBlockHeader::from).collect::<Vec<HashedBlockHeader>>();
-        self.store_hashed_headers_at_height(&headers, height).await
-    }
-
-    async fn store_hashed_headers(&mut self, headers: &[HashedBlockHeader]) -> StorageResult<()> {
-        let height = self.block_headers.read().await.next_height();
-        self.store_hashed_headers_at_height(headers, height).await
-    }
-
-    async fn store_hashed_headers_at_height(
         &mut self,
         headers: &[HashedBlockHeader],
         height: u32,
@@ -198,16 +172,9 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         Ok(())
     }
 
-    async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<BlockHeader>> {
-        Ok(self
-            .block_headers
-            .write()
-            .await
-            .get_items(range)
-            .await?
-            .into_iter()
-            .map(|cached| *cached.header())
-            .collect())
+    // Returns the cached `HashedBlockHeader`s straight from the segment cache — no recomputation.
+    async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<HashedBlockHeader>> {
+        self.block_headers.write().await.get_items(range).await
     }
 
     async fn get_tip_height(&self) -> Option<u32> {
@@ -268,9 +235,13 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn hashed_batch(r: std::ops::Range<u32>) -> Vec<HashedBlockHeader> {
+        BlockHeader::dummy_batch(r).into_iter().map(HashedBlockHeader::from).collect()
+    }
+
     #[tokio::test]
     async fn test_get_tip() {
-        let headers = BlockHeader::dummy_batch(0..5);
+        let headers = hashed_batch(0..5);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
         // Tip should be none before storing headers
@@ -278,13 +249,13 @@ mod tests {
         // Add one header and validate tip
         storage.store_headers(&headers[0..1]).await.unwrap();
         let tip = storage.get_tip().await.unwrap();
-        let expected_tip = BlockHeaderTip::new(0, HashedBlockHeader::from(headers[0]));
+        let expected_tip = BlockHeaderTip::new(0, headers[0].clone());
         assert_eq!(tip, expected_tip);
         assert_eq!(storage.get_tip_height().await, Some(0));
         // Add multiple headers and validate tip
         storage.store_headers(&headers[1..]).await.unwrap();
         let tip = storage.get_tip().await.unwrap();
-        let expected_tip = BlockHeaderTip::new(4, HashedBlockHeader::from(headers[4]));
+        let expected_tip = BlockHeaderTip::new(4, headers[4].clone());
         assert_eq!(tip, expected_tip);
         assert_eq!(storage.get_tip_height().await, Some(4));
     }
@@ -294,35 +265,32 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
 
-        let headers = BlockHeader::dummy_batch(0..10);
+        let headers = hashed_batch(0..10);
         storage.store_headers(&headers).await.unwrap();
 
-        let orphaned_hash = headers[7].block_hash();
+        let orphaned_hash = *headers[7].hash();
         assert_eq!(storage.get_header_height_by_hash(&orphaned_hash).await.unwrap(), Some(7));
 
         storage.truncate_above(100).await.unwrap();
         assert_eq!(storage.get_tip_height().await, Some(9));
-        assert_eq!(
-            storage.get_header_height_by_hash(&headers[4].block_hash()).await.unwrap(),
-            Some(4)
-        );
+        assert_eq!(storage.get_header_height_by_hash(headers[4].hash()).await.unwrap(), Some(4));
 
         storage.truncate_above(5).await.unwrap();
 
         assert_eq!(storage.get_tip_height().await, Some(5));
         assert_eq!(storage.get_header_height_by_hash(&orphaned_hash).await.unwrap(), None);
 
-        let kept_hash = headers[3].block_hash();
+        let kept_hash = *headers[3].hash();
         assert_eq!(storage.get_header_height_by_hash(&kept_hash).await.unwrap(), Some(3));
 
-        let replacement = BlockHeader::dummy_batch(100..105);
+        let replacement = hashed_batch(100..105);
         storage.store_headers_at_height(&replacement, 6).await.unwrap();
         assert_eq!(storage.get_tip_height().await, Some(10));
 
         let reloaded = storage.load_headers(6..11).await.unwrap();
         assert_eq!(reloaded, replacement);
 
-        let new_hash = replacement[0].block_hash();
+        let new_hash = *replacement[0].hash();
         assert_eq!(storage.get_header_height_by_hash(&new_hash).await.unwrap(), Some(6));
 
         // Exercise the durability contract: persist, drop, reopen, and verify

@@ -227,7 +227,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     async fn verify_block_hash(&self, chainlock: &ChainLock) -> bool {
         let storage = self.header_storage.read().await;
         match storage.get_header(chainlock.block_height).await {
-            Ok(Some(header)) => header.block_hash() == chainlock.block_hash,
+            Ok(Some(header)) => *header.hash() == chainlock.block_hash,
             Ok(None) => {
                 // Don't reject if we don't have the header yet
                 true
@@ -300,6 +300,7 @@ mod tests {
     use crate::Network;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hashes::Hash;
+    use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::BlockHash;
 
     type TestChainLockManager =
@@ -412,7 +413,7 @@ mod tests {
             .block_headers()
             .write()
             .await
-            .store_headers_at_height(&[header], 100)
+            .store_headers_at_height(&[crate::types::HashedBlockHeader::from(header)], 100)
             .await
             .expect("store header at 100");
 
@@ -452,6 +453,30 @@ mod tests {
 
         assert_eq!(manager.progress.invalid(), 1);
         assert_eq!(manager.progress.valid(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_chainlock_signed_above_the_newest_list_is_not_accepted() {
+        let mut manager = create_test_manager().await;
+        manager
+            .masternode_engine
+            .write()
+            .await
+            .masternode_lists
+            .insert(100, MasternodeList::empty(BlockHash::all_zeros(), 100));
+        let _ = manager.on_masternode_ready().await;
+
+        let events = manager.process_chainlock(&create_test_chainlock(1_000)).await.unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::ChainLockReceived {
+                validated: false,
+                ..
+            }]
+        ));
+        assert!(manager.best_chainlock().is_none());
+        assert_eq!(manager.progress.invalid(), 1);
     }
 
     #[tokio::test]

@@ -3,15 +3,14 @@
 //! This module provides a structure for managing multiple accounts
 //! across different networks in a hierarchical manner.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use dashcore::blockdata::transaction::OutPoint;
+use dashcore::Transaction;
 
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
-use crate::account::account_type::AccountType;
-use crate::gap_limit::{
-    DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
-    DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
-};
-use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::gap_limit::DIP17_GAP_LIMIT;
+use crate::managed_account::address_pool::AddressPoolType;
 use crate::managed_account::managed_account_ref::{
     ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount,
 };
@@ -20,8 +19,8 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use crate::transaction_checking::account_checker::CoreAccountTypeMatch;
-use crate::{Account, AccountCollection};
-use crate::{KeySource, Network};
+use crate::KeySource;
+use crate::{Account, AccountCollection, AccountType};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -100,6 +99,18 @@ impl ManagedAccountCollection {
     }
 
     /// Check if a managed account type exists in the collection
+    /// Whether the wallet holds any masternode provider account (owner,
+    /// voting, operator, or platform keys).
+    ///
+    /// A wallet with none of these can never own or operate a masternode, so it
+    /// has no reason to watch for masternode special transactions.
+    pub(crate) fn has_provider_accounts(&self) -> bool {
+        self.provider_owner_keys.is_some()
+            || self.provider_voting_keys.is_some()
+            || self.provider_operator_keys.is_some()
+            || self.provider_platform_keys.is_some()
+    }
+
     pub fn contains_managed_account_type(&self, managed_type: &ManagedAccountType) -> bool {
         use crate::account::StandardAccountType;
 
@@ -489,8 +500,11 @@ impl ManagedAccountCollection {
         account: &Account,
     ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
         let key_source = KeySource::Public(account.account_xpub);
-        let managed_type =
-            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
         Ok(ManagedCoreFundsAccount::new(managed_type, account.network))
     }
 
@@ -499,8 +513,11 @@ impl ManagedAccountCollection {
         account: &Account,
     ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
         let key_source = KeySource::Public(account.account_xpub);
-        let managed_type =
-            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
         Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
     }
 
@@ -511,8 +528,11 @@ impl ManagedAccountCollection {
         account: &crate::account::BLSAccount,
     ) -> Result<ManagedCoreKeysAccount, crate::error::Error> {
         let key_source = KeySource::BLSPublic(account.bls_public_key.clone());
-        let managed_type =
-            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
         Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
     }
 
@@ -527,252 +547,12 @@ impl ManagedAccountCollection {
             Some(priv_key) => KeySource::EdDSAPrivate(priv_key),
             None => KeySource::NoKeySource,
         };
-        let managed_type =
-            Self::build_managed_account_type(account.account_type, account.network, &key_source)?;
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
         Ok(ManagedCoreKeysAccount::new(managed_type, account.network))
-    }
-
-    /// Build the [`ManagedAccountType`] (address pools + variant data) for an
-    /// account type and network. Shared between the funds-bearing and
-    /// keys-only construction helpers above — the wrap into one variant or
-    /// the other happens in the caller.
-    fn build_managed_account_type(
-        account_type: AccountType,
-        network: Network,
-        key_source: &KeySource,
-    ) -> Result<ManagedAccountType, crate::error::Error> {
-        // Get the derivation path for this account type
-        let base_path = account_type
-            .derivation_path(network)
-            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
-
-        // Create the appropriate ManagedAccountType with address pools
-        let managed_type = match account_type {
-            AccountType::Standard {
-                index,
-                standard_account_type,
-            } => {
-                // For standard accounts, add the receive/change branch to the path
-                let mut external_path = base_path.clone();
-                external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?); // 0 for external
-                let external_pool = AddressPool::new(
-                    external_path,
-                    AddressPoolType::External,
-                    DEFAULT_EXTERNAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                let mut internal_path = base_path;
-                internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1)?); // 1 for internal
-                let internal_pool = AddressPool::new(
-                    internal_path,
-                    AddressPoolType::Internal,
-                    DEFAULT_INTERNAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-
-                let managed_standard_type = standard_account_type;
-
-                ManagedAccountType::Standard {
-                    index,
-                    standard_account_type: managed_standard_type,
-                    external_addresses: external_pool,
-                    internal_addresses: internal_pool,
-                }
-            }
-            AccountType::CoinJoin {
-                index,
-            } => {
-                // CoinJoin addresses live on the external branch (m/9'/coin'/4'/account'/0/index)
-                // to match Dash Core, so derive through the `External` pool which uses [0, index].
-                let mut coinjoin_path = base_path;
-                coinjoin_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
-                let addresses = AddressPool::new(
-                    coinjoin_path,
-                    AddressPoolType::External,
-                    DEFAULT_COINJOIN_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::CoinJoin {
-                    index,
-                    addresses,
-                }
-            }
-            AccountType::IdentityRegistration => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityRegistration {
-                    addresses,
-                }
-            }
-            AccountType::IdentityTopUp {
-                registration_index,
-            } => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityTopUp {
-                    registration_index,
-                    addresses,
-                }
-            }
-            AccountType::IdentityTopUpNotBoundToIdentity => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                    addresses,
-                }
-            }
-            AccountType::IdentityInvitation => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::IdentityInvitation {
-                    addresses,
-                }
-            }
-            AccountType::AssetLockAddressTopUp => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::AssetLockAddressTopUp {
-                    addresses,
-                }
-            }
-            AccountType::AssetLockShieldedAddressTopUp => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::AssetLockShieldedAddressTopUp {
-                    addresses,
-                }
-            }
-            AccountType::ProviderVotingKeys => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::ProviderVotingKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderOwnerKeys => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::ProviderOwnerKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderOperatorKeys => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::ProviderOperatorKeys {
-                    addresses,
-                }
-            }
-            AccountType::ProviderPlatformKeys => {
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::AbsentHardened,
-                    DEFAULT_SPECIAL_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::ProviderPlatformKeys {
-                    addresses,
-                }
-            }
-            AccountType::DashpayReceivingFunds {
-                index,
-                user_identity_id,
-                friend_identity_id,
-            } => {
-                let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
-                ManagedAccountType::DashpayReceivingFunds {
-                    index,
-                    user_identity_id,
-                    friend_identity_id,
-                    addresses,
-                }
-            }
-            AccountType::DashpayExternalAccount {
-                index,
-                user_identity_id,
-                friend_identity_id,
-            } => {
-                let addresses =
-                    AddressPool::new(base_path, AddressPoolType::Absent, 20, network, key_source)?;
-                ManagedAccountType::DashpayExternalAccount {
-                    index,
-                    user_identity_id,
-                    friend_identity_id,
-                    addresses,
-                }
-            }
-            AccountType::PlatformPayment {
-                account,
-                key_class,
-            } => {
-                // DIP-17/DIP-18: Platform Payment addresses
-                let addresses = AddressPool::new(
-                    base_path,
-                    AddressPoolType::Absent,
-                    DIP17_GAP_LIMIT,
-                    network,
-                    key_source,
-                )?;
-                ManagedAccountType::PlatformPayment {
-                    account,
-                    key_class,
-                    addresses,
-                }
-            }
-        };
-
-        Ok(managed_type)
     }
 
     /// Create a ManagedPlatformAccount from an Account for Platform Payment accounts
@@ -783,15 +563,9 @@ impl ManagedAccountCollection {
         // Use the account's existing public key
         let key_source = KeySource::Public(account.account_xpub);
 
-        // Get the derivation path for this account type
-        let base_path = account
-            .account_type
-            .derivation_path(account.network)
-            .unwrap_or_else(|_| crate::bip32::DerivationPath::master());
-
-        // Create address pool for DIP-17 Platform Payment addresses
-        let addresses = AddressPool::new(
-            base_path,
+        // DIP-17 Platform Payment addresses: single pool on the account's path.
+        let addresses = ManagedAccountType::single_pool(
+            account.account_type,
             AddressPoolType::Absent,
             DIP17_GAP_LIMIT,
             account.network,
@@ -806,13 +580,76 @@ impl ManagedAccountCollection {
         ))
     }
 
+    /// Get the spendable account for an exact [`AccountType`]
+    pub fn funds_account(&self, account_type: &AccountType) -> Option<&ManagedCoreFundsAccount> {
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                crate::account::StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.get(index)
+                }
+                crate::account::StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.get(index)
+                }
+            },
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get(index),
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_receival_accounts.get(&DashpayAccountKey {
+                index: *index,
+                user_identity_id: *user_identity_id,
+                friend_identity_id: *friend_identity_id,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Mutable twin of [`Self::funds_account`].
+    pub fn funds_account_mut(
+        &mut self,
+        account_type: &AccountType,
+    ) -> Option<&mut ManagedCoreFundsAccount> {
+        match account_type {
+            AccountType::Standard {
+                index,
+                standard_account_type,
+            } => match standard_account_type {
+                crate::account::StandardAccountType::BIP44Account => {
+                    self.standard_bip44_accounts.get_mut(index)
+                }
+                crate::account::StandardAccountType::BIP32Account => {
+                    self.standard_bip32_accounts.get_mut(index)
+                }
+            },
+            AccountType::CoinJoin {
+                index,
+            } => self.coinjoin_accounts.get_mut(index),
+            AccountType::DashpayReceivingFunds {
+                index,
+                user_identity_id,
+                friend_identity_id,
+            } => self.dashpay_receival_accounts.get_mut(&DashpayAccountKey {
+                index: *index,
+                user_identity_id: *user_identity_id,
+                friend_identity_id: *friend_identity_id,
+            }),
+            _ => None,
+        }
+    }
+
     /// Get a funds-bearing account by primary index across Standard BIP44,
     /// Standard BIP32, and CoinJoin accounts.
     ///
     /// Returns only [`ManagedCoreFundsAccount`] entries — keys-only accounts
     /// (identity / asset-lock / provider) are not reachable via this index
-    /// lookup. Use [`Self::get_by_account_type_match`] or direct field access
-    /// for those.
+    /// lookup. Use [`Self::funds_account`], [`Self::get_by_account_type_match`]
+    /// or direct field access for those.
     pub fn get(&self, index: u32) -> Option<&ManagedCoreFundsAccount> {
         if let Some(account) = self.standard_bip44_accounts.get(&index) {
             return Some(account);
@@ -1100,6 +937,25 @@ impl ManagedAccountCollection {
         accounts
     }
 
+    /// Union, across every funds-bearing account, of the outpoints among
+    /// `tx`'s inputs that the wallet holds as final UTXOs.
+    ///
+    /// A single account can only answer this for the coins it owns, but
+    /// pooled funding (asset locks draw from BIP44 + BIP32 + the DashPay
+    /// contact-receiving accounts) routinely spreads one transaction's inputs
+    /// across several. The union is what makes the trusted-self-send check in
+    /// [`ManagedCoreFundsAccount::record_transaction`] see the whole wallet.
+    ///
+    /// Must be taken before any account processes `tx` — `update_utxos`
+    /// removes spent parents as it goes.
+    pub(crate) fn final_parents_of(&self, tx: &Transaction) -> BTreeSet<OutPoint> {
+        let mut parents = BTreeSet::new();
+        for funds in self.all_funding_accounts() {
+            funds.collect_final_parents(tx, &mut parents);
+        }
+        parents
+    }
+
     /// Get all accounts in the collection as mutable
     /// [`ManagedAccountRefMut`] values.
     pub fn all_accounts_mut(&mut self) -> Vec<ManagedAccountRefMut<'_>> {
@@ -1146,31 +1002,55 @@ impl ManagedAccountCollection {
         accounts
     }
 
-    /// Get all funds-bearing accounts (Standard BIP44/32, CoinJoin, DashPay).
+    /// Get the accounts whose funds belong to **this** wallet (Standard
+    /// BIP44/32, CoinJoin, DashPay receival).
     ///
     /// Use this from callsites that operate on balance / UTXO state — keys-only
     /// accounts (identity, asset-lock, provider) don't track those, so iterating
     /// [`Self::all_accounts`] and filtering via [`ManagedAccountRef::as_funds`]
     /// in those callsites is just noise.
+    ///
+    /// **`dashpay_external_accounts` are deliberately excluded** — they are
+    /// the only funds-bearing accounts that are
+    /// [contact-owned](crate::account::AccountType::is_contact_owned), and
+    /// that predicate is the canonical statement of the policy applied here.
+    /// A DashPay
+    /// external account is watch-only by construction: its addresses are derived
+    /// from a *contact's* xpub, so this wallet can observe those outputs but can
+    /// never sign for them. They are the contact's coins. Counting them here
+    /// made the wallet's own balance grow by whatever it had just paid out —
+    /// send 0.01 DASH to a contact and the total does not move, because the
+    /// amount leaves the standard account and reappears under the contact's —
+    /// and put unspendable outputs into `get_spendable_utxos`, where coin
+    /// selection can pick one and fail at signing time.
+    ///
+    /// Receival accounts stay: those addresses derive from *our* xpub and a
+    /// contact pays into them, so the funds are genuinely ours.
+    ///
+    /// Excluding them here does not stop the wallet seeing those transactions.
+    /// Detection runs through
+    /// [`transaction_checking`](crate::transaction_checking), whose
+    /// `AccountTypeToCheck` list still includes `DashpayExternalAccount`, and
+    /// the monitored-address / compact-filter set is built from
+    /// [`Self::all_accounts`], which also still includes it.
     pub fn all_funding_accounts(&self) -> Vec<&ManagedCoreFundsAccount> {
         let mut accounts = Vec::new();
         accounts.extend(self.standard_bip44_accounts.values());
         accounts.extend(self.standard_bip32_accounts.values());
         accounts.extend(self.coinjoin_accounts.values());
         accounts.extend(self.dashpay_receival_accounts.values());
-        accounts.extend(self.dashpay_external_accounts.values());
         accounts
     }
 
     /// Get all funds-bearing accounts mutably. See [`Self::all_funding_accounts`]
-    /// for which account types are visited.
+    /// for which account types are visited — in particular, why DashPay
+    /// *external* (watch-only) accounts are not among them.
     pub fn all_funding_accounts_mut(&mut self) -> Vec<&mut ManagedCoreFundsAccount> {
         let mut accounts = Vec::new();
         accounts.extend(self.standard_bip44_accounts.values_mut());
         accounts.extend(self.standard_bip32_accounts.values_mut());
         accounts.extend(self.coinjoin_accounts.values_mut());
         accounts.extend(self.dashpay_receival_accounts.values_mut());
-        accounts.extend(self.dashpay_external_accounts.values_mut());
         accounts
     }
 
@@ -1262,5 +1142,100 @@ impl ManagedAccountCollection {
         key: &PlatformPaymentAccountKey,
     ) -> Option<&mut ManagedPlatformAccount> {
         self.platform_payment_accounts.get_mut(key)
+    }
+}
+
+#[cfg(test)]
+mod dashpay_funding_scope_tests {
+    use super::*;
+    use crate::account::{Account, AccountType, StandardAccountType};
+    use crate::managed_account::ManagedCoreFundsAccount;
+    use crate::Network;
+
+    fn xpub() -> crate::bip32::ExtendedPubKey {
+        let seed = [7u8; 32];
+        let xpriv =
+            crate::bip32::ExtendedPrivKey::new_master(Network::Testnet, &seed).expect("master key");
+        {
+            let secp = secp256k1::Secp256k1::new();
+            crate::bip32::ExtendedPubKey::from_priv(&secp, &xpriv)
+        }
+    }
+
+    fn managed(account_type: AccountType) -> ManagedCoreFundsAccount {
+        ManagedCoreFundsAccount::from_account(&Account {
+            parent_wallet_id: Some([1u8; 32]),
+            account_type,
+            network: Network::Testnet,
+            account_xpub: xpub(),
+            is_watch_only: matches!(account_type, AccountType::DashpayExternalAccount { .. }),
+        })
+    }
+
+    /// A DashPay **external** account is watch-only — its addresses derive from
+    /// the contact's xpub, so those coins are the contact's and this wallet can
+    /// never sign for them. Counting them as funding made the wallet's balance
+    /// absorb whatever it had just paid out, and put unspendable outputs in
+    /// front of coin selection.
+    ///
+    /// A DashPay **receival** account derives from our own xpub and must stay.
+    #[test]
+    fn external_dashpay_accounts_are_not_funding_accounts() {
+        let mut collection = ManagedAccountCollection::default();
+        collection
+            .insert_funds_bearing_account(managed(AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            }))
+            .expect("standard");
+        collection
+            .insert_funds_bearing_account(managed(AccountType::DashpayReceivingFunds {
+                index: 0,
+                user_identity_id: [0xAA; 32],
+                friend_identity_id: [0xBB; 32],
+            }))
+            .expect("receival");
+        collection
+            .insert_funds_bearing_account(managed(AccountType::DashpayExternalAccount {
+                index: 0,
+                user_identity_id: [0xAA; 32],
+                friend_identity_id: [0xBB; 32],
+            }))
+            .expect("external");
+
+        let funding: Vec<AccountType> = collection
+            .all_funding_accounts()
+            .iter()
+            .map(|a| a.managed_account_type().to_account_type())
+            .collect();
+
+        assert!(
+            funding.iter().any(|t| matches!(t, AccountType::DashpayReceivingFunds { .. })),
+            "receival accounts hold our own coins and must fund"
+        );
+        assert!(
+            !funding.iter().any(|t| matches!(t, AccountType::DashpayExternalAccount { .. })),
+            "the contact's watch-only account must not count as this wallet's funds"
+        );
+        assert!(
+            funding.iter().all(|t| !t.is_contact_owned()),
+            "all_funding_accounts must exclude exactly what AccountType::is_contact_owned flags"
+        );
+        assert!(
+            collection
+                .dashpay_external_accounts
+                .values()
+                .all(|a| a.managed_account_type().is_contact_owned()),
+            "the managed-side predicate must agree"
+        );
+        assert_eq!(
+            funding.len(),
+            collection.all_funding_accounts_mut().len(),
+            "the mutable view must visit exactly the same accounts"
+        );
+
+        // The account still exists and is still watched — only its role in
+        // balance/UTXO aggregation changed.
+        assert_eq!(collection.dashpay_external_accounts.len(), 1);
     }
 }

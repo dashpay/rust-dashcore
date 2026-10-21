@@ -3,6 +3,7 @@
 //! Downloads blocks that matched wallet filters and processes them in height order.
 //! Subscribes to BlockNeeded events and emits BlockProcessed events.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -12,7 +13,8 @@ use crate::error::SyncResult;
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, BlockStorage};
 use crate::sync::{BlocksProgress, SyncEvent, SyncManager, SyncState};
-use key_wallet_manager::WalletInterface;
+use crate::types::HashedBlock;
+use key_wallet_manager::{BlockProcessingResult, WalletId, WalletInterface};
 
 /// Blocks manager for downloading and processing matching blocks.
 ///
@@ -77,60 +79,50 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
     /// in the correct sequence.
     pub(super) async fn process_buffered_blocks(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
+        // Highest height applied in this drain, used below to advance the
+        // storage's committed watermark exactly once.
+        let mut last_applied: Option<u32> = None;
 
         // Process blocks in height order using pipeline's ordering logic
         while let Some((block, height, interested)) = self.pipeline.take_next_ordered_block() {
-            let hash = block.block_hash();
+            let hash = *block.hash();
 
             // Process the block only for the wallets whose filter matched it.
             // Already-synced wallets that did not match are not touched.
-            let mut wallet = self.wallet.write().await;
-            let result = wallet.process_block_for_wallets(&block, height, &interested).await;
-            drop(wallet);
-
-            let total_relevant = result.relevant_tx_count();
-            let new_scripts_total: usize = result.new_scripts.values().map(|v| v.len()).sum();
-            if total_relevant > 0 {
-                tracing::info!(
-                    "Found {} relevant transactions ({} new, {} existing) {} at height {}, new scripts: {}",
-                    total_relevant,
-                    result.new_txids.len(),
-                    result.existing_txids.len(),
-                    hash,
-                    height,
-                    new_scripts_total
-                );
-            }
-
-            // Collect confirmed txids before moving new_scripts out of result
-            let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
-
-            // Collect new scripts for gap limit rescanning
-            let new_scripts = result.new_scripts;
-            if new_scripts_total > 0 {
-                tracing::debug!(
-                    "Block {} generated {} new scripts for gap limit maintenance across {} wallets",
-                    height,
-                    new_scripts_total,
-                    new_scripts.len()
-                );
-            }
+            let result = self.apply_block(&block, height, &interested).await;
 
             self.progress.add_processed(1);
-            if total_relevant > 0 {
+            if result.relevant_tx_count() > 0 {
                 self.progress.add_relevant(1);
             }
-            // Only count new transactions to avoid double-counting during rescans
-            self.progress.add_transactions(result.new_txids.len() as u32);
+            // Collect confirmed txids before moving new_scripts out of result
+            let confirmed_txids: Vec<_> = result.relevant_txids().cloned().collect();
             self.progress.update_last_processed(height);
+            last_applied = Some(height);
 
             events.push(SyncEvent::BlockProcessed {
                 block_hash: hash,
                 height,
                 wallets: interested,
-                new_scripts,
+                new_scripts: result.new_scripts,
                 confirmed_txids,
             });
+
+            self.reapply_blocks(result.reapply_heights).await;
+        }
+
+        // Blocks are drained in strict height order, so `last_applied` is the
+        // high-water mark of blocks now applied to every interested wallet.
+        // Telling storage lets it release those block bodies from memory on the
+        // next persist instead of pinning the whole backfill; they stay
+        // readable via `load_block`, which reloads them from disk.
+        //
+        // Set once per drain rather than per block: this takes the block
+        // storage write lock, and the loop above can run thousands of times.
+        // No other guard is held here, and the wallet lock inside the loop was
+        // dropped before this point.
+        if let Some(height) = last_applied {
+            self.block_storage.write().await.set_committed_height(height).await;
         }
 
         // Check if pipeline is empty
@@ -150,6 +142,70 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
 
         Ok(events)
     }
+
+    async fn apply_block(
+        &mut self,
+        block: &HashedBlock,
+        height: u32,
+        wallets: &BTreeSet<WalletId>,
+    ) -> BlockProcessingResult {
+        let hash = *block.hash();
+        let mut wallet = self.wallet.write().await;
+        let result = wallet.process_block_for_wallets(block.block(), hash, height, wallets).await;
+        drop(wallet);
+
+        let total_relevant = result.relevant_tx_count();
+        let new_scripts_total: usize = result.new_scripts.values().map(|v| v.len()).sum();
+        if total_relevant > 0 {
+            tracing::info!(
+                "Found {} relevant transactions ({} new, {} existing) {} at height {}, new scripts: {}",
+                total_relevant,
+                result.new_txids.len(),
+                result.existing_txids.len(),
+                hash,
+                height,
+                new_scripts_total
+            );
+        }
+        if new_scripts_total > 0 {
+            tracing::debug!(
+                "Block {} generated {} new scripts for gap limit maintenance across {} wallets",
+                height,
+                new_scripts_total,
+                result.new_scripts.len()
+            );
+        }
+
+        // Only count new transactions to avoid double-counting during rescans
+        self.progress.add_transactions(result.new_txids.len() as u32);
+        result
+    }
+
+    async fn reapply_blocks(&mut self, reapply: BTreeMap<WalletId, BTreeSet<u32>>) {
+        let mut queue: BTreeSet<(u32, WalletId)> = reapply
+            .into_iter()
+            .flat_map(|(wallet_id, heights)| heights.into_iter().map(move |h| (h, wallet_id)))
+            .collect();
+        while let Some((height, wallet_id)) = queue.pop_first() {
+            let block = match self.block_storage.read().await.load_block(height).await {
+                Ok(Some(block)) => block,
+                Ok(None) => {
+                    tracing::warn!("Cannot re-apply block at height {}: not in storage", height);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!("Cannot re-apply block at height {}: {}", height, e);
+                    continue;
+                }
+            };
+            let result = self.apply_block(&block, height, &BTreeSet::from([wallet_id])).await;
+            queue.extend(
+                result.reapply_heights.into_iter().flat_map(|(wallet_id, heights)| {
+                    heights.into_iter().map(move |h| (h, wallet_id))
+                }),
+            );
+        }
+    }
 }
 
 impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> std::fmt::Debug
@@ -166,15 +222,20 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> std::fmt::Debug
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, NetworkManager};
+    use crate::network::{MessageType, NetworkEvent, NetworkManager, NetworkRequest};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentBlockStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
-    use crate::test_utils::MockNetworkManager;
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
+    use crate::types::HashedBlock;
+    use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_blockdata::Inventory;
+    use dashcore::BlockHash;
     use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
-    use key_wallet_manager::FilterMatchKey;
+    use key_wallet_manager::{FilterMatchKey, WalletId};
     use std::collections::{BTreeMap, BTreeSet};
+    use tokio::sync::mpsc;
 
     type TestBlocksManager =
         BlocksManager<PersistentBlockHeaderStorage, PersistentBlockStorage, MockWallet>;
@@ -232,6 +293,61 @@ mod tests {
         assert!(events.is_empty());
     }
 
+    /// Losing one peer of several must put that peer's `getdata` back on the
+    /// queue right away instead of waiting out the block download timeout.
+    #[tokio::test]
+    async fn test_peer_disconnect_reissues_in_flight_block_requests() {
+        let mut manager = create_test_manager().await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let requests = RequestSender::new(tx);
+
+        let blocks: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = (100..103)
+            .map(|height| {
+                (
+                    FilterMatchKey::new(height, BlockHash::dummy(height)),
+                    BTreeSet::from([MOCK_WALLET_ID]),
+                )
+            })
+            .collect();
+        let event = SyncEvent::BlocksNeeded {
+            blocks,
+        };
+        manager.handle_sync_event(&event, &requests).await.unwrap();
+
+        let requested = drain_requested_blocks(&mut rx);
+        assert_eq!(requested.len(), 3);
+
+        let disconnect = NetworkEvent::PeerDisconnected {
+            address: test_socket_address(1),
+        };
+        manager.handle_network_event(&disconnect, &requests).await.unwrap();
+
+        manager.tick(&requests).await.unwrap();
+        assert_eq!(drain_requested_blocks(&mut rx), requested);
+    }
+
+    fn drain_requested_blocks(
+        rx: &mut mpsc::UnboundedReceiver<NetworkRequest>,
+    ) -> BTreeSet<BlockHash> {
+        let mut hashes = BTreeSet::new();
+        while let Ok(request) = rx.try_recv() {
+            match request {
+                NetworkRequest::SendMessage(NetworkMessage::GetData(inventory)) => {
+                    for item in inventory {
+                        match item {
+                            Inventory::Block(hash) => {
+                                hashes.insert(hash);
+                            }
+                            other => panic!("Expected a block inventory item, got {:?}", other),
+                        }
+                    }
+                }
+                other => panic!("Expected GetData, got {:?}", other),
+            }
+        }
+        hashes
+    }
+
     /// `process_buffered_blocks` must call `process_block_for_wallets` with
     /// the exact wallet set carried in the pipeline so already-synced
     /// wallets are not touched by routing logic.
@@ -256,7 +372,11 @@ mod tests {
             header,
             txdata: vec![],
         };
-        manager.pipeline.add_from_storage(block.clone(), 100, BTreeSet::from([MOCK_WALLET_ID]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            100,
+            BTreeSet::from([MOCK_WALLET_ID]),
+        );
 
         let events = manager.process_buffered_blocks().await.unwrap();
         assert!(matches!(events.first(), Some(SyncEvent::BlockProcessed { .. })));
@@ -268,6 +388,41 @@ mod tests {
         let processed = processed.lock().await;
         assert_eq!(processed.len(), 1);
         assert_eq!(processed[0].1, 100);
+    }
+
+    #[tokio::test]
+    async fn test_process_buffered_blocks_reapplies_requested_stored_block() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut wallet = MockWallet::new();
+        wallet.set_reapply_heights(100, BTreeSet::from([200]));
+        let wallet = Arc::new(RwLock::new(wallet));
+        let mut manager: TestBlocksManager =
+            BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()).await;
+        manager.progress.set_state(SyncState::Syncing);
+
+        manager
+            .block_storage
+            .write()
+            .await
+            .store_block(200, HashedBlock::dummy(200, vec![]))
+            .await
+            .unwrap();
+        manager.pipeline.add_from_storage(
+            HashedBlock::dummy(100, vec![]),
+            100,
+            BTreeSet::from([MOCK_WALLET_ID]),
+        );
+
+        let events = manager.process_buffered_blocks().await.unwrap();
+        assert_eq!(
+            events.iter().filter(|e| matches!(e, SyncEvent::BlockProcessed { .. })).count(),
+            1
+        );
+
+        let processed = wallet.read().await.processed_blocks();
+        let heights: Vec<u32> = processed.lock().await.iter().map(|(_, h)| *h).collect();
+        assert_eq!(heights, vec![100, 200]);
+        assert_eq!(manager.progress.processed(), 1);
     }
 
     /// A wallet that is NOT in the pipeline's interested set must not be
@@ -312,7 +467,11 @@ mod tests {
             txdata: vec![],
         };
         // Only wallet_in is in the routed set.
-        manager.pipeline.add_from_storage(block.clone(), 100, BTreeSet::from([wallet_in]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            100,
+            BTreeSet::from([wallet_in]),
+        );
 
         let _ = manager.process_buffered_blocks().await.unwrap();
 
@@ -357,7 +516,11 @@ mod tests {
         };
 
         // Already-downloaded block sitting in the pipeline.
-        manager.pipeline.add_from_storage(block.clone(), 200, BTreeSet::from([MOCK_WALLET_ID]));
+        manager.pipeline.add_from_storage(
+            HashedBlock::from(&block),
+            200,
+            BTreeSet::from([MOCK_WALLET_ID]),
+        );
 
         manager.on_disconnect();
 

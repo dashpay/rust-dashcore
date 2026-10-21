@@ -133,6 +133,27 @@ extern "C" fn on_sync_complete(header_tip: u32, cycle: u32, _user_data: *mut c_v
     println!("[Sync] Sync complete at height: {} (cycle {})", header_tip, cycle);
 }
 
+extern "C" fn on_transaction_broadcast_result(
+    txid: *const [u8; 32],
+    status: FFIBroadcastStatus,
+    relayed_by: u32,
+    _user_data: *mut c_void,
+) {
+    let txid_hex = unsafe { &*txid }.iter().rev().fold(String::new(), |mut acc, b| {
+        use std::fmt::Write;
+        let _ = write!(acc, "{:02x}", b);
+        acc
+    });
+    match status {
+        FFIBroadcastStatus::Accepted => {
+            println!("[Broadcast] {} accepted ({} peer(s) relayed it back)", txid_hex, relayed_by)
+        }
+        FFIBroadcastStatus::Uncertain => {
+            println!("[Broadcast] {} outcome uncertain (no network signal)", txid_hex)
+        }
+    }
+}
+
 // ============================================================================
 // Network Event Callbacks
 // ============================================================================
@@ -202,6 +223,46 @@ extern "C" fn on_transaction_detected(
         b.unconfirmed,
         account_balances_count,
         addresses_derived_count,
+    );
+}
+
+extern "C" fn on_transactions_swept(
+    wallet_id: *const c_char,
+    txids: *const [u8; 32],
+    txids_count: usize,
+    superseded_by: *const [u8; 32],
+    released_outpoints: *const dash_spv_ffi::FFIOutPoint,
+    released_outpoints_count: usize,
+    balance: *const FFIBalance,
+    _account_balances: *const dash_spv_ffi::FFIAccountBalance,
+    _account_balances_count: u32,
+    _user_data: *mut c_void,
+) {
+    let wallet_short = short_wallet(wallet_id);
+    if txids.is_null() || superseded_by.is_null() {
+        println!("[Wallet] TXs swept: wallet={}..., null payload", wallet_short);
+        return;
+    }
+    let list = unsafe { std::slice::from_raw_parts(txids, txids_count) };
+    let winner = unsafe { &*superseded_by };
+    let released = if released_outpoints.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(released_outpoints, released_outpoints_count) }
+    };
+    let b = read_balance(balance);
+    println!(
+        "[Wallet] TXs swept: wallet={}..., removed=[{}], superseded_by={}, released=[{}], balance[confirmed={}, unconfirmed={}]",
+        wallet_short,
+        list.iter().map(hex::encode).collect::<Vec<_>>().join(","),
+        hex::encode(winner),
+        released
+            .iter()
+            .map(|o| format!("{}:{}", hex::encode(o.txid), o.vout))
+            .collect::<Vec<_>>()
+            .join(","),
+        b.confirmed,
+        b.unconfirmed,
     );
 }
 
@@ -511,6 +572,7 @@ fn main() {
                 on_instantlock_received: Some(on_instantlock_received),
                 on_manager_error: Some(on_manager_error),
                 on_sync_complete: Some(on_sync_complete),
+                on_transaction_broadcast_result: Some(on_transaction_broadcast_result),
                 user_data: ptr::null_mut(),
             },
             network: FFINetworkEventCallbacks {
@@ -526,6 +588,7 @@ fn main() {
             wallet: FFIWalletEventCallbacks {
                 on_transaction_detected: Some(on_transaction_detected),
                 on_transaction_instant_locked: Some(on_transaction_instant_locked),
+                on_transactions_swept: Some(on_transactions_swept),
                 on_block_processed: Some(on_wallet_block_processed),
                 on_sync_height_advanced: Some(on_sync_height_advanced),
                 on_chain_lock_processed: Some(on_wallet_chain_lock_processed),

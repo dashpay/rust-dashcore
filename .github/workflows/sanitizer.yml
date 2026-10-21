@@ -18,6 +18,13 @@ on:
 permissions:
   contents: read
 
+# Pinned nightly: nightly-2026-07-14 (rustc daf2e5e18) ICEs while expanding the
+# libtest harness for dash-spv-ffi ("attribute is missing tokens:
+# rustc_test_entrypoint_marker" in rustc_ast/src/attr/mod.rs). Bump or restore
+# the floating `nightly` once a fixed nightly ships.
+env:
+  SANITIZER_TOOLCHAIN: nightly-2026-07-13
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -28,8 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.SANITIZER_TOOLCHAIN }}
           components: rust-src
 
       - name: Run tests with ASAN
@@ -41,11 +49,11 @@ jobs:
           SKIP_DASHD_TESTS: 1
         run: |
           # FFI crates (C interop)
-          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+          cargo "+$SANITIZER_TOOLCHAIN" test -Zbuild-std --target x86_64-unknown-linux-gnu \
             -p key-wallet-ffi -p dash-spv-ffi --lib --tests
 
           # Core crypto crates (unsafe optimizations)
-          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+          cargo "+$SANITIZER_TOOLCHAIN" test -Zbuild-std --target x86_64-unknown-linux-gnu \
             -p dashcore -p dashcore_hashes --lib --tests
 
   tsan:
@@ -53,8 +61,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.SANITIZER_TOOLCHAIN }}
           components: rust-src
 
       - name: Run tests with TSAN
@@ -65,5 +74,5 @@ jobs:
           SKIP_DASHD_TESTS: 1
         run: |
           # Async crate with concurrent code
-          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+          cargo "+$SANITIZER_TOOLCHAIN" test -Zbuild-std --target x86_64-unknown-linux-gnu \
             -p dash-spv --lib --tests

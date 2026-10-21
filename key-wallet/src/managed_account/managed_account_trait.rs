@@ -52,6 +52,10 @@ pub trait ManagedAccountTrait {
     /// (mempool → block, IS-lock arrival, chainlock, …).
     fn has_transaction(&self, txid: &Txid) -> bool;
 
+    /// Distinct transactions this account knows, including those whose records
+    /// were pruned at finalization — which [`Self::transactions`] does not.
+    fn tx_count(&self) -> usize;
+
     /// Returns `true` if `txid` has been mined in a block that is itself
     /// chainlocked — the only finality signal we treat as terminal
     /// (mirrors [`crate::transaction_checking::TransactionContext::is_chain_locked`]).
@@ -133,7 +137,7 @@ pub trait ManagedAccountTrait {
                 ..
             } => self.get_next_receive_address_index(),
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses: addresses,
                 ..
             }
             | ManagedAccountType::IdentityRegistration {
@@ -237,7 +241,7 @@ pub trait ManagedAccountTrait {
                 ..
             } => Err("Standard accounts must use next_receive_address or next_change_address"),
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses: addresses,
                 ..
             }
             | ManagedAccountType::IdentityRegistration {
@@ -320,7 +324,7 @@ pub trait ManagedAccountTrait {
                 "Standard accounts must use next_receive_address_with_info or next_change_address_with_info",
             ),
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses: addresses,
                 ..
             }
             | ManagedAccountType::IdentityRegistration {
@@ -552,6 +556,39 @@ pub trait ManagedAccountTrait {
             .sum()
     }
 
+    /// Widen the gap limit for every address pool of this account.
+    /// Returns every freshly generated address (across all pools)
+    fn set_gap_limit(
+        &mut self,
+        gap_limit: u32,
+        key_source: &address_pool::KeySource,
+    ) -> crate::error::Result<Vec<address_pool::AddressInfo>> {
+        let mut generated = Vec::new();
+        let mut first_error = None;
+
+        for pool in self.managed_account_type_mut().address_pools_mut() {
+            match pool.set_gap_limit(gap_limit, key_source) {
+                Ok(new) => generated.extend(new),
+                Err(e) => {
+                    first_error = Some(e);
+                    break;
+                }
+            }
+        }
+
+        // Bump the monitor revision if any pool actually generated addresses, even when a later
+        // pool failed — otherwise the revision would stay stale despite changed monitored state.
+        if !generated.is_empty() {
+            self.bump_monitor_revision();
+        }
+
+        if let Some(e) = first_error {
+            return Err(e);
+        }
+
+        Ok(generated)
+    }
+
     /// Get the gap limit for non-standard (single-pool) accounts
     fn gap_limit(&self) -> Option<u32> {
         match self.managed_account_type() {
@@ -559,7 +596,7 @@ pub trait ManagedAccountTrait {
                 ..
             } => None,
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses: addresses,
                 ..
             }
             | ManagedAccountType::IdentityRegistration {

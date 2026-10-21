@@ -1,0 +1,25 @@
+name: Ready for Review Trigger
+
+# Fork pull requests run pull_request and pull_request_review events with a
+# read-only token and no secrets, so they cannot add or remove labels. This
+# workflow does nothing but complete, which fires a workflow_run event that the
+# privileged "Ready for Review Label" workflow reacts to with a write token.
+on:
+  pull_request:
+    types: [ready_for_review, labeled, converted_to_draft]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  relay:
+    name: ready-for-review-trigger
+    runs-on: ubuntu-latest
+    steps:
+      - name: Relay to applier
+        run: echo "Relaying pull request event to the ready-for-review applier via workflow_run."

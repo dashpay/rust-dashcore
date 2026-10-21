@@ -254,6 +254,67 @@ impl AccountType {
         }
     }
 
+    /// Is this account a chain owned by a DashPay contact rather than by
+    /// this wallet?
+    ///
+    /// A [`DashpayExternalAccount`](Self::DashpayExternalAccount) derives
+    /// its addresses from the **contact's** xpub (the mirrored DIP-15 path,
+    /// `friend_id/user_id`), so this wallet can observe those outputs but
+    /// can never sign for them. They are the contact's coins; this wallet
+    /// only ever pays into them.
+    ///
+    /// This is the canonical form of the policy that keeps a contact's
+    /// coins out of every "the wallet's funds" aggregate. Balance and
+    /// spendable-UTXO aggregation already follow it
+    /// ([`ManagedAccountCollection::all_funding_accounts`]), and persisters
+    /// projecting per-account [`TransactionRecord`]s into a wallet-level
+    /// store must follow it too, or a payment *to* a contact gets recorded
+    /// as money arriving. Detection is deliberately unaffected:
+    /// contact-owned accounts stay monitored so contact address rotation
+    /// and gap-limit maintenance keep working.
+    ///
+    /// [`DashpayReceivingFunds`](Self::DashpayReceivingFunds) is **not**
+    /// contact-owned: its addresses derive from *our* xpub and a contact
+    /// pays into them, so those funds are genuinely this wallet's.
+    ///
+    /// [`ManagedAccountCollection::all_funding_accounts`]:
+    ///     crate::managed_account::managed_account_collection::ManagedAccountCollection::all_funding_accounts
+    /// [`TransactionRecord`]:
+    ///     crate::managed_account::transaction_record::TransactionRecord
+    pub fn is_contact_owned(&self) -> bool {
+        // Exhaustive on purpose: a new account type must decide here
+        // whether its coins are the wallet's or a contact's.
+        match self {
+            Self::DashpayExternalAccount {
+                ..
+            } => true,
+            Self::Standard {
+                ..
+            }
+            | Self::CoinJoin {
+                ..
+            }
+            | Self::IdentityRegistration
+            | Self::IdentityTopUp {
+                ..
+            }
+            | Self::IdentityTopUpNotBoundToIdentity
+            | Self::IdentityInvitation
+            | Self::AssetLockAddressTopUp
+            | Self::AssetLockShieldedAddressTopUp
+            | Self::ProviderVotingKeys
+            | Self::ProviderOwnerKeys
+            | Self::ProviderOperatorKeys
+            | Self::ProviderPlatformKeys
+            | Self::DashpayReceivingFunds {
+                ..
+            }
+            | Self::PlatformPayment {
+                ..
+            } => false,
+        }
+    }
+
     /// Get the derivation path reference for this account type
     pub fn derivation_path_reference(&self) -> DerivationPathReference {
         match self {
@@ -470,11 +531,13 @@ impl AccountType {
                 ]))
             }
             Self::DashpayReceivingFunds {
+                index: account_index,
                 user_identity_id,
                 friend_identity_id,
-                ..
             } => {
-                // Base DashPay root + account 0' + user_id/friend_id (non-hardened per DIP-14/DIP-15)
+                // Base DashPay root + account' + user_id/friend_id (non-hardened per DIP-14/DIP-15).
+                // The account is the sender's DashPay account (DIP-15 "Account Reference"),
+                // hardened; defaults to 0 but may differ for multi-account wallets.
                 let mut path = match network {
                     Network::Mainnet => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET)
@@ -483,7 +546,10 @@ impl AccountType {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
                 };
-                path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
+                path.push(
+                    ChildNumber::from_hardened_idx(*account_index)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
                 path.push(ChildNumber::Normal256 {
                     index: *user_identity_id,
                 });
@@ -493,11 +559,13 @@ impl AccountType {
                 Ok(path)
             }
             Self::DashpayExternalAccount {
+                index: account_index,
                 user_identity_id,
                 friend_identity_id,
-                ..
             } => {
-                // Base DashPay root + account 0' + friend_id/user_id (non-hardened per DIP-14/DIP-15)
+                // Base DashPay root + account' + friend_id/user_id (non-hardened per DIP-14/DIP-15).
+                // The account is the sender's DashPay account (DIP-15 "Account Reference"),
+                // hardened; defaults to 0 but may differ for multi-account wallets.
                 let mut path = match network {
                     Network::Mainnet => {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_MAINNET)
@@ -506,7 +574,10 @@ impl AccountType {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
                 };
-                path.push(ChildNumber::from_hardened_idx(0).map_err(crate::error::Error::Bip32)?);
+                path.push(
+                    ChildNumber::from_hardened_idx(*account_index)
+                        .map_err(crate::error::Error::Bip32)?,
+                );
                 path.push(ChildNumber::Normal256 {
                     index: *friend_identity_id,
                 });
@@ -538,6 +609,63 @@ impl AccountType {
                 );
                 Ok(path)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod contact_owned_tests {
+    use super::*;
+
+    /// Only the DashPay external account — addresses derived from the
+    /// *contact's* xpub — is contact-owned. Every other account type,
+    /// including its receival twin (derived from *our* xpub), holds this
+    /// wallet's own funds or keys.
+    #[test]
+    fn only_the_dashpay_external_account_is_contact_owned() {
+        let external = AccountType::DashpayExternalAccount {
+            index: 0,
+            user_identity_id: [0xAA; 32],
+            friend_identity_id: [0xBB; 32],
+        };
+        assert!(external.is_contact_owned());
+
+        let ours = [
+            AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP44Account,
+            },
+            AccountType::Standard {
+                index: 0,
+                standard_account_type: StandardAccountType::BIP32Account,
+            },
+            AccountType::CoinJoin {
+                index: 0,
+            },
+            AccountType::IdentityRegistration,
+            AccountType::IdentityTopUp {
+                registration_index: 0,
+            },
+            AccountType::IdentityTopUpNotBoundToIdentity,
+            AccountType::IdentityInvitation,
+            AccountType::AssetLockAddressTopUp,
+            AccountType::AssetLockShieldedAddressTopUp,
+            AccountType::ProviderVotingKeys,
+            AccountType::ProviderOwnerKeys,
+            AccountType::ProviderOperatorKeys,
+            AccountType::ProviderPlatformKeys,
+            AccountType::DashpayReceivingFunds {
+                index: 0,
+                user_identity_id: [0xAA; 32],
+                friend_identity_id: [0xBB; 32],
+            },
+            AccountType::PlatformPayment {
+                account: 0,
+                key_class: 0,
+            },
+        ];
+        for account_type in ours {
+            assert!(!account_type.is_contact_owned(), "{account_type} must not be contact-owned");
         }
     }
 }

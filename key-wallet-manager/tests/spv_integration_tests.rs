@@ -17,7 +17,7 @@ async fn process_block_all_wallets(
     height: u32,
 ) -> BlockProcessingResult {
     let wallet_ids: BTreeSet<WalletId> = manager.list_wallets().into_iter().copied().collect();
-    manager.process_block_for_wallets(block, height, &wallet_ids).await
+    manager.process_block_for_wallets(block, block.block_hash(), height, &wallet_ids).await
 }
 
 #[tokio::test]

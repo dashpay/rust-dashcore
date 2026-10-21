@@ -50,9 +50,22 @@ pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COM
 /// 60001 - Support `pong` message and nonce in `ping` message
 pub const PROTOCOL_VERSION: u32 = 70237;
 
+/// Mainnet height from which Dash HD/BIP39 wallets could first exist on chain.
+///
+/// No address any HD wallet derives can appear earlier, so an SPV client scanning for HD
+/// wallet activity has no reason to sync mainnet below this height. Matches the entry in
+/// DashSync's `mainnet_checkpoint_array` commented "first sync time (aka BIP39 creation
+/// time)", the value the official Dash mobile SPV client uses as its floor.
+pub const MAINNET_HD_ACTIVATION_HEIGHT: u32 = 227121;
+
 pub trait NetworkExt {
     /// Returns the known genesis block hash for `network`, if one is hardcoded.
     fn known_genesis_block_hash(&self) -> Option<BlockHash>;
+
+    /// Earliest block height worth syncing for HD/BIP39 wallets, or `0` when the network
+    /// has no floor (sync from genesis). Mainnet is floored at
+    /// [`MAINNET_HD_ACTIVATION_HEIGHT`]; other networks return `0`.
+    fn hd_wallet_sync_floor(&self) -> u32;
 }
 
 impl NetworkExt for Network {
@@ -86,6 +99,13 @@ impl NetworkExt for Network {
                 block_hash.reverse();
                 Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
             }
+        }
+    }
+
+    fn hd_wallet_sync_floor(&self) -> u32 {
+        match self {
+            Network::Mainnet => MAINNET_HD_ACTIVATION_HEIGHT,
+            _ => 0,
         }
     }
 }
@@ -265,9 +285,18 @@ impl Decodable for ServiceFlags {
 
 #[cfg(test)]
 mod tests {
-    use super::ServiceFlags;
+    use super::{MAINNET_HD_ACTIVATION_HEIGHT, NetworkExt, ServiceFlags};
     use crate::Network;
     use crate::consensus::encode::{deserialize, serialize};
+
+    #[test]
+    fn test_hd_wallet_sync_floor() {
+        // Only mainnet is floored; every other network syncs from genesis (0).
+        assert_eq!(Network::Mainnet.hd_wallet_sync_floor(), MAINNET_HD_ACTIVATION_HEIGHT);
+        assert_eq!(Network::Testnet.hd_wallet_sync_floor(), 0);
+        assert_eq!(Network::Devnet.hd_wallet_sync_floor(), 0);
+        assert_eq!(Network::Regtest.hd_wallet_sync_floor(), 0);
+    }
 
     #[test]
     fn test_network_magic() {

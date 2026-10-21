@@ -15,7 +15,10 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use dashcore::hashes::Hash;
+use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
+use dashcore::test_utils::UNASSIGNED_SPECIAL_TX_TYPE;
 use dashcore::Txid;
+use std::net::SocketAddr;
 
 #[test]
 fn test_classify_standard_transaction() {
@@ -88,6 +91,7 @@ fn test_classify_provider_update_registrar_transaction() {
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         payload_sig: vec![4u8; 65],
+        payouts: None,
     };
     tx.special_transaction_payload =
         Some(TransactionPayload::ProviderUpdateRegistrarPayloadType(payload));
@@ -107,8 +111,7 @@ fn test_classify_provider_update_service_transaction() {
         version: 1,
         mn_type: None,
         pro_tx_hash: Txid::from_byte_array([1u8; 32]),
-        ip_address: 0x0100007f, // 127.0.0.1 in network byte order
-        port: 19999,
+        service_address: MasternodeNetInfo::Legacy(SocketAddr::from(([127, 0, 0, 1], 19999))),
         script_payout: ScriptBuf::new(),
         inputs_hash: [3u8; 32].into(),
         platform_node_id: None,
@@ -171,6 +174,16 @@ fn test_classify_asset_unlock_transaction() {
 }
 
 #[test]
+fn test_classify_unknown_special_transaction_as_standard() {
+    let addr = test_addr();
+    let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
+    tx.special_transaction_payload =
+        Some(TransactionPayload::RawPayloadType(UNASSIGNED_SPECIAL_TX_TYPE, vec![0x01, 0x00]));
+
+    assert_eq!(TransactionRouter::classify_transaction(&tx), TransactionType::Standard);
+}
+
+#[test]
 fn test_classify_coinbase_transaction() {
     let addr = test_addr();
     let mut tx = Transaction::dummy(&addr, 0..1, &[100_000_000]);
@@ -183,6 +196,7 @@ fn test_classify_coinbase_transaction() {
         best_cl_height: Some(99900),
         best_cl_signature: Some(BLSSignature::from([9u8; 96])),
         asset_locked_amount: Some(100_000_000_000),
+        merkle_root_asset_unlocks: None,
     };
     tx.special_transaction_payload = Some(TransactionPayload::CoinbasePayloadType(payload));
 

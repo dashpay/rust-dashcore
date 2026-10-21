@@ -5,11 +5,12 @@ pub mod constants;
 pub mod discovery;
 mod event;
 pub mod handshake;
+mod latency;
 pub mod manager;
 mod message_dispatcher;
 pub mod peer;
 pub mod pool;
-pub mod reputation;
+mod reputation;
 
 mod message_type;
 #[cfg(test)]
@@ -35,6 +36,7 @@ pub use manager::PeerNetworkManager;
 pub use message_dispatcher::{Message, MessageDispatcher};
 pub use message_type::MessageType;
 pub use peer::Peer;
+pub(crate) use reputation::PeerReputation;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -88,6 +90,15 @@ impl RequestSender {
         self.tx
             .send(NetworkRequest::BroadcastMessage(msg))
             .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
+    /// Send a transaction to a specific peer.
+    pub(crate) fn send_transaction(
+        &self,
+        tx: dashcore::Transaction,
+        peer_address: SocketAddr,
+    ) -> NetworkResult<()> {
+        self.send_message_to_peer(NetworkMessage::Tx(tx), peer_address)
     }
 
     /// Request inventory from a specific peer.

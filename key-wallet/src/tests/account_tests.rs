@@ -6,16 +6,13 @@ use crate::account::{Account, AccountType, StandardAccountType};
 use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::mnemonic::{Language, Mnemonic};
+use crate::mnemonic::Mnemonic;
 use crate::Network;
 use secp256k1::Secp256k1;
 
 /// Helper function to create a test wallet with deterministic mnemonic
 fn create_test_mnemonic() -> Mnemonic {
-    Mnemonic::from_phrase(
-        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        Language::English,
-    ).unwrap()
+    Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap()
 }
 
 /// Helper function to create a test extended private key
@@ -142,9 +139,9 @@ fn test_coinjoin_account_creation() {
                 .unwrap();
         let pool = match &managed_type {
             ManagedAccountType::CoinJoin {
-                addresses,
+                external_addresses,
                 ..
-            } => addresses,
+            } => external_addresses,
             _ => panic!("Expected CoinJoin managed account type"),
         };
         let first_address =
@@ -342,11 +339,11 @@ fn test_account_extended_key_generation() {
     let derivation_path = account_type.derivation_path(network).unwrap();
     let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
+    let expected_xpub = ExtendedPubKey::from_priv(&secp, &account_key);
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 
     // Verify extended public key can be derived
     let xpub = account.extended_public_key();
-    let expected_xpub = ExtendedPubKey::from_priv(&secp, &account_key);
     assert_eq!(xpub, expected_xpub);
 
     // Verify the account can be created as watch-only
@@ -400,7 +397,8 @@ fn test_account_network_consistency() {
     let derivation_path = account_type.derivation_path(network).unwrap();
     let account_key = master.derive_priv(&secp, &derivation_path).unwrap();
 
-    let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
+    let account =
+        Account::from_xpriv(Some([0u8; 32]), account_type, account_key.clone(), network).unwrap();
 
     // Verify account stores the correct network
     assert_eq!(account.network, network);
@@ -547,5 +545,84 @@ fn test_account_derivation_path_uniqueness() {
         assert!(!paths.contains(&path_str), "Duplicate derivation path: {}", path_str);
 
         paths.push(path_str);
+    }
+}
+
+#[test]
+fn test_dashpay_account_index_in_derivation_path() {
+    use crate::bip32::ChildNumber;
+
+    // The DashPay friendship path is m/9'/coin'/15'/account'/<id>/<id> (DIP-15 "Account
+    // Reference" + DIP-14 256-bit indices). The account segment is the sender's DashPay
+    // account and MUST reflect the account index carried on the account type — not a fixed
+    // 0'. A multi-account wallet that derived every relationship under account 0 would
+    // watch the wrong addresses and miss funds paid to a non-zero account. Account 0 must
+    // stay byte-identical to the legacy single-account path (backward compatibility).
+    let network = Network::Testnet;
+    let user_id = [0x11u8; 32];
+    let friend_id = [0x22u8; 32];
+
+    for account in [0u32, 1, 7, 42] {
+        // Receiving funds: identity ids ordered user/friend.
+        let recv = AccountType::DashpayReceivingFunds {
+            index: account,
+            user_identity_id: user_id,
+            friend_identity_id: friend_id,
+        };
+        let recv_path = recv.derivation_path(network).unwrap();
+        let recv_comps: Vec<ChildNumber> = recv_path.clone().into();
+        assert_eq!(recv_comps.len(), 6, "root(3) + account' + two 256-bit ids");
+        assert_eq!(
+            recv_comps[3],
+            ChildNumber::Hardened {
+                index: account
+            },
+            "receiving account segment must honor the account index"
+        );
+        assert_eq!(
+            recv_comps[4],
+            ChildNumber::Normal256 {
+                index: user_id
+            }
+        );
+        assert_eq!(
+            recv_comps[5],
+            ChildNumber::Normal256 {
+                index: friend_id
+            }
+        );
+        assert!(
+            recv_path.to_string().starts_with(&format!("m/9'/1'/15'/{}'/", account)),
+            "receiving path should carry account {}': got {}",
+            account,
+            recv_path
+        );
+
+        // External account: the reverse channel, ids ordered friend/user.
+        let ext = AccountType::DashpayExternalAccount {
+            index: account,
+            user_identity_id: user_id,
+            friend_identity_id: friend_id,
+        };
+        let ext_comps: Vec<ChildNumber> = ext.derivation_path(network).unwrap().into();
+        assert_eq!(
+            ext_comps[3],
+            ChildNumber::Hardened {
+                index: account
+            },
+            "external account segment must honor the account index"
+        );
+        assert_eq!(
+            ext_comps[4],
+            ChildNumber::Normal256 {
+                index: friend_id
+            }
+        );
+        assert_eq!(
+            ext_comps[5],
+            ChildNumber::Normal256 {
+                index: user_id
+            }
+        );
     }
 }

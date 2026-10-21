@@ -57,17 +57,14 @@ impl Wallet {
 #[cfg(all(test, feature = "bincode"))]
 mod tests {
     use super::*;
-    use crate::mnemonic::{Language, Mnemonic};
+    use crate::mnemonic::Mnemonic;
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::Network;
 
     #[test]
     fn test_backup_restore() {
         // Create a wallet
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            Language::English,
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let original = Wallet::from_mnemonic(
             mnemonic,

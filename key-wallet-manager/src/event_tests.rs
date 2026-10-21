@@ -19,6 +19,7 @@ use key_wallet::account::StandardAccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
+use key_wallet::transaction_checking::{TransactionRouter, TransactionType};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
 use std::collections::BTreeSet;
@@ -283,7 +284,7 @@ async fn test_late_instant_send_lock_after_block_confirmation_emits_event() {
     // Confirm the transaction in a block first.
     let block = make_block(vec![tx.clone()], 0xe3, 4000);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 300, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 300, &wallets).await;
 
     let mut rx = manager.subscribe_events();
     let lock = InstantLock {
@@ -332,7 +333,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
     let block = make_block(vec![tx.clone()], 0xcc, 1000);
 
     let wallets = BTreeSet::from([wallet_id]);
-    let result = manager.process_block_for_wallets(&block, 100, &wallets).await;
+    let result = manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
     assert_eq!(result.new_txids.len(), 1);
 
     let events = drain_events(&mut rx);
@@ -399,7 +400,7 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
     let mut rx = manager.subscribe_events();
     let block = make_block(vec![tx.clone()], 0xdd, 2000);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 200, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 200, &wallets).await;
 
     let events = drain_events(&mut rx);
     assert_eq!(events.len(), 1, "one BlockProcessed expected, got {:?}", events);
@@ -438,6 +439,320 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
         }
         other => panic!("expected BlockProcessed with updated record, got {:?}", other),
     }
+}
+
+async fn setup_known_mempool_spend_only_asset_lock(
+) -> (WalletManager<ManagedWalletInfo>, WalletId, Transaction, OutPoint, BTreeSet<WalletId>) {
+    let (mut manager, wallet_id, _default_addr) = setup_manager_with_wallet();
+
+    let funding_address = {
+        let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+        let account = info.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account 0");
+        match account.managed_account_type() {
+            ManagedAccountType::Standard {
+                external_addresses,
+                ..
+            } => external_addresses.address_at_index(0).expect("BIP44 receive address 0"),
+            other => panic!("expected Standard BIP44 account, got {other:?}"),
+        }
+    };
+
+    let funding_tx = create_tx_paying_to(&funding_address, 0x43);
+    let funding_outpoint = OutPoint::new(funding_tx.txid(), 0);
+    let funding_block = make_block(vec![funding_tx], 0x44, 4_000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 400, &wallets)
+        .await;
+
+    let funding_script = funding_address.script_pubkey();
+    let funded_account = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    assert!(
+        funded_account.utxos.contains_key(&funding_outpoint),
+        "funding block must create the confirmed wallet UTXO"
+    );
+    assert!(
+        funded_account.utxos[&funding_outpoint].is_confirmed,
+        "funding UTXO must be confirmed before the spend"
+    );
+
+    let external_address = Address::p2pkh(
+        &PublicKey::from_slice(&[2u8; 33]).expect("valid external public key"),
+        key_wallet::Network::Testnet,
+    );
+    let regular_external_script =
+        Builder::new().push_opcode(opcodes::all::OP_RETURN).push_slice([0x52u8; 20]).into_script();
+    let asset_lock_tx = Transaction {
+        version: 3,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: funding_outpoint,
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: TX_AMOUNT - 1_000,
+            script_pubkey: regular_external_script.clone(),
+        }],
+        special_transaction_payload: Some(TransactionPayload::AssetLockPayloadType(
+            AssetLockPayload::new(vec![TxOut {
+                value: TX_AMOUNT - 1_000,
+                script_pubkey: external_address.script_pubkey(),
+            }]),
+        )),
+    };
+    assert_eq!(
+        TransactionRouter::classify_transaction(&asset_lock_tx),
+        TransactionType::AssetLock,
+        "fixture must take the production AssetLock routing path"
+    );
+    let monitored_scripts = manager.monitored_script_pubkeys_for(&wallet_id);
+    assert!(
+        !monitored_scripts.contains(&regular_external_script),
+        "regular AssetLock output must not pay the wallet"
+    );
+    assert!(
+        !monitored_scripts.contains(&external_address.script_pubkey()),
+        "AssetLock credit output must not pay the wallet"
+    );
+
+    let mempool_result = manager.process_mempool_transaction(&asset_lock_tx, None).await;
+    assert!(mempool_result.is_relevant, "mempool sighting must spend the wallet UTXO");
+    assert_eq!(mempool_result.net_amount, -(TX_AMOUNT as i64));
+
+    let account_after_mempool = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    assert_eq!(
+        account_after_mempool
+            .transactions()
+            .get(&asset_lock_tx.txid())
+            .expect("mempool sighting must create a transaction record")
+            .context,
+        TransactionContext::Mempool
+    );
+    assert!(
+        !account_after_mempool.utxos.contains_key(&funding_outpoint),
+        "mempool processing must remove the spent live UTXO"
+    );
+    assert!(
+        !manager
+            .get_wallet_info(&wallet_id)
+            .expect("wallet info")
+            .observed_spent_outpoints()
+            .contains_key(&funding_outpoint),
+        "mempool sightings must not populate block-only observed spends"
+    );
+    assert!(
+        manager.scan_script_pubkeys_for(&wallet_id).contains(&funding_script),
+        "the Standard BIP44 funding script must still match a compact filter"
+    );
+
+    (manager, wallet_id, asset_lock_tx, funding_outpoint, wallets)
+}
+
+#[tokio::test]
+async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo() {
+    let (mut manager, wallet_id, asset_lock_tx, funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock().await;
+    let mut rx = manager.subscribe_events();
+    let block = make_block(vec![asset_lock_tx.clone()], 0x45, 4_100);
+
+    let block_result =
+        manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+    let block_events = drain_events(&mut rx);
+    let account_after_block = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    let stored_context = &account_after_block
+        .transactions()
+        .get(&asset_lock_tx.txid())
+        .expect("mempool record must remain stored")
+        .context;
+    let updated = block_events.iter().find_map(|event| match event {
+        WalletEvent::BlockProcessed {
+            updated,
+            ..
+        } => Some(updated),
+        _ => None,
+    });
+
+    assert_eq!(
+        manager
+            .get_wallet_info(&wallet_id)
+            .expect("wallet info")
+            .observed_spent_outpoints()
+            .get(&funding_outpoint),
+        Some(&401),
+        "the block transaction must reach the checker before relevance gating"
+    );
+    assert!(block_result.new_txids.is_empty());
+    assert_eq!(block_result.existing_txids, vec![asset_lock_tx.txid()]);
+    assert!(
+        matches!(stored_context, TransactionContext::InBlock(info) if info.height() == 401),
+        "known spend-only transaction must be promoted to its block context, got {stored_context:?}"
+    );
+    let updated =
+        updated.unwrap_or_else(|| panic!("BlockProcessed update expected: {block_events:?}"));
+    assert_eq!(updated.len(), 1);
+    assert_eq!(updated[0].txid, asset_lock_tx.txid());
+}
+
+#[tokio::test]
+async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction() {
+    let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock().await;
+    manager.apply_chain_lock(ChainLock::dummy(500));
+    let mut rx = manager.subscribe_events();
+    let block = make_block(vec![asset_lock_tx.clone()], 0x46, 4_200);
+
+    let block_result =
+        manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+    let events = drain_events(&mut rx);
+    let updated = events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::BlockProcessed {
+                updated,
+                ..
+            } => Some(updated),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("chainlocked BlockProcessed update expected: {events:?}"));
+
+    assert_eq!(block_result.existing_txids, vec![asset_lock_tx.txid()]);
+    assert_eq!(updated.len(), 1);
+    assert!(matches!(
+        updated[0].context,
+        TransactionContext::InChainLockedBlock(info) if info.height() == 401
+    ));
+
+    let account = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    assert!(account.transaction_is_finalized(&asset_lock_tx.txid()));
+    #[cfg(feature = "keep-finalized-transactions")]
+    assert!(matches!(
+        account
+            .transactions()
+            .get(&asset_lock_tx.txid())
+            .expect("retained finalized record")
+            .context,
+        TransactionContext::InChainLockedBlock(_)
+    ));
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    assert!(!account.transactions().contains_key(&asset_lock_tx.txid()));
+}
+
+#[tokio::test]
+async fn test_spend_only_promotion_never_demotes_chainlocked_context() {
+    let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock().await;
+    manager.apply_chain_lock(ChainLock::dummy(500));
+    let chainlocked_block = make_block(vec![asset_lock_tx.clone()], 0x47, 4_300);
+    manager
+        .process_block_for_wallets(
+            &chainlocked_block,
+            chainlocked_block.block_hash(),
+            401,
+            &wallets,
+        )
+        .await;
+
+    let mut rx = manager.subscribe_events();
+    let weaker_block = make_block(vec![asset_lock_tx.clone()], 0x48, 4_400);
+    let replay = manager
+        .process_block_for_wallets(&weaker_block, weaker_block.block_hash(), 600, &wallets)
+        .await;
+
+    assert!(replay.new_txids.is_empty());
+    assert!(replay.existing_txids.is_empty());
+    assert_no_events(&mut rx);
+    let account = manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0");
+    assert!(account.transaction_is_finalized(&asset_lock_tx.txid()));
+    #[cfg(feature = "keep-finalized-transactions")]
+    assert!(matches!(
+        account
+            .transactions()
+            .get(&asset_lock_tx.txid())
+            .expect("retained finalized record")
+            .context,
+        TransactionContext::InChainLockedBlock(_)
+    ));
+}
+
+#[tokio::test]
+async fn test_block_does_not_promote_unknown_irrelevant_transaction() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let external_address = Address::p2pkh(
+        &PublicKey::from_slice(&[2u8; 33]).expect("valid external public key"),
+        key_wallet::Network::Testnet,
+    );
+    let tx = make_coinbase_paying_to(&external_address, TX_AMOUNT);
+    let block = make_block(vec![tx.clone()], 0x49, 4_500);
+    let wallets = BTreeSet::from([wallet_id]);
+    let mut rx = manager.subscribe_events();
+
+    let result = manager.process_block_for_wallets(&block, block.block_hash(), 450, &wallets).await;
+
+    assert!(result.new_txids.is_empty());
+    assert!(result.existing_txids.is_empty());
+    assert_no_events(&mut rx);
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    assert!(
+        info.accounts
+            .all_accounts()
+            .into_iter()
+            .all(|account| !account.has_transaction(&tx.txid())),
+        "an unknown transaction with no wallet evidence must remain irrelevant"
+    );
+}
+
+#[tokio::test]
+async fn test_spend_only_block_promotion_is_idempotent() {
+    let (mut manager, _wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock().await;
+    let block = make_block(vec![asset_lock_tx.clone()], 0x4a, 4_600);
+    let mut rx = manager.subscribe_events();
+
+    let first = manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+    let first_events = drain_events(&mut rx);
+    assert_eq!(first.existing_txids, vec![asset_lock_tx.txid()]);
+    assert!(first_events.iter().any(|event| matches!(
+        event,
+        WalletEvent::BlockProcessed { updated, .. }
+            if updated.iter().any(|record| record.txid == asset_lock_tx.txid())
+    )));
+
+    let second = manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+    assert!(second.new_txids.is_empty());
+    assert!(second.existing_txids.is_empty());
+    assert_no_events(&mut rx);
 }
 
 #[tokio::test]
@@ -502,7 +817,7 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
     let mut rx = manager.subscribe_events();
     let block = make_block(vec![tx.clone()], 0xee, 9999);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 9000, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 9000, &wallets).await;
 
     let events = drain_events(&mut rx);
     let block_event = events
@@ -533,6 +848,227 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
     }
 }
 
+/// The sweep event's own coverage at the manager level: a block whose
+/// transaction beats a recorded mempool spend must emit `TransactionsSwept`
+/// naming the removed transaction and the coins its removal freed.
+///
+/// The released set is the half a consumer cannot recompute, so it is worth
+/// pinning where it is actually assembled — this exercises the per-wallet
+/// aggregation in `check_transactions` and the block path's emission
+/// together, neither of which the account-level sweep tests reach.
+#[tokio::test]
+async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+
+    // One funding transaction pays us twice, so the loser can spend a coin
+    // the winner does not.
+    let funding = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x5a; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![
+            TxOut {
+                value: 500_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+            TxOut {
+                value: 400_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: None,
+    };
+    let funding_block = make_block(vec![funding.clone()], 0x5a, 1000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
+        .await;
+
+    let coin_a = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let coin_b = OutPoint {
+        txid: funding.txid(),
+        vout: 1,
+    };
+    let spend = |inputs: Vec<OutPoint>, value: u64| Transaction {
+        version: 2,
+        lock_time: 0,
+        input: inputs
+            .into_iter()
+            .map(|previous_output| TxIn {
+                previous_output,
+                script_sig: ScriptBuf::new(),
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            })
+            .collect(),
+        output: vec![TxOut {
+            value,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    let loser = spend(vec![coin_a, coin_b], 800_000);
+    manager.process_mempool_transaction(&loser, None).await;
+
+    // Subscribe only now: the funding block and the loser's arrival are
+    // setup, and the sweep is what this test is about.
+    let mut rx = manager.subscribe_events();
+
+    let winner = spend(vec![coin_a], 400_000);
+    let winner_block = make_block(vec![winner.clone()], 0x5b, 1100);
+    manager
+        .process_block_for_wallets(&winner_block, winner_block.block_hash(), 101, &wallets)
+        .await;
+
+    let events = drain_events(&mut rx);
+    let swept = events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::TransactionsSwept {
+                wallet_id: wid,
+                txids,
+                superseded_by,
+                winner_mined_height,
+                released_outpoints,
+                ..
+            } => Some((wid, txids, superseded_by, winner_mined_height, released_outpoints)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
+
+    assert_eq!(swept.0, &wallet_id);
+    assert_eq!(swept.1, &vec![loser.txid()], "the beaten transaction is named");
+    assert_eq!(swept.2, &winner.txid(), "attributed to the transaction that beat it");
+    assert_eq!(
+        swept.3,
+        &Some(101),
+        "a block-context sweep must carry the winner's mined height — the height of \
+         the block whose processing triggered the sweep, not None and not any other \
+         height the manager has seen"
+    );
+    assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
+}
+
+/// The mempool emission site's counterpart to the block test above, pinning
+/// the other half of `winner_mined_height`'s contract: a sweep triggered by
+/// an InstantSend-locked winner that has not been mined carries `None`. This
+/// is the distinction the field exists to make — a consumer retiring durable
+/// records of the swept spends can anchor a block-context sweep to the
+/// winner's height, while an IS-locked winner has no mining deadline, so
+/// conflating the two (a height where there is none, or vice versa) would
+/// let those records be retired while the conflict is still unmined.
+#[tokio::test]
+async fn test_is_locked_mempool_winner_sweeps_with_no_mined_height() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+
+    // Same shape as the block test: one funding transaction pays us twice so
+    // the loser spends a coin the winner does not.
+    let funding = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x6a; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![
+            TxOut {
+                value: 500_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+            TxOut {
+                value: 400_000,
+                script_pubkey: addr.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: None,
+    };
+    let funding_block = make_block(vec![funding.clone()], 0x6a, 2000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
+        .await;
+
+    let coin_a = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let coin_b = OutPoint {
+        txid: funding.txid(),
+        vout: 1,
+    };
+    let spend = |inputs: Vec<OutPoint>, value: u64| Transaction {
+        version: 2,
+        lock_time: 0,
+        input: inputs
+            .into_iter()
+            .map(|previous_output| TxIn {
+                previous_output,
+                script_sig: ScriptBuf::new(),
+                sequence: u32::MAX,
+                witness: Witness::default(),
+            })
+            .collect(),
+        output: vec![TxOut {
+            value,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+
+    let loser = spend(vec![coin_a, coin_b], 800_000);
+    manager.process_mempool_transaction(&loser, None).await;
+
+    let mut rx = manager.subscribe_events();
+
+    // The winner arrives off-chain with an InstantSend lock — final enough
+    // to sweep the loser, but not mined anywhere.
+    let winner = spend(vec![coin_a], 400_000);
+    manager.process_mempool_transaction(&winner, Some(dummy_instant_lock(winner.txid()))).await;
+
+    let events = drain_events(&mut rx);
+    let swept = events
+        .iter()
+        .find_map(|event| match event {
+            WalletEvent::TransactionsSwept {
+                wallet_id: wid,
+                txids,
+                superseded_by,
+                winner_mined_height,
+                released_outpoints,
+                ..
+            } => Some((wid, txids, superseded_by, winner_mined_height, released_outpoints)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
+
+    assert_eq!(swept.0, &wallet_id);
+    assert_eq!(swept.1, &vec![loser.txid()], "the beaten transaction is named");
+    assert_eq!(swept.2, &winner.txid(), "attributed to the transaction that beat it");
+    assert_eq!(
+        swept.3, &None,
+        "an IS-locked winner is not mined: fabricating a height here would give the \
+         consumer a finality horizon the winner does not have"
+    );
+    assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
+}
+
 #[tokio::test]
 async fn test_empty_block_for_idle_wallet_emits_nothing() {
     let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
@@ -540,7 +1076,7 @@ async fn test_empty_block_for_idle_wallet_emits_nothing() {
     let block = make_block(Vec::new(), 0x55, 3000);
 
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 50, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 50, &wallets).await;
     assert_no_events(&mut rx);
 }
 
@@ -555,13 +1091,27 @@ async fn test_block_processed_carries_matured_coinbase_record() {
     let coinbase_height = 100;
     let coinbase_block = make_block(vec![coinbase_tx.clone()], 0xc0, 4000);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&coinbase_block, coinbase_height, &wallets).await;
+    manager
+        .process_block_for_wallets(
+            &coinbase_block,
+            coinbase_block.block_hash(),
+            coinbase_height,
+            &wallets,
+        )
+        .await;
 
     // Advance to maturity height. With coinbase_height = 100, maturity is at
     // height 200. Processing block 200 must surface the matured record.
     let mut rx = manager.subscribe_events();
     let mature_block = make_block(Vec::new(), 0xc1, 5000);
-    manager.process_block_for_wallets(&mature_block, coinbase_height + 100, &wallets).await;
+    manager
+        .process_block_for_wallets(
+            &mature_block,
+            mature_block.block_hash(),
+            coinbase_height + 100,
+            &wallets,
+        )
+        .await;
 
     let events = drain_events(&mut rx);
     let block_event = events
@@ -586,6 +1136,84 @@ async fn test_block_processed_carries_matured_coinbase_record() {
             assert!(updated.is_empty());
             assert_eq!(matured.len(), 1);
             assert_eq!(matured[0].txid, coinbase_tx.txid());
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn test_maturity_clock_advance_carries_matured_coinbase_record() {
+    // The clock can advance with no block of its own: dash-spv calls this at
+    // every committed filter batch, including ranges that match nothing
+    // (dashpay/rust-dashcore#995).
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let coinbase_tx = make_coinbase_paying_to(&addr, 5_000_000_000);
+    let coinbase_block = make_block(vec![coinbase_tx.clone()], 0xc2, 4000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&coinbase_block, coinbase_block.block_hash(), 100, &wallets)
+        .await;
+
+    let mut rx = manager.subscribe_events();
+    manager.update_wallet_last_processed_height(&wallet_id, 200);
+
+    let events = drain_events(&mut rx);
+    let block_event = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .unwrap_or_else(|| panic!("expected a BlockProcessed, got {:?}", events));
+
+    match block_event {
+        WalletEvent::BlockProcessed {
+            height,
+            matured,
+            balance,
+            ..
+        } => {
+            assert_eq!(*height, 200);
+            assert_eq!(matured.len(), 1);
+            assert_eq!(matured[0].txid, coinbase_tx.txid());
+            assert_eq!(balance.immature(), 0);
+            assert_eq!(balance.confirmed(), 5_000_000_000);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn test_coinbase_found_below_the_maturity_clock_is_spendable_but_unannounced() {
+    // A rescan can surface a matched block the clock already passed. The
+    // coinbase in it is mature on arrival, so it counts as confirmed, but its
+    // maturity window is behind us and no `matured` record can name it.
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    manager.update_wallet_last_processed_height(&wallet_id, 300);
+
+    let mut rx = manager.subscribe_events();
+    let coinbase_tx = make_coinbase_paying_to(&addr, 5_000_000_000);
+    let late_block = make_block(vec![coinbase_tx.clone()], 0xc3, 4000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&late_block, late_block.block_hash(), 150, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    let block_event = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .unwrap_or_else(|| panic!("expected a BlockProcessed, got {:?}", events));
+
+    match block_event {
+        WalletEvent::BlockProcessed {
+            height,
+            inserted,
+            matured,
+            balance,
+            ..
+        } => {
+            assert_eq!(*height, 150);
+            assert_eq!(inserted.len(), 1);
+            assert_eq!(inserted[0].txid, coinbase_tx.txid());
+            assert!(matured.is_empty());
+            assert_eq!(balance.immature(), 0);
+            assert_eq!(balance.confirmed(), 5_000_000_000);
         }
         _ => unreachable!(),
     }
@@ -903,7 +1531,7 @@ async fn test_block_with_external_and_internal_high_index_extends_both_pools() {
 
     let mut rx = manager.subscribe_events();
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 700, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 700, &wallets).await;
 
     let events = drain_events(&mut rx);
     let block_event = events
@@ -967,7 +1595,7 @@ async fn test_block_with_two_records_pushing_external_boundary_dedupes() {
 
     let mut rx = manager.subscribe_events();
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 800, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 800, &wallets).await;
 
     let events = drain_events(&mut rx);
     let block_event = events
@@ -1054,7 +1682,7 @@ async fn test_apply_chain_lock_promotes_in_block_record_and_emits_event() {
     let tx = create_tx_paying_to(&addr, 0xa1);
     let block = make_block(vec![tx.clone()], 0xa1, 1000);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 100, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
 
     let mut rx = manager.subscribe_events();
     manager.apply_chain_lock(ChainLock::dummy(100));
@@ -1125,7 +1753,7 @@ async fn test_apply_chain_lock_with_no_records_emits_chain_lock_processed_and_ad
     let tx = create_tx_paying_to(&addr, 0xa2);
     let block = make_block(vec![tx.clone()], 0xa2, 1100);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 100, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 100, &wallets).await;
 
     let events = drain_events(&mut rx);
     let bp = events
@@ -1161,7 +1789,7 @@ async fn test_apply_chain_lock_is_idempotent_on_already_finalized() {
     let tx = create_tx_paying_to(&addr, 0xa3);
     let block = make_block(vec![tx.clone()], 0xa3, 1200);
     let wallets = BTreeSet::from([wallet_id]);
-    manager.process_block_for_wallets(&block, 50, &wallets).await;
+    manager.process_block_for_wallets(&block, block.block_hash(), 50, &wallets).await;
 
     let mut rx = manager.subscribe_events();
     manager.apply_chain_lock(ChainLock::dummy(50));
@@ -1228,7 +1856,7 @@ async fn test_block_processed_chainlocked_flag_matches_record_context() {
     let block_below = make_block(vec![tx_below.clone()], 0xa4, 1300);
     let wallets = BTreeSet::from([wallet_id]);
     let mut rx = manager.subscribe_events();
-    manager.process_block_for_wallets(&block_below, 500, &wallets).await;
+    manager.process_block_for_wallets(&block_below, block_below.block_hash(), 500, &wallets).await;
 
     let events_below = drain_events(&mut rx);
     let bp_below = events_below
@@ -1252,7 +1880,7 @@ async fn test_block_processed_chainlocked_flag_matches_record_context() {
         .expect("address generation");
     let tx_above = create_tx_paying_to(&addr2, 0xa5);
     let block_above = make_block(vec![tx_above.clone()], 0xa5, 1400);
-    manager.process_block_for_wallets(&block_above, 2000, &wallets).await;
+    manager.process_block_for_wallets(&block_above, block_above.block_hash(), 2000, &wallets).await;
 
     let events_above = drain_events(&mut rx);
     let bp_above = events_above
@@ -1268,4 +1896,226 @@ async fn test_block_processed_chainlocked_flag_matches_record_context() {
         assert!(chain_lock.is_none());
         assert!(matches!(inserted[0].context, TransactionContext::InBlock(_)));
     }
+}
+
+// ---------------------------------------------------------------------------
+// In-block position stamping
+// ---------------------------------------------------------------------------
+
+/// Records inserted by block processing must carry their `block.txdata`
+/// index in `BlockInfo::position`, so consumers can replay Core's
+/// same-block apply order (e.g. multiple provider special transactions
+/// for one masternode in a single block resolve latest-wins by this
+/// position in `RebuildListFromBlock`).
+#[tokio::test]
+async fn test_block_processing_stamps_in_block_position() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let mut rx = manager.subscribe_events();
+
+    let tx_first = create_tx_paying_to(&addr, 0xb1);
+    let tx_second = create_tx_paying_to(&addr, 0xb2);
+    let block = make_block(vec![tx_first.clone(), tx_second.clone()], 0xb1, 1500);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, block.block_hash(), 300, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    let bp = events
+        .iter()
+        .find(|e| matches!(e, WalletEvent::BlockProcessed { .. }))
+        .expect("BlockProcessed expected");
+    let WalletEvent::BlockProcessed {
+        inserted,
+        ..
+    } = bp
+    else {
+        unreachable!()
+    };
+    assert_eq!(inserted.len(), 2, "both txs pay the wallet, got {inserted:?}");
+
+    let position_of = |txid| {
+        inserted
+            .iter()
+            .find(|r| r.txid == txid)
+            .expect("record for txid")
+            .context
+            .block_info()
+            .expect("confirmed record must carry block info")
+            .position()
+    };
+    assert_eq!(
+        position_of(tx_first.txid()),
+        Some(0),
+        "first tx in block.txdata must be stamped position 0"
+    );
+    assert_eq!(
+        position_of(tx_second.txid()),
+        Some(1),
+        "second tx in block.txdata must be stamped position 1"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Lossless persistence channel (dashpay/platform#4069)
+// ---------------------------------------------------------------------------
+
+/// A large burst of watermark events that the durable-persistence consumer
+/// does not drain until the very end is delivered **losslessly and in order**
+/// over the unbounded persistence channel — the exact property the platform
+/// consumer's durable sync watermark relies on. The bounded broadcast, by
+/// contrast, drops events (`Lagged`) under the same burst; that drop is the
+/// freeze root cause this dedicated channel removes.
+///
+/// This models a stalled/slow persistence consumer during a heavy SPV
+/// catch-up: neither receiver is drained while `BURST` monotonically
+/// increasing `SyncHeightAdvanced` watermarks are emitted. On the unbounded
+/// channel every watermark survives, so the watermark can keep advancing to
+/// the tip after the stall clears; on the broadcast it lags and the watermark
+/// would freeze.
+#[tokio::test]
+async fn persistence_channel_is_lossless_under_a_large_burst() {
+    // `BURST` far exceeds the broadcast ring (`DEFAULT_WALLET_EVENT_CAPACITY`
+    // == 1000), so the bounded broadcast is guaranteed to lag.
+    const BURST: u32 = 5000;
+
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    // Take the lossless persistence receiver AND subscribe a bounded broadcast
+    // receiver before emitting; neither is drained during the burst.
+    let mut persistence_rx =
+        manager.take_persistence_receiver().expect("persistence receiver available once");
+    let mut broadcast_rx = manager.subscribe_events();
+
+    for h in 1..=BURST {
+        manager.update_wallet_synced_height(&wallet_id, h);
+    }
+
+    // Persistence channel: every watermark arrived, in order, no gaps.
+    let mut received: Vec<u32> = Vec::with_capacity(BURST as usize);
+    while let Ok(event) = persistence_rx.try_recv() {
+        match event {
+            WalletEvent::SyncHeightAdvanced {
+                wallet_id: w,
+                height,
+            } => {
+                assert_eq!(w, wallet_id, "watermark for the wrong wallet");
+                received.push(height);
+            }
+            other => panic!("unexpected event on persistence channel: {other:?}"),
+        }
+    }
+    assert_eq!(
+        received.len(),
+        BURST as usize,
+        "persistence channel dropped events: got {} of {BURST}",
+        received.len()
+    );
+    assert!(
+        received.windows(2).all(|w| w[0] + 1 == w[1]),
+        "persistence channel reordered or gapped the watermark stream"
+    );
+    assert_eq!(received.first().copied(), Some(1));
+    assert_eq!(received.last().copied(), Some(BURST), "final watermark must reach the tip");
+
+    // Broadcast channel: the same burst overflows the bounded ring and drops
+    // events — demonstrating why the persistence consumer must NOT use it.
+    let mut broadcast_lagged = false;
+    let mut broadcast_delivered = 0usize;
+    loop {
+        match broadcast_rx.try_recv() {
+            Ok(_) => broadcast_delivered += 1,
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => broadcast_lagged = true,
+            Err(_) => break,
+        }
+    }
+    assert!(
+        broadcast_lagged,
+        "the bounded broadcast should have lagged under a {BURST}-event burst"
+    );
+    assert!(
+        broadcast_delivered < BURST as usize,
+        "broadcast should have dropped events but delivered all {BURST}"
+    );
+}
+
+/// The receiver is taken exactly once: the second call returns `None` and the
+/// first receiver keeps working. Platform's manager construction relies on
+/// exactly this (`take_persistence_receiver().expect(..)` on a fresh manager).
+#[tokio::test]
+async fn persistence_receiver_is_taken_exactly_once() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let mut first = manager.take_persistence_receiver().expect("first take must succeed");
+    assert!(manager.take_persistence_receiver().is_none(), "second take must return None");
+    manager.update_wallet_synced_height(&wallet_id, 1);
+    assert!(
+        matches!(
+            first.try_recv(),
+            Ok(WalletEvent::SyncHeightAdvanced {
+                height: 1,
+                ..
+            })
+        ),
+        "the first receiver must keep receiving after a second take attempt"
+    );
+}
+
+/// Late install (contract violation): events emitted before
+/// `take_persistence_receiver` are permanently absent from the persistence
+/// stream — the channel is created empty and only delivers from installation
+/// onward. The accessor warns (see its docs); this pins the behavioural half:
+/// no silent replay is invented.
+#[tokio::test]
+async fn late_install_delivers_only_post_install_events() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    // Emitted BEFORE any consumer exists: reaches only the lossy broadcast.
+    manager.update_wallet_synced_height(&wallet_id, 7);
+
+    let mut rx =
+        manager.take_persistence_receiver().expect("late install still returns the receiver");
+    manager.update_wallet_synced_height(&wallet_id, 8);
+
+    match rx.try_recv() {
+        Ok(WalletEvent::SyncHeightAdvanced {
+            height,
+            ..
+        }) => {
+            assert_eq!(height, 8, "only post-install events may be delivered");
+        }
+        other => panic!("expected the post-install watermark, got {other:?}"),
+    }
+    assert!(
+        rx.try_recv().is_err(),
+        "the pre-install event must not be replayed into the persistence stream"
+    );
+}
+
+/// A consumer that drops its receiver while the manager is running must not
+/// wedge or panic the emit paths: in-memory processing continues and the
+/// broadcast fan-out still delivers (the lost-consumer anomaly is logged once
+/// inside `emit_event`).
+#[tokio::test]
+async fn dropped_persistence_consumer_does_not_wedge_emission() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let rx = manager.take_persistence_receiver().expect("receiver available once");
+    drop(rx);
+
+    let mut broadcast_rx = manager.subscribe_events();
+    // Two emissions: the first trips the log-once latch, the second proves
+    // emission keeps flowing afterwards.
+    manager.update_wallet_synced_height(&wallet_id, 21);
+    manager.update_wallet_synced_height(&wallet_id, 22);
+
+    let mut heights = Vec::new();
+    while let Ok(event) = broadcast_rx.try_recv() {
+        if let WalletEvent::SyncHeightAdvanced {
+            height,
+            ..
+        } = event
+        {
+            heights.push(height);
+        }
+    }
+    assert_eq!(
+        heights,
+        vec![21, 22],
+        "broadcast delivery must be unaffected by a lost persistence consumer"
+    );
 }

@@ -593,6 +593,7 @@ pub(super) fn create_sync_callbacks(tracker: &Arc<CallbackTracker>) -> FFISyncEv
         on_instantlock_received: Some(on_instantlock_received),
         on_manager_error: Some(on_manager_error),
         on_sync_complete: Some(on_sync_complete),
+        on_transaction_broadcast_result: None,
         user_data: Arc::as_ptr(tracker) as *mut c_void,
     }
 }
@@ -621,6 +622,8 @@ pub(super) fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWall
         on_block_processed: Some(on_wallet_block_processed),
         on_sync_height_advanced: Some(on_sync_height_advanced),
         on_chain_lock_processed: None,
+        // Not exercised by these tests: they never build a conflicting spend.
+        on_transactions_swept: None,
         user_data: Arc::as_ptr(tracker) as *mut c_void,
     }
 }

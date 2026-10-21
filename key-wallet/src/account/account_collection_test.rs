@@ -7,7 +7,7 @@ mod tests {
         Account, AccountCollection, AccountType, BLSAccount, EdDSAAccount, StandardAccountType,
     };
     use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
-    use crate::mnemonic::{Language, Mnemonic};
+    use crate::mnemonic::Mnemonic;
     use crate::Network;
     use secp256k1::Secp256k1;
 
@@ -16,10 +16,7 @@ mod tests {
         let mut collection = AccountCollection::new();
 
         // Create test keys
-        let mnemonic = Mnemonic::from_phrase(
-            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-            Language::English,
-        ).unwrap();
+        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let seed = mnemonic.to_seed("");
         let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
         let secp = Secp256k1::new();
@@ -58,7 +55,7 @@ mod tests {
         let bls_account = BLSAccount::from_seed(
             None,
             AccountType::ProviderOperatorKeys,
-            [42u8; 32],
+            &[42u8; 32],
             Network::Testnet,
         )
         .unwrap();
@@ -70,7 +67,7 @@ mod tests {
         let eddsa_account = EdDSAAccount::from_seed(
             None,
             AccountType::ProviderPlatformKeys,
-            [99u8; 32],
+            &[99u8; 32],
             Network::Testnet,
         )
         .unwrap();
@@ -118,7 +115,7 @@ mod tests {
         let bls_account = BLSAccount::from_seed(
             None,
             AccountType::ProviderVotingKeys, // Wrong! Should be ProviderOperatorKeys
-            [42u8; 32],
+            &[42u8; 32],
             Network::Testnet,
         )
         .unwrap();
@@ -136,7 +133,7 @@ mod tests {
         let eddsa_account = EdDSAAccount::from_seed(
             None,
             AccountType::IdentityRegistration, // Wrong! Should be ProviderPlatformKeys
-            [99u8; 32],
+            &[99u8; 32],
             Network::Testnet,
         )
         .unwrap();

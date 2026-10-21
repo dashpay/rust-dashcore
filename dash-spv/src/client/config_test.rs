@@ -23,7 +23,7 @@ mod tests {
         assert_eq!(config.validation_mode, ValidationMode::Full);
         assert!(config.enable_filters);
         assert!(config.enable_masternodes);
-        assert_eq!(config.max_peers, 8);
+        assert_eq!(config.max_peers, 3);
 
         // Mempool defaults
         assert!(config.enable_mempool_tracking);
@@ -195,6 +195,18 @@ mod tests {
         let result = config.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("max_mempool_transactions must be > 0"));
+    }
+
+    #[test]
+    fn test_validation_rejects_zero_reservation_ttl() {
+        let config = ClientConfig {
+            reservation_sweep_ttl_secs: Some(0),
+            ..Default::default()
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("reservation_sweep_ttl_secs must be > 0"));
     }
 
     #[test]

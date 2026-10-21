@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use dashcore_hashes::{hash160, ripemd160, sha1, sha256, sha256d, sha512, sha512_256};
-use dashcore_hashes::{hmac, siphash24, Hash, HashEngine};
+use dashcore_hashes::{hmac, Hash, HashEngine};
 
 fn bench_sha256(c: &mut Criterion) {
     let mut group = c.benchmark_group("sha256");
@@ -121,24 +121,6 @@ fn bench_hash160(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_siphash24(c: &mut Criterion) {
-    let mut group = c.benchmark_group("siphash24");
-
-    // Standard siphash benchmarks
-    for (size, label) in [(1024, "1k"), (65536, "64k"), (1048576, "1m")] {
-        group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-            let bytes = vec![1u8; size];
-            b.iter(|| {
-                let hash =
-                    siphash24::Hash::hash_with_keys(0x0706050403020100, 0x0f0e0d0c0b0a0908, &bytes);
-                black_box(hash);
-            });
-        });
-    }
-    group.finish();
-}
-
 fn bench_hmac_sha256(c: &mut Criterion) {
     let mut group = c.benchmark_group("hmac_sha256");
 
@@ -250,7 +232,6 @@ criterion_group!(
     bench_sha1,
     bench_ripemd160,
     bench_hash160,
-    bench_siphash24,
     bench_hmac_sha256,
     bench_hmac_sha512,
     bench_constant_time_comparisons,

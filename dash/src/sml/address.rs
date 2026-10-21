@@ -40,7 +40,7 @@ impl Decodable for SocketAddr {
 
         let ipv6 = Ipv6Addr::from_bits(ip);
 
-        if let Some(ipv4) = ipv6.to_ipv4() {
+        if let Some(ipv4) = ipv6.to_ipv4_mapped() {
             Ok(SocketAddr::V4(SocketAddrV4::new(ipv4, port)))
         } else {
             Ok(SocketAddr::V6(SocketAddrV6::new(ipv6, port, 0, 0)))
@@ -84,6 +84,20 @@ mod tests {
         decoded.consensus_encode(&mut decoded_writer).unwrap();
 
         assert_eq!(writer, decoded_writer);
+    }
+
+    #[test]
+    fn encode_decode_unspecified_preserves_bytes() {
+        // An all-zero (`::`) address must round-trip to the same 16 zero bytes. Decoding it as
+        // IPv4 `0.0.0.0` would re-encode with the `::ffff:` mapped prefix and corrupt the bytes,
+        // which in turn breaks the masternode entry hash for entries with an unset service.
+        let original = [0u8; 18];
+        let mut reader = &original[..];
+        let decoded = SocketAddr::consensus_decode(&mut reader).unwrap();
+
+        let mut writer = Vec::new();
+        decoded.consensus_encode(&mut writer).unwrap();
+        assert_eq!(writer, original);
     }
 
     #[test]

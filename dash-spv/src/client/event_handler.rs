@@ -6,6 +6,7 @@
 
 use std::fmt::Display;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tokio::task::JoinHandle;
@@ -150,7 +151,8 @@ pub(crate) fn spawn_progress_monitor(
 /// [`SyncEvent::SyncComplete`], serializing all `apply_chain_lock`
 /// calls on a single task. During the initial sync cycle (cycle 0)
 /// chainlock arrivals are buffered as the latest-seen height rather
-/// than applied. At `SyncComplete { cycle: 0 }` the buffered height
+/// than applied; only that height is passed on
+/// (`note_chain_lock_height`). At `SyncComplete { cycle: 0 }` the buffered height
 /// is applied once, then every subsequent validated chainlock is
 /// applied directly. Only validated chainlocks advance the wallet.
 ///
@@ -184,6 +186,7 @@ where
                                 .as_ref()
                                 .is_none_or(|buffered| chain_lock.block_height > buffered.block_height)
                             {
+                                wallet.write().await.note_chain_lock_height(chain_lock.block_height);
                                 deferred_chain_lock = Some(chain_lock);
                             }
                         }
@@ -208,6 +211,48 @@ where
                             let _ = on_failure.try_send(msg);
                             break;
                         }
+                    }
+                }
+                _ = shutdown.cancelled() => break,
+            }
+        }
+        tracing::debug!("{} task exiting", NAME);
+    })
+}
+
+/// How often the reservation-sweep task wakes to reclaim expired reservations.
+const RESERVATION_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Periodically reclaim receive-address reservations that were handed out but
+/// never funded and never explicitly released, which would otherwise pin
+/// gap-limit headroom forever.
+///
+/// The wallet keeps no clock, so this task supplies `now` from the system clock
+/// and the caller-supplied `ttl` (seconds). A system-clock failure yields a
+/// `now` of `0`, which the wallet treats as "no clock" and reclaims nothing.
+/// Runs until `shutdown` is cancelled.
+pub(crate) fn spawn_reservation_sweep<W>(
+    wallet: Arc<RwLock<W>>,
+    ttl_secs: u64,
+    shutdown: CancellationToken,
+) -> JoinHandle<()>
+where
+    W: WalletInterface + 'static,
+{
+    const NAME: &str = "Reservation sweep";
+    tokio::spawn(async move {
+        tracing::debug!("{} task started", NAME);
+        let mut interval = tokio::time::interval(RESERVATION_SWEEP_INTERVAL);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let reclaimed = wallet.write().await.sweep_expired_reservations(now, ttl_secs);
+                    if reclaimed > 0 {
+                        tracing::debug!("{}: reclaimed {} expired reservation(s)", NAME, reclaimed);
                     }
                 }
                 _ = shutdown.cancelled() => break,

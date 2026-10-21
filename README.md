@@ -47,22 +47,58 @@ Supports (or should support)
 * JSONRPC interaction with Dash Core
 * FFI bindings for C/Swift integration (dash-spv-ffi, key-wallet-ffi)
 * High-level wallet management with transaction building and UTXO management
+* Dash special transaction data types, including DIP4 coinbase payloads and
+  quorum commitments
+* Simplified masternode list and QRInfo processing, including optional LLMQ
+  commitment and BLS signature validation
+* ChainLock and InstantSend lock verification through the masternode list
+  engine and `dash-spv`
+
+## Dash verification support
+
+This workspace contains reusable building blocks for applications that need to
+verify Dash-specific data without making an RPC call for every operation.
+`dashcore` provides the protocol types, hashing, simplified masternode list and
+LLMQ machinery, while `dash-spv` adds peer synchronization, persistent header
+and compact-filter storage, and ChainLock and InstantSend processing. The
+`dash-spv-ffi` crate exposes the SPV client through a C-compatible API suitable
+for C, C++, Swift, and other languages that can call a C ABI.
+
+These components do not together form a standalone implementation of all Dash
+Core consensus rules. See the consensus limitations below before choosing a
+trust model or using them for security-sensitive validation.
 
 # Known limitations
 
 ## Consensus
 
-This library **must not** be used for consensus code (i.e. fully validating
-blockchain data). It technically supports doing this, but doing so is very
-ill-advised because there are many deviations, known and unknown, between
-this library and the Dash Core reference implementation. In a consensus
-based cryptocurrency such as Dash it is critical that all parties are
-using the same rules to validate data, and this library does not and might
-never implement the same rules as Core.
+This library **must not** be treated as a drop-in replacement for Dash Core's
+full block-validation pipeline. It implements a useful subset of the required
+primitives and verification logic, but it does not maintain all of the
+consensus state or apply every contextual rule required to independently accept
+and construct mainnet blocks.
 
-Given the complexity of both C++ and Rust, it is unlikely that this will
-ever be fixed, and there are no plans to do so. Of course, patches to
-fix specific consensus incompatibilities are welcome.
+Notably, the workspace does not currently provide a complete equivalent of
+Dash Core's stateful block connection and block-template logic, including all
+of the following as one validated pipeline:
+
+* expected-difficulty and complete contextual header validation;
+* UTXO state transitions and all transaction and special-transaction rules;
+* subsidy, fee, masternode and Platform reward, and coinbase payout checks;
+* governance object, superblock trigger, and superblock payout validation;
+* asset-lock credit-pool accounting and withdrawal limits; and
+* construction of consensus-valid mining templates.
+
+Support for parsing a payload or verifying an individual commitment, quorum,
+ChainLock, or InstantSend lock should not be interpreted as validation of the
+block and state that produced it. Applications must define their trust and
+state model explicitly and use Dash Core when exact agreement with the network's
+consensus implementation is required. The C-compatible bindings expose the SPV
+and wallet APIs; they are not a general full-consensus validation ABI.
+
+Consensus compatibility is difficult to establish independently of the C++
+reference implementation, and known and unknown deviations may exist. Patches
+that close specific, tested gaps are welcome.
 
 ## Support for 16-bit pointer sizes
 

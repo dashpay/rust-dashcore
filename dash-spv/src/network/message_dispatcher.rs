@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 
 use dashcore::network::message::NetworkMessage;
+use dashcore::BlockHash;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::network::MessageType;
@@ -19,6 +20,7 @@ use crate::network::MessageType;
 pub struct Message {
     peer_address: SocketAddr,
     inner: NetworkMessage,
+    header_hashes: Option<Vec<BlockHash>>,
 }
 
 impl Message {
@@ -27,6 +29,20 @@ impl Message {
         Self {
             peer_address,
             inner,
+            header_hashes: None,
+        }
+    }
+
+    /// Creates a headers message carrying hashes already computed during decompression.
+    pub(crate) fn new_headers(
+        peer_address: SocketAddr,
+        headers_with_hashes: Vec<(dashcore::Header, BlockHash)>,
+    ) -> Self {
+        let (headers, hashes) = headers_with_hashes.into_iter().unzip();
+        Self {
+            peer_address,
+            inner: NetworkMessage::Headers(headers),
+            header_hashes: Some(hashes),
         }
     }
 
@@ -43,6 +59,16 @@ impl Message {
     /// Returns a reference to the underlying network message.
     pub fn inner(&self) -> &NetworkMessage {
         &self.inner
+    }
+
+    /// Consumes the wrapper and returns its network message.
+    pub(crate) fn into_inner(self) -> NetworkMessage {
+        self.inner
+    }
+
+    /// Returns cached hashes for a decompressed headers2 message.
+    pub(crate) fn header_hashes(&self) -> Option<&[BlockHash]> {
+        self.header_hashes.as_deref()
     }
 }
 
@@ -94,6 +120,17 @@ mod tests {
         assert_eq!(msg.cmd(), inner.cmd());
         assert_eq!(msg.peer_address(), peer_address);
         assert_eq!(*msg.inner(), inner);
+    }
+
+    #[test]
+    fn test_headers_message_carries_precomputed_hashes() {
+        let peer_address = test_socket_address(1);
+        let header = dashcore::Header::dummy(1);
+        let hash = header.block_hash();
+        let msg = Message::new_headers(peer_address, vec![(header, hash)]);
+
+        assert_eq!(msg.header_hashes(), Some([hash].as_slice()));
+        assert_eq!(msg.inner(), &NetworkMessage::Headers(vec![header]));
     }
 
     #[tokio::test]
