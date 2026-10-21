@@ -312,7 +312,8 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
             let engine = client_handle.engine.read().await;
             let mut max_cycle = 0;
             for cycle_hash in engine.rotated_quorums_per_cycle().keys() {
-                max_cycle = max_cycle.max(engine.height_of(cycle_hash).await.unwrap_or(0));
+                let height = engine.height_of(cycle_hash).await.expect("the headers read");
+                max_cycle = max_cycle.max(height.unwrap_or(0));
             }
             max_cycle
         };
@@ -443,7 +444,7 @@ async fn test_rotated_quorums_stored_when_sync_starts_post_dkg() {
         assert_all_rotated_quorums_verified(&engine);
         let mut heights: Vec<u32> = Vec::new();
         for cycle_hash in engine.rotated_quorums_per_cycle().keys() {
-            heights.extend(engine.height_of(cycle_hash).await);
+            heights.extend(engine.height_of(cycle_hash).await.expect("the headers read"));
         }
         heights.sort_unstable();
         heights.dedup();

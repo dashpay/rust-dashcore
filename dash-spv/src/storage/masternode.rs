@@ -190,7 +190,7 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
             };
             let mut newest_base = None;
             for base in message.base_hashes() {
-                newest_base = newest_base.max(engine.height_of(&base).await);
+                newest_base = newest_base.max(engine.height_if_known(&base).await);
             }
             plan.push((newest_base.unwrap_or(height), height, kind, path));
         }

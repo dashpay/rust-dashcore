@@ -5,6 +5,7 @@ mod validation;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::error::{StorageError, StorageResult};
 use crate::storage::BlockHeaderStorage;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
@@ -51,6 +52,27 @@ impl QRInfoFeedResult {
         self.expected_rotated_quorum_count > 0
             && self.rotated_quorum_count == self.expected_rotated_quorum_count
             && self.fully_verified_count == self.rotated_quorum_count
+    }
+}
+
+/// Why the engine did not take a diff or a QRInfo.
+#[derive(Debug, thiserror::Error)]
+pub enum FeedError<E> {
+    /// The header chain could not be read, so the message was not judged.
+    /// The fault is ours: the message may well be taken once it reads again.
+    #[error("Could not read the header chain: {0}")]
+    HeaderStorage(StorageError),
+    /// The message was refused.
+    #[error(transparent)]
+    Refused(#[from] E),
+}
+
+impl From<FeedError<SmlError>> for FeedError<QuorumValidationError> {
+    fn from(error: FeedError<SmlError>) -> Self {
+        match error {
+            FeedError::HeaderStorage(e) => FeedError::HeaderStorage(e),
+            FeedError::Refused(e) => FeedError::Refused(e.into()),
+        }
     }
 }
 
@@ -169,22 +191,41 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
     }
 
-    /// The height of `block_hash` in the header chain. The genesis block, and
-    /// the all-zero hash standing for it, is at 0 even when the chain starts
-    /// at a checkpoint.
-    pub async fn height_of(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
+    /// The height of `block_hash` in the header chain, `None` when the chain
+    /// does not hold it. The genesis block, and the all-zero hash standing for
+    /// it, is at 0 even when the chain starts at a checkpoint. Fails when the
+    /// header storage cannot be read, which says nothing about the block.
+    pub async fn height_of(
+        &self,
+        block_hash: &BlockHash,
+    ) -> StorageResult<Option<CoreBlockHeight>> {
         if *block_hash == BlockHash::all_zeros()
             || self.network.known_genesis_block_hash() == Some(*block_hash)
         {
-            return Some(0);
+            return Ok(Some(0));
         }
-        match self.headers.read().await.get_header_height_by_hash(block_hash).await {
-            Ok(height) => height,
-            Err(e) => {
-                tracing::warn!("Could not look up the height of {block_hash}: {e}");
-                None
-            }
-        }
+        self.headers.read().await.get_header_height_by_hash(block_hash).await
+    }
+
+    /// [`Self::height_of`] for a lookup that only informs, where a block whose
+    /// height could not be read counts as one the header chain does not hold.
+    pub(crate) async fn height_if_known(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
+        self.height_of(block_hash).await.unwrap_or_else(|e| {
+            tracing::warn!("Could not look up the height of {block_hash}: {e}");
+            None
+        })
+    }
+
+    /// [`Self::height_of`] for a block a diff names and cannot be applied
+    /// without, which refuses the diff when the header chain does not hold it.
+    async fn required_height_of(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<CoreBlockHeight, FeedError<SmlError>> {
+        self.height_of(block_hash)
+            .await
+            .map_err(FeedError::HeaderStorage)?
+            .ok_or(FeedError::Refused(SmlError::BlockHashLookupFailed(*block_hash)))
     }
 
     /// The hash of the block at `height` in the header chain.
@@ -258,8 +299,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             })
             .await;
         let blocks = match (
-            self.height_of(&diff.base_block_hash).await,
-            self.height_of(&diff.block_hash).await,
+            self.height_if_known(&diff.base_block_hash).await,
+            self.height_if_known(&diff.block_hash).await,
         ) {
             (Some(base), Some(target)) => target.saturating_sub(base),
             _ => 0,
@@ -312,7 +353,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 if !awaits_validation || !wanted(llmq_type, quorum_hash) {
                     continue;
                 }
-                match self.height_of(quorum_hash).await {
+                match self.height_if_known(quorum_hash).await {
                     Some(height) => {
                         work_heights
                             .entry(height.saturating_sub(QUORUM_MEMBER_LIST_OFFSET))
@@ -452,7 +493,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let cycle_map =
             build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
         self.rotated_quorums_per_cycle.entry(cycle_key).or_default().extend(cycle_map);
-        Ok(self.height_of(&cycle_key).await)
+        Ok(self.height_if_known(&cycle_key).await)
     }
 
     /// The ChainLock signature of each rotation work block, from the
@@ -470,7 +511,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     ) -> (BTreeMap<CoreBlockHeight, BLSSignature>, BTreeSet<CoreBlockHeight>) {
         let mut diffs_by_end_height = Vec::new();
         for diff in diffs {
-            diffs_by_end_height.push((self.height_of(&diff.block_hash).await, diff));
+            diffs_by_end_height.push((self.height_if_known(&diff.block_hash).await, diff));
         }
         diffs_by_end_height.sort_by_key(|(end_height, _)| *end_height);
 
@@ -561,7 +602,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     }
 
     async fn rotated_quorum_cycle_base(&self, quorum: &QuorumEntry) -> Option<CoreBlockHeight> {
-        rotated_cycle_base_height(quorum, self.height_of(&quorum.quorum_hash).await?)
+        rotated_cycle_base_height(quorum, self.height_if_known(&quorum.quorum_hash).await?)
     }
 
     async fn quarter_work_heights(&self, quorum: &QuorumEntry) -> Option<[CoreBlockHeight; 4]> {
@@ -663,7 +704,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     pub async fn feed_qr_info(
         &mut self,
         qr_info: QRInfo,
-    ) -> Result<QRInfoFeedResult, QuorumValidationError> {
+    ) -> Result<QRInfoFeedResult, FeedError<QuorumValidationError>> {
         let masternode_lists = self.masternode_lists.clone();
         let rotated_quorums_per_cycle = self.rotated_quorums_per_cycle.clone();
         let result = self.apply_qr_info(qr_info).await;
@@ -677,7 +718,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn apply_qr_info(
         &mut self,
         qr_info: QRInfo,
-    ) -> Result<QRInfoFeedResult, QuorumValidationError> {
+    ) -> Result<QRInfoFeedResult, FeedError<QuorumValidationError>> {
         let (rotation_sigs_by_work_height, inferred_work_heights) =
             self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info)).await;
 
@@ -699,7 +740,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         // Core sends a snapshot with every diff of the list. Pairing them with
         // `zip` would drop a diff without one unnoticed.
         if let Some(unpaired) = mn_list_diff_list.get(quorum_snapshot_list.len()) {
-            return Err(QuorumValidationError::RequiredSnapshotNotPresent(unpaired.block_hash));
+            return Err(
+                QuorumValidationError::RequiredSnapshotNotPresent(unpaired.block_hash).into()
+            );
         }
 
         let can_verify_previous = quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
@@ -725,7 +768,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.apply_and_prune(mn_list_diff_tip).await?;
 
         // Only the h-4c share brings the oldest quarters of the list at h.
-        if let Some(h_height) = self.height_of(&h_block_hash).await.filter(|_| can_verify_previous)
+        if let Some(h_height) =
+            self.height_if_known(&h_block_hash).await.filter(|_| can_verify_previous)
         {
             self.validate_and_store_previous_cycle_quorums(
                 h_height,
@@ -770,7 +814,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .map(|quorum| &quorum.verified)
             .find(|status| matches!(status, LLMQEntryVerificationStatus::Invalid(_)))
         {
-            return Err(e.clone());
+            return Err(e.clone().into());
         }
 
         for quorum in &qualified_last_commitment_per_index {
@@ -807,7 +851,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// Applies a diff, then verifies the newest list's non-rotating quorums: the
     /// diff may have brought one, or the work-block list one needs.
-    pub async fn apply_diff(&mut self, masternode_list_diff: MnListDiff) -> Result<(), SmlError> {
+    pub async fn apply_diff(
+        &mut self,
+        masternode_list_diff: MnListDiff,
+    ) -> Result<(), FeedError<SmlError>> {
         self.apply_and_prune(masternode_list_diff).await?;
         self.verify_newest_quorums().await;
         Ok(())
@@ -815,7 +862,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// A diff on the newest list moves the tip and prunes, see
     /// [`Self::prune_after_extending`]. Others may share an older base.
-    async fn apply_and_prune(&mut self, masternode_list_diff: MnListDiff) -> Result<(), SmlError> {
+    async fn apply_and_prune(
+        &mut self,
+        masternode_list_diff: MnListDiff,
+    ) -> Result<(), FeedError<SmlError>> {
         let extended_tip = self
             .latest_masternode_list()
             .filter(|list| list.block_hash == masternode_list_diff.base_block_hash)
@@ -830,15 +880,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn apply_diff_to_base(
         &mut self,
         masternode_list_diff: MnListDiff,
-    ) -> Result<(), SmlError> {
+    ) -> Result<(), FeedError<SmlError>> {
         let block_hash = masternode_list_diff.block_hash;
         let base_block_hash = masternode_list_diff.base_block_hash;
-        let base_height = self
-            .height_of(&base_block_hash)
-            .await
-            .ok_or(SmlError::BlockHashLookupFailed(base_block_hash))?;
-        let diff_end_height =
-            self.height_of(&block_hash).await.ok_or(SmlError::BlockHashLookupFailed(block_hash))?;
+        let base_height = self.required_height_of(&base_block_hash).await?;
+        let diff_end_height = self.required_height_of(&block_hash).await?;
         if base_height == 0 {
             let masternode_list =
                 MasternodeList::from_diff(masternode_list_diff, diff_end_height, self.network)?;
@@ -847,7 +893,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
 
         let Some(base_masternode_list) = self.masternode_lists.get(&base_height) else {
-            return Err(SmlError::MissingStartMasternodeList(base_block_hash));
+            return Err(SmlError::MissingStartMasternodeList(base_block_hash).into());
         };
         let masternode_list =
             base_masternode_list.apply_diff(masternode_list_diff, diff_end_height, self.network)?;
@@ -1048,7 +1094,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
-    use super::{build_cycle_quorum_map, WORK_DIFF_DEPTH};
+    use super::{build_cycle_quorum_map, FeedError, WORK_DIFF_DEPTH};
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -1421,7 +1467,9 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(QuorumValidationError::SMLError(SmlError::IncompleteSignatureSet))
+                Err(FeedError::Refused(QuorumValidationError::SMLError(
+                    SmlError::IncompleteSignatureSet
+                )))
             ),
             "diff h must be refused, got {result:?}"
         );
@@ -1449,7 +1497,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(QuorumValidationError::RequiredSnapshotNotPresent(block_hash))
+                Err(FeedError::Refused(QuorumValidationError::RequiredSnapshotNotPresent(block_hash)))
                     if block_hash == BlockHash::dummy(1)
             ),
             "got {result:?}"
@@ -1526,8 +1574,11 @@ mod tests {
 
         // The list at h holds the same previous-cycle quorums and must agree
         // with the stored cycle instead of reading them as skipped.
-        let h_height =
-            engine.height_of(&h_block_hash).await.expect("expected the height of the h block");
+        let h_height = engine
+            .height_of(&h_block_hash)
+            .await
+            .expect("the headers read")
+            .expect("expected the height of the h block");
         let h_quorums =
             &engine.masternode_lists[&h_height].quorums[&engine.network.isd_llmq_type()];
         for quorum in previous_cycle.values() {
@@ -1707,7 +1758,12 @@ mod tests {
 
         let err = engine.feed_qr_info(qr_info).await.expect_err("corrupt signature must reject");
         assert!(
-            matches!(err, QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(_)),
+            matches!(
+                err,
+                FeedError::Refused(
+                    QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(_)
+                )
+            ),
             "expected aggregate-signature rejection, got {:?}",
             err
         );
@@ -1735,7 +1791,9 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(_))
+                Err(FeedError::Refused(
+                    QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(_)
+                ))
             ),
             "the current-cycle quorum must be refused, got {result:?}"
         );

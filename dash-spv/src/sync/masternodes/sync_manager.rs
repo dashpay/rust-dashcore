@@ -120,7 +120,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 };
 
                 let request_pairs = engine.missing_work_block_list_requests().await;
-                let tip_height = engine.height_of(&qr_info.mn_list_diff_tip.block_hash).await;
+                let tip_height = engine.height_if_known(&qr_info.mn_list_diff_tip.block_hash).await;
                 drop(engine);
 
                 if let Some(height) = tip_height {
@@ -191,7 +191,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 tracing::debug!("Processing MnListDiff message for {}", diff.block_hash);
 
                 let mut engine = self.engine.write().await;
-                let Some(target_height) = engine.height_of(&diff.block_hash).await else {
+                let Some(target_height) = engine.height_if_known(&diff.block_hash).await else {
                     drop(engine);
                     tracing::warn!(
                         "Height not found for MnListDiff block {}, requeuing for retry",
