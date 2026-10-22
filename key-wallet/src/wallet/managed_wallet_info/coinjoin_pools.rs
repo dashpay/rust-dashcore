@@ -242,6 +242,10 @@ mod tests {
         synced.metadata.last_processed_height = 10;
         assert_rejected(&mut synced, &wallet);
 
+        let (wallet, mut other_network) = fresh(Network::Testnet);
+        other_network.network = Network::Mainnet;
+        assert_rejected(&mut other_network, &wallet);
+
         let (wallet, mut certified) = fresh(Network::Testnet);
         certified.metadata.synced_height = 10;
         assert_rejected(&mut certified, &wallet);
