@@ -7,6 +7,7 @@
 use super::ManagedWalletInfo;
 use crate::account::AccountType;
 use crate::error::{Error, Result};
+use crate::managed_account::address_pool::AddressPool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::Wallet;
 use crate::KeySource;
@@ -18,7 +19,7 @@ use crate::KeySource;
 /// The only DashSync log at hand reported 10,530 CoinJoin addresses derived
 /// (both chains together). Deep pools are not free: every extra script is
 /// matched against every compact filter (about 3% of blocks match falsely at
-/// 12,000 per chain), and past about 9,000 scripts in total dash-spv's
+/// 12,000 per chain), and past about 18,000 scripts in total dash-spv's
 /// size-capped mempool bloom filter runs above its target false-positive rate.
 pub const MAX_COINJOIN_POOL_DEPTH: u32 = 25_000;
 
@@ -42,15 +43,16 @@ impl ManagedWalletInfo {
                 "CoinJoin pool depth {last_index} must be below {MAX_COINJOIN_POOL_DEPTH}"
             )));
         }
-        if wallet.wallet_id != self.wallet_id {
+        if wallet.wallet_id != self.wallet_id || wallet.network != self.network {
             return Err(Error::InvalidParameter(
                 "the wallet does not own this wallet info".to_string(),
             ));
         }
+        // ChainLocks are applied to every wallet whether it scanned or not, so
+        // only the heights and recorded transactions prove a scan.
         let floor = self.metadata.birth_height.saturating_sub(1);
-        let synced_past_birth = self.metadata.last_processed_height > floor
-            || self.metadata.synced_height > floor
-            || self.metadata.last_applied_chain_lock.is_some();
+        let synced_past_birth =
+            self.metadata.last_processed_height > floor || self.metadata.synced_height > floor;
         if synced_past_birth
             || self.accounts.all_accounts().iter().any(|account| !account.transactions().is_empty())
         {
@@ -77,18 +79,10 @@ impl ManagedWalletInfo {
         for (account, key_source) in self.accounts.coinjoin_accounts.values_mut().zip(&key_sources)
         {
             let mut account_generated = 0;
-            'pools: for pool in account.managed_account_type_mut().address_pools_mut() {
-                for index in 0..=last_index {
-                    if pool.info_at_index(index).is_some() {
-                        continue;
-                    }
-                    if let Err(error) = pool.generate_address_at_index(index, key_source, true) {
-                        outcome = Err(error);
-                        break 'pools;
-                    }
-                    account_generated += 1;
-                }
-            }
+            outcome =
+                account.managed_account_type_mut().address_pools_mut().into_iter().try_for_each(
+                    |pool| fill_pool(pool, key_source, last_index, &mut account_generated),
+                );
             if account_generated > 0 {
                 account.bump_monitor_revision();
             }
@@ -106,10 +100,27 @@ impl ManagedWalletInfo {
     }
 }
 
+/// Derive every index of `pool` up to and including `last_index` that it does
+/// not hold yet, counting each one in `generated` as it lands.
+fn fill_pool(
+    pool: &mut AddressPool,
+    key_source: &KeySource,
+    last_index: u32,
+    generated: &mut usize,
+) -> Result<()> {
+    for index in 0..=last_index {
+        if pool.info_at_index(index).is_none() {
+            pool.generate_address_at_index(index, key_source, true)?;
+            *generated += 1;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+    use crate::managed_account::address_pool::AddressPoolType;
     use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
