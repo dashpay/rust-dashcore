@@ -21,12 +21,7 @@ use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
 };
-use crate::types::HashedBlockHeader;
-use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::network::constants::NetworkExt;
-use dashcore::pow::CompactTarget;
-use dashcore::TxMerkleNode;
-use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::future::Future;
 use std::pin::Pin;
@@ -124,7 +119,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     ) -> Result<SyncManagers<W>> {
         let mut managers: SyncManagers<W> = Managers::default();
 
-        let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
+        let checkpoint_manager = CheckpointManager::for_network(config.network);
         managers.block_headers = Some(
             BlockHeadersManager::new(
                 storage.block_headers(),
@@ -357,45 +352,23 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             // Find the best checkpoint at or before the requested height
             if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)
             {
-                if checkpoint.height > 0 {
-                    tracing::info!(
-                        "🚀 Starting sync from checkpoint at height {} instead of genesis (requested start height: {})",
-                        checkpoint.height,
-                        start_height
-                    );
+                tracing::info!(
+                    "🚀 Starting sync from checkpoint at height {} instead of genesis (requested start height: {})",
+                    checkpoint.height(),
+                    start_height
+                );
 
-                    // The checkpoint stores the trusted block hash but not the block version,
-                    // so a reconstructed header cannot be hashed back to that value. Anchor on
-                    // the trusted hash directly: chain linkage compares against the stored hash,
-                    // and `time`/`bits` (used for difficulty checks of later headers) come from
-                    // the checkpoint. The version is irrelevant since the hash is never recomputed.
-                    let checkpoint_header = BlockHeader {
-                        version: Version::from_consensus(0),
-                        prev_blockhash: checkpoint.prev_blockhash,
-                        merkle_root: checkpoint
-                            .merkle_root
-                            .map(|h| TxMerkleNode::from_byte_array(*h.as_byte_array()))
-                            .unwrap_or_else(TxMerkleNode::all_zeros),
-                        time: checkpoint.timestamp,
-                        bits: CompactTarget::from_consensus(
-                            checkpoint.target.to_compact_lossy().to_consensus(),
-                        ),
-                        nonce: checkpoint.nonce,
-                    };
-                    let anchor = HashedBlockHeader::with_trusted_hash(
-                        checkpoint_header,
-                        checkpoint.block_hash,
-                    );
-                    storage.store_headers_at_height(&[anchor], checkpoint.height).await?;
+                storage
+                    .store_headers_at_height(checkpoint.headers(), checkpoint.start_height())
+                    .await?;
 
-                    tracing::info!(
-                        "✅ Initialized from checkpoint at height {}, skipping {} headers",
-                        checkpoint.height,
-                        checkpoint.height
-                    );
+                tracing::info!(
+                    "✅ Initialized from checkpoint at height {}, skipping {} headers",
+                    checkpoint.height(),
+                    checkpoint.start_height()
+                );
 
-                    return Ok(());
-                }
+                return Ok(());
             }
         }
 
