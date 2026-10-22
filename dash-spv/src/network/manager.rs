@@ -64,9 +64,12 @@ impl<T> OrderedHeaderResults<T> {
     }
 }
 
-/// Handshake ping at/above which a peer is "very bad": taken only as a last resort,
-/// when nothing better is connectable and the set would otherwise be empty.
-const BAD_LAG_MS: u32 = 1000;
+/// A peer is "very bad", taken only as a last resort when the set would otherwise be
+/// empty, at a handshake ping of this multiple of the best ping seen, and never below
+/// [`BAD_LAG_FLOOR_MS`]. Relative, so a slow link (every peer far away) still fills
+/// the set instead of probing forever for a peer that does not exist.
+const BAD_LAG_MULTIPLIER: u32 = 3;
+const BAD_LAG_FLOOR_MS: u32 = 1000;
 
 /// A connected peer is underserving when its mean service time exceeds the best
 /// connected peer's by this multiple.
@@ -96,6 +99,15 @@ const STALL_CHECK: Duration = Duration::from_secs(5);
 /// stopped answering is faster than waiting for it; merely-slow peers are already
 /// throttled by their per-peer cap.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A far peer gets this many handshake pings instead, when that is longer: its round
+/// trip alone can eat most of [`REQUEST_TIMEOUT`], leaving no room to queue work there.
+const REQUEST_TIMEOUT_LAGS: u32 = 6;
+
+/// The request timeout for a peer with handshake ping `lag_ms`.
+fn request_timeout(lag_ms: u32) -> Duration {
+    REQUEST_TIMEOUT.max(Duration::from_millis(lag_ms as u64) * REQUEST_TIMEOUT_LAGS)
+}
 
 /// How often the timeout monitor scans the outstanding-request registry.
 const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
@@ -353,7 +365,12 @@ struct MsgQueue {
 
 /// Downstream first: the stage closest to the wallet is the one waiting on the network,
 /// while the head of the chain has a full backlog and only waits for room.
-const DRAIN_PRIORITY: [MsgClass; 5] =
+const MSG_CLASSES: usize = 5;
+
+/// Requests per class kept on the wire ahead of [`DRAIN_PRIORITY`] while the class has work.
+const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
+
+const DRAIN_PRIORITY: [MsgClass; MSG_CLASSES] =
     [MsgClass::Other, MsgClass::Blocks, MsgClass::CFilters, MsgClass::CfHeaders, MsgClass::Headers];
 
 impl PeerNetworkManager {
@@ -697,7 +714,16 @@ async fn route_tick(
         return 0;
     }
 
-    let msgs = queue.pop_n(capacity).await;
+    // A class with work queued but almost nothing on the wire goes first, so strict
+    // priority never parks a stage: headers are tiny yet head the whole chain.
+    let mut guaranteed = [MIN_IN_FLIGHT_PER_CLASS; MSG_CLASSES];
+    for state in requests.lock().await.values() {
+        if let ReqState::OnWire(o) = state {
+            let slot = &mut guaranteed[classify(&o.msg) as usize];
+            *slot = slot.saturating_sub(1);
+        }
+    }
+    let msgs = queue.pop_guaranteed(capacity, &guaranteed).await;
     let mut sent = 0;
     // Anything popped but not sent goes BACK on the queue: its key is registered, so a
     // dropped message would never be re-sent nor time out and its pipeline would stall.
@@ -799,6 +825,11 @@ struct PeerCapState {
     /// peer's bandwidth-delay product.
     max_lambda: f64,
     cap_ema: f64,
+    /// Completions/sec smoothed over every window, empty ones included: the peer's real
+    /// turnaround rate, unlike the bursty per-window peak in `max_lambda`.
+    lambda_ema: f64,
+    /// Bytes/sec from this peer, smoothed over every window like `lambda_ema`.
+    rate_ema: f64,
     /// Smoothed response size in bytes. Converts a cap (a request count) into what the
     /// link rations: a 1000-filter `getcfilters` and a one-block `getdata` are each one
     /// request but orders of magnitude apart on the wire.
@@ -825,16 +856,6 @@ struct PeerPlan {
     lag_ms: u32,
 }
 
-/// Factor to shrink every peer's cap by so their combined bytes in flight fit the
-/// shared link's bandwidth-delay product. Only ever shrinks; 1.0 when they fit or
-/// when nothing is measured (scaling by a guess is worse than not scaling).
-fn link_share_scale(link_bytes: f64, priced_bytes: f64) -> f64 {
-    if !link_bytes.is_finite() || link_bytes <= 0.0 || priced_bytes <= 0.0 {
-        return 1.0;
-    }
-    (link_bytes / priced_bytes).min(1.0)
-}
-
 /// How long a request may sit without progress before it counts as evidence its peer
 /// is over-committed: a multiple of that peer's own UNCONGESTED cost `min_w`.
 ///
@@ -844,12 +865,12 @@ fn link_share_scale(link_bytes: f64, priced_bytes: f64) -> f64 {
 /// mainnet it put the threshold past the hard timeout, so it never fired). Capped
 /// at half the hard timeout so the soft signal fires before eviction. `None` while
 /// the peer is unmeasured.
-fn soft_timeout_threshold(min_w: f64) -> Option<Duration> {
+fn soft_timeout_threshold(min_w: f64, timeout: Duration) -> Option<Duration> {
     const SOFT_GAIN: f64 = 3.0;
     if min_w <= 0.0 {
         return None;
     }
-    Some(Duration::from_secs_f64(SOFT_GAIN * min_w).min(REQUEST_TIMEOUT / 2))
+    Some(Duration::from_secs_f64(SOFT_GAIN * min_w).min(timeout / 2))
 }
 
 /// Sizes the GLOBAL in-flight budget and each PEER's cap from measurements, with no
@@ -912,15 +933,15 @@ fn spawn_bandwidth_controller(
                                // In-flight target as a multiple of the peer's BDP. Two, like BBR's cwnd: one
                                // BDP fills the pipe with no margin for jitter.
     const CAP_GAIN: f64 = 2.0;
+    // Little's law at a target service time of half the peer's request timeout: more in flight
+    // than a peer completes in that time only queues there, and the tail of that queue
+    // times out and gets the peer kicked.
+    const LAMBDA_EMA_ALPHA: f64 = 0.1;
     let window_s = WINDOW.as_secs_f64();
 
     tokio::spawn(async move {
         let mut last_bytes = bytes.load(Ordering::Relaxed);
         let mut rate_ema = 0.0f64; // smoothed downlink bytes/s
-                                   // Best aggregate downlink seen: the shared bottleneck every peer queues behind.
-                                   // Windowed like `max_lambda`, so an old peak expires.
-        let mut max_rate = 0.0f64;
-        let mut max_rate_age = 0u32;
         let mut last_rate = 0.0f64; // smoothed rate at the previous cap adjustment
         let mut hold = 0u32; // consecutive plateau windows
                              // Sum of per-peer caps from the previous window (they are computed after the host
@@ -948,17 +969,6 @@ fn spawn_bandwidth_controller(
             } else {
                 EMA_ALPHA * dl_rate + (1.0 - EMA_ALPHA) * rate_ema
             };
-
-            if rate_ema > max_rate {
-                max_rate = rate_ema;
-                max_rate_age = 0;
-            } else {
-                max_rate_age += 1;
-                if max_rate_age >= MAX_LAMBDA_WINDOW {
-                    max_rate = rate_ema;
-                    max_rate_age = 0;
-                }
-            }
 
             let npeers = connected.lock().await.len();
             if npeers == 0 {
@@ -1036,6 +1046,7 @@ fn spawn_bandwidth_controller(
                     let (count, total_ns) = p.latency_totals();
                     let now_bytes = p.bytes_read();
                     let st = peer_caps.entry(addr).or_default();
+                    let timeout = request_timeout(p.lag_ms());
                     let dc = count.saturating_sub(st.last_count);
                     let dt = total_ns.saturating_sub(st.last_total_ns);
                     let d_bytes = now_bytes.saturating_sub(st.last_bytes);
@@ -1044,6 +1055,9 @@ fn spawn_bandwidth_controller(
                     st.last_bytes = now_bytes;
                     let rate = d_bytes as f64 / window_s; // this peer's downlink (bytes/s)
 
+                    st.lambda_ema = LAMBDA_EMA_ALPHA * (dc as f64 / window_s)
+                        + (1.0 - LAMBDA_EMA_ALPHA) * st.lambda_ema;
+                    st.rate_ema = LAMBDA_EMA_ALPHA * rate + (1.0 - LAMBDA_EMA_ALPHA) * st.rate_ema;
                     let (lambda, w) = if dc == 0 {
                         // No completions this window: the NORMAL case (one request covers up to
                         // thousands of items; ~94% of windows are empty). Carry the smoothed values and
@@ -1107,8 +1121,18 @@ fn spawn_bandwidth_controller(
                     };
                     let bdp = bdp_raw * CAP_GAIN;
                     // Ceiling from this peer's own BDP; the bootstrap value only until measured.
-                    let peer_ceil =
-                        ((bdp_raw * PROBE_GAIN) as usize).clamp(BOOTSTRAP_CEIL, HARD_CEIL);
+                    // In bytes: counted in requests, a run of small answers (headers) would license
+                    // a cap that the next run of 500 KB filter batches turns into a minute of queue.
+                    let drain_ceil = if st.lambda_ema > 0.0 && st.resp_bytes_ema > 0.0 {
+                        ((st.rate_ema * (timeout / 2).as_secs_f64() / st.resp_bytes_ema).ceil()
+                            as usize)
+                            .max(FLOOR_PER_PEER)
+                    } else {
+                        HARD_CEIL
+                    };
+                    let peer_ceil = ((bdp_raw * PROBE_GAIN) as usize)
+                        .clamp(BOOTSTRAP_CEIL, HARD_CEIL)
+                        .min(drain_ceil);
 
                     // λ is only measured under the cap we granted, so the BDP can't discover unused
                     // capacity: probe past it while the peer shows no strain (BBR's ProbeBW) and back
@@ -1116,17 +1140,19 @@ fn spawn_bandwidth_controller(
                     let degraded = st.w_ema > 0.0 && st.w_ema > st.min_w * W_INFLATE;
                     let saturated = p.in_flight() + 1 >= st.cap_ema.round() as usize;
                     // A peer holding work it never answers is not probed further; the timeout monitor
-                    // removes it.
+                    // removes it. Nor is one that has not completed anything yet: on a slow link the
+                    // first answer takes seconds, and growing blind meanwhile overfills it.
                     let stuck = st.dry_windows >= DRY_LIMIT && p.in_flight() > 0;
 
                     // Soft timeout: a request untouched for several service times means the peer is
                     // given more than it can turn around. Take future work away but leave in-flight
                     // alone: re-queueing would re-send bytes still on their way.
                     st.soft_cut_cooldown = st.soft_cut_cooldown.saturating_sub(1);
-                    let burning = match (soft_timeout_threshold(st.min_w), stalled_for.get(&addr)) {
-                        (Some(limit), Some(idle)) => *idle > limit,
-                        _ => false,
-                    };
+                    let burning =
+                        match (soft_timeout_threshold(st.min_w, timeout), stalled_for.get(&addr)) {
+                            (Some(limit), Some(idle)) => *idle > limit,
+                            _ => false,
+                        };
 
                     if st.cap_ema == 0.0 {
                         st.cap_ema = FLOOR_PER_PEER as f64;
@@ -1140,12 +1166,12 @@ fn spawn_bandwidth_controller(
                             "{} soft timeout: idle {:?} > {:?}, cap -> {:.1}",
                             addr,
                             stalled_for.get(&addr).copied().unwrap_or_default(),
-                            soft_timeout_threshold(st.min_w).unwrap_or_default(),
+                            soft_timeout_threshold(st.min_w, timeout).unwrap_or_default(),
                             st.cap_ema,
                         );
                     } else if degraded {
                         st.cap_ema = (st.cap_ema * CAP_BACKOFF).max(FLOOR_PER_PEER as f64);
-                    } else if saturated && !stuck {
+                    } else if saturated && !stuck && st.lambda_ema > 0.0 {
                         st.cap_ema = (st.cap_ema * CAP_GROW).min(peer_ceil as f64);
                     }
                     // Never sit below what measurements justify, unless a request is stalled now: then
@@ -1154,6 +1180,7 @@ fn spawn_bandwidth_controller(
                     if !burning {
                         st.cap_ema = st.cap_ema.max(bdp.min(peer_ceil as f64));
                     }
+                    st.cap_ema = st.cap_ema.min(peer_ceil as f64);
 
                     let want = (st.cap_ema.round() as usize).clamp(FLOOR_PER_PEER, peer_ceil);
                     plans.push(PeerPlan {
@@ -1172,34 +1199,8 @@ fn spawn_bandwidth_controller(
                 }
                 peer_caps.retain(|addr, _| live.contains(addr));
 
-                // ---- phase two: ration the ONE link they all share ----
-                //
-                // Each cap above assumes its peer owns the pipe, so N peers over-commit the shared
-                // downlink N-fold (seen: sum_peer_cap=121 vs global_cap=71, the floor pulling the
-                // budget up). Bounded in bytes, because bytes are what the link rations.
-                let link_rate = max_rate.max(rate_ema); // measured ceiling, bytes/s
-                let w_ref = plans
-                    .iter()
-                    .map(|pl| pl.min_w)
-                    .filter(|m| *m > 0.0)
-                    .fold(f64::INFINITY, f64::min);
-                let priced: f64 = plans.iter().map(|pl| pl.want as f64 * pl.resp_bytes).sum();
-                // Only bind once there is something to bind with: an unpriced or
-                // unmeasured window leaves the per-peer answers untouched rather
-                // than scaling them by a guess.
-                let link_bytes = if w_ref.is_finite() {
-                    link_rate * w_ref * CAP_GAIN
-                } else {
-                    0.0
-                };
-                let scale = 1.0f64.min(link_share_scale(link_bytes, priced)).max(1.0);
-
                 for (p, pl) in g.iter().zip(plans.iter()) {
-                    let cap_peer = if scale < 1.0 {
-                        ((pl.want as f64 * scale).round() as usize).max(FLOOR_PER_PEER)
-                    } else {
-                        pl.want
-                    };
+                    let cap_peer = pl.want;
                     p.set_cap(cap_peer);
 
                     tracing::debug!(
@@ -1221,18 +1222,6 @@ fn spawn_bandwidth_controller(
                     cap_min = cap_min.min(cap_peer);
                     cap_max = cap_max.max(cap_peer);
                     cap_sum += cap_peer;
-                }
-                if scale < 1.0 {
-                    tracing::debug!(
-                        target: "peer_speed",
-                        "link budget: {:.1} MB/s x {:.0}ms x{} = {:.1} MB vs {:.1} MB asked => scale {:.2}",
-                        link_rate / 1e6,
-                        w_ref * 1e3,
-                        CAP_GAIN,
-                        link_rate * w_ref * CAP_GAIN / 1e6,
-                        priced / 1e6,
-                        scale,
-                    );
                 }
 
                 // Service times were just refreshed, so detect a laggard here. Only the transition
@@ -1292,7 +1281,8 @@ fn lag_key(peer: &ConnectedPeer) -> u32 {
 /// filled toward `max_peers` with the lowest-latency peers it can find.
 ///
 /// - Below cap it probes candidates in parallel and accepts those with handshake
-///   ping under [`BAD_LAG_MS`], announcing each so sync starts on the first. A very
+///   ping under the bad-lag threshold ([`BAD_LAG_MULTIPLIER`]), announcing each so sync
+///   starts on the first. A very
 ///   bad peer is taken only when the set would otherwise be empty.
 /// - At cap it waits to be woken by a lost or underserving peer, then probes for a
 ///   replacement. No periodic improvement pass: each probe costs a full handshake.
@@ -1313,6 +1303,8 @@ struct Supervisor {
     wake: Arc<Notify>,
     /// Handed to every peer it connects, so the bound is global.
     headers2_decompression_semaphore: Arc<Semaphore>,
+    /// Lowest handshake ping seen, the reference for the bad-lag threshold.
+    best_lag_ms: AtomicU32,
 }
 
 impl Supervisor {
@@ -1423,7 +1415,15 @@ impl Supervisor {
             self.best_tip.fetch_max(peer.version().start_height.max(0) as u32, Ordering::Relaxed);
 
             let lag = peer.lag_ms();
-            if lag == 0 || lag >= BAD_LAG_MS {
+            if lag > 0 {
+                self.best_lag_ms.fetch_min(lag, Ordering::Relaxed);
+            }
+            let bad_lag = self
+                .best_lag_ms
+                .load(Ordering::Relaxed)
+                .saturating_mul(BAD_LAG_MULTIPLIER)
+                .max(BAD_LAG_FLOOR_MS);
+            if lag == 0 || lag >= bad_lag {
                 leftover.push(peer);
                 continue;
             }
@@ -1568,6 +1568,7 @@ fn spawn_peer_supervisor(
             required_services,
             wake,
             headers2_decompression_semaphore,
+            best_lag_ms: AtomicU32::new(u32::MAX),
         }
         .run(),
     )
@@ -1644,7 +1645,9 @@ fn spawn_timeout_monitor(
                     if bytes > entry.0 {
                         *entry = (bytes, now);
                     }
-                    if peer.in_flight() > 0 && now.duration_since(entry.1) > REQUEST_TIMEOUT {
+                    if peer.in_flight() > 0
+                        && now.duration_since(entry.1) > request_timeout(peer.lag_ms())
+                    {
                         culprits.insert(addr);
                     }
                 }
@@ -1653,10 +1656,17 @@ fn spawn_timeout_monitor(
             // A request that stopped making progress also condemns its peer: the
             // per-peer byte check above sees unrelated traffic and judges it healthy.
             {
+                let timeouts: HashMap<PeerId, Duration> = connected
+                    .lock()
+                    .await
+                    .iter()
+                    .map(|p| (p.id(), request_timeout(p.lag_ms())))
+                    .collect();
                 let reqs = requests.lock().await;
                 for state in reqs.values() {
                     if let ReqState::OnWire(o) = state {
-                        if now.duration_since(o.last_progress) > REQUEST_TIMEOUT {
+                        let timeout = timeouts.get(&o.peer).copied().unwrap_or(REQUEST_TIMEOUT);
+                        if now.duration_since(o.last_progress) > timeout {
                             culprits.insert(o.peer);
                         }
                     }
@@ -1737,20 +1747,23 @@ fn spawn_pump(
                     *recv_by_peer.entry(addr).or_insert(0) += 1;
                     total_recv += 1;
 
-                    // A `cfilter` is one piece of a `getcfilters` batch, which is only
-                    // marked answered once the whole batch lands. Refresh that request's
-                    // deadline so the timeout means "the pieces stopped coming".
-                    if matches!(*msg, NetworkMessage::CFilter(_)) {
+                    // Peers answer in order, so any answer means the peer is working
+                    // through its queue: refresh all its requests, or one waiting behind
+                    // big answers on a slow link would be judged stalled.
+                    if matches!(
+                        *msg,
+                        NetworkMessage::CFilter(_)
+                            | NetworkMessage::CFHeaders(_)
+                            | NetworkMessage::Block(_)
+                            | NetworkMessage::Headers(_)
+                            | NetworkMessage::Headers2(_)
+                    ) {
+                        let now = Instant::now();
                         let mut reqs = requests.lock().await;
                         for state in reqs.values_mut() {
                             if let ReqState::OnWire(o) = state {
-                                if o.peer == peer
-                                    && matches!(
-                                        request_keys(&o.msg).first(),
-                                        Some(RequestKey::CFilters(_))
-                                    )
-                                {
-                                    o.last_progress = Instant::now();
+                                if o.peer == peer {
+                                    o.last_progress = now;
                                 }
                             }
                         }
@@ -1914,10 +1927,30 @@ impl MsgQueue {
     /// Take up to `n` messages in strict [`DRAIN_PRIORITY`] order, fully draining a
     /// class (up to the budget) before touching the next.
     async fn pop_n(&self, n: usize) -> Vec<(u32, NetworkMessage)> {
+        self.pop_guaranteed(n, &[0; MSG_CLASSES]).await
+    }
+
+    /// [`pop_n`](Self::pop_n), first taking up to `guaranteed[class]` from each class.
+    async fn pop_guaranteed(
+        &self,
+        n: usize,
+        guaranteed: &[usize; MSG_CLASSES],
+    ) -> Vec<(u32, NetworkMessage)> {
         if n == 0 {
             return Vec::new();
         }
         let mut out: Vec<(u32, NetworkMessage)> = Vec::with_capacity(n);
+        for class in DRAIN_PRIORITY {
+            let mut q = self.queue(class).lock().await;
+            let mut take = guaranteed[class as usize];
+            while take > 0 && out.len() < n {
+                let Some(((height, _), msg)) = q.pop_first() else {
+                    break;
+                };
+                out.push((height, msg));
+                take -= 1;
+            }
+        }
         for class in DRAIN_PRIORITY {
             let mut q = self.queue(class).lock().await;
             while out.len() < n {
@@ -2193,23 +2226,12 @@ mod tests {
         assert_eq!(net.msg_queue.len(), stalls as usize);
     }
 
-    // rate x uncongested W x BBR gain, against what three peers asked for.
-    #[test_case(5.0e6 * 0.95 * 2.0, 121.0 * 138.0e3 => 0.57; "peers sized for the whole pipe shrink")]
-    #[test_case(9.5e6, 4.0e6 => 1.0; "peers that fit")]
-    #[test_case(9.5e6, 9.5e6 => 1.0; "peers that exactly fit")]
-    #[test_case(0.0, 4.0e6 => 1.0; "unmeasured link")]
-    #[test_case(f64::INFINITY, 4.0e6 => 1.0; "infinite link")]
-    #[test_case(9.5e6, 0.0 => 1.0; "nothing priced")]
-    fn link_share_scale_cases(link_bytes: f64, priced_bytes: f64) -> f64 {
-        (link_share_scale(link_bytes, priced_bytes) * 100.0).round() / 100.0
-    }
-
     #[test_case(0.0 => None; "unmeasured peer")]
     #[test_case(0.05 => Some(Duration::from_secs_f64(0.15)); "near peer")]
     #[test_case(0.7 => Some(Duration::from_secs_f64(2.1)); "far peer")]
     #[test_case(60.0 => Some(REQUEST_TIMEOUT / 2); "capped before the hard timeout")]
     fn soft_timeout_threshold_cases(min_w: f64) -> Option<Duration> {
-        soft_timeout_threshold(min_w)
+        soft_timeout_threshold(min_w, REQUEST_TIMEOUT)
     }
 
     #[test_case(get_headers(1) => MsgClass::Headers)]
