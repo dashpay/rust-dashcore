@@ -182,7 +182,8 @@ mod tests {
                     let (mut wallet, mut managed) = fresh(network);
                     let revision = managed.accounts.coinjoin_accounts[&0].monitor_revision();
                     let generation = managed.account_generation();
-                    managed.extend_coinjoin_pools(&wallet, DEPTH).expect("extend");
+                    let generated = managed.extend_coinjoin_pools(&wallet, DEPTH).expect("extend");
+                    assert_eq!(generated, 2 * (DEPTH + 1 - GAP) as usize);
                     assert!(managed.account_generation() > generation);
                     assert!(managed.accounts.coinjoin_accounts[&0].monitor_revision() > revision);
 
