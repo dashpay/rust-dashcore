@@ -54,7 +54,8 @@ impl ManagedWalletInfo {
         let synced_past_birth =
             self.metadata.last_processed_height > floor || self.metadata.synced_height > floor;
         if synced_past_birth
-            || self.accounts.all_accounts().iter().any(|account| !account.transactions().is_empty())
+            // `tx_count` also counts finalized transactions whose records were pruned.
+            || self.accounts.all_accounts().into_iter().any(|account| account.tx_count() > 0)
         {
             return Err(Error::InvalidParameter(
                 "CoinJoin pools can only be extended before the first sync".to_string(),
@@ -253,13 +254,18 @@ mod tests {
 
     #[tokio::test]
     async fn extend_rejects_a_wallet_that_already_saw_a_transaction() {
-        let (mut wallet, mut managed) = fresh(Network::Testnet);
-        let near = coinjoin_address(&wallet, Network::Testnet, false, 0);
-        let tx = Transaction::dummy(&near, 0..1, &[DENOM]);
-        managed
-            .check_core_transaction(&tx, TransactionContext::Mempool, &mut wallet, true, true)
-            .await;
-        assert_eq!(managed.metadata.last_processed_height, 0);
-        assert_rejected(&mut managed, &wallet);
+        let chain_locked = TransactionContext::InChainLockedBlock(BlockInfo::new(
+            1,
+            BlockHash::from_byte_array([1; 32]),
+            1_650_000_000,
+        ));
+        for context in [TransactionContext::Mempool, chain_locked] {
+            let (mut wallet, mut managed) = fresh(Network::Testnet);
+            let near = coinjoin_address(&wallet, Network::Testnet, false, 0);
+            let tx = Transaction::dummy(&near, 0..1, &[DENOM]);
+            managed.check_core_transaction(&tx, context, &mut wallet, true, true).await;
+            assert_eq!(managed.metadata.last_processed_height, 0);
+            assert_rejected(&mut managed, &wallet);
+        }
     }
 }
