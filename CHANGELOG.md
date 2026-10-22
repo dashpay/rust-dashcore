@@ -8,15 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Restore externally persisted spent-output claims with `ManagedWalletInfo::restore_spent_outpoints` in `key-wallet`.
+  Claims are held once per wallet and guard every account that holds funds, including one added later.
+  It returns the restored outpoints the wallet still holds as UTXOs, which stay credited.
 - Make `PublicKey::with_serialized` public
+- `EcdsaPublicKey`, `EcdsaSecretKey`, `EcdsaSignature`, `EcdsaRecSignature`,
+  `EcdsaError` and the `ECDSA_*_LEN` constants in `dashcore::ecdsa`
+- `EcdsaSecretKey::generate` with the `rand` feature
+- `TryFrom<&[u8]>` for `PublicKey`
 
 ### Changed
 
-- **Breaking:** the `bincode` feature and binary serialization dependencies now use
-  `grovedb-bincode` 2.1.0 and its derive macros from crates.io, sharing the same
-  serialization traits as Platform. Existing bincode encodings and C interfaces
-  are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
-  The dependency switch does not automatically opt types into `DecodeUntrusted`.
 - **Breaking:** `dashcore_hashes` re-exports the hash primitives (`sha1`,
   `sha256`, `sha256d`, `sha512`, `sha512_256`, `ripemd160`, `hash160`, `hmac`,
   `siphash24`, `cmp`) from `bitcoin_hashes` 0.14. The raw types no longer
@@ -41,6 +43,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** the taproot types come from `bitcoin-crypto`. `Signature`
   fields are renamed to `signature` and `sighash_type`, and `taproot::Error` is
   `SigFromSliceError`, without a `Secp256k1` variant
+- **Breaking:** `ecdsa::Signature` and `ecdsa::SerializedSignature` come from
+  `bitcoin-crypto`. `Signature` fields and human-readable serde keys are
+  renamed from `sig` and `hash_ty` to `signature` and `sighash_type`.
+  `signature` is a `secp256k1` signature.
+  `DecodeError` and `ParseSignatureError` replace `ecdsa::Error`. Formatting
+  flags apply to the whole encoding instead of being ignored
+- **Breaking:** the `dashcore::ecdsa` newtypes replace the `secp256k1` keys and
+  signatures in `PublicKey`, `PrivateKey`, `ExtendedPrivKey`, `ExtendedPubKey`,
+  `RootExtendedPrivKey`, `RootExtendedPubKey`, `Wallet` key derivation,
+  `AssetLockCreditKeys` and `Signer`. `EcdsaPublicKey` converts into
+  `XOnlyPublicKey` and `EcdsaSecretKey` into `Keypair`
+- **Breaking:** `key::XOnlyPublicKey`, `Keypair`, `Parity`, `TweakedPublicKey`
+  and `UntweakedPublicKey` come from `bitcoin-crypto`, whose `XOnlyPublicKey`
+  keeps its parity. `TweakedKeyPair` and `UntweakedKeyPair` are renamed to
+  `TweakedKeypair` and `UntweakedKeypair`
+- **Breaking:** `TaprootError::InvalidInternalKey` and
+  `TaprootBuilderError::InvalidInternalKey` no longer hold a `secp256k1::Error`
+- **Breaking:** `PrivateKey` is no longer `Copy`. `to_bytes` and `to_wif` take
+  `&self` instead of `self`
+- **Breaking:** `Ecdsa(EcdsaError)` replaces `key::Error::Secp256k1` and
+  `bip32::Error::Secp256k1`. `MessageSignatureError::InvalidEncoding` holds an
+  `EcdsaError` instead of a `secp256k1::Error`. Failed verification reads
+  "signature verification failed" instead of "signature failed verification"
 - **Breaking:** `dashcore::eddsa` uses the `dash-pkc` types, so `EddsaPkBytes`
   and `EddsaSkBytes` no longer implement `BaseCodec` and `EddsaError` changes
   shape. Use `EddsaPublicKey::try_from`, `EddsaPkHash::from` and
@@ -59,10 +84,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `ExtendedPrivKey::new_master` rejects seeds outside 16 to 64
   bytes with `bip32::Error::InvalidSeedLength`, which
   `RootExtendedPrivKey::new_master` returns instead of `InvalidParameter`
-- **Breaking:** `MessageSignature::from_slice` rejects headers above 34
+- **Breaking:** `EcdsaRecSignature` rejects headers above 34 when read
 - Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
   `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
 - All workspace crates declare a MSRV of 1.89
+- `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` release
+  a restored spent-output claim that names a transaction they remove. `released_outpoints` of a
+  sweep, as `WalletEvent::TransactionsSwept` and the `dash-spv-ffi` swept callback carry it, lists
+  an outpoint only once no claim and no account's own spent mark guards it.
+- Human-readable serde of `PublicKey`, `ShortId` and `PlatformNodeId` also
+  accepts raw bytes, and their deserialization errors read differently
+- `RootExtendedPubKey` now supports hybrid SEC1 public keys in human-readable
+  serde, and writes them back compressed
 
 ### Fixed
 
@@ -80,6 +113,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `key::Error::InvalidWifCompressionFlag`
 - Accept an IL of zero in `key-wallet` private child derivation
 - `transaction_sign_input` in `key-wallet-ffi` rejects flags above `0xff`
+- `dash-spv` drops the masternode lists, and the rotated quorum cycles, built
+  above a fork it follows, so they no longer answer for blocks that left the
+  chain
+- `dash-spv` no longer follows a fork that branches off below the newest
+  checkpoint its stored chain reaches
 
 ### Removed
 
@@ -102,14 +140,173 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Witness::push_bitcoin_signature`
 - **Breaking:** remove `key::Error::NotSupported`,
   `bip32::Error::NotSupported` and `dashcore_rpc::Error::Secp256k1`
-- **Breaking:** remove `signer::CompactSignature`. Use `MessageSignature`
+- **Breaking:** remove `signer::CompactSignature`. Use `EcdsaRecSignature`
   instead
+- **Breaking:** remove `bip32::PublicKey`, `bip32::PrivateKey`,
+  `key_wallet::Error::Secp256k1` and `Index<RangeFull>` for `PrivateKey`
+- **Breaking:** remove the `secp256k1` re-exports from `dashcore` and
+  `dashcore-crypto`, `key::Secp256k1`, `key::Verification` and
+  `TaprootError::InvalidParity`
+- **Breaking:** remove the `secp-recovery` and `secp-lowmemory` features.
+  Message signature recovery is always available
+- **Breaking:** remove `MessageSignature`. Signed messages are
+  `EcdsaRecSignature`s, which carry the key compression, and the
+  `sign_message` functions `from_slice`, `from_base64`, `to_base64`,
+  `recover_pubkey` and `is_signed_by_address` replace its methods
 
 ### Fixed
 
 - Correct retained spender amounts and direction when late funding reveals owned inputs,
   including newly discovered owned outputs and InstantSend locks received through live SPV
   after account import. Preserve spender context and suppress duplicate lock notifications.
+
+## 0.45.0 - 2026-10-21
+
+### Highlights
+
+- **Dash Core v24 support:** v24 masternode lists in `rpc-json` (nested platform addresses, shared and multi-payout masternodes, non-IP services), CbTx v4, ProRegTx, ProUpServTx and ProUpRegTx version 3, raw payloads for unknown special transactions, `getblockchaininfo` and `getdeploymentinfo`, and asset locks decoded without their payload length prefix (#1093, #1136, #1137, #1138, #1152, #1154, #1155, #1165, #1167).
+- **GroveDB bincode:** binary serialization moved to `grovedb-bincode` 2.1.0, sharing its traits with Platform (#1005).
+- **Wallet funding and reservations:** UTXO and receive-address reservations, owner-tagged reservations, funding from several account types, a CoinJoin funding account and drain mode for asset locks, and OP_RETURN outputs (#812, #818, #916, #925, #915, #944, #922).
+- **SPV sync reliability:** sync anchored at the wallet birth height, filter sync no longer stalls after a restart or a full sync, peer selection and stall handling reworked, in-flight downloads requeued on peer disconnect, and committed ranges rescanned for newly derived scripts (#848, #835, #816, #943, #941, #866, #989).
+- **Security hardening:** forged ChainLocks are rejected, oversized headers messages are refused, and the RPC client no longer logs request arguments and results, which can carry credentials (#1059, #1140, #1147).
+
+### Added
+
+- `Signer::extended_public_key` (#817) @shumkov
+- Address pool gap limits can be changed at runtime (#822) @ZocoLini
+- Track internal address pools for CoinJoin accounts (#821) @ZocoLini
+- More account types and a strategy to consume every available UTXO (#823) @ZocoLini
+- `Zeroize` for `ExtendedPrivKey` (#833) @lklimek
+- Seed the sync checkpoint from `birth_height` (#693) @xdustinface
+- Anchor sync at the wallet birth height checkpoint in `dash-spv` (#848) @xdustinface
+- One-shot transaction decode to (address, amount) structs in `key-wallet-ffi` (#870) @QuantumExplorer
+- Typed special transaction payload on `FFITransactionRecord` (#876) @QuantumExplorer
+- Floor mainnet sync at the HD/BIP39 activation height (#877) @xdustinface
+- Provider key derivation API for operator and platform node keys at an index (#881) @QuantumExplorer
+- Dedicated `PlatformNodeId` newtype for `platform_node_id` fields (#885) @QuantumExplorer
+- Missing DIP-15 derivation constants in `dip9` (#886) @shumkov
+- Stamp retained transaction records with their in-block position (#891) @QuantumExplorer
+- Track network acceptance of broadcast transactions in `dash-spv` (#913) @QuantumExplorer
+- `dash-spv-bench` multi-scenario sync benchmark harness (#908, #965, #967) @ZocoLini
+- Reserve receive addresses on hand-out (#818) @xdustinface
+- CoinJoin funding account and drain mode for asset lock builds (#915) @QuantumExplorer
+- Owner-tagged reservations to close the broadcast-release race (#916) @bfoss765
+- Lossless persistence event channel in `key-wallet-manager` (#927) @QuantumExplorer
+- OP_RETURN outputs, output order control and change to VIN0 (#922) @romchornyi
+- Fund transactions from several account types (#925) @ZocoLini
+- DashPay contact account funding (#929) @ZocoLini
+- Fund an asset lock from a caller-chosen list of accounts (#944) @QuantumExplorer
+- Canonical `is_contact_owned` predicate on account types (#952) @QuantumExplorer
+- Prune spent single-use CoinJoin addresses from the filter scan query (#949) @QuantumExplorer
+- Accelerate compressed header sync (#950) @PastaPastaPasta
+- Let a drain carry zero-value OP_RETURN data outputs (#928) @HashEngineering
+- Carry the sweep winner's mined height on `TransactionsSwept` (#975) @romchornyi
+- Payload finalization seam for input-committing special transactions (#991) @QuantumExplorer
+- Let a build fund from only the inputs it was given (#994) @romchornyi
+- **Breaking:** decode and encode CbTx v4 `merkleRootAssetUnlocks` (#1137) @ZocoLini
+- **Breaking:** decode and encode ProUpServTx and ProUpRegTx version 3 (#1138) @ZocoLini
+- **Breaking:** decode and encode ProRegTx version 3 (#1152) @ZocoLini
+- Decode Core v24 `getblockchaininfo` and add `getdeploymentinfo` (#1165) @shumkov
+- Decode asset locks ignoring their payload length prefix (#1167) @shumkov
+
+### Changed
+
+- **Breaking:** the `bincode` feature and binary serialization dependencies now use
+  `grovedb-bincode` 2.1.0 and its derive macros from crates.io, sharing the same
+  serialization traits as Platform. Existing bincode encodings and C interfaces
+  are unchanged, but Rust consumers must use the fork for compatible `Encode`/`Decode` traits.
+  The dependency switch does not automatically opt types into `DecodeUntrusted`.
+  (#1005) @QuantumExplorer
+- **Breaking:** parse Core v24 masternode lists in `rpc-json`, including nested platform addresses, shared and multi-payout masternodes, non-IP services and partial address diffs (#1093) @shumkov
+- **Breaking:** decode unknown special transaction types as raw payloads (#1136) @ZocoLini
+- **Breaking:** keep special payloads raw when their layout is unknown (#1154) @ZocoLini
+- **Breaking:** temporarily expose the coinbase payload of the newest masternode list diff as `MasternodeListEngine::latest_coinbase()` and `DashSpvClient::latest_coinbase()`. It is not verified, so a single peer can serve any payload, and it is replaced by a verified version in a later release (#1204) @shumkov
+- **Breaking:** name the outpoints a sweep releases (#962) @romchornyi
+- **Breaking:** unify mnemonic parsing on one auto-detecting path (#981) @PastaPastaPasta
+- Move `extended_public_key` out of `Signer` into the `ExtendedPubKeySigner` subtrait (#839) @QuantumExplorer
+- Refactor `ManagedAccountType::from_account_type` (#828) @ZocoLini
+- Compute fewer block hashes (#834) @ZocoLini
+- SIMD-batched SipHash-2-4 for BIP158 filter matching (#845) @ZocoLini
+- Peer reputation module cleanup (#328) @ZocoLini
+- Widen `DEFAULT_COINJOIN_GAP_LIMIT` from 30 to 100 for dashj parity (#868) @bfoss765
+- Replace `TARGET_PEERS` with the existing `max_peers` config field (#827) @ZocoLini
+- Reduce debug log verbosity in `dash-spv` (#917) @ZocoLini
+- Add recent mainnet and testnet checkpoints (#857) @xdustinface
+- Refresh masternode seed files and the mainnet seed list (#805, #874, #906, #963, #983, #970)
+
+### Fixed
+
+- Honor the account index in the DashPay derivation path (#813) @shumkov
+- Prevent a filter sync crash on a new block after a full sync (#816) @xdustinface
+- Resolve a just-retired quorum by walking earlier masternode lists (#801) @xdustinface
+- Reprocess blocks on rescan against newly derived scripts (#820) @xdustinface
+- Compute the SML entry hash with `SER_GETHASH` semantics (#798) @xdustinface
+- Remove a release build warning (#825) @ZocoLini
+- Reserve selected UTXOs to prevent double spends (#812) @xdustinface
+- Degrade gracefully when advisory file locking is unsupported (#841) @QuantumExplorer
+- Avoid filter sync getting stuck on the first new block after a restart (#835) @xdustinface
+- Don't build asset locks on unconfirmed funds (#836) @xdustinface
+- Preserve UTXO flags across reprocessing (#837) @xdustinface
+- Actionable error when `add_account(_, None)` hits a keyless wallet (#847) @lklimek
+- Derive the storage lockfile path from the full directory name (#862) @QuantumExplorer
+- Zeroize `ExtendedBLSPrivKey` and `ExtendedEd25519PrivKey` on drop (#859) @QuantumExplorer
+- Match masternode owner and voting key hashes in compact filters (#863) @xdustinface
+- Match masternode collateral outpoints in compact filters (#864) @xdustinface
+- Return the fee the transaction actually pays from `build` and `build_signed` (#872) @QuantumExplorer
+- Cover CoinJoin and DashPay accounts for AssetLock routing (#867) @bfoss765
+- Derive BLS operator and Ed25519 platform node keys per DashSync and dashbls (#879) @QuantumExplorer
+- Extend the gap limit for operator keys like owner and voting keys (#882) @QuantumExplorer
+- Platform node id is the Tenderdash node ID, not hash160 (#884) @QuantumExplorer
+- Normalize `PlatformNodeId` to canonical byte order at the consensus boundary (#889) @QuantumExplorer
+- Don't preload filters below the stored range on filter download start (#893) @QuantumExplorer
+- Fix issue 911 in `key-wallet` (#914) @ZocoLini
+- Rewrite branch-and-bound coin selection (#919) @ZocoLini
+- Recover InstantSend locks received before quorum sync completes (#895) @bfoss765
+- Record an out-of-order UTXO spend so it no longer shows a phantom unspent balance (#909) @bfoss765
+- Fix the dashd process port assignment in tests (#923) @ZocoLini
+- Stop counting a contact's watch-only coins as the wallet's (#926) @romchornyi
+- Never offer an outpoint the builder already holds (#931) @QuantumExplorer
+- Stop the filter rescan loop when the chain anchors above the wallet (#933) @xdustinface
+- Use `WalletAccountCreationOptions::default()` in the benchmark framework (#938) @ZocoLini
+- Requeue in-flight downloads when a single peer disconnects (#941) @xdustinface
+- Reliable peer selection and stall handling during sync (#943) @xdustinface
+- Reissue requeued masternode requests from `tick` (#953) @xdustinface
+- Key rotation ChainLock signatures per quorum work block (#934) @xdustinface
+- Resume on the invariant `start_download` asserts (#955) @romchornyi
+- Release clean storage segments below the committed height during long scans (#946) @bfoss765
+- Enable `key-wallet/getrandom` for mnemonic generation (#945) @QuantumExplorer
+- Stop a never-broadcast transaction from crediting money that does not exist (#961) @romchornyi
+- Promote finished header segments from the tick, not only on a message (#960) @romchornyi
+- Rescan committed filter ranges for newly derived scripts (#866) @HashEngineering
+- Collect a sweep's surviving inputs once instead of per candidate (#966) @romchornyi
+- Extend the CFHeaders queue from the tick, not only on a header event (#964) @romchornyi
+- Walk a sweep's descendant closure once instead of per generation (#969) @romchornyi
+- Recover masternode sync from a rejected QRInfo (#947) @bfoss765
+- Accept non-English BIP-39 mnemonics on all parse paths (#980) @llbartekll
+- Count acceptance signals that arrived before the broadcast (#982) @romchornyi
+- Coalesce committed-range filter rescans across batch commits (#974) @romchornyi
+- Build `dash-spv-bench` on a Linux host and survive having no terminal (#987) @ZocoLini
+- Report the transactions each account knows in `dash-spv-bench` (#984) @ZocoLini
+- Stop pruning spent CoinJoin addresses from the filter scan (#985) @ZocoLini
+- Coinbase maturity clock (#996) @ZocoLini
+- Promote confirmed spend-only transactions (#998) @shumkov
+- Ask every account whether a transaction is new, not just the matched ones (#1000) @ZocoLini
+- Keep a spend-first coin recognisable so its spend stays in history (#1001) @ZocoLini
+- Discover DashPay asset unlock receipts (#1004) @PastaPastaPasta
+- Stop losing derived scripts, and close the loop on wallet state (#989) @ZocoLini
+- Prune observed spends during the initial sync, so a wallet persisted mid-sync loads again (#1014) @ZocoLini
+- Only decode a special payload from transaction version 3 (#1155) @ZocoLini
+- Keep the pre-v4 serde shape of `CoinbasePayload` (#1149) @ZocoLini
+- Send the ChainLock block hash in display order to `submitchainlock` (#1148) @ZocoLini
+- Consult every fund-bearing account for provider transactions (#1009) @ZocoLini
+- Extend DIP-15 contact pools as their payments arrive (#1035) @ZocoLini
+- Keep a mined transaction promotable when its IS lock arrives late (#1037) @ZocoLini
+- Re-apply a spend whose coin was funded after it (#1015) @ZocoLini
+- Reject a ChainLock that the masternode list below its signing height refuses (#1059) @ZocoLini
+- Reject headers messages above Core's batch limit (#1140) @ZocoLini
+- Keep RPC request arguments and results out of the logs (#1147) @ZocoLini
+- Sweep a conflict loser's keys-only records too (#1143) @lklimek
+- Set LLMQ params to Dash Core's values (#1187) @ZocoLini
 
 ## 0.44.0 - 2026-07-01
 

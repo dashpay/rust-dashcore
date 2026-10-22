@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use dash_spv::storage::DiskStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient, EventHandler};
 use dashcore::Network;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
@@ -150,9 +149,6 @@ async fn main() -> Result<()> {
         config.add_peer(*addr);
     }
 
-    let storage_manager =
-        DiskStorageManager::new(&config).await.map_err(|e| anyhow!("storage manager: {e}"))?;
-
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(network);
     let birth_height = start_height.unwrap_or(0);
     let mut wallet_ids = Vec::with_capacity(mnemonics.len());
@@ -174,15 +170,10 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow!("network new: {e}"))?;
 
-    let client = DashSpvClient::new(
-        config,
-        network,
-        storage_manager,
-        wallet,
-        vec![handler.clone() as Arc<dyn EventHandler>],
-    )
-    .await
-    .map_err(|e| anyhow!("client new: {e}"))?;
+    let client =
+        DashSpvClient::new(config, network, wallet, vec![handler.clone() as Arc<dyn EventHandler>])
+            .await
+            .map_err(|e| anyhow!("client new: {e}"))?;
 
     client.run().await.map_err(|e| anyhow!("client run: {e}"))?;
 

@@ -42,6 +42,9 @@ pub trait MasternodeStorage: Send + Sync + 'static {
         height: CoreBlockHeight,
         qr_info: &QRInfo,
     ) -> StorageResult<()>;
+
+    /// Drops the messages stored above `height`.
+    async fn truncate_above(&mut self, height: CoreBlockHeight) -> StorageResult<()>;
 }
 
 pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
@@ -343,6 +346,21 @@ impl<H: BlockHeaderStorage> MasternodeStorage for PersistentMasternodeStorage<H>
         let folder = self.folder();
         Self::store_message(&folder, &mut self.qr_infos, Self::QRINFO_PREFIX, height, qr_info).await
     }
+
+    async fn truncate_above(&mut self, height: CoreBlockHeight) -> StorageResult<()> {
+        // A message leaves its index only once its file is gone, so a retry
+        // finds what a failed deletion left.
+        for index in [&mut self.diffs, &mut self.qr_infos] {
+            while let Some(entry) = index.last_entry().filter(|entry| *entry.key() > height) {
+                match tokio::fs::remove_file(entry.get()).await {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                    _ => entry.remove(),
+                };
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -370,6 +388,23 @@ mod tests {
         )
         .await
         .expect("open")
+    }
+
+    #[tokio::test]
+    async fn truncating_drops_the_messages_stored_above() {
+        let dir = TempDir::new().unwrap();
+        let heights = [(0x00, 0), (0xAA, 100), (0xBB, 200)];
+        let mut storage = open_storage(&dir, &heights).await;
+
+        storage.store_diff(100, &MnListDiff::dummy(0x00, 0xAA)).await.unwrap();
+        storage.store_diff(200, &MnListDiff::dummy(0xAA, 0xBB)).await.unwrap();
+        storage.store_qr_info(200, &QRInfo::dummy(0xBB)).await.unwrap();
+
+        storage.truncate_above(100).await.unwrap();
+
+        let reopened = open_storage(&dir, &heights).await;
+        assert_eq!(reopened.diffs.keys().copied().collect::<Vec<_>>(), vec![100]);
+        assert!(reopened.qr_infos.is_empty());
     }
 
     #[tokio::test]

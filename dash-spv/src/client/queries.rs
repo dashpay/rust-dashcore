@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 use super::DashSpvClient;
 use hex_conservative::DisplayHex;
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     // ============ Peer Queries ============
 
     /// Get the number of connected peers.

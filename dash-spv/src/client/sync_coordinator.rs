@@ -14,14 +14,13 @@ use super::event_handler::{
 use super::DashSpvClient;
 use crate::error::Result;
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
 use crate::sync::SyncEvent;
 use crate::SpvError;
 use key_wallet_manager::WalletInterface;
 
 const SYNC_COORDINATOR_TICK_MS: Duration = Duration::from_millis(100);
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Start the client and run the sync loop in the background until `stop()` is called.
     ///
     /// Subscribes to all event channels internally and dispatches events to the

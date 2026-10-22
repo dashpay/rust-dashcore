@@ -81,6 +81,30 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.rotated_quorums_per_cycle.retain(|hash, _| !below_floor.contains(hash));
     }
 
+    /// Drops what the engine built on blocks above `height`, once the header
+    /// chain has dropped them for another branch: the lists above it, and the
+    /// rotated cycles whose base block left the chain or whose mining window
+    /// ends above it, since their commitments may have been mined on the
+    /// dropped branch.
+    pub(crate) async fn truncate_above(&mut self, height: CoreBlockHeight) {
+        if let Some(above) = height.checked_add(1) {
+            self.masternode_lists.split_off(&above);
+        }
+
+        let mining_window_end = self.network.isd_llmq_type().params().dkg_params.mining_window_end;
+        let mut dropped = BTreeSet::new();
+        for cycle_hash in self.rotated_quorums_per_cycle.keys() {
+            let mined_below = self
+                .height_of(cycle_hash)
+                .await
+                .is_some_and(|base| base.saturating_add(mining_window_end) <= height);
+            if !mined_below {
+                dropped.insert(*cycle_hash);
+            }
+        }
+        self.rotated_quorums_per_cycle.retain(|hash, _| !dropped.contains(hash));
+    }
+
     /// Sets the verification status of a quorum in every list holding it.
     /// Lists that shared a quorum map keep sharing the updated one.
     pub(super) fn set_quorum_status(
@@ -433,6 +457,35 @@ mod prune_tests {
         extend(&mut engine, TIP, TIP + 1).await;
 
         assert_eq!(heights(&engine), vec![floor, TIP, TIP + 1]);
+    }
+
+    /// Once the header chain follows another branch at `fork`, nothing built on
+    /// the dropped blocks may answer for them: the lists above the fork go, and
+    /// so does a rotated cycle whose base left the chain or whose commitments
+    /// could have been mined above the fork.
+    #[tokio::test]
+    async fn truncating_above_a_fork_drops_what_the_dropped_blocks_built() {
+        let fork = TIP;
+        let window_end = Network::Mainnet.isd_llmq_type().params().dkg_params.mining_window_end;
+        let mut engine = TestEngine::dummy_with_lists(&[fork - 100, fork, fork + 1, fork + 50]);
+        let mined_below = fork - window_end;
+        let mined_above = mined_below + 1;
+        let left_the_chain = fork + 10;
+        for base in [mined_below, mined_above, left_the_chain] {
+            engine.feed_block_height(base, BlockHash::dummy(base));
+            engine.rotated_quorums_per_cycle.insert(BlockHash::dummy(base), Default::default());
+        }
+        for height in [fork + 1, left_the_chain, fork + 50] {
+            engine.forget_block(&BlockHash::dummy(height));
+        }
+
+        engine.truncate_above(fork).await;
+
+        assert_eq!(heights(&engine), vec![fork - 100, fork]);
+        assert_eq!(
+            engine.rotated_quorums_per_cycle.keys().collect::<Vec<_>>(),
+            vec![&BlockHash::dummy(mined_below)]
+        );
     }
 
     /// As a legacy QRInfo or a batch of work-block lists does.

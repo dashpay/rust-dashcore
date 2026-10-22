@@ -592,8 +592,12 @@ impl WalletInfoInterface for ManagedWalletInfo {
         for account in self.accounts.all_accounts_mut() {
             match account {
                 ManagedAccountRefMut::Funds(funds) => {
-                    let truncation =
-                        funds.truncate_above(height, &dropped_spends, &self.instant_send_locks);
+                    let truncation = funds.truncate_above(
+                        height,
+                        &dropped_spends,
+                        &self.instant_send_locks,
+                        &self.spent_claims,
+                    );
                     txids.extend(truncation.txids);
                     unconfirmed_txids.extend(truncation.unconfirmed_txids);
                     restored_outpoints.extend(truncation.restored_outpoints);

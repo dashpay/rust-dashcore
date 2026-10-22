@@ -81,8 +81,9 @@ async fn test_sync_follows_reorg() {
     .await
     .expect("client did not follow the reorg");
     wait_for_wallet_synced(&wallet, &wallet_id, new_tip).await;
-    assert_eq!(client_handle.client.tip_height().await, new_tip);
-    assert_eq!(client_handle.client.tip_hash().await, Some(node.get_best_block_hash()));
+    let tip = client_handle.client.tip_header().await.expect("tip");
+    assert_eq!(tip.height(), new_tip);
+    assert_eq!(*tip.hash(), node.get_best_block_hash());
 
     let balance = wallet.read().await.get_wallet_balance(&wallet_id).unwrap();
     assert_eq!(balance.total(), funding_amount, "only the funding coin is left, unspent");

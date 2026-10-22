@@ -13,7 +13,7 @@ The project follows a layered, trait-based architecture with clear separation of
 ### Core Modules
 - **`client/`**: High-level client API (`DashSpvClient`) and configuration (`ClientConfig`)
 - **`network/`**: TCP connections, handshake management, message routing, and peer management
-- **`storage/`**: Storage abstraction with memory and disk backends via `StorageManager` trait
+- **`storage/`**: Internal disk storage, opened by the client from `ClientConfig::storage_path`
 - **`sync/`**: Synchronization coordinators for headers, filters, and masternode data
 - **`sync/sequential/`**: Sequential sync manager that handles all synchronization phases
 - **`validation/`**: Header validation, ChainLock, and InstantLock verification
@@ -22,7 +22,7 @@ The project follows a layered, trait-based architecture with clear separation of
 - **`error.rs`**: Unified error handling with domain-specific error types
 
 ### Key Design Patterns
-- **Trait-based abstractions**: `NetworkManager`, `StorageManager` for swappable implementations
+- **Trait-based abstractions**: `NetworkManager` for swappable implementations
 - **Async/await throughout**: Built on tokio runtime
 - **Sequential sync**: Uses `SyncManager` for organized phase-based synchronization
 - **State management**: Each sync phase tracked independently with clear state transitions
@@ -91,9 +91,8 @@ The `SyncManager` coordinates all synchronization through a phase-based approach
 
 Each phase must complete before the next begins, ensuring consistency and simplifying error recovery.
 
-### Storage Backends
-One storage implementation via the `StorageManager` trait:
-- `DiskStorageManager`: Persistent disk storage
+### Storage
+Internal and not exported: the client opens a `DiskStorageManager` at `ClientConfig::storage_path`.
 
 ### Network Layer
 TCP-based networking with proper Dash protocol implementation:

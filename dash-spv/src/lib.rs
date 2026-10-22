@@ -14,7 +14,6 @@
 //! ```no_run
 //! use dash_spv::{DashSpvClient, ClientConfig};
 //! use dash_spv::network::PeerNetworkManager;
-//! use dash_spv::storage::DiskStorageManager;
 //! use dashcore::Network;
 //! use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 //! use key_wallet_manager::WalletManager;
@@ -29,14 +28,12 @@
 //!
 //!     // Create the required components
 //!     let network = PeerNetworkManager::new(&config).await?;
-//!     let storage = DiskStorageManager::new(&config).await?;
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 //!
 //!     // Create and run the client
 //!     let client = DashSpvClient::new(
 //!         config.clone(),
 //!         network,
-//!         storage,
 //!         wallet,
 //!         vec![Arc::new(())],
 //!     ).await?;
@@ -54,7 +51,7 @@
 //! # Features
 //!
 //! - **Async/await support**: Built on tokio for modern async Rust
-//! - **Modular architecture**: Easily swap out components like storage backends
+//! - **Modular architecture**: Easily swap out components like the network manager and wallet
 //! - **Comprehensive validation**: Configurable validation levels from basic to full PoW
 //! - **BIP157 support**: Efficient transaction filtering with compact block filters
 //! - **Dash-specific features**: ChainLocks, InstantLocks, and masternode list sync
@@ -62,6 +59,9 @@
 //! - **Extensive logging**: Built-in tracing support for debugging
 
 #![deny(clippy::disallowed_types)]
+
+mod sml_engine;
+mod storage;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -71,8 +71,6 @@ pub mod client;
 pub mod error;
 pub mod logging;
 pub mod network;
-mod sml_engine;
-pub mod storage;
 pub mod sync;
 pub mod types;
 pub mod validation;
@@ -84,6 +82,7 @@ pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
+pub use storage::BlockHeaderTip;
 pub use sync::{BroadcastHoldout, BroadcastResult};
 pub use tracing::level_filters::LevelFilter;
 pub use types::{FilterMatch, ValidationMode};

@@ -45,6 +45,8 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     pub(super) metadata_storage: Arc<RwLock<M>>,
     /// Pipeline for parallel header downloads (used for both initial sync and post-sync).
     pub(super) pipeline: HeadersPipeline,
+    /// Compiled-in checkpoints, which no fork may branch off below.
+    checkpoint_manager: &'static CheckpointManager,
     /// Pending block announcements waiting for headers message (post-sync).
     pub(super) pending_announcements: HashMap<BlockHash, Instant>,
     /// Peers we've sent a GetHeaders to after sync, so Dash Core knows our tip
@@ -66,7 +68,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     pub async fn new(
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
-        checkpoint_manager: Arc<CheckpointManager>,
+        checkpoint_manager: &'static CheckpointManager,
     ) -> SyncResult<Self> {
         let tip = header_storage
             .read()
@@ -91,6 +93,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             header_storage,
             metadata_storage,
             pipeline: HeadersPipeline::new(checkpoint_manager),
+            checkpoint_manager,
             pending_announcements: HashMap::new(),
             announced_peers: HashSet::new(),
         })
@@ -186,8 +189,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     }
 
     /// Height where `headers` branch off the stored chain below its tip, if they
-    /// do. A branch off below the best ChainLock is not followed: the blocks it
-    /// locks are final.
+    /// do. A branch off below the best ChainLock, or below the newest checkpoint
+    /// the stored chain reaches, is not followed: the blocks they fix are final.
     async fn fork_height(&self, headers: &[HashedBlockHeader]) -> SyncResult<Option<u32>> {
         let storage = self.header_storage.read().await;
 
@@ -203,6 +206,18 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             else {
                 return Ok(None);
             };
+
+            if let Some(checkpoint) = tip
+                .and_then(|tip| self.checkpoint_manager.last_checkpoint_before_height(tip))
+                .filter(|checkpoint| fork_height < checkpoint.height())
+            {
+                tracing::warn!(
+                    "Ignoring a fork at height {}, below the checkpoint at {}",
+                    fork_height,
+                    checkpoint.height()
+                );
+                return Ok(None);
+            }
 
             let chain_lock = self
                 .metadata_storage
@@ -351,7 +366,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::checkpoints::testnet_checkpoints;
     use crate::network::{MessageType, NetworkEvent, NetworkRequest, RequestSender};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
@@ -366,8 +380,8 @@ mod tests {
     type TestBlockHeadersManager =
         BlockHeadersManager<PersistentBlockHeaderStorage, PersistentMetadataStorage>;
 
-    fn create_test_checkpoint_manager() -> Arc<CheckpointManager> {
-        Arc::new(CheckpointManager::new(testnet_checkpoints()))
+    fn create_test_checkpoint_manager() -> &'static CheckpointManager {
+        CheckpointManager::for_network(dashcore::Network::Testnet)
     }
 
     async fn create_test_manager() -> TestBlockHeadersManager {
@@ -417,6 +431,41 @@ mod tests {
         let branch = Header {
             prev_blockhash: stored[branch_off as usize].block_hash(),
             ..Header::dummy(1_000)
+        };
+
+        assert_eq!(
+            manager.fork_height(&[HashedBlockHeader::from(&branch)]).await.unwrap(),
+            expected
+        );
+    }
+
+    /// Blocks below the newest checkpoint the stored chain reaches are final, as
+    /// below the best ChainLock. A checkpoint above the tip fixes nothing yet,
+    /// or no fork could ever be followed before the chain reached it.
+    #[test_case(49_999, None; "below the checkpoint")]
+    #[test_case(50_000, Some(50_000); "at the checkpoint")]
+    #[test_case(50_001, Some(50_001); "above the checkpoint")]
+    #[tokio::test]
+    async fn a_branch_off_below_the_newest_reached_checkpoint_is_no_fork(
+        branch_off: u32,
+        expected: Option<u32>,
+    ) {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let start = 49_990;
+        let stored: Vec<_> =
+            Header::dummy_batch(start..50_010).iter().map(HashedBlockHeader::from).collect();
+        storage.store_headers_at_height(&stored, start).await.unwrap();
+        let manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+        )
+        .await
+        .unwrap();
+
+        let branch = Header {
+            prev_blockhash: *stored[(branch_off - start) as usize].hash(),
+            ..Header::dummy(1_000_000)
         };
 
         assert_eq!(
