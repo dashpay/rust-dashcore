@@ -75,6 +75,8 @@ mod tests {
     const NETWORK: Network = Network::Testnet;
     const DENOM: u64 = 100_001;
     const GAP: u32 = crate::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
+    /// Deep enough to sit far past the gap limit, shallow enough for debug test runs.
+    const DEPTH: u32 = 2_999;
 
     fn fresh() -> (Wallet, ManagedWalletInfo) {
         let wallet =
@@ -158,11 +160,11 @@ mod tests {
     #[tokio::test]
     async fn coins_past_the_gap_are_found_only_after_extending() {
         for internal in [false, true] {
-            let far_index = GAP + 4_000;
+            let far_index = DEPTH - 1;
             for extend in [false, true] {
                 let (mut wallet, mut managed) = fresh();
                 if extend {
-                    managed.extend_coinjoin_pools(&wallet, 11_999).expect("extend");
+                    managed.extend_coinjoin_pools(&wallet, DEPTH).expect("extend");
                 }
                 let far = coinjoin_address(&wallet, internal, far_index);
                 let tx = Transaction::dummy(&far, 0..1, &[DENOM]);
@@ -182,14 +184,14 @@ mod tests {
     #[tokio::test]
     async fn trim_keeps_used_addresses_and_the_gap() {
         let (mut wallet, mut managed) = fresh();
-        managed.extend_coinjoin_pools(&wallet, 11_999).expect("extend");
+        managed.extend_coinjoin_pools(&wallet, DEPTH).expect("extend");
         let used = 2_500;
         let far = coinjoin_address(&wallet, false, used);
         let tx = Transaction::dummy(&far, 0..1, &[DENOM]);
         managed.check_core_transaction(&tx, block(1), &mut wallet, true, true).await;
 
         let pruned = managed.trim_coinjoin_pools();
-        assert_eq!(pruned, (11_999 - (used + GAP)) + (11_999 - (GAP - 1)));
+        assert_eq!(pruned, (DEPTH - (used + GAP)) + (DEPTH - (GAP - 1)));
         let external = pool(&managed, AddressPoolType::External);
         assert_eq!(external.stats().highest_generated, Some(used + GAP));
         assert!(external.info_at_index(used).is_some_and(|info| info.is_used()));
