@@ -80,7 +80,6 @@ pub mod test_utils;
 #[macro_use]
 mod test_macros;
 mod internal_macros;
-mod parse;
 #[cfg(feature = "serde")]
 pub mod serde_utils;
 

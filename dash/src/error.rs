@@ -5,7 +5,7 @@ use core::fmt;
 use internals::write_err;
 
 use crate::consensus::encode;
-pub use crate::parse::ParseIntError;
+pub use bitcoin_units::parse_int::ParseIntError;
 
 /// A general error code, other errors should implement conversions to/from this
 /// if appropriate.
