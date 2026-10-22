@@ -31,11 +31,11 @@ impl ManagedWalletInfo {
     /// addresses are reported nowhere but in the returned count. The pools stay
     /// that deep for the life of the wallet state.
     ///
-    /// Returns the number of addresses generated. The depth, the wallet, the
-    /// fresh state and every CoinJoin account's key source are checked before
-    /// anything changes. A derivation error past that point leaves the pools
-    /// grown partway (the accounts that grew still get their monitor revision
-    /// bumped); discard the wallet state then.
+    /// Returns the number of addresses generated; indices already in a pool are
+    /// skipped. The depth, the wallet, the fresh state and every CoinJoin
+    /// account's key source are checked before anything changes. A derivation
+    /// error past that point leaves the pools grown partway (the revisions are
+    /// still bumped); discard the wallet state then.
     pub fn extend_coinjoin_pools(&mut self, wallet: &Wallet, last_index: u32) -> Result<usize> {
         if last_index >= MAX_COINJOIN_POOL_DEPTH {
             return Err(Error::InvalidParameter(format!(
@@ -47,8 +47,10 @@ impl ManagedWalletInfo {
                 "the wallet does not own this wallet info".to_string(),
             ));
         }
-        let synced_past_birth =
-            self.metadata.last_processed_height > self.metadata.birth_height.saturating_sub(1);
+        let floor = self.metadata.birth_height.saturating_sub(1);
+        let synced_past_birth = self.metadata.last_processed_height > floor
+            || self.metadata.synced_height > floor
+            || self.metadata.last_applied_chain_lock.is_some();
         if synced_past_birth
             || self.accounts.all_accounts().iter().any(|account| !account.transactions().is_empty())
         {
@@ -65,21 +67,21 @@ impl ManagedWalletInfo {
                 index: *index,
             });
             if matches!(key_source, KeySource::NoKeySource) {
-                return Err(Error::InvalidParameter(format!(
-                    "the wallet has no key source for CoinJoin account {index}"
-                )));
+                return Err(Error::NoKeySource);
             }
             key_sources.push(key_source);
         }
 
         let mut generated = 0;
+        let mut outcome = Ok(());
         for (account, key_source) in self.accounts.coinjoin_accounts.values_mut().zip(&key_sources)
         {
             let mut account_generated = 0;
-            let mut outcome = Ok(());
             'pools: for pool in account.managed_account_type_mut().address_pools_mut() {
-                let start = pool.highest_generated.map_or(0, |h| h + 1);
-                for index in start..=last_index {
+                for index in 0..=last_index {
+                    if pool.info_at_index(index).is_some() {
+                        continue;
+                    }
                     if let Err(error) = pool.generate_address_at_index(index, key_source, true) {
                         outcome = Err(error);
                         break 'pools;
@@ -91,9 +93,16 @@ impl ManagedWalletInfo {
                 account.bump_monitor_revision();
             }
             generated += account_generated;
-            outcome?;
+            if outcome.is_err() {
+                break;
+            }
         }
-        Ok(generated)
+        if generated > 0 {
+            // Like an account add: a filter scan snapshot taken before this
+            // call must not commit (see `rewind_sync_checkpoint_for_new_account`).
+            self.account_generation += 1;
+        }
+        outcome.map(|()| generated)
     }
 }
 
@@ -140,7 +149,7 @@ mod tests {
         let before = highest_generated(managed);
         assert!(matches!(
             managed.extend_coinjoin_pools(wallet, DEPTH),
-            Err(Error::InvalidParameter(_))
+            Err(Error::InvalidParameter(_) | Error::NoKeySource)
         ));
         assert_eq!(highest_generated(managed), before, "nothing may change on a rejection");
     }
@@ -172,7 +181,9 @@ mod tests {
                 for (index, expected) in [(DEPTH, DENOM), (DEPTH + 1, 0)] {
                     let (mut wallet, mut managed) = fresh(network);
                     let revision = managed.accounts.coinjoin_accounts[&0].monitor_revision();
+                    let generation = managed.account_generation();
                     managed.extend_coinjoin_pools(&wallet, DEPTH).expect("extend");
+                    assert!(managed.account_generation() > generation);
                     assert!(managed.accounts.coinjoin_accounts[&0].monitor_revision() > revision);
 
                     let far = coinjoin_address(&wallet, network, internal, index);
@@ -218,5 +229,21 @@ mod tests {
         let (wallet, mut synced) = fresh(Network::Testnet);
         synced.metadata.last_processed_height = 10;
         assert_rejected(&mut synced, &wallet);
+
+        let (wallet, mut certified) = fresh(Network::Testnet);
+        certified.metadata.synced_height = 10;
+        assert_rejected(&mut certified, &wallet);
+    }
+
+    #[tokio::test]
+    async fn extend_rejects_a_wallet_that_already_saw_a_transaction() {
+        let (mut wallet, mut managed) = fresh(Network::Testnet);
+        let near = coinjoin_address(&wallet, Network::Testnet, false, 0);
+        let tx = Transaction::dummy(&near, 0..1, &[DENOM]);
+        managed
+            .check_core_transaction(&tx, TransactionContext::Mempool, &mut wallet, true, true)
+            .await;
+        assert_eq!(managed.metadata.last_processed_height, 0);
+        assert_rejected(&mut managed, &wallet);
     }
 }
