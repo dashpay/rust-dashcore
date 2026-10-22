@@ -13,8 +13,9 @@ use crate::KeySource;
 
 /// Upper bound (exclusive) for the `last_index` passed to
 /// [`ManagedWalletInfo::extend_coinjoin_pools`]. DashSync derived about
-/// 10,500 CoinJoin addresses per chain on the deepest wallets seen.
-pub const MAX_COINJOIN_POOL_DEPTH: u32 = 100_000;
+/// 10,500 CoinJoin addresses per chain on the deepest wallets seen; much
+/// deeper pools saturate dash-spv's size-capped mempool bloom filter.
+pub const MAX_COINJOIN_POOL_DEPTH: u32 = 25_000;
 
 impl ManagedWalletInfo {
     /// Derive both pools of every CoinJoin account up to and including `last_index`.
@@ -22,36 +23,51 @@ impl ManagedWalletInfo {
     /// Call it on fresh wallet state, before the first sync from the wallet's
     /// birth height and before the wallet's addresses are persisted: addresses
     /// added after a block was processed do not bring that block back, and the
-    /// new addresses are not reported anywhere but in the returned count.
+    /// new addresses are not reported anywhere but in the returned count. The
+    /// pools stay that deep for the life of the wallet state.
     ///
-    /// Returns the number of addresses generated. On an error, every account
-    /// whose pools already grew still gets its monitor revision bumped.
+    /// Returns the number of addresses generated. The depth, the wallet and
+    /// every CoinJoin account's key source are checked before anything changes.
+    /// A derivation error past that point leaves the pools grown partway (the
+    /// accounts that grew still get their monitor revision bumped); discard the
+    /// wallet state then, as it is no longer fresh.
     pub fn extend_coinjoin_pools(&mut self, wallet: &Wallet, last_index: u32) -> Result<usize> {
         if last_index >= MAX_COINJOIN_POOL_DEPTH {
             return Err(Error::InvalidParameter(format!(
                 "CoinJoin pool depth {last_index} must be below {MAX_COINJOIN_POOL_DEPTH}"
             )));
         }
-        let mut generated = 0;
-        for (index, account) in self.accounts.coinjoin_accounts.iter_mut() {
+        if wallet.wallet_id != self.wallet_id {
+            return Err(Error::InvalidParameter(
+                "the wallet does not own this wallet info".to_string(),
+            ));
+        }
+        let mut key_sources = Vec::with_capacity(self.accounts.coinjoin_accounts.len());
+        for index in self.accounts.coinjoin_accounts.keys() {
             let key_source = wallet.key_source_for_account(AccountType::CoinJoin {
                 index: *index,
             });
             if matches!(key_source, KeySource::NoKeySource) {
-                continue;
+                return Err(Error::InvalidParameter(format!(
+                    "the wallet has no key source for CoinJoin account {index}"
+                )));
             }
+            key_sources.push(key_source);
+        }
+
+        let mut generated = 0;
+        for (account, key_source) in self.accounts.coinjoin_accounts.values_mut().zip(&key_sources)
+        {
             let mut account_generated = 0;
             let mut outcome = Ok(());
-            for pool in account.managed_account_type_mut().address_pools_mut() {
+            'pools: for pool in account.managed_account_type_mut().address_pools_mut() {
                 let start = pool.highest_generated.map_or(0, |h| h + 1);
-                if start > last_index {
-                    continue;
-                }
-                let result = pool.generate_addresses(last_index - start + 1, &key_source, true);
-                account_generated += (pool.highest_generated.map_or(0, |h| h + 1) - start) as usize;
-                if let Err(error) = result {
-                    outcome = Err(error);
-                    break;
+                for index in start..=last_index {
+                    if let Err(error) = pool.generate_address_at_index(index, key_source, true) {
+                        outcome = Err(error);
+                        break 'pools;
+                    }
+                    account_generated += 1;
                 }
             }
             if account_generated > 0 {
@@ -168,46 +184,77 @@ mod tests {
     }
 
     #[test]
+    fn extend_rejects_a_wallet_that_does_not_own_the_info() {
+        let (_, mut managed) = fresh(Network::Testnet);
+        let other = Wallet::from_seed_bytes(
+            [0x02; 64],
+            Network::Testnet,
+            WalletAccountCreationOptions::Default,
+        )
+        .expect("wallet");
+        assert!(matches!(
+            managed.extend_coinjoin_pools(&other, 999),
+            Err(Error::InvalidParameter(_))
+        ));
+        assert_eq!(pool(&managed, AddressPoolType::External).highest_generated, Some(GAP - 1));
+    }
+
+    #[test]
     fn extend_leaves_other_accounts_alone() {
+        fn others(managed: &ManagedWalletInfo) -> Vec<(String, u64, Vec<u32>)> {
+            managed
+                .accounts
+                .all_accounts()
+                .into_iter()
+                .filter(|account| {
+                    !matches!(
+                        account.managed_account_type().to_account_type(),
+                        AccountType::CoinJoin { .. }
+                    )
+                })
+                .map(|account| {
+                    let pools = account
+                        .managed_account_type()
+                        .address_pools()
+                        .iter()
+                        .map(|pool| pool.stats().total_generated)
+                        .collect();
+                    (
+                        format!("{:?}", account.managed_account_type().to_account_type()),
+                        account.monitor_revision(),
+                        pools,
+                    )
+                })
+                .collect()
+        }
         let (wallet, mut managed) = fresh(Network::Testnet);
-        let before: Vec<_> = managed
-            .accounts
-            .standard_bip44_accounts
-            .values()
-            .map(|a| a.managed_account_type().address_pools()[0].stats().total_generated)
-            .collect();
+        let before = others(&managed);
+        assert!(!before.is_empty());
         managed.extend_coinjoin_pools(&wallet, 999).expect("extend");
-        let after: Vec<_> = managed
-            .accounts
-            .standard_bip44_accounts
-            .values()
-            .map(|a| a.managed_account_type().address_pools()[0].stats().total_generated)
-            .collect();
-        assert_eq!(before, after);
+        assert_eq!(others(&managed), before);
     }
 
     /// 32008: a coin far past the gap limit on either chain is credited by the
-    /// regular check once the pools are extended past it, and missed without.
+    /// regular check once the pools are extended through its index (inclusive),
+    /// and missed without, or one index past the depth.
     #[tokio::test]
     async fn coins_past_the_gap_are_found_only_after_extending() {
         for network in [Network::Mainnet, Network::Testnet] {
             for internal in [false, true] {
-                for extend in [false, true] {
+                for (extend, index, expected) in
+                    [(false, DEPTH, 0), (true, DEPTH, DENOM), (true, DEPTH + 1, 0)]
+                {
                     let (mut wallet, mut managed) = fresh(network);
                     if extend {
                         managed.extend_coinjoin_pools(&wallet, DEPTH).expect("extend");
                     }
-                    let far = coinjoin_address(&wallet, network, internal, DEPTH - 1);
+                    let far = coinjoin_address(&wallet, network, internal, index);
                     let tx = Transaction::dummy(&far, 0..1, &[DENOM]);
                     let result = managed
                         .check_core_transaction(&tx, block(1), &mut wallet, true, true)
                         .await;
-                    let expected = if extend {
-                        DENOM
-                    } else {
-                        0
-                    };
-                    let case = format!("{network:?} internal={internal} extend={extend}");
+                    let case =
+                        format!("{network:?} internal={internal} extend={extend} index={index}");
                     assert_eq!(result.total_received, expected, "{case}");
                     assert_eq!(managed.balance().total(), expected, "{case}");
                 }
