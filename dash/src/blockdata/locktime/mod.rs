@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn relative_lock_time_layout() {
-        let height = relative::Height::from(100);
+        let height = relative::Height::from_count(100);
         let time = relative::Time::from_512_second_intervals(70);
         let blocks = relative::LockTime::from(height);
         let seconds = relative::LockTime::from(time);
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn relative_lock_time_serde() {
         let config = bincode::config::standard();
-        let height = relative::Height::from(100);
+        let height = relative::Height::from_count(100);
         let time = relative::Time::from_512_second_intervals(70);
         let blocks = relative::LockTime::from(height);
         let seconds = relative::LockTime::from(time);
