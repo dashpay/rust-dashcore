@@ -95,9 +95,6 @@ pub struct TransactionBuilder {
     /// account that holds the UTXO, so each account reserves its own share of
     /// the chosen inputs — all under the one token this build is stamped with.
     funding: Vec<(ReservationSet, HashSet<OutPoint>)>,
-    /// A funding account was being replayed by a CoinJoin recovery, so the
-    /// build must fail rather than spend coins of a past height.
-    replaying_funds: bool,
 }
 
 impl Default for TransactionBuilder {
@@ -122,7 +119,6 @@ impl TransactionBuilder {
             special_payload: None,
             payload_finalizer: None,
             funding: Vec::new(),
-            replaying_funds: false,
         }
     }
 
@@ -199,10 +195,6 @@ impl TransactionBuilder {
         acc: &Account,
         contribute_candidates: bool,
     ) -> Self {
-        if funds_acc.replaying {
-            self.replaying_funds = true;
-            return self;
-        }
         let reserved = funds_acc.reservations().reserved(self.current_height);
         // An outpoint the builder already holds — seeded by `add_inputs`, or
         // offered by an earlier `add_funding` of an overlapping account — must
@@ -460,9 +452,6 @@ impl TransactionBuilder {
     fn assemble_unsigned(
         mut self,
     ) -> Result<(Transaction, Vec<Utxo>, Option<ReservationToken>), BuilderError> {
-        if self.replaying_funds {
-            return Err(BuilderError::RecoveryInProgress);
-        }
         if let Some(TransactionPayload::AssetLockPayloadType(p)) = &self.special_payload {
             if p.credit_outputs.is_empty() {
                 return Err(BuilderError::NoOutputs);
@@ -1051,9 +1040,6 @@ pub enum BuilderError {
         len: usize,
         max: usize,
     },
-    /// The wallet is being replayed by a CoinJoin recovery, so its coins are
-    /// those of a past height; a build has to wait until the replay is done.
-    RecoveryInProgress,
 }
 
 impl fmt::Display for BuilderError {
@@ -1085,9 +1071,6 @@ impl fmt::Display for BuilderError {
                 max,
             } => {
                 write!(f, "OP_RETURN payload too large: {len} bytes (max {max})")
-            }
-            Self::RecoveryInProgress => {
-                write!(f, "The wallet is being replayed by a CoinJoin recovery; try again when it finishes")
             }
         }
     }

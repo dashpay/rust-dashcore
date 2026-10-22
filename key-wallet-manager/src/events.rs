@@ -427,46 +427,6 @@ pub enum WalletEvent {
         /// the parent transaction).
         locked_transactions: BTreeMap<AccountType, Vec<Txid>>,
     },
-    /// The wallet dropped everything it learned from the chain and rewound its
-    /// sync checkpoint to `synced_height`, just below its birth height, to be
-    /// replayed from birth by a CoinJoin recovery
-    /// ([`crate::WalletManager::begin_coinjoin_recovery`]). No other event
-    /// reports what was dropped, and other wallets are not affected.
-    ///
-    /// A consumer mirroring wallet state to disk must delete every
-    /// transaction and UTXO it holds for this wallet, replace its CoinJoin
-    /// address rows with `coinjoin_addresses`, and lower its synced height to
-    /// `synced_height`. The CoinJoin pools are rebuilt so the wallet stops
-    /// watching empty runs; every other address row stays as it is, as the
-    /// wallet keeps those addresses and their usage. Addresses the replay
-    /// derives anew arrive in the usual events. Annotations the consumer
-    /// keeps beside the rows (labels, notes) should survive keyed by txid or
-    /// address: the replay delivers the same transactions again, without them.
-    WalletReset {
-        /// ID of the affected wallet.
-        wallet_id: WalletId,
-        /// The rewound sync checkpoint: one below the wallet's birth height, or
-        /// lower when the wallet had not synced that far.
-        synced_height: CoreBlockHeight,
-        /// Wallet balance after the reset.
-        balance: WalletCoreBalance,
-        /// Every address the rebuilt CoinJoin pools hold.
-        coinjoin_addresses: Vec<DerivedAddress>,
-    },
-    /// A CoinJoin recovery ended: its replay reached the committed sync height
-    /// it was to run to, the wallet's coins are current again and builds from
-    /// it are allowed. `cancelled` says its probe had been stopped before
-    /// ([`crate::WalletManager::cancel_coinjoin_recovery`]).
-    CoinJoinRecoveryFinished {
-        /// ID of the affected wallet.
-        wallet_id: WalletId,
-        /// The committed sync height the replay reached.
-        height: CoreBlockHeight,
-        /// CoinJoin addresses past the gap limit the replay found coins on.
-        found: u32,
-        /// Whether the probe had been cancelled before the replay completed.
-        cancelled: bool,
-    },
 }
 
 impl WalletEvent {
@@ -498,14 +458,6 @@ impl WalletEvent {
                 ..
             }
             | WalletEvent::ChainLockProcessed {
-                wallet_id,
-                ..
-            }
-            | WalletEvent::WalletReset {
-                wallet_id,
-                ..
-            }
-            | WalletEvent::CoinJoinRecoveryFinished {
                 wallet_id,
                 ..
             } => *wallet_id,
@@ -622,28 +574,6 @@ impl fmt::Display for WalletEvent {
                     total_txids,
                 )
             }
-            WalletEvent::WalletReset {
-                synced_height,
-                balance,
-                coinjoin_addresses,
-                ..
-            } => write!(
-                f,
-                "WalletReset(synced_height={}, balance={}, coinjoin_addresses={})",
-                synced_height,
-                balance,
-                coinjoin_addresses.len()
-            ),
-            WalletEvent::CoinJoinRecoveryFinished {
-                height,
-                found,
-                cancelled,
-                ..
-            } => write!(
-                f,
-                "CoinJoinRecoveryFinished(height={}, found={}, cancelled={})",
-                height, found, cancelled
-            ),
         }
     }
 }

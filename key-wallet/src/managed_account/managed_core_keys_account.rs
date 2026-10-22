@@ -195,35 +195,6 @@ impl ManagedCoreKeysAccount {
         promoted
     }
 
-    /// Forget everything this account learned from the chain, for a replay
-    /// from wallet birth: its transaction history, finalized txids and
-    /// per-address totals. `fresh_type` replaces the address pools with newly
-    /// created ones; without it the pools keep their addresses and which of
-    /// them were used or handed out.
-    pub(crate) fn reset_chain_state(&mut self, fresh_type: Option<ManagedAccountType>) {
-        match fresh_type {
-            Some(fresh_type) => self.managed_account_type = fresh_type,
-            None => {
-                // Which addresses were used or handed out stays as it was: the
-                // replay marks the same ones used again, and clearing it would
-                // hand an address paid years ago out as fresh meanwhile. Only
-                // the per-address totals, which the replay adds up again, go.
-                for pool in self.managed_account_type.address_pools_mut() {
-                    for info in pool.addresses.values_mut() {
-                        info.tx_count = 0;
-                        info.total_received = 0;
-                        info.total_sent = 0;
-                        info.balance = 0;
-                    }
-                }
-            }
-        }
-        self.transactions.clear();
-        #[cfg(not(feature = "keep-finalized-transactions"))]
-        self.finalized_txids.clear();
-        self.monitor_revision += 1;
-    }
-
     /// Create a `ManagedCoreKeysAccount` from an [`Account`](super::super::Account).
     pub fn from_account(account: &super::super::Account) -> Self {
         let key_source = address_pool::KeySource::Public(account.account_xpub);

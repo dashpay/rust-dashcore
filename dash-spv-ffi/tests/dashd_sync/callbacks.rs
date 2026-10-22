@@ -625,9 +625,6 @@ pub(super) fn create_wallet_callbacks(tracker: &Arc<CallbackTracker>) -> FFIWall
         // Not exercised by these tests: they never build a conflicting spend.
         on_transactions_swept: None,
         on_chain_truncated: None,
-        // Not exercised by these tests: they never start a CoinJoin recovery.
-        on_wallet_reset: None,
-        on_coinjoin_recovery_finished: None,
         user_data: Arc::as_ptr(tracker) as *mut c_void,
     }
 }

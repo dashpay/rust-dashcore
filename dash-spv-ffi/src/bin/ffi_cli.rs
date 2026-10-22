@@ -292,41 +292,6 @@ extern "C" fn on_chain_truncated(
     );
 }
 
-extern "C" fn on_wallet_reset(
-    wallet_id: *const c_char,
-    synced_height: u32,
-    balance: *const FFIBalance,
-    _coinjoin_addresses: *const dash_spv_ffi::FFIDerivedAddress,
-    coinjoin_addresses_count: u32,
-    _user_data: *mut c_void,
-) {
-    let b = read_balance(balance);
-    println!(
-        "[Wallet] Reset for CoinJoin recovery: wallet={}..., synced_height={}, coinjoin_addresses={}, balance[confirmed={}, unconfirmed={}]",
-        short_wallet(wallet_id),
-        synced_height,
-        coinjoin_addresses_count,
-        b.confirmed,
-        b.unconfirmed,
-    );
-}
-
-extern "C" fn on_coinjoin_recovery_finished(
-    wallet_id: *const c_char,
-    height: u32,
-    found: u32,
-    cancelled: bool,
-    _user_data: *mut c_void,
-) {
-    println!(
-        "[Wallet] CoinJoin recovery finished: wallet={}..., height={}, found={}, cancelled={}",
-        short_wallet(wallet_id),
-        height,
-        found,
-        cancelled,
-    );
-}
-
 extern "C" fn on_transaction_instant_locked(
     wallet_id: *const c_char,
     txid: *const [u8; 32],
@@ -654,8 +619,6 @@ fn main() {
                 on_sync_height_advanced: Some(on_sync_height_advanced),
                 on_chain_lock_processed: Some(on_wallet_chain_lock_processed),
                 on_chain_truncated: Some(on_chain_truncated),
-                on_wallet_reset: Some(on_wallet_reset),
-                on_coinjoin_recovery_finished: Some(on_coinjoin_recovery_finished),
                 user_data: ptr::null_mut(),
             },
             error: FFIClientErrorCallback {

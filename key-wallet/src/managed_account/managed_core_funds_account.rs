@@ -73,10 +73,6 @@ pub struct ManagedCoreFundsAccount {
     /// re-establish which coins are spent.
     #[cfg_attr(feature = "serde", serde(skip))]
     reservations: ReservationSet,
-    /// Set while a CoinJoin recovery replays the wallet: the UTXOs are those
-    /// of a past height, so no transaction build may fund from them.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) replaying: bool,
 }
 
 /// What [`ManagedCoreFundsAccount::apply_abandon`] removed from one account.
@@ -115,27 +111,7 @@ impl ManagedCoreFundsAccount {
             spent_before_funded: BTreeMap::new(),
             unsettled_spends: BTreeMap::new(),
             reservations: ReservationSet::default(),
-            replaying: false,
         }
-    }
-
-    /// Forget everything this account learned from the chain, for a replay
-    /// from wallet birth; see [`ManagedCoreKeysAccount::reset_chain_state`].
-    /// Reservations are left alone: a caller resets only an account no build
-    /// holds coins of.
-    pub(crate) fn reset_chain_state(&mut self, fresh_type: Option<ManagedAccountType>) {
-        self.keys.reset_chain_state(fresh_type);
-        self.balance = WalletCoreBalance::default();
-        self.utxos.clear();
-        self.spent_outpoints.clear();
-        self.spent_before_funded.clear();
-        self.unsettled_spends.clear();
-    }
-
-    /// Whether a transaction build holds coins of this account at
-    /// `current_height`.
-    pub(crate) fn has_reservations(&self, current_height: u32) -> bool {
-        !self.reservations.reserved(current_height).is_empty()
     }
 
     /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account).
@@ -164,7 +140,6 @@ impl ManagedCoreFundsAccount {
             spent_before_funded: BTreeMap::new(),
             unsettled_spends: BTreeMap::new(),
             reservations: ReservationSet::default(),
-            replaying: false,
         }
     }
 
@@ -1479,7 +1454,6 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             spent_before_funded: helper.spent_before_funded,
             unsettled_spends: helper.unsettled_spends,
             reservations: ReservationSet::default(),
-            replaying: false,
         })
     }
 }

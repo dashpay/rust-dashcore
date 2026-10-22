@@ -309,8 +309,6 @@ impl From<key_wallet_manager::WalletError> for FFIError {
             WalletError::InvalidParameter(_) => FFIErrorCode::InvalidInput,
             WalletError::TransactionBuild(_) => FFIErrorCode::InvalidTransaction,
             WalletError::InsufficientFunds
-            | WalletError::InvalidState(_)
-            | WalletError::CoinJoinRecoveryInProgress(_)
             | WalletError::TruncateBelowChainLock {
                 ..
             } => FFIErrorCode::InvalidState,
@@ -382,13 +380,8 @@ impl From<dashcore::consensus::encode::Error> for FFIError {
 
 impl From<BuilderError> for FFIError {
     fn from(value: BuilderError) -> Self {
-        // A replayed wallet is a state to wait out, not a bad request.
-        let code = match value {
-            BuilderError::RecoveryInProgress => FFIErrorCode::InvalidState,
-            _ => FFIErrorCode::TransactionBuildingError,
-        };
         FFIError {
-            code,
+            code: FFIErrorCode::TransactionBuildingError,
             message: CString::new(value.to_string())
                 .unwrap_or(
                     CString::new(

@@ -499,18 +499,13 @@ impl ManagedAccountCollection {
     fn create_managed_funds_account_from_account(
         account: &Account,
     ) -> Result<ManagedCoreFundsAccount, crate::error::Error> {
-        Ok(ManagedCoreFundsAccount::new(
-            Self::fresh_managed_account_type(account)?,
-            account.network,
-        ))
-    }
-
-    /// The address pools a funds account built from `account` starts with.
-    pub(crate) fn fresh_managed_account_type(
-        account: &Account,
-    ) -> Result<ManagedAccountType, crate::error::Error> {
         let key_source = KeySource::Public(account.account_xpub);
-        ManagedAccountType::from_account_type(account.account_type, account.network, &key_source)
+        let managed_type = ManagedAccountType::from_account_type(
+            account.account_type,
+            account.network,
+            &key_source,
+        )?;
+        Ok(ManagedCoreFundsAccount::new(managed_type, account.network))
     }
 
     /// Create a keys-only managed account from an [`Account`].

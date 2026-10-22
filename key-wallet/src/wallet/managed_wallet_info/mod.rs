@@ -5,6 +5,7 @@
 
 pub mod asset_lock_builder;
 pub mod coin_selection;
+pub mod coinjoin_pools;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
@@ -60,19 +61,6 @@ pub struct ManagedWalletInfo {
     /// Transactions that have received an InstantSend lock.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) instant_send_locks: HashSet<Txid>,
-    /// The CoinJoin recovery replay running on this wallet, if any, until the
-    /// replay is back at the height it was to run to (builds are refused
-    /// meanwhile, even after a cancel stopped its probe). In memory only: a
-    /// restart ends it, and the wallet resumes a normal sync from wherever the
-    /// replay got to.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) coinjoin_recovery:
-        Option<crate::transaction_checking::coinjoin_recovery::CoinJoinRecovery>,
-    /// What a CoinJoin recovery found, once its replay completed, until the
-    /// manager takes it to report the end.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) finished_coinjoin_recovery:
-        Option<crate::transaction_checking::coinjoin_recovery::CoinJoinRecoveryProgress>,
     /// Outpoints observed spent by transactions seen in a processed block,
     /// mapped to the height of the block that spent them.
     ///
@@ -257,8 +245,6 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::new(),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
-            coinjoin_recovery: None,
-            finished_coinjoin_recovery: None,
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
@@ -276,8 +262,6 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::new(),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
-            coinjoin_recovery: None,
-            finished_coinjoin_recovery: None,
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
@@ -305,8 +289,6 @@ impl ManagedWalletInfo {
             accounts: ManagedAccountCollection::from_account_collection(&wallet.accounts),
             balance: WalletCoreBalance::default(),
             instant_send_locks: HashSet::new(),
-            coinjoin_recovery: None,
-            finished_coinjoin_recovery: None,
             observed_spent_outpoints: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
@@ -417,7 +399,7 @@ impl ManagedWalletInfo {
     /// `last_processed_height` and `last_applied_chain_lock` are intentionally
     /// left as-is: they are chain facts, not coverage facts, and keeping the
     /// chainlock is what lets the backfilled history arrive born-chainlocked.
-    pub(crate) fn rewind_sync_checkpoint_for_new_account(&mut self) {
+    fn rewind_sync_checkpoint_for_new_account(&mut self) {
         let floor = self.metadata.birth_height.saturating_sub(1);
         self.metadata.synced_height = self.metadata.synced_height.min(floor);
         // Bump unconditionally — even when the checkpoint was already at or
@@ -426,11 +408,6 @@ impl ManagedWalletInfo {
         // the generation mismatch is the only signal a commit-time check has
         // when the rewind is height-invisible (dashpay/rust-dashcore#649).
         self.account_generation += 1;
-        // An account added during a CoinJoin recovery replay holds coins of a
-        // past height as much as the others.
-        if self.coinjoin_recovery.is_some() {
-            self.set_funds_replaying(true);
-        }
     }
 
     /// Current generation of the wallet's account set; see the

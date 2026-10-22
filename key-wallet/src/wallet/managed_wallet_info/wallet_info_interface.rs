@@ -217,51 +217,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         0
     }
 
-    /// Start a CoinJoin recovery replay through
-    /// `WalletManager::begin_coinjoin_recovery`, which also emits the reset
-    /// event a persisting consumer needs and runs one recovery at a time;
-    /// calling this directly skips both. Forgets everything the wallet learned
-    /// from the chain, rewind its sync checkpoint to just below its birth
-    /// height, and look for CoinJoin coins past the gap limit while the sync
-    /// layer replays it (ticket 32008). The account generation is bumped, so
-    /// in-flight scans cannot certify coverage for the reset wallet.
-    ///
-    /// `known_height` is the highest height the caller knows the chain to
-    /// have reached; the replay is complete once the wallet is synced to it,
-    /// or to its own synced height or chainlock when higher. Returns that
-    /// height. Required, so that a wrapper around another implementation has
-    /// to forward it (and the three methods below) rather than opt out
-    /// silently.
-    fn begin_coinjoin_recovery(
-        &mut self,
-        wallet: &Wallet,
-        known_height: CoreBlockHeight,
-    ) -> Result<CoreBlockHeight, Error>;
-
-    /// Stop the probe of a running CoinJoin recovery before its replay is
-    /// complete, returning how many CoinJoin addresses it found past the gap
-    /// limit; `None` when no probe runs, which includes a cancelled recovery
-    /// whose replay still goes on (see `coinjoin_recovery_progress`).
-    fn cancel_coinjoin_recovery(&mut self) -> Option<u32>;
-
-    /// Where the running CoinJoin recovery replay stands; `None` when none
-    /// runs.
-    fn coinjoin_recovery_progress(
-        &self,
-    ) -> Option<crate::transaction_checking::coinjoin_recovery::CoinJoinRecoveryProgress>;
-
-    /// Where a CoinJoin recovery whose replay reached the height it was to
-    /// run to (the one `begin_coinjoin_recovery` returned) since the last call
-    /// ended up: how many CoinJoin addresses it found past the gap limit, and
-    /// whether it had been cancelled. The recovery itself ends inside
-    /// `update_synced_height`, whoever calls it; this only hands its result
-    /// over once. `WalletManager::update_wallet_synced_height` takes it right
-    /// after advancing and reports it as an event, so a caller advancing the
-    /// height any other way reports nothing.
-    fn take_finished_coinjoin_recovery(
-        &mut self,
-    ) -> Option<crate::transaction_checking::coinjoin_recovery::CoinJoinRecoveryProgress>;
-
     /// Return the highest chainlock that has been applied to this
     /// wallet, retaining the signing proof. Blocks at or below
     /// `chain_lock.block_height` are considered chainlock-finalized
@@ -405,30 +360,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn account_generation(&self) -> u64 {
         self.account_generation
-    }
-
-    fn begin_coinjoin_recovery(
-        &mut self,
-        wallet: &Wallet,
-        known_height: CoreBlockHeight,
-    ) -> Result<CoreBlockHeight, Error> {
-        ManagedWalletInfo::begin_coinjoin_recovery(self, wallet, known_height)
-    }
-
-    fn cancel_coinjoin_recovery(&mut self) -> Option<u32> {
-        ManagedWalletInfo::cancel_coinjoin_recovery(self)
-    }
-
-    fn coinjoin_recovery_progress(
-        &self,
-    ) -> Option<crate::transaction_checking::coinjoin_recovery::CoinJoinRecoveryProgress> {
-        self.coinjoin_recovery.as_ref().map(|recovery| recovery.progress())
-    }
-
-    fn take_finished_coinjoin_recovery(
-        &mut self,
-    ) -> Option<crate::transaction_checking::coinjoin_recovery::CoinJoinRecoveryProgress> {
-        ManagedWalletInfo::take_finished_coinjoin_recovery(self)
     }
 
     fn last_applied_chain_lock(&self) -> Option<&ChainLock> {
@@ -635,7 +566,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
         // A newly committed checkpoint can lift the finality boundary when the
         // chainlock was already ahead of the old synced_height.
         self.prune_finalized_observed_spends();
-        self.on_synced_height_advanced();
     }
 
     fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<Truncation, Error> {

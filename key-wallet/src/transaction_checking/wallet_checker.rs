@@ -231,22 +231,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // Check only relevant account types
         let mut result = self.accounts.check_transaction(tx, &relevant_types);
 
-        // During a CoinJoin recovery replay, a relevant transaction may also pay
-        // CoinJoin addresses of ours past the pools' gap limit (32008). They are
-        // added to the pools before any state is touched, and the check is
-        // repeated so the update below credits them.
-        if update_state
-            && result.is_relevant
-            && relevant_types.contains(&AccountTypeToCheck::CoinJoin)
-        {
-            let recovered = self.recover_coinjoin_outputs(tx, wallet);
-            if !recovered.is_empty() {
-                result = self.accounts.check_transaction(tx, &relevant_types);
-                result.new_addresses.extend(recovered);
-                result.state_modified = true;
-            }
-        }
-
         // #649: remember every spend seen in a block, independent of the
         // spending tx's classification or whether the wallet can attribute it.
         // Insert-only here (no account mutation), so a spend that IS attributed
