@@ -2,6 +2,7 @@ use hashes::{Hash, sha256d};
 
 use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::sml::error::SmlError;
 use crate::sml::masternode_list::MasternodeList;
 use crate::transaction::special_transaction::TransactionPayload;
 
@@ -44,66 +45,34 @@ pub fn merkle_root_from_hashes(hashes: Vec<sha256d::Hash>) -> Option<sha256d::Ha
 }
 
 impl MasternodeList {
-    /// Validates whether the stored masternode list Merkle root matches the one in the coinbase transaction.
-    ///
-    /// This function compares the calculated masternode Merkle root with the one provided
-    /// in the coinbase transaction payload to verify the integrity of the masternode list.
-    ///
-    /// # Parameters
-    ///
-    /// - `coinbase_transaction`: The coinbase transaction containing the expected Merkle root.
-    ///
-    /// # Returns
-    ///
-    /// - `true` if the Merkle root matches.
-    /// - `false` otherwise.
-    pub fn has_valid_mn_list_root(&self, coinbase_transaction: &Transaction) -> bool {
+    /// The quorum root is in the coinbase payload from its version 2. An empty
+    /// list hashes to the all-zero root, as in Dash Core.
+    pub fn verify_coinbase_roots(
+        &self,
+        coinbase_transaction: &Transaction,
+    ) -> Result<(), SmlError> {
         let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) =
             &coinbase_transaction.special_transaction_payload
         else {
-            return false;
-        };
-        // we need to check that the coinbase is in the transaction hashes we got back
-        // and is in the merkle block
-        if let Some(mn_merkle_root) = self.masternode_merkle_root {
-            coinbase_payload.merkle_root_masternode_list == mn_merkle_root
-        } else {
-            false
-        }
-    }
-
-    /// Validates whether the stored LLMQ list Merkle root matches the one in the coinbase transaction.
-    ///
-    /// This function compares the calculated quorum Merkle root with the one provided
-    /// in the coinbase transaction payload to verify the integrity of the quorum list.
-    ///
-    /// # Parameters
-    ///
-    /// - `coinbase_transaction`: The coinbase transaction containing the expected Merkle root.
-    ///
-    /// # Returns
-    ///
-    /// - `true` if the Merkle root matches.
-    /// - `false` otherwise.
-    pub fn has_valid_llmq_list_root(&self, coinbase_transaction: &Transaction) -> bool {
-        let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) =
-            &coinbase_transaction.special_transaction_payload
-        else {
-            return false;
+            return Err(SmlError::CoinbaseCommitmentMismatch(self.block_hash));
         };
 
-        let q_merkle_root = self.llmq_merkle_root;
-        let coinbase_merkle_root_quorums = coinbase_payload.merkle_root_quorums;
-        let has_valid_quorum_list_root =
-            q_merkle_root.is_some() && coinbase_merkle_root_quorums == q_merkle_root.unwrap();
-        if !has_valid_quorum_list_root {
-            // warn!("LLMQ Merkle root not valid for DML on block {} version {} ({:?} wanted - {:?} calculated)",
-            //          tx.height,
-            //          tx.base.version,
-            //          tx.merkle_root_llmq_list.map(|q| q.to_hex()).unwrap_or("None".to_string()),
-            //          self.llmq_merkle_root.map(|q| q.to_hex()).unwrap_or("None".to_string()));
+        let calculated = self
+            .calculate_masternodes_merkle_root(self.known_height)
+            .unwrap_or_else(MerkleRootMasternodeList::all_zeros);
+        if calculated != coinbase_payload.merkle_root_masternode_list {
+            return Err(SmlError::CoinbaseCommitmentMismatch(self.block_hash));
         }
-        has_valid_quorum_list_root
+
+        if coinbase_payload.version >= 2 {
+            let calculated =
+                self.calculate_llmq_merkle_root().unwrap_or_else(MerkleRootQuorums::all_zeros);
+            if calculated != coinbase_payload.merkle_root_quorums {
+                return Err(SmlError::CoinbaseCommitmentMismatch(self.block_hash));
+            }
+        }
+
+        Ok(())
     }
 
     /// Computes the Merkle root for the masternode list at a given block height.
@@ -182,5 +151,63 @@ impl MasternodeList {
             .collect::<Vec<_>>();
         llmq_commitment_hashes.sort();
         llmq_commitment_hashes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hashes::Hash;
+    use test_case::test_case;
+
+    use crate::consensus::deserialize;
+    use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+    use crate::network::message_sml::MnListDiff;
+    use crate::sml::error::SmlError;
+    use crate::sml::masternode_list::MasternodeList;
+    use crate::transaction::special_transaction::TransactionPayload;
+    use crate::transaction::special_transaction::coinbase::CoinbasePayload;
+    use crate::{BlockHash, Network};
+
+    #[test_case(|_| {}, None; "matching")]
+    #[test_case(
+        |payload| payload.merkle_root_masternode_list = MerkleRootMasternodeList::all_zeros(),
+        Some(SmlError::CoinbaseCommitmentMismatch);
+        "off the masternode list root"
+    )]
+    #[test_case(
+        |payload| payload.merkle_root_quorums = MerkleRootQuorums::all_zeros(),
+        Some(SmlError::CoinbaseCommitmentMismatch);
+        "off the quorum list root"
+    )]
+    #[test_case(
+        |payload| {
+            payload.version = 1;
+            payload.merkle_root_quorums = MerkleRootQuorums::all_zeros();
+        },
+        None;
+        "a version 1 coinbase committing to no quorums"
+    )]
+    fn verify_coinbase_roots(
+        tamper: fn(&mut CoinbasePayload),
+        error: Option<fn(BlockHash) -> SmlError>,
+    ) {
+        let diff: MnListDiff = deserialize(include_bytes!(
+            "../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("expected to deserialize");
+        let mut coinbase = diff.coinbase_tx.clone();
+        let list = MasternodeList::from_diff(diff, 2_227_096, Network::Mainnet).expect("builds");
+        let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+            &mut coinbase.special_transaction_payload
+        else {
+            panic!("coinbase payload");
+        };
+        // The capture's masternodes do not hash to its coinbase's root, its quorums do.
+        payload.merkle_root_masternode_list = list.masternode_merkle_root.expect("masternodes");
+        tamper(payload);
+
+        let result = list.verify_coinbase_roots(&coinbase);
+
+        assert_eq!(result, error.map_or(Ok(()), |error| Err(error(list.block_hash))));
     }
 }

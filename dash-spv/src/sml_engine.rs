@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::storage::BlockHeaderStorage;
+use crate::validation::MasternodeListValidator;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
 use dashcore::network::constants::NetworkExt;
@@ -59,6 +60,7 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     rotated_quorums_per_cycle: BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
     network: Network,
+    validator: Option<MasternodeListValidator<H>>,
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
@@ -161,11 +163,26 @@ fn cycle_quarter_work_heights(
 impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// An empty engine for `network` that looks block heights up in `headers`.
     pub fn new(network: Network, headers: Arc<RwLock<H>>) -> Self {
+        let validator = MasternodeListValidator::new(Arc::clone(&headers));
+        Self::with_validator(network, headers, Some(validator))
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_without_validation(network: Network, headers: Arc<RwLock<H>>) -> Self {
+        Self::with_validator(network, headers, None)
+    }
+
+    fn with_validator(
+        network: Network,
+        headers: Arc<RwLock<H>>,
+        validator: Option<MasternodeListValidator<H>>,
+    ) -> Self {
         Self {
             headers,
             masternode_lists: BTreeMap::new(),
             rotated_quorums_per_cycle: BTreeMap::new(),
             network,
+            validator,
         }
     }
 
@@ -782,6 +799,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// Applies a diff, then verifies the newest list's non-rotating quorums: the
     /// diff may have brought one, or the work-block list one needs.
+    /// The diff must prove its coinbase in its block's header and build the
+    /// lists that coinbase commits to.
     pub async fn apply_diff(&mut self, masternode_list_diff: MnListDiff) -> Result<(), SmlError> {
         self.apply_and_prune(masternode_list_diff).await?;
         self.verify_newest_quorums().await;
@@ -814,9 +833,23 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .ok_or(SmlError::BlockHashLookupFailed(base_block_hash))?;
         let diff_end_height =
             self.height_of(&block_hash).await.ok_or(SmlError::BlockHashLookupFailed(block_hash))?;
+
+        let coinbase_tx = match &self.validator {
+            Some(validator) => {
+                validator.validate_coinbase_proof(&masternode_list_diff, diff_end_height).await?;
+                Some(masternode_list_diff.coinbase_tx.clone())
+            }
+            None => None,
+        };
+
         if base_height == 0 {
             let masternode_list =
                 MasternodeList::from_diff(masternode_list_diff, diff_end_height, self.network)?;
+
+            if let (Some(validator), Some(coinbase_tx)) = (&self.validator, &coinbase_tx) {
+                validator.validate_coinbase_roots(&masternode_list, coinbase_tx)?;
+            }
+
             self.masternode_lists.insert(diff_end_height, masternode_list);
             return Ok(());
         }
@@ -826,6 +859,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         };
         let masternode_list =
             base_masternode_list.apply_diff(masternode_list_diff, diff_end_height, self.network)?;
+
+        if let (Some(validator), Some(coinbase_tx)) = (&self.validator, &coinbase_tx) {
+            validator.validate_coinbase_roots(&masternode_list, coinbase_tx)?;
+        }
+
         // A quorum the diff brings may already have a status in another list.
         let mut changes = Vec::new();
         for (quorum_type, quorums) in masternode_list.quorums.iter() {
@@ -955,28 +993,43 @@ pub(crate) mod test_support {
             network: Network,
             heights: HashMap<BlockHash, CoreBlockHeight>,
         ) -> Self {
-            Self::new(network, Arc::new(RwLock::new(MockHeaderStorage(heights))))
+            Self::new_without_validation(
+                network,
+                Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
+            )
         }
 
         pub(crate) fn headers(&self) -> Arc<RwLock<MockHeaderStorage>> {
             self.headers.clone()
         }
 
+        /// Stands in for the headers a fixture lacks.
+        pub(crate) fn feed_merkle_roots<'a>(
+            &mut self,
+            diffs: impl IntoIterator<Item = &'a MnListDiff>,
+        ) {
+            let mut headers = self.headers.try_write().expect("unlocked");
+            for diff in diffs {
+                let merkle_root = diff.coinbase_merkle_root().expect("proves its coinbase");
+                headers.merkle_roots.insert(diff.block_hash, merkle_root);
+            }
+        }
+
         pub(crate) fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
-            self.headers.try_write().expect("unlocked").0.insert(block_hash, height);
+            self.headers.try_write().expect("unlocked").heights.insert(block_hash, height);
         }
 
         pub(crate) fn forget_block(&mut self, block_hash: &BlockHash) {
-            self.headers.try_write().expect("unlocked").0.remove(block_hash);
+            self.headers.try_write().expect("unlocked").heights.remove(block_hash);
         }
 
         pub(crate) fn block_height(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
-            self.headers.try_read().expect("unlocked").0.get(block_hash).copied()
+            self.headers.try_read().expect("unlocked").heights.get(block_hash).copied()
         }
 
         pub(crate) fn block_hash_at(&self, height: CoreBlockHeight) -> Option<BlockHash> {
             let headers = self.headers.try_read().expect("unlocked");
-            headers.0.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
+            headers.heights.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
         }
 
         /// Verifies `chain_lock` as the ChainLock manager does.
@@ -1023,7 +1076,8 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
-    use super::{build_cycle_quorum_map, WORK_DIFF_DEPTH};
+    use super::{build_cycle_quorum_map, qr_info_diffs, WORK_DIFF_DEPTH};
+    use crate::test_utils::MockHeaderStorage;
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -1031,6 +1085,7 @@ mod tests {
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
     use dashcore::prelude::CoreBlockHeight;
+    use dashcore::sml::error::SmlError;
     use dashcore::sml::llmq_entry_verification::{
         LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
     };
@@ -1038,6 +1093,7 @@ mod tests {
     use dashcore::sml::llmq_type::network::NetworkLLMQExt;
     use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
     use dashcore::sml::masternode_list::MasternodeList;
+    use dashcore::sml::masternode_list_entry::MasternodeListEntry;
     use dashcore::sml::quorum_entry::qualified_quorum_entry::{
         QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
     };
@@ -1046,6 +1102,8 @@ mod tests {
     use dashcore::{BlockHash, Network, QuorumHash};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
+    use test_case::test_case;
+    use tokio::sync::RwLock;
 
     fn make_qualified_quorum_entry(
         llmq_type: LLMQType,
@@ -1364,21 +1422,33 @@ mod tests {
     /// engine state mirrors production cold start: empty masternode lists
     /// over the captured header heights.
     fn load_qrinfo_2518986_fixture() -> (TestEngine, QRInfo) {
-        let engine = TestEngine::knowing(
+        let heights = fixture_heights(include_bytes!(
+            "../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
+        ));
+        let mut engine = TestEngine::new(
             Network::Mainnet,
-            fixture_heights(include_bytes!(
-                "../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
-            )),
+            Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
         );
         let qr_info: QRInfo = decode_fixture(include_bytes!(
             "../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"
         ));
+        engine.feed_merkle_roots(qr_info_diffs(&qr_info));
         (engine, qr_info)
     }
 
+    #[test_case(true; "matching its commitments")]
+    #[test_case(false; "off its masternode list root")]
     #[tokio::test]
-    async fn validate_first_qr_info_on_fresh_engine_with_mixed_cycle_quorums() {
-        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+    async fn validate_first_qr_info_on_fresh_engine_with_mixed_cycle_quorums(committed: bool) {
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        if !committed {
+            let tip = &mut qr_info.mn_list_diff_tip;
+            tip.new_masternodes.push(MasternodeListEntry::dummy(0x11));
+            let tip_hash = tip.block_hash;
+            let result = engine.feed_qr_info(qr_info).await;
+            assert_eq!(result, Err(SmlError::CoinbaseCommitmentMismatch(tip_hash).into()));
+            return;
+        }
 
         // The fixture's active set mixes cycles: quorum index 0 carries the
         // previous cycle's commitment (its DKG failed in the current cycle),

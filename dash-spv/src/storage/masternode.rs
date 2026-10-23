@@ -20,6 +20,8 @@ use crate::storage::{io::atomic_write, BlockHeaderStorage};
 
 type IndexMap = BTreeMap<CoreBlockHeight, PathBuf>;
 
+type NewEngine<H> = fn(Network, Arc<RwLock<H>>) -> MasternodeListEngine<H>;
+
 enum Message {
     Diff(Box<MnListDiff>),
     QrInfo(Box<QRInfo>),
@@ -53,6 +55,7 @@ pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
     network: Network,
     diffs: IndexMap,
     qr_infos: IndexMap,
+    new_engine: NewEngine<H>,
 }
 
 /// The stored messages as of when it was taken. A replay runs on this, so the
@@ -62,6 +65,7 @@ pub struct MessageLog<H: BlockHeaderStorage> {
     network: Network,
     diffs: IndexMap,
     qr_infos: IndexMap,
+    new_engine: NewEngine<H>,
 }
 
 impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
@@ -84,7 +88,15 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             network,
             diffs,
             qr_infos,
+            new_engine: MasternodeListEngine::new,
         })
+    }
+
+    /// Replays into engines that do not validate diffs against their block.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn without_validation(mut self) -> Self {
+        self.new_engine = MasternodeListEngine::new_without_validation;
+        self
     }
 
     fn folder(&self) -> PathBuf {
@@ -157,6 +169,7 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             network: self.network,
             diffs: self.diffs.clone(),
             qr_infos: self.qr_infos.clone(),
+            new_engine: self.new_engine,
         }
     }
 
@@ -176,7 +189,7 @@ impl<H: BlockHeaderStorage> MessageLog<H> {
         until: CoreBlockHeight,
         mut visit: impl FnMut(&MasternodeListEngine<H>),
     ) -> MasternodeListEngine<H> {
-        let mut engine = MasternodeListEngine::new(self.network, Arc::clone(&self.headers));
+        let mut engine = (self.new_engine)(self.network, Arc::clone(&self.headers));
 
         let entries =
             self.diffs.range(..=until).map(|(height, path)| (*height, Kind::Diff, path)).chain(
@@ -383,11 +396,12 @@ mod tests {
         let map = heights.iter().map(|(b, h)| (hash(*b), *h)).collect();
         PersistentMasternodeStorage::open(
             dir.path(),
-            Arc::new(RwLock::new(MockHeaderStorage(map))),
+            Arc::new(RwLock::new(MockHeaderStorage::new(map))),
             Network::Regtest,
         )
         .await
         .expect("open")
+        .without_validation()
     }
 
     #[tokio::test]
@@ -659,11 +673,12 @@ mod tests {
         let heights = (1..=tip).map(|height| (BlockHash::dummy(height), height)).collect();
         let storage = S::open(
             dir.path(),
-            Arc::new(RwLock::new(MockHeaderStorage(heights))),
+            Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
             Network::Regtest,
         )
         .await
-        .unwrap();
+        .unwrap()
+        .without_validation();
 
         let engine = storage.load_engine().await;
         assert!(engine
@@ -720,11 +735,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut storage = PersistentMasternodeStorage::open(
             dir.path(),
-            Arc::new(RwLock::new(MockHeaderStorage(heights))),
+            Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
             Network::Mainnet,
         )
         .await
-        .unwrap();
+        .unwrap()
+        .without_validation();
         storage.store_qr_info(tip_height, &qr_info).await.unwrap();
         let diff = MnListDiff {
             base_block_hash: base,
