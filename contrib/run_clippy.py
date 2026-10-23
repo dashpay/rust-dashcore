@@ -7,8 +7,6 @@ import sys
 base = [
     "cargo", "clippy",
     "--workspace",
-    "--all-features",
-    "--all-targets",
     "--target-dir", "target/clippy",
 ]
 
@@ -17,8 +15,12 @@ if sys.platform == "win32":
     base.extend(["--exclude", "dash-fuzz"])
 
 profiles = [
-    ("debug", []),
-    ("release", ["--release"]),
+    ("all features + targets debug", ["--all-features", "--all-targets"]),
+    ("all features + targets release", ["--all-features", "--all-targets", "--release"]),
+    ("all targets debug", ["--all-targets"]),
+    ("all targets release", ["--all-targets", "--release"]),
+    ("default debug", []),
+    ("default release", ["--release"]),
 ]
 
 for label, extra in profiles:
