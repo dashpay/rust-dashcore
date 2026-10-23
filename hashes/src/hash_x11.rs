@@ -135,3 +135,30 @@ impl io::Write for HashEngine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use hex_conservative::hex;
+
+    use crate::{hash_x11, Hash, HashEngine};
+
+    const HEADER: [u8; 80] = hex!("020000002cc0081be5039a54b686d24d5d8747ee9770d9973ec1ace02e5c0500000000008d7139724b11c52995db4370284c998b9114154b120ad3486f1a360a1d4253d310d40e55b8f70a1be8e32300");
+    const HEADER_HASH: [u8; 32] =
+        hex!("f29c0f286fd8071669286c6987eb941181134ff5f3978bf89f34070000000000");
+
+    /// The block header vector from `rs-x11-hash`.
+    #[test]
+    fn block_header() {
+        assert_eq!(hash_x11::Hash::hash(&HEADER).to_byte_array(), HEADER_HASH);
+    }
+
+    /// A header split across writes hashes like the whole.
+    #[test]
+    fn split_header() {
+        let mut engine = hash_x11::Hash::engine();
+        engine.input(&HEADER[..50]);
+        engine.input(&HEADER[50..]);
+        assert_eq!(engine.n_bytes_hashed(), 80);
+        assert_eq!(hash_x11::Hash::from_engine(engine).to_byte_array(), HEADER_HASH);
+    }
+}
