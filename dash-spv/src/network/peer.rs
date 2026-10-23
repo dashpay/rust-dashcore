@@ -1,850 +1,758 @@
-//! Dash peer connection management.
-
-use dashcore::network::constants::ServiceFlags;
-use std::collections::HashMap;
+use dashcore::{
+    consensus::encode,
+    network::{
+        address::Address,
+        constants::{ServiceFlags, NODE_HEADERS_COMPRESSED},
+        message::{NetworkMessage, RawNetworkMessage, RawNetworkMessageCodec},
+        message_headers2::CompressionState,
+        message_network::VersionMessage,
+    },
+    Network,
+};
+use futures::lock::Mutex;
+use std::collections::VecDeque;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::{
+    io::{AsyncRead, AsyncWriteExt, ReadBuf},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
+};
+use tokio_stream::StreamExt;
+use tokio_util::codec::FramedRead;
+use tokio_util::sync::CancellationToken;
 
-use dashcore::consensus::{encode, Decodable};
-use dashcore::network::message::{NetworkMessage, RawNetworkMessage};
-use dashcore::Network;
+use crate::network::manager::{InboundMessage, OrderedHeaderResults};
+use crate::{error::NetworkResult, NetworkError};
 
-use crate::error::{NetworkError, NetworkResult};
-use crate::network::constants::PING_INTERVAL;
-use crate::network::Message;
+static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
 
-/// Internal state for the TCP connection
-struct ConnectionState {
-    stream: TcpStream,
-    // Stateful message framing buffer to ensure full frames before decoding
-    framing_buffer: Vec<u8>,
+/// Identifies one connection, not one address: a late close event from an old
+/// connection must not evict a newer live connection to the same address.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct PeerId {
+    addr: SocketAddr,
+    connection: u64,
 }
 
-/// Dash P2P peer
-pub struct Peer {
-    address: SocketAddr,
-    // Use a single mutex to protect both the write stream and read buffer
-    // This ensures no concurrent access to the underlying socket
-    state: Option<Arc<Mutex<ConnectionState>>>,
-    timeout: Duration,
-    connected_at: Option<SystemTime>,
-    bytes_sent: u64,
-    network: Network,
-    // Ping/pong state
-    last_ping_sent: Option<SystemTime>,
-    last_pong_received: Option<SystemTime>,
-    pending_pings: HashMap<u64, SystemTime>, // nonce -> sent_time
-    // Peer information from Version message
-    version: Option<u32>,
-    services: Option<u64>,
-    user_agent: Option<String>,
-    best_height: Option<u32>,
-    relay: Option<bool>,
-    prefers_headers2: bool,
-    sent_sendheaders2: bool,
-}
-
-impl Peer {
-    /// Get the remote peer socket address.
-    pub fn address(&self) -> SocketAddr {
-        self.address
+impl PeerId {
+    pub(crate) fn addr(&self) -> SocketAddr {
+        self.addr
     }
-    /// Create a new peer.
-    pub fn new(address: SocketAddr, timeout: Duration, network: Network) -> Self {
-        Self {
-            address,
-            state: None,
-            timeout,
-            connected_at: None,
-            bytes_sent: 0,
-            network,
-            last_ping_sent: None,
-            last_pong_received: None,
-            pending_pings: HashMap::new(),
-            version: None,
-            services: None,
-            user_agent: None,
-            best_height: None,
-            relay: None,
-            prefers_headers2: false,
-            sent_sendheaders2: false,
+
+    #[cfg(test)]
+    pub(crate) fn for_test(addr: SocketAddr, connection: u64) -> Self {
+        PeerId {
+            addr,
+            connection,
         }
     }
 
-    /// Connect to a peer and return a connected instance.
-    pub async fn connect(
-        address: SocketAddr,
-        timeout_secs: u64,
-        network: Network,
-    ) -> NetworkResult<Self> {
-        let timeout = Duration::from_secs(timeout_secs);
+    /// Not a real connection: the sentinel `dispatch_local` injects under.
+    pub(crate) fn synthetic(addr: SocketAddr) -> Self {
+        PeerId {
+            addr,
+            connection: u64::MAX,
+        }
+    }
+}
 
-        let stream = tokio::time::timeout(timeout, TcpStream::connect(address))
+impl std::fmt::Display for PeerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.addr)
+    }
+}
+
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// A new peer's in-flight byte cap until the controller has measured it.
+pub(crate) const INITIAL_CAP_BYTES: u64 = 256 * 1024;
+const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
+
+/// Per-peer request latency. Send times are queued FIFO; each completing response
+/// pops the oldest.
+#[derive(Default)]
+pub(crate) struct Latency {
+    pending: Mutex<VecDeque<Instant>>,
+    total_ns: AtomicU64,
+    count: AtomicU64,
+    max_ns: AtomicU64,
+}
+
+impl Latency {
+    async fn on_send(&self) {
+        self.pending.lock().await.push_back(Instant::now());
+    }
+
+    /// Undo an `on_send` whose write then failed, so the queue does not drift.
+    async fn cancel_one(&self) {
+        self.pending.lock().await.pop_back();
+    }
+
+    async fn complete_one(&self) {
+        let sent = self.pending.lock().await.pop_front();
+        if let Some(sent) = sent {
+            let ns = sent.elapsed().as_nanos() as u64;
+            self.total_ns.fetch_add(ns, Ordering::Relaxed);
+            self.count.fetch_add(1, Ordering::Relaxed);
+            self.max_ns.fetch_max(ns, Ordering::Relaxed);
+        }
+    }
+
+    /// (completed request count, average ms, worst ms).
+    fn snapshot(&self) -> (u64, f64, f64) {
+        let count = self.count.load(Ordering::Relaxed);
+        let total = self.total_ns.load(Ordering::Relaxed);
+        let max = self.max_ns.load(Ordering::Relaxed);
+        let avg_ms = if count > 0 {
+            total as f64 / count as f64 / 1e6
+        } else {
+            0.0
+        };
+        (count, avg_ms, max as f64 / 1e6)
+    }
+}
+
+/// Counts bytes read, globally and per peer, to size the in-flight budgets from
+/// measured throughput.
+struct CountingReader<R> {
+    inner: R,
+    bytes: Arc<AtomicU64>,
+    peer_bytes: Arc<AtomicU64>,
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let r = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        if let std::task::Poll::Ready(Ok(())) = &r {
+            let n = (buf.filled().len() - before) as u64;
+            self.bytes.fetch_add(n, Ordering::Relaxed);
+            self.peer_bytes.fetch_add(n, Ordering::Relaxed);
+        }
+        r
+    }
+}
+
+type PeerReader = FramedRead<CountingReader<OwnedReadHalf>, RawNetworkMessageCodec>;
+
+// Boxing every message would penalise the common small ones.
+#[allow(clippy::large_enum_variant)]
+pub enum PeerEvent {
+    Message(PeerId, InboundMessage),
+    Disconnected(PeerId),
+}
+
+/// Cloneable view of a peer, so the router can write without holding the peer-set lock.
+#[derive(Clone)]
+pub(crate) struct PeerHandle {
+    id: PeerId,
+    network: Network,
+    writer: Arc<Mutex<OwnedWriteHalf>>,
+    in_flight: Arc<AtomicUsize>,
+    /// Expected response bytes of the requests in flight, charged at send.
+    in_flight_bytes: Arc<AtomicU64>,
+    /// Response bytes this peer can have in flight before they queue (its
+    /// bandwidth-delay product), sized by the controller from its byte rate and
+    /// service time.
+    cap: Arc<AtomicU64>,
+    /// Bytes/s this peer serves while it has work, 0 until measured.
+    serving_rate: Arc<AtomicU64>,
+    latency: Arc<Latency>,
+    /// Ask this peer for compressed headers (DIP-25). Cleared by the reader if a
+    /// `headers2` fails to decompress, falling back to plain `headers`.
+    headers2: Arc<AtomicBool>,
+}
+
+impl PeerHandle {
+    pub(crate) fn addr(&self) -> SocketAddr {
+        self.id.addr()
+    }
+
+    pub(crate) fn id(&self) -> PeerId {
+        self.id
+    }
+
+    pub(crate) fn in_flight(&self) -> usize {
+        self.in_flight.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn in_flight_bytes(&self) -> u64 {
+        self.in_flight_bytes.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn cap(&self) -> u64 {
+        self.cap.load(Ordering::Relaxed)
+    }
+
+    /// Gives back one request and the `cost` it was charged at send.
+    pub(crate) async fn response_completed(&self, cost: u64) {
+        let _ = self
+            .in_flight
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)));
+        let _ = self
+            .in_flight_bytes
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(cost)));
+        self.latency.complete_one().await;
+    }
+
+    /// `cost` is the expected response size, charged only for pipeline requests.
+    pub(crate) async fn send(&self, msg: &NetworkMessage, cost: u64) -> NetworkResult<()> {
+        // The sync layer always declares plain `getheaders` since it doesn't know
+        // the peer; upgrade here. The reader decompresses `Headers2` back to `Headers`.
+        let upgraded = match msg {
+            NetworkMessage::GetHeaders(m) if self.headers2.load(Ordering::Relaxed) => {
+                Some(NetworkMessage::GetHeaders2(m.clone()))
+            }
+            _ => None,
+        };
+        let msg = upgraded.as_ref().unwrap_or(msg);
+
+        // TODO: Take a reference to msg instead of cloning it
+        let raw = RawNetworkMessage {
+            magic: self.network.magic(),
+            payload: msg.clone(),
+        };
+        let serialized = encode::serialize(&raw);
+
+        // Count BEFORE the write: the reply can arrive before this task runs again,
+        // and the saturating decrement would then be lost, leaking the slot.
+        let accounted = is_pipeline_request(msg);
+        if accounted {
+            self.in_flight.fetch_add(1, Ordering::Relaxed);
+            self.in_flight_bytes.fetch_add(cost, Ordering::Relaxed);
+            self.latency.on_send().await;
+        }
+
+        let write = async {
+            let mut writer = self.writer.lock().await;
+            writer.write_all(&serialized).await
+        };
+        let outcome = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(format!("Write failed: {}", e)),
+            // The peer stopped reading; treat it as a failed write.
+            Err(_) => Err(format!("Write stalled for {}s", WRITE_TIMEOUT.as_secs())),
+        };
+        if let Err(reason) = outcome {
+            if accounted {
+                self.in_flight.fetch_sub(1, Ordering::Relaxed);
+                self.in_flight_bytes.fetch_sub(cost, Ordering::Relaxed);
+                self.latency.cancel_one().await;
+            }
+            tracing::warn!("Disconnecting {} due to write error: {}", self.id, reason);
+            return Err(NetworkError::ConnectionFailed(reason));
+        }
+        Ok(())
+    }
+}
+
+pub struct ConnectedPeer {
+    handle: PeerHandle,
+    version: VersionMessage,
+    lag_ms: AtomicU32,
+    bytes: Arc<AtomicU64>,
+    /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
+    token: CancellationToken,
+}
+
+pub struct DisconnectedPeer {
+    network: Network,
+    addr: SocketAddr,
+    /// Handshake ping from the last connection, used to rank backups.
+    lag_ms: Option<u32>,
+}
+
+impl ConnectedPeer {
+    pub fn addr(&self) -> SocketAddr {
+        self.handle.addr()
+    }
+
+    pub(crate) fn id(&self) -> PeerId {
+        self.handle.id()
+    }
+
+    pub fn version(&self) -> &VersionMessage {
+        &self.version
+    }
+
+    pub(crate) fn handle(&self) -> PeerHandle {
+        self.handle.clone()
+    }
+
+    pub fn in_flight(&self) -> usize {
+        self.handle.in_flight()
+    }
+
+    pub fn disconnect(self) -> DisconnectedPeer {
+        DisconnectedPeer {
+            network: self.handle.network,
+            addr: self.handle.addr(),
+            lag_ms: (self.lag_ms() > 0).then(|| self.lag_ms()),
+        }
+    }
+
+    pub(crate) async fn response_completed(&self, cost: u64) {
+        self.handle.response_completed(cost).await
+    }
+
+    /// (completed requests, average ms, worst ms).
+    pub(crate) fn latency_stats(&self) -> (u64, f64, f64) {
+        self.handle.latency.snapshot()
+    }
+
+    /// Handshake round-trip latency in ms (0 if unmeasured).
+    pub(crate) fn lag_ms(&self) -> u32 {
+        self.lag_ms.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn close(&self) {
+        self.token.cancel();
+    }
+
+    pub(crate) fn bytes_read(&self) -> u64 {
+        self.bytes.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn in_flight_bytes(&self) -> u64 {
+        self.handle.in_flight_bytes()
+    }
+
+    pub(crate) fn set_cap(&self, bytes: u64) {
+        self.handle.cap.store(bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn cap(&self) -> u64 {
+        self.handle.cap()
+    }
+
+    pub(crate) fn serving_rate(&self) -> u64 {
+        self.handle.serving_rate.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_serving_rate(&self, bytes_per_sec: u64) {
+        self.handle.serving_rate.store(bytes_per_sec, Ordering::Relaxed);
+    }
+}
+
+/// Requests charged one in-flight unit; only these give a unit back when answered.
+/// Ones tracked only for de-dup/retry (e.g. `getmnlistdiff`) cost nothing.
+pub(super) fn is_pipeline_request(msg: &NetworkMessage) -> bool {
+    match msg {
+        NetworkMessage::GetHeaders(_)
+        | NetworkMessage::GetHeaders2(_)
+        | NetworkMessage::GetCFHeaders(_)
+        | NetworkMessage::GetCFilters(_) => true,
+        // Block `getdata` carries one block per message, so it is one unit. Other
+        // `getdata` has replies that can't be attributed one-for-one; counting it
+        // would leak slots.
+        NetworkMessage::GetData(inv) => {
+            !inv.is_empty()
+                && inv
+                    .iter()
+                    .all(|i| matches!(i, dashcore::network::message_blockdata::Inventory::Block(_)))
+        }
+        _ => false,
+    }
+}
+
+impl DisconnectedPeer {
+    pub fn new(addr: SocketAddr, network: Network) -> Self {
+        DisconnectedPeer {
+            network,
+            addr,
+            lag_ms: None,
+        }
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// `None` (never probed) sorts as worst when ranking backups.
+    pub(crate) fn lag_ms(&self) -> Option<u32> {
+        self.lag_ms
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn connect(
+        self,
+        inbound: UnboundedSender<PeerEvent>,
+        shutdown: CancellationToken,
+        bytes: Arc<AtomicU64>,
+        required_services: ServiceFlags,
+        headers2_decompression_semaphore: Arc<Semaphore>,
+    ) -> NetworkResult<ConnectedPeer> {
+        let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
             .await
             .map_err(|_| {
-                NetworkError::ConnectionFailed(format!("Connection to {} timed out", address))
+                NetworkError::ConnectionFailed(format!(
+                    "Connection to {} timed out after {}s",
+                    self.addr,
+                    CONNECT_TIMEOUT.as_secs()
+                ))
             })?
             .map_err(|e| {
-                NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", address, e))
+                NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", self.addr, e))
             })?;
 
-        stream.set_nodelay(true).map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
-        })?;
+        let peer_bytes = Arc::new(AtomicU64::new(0));
+        let (read_half, mut writer) = stream.into_split();
+        let mut reader = FramedRead::new(
+            CountingReader {
+                inner: read_half,
+                bytes,
+                peer_bytes: peer_bytes.clone(),
+            },
+            RawNetworkMessageCodec,
+        );
+        let magic = self.network.magic();
 
-        let state = ConnectionState {
-            stream,
-            framing_buffer: Vec::new(),
+        handshake_send(&mut writer, magic, NetworkMessage::Version(build_version(self.addr)))
+            .await?;
+
+        let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
+        let mut peer_version: Option<VersionMessage> = None;
+        let mut got_verack = false;
+
+        while !(peer_version.is_some() && got_verack) {
+            let raw = match tokio::time::timeout_at(deadline, reader.next()).await {
+                Err(_) => return Err(NetworkError::Timeout),
+                Ok(None) => return Err(NetworkError::PeerDisconnected),
+                Ok(Some(Err(e))) => return Err(e.into()),
+                Ok(Some(Ok(raw))) => raw,
+            };
+            if raw.magic != magic {
+                return Err(NetworkError::ProtocolError("wrong network magic".into()));
+            }
+            match raw.payload {
+                NetworkMessage::Version(v) => {
+                    // BIP155: sendaddrv2 must be sent BEFORE verack.
+                    handshake_send(&mut writer, magic, NetworkMessage::SendAddrV2).await?;
+                    handshake_send(&mut writer, magic, NetworkMessage::Verack).await?;
+                    peer_version = Some(v);
+                }
+                NetworkMessage::Verack => got_verack = true,
+                NetworkMessage::Ping(n) => {
+                    handshake_send(&mut writer, magic, NetworkMessage::Pong(n)).await?
+                }
+                _ => {}
+            }
+        }
+
+        let version = peer_version.ok_or(NetworkError::PeerDisconnected)?;
+
+        // A peer lacking a service silently ignores those requests, stalling its
+        // slots until timeout, so drop it now.
+        if !version.services.has(required_services) {
+            tracing::debug!(
+                target: "dash_spv::network",
+                "dropping {}: lacks required services {:?} (advertises {:?})",
+                self.addr, required_services, version.services
+            );
+            return Err(NetworkError::ConnectionFailed(format!(
+                "peer {} lacks required services {:?}",
+                self.addr, required_services
+            )));
+        }
+
+        // Announce sendheaders only after the handshake is fully complete, compressed
+        // (DIP-25, ~half the bytes) if the peer advertises it.
+        let headers2 = Arc::new(AtomicBool::new(version.services.has(NODE_HEADERS_COMPRESSED)));
+        let announce = if headers2.load(Ordering::Relaxed) {
+            NetworkMessage::SendHeaders2
+        } else {
+            NetworkMessage::SendHeaders
         };
+        handshake_send(&mut writer, magic, announce).await?;
 
-        Ok(Self {
-            address,
-            state: Some(Arc::new(Mutex::new(state))),
-            timeout,
-            connected_at: Some(SystemTime::now()),
-            bytes_sent: 0,
-            network,
-            last_ping_sent: None,
-            last_pong_received: None,
-            pending_pings: HashMap::new(),
-            version: None,
-            services: None,
-            user_agent: None,
-            best_height: None,
-            relay: None,
-            prefers_headers2: false,
-            sent_sendheaders2: false,
+        // Pinging before the handshake completes makes some peers drop us.
+        let mut lag_ms: u32 = 0;
+        let ping_nonce: u64 = rand::random();
+        let ping_sent = tokio::time::Instant::now();
+        if handshake_send(&mut writer, magic, NetworkMessage::Ping(ping_nonce)).await.is_ok() {
+            let deadline = ping_sent + HANDSHAKE_TIMEOUT;
+            while let Ok(Some(Ok(raw))) = tokio::time::timeout_at(deadline, reader.next()).await {
+                if raw.magic != magic {
+                    continue;
+                }
+                match raw.payload {
+                    NetworkMessage::Pong(n) if n == ping_nonce => {
+                        lag_ms = ping_sent.elapsed().as_millis().clamp(1, u32::MAX as u128) as u32;
+                        break;
+                    }
+                    NetworkMessage::Ping(n) => {
+                        let _ = handshake_send(&mut writer, magic, NetworkMessage::Pong(n)).await;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let _ = handshake_send(&mut writer, magic, NetworkMessage::GetAddr).await;
+
+        let id = PeerId {
+            addr: self.addr,
+            connection: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
+        };
+        let writer = Arc::new(Mutex::new(writer));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let latency = Arc::new(Latency::default());
+        // The controller grows it from the peer's measured serving rate.
+        let cap = Arc::new(AtomicU64::new(INITIAL_CAP_BYTES));
+        let token = shutdown.child_token();
+        spawn_reader(
+            id,
+            magic,
+            reader,
+            writer.clone(),
+            inbound,
+            token.clone(),
+            headers2.clone(),
+            headers2_decompression_semaphore,
+        );
+
+        tracing::debug!(
+            target: "dash_spv::network",
+            "peer connected: {} | lag={}ms height={}",
+            self.addr,
+            lag_ms,
+            version.start_height,
+        );
+
+        Ok(ConnectedPeer {
+            handle: PeerHandle {
+                id,
+                network: self.network,
+                writer,
+                in_flight,
+                in_flight_bytes: Arc::new(AtomicU64::new(0)),
+                cap,
+                serving_rate: Arc::new(AtomicU64::new(0)),
+                latency,
+                headers2,
+            },
+            version,
+            lag_ms: AtomicU32::new(lag_ms),
+            bytes: peer_bytes,
+            token,
         })
     }
+}
 
-    pub fn version(&self) -> Option<u32> {
-        self.version
-    }
+/// A header message in the reorder buffer. Holding the permit until dispatch is
+/// what bounds the buffer. `None` for a failed batch, which must still complete
+/// its sequence or everything behind it waits forever.
+type HeaderSlot = (Option<InboundMessage>, OwnedSemaphorePermit);
 
-    pub fn best_height(&self) -> Option<u32> {
-        self.best_height
-    }
+/// Returns whether the receiver is still there.
+fn dispatch_headers(
+    inbound: &UnboundedSender<PeerEvent>,
+    addr: PeerId,
+    ready: Vec<HeaderSlot>,
+) -> bool {
+    ready
+        .into_iter()
+        .filter_map(|(msg, _permit)| msg)
+        .all(|msg| inbound.send(PeerEvent::Message(addr, msg)).is_ok())
+}
 
-    /// Check if peer supports compact filters (BIP 157/158).
-    pub fn supports_compact_filters(&self) -> bool {
-        self.has_service(ServiceFlags::COMPACT_FILTERS)
-    }
-
-    /// Check if peer supports headers2 compression (DIP-0025).
-    pub fn supports_headers2(&self) -> bool {
-        self.has_service(ServiceFlags::NODE_HEADERS_COMPRESSED)
-    }
-
-    pub fn has_service(&self, flags: ServiceFlags) -> bool {
-        self.services.map(|s| ServiceFlags::from(s).has(flags)).unwrap_or(false)
-    }
-
-    pub(crate) fn services_known(&self) -> bool {
-        self.services.is_some()
-    }
-
-    /// Connect to the peer (instance method for compatibility).
-    pub async fn connect_instance(&mut self) -> NetworkResult<()> {
-        let stream = tokio::time::timeout(self.timeout, TcpStream::connect(self.address))
-            .await
-            .map_err(|_| {
-                NetworkError::ConnectionFailed(format!("Connection to {} timed out", self.address))
-            })?
-            .map_err(|e| {
-                NetworkError::ConnectionFailed(format!(
-                    "Failed to connect to {}: {}",
-                    self.address, e
-                ))
-            })?;
-
-        // Disable Nagle's algorithm for lower latency
-        stream.set_nodelay(true).map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
-        })?;
-
-        let state = ConnectionState {
-            stream,
-            framing_buffer: Vec::new(),
-        };
-
-        self.state = Some(Arc::new(Mutex::new(state)));
-        self.connected_at = Some(SystemTime::now());
-
-        tracing::info!("Connected to peer {}", self.address);
-
-        Ok(())
-    }
-
-    /// Disconnect from the peer.
-    pub async fn disconnect(&mut self) -> NetworkResult<()> {
-        if let Some(state_arc) = self.state.take() {
-            if let Ok(state_mutex) = Arc::try_unwrap(state_arc) {
-                let mut state = state_mutex.into_inner();
-                let _ = state.stream.shutdown().await;
-            }
-        }
-        self.connected_at = None;
-
-        tracing::info!("Disconnected from peer {}", self.address);
-
-        Ok(())
-    }
-
-    /// Update peer information from a received Version message
-    pub fn update_peer_info(
-        &mut self,
-        version_msg: &dashcore::network::message_network::VersionMessage,
-    ) {
-        // Define validation constants
-        const MIN_PROTOCOL_VERSION: u32 = 60001; // Minimum version that supports ping/pong
-        const MAX_PROTOCOL_VERSION: u32 = 100000; // Reasonable upper bound for protocol version
-        const MAX_USER_AGENT_LENGTH: usize = 256; // Maximum reasonable user agent length
-        const MAX_START_HEIGHT: i32 = 10_000_000; // Reasonable upper bound for block height
-
-        // Validate protocol version
-        if version_msg.version < MIN_PROTOCOL_VERSION {
-            tracing::warn!(
-                "Peer {} reported protocol version {} below minimum {}, skipping update",
-                self.address,
-                version_msg.version,
-                MIN_PROTOCOL_VERSION
-            );
-            return;
-        }
-
-        if version_msg.version > MAX_PROTOCOL_VERSION {
-            tracing::warn!(
-                "Peer {} reported suspiciously high protocol version {}, skipping update",
-                self.address,
-                version_msg.version
-            );
-            return;
-        }
-
-        // Validate start height
-        if version_msg.start_height < 0 {
-            tracing::warn!(
-                "Peer {} reported negative start height {}, skipping update",
-                self.address,
-                version_msg.start_height
-            );
-            return;
-        }
-
-        if version_msg.start_height > MAX_START_HEIGHT {
-            tracing::warn!(
-                "Peer {} reported suspiciously high start height {}, skipping update",
-                self.address,
-                version_msg.start_height
-            );
-            return;
-        }
-
-        // Validate user agent
-        if version_msg.user_agent.is_empty() {
-            tracing::warn!("Peer {} provided empty user agent, skipping update", self.address);
-            return;
-        }
-
-        if version_msg.user_agent.len() > MAX_USER_AGENT_LENGTH {
-            tracing::warn!(
-                "Peer {} provided excessively long user agent ({} bytes), skipping update",
-                self.address,
-                version_msg.user_agent.len()
-            );
-            return;
-        }
-
-        // Validate services - ensure they contain expected flags
-        let services = version_msg.services.as_u64();
-        const KNOWN_SERVICE_FLAGS: u64 = 0x0000_0000_0000_1FFF; // All known service flags up to bit 12
-        if services & !KNOWN_SERVICE_FLAGS != 0 {
-            tracing::warn!(
-                "Peer {} reported unknown service flags: 0x{:016x}, proceeding with caution",
-                self.address,
-                services
-            );
-            // Note: We don't return here as unknown flags might be from newer versions
-        }
-
-        // All validations passed, update peer info
-        self.version = Some(version_msg.version);
-        self.services = Some(version_msg.services.as_u64());
-        self.user_agent = Some(version_msg.user_agent.clone());
-        self.best_height = Some(version_msg.start_height as u32);
-        self.relay = Some(version_msg.relay);
-
-        tracing::info!(
-            "Updated peer info for {}: height={}, version={}, services={:?}",
-            self.address,
-            version_msg.start_height,
-            version_msg.version,
-            version_msg.services
-        );
-
-        // Also log with standard logging for debugging
-        tracing::info!(
-            "PEER_INFO_DEBUG: Updated peer {} with height={}, version={}",
-            self.address,
-            version_msg.start_height,
-            version_msg.version
-        );
-    }
-
-    /// Helper function to read some bytes into the framing buffer.
-    async fn read_some(state: &mut ConnectionState) -> std::io::Result<usize> {
-        let mut tmp = [0u8; 8192];
-        match state.stream.read(&mut tmp).await {
-            Ok(0) => Ok(0),
-            Ok(n) => {
-                state.framing_buffer.extend_from_slice(&tmp[..n]);
-                Ok(n)
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Send a message to the peer.
-    pub async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
-        let state_arc = self
-            .state
-            .as_ref()
-            .ok_or_else(|| NetworkError::ConnectionFailed("Not connected".to_string()))?;
-
-        let raw_message = RawNetworkMessage {
-            magic: self.network.magic(),
-            payload: message,
-        };
-
-        let serialized = encode::serialize(&raw_message);
-
-        // Log details for debugging headers2 issues
-        if matches!(
-            raw_message.payload,
-            NetworkMessage::GetHeaders2(_) | NetworkMessage::GetHeaders(_)
-        ) {
-            let msg_type = match raw_message.payload {
-                NetworkMessage::GetHeaders2(_) => "GetHeaders2",
-                NetworkMessage::GetHeaders(_) => "GetHeaders",
-                _ => "Unknown",
+#[allow(clippy::too_many_arguments)]
+fn spawn_reader(
+    addr: PeerId,
+    magic: u32,
+    mut reader: PeerReader,
+    writer: Arc<Mutex<OwnedWriteHalf>>,
+    inbound: UnboundedSender<PeerEvent>,
+    shutdown: CancellationToken,
+    headers2: Arc<AtomicBool>,
+    headers2_decompression_semaphore: Arc<Semaphore>,
+) {
+    tokio::spawn(async move {
+        // Header messages leave this reader in wire order even though the
+        // compressed ones are decoded off-thread and finish out of order.
+        let header_order = Arc::new(Mutex::new(OrderedHeaderResults::default()));
+        let mut header_sequence = 0_u64;
+        loop {
+            let next = tokio::select! {
+                _ = shutdown.cancelled() => break,
+                next = reader.next() => next,
             };
-            tracing::debug!(
-                "Sending {} raw bytes (len={}): {:02x?}",
-                msg_type,
-                serialized.len(),
-                &serialized[..std::cmp::min(100, serialized.len())]
-            );
-        }
-
-        // Lock the state for the entire write operation
-        let mut state = state_arc.lock().await;
-
-        // Write with error handling
-        match state.stream.write_all(&serialized).await {
-            Ok(_) => {
-                // Flush to ensure data is sent immediately
-                if let Err(e) = state.stream.flush().await {
-                    tracing::warn!("Failed to flush socket {}: {}", self.address, e);
+            match next {
+                None => break,
+                Some(Err(e)) => {
+                    tracing::error!("NETWORK: reader {} stopped: {}", addr, e);
+                    break;
                 }
-                self.bytes_sent += serialized.len() as u64;
-                tracing::trace!("Sent message to {}: {:?}", self.address, raw_message.payload);
-                Ok(())
-            }
-            Err(e) => {
-                tracing::warn!("Disconnecting {} due to write error: {}", self.address, e);
-                // Drop the lock before clearing connection state
-                drop(state);
-                // Clear connection state on write error
-                self.state = None;
-                self.connected_at = None;
-                Err(NetworkError::ConnectionFailed(format!("Write failed: {}", e)))
-            }
-        }
-    }
-
-    /// Receive a message from the peer.
-    pub async fn receive_message(&mut self) -> NetworkResult<Option<Message>> {
-        // If the state was cleared e.g. by a write-path broken pipe, treat as disconnected
-        // so the reader loop handles it identically to a read-path EOF.
-        let state_arc = self.state.as_ref().ok_or(NetworkError::PeerDisconnected)?;
-
-        // Lock the state for the entire read operation
-        // This ensures no concurrent access to the socket
-        let mut state = state_arc.lock().await;
-
-        // Buffered, stateful framing
-        const HEADER_LEN: usize = 24; // magic[4] + cmd[12] + length[4] + checksum[4]
-        const MAX_RESYNC_STEPS_PER_CALL: usize = 64;
-
-        let result = async {
-            let magic_bytes = self.network.magic().to_le_bytes();
-            let mut resync_steps = 0usize;
-
-            loop {
-                // Ensure header availability
-                if state.framing_buffer.len() < HEADER_LEN {
-                    match Self::read_some(&mut state).await {
-                        Ok(0) => {
-                            tracing::info!("Peer {} closed connection (EOF)", self.address);
-                            return Err(NetworkError::PeerDisconnected);
-                        }
-                        Ok(_) => {}
-                        Err(ref e)
-                            if e.kind() == std::io::ErrorKind::ConnectionAborted
-                                || e.kind() == std::io::ErrorKind::ConnectionReset =>
-                        {
-                            tracing::info!("Peer {} connection reset/aborted", self.address);
-                            return Err(NetworkError::PeerDisconnected);
-                        }
-                        Err(e) => {
-                            return Err(NetworkError::ConnectionFailed(format!(
-                                "Read failed: {}",
-                                e
-                            )));
-                        }
-                    }
-                }
-
-                // Align to magic
-                if state.framing_buffer.len() >= 4 && state.framing_buffer[..4] != magic_bytes {
-                    if let Some(pos) =
-                        state.framing_buffer.windows(4).position(|w| w == magic_bytes)
-                    {
-                        if pos > 0 {
-                            tracing::warn!(
-                                "{}: stream desync: skipping {} stray bytes before magic",
-                                self.address,
-                                pos
-                            );
-                            state.framing_buffer.drain(0..pos);
-                            resync_steps += 1;
-                            if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
-                                return Ok(None);
-                            }
-                            continue;
-                        }
-                    } else {
-                        // Keep last 3 bytes of potential magic prefix
-                        if state.framing_buffer.len() > 3 {
-                            let dropped = state.framing_buffer.len() - 3;
-                            tracing::warn!(
-                                "{}: stream desync: dropping {} bytes (no magic found)",
-                                self.address,
-                                dropped
-                            );
-                            state.framing_buffer.drain(0..dropped);
-                            resync_steps += 1;
-                            if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
-                                return Ok(None);
-                            }
-                        }
-                        // Need more data
-                        match Self::read_some(&mut state).await {
-                            Ok(0) => {
-                                tracing::info!("Peer {} closed connection (EOF)", self.address);
-                                return Err(NetworkError::PeerDisconnected);
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                return Err(NetworkError::ConnectionFailed(format!(
-                                    "Read failed: {}",
-                                    e
-                                )));
-                            }
-                        }
+                Some(Ok(raw)) => {
+                    if raw.magic != magic {
                         continue;
                     }
-                }
-
-                // Ensure full header
-                if state.framing_buffer.len() < HEADER_LEN {
-                    match Self::read_some(&mut state).await {
-                        Ok(0) => {
-                            tracing::info!("Peer {} closed connection (EOF)", self.address);
-                            return Err(NetworkError::PeerDisconnected);
+                    match raw.payload {
+                        NetworkMessage::Ping(nonce) => {
+                            let pong = RawNetworkMessage {
+                                magic,
+                                payload: NetworkMessage::Pong(nonce),
+                            };
+                            if writer
+                                .lock()
+                                .await
+                                .write_all(&encode::serialize(&pong))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
-                        Ok(_) => {}
-                        Err(e) => {
-                            return Err(NetworkError::ConnectionFailed(format!(
-                                "Read failed: {}",
-                                e
-                            )));
+                        NetworkMessage::Headers2(compressed) => {
+                            // CPU-bound, so decoded on the blocking pool, several at
+                            // once. DIP-25 resets compression state per `headers2`, so
+                            // batches are independent. The permit, held until the batch
+                            // is dispatched, bounds the reorder buffer.
+                            let permit = tokio::select! {
+                                permit = headers2_decompression_semaphore.clone().acquire_owned() => match permit {
+                                    Ok(permit) => permit,
+                                    Err(_) => break,
+                                },
+                                _ = shutdown.cancelled() => break,
+                            };
+                            let sequence = header_sequence;
+                            header_sequence += 1;
+
+                            let order = header_order.clone();
+                            let inbound = inbound.clone();
+                            let headers2 = headers2.clone();
+                            let shutdown = shutdown.clone();
+                            tokio::spawn(async move {
+                                let decoded = tokio::task::spawn_blocking(move || {
+                                    CompressionState::default()
+                                        .process_headers_with_hashes(&compressed.headers)
+                                })
+                                .await;
+                                if shutdown.is_cancelled() {
+                                    return;
+                                }
+                                let decompressed = match decoded {
+                                    Ok(Ok(decompressed)) => {
+                                        tracing::debug!(
+                                            target: "dash_spv::network",
+                                            "decompressed {} headers from {}",
+                                            decompressed.len(),
+                                            addr
+                                        );
+                                        Some(InboundMessage::new_headers(decompressed))
+                                    }
+                                    Ok(Err(e)) => {
+                                        // The broker times the request out and re-sends
+                                        // it as plain `getheaders` now the flag is off.
+                                        tracing::warn!(
+                                            target: "dash_spv::network",
+                                            "headers2 from {} failed to decompress ({}); \
+                                             falling back to uncompressed headers for this peer",
+                                            addr,
+                                            e
+                                        );
+                                        headers2.store(false, Ordering::Relaxed);
+                                        None
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            target: "dash_spv::network",
+                                            "headers2 decompression task for {} failed: {}",
+                                            addr,
+                                            e
+                                        );
+                                        None
+                                    }
+                                };
+                                // Hold the lock through dispatch so another batch
+                                // cannot overtake this one.
+                                let mut order = order.lock().await;
+                                let ready = order.complete(sequence, (decompressed, permit));
+                                dispatch_headers(&inbound, addr, ready);
+                            });
                         }
-                    }
-                    continue;
-                }
-
-                // Parse header fields
-                let length_le = u32::from_le_bytes([
-                    state.framing_buffer[16],
-                    state.framing_buffer[17],
-                    state.framing_buffer[18],
-                    state.framing_buffer[19],
-                ]) as usize;
-                let header_checksum = [
-                    state.framing_buffer[20],
-                    state.framing_buffer[21],
-                    state.framing_buffer[22],
-                    state.framing_buffer[23],
-                ];
-                // Validate announced length to prevent unbounded accumulation or overflow
-                if length_le > dashcore::network::message::MAX_MSG_SIZE {
-                    return Err(NetworkError::ProtocolError(format!(
-                        "Declared payload length {} exceeds MAX_MSG_SIZE {}",
-                        length_le,
-                        dashcore::network::message::MAX_MSG_SIZE
-                    )));
-                }
-                let total_len = match HEADER_LEN.checked_add(length_le) {
-                    Some(v) => v,
-                    None => {
-                        return Err(NetworkError::ProtocolError(
-                            "Message length overflow".to_string(),
-                        ));
-                    }
-                };
-
-                // Ensure full frame available
-                if state.framing_buffer.len() < total_len {
-                    match Self::read_some(&mut state).await {
-                        Ok(0) => {
-                            tracing::info!("Peer {} closed connection (EOF)", self.address);
-                            return Err(NetworkError::PeerDisconnected);
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            return Err(NetworkError::ConnectionFailed(format!(
-                                "Read failed: {}",
-                                e
-                            )));
-                        }
-                    }
-                    continue;
-                }
-
-                // Verify checksum
-                let payload_slice = &state.framing_buffer[HEADER_LEN..total_len];
-                let expected = {
-                    let checksum = <dashcore_hashes::sha256d::Hash as dashcore_hashes::Hash>::hash(
-                        payload_slice,
-                    );
-                    [checksum[0], checksum[1], checksum[2], checksum[3]]
-                };
-                if expected != header_checksum {
-                    tracing::warn!(
-                        "Skipping message with invalid checksum from {}: expected {:02x?}, actual {:02x?}",
-                        self.address,
-                        expected,
-                        header_checksum
-                    );
-                    if header_checksum == [0, 0, 0, 0] {
-                        tracing::warn!(
-                            "All-zeros checksum detected from {}, likely corrupted stream - resyncing",
-                            self.address
-                        );
-                    }
-                    // Resync by dropping a byte and retrying
-                    state.framing_buffer.drain(0..1);
-                    resync_steps += 1;
-                    if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
-                        return Ok(None);
-                    }
-                    continue;
-                }
-
-                // Decode full RawNetworkMessage from the frame using existing decoder
-                let mut cursor = std::io::Cursor::new(&state.framing_buffer[..total_len]);
-                match RawNetworkMessage::consensus_decode(&mut cursor) {
-                    Ok(raw_message) => {
-                        // Consume bytes
-                        state.framing_buffer.drain(0..total_len);
-
-                        // Validate magic matches our network
-                        if raw_message.magic != self.network.magic() {
-                            tracing::warn!(
-                                "Received message with wrong magic bytes: expected {:#x}, got {:#x}",
-                                self.network.magic(),
-                                raw_message.magic
+                        NetworkMessage::Headers(headers) => {
+                            // Same queue as `headers2`, else a plain reply could
+                            // overtake a batch still decoding (the pipeline matches by
+                            // the tip it extends). Takes a permit to keep it bounded.
+                            let permit = tokio::select! {
+                                permit = headers2_decompression_semaphore.clone().acquire_owned() => match permit {
+                                    Ok(permit) => permit,
+                                    Err(_) => break,
+                                },
+                                _ = shutdown.cancelled() => break,
+                            };
+                            let sequence = header_sequence;
+                            header_sequence += 1;
+                            let mut order = header_order.lock().await;
+                            let ready = order.complete(
+                                sequence,
+                                (Some(NetworkMessage::Headers(headers).into()), permit),
                             );
-                            return Err(NetworkError::ProtocolError(format!(
-                                "Wrong magic bytes: expected {:#x}, got {:#x}",
-                                self.network.magic(),
-                                raw_message.magic
-                            )));
+                            if !dispatch_headers(&inbound, addr, ready) {
+                                break;
+                            }
                         }
-
-                        tracing::trace!(
-                            "Successfully decoded message from {}: {:?}",
-                            self.address,
-                            raw_message.payload.cmd()
-                        );
-
-                        return Ok(Some(Message::new(self.address, raw_message.payload)));
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "{}: decode error after framing ({}), attempting resync",
-                            self.address,
-                            e
-                        );
-                        state.framing_buffer.drain(0..1);
-                        resync_steps += 1;
-                        if resync_steps >= MAX_RESYNC_STEPS_PER_CALL {
-                            return Ok(None);
+                        payload => {
+                            if inbound.send(PeerEvent::Message(addr, payload.into())).is_err() {
+                                break;
+                            }
                         }
-                        continue;
                     }
                 }
             }
         }
-        .await;
 
-        // Drop the lock before disconnecting
-        drop(state);
-
-        // Handle disconnection if needed
-        if let Err(NetworkError::PeerDisconnected) = &result {
-            self.state = None;
-            self.connected_at = None;
-        }
-
-        result
-    }
-
-    /// Check if the connection is active.
-    pub fn is_connected(&self) -> bool {
-        self.state.is_some()
-    }
-
-    /// Check if connection appears healthy (not just connected).
-    pub fn is_healthy(&self) -> bool {
-        if !self.is_connected() {
-            tracing::debug!("Connection to {} marked unhealthy: not connected", self.address);
-            return false;
-        }
-
-        let now = SystemTime::now();
-
-        // If we have exchanged pings/pongs, check the last activity
-        if let Some(last_pong) = self.last_pong_received {
-            if let Ok(duration) = now.duration_since(last_pong) {
-                // If no pong in 10 minutes, consider unhealthy
-                if duration > Duration::from_secs(600) {
-                    tracing::warn!("Connection to {} marked unhealthy: no pong received for {} seconds (limit: 600)",
-                                  self.address, duration.as_secs());
-                    return false;
-                }
-            }
-        } else if let Some(connected_at) = self.connected_at {
-            // If we haven't received any pongs yet, check how long we've been connected
-            if let Ok(duration) = now.duration_since(connected_at) {
-                // Give new connections 5 minutes before considering them unhealthy
-                if duration > Duration::from_secs(300) {
-                    tracing::warn!("Connection to {} marked unhealthy: no pong activity after {} seconds (limit: 300, last_ping_sent: {:?})",
-                                  self.address, duration.as_secs(), self.last_ping_sent.is_some());
-                    return false;
-                }
-            }
-        }
-
-        // Connection is healthy
-        true
-    }
-
-    /// Get connection statistics.
-    pub fn stats(&self) -> (u64, u64) {
-        (self.bytes_sent, 0) // TODO: Track bytes received
-    }
-
-    /// Send a ping message with a random nonce.
-    pub async fn send_ping(&mut self) -> NetworkResult<u64> {
-        let nonce = rand::random::<u64>();
-        let ping_message = NetworkMessage::Ping(nonce);
-
-        self.send_message(ping_message).await?;
-
-        let now = SystemTime::now();
-        self.last_ping_sent = Some(now);
-        self.pending_pings.insert(nonce, now);
-
-        tracing::trace!("Sent ping to {} with nonce {}", self.address, nonce);
-
-        Ok(nonce)
-    }
-
-    /// Handle a received ping message by sending a pong response.
-    pub async fn handle_ping(&mut self, nonce: u64) -> NetworkResult<()> {
-        let pong_message = NetworkMessage::Pong(nonce);
-        self.send_message(pong_message).await?;
-
-        tracing::trace!("Responded to ping from {} with pong nonce {}", self.address, nonce);
-
-        Ok(())
-    }
-
-    /// Handle a received pong message by validating the nonce.
-    pub fn handle_pong(&mut self, nonce: u64) -> NetworkResult<()> {
-        if let Some(sent_time) = self.pending_pings.remove(&nonce) {
-            let now = SystemTime::now();
-            let rtt = now.duration_since(sent_time).unwrap_or(Duration::from_secs(0));
-
-            self.last_pong_received = Some(now);
-
-            tracing::debug!(
-                "Received valid pong from {} with nonce {} (RTT: {:?})",
-                self.address,
-                nonce,
-                rtt
-            );
-
-            Ok(())
-        } else {
-            tracing::warn!("Received unexpected pong from {} with nonce {}", self.address, nonce);
-            Err(NetworkError::ProtocolError(format!(
-                "Unexpected pong nonce {} from {}",
-                nonce, self.address
-            )))
-        }
-    }
-
-    /// Check if we need to send a ping (no ping/pong activity for 2 minutes).
-    pub fn should_ping(&self) -> bool {
-        let now = SystemTime::now();
-
-        // Check if we've sent a ping recently
-        if let Some(last_ping) = self.last_ping_sent {
-            if now.duration_since(last_ping).unwrap_or(Duration::MAX) < PING_INTERVAL {
-                return false;
-            }
-        }
-
-        // Check if we've received a pong recently
-        if let Some(last_pong) = self.last_pong_received {
-            if now.duration_since(last_pong).unwrap_or(Duration::MAX) < PING_INTERVAL {
-                return false;
-            }
-        }
-
-        // If we haven't sent a ping or received a pong in 2 minutes, we should ping
-        true
-    }
-
-    /// Remove pending pings that have timed out.
-    /// Returns `true` if any pings were removed.
-    pub fn remove_expired_pings(&mut self) -> bool {
-        const PING_TIMEOUT: Duration = Duration::from_secs(60); // 1 minute timeout for pings
-
-        let now = SystemTime::now();
-        let mut expired_nonces = Vec::new();
-
-        for (&nonce, &sent_time) in &self.pending_pings {
-            if now.duration_since(sent_time).unwrap_or(Duration::ZERO) > PING_TIMEOUT {
-                expired_nonces.push(nonce);
-            }
-        }
-
-        let has_expired = !expired_nonces.is_empty();
-        for nonce in expired_nonces {
-            self.pending_pings.remove(&nonce);
-            tracing::warn!("Ping timeout for {} with nonce {}", self.address, nonce);
-        }
-
-        has_expired
-    }
-
-    /// Get ping/pong statistics.
-    pub fn ping_stats(&self) -> (Option<SystemTime>, Option<SystemTime>, usize) {
-        (self.last_ping_sent, self.last_pong_received, self.pending_pings.len())
-    }
-
-    /// Set that peer prefers headers2.
-    pub fn set_prefers_headers2(&mut self, prefers: bool) {
-        self.prefers_headers2 = prefers;
-        if prefers {
-            tracing::info!("Peer {} prefers headers2 compression", self.address);
-        }
-    }
-
-    /// Check if peer prefers headers2.
-    pub fn prefers_headers2(&self) -> bool {
-        self.prefers_headers2
-    }
-
-    /// Set that peer sent us SendHeaders2.
-    pub fn set_peer_sent_sendheaders2(&mut self, sent: bool) {
-        self.sent_sendheaders2 = sent;
-        if sent {
-            tracing::info!(
-                "Peer {} sent SendHeaders2 - they will send compressed headers",
-                self.address
-            );
-        }
-    }
-
-    /// Check if peer sent us SendHeaders2.
-    pub fn peer_sent_sendheaders2(&self) -> bool {
-        self.sent_sendheaders2
-    }
-
-    /// Check if we can request headers2 from this peer.
-    pub fn can_request_headers2(&self) -> bool {
-        // We can request headers2 if peer has the service flag for headers2 support
-        // Note: We don't wait for SendHeaders2 from peer as that creates a race condition
-        // during initial sync. The service flag is sufficient to know they support headers2.
-        if let Some(services) = self.services {
-            dashcore::network::constants::ServiceFlags::from(services)
-                .has(dashcore::network::constants::NODE_HEADERS_COMPRESSED)
-        } else {
-            false
-        }
-    }
+        tracing::info!("NETWORK: peer {} disconnected", addr);
+        let _ = inbound.send(PeerEvent::Disconnected(addr));
+    });
 }
 
-#[cfg(test)]
-impl Peer {
-    pub(crate) fn set_services(&mut self, flags: ServiceFlags) {
-        self.services = Some(flags.as_u64());
-    }
+fn build_version(peer: SocketAddr) -> VersionMessage {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let unspecified: SocketAddr = ([0u8, 0, 0, 0], 0).into();
+    VersionMessage::new(
+        // Needed for peers to honour our `sendheaders2`; we serve nothing else.
+        ServiceFlags::NONE | NODE_HEADERS_COMPRESSED,
+        now,
+        Address::new(&peer, ServiceFlags::NETWORK),
+        Address::new(&unspecified, ServiceFlags::NONE),
+        rand::random(),
+        USER_AGENT.to_string(),
+        0,
+        false,
+        [0u8; 32],
+    )
 }
 
-#[cfg(test)]
-mod tests {
-    use std::net::SocketAddr;
-    use std::time::{Duration, SystemTime};
-
-    use super::Peer;
-
-    #[test]
-    fn remove_expired_pings() {
-        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
-        let mut peer = Peer::dummy(addr);
-        let now = SystemTime::now();
-        let expired = now - Duration::from_secs(61);
-
-        // No pings at all
-        assert!(!peer.remove_expired_pings());
-
-        // Only recent pings — nothing removed
-        peer.pending_pings.insert(1, now);
-        peer.pending_pings.insert(2, now);
-        assert!(!peer.remove_expired_pings());
-        assert_eq!(peer.pending_pings.len(), 2);
-
-        // Add an expired ping — only it gets removed
-        peer.pending_pings.insert(3, expired);
-        assert!(peer.remove_expired_pings());
-        assert_eq!(peer.pending_pings.len(), 2);
-        assert!(!peer.pending_pings.contains_key(&3));
-
-        // All expired — map ends up empty
-        peer.pending_pings.clear();
-        peer.pending_pings.insert(10, expired);
-        peer.pending_pings.insert(20, expired);
-        assert!(peer.remove_expired_pings());
-        assert!(peer.pending_pings.is_empty());
-    }
+async fn handshake_send(
+    writer: &mut OwnedWriteHalf,
+    magic: u32,
+    payload: NetworkMessage,
+) -> NetworkResult<()> {
+    let raw = RawNetworkMessage {
+        magic,
+        payload,
+    };
+    writer
+        .write_all(&encode::serialize(&raw))
+        .await
+        .map_err(|e| NetworkError::ConnectionFailed(format!("handshake write failed: {}", e)))?;
+    writer
+        .flush()
+        .await
+        .map_err(|e| NetworkError::ConnectionFailed(format!("handshake flush failed: {}", e)))?;
+    Ok(())
 }

@@ -1,4 +1,3 @@
-use rayon::prelude::*;
 use std::time::Instant;
 
 use crate::error::{ValidationError, ValidationResult};
@@ -18,8 +17,8 @@ impl Validator<&[HashedBlockHeader]> for BlockHeaderValidator {
     fn validate(&self, hashed_headers: &[HashedBlockHeader]) -> ValidationResult<()> {
         let start = Instant::now();
 
-        // Check PoW of i and continuity of i-1 to i in parallel
-        hashed_headers.par_iter().enumerate().try_for_each(|(i, header)| {
+        // Check PoW of i and continuity of i-1 to i
+        hashed_headers.iter().enumerate().try_for_each(|(i, header)| {
             // For the first header, skip chain continuity check since we don't have i-1 here
             if i > 0 && header.header().prev_blockhash != *hashed_headers[i - 1].hash() {
                 return Err(ValidationError::InvalidHeaderChain(format!(

@@ -382,7 +382,7 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for InstantSendManager<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, RequestSender};
+    use crate::network::{MessageType, NetworkManager};
     use crate::sml_engine::test_support::TestEngine;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
     use crate::test_utils::MockHeaderStorage;
@@ -392,7 +392,6 @@ mod tests {
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::{BlockHash, OutPoint};
     use test_case::test_case;
-    use tokio::sync::mpsc::unbounded_channel;
 
     /// Insert an empty masternode list at `height` so the shared engine reports a
     /// new tip height. Empty lists carry no rotated quorums, so InstantLock
@@ -406,9 +405,8 @@ mod tests {
         );
     }
 
-    fn no_op_requests() -> RequestSender {
-        let (tx, _rx) = unbounded_channel();
-        RequestSender::new(tx)
+    fn no_op_network() -> Arc<dyn NetworkManager> {
+        Arc::new(crate::test_utils::MockNetworkManager::new())
     }
 
     /// A pending lock whose `first_seen` is the current instant. Expiry is
@@ -457,7 +455,7 @@ mod tests {
         let manager = create_test_manager();
         assert_eq!(manager.identifier(), ManagerIdentifier::InstantSend);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
-        assert_eq!(manager.wanted_message_types(), vec![MessageType::ISLock, MessageType::Inv]);
+        assert_eq!(manager.wanted_message_types(), [MessageType::IsDLock, MessageType::Inv]);
     }
 
     /// Buffered `MasternodeStateUpdated` events delivered during
@@ -466,9 +464,9 @@ mod tests {
     /// `MasternodesManager` re-emits the event after reconnect.
     #[tokio::test]
     async fn test_handle_sync_event_drops_masternode_state_updated_in_waiting_for_connections() {
-        use crate::network::RequestSender;
+        use crate::network::NetworkManager;
         use crate::sync::SyncEvent;
-        use tokio::sync::mpsc::unbounded_channel;
+        use crate::test_utils::MockNetworkManager;
 
         let mut manager = create_test_manager();
         manager.set_state(SyncState::WaitingForConnections);
@@ -477,8 +475,8 @@ mod tests {
             height: 100,
             qr_info_result: None,
         };
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.handle_sync_event(&event, &RequestSender::new(tx)).await.unwrap();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
@@ -598,7 +596,7 @@ mod tests {
     #[tokio::test]
     async fn test_tick_revalidates_pending_when_engine_advances() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         // A lock arrives before quorum sync: the empty engine can't verify it,
         // so it is queued.
@@ -609,7 +607,7 @@ mod tests {
 
         // Engine has not advanced yet (still empty): tick must not re-validate,
         // and the pending-validation marker stays untouched.
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 1);
         assert_eq!(manager.last_validated_engine_height, None);
@@ -618,19 +616,19 @@ mod tests {
         // The needed rotated quorum is still absent, so the lock is re-queued,
         // but the marker records the height we validated against.
         advance_engine_height(&manager, 200).await;
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 1);
         assert_eq!(manager.last_validated_engine_height, Some(200));
 
         // No further advance: tick must not spend work re-validating again.
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.last_validated_engine_height, Some(200));
 
         // Another advance re-arms re-validation.
         advance_engine_height(&manager, 201).await;
-        let _ = manager.tick(&requests).await.unwrap();
+        let _ = manager.tick(&network).await.unwrap();
         assert_eq!(manager.last_validated_engine_height, Some(201));
     }
 
@@ -641,7 +639,7 @@ mod tests {
     #[tokio::test]
     async fn test_tick_skips_revalidation_without_engine_advance() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         // Engine at height 100, but the marker is deliberately set ABOVE it so
         // the advancement gate (current > last) stays closed. If `validate_pending`
@@ -652,7 +650,7 @@ mod tests {
 
         manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([7u8; 32])));
 
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 1);
         assert_eq!(manager.last_validated_engine_height, Some(150));
@@ -670,7 +668,7 @@ mod tests {
     #[tokio::test]
     async fn test_tick_expires_pending_without_engine_advance() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         // Close the advancement gate: engine at 100, already validated at 100.
         // `validate_pending` therefore cannot run this tick.
@@ -681,7 +679,7 @@ mod tests {
 
         // Drive the tick with a `now` past the lock's TTL so the cheap expiry
         // pass drops it without back-dating `first_seen`.
-        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
+        let events = manager.tick_at(past_ttl(), &network).await.unwrap();
 
         assert!(events.is_empty());
         // Expired purely by the advancement-independent pass.
@@ -702,14 +700,14 @@ mod tests {
     #[tokio::test]
     async fn test_tick_transitions_synced_when_last_pending_resolved() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         manager.set_state(SyncState::Syncing);
         manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([4u8; 32])));
 
         // A `now` past the lock's TTL expires it during the tick, draining the
         // last pending lock and forcing the synced-state transition.
-        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
+        let events = manager.tick_at(past_ttl(), &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 0);
@@ -752,7 +750,7 @@ mod tests {
     #[tokio::test]
     async fn test_pending_expires_after_ttl_on_revalidation() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([9u8; 32])));
 
@@ -760,7 +758,7 @@ mod tests {
         // unverifiable, so it is dropped and counted invalid regardless of the
         // engine advancing to height 300.
         advance_engine_height(&manager, 300).await;
-        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
+        let events = manager.tick_at(past_ttl(), &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 0);

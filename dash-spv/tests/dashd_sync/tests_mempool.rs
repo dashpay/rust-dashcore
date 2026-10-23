@@ -410,12 +410,12 @@ async fn test_mempool_peer_disconnect_reactivation() {
     let (fa_disc, bf_disc) = tokio::join!(
         wait_for_network_event(
             &mut fa_net_rx,
-            |e| matches!(e, NetworkEvent::PeerDisconnected { address } if *address == ctx.dashd.addr),
+            |e| matches!(e, NetworkEvent::PeerDisconnected(address) if *address == ctx.dashd.addr),
             Duration::from_secs(10),
         ),
         wait_for_network_event(
             &mut bf_net_rx,
-            |e| matches!(e, NetworkEvent::PeerDisconnected { address } if *address == ctx.dashd.addr),
+            |e| matches!(e, NetworkEvent::PeerDisconnected(address) if *address == ctx.dashd.addr),
             Duration::from_secs(10),
         ),
     );
@@ -449,10 +449,10 @@ async fn test_mempool_peer_disconnect_reactivation() {
                 _ = &mut deadline => panic!("{}: timed out waiting for both peer disconnects", label),
                 result = receiver.recv() => {
                     match result {
-                        Ok(NetworkEvent::PeerDisconnected { address }) if address == ctx.dashd.addr => {
+                        Ok(NetworkEvent::PeerDisconnected(address)) if address == ctx.dashd.addr => {
                             seen_dashd1 = true;
                         }
-                        Ok(NetworkEvent::PeerDisconnected { address }) if address == dashd2.addr => {
+                        Ok(NetworkEvent::PeerDisconnected(address)) if address == dashd2.addr => {
                             seen_dashd2 = true;
                         }
                         _ => {}

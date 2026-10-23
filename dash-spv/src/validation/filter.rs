@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use dashcore::bip158::BlockFilter;
 use dashcore::hash_types::FilterHeader;
 use key_wallet_manager::FilterMatchKey;
-use rayon::prelude::*;
 
 use crate::error::{ValidationError, ValidationResult};
 use crate::validation::Validator;
@@ -26,8 +25,7 @@ pub struct FilterValidationInput<'a> {
 /// Validates compact block filters against their expected headers.
 ///
 /// Each filter's header is computed by chaining from the previous filter header,
-/// then compared against the expected header from storage. Uses rayon for
-/// parallel verification.
+/// then compared against the expected header from storage.
 #[derive(Default)]
 pub struct FilterValidator;
 
@@ -69,10 +67,9 @@ impl Validator<FilterValidationInput<'_>> for FilterValidator {
             prev = input.expected_headers[&height];
         }
 
-        // Verify all filters in parallel
         let failures: Vec<(u32, String)> = input
             .filters
-            .par_iter()
+            .iter()
             .filter_map(|(key, filter)| {
                 let height = key.height();
 

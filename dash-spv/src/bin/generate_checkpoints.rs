@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // From genesis: checkpoints must not come from the checkpoints they replace.
     config.start_from_height = Some(0);
 
-    let network_manager = PeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await;
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(network)));
     let synced = Arc::new(Notify::new());
     let client = DashSpvClient::new(
