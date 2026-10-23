@@ -74,7 +74,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
         let mut below_floor = BTreeSet::new();
         for cycle_hash in self.rotated_quorums_per_cycle.keys() {
-            if self.height_of(cycle_hash).await.is_some_and(|height| height < floor) {
+            if self.height_if_known(cycle_hash).await.is_some_and(|height| height < floor) {
                 below_floor.insert(*cycle_hash);
             }
         }
@@ -85,7 +85,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// chain has dropped them for another branch: the lists above it, and the
     /// rotated cycles whose base block left the chain or whose mining window
     /// ends above it, since their commitments may have been mined on the
-    /// dropped branch.
+    /// dropped branch. A cycle whose base block cannot be read goes too:
+    /// nothing shows it was mined below `height`.
     pub(crate) async fn truncate_above(&mut self, height: CoreBlockHeight) {
         if let Some(above) = height.checked_add(1) {
             self.masternode_lists.split_off(&above);
@@ -95,7 +96,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let mut dropped = BTreeSet::new();
         for cycle_hash in self.rotated_quorums_per_cycle.keys() {
             let mined_below = self
-                .height_of(cycle_hash)
+                .height_if_known(cycle_hash)
                 .await
                 .is_some_and(|base| base.saturating_add(mining_window_end) <= height);
             if !mined_below {

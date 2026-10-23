@@ -16,7 +16,7 @@ version.workspace = true
 default = []
 serde = ["dep:serde", "bitcoin_hashes/serde"]
 serde-std = ["serde", "serde/std"]
-x11 = ["rs-x11-hash"]
+x11 = ["dep:dash-pow"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -26,8 +26,22 @@ rustdoc-args = ["--cfg", "docsrs"]
 bincode = { workspace = true, optional = true }
 bitcoin_hashes = { workspace = true, features = ["std"] }
 hex-conservative = { workspace = true }
-rs-x11-hash = { version = "0.1.8", optional = true }
 serde = { workspace = true, optional = true }
+
+# `dash-pow` supports hardware acceleration on platforms that meet system requirements. All other platforms must use `portable`.
+dash-pow = { workspace = true, optional = true }
+
+[target.'cfg(all(target_arch = "aarch64", not(all(target_feature = "neon", target_feature = "aes"))))'.dependencies]
+dash-pow = { workspace = true, optional = true, features = ["portable"] }
+
+[target.'cfg(all(target_arch = "x86_64", not(all(target_feature = "aes", target_feature = "avx", target_feature = "avx2", target_feature = "bmi1", target_feature = "bmi2", target_feature = "f16c", target_feature = "fma", target_feature = "lzcnt", target_feature = "movbe", target_feature = "xsave"))))'.dependencies]
+dash-pow = { workspace = true, optional = true, features = ["portable"] }
+
+[target.'cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))'.dependencies]
+dash-pow = { workspace = true, optional = true, features = ["portable"] }
+
+[target.'cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "wasm32")))'.dependencies]
+dash-pow = { workspace = true, optional = true, features = ["portable"] }
 
 [dev-dependencies]
 serde_test = "1.0"
@@ -44,6 +58,11 @@ harness = false
 [[bench]]
 name = "siphash"
 harness = false
+
+[[bench]]
+name = "x11"
+harness = false
+required-features = ["x11"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }

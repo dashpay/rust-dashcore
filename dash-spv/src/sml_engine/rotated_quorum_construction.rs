@@ -39,7 +39,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
                 quorum_hash,
                 index,
             };
-            let Some(height) = self.height_of(&quorum_hash).await else {
+            let Some(height) = self.height_if_known(&quorum_hash).await else {
                 members.push(Err(QuorumValidationError::RequiredBlockNotPresent(
                     quorum_hash,
                     "rotated quorum height".to_string(),

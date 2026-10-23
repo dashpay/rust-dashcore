@@ -23,7 +23,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     ) -> Result<(), QuorumValidationError> {
         quorum.quorum_entry.validate_structure()?;
         let quorum_hash = quorum.quorum_entry.quorum_hash;
-        let height = self.height_of(&quorum_hash).await.ok_or_else(|| {
+        let height = self.height_if_known(&quorum_hash).await.ok_or_else(|| {
             QuorumValidationError::RequiredBlockNotPresent(quorum_hash, "quorum height".to_string())
         })?;
         let work_height = height.saturating_sub(QUORUM_MEMBER_LIST_OFFSET);
