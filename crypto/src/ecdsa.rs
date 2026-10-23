@@ -71,6 +71,11 @@ impl EcdsaPublicKey {
             pub fn add_tweak(&self, tweak: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError>;
 
             /// Checks `sig` over the 32-byte prehashed message.
+            ///
+            /// A high-S signature verifies like its low-S twin, as in Dash
+            /// Core. Callers refusing malleable signatures check
+            /// [`EcdsaSignature::is_low_s`].
+            #[call(verify_digest)]
             pub fn verify(
                 &self,
                 msg_hash: &[u8; 32],
@@ -154,6 +159,7 @@ impl EcdsaSecretKey {
             pub fn add_tweak(&self, tweak: &[u8; ECDSA_SK_LEN]) -> Result<Self, EcdsaError>;
 
             /// Signs a 32-byte prehashed message (RFC 6979, low-S, low-R ground).
+            #[call(sign_digest)]
             #[expr(EcdsaSignature($))]
             pub fn sign(&self, msg_hash: &[u8; 32]) -> EcdsaSignature;
 
@@ -216,6 +222,9 @@ impl EcdsaSignature {
         to self.0 {
             /// The compact (`r || s`) encoding.
             pub fn to_bytes(&self) -> [u8; ECDSA_SIG_LEN];
+
+            /// Whether S is in the lower half of the curve order.
+            pub fn is_low_s(&self) -> bool;
         }
     }
 
@@ -273,7 +282,7 @@ impl EcdsaRecSignature {
     }
 
     fn parse(&self) -> Result<PkcRecSignature, EcdsaError> {
-        PkcRecSigBytes::from_raw(self.0).ok_or(EcdsaError::InvalidRecoveryId)?.try_into()
+        PkcRecSigBytes::from_bytes(self.0).ok_or(EcdsaError::InvalidRecoveryId)?.try_into()
     }
 
     delegate! {
@@ -295,6 +304,8 @@ impl EcdsaRecSignature {
 
 #[cfg(test)]
 mod tests {
+    use hex_conservative::hex;
+
     use super::*;
 
     // A DER signature with `SIGHASH_ALL` appended.
@@ -332,6 +343,31 @@ mod tests {
             assert_eq!(EcdsaSignature::from_bytes(&sig.to_bytes()), Ok(sig));
             assert_eq!(sig.with_der(EcdsaSignature::from_der), Ok(sig));
         }
+    }
+
+    /// A high-S signature verifies like its low-S twin, and `is_low_s` tells
+    /// them apart.
+    #[test]
+    fn verify_accepts_high_s() {
+        const ORDER: [u8; 32] =
+            hex!("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+
+        let sk = EcdsaSecretKey::from_bytes(&[0x42; ECDSA_SK_LEN]).expect("valid secret key");
+        let msg = [0x01; 32];
+        let sig = sk.sign(&msg);
+        assert!(sig.is_low_s());
+
+        let mut high = sig.to_bytes();
+        let mut borrow = 0;
+        for (s, n) in high[32..].iter_mut().zip(ORDER).rev() {
+            let (diff, b1) = n.overflowing_sub(*s);
+            let (diff, b2) = diff.overflowing_sub(borrow);
+            *s = diff;
+            borrow = u8::from(b1 || b2);
+        }
+        let high = EcdsaSignature::from_bytes(&high).expect("valid signature");
+        assert!(!high.is_low_s());
+        assert_eq!(sk.public_key().verify(&msg, high), Ok(()));
     }
 
     #[test]

@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `EcdsaPublicKey`, `EcdsaSecretKey`, `EcdsaSignature`, `EcdsaRecSignature`,
   `EcdsaError` and the `ECDSA_*_LEN` constants in `dashcore::ecdsa`
 - `EcdsaSecretKey::generate` with the `rand` feature
+- `EcdsaSignature::is_low_s`
 - `TryFrom<&[u8]>` for `PublicKey`
 
 ### Changed
@@ -71,6 +72,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   shape. Use `EddsaPublicKey::try_from`, `EddsaPkHash::from` and
   `EddsaSecretKey::public_key` instead of `EddsaPkBytes::validate`,
   `EddsaPkBytes::hash` and `EddsaSkBytes::public_key`
+- **Breaking:** `dashcore-crypto` re-exports `dash-pkc` 0.2.
+  `EddsaPublicKey::verify` and `EddsaSecretKey::sign` are renamed to
+  `verify_message` and `sign_message`, the BLS and ECDSA types under
+  `dash_pkc` split signing and verification into `_digest` and `_message`
+  methods, and `dash_pkc`'s `BlsPkBytes`, `BlsSigBytes` and `BlsSkBytes` lose
+  their scheme parameter
+- **Breaking:** `EcdsaPublicKey::verify`, and `signer::verify_data_signature`
+  with it, accept a high-S signature like its low-S twin, as Dash Core does.
+  Check `EcdsaSignature::is_low_s` to refuse malleable signatures
+- **Breaking:** `dash-pow` replaces `rs-x11-hash` for X11, so
+  `dashcore_hashes` loses its `rs-x11-hash` feature and no longer needs a C
+  toolchain. X11 hashes inputs of any length, where `rs-x11-hash` always read
+  80 bytes. AES runs in hardware when the build enables the target features
+  `dash-pow` needs, and in software otherwise
+  - Cargo ignores a dependency's profile overrides, so set `opt-level = 3`
+    under `[profile.dev.package.dash-pow]` to keep debug builds fast enough
+    for header sync
 - **Breaking:** `QualifiedMasternodeListEntry::entry_hash` and
   `MessageVerificationError::ThresholdSignatureNotValid` hold `Sha256dHash`
 - **Breaking:** `dashcore::base58` is `base58ck` 0.5.0, so `Base58CkString`
