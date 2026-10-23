@@ -150,7 +150,6 @@ struct SyncRun {
     tasks: JoinSet<SyncResult<ManagerIdentifier>>,
     shutdown: CancellationToken,
     progress_task: tokio::task::JoinHandle<()>,
-    start_time: Instant,
 }
 
 impl SyncCoordinator {
@@ -248,7 +247,6 @@ impl SyncCoordinator {
             tasks,
             shutdown,
             progress_task,
-            start_time,
         });
 
         Ok(())
@@ -333,16 +331,6 @@ impl SyncCoordinator {
     /// Get current progress.
     pub fn progress(&self) -> SyncProgress {
         self.progress_sender.borrow().clone()
-    }
-
-    /// Check if all managers are idle (sync complete).
-    pub fn is_synced(&self) -> bool {
-        self.progress_sender.borrow().is_synced()
-    }
-
-    /// Get the duration since sync started.
-    pub fn sync_duration(&self) -> Option<Duration> {
-        self.run.as_ref().map(|run| run.start_time.elapsed())
     }
 }
 

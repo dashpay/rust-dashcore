@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use dash_network::ffi::FFINetwork;
-    use dash_spv::sync::{
+    use dash_spv::{
         BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
         FiltersProgress, InstantSendProgress, MasternodesProgress, SyncProgress, SyncState,
     };

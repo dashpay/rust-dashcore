@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncState};
+use dash_spv::{ProgressPercentage, SyncEvent, SyncState};
 use dashcore::hashes::Hash;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
