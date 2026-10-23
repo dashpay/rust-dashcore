@@ -45,5 +45,10 @@ harness = false
 name = "siphash"
 harness = false
 
+[[bench]]
+name = "x11"
+harness = false
+required-features = ["x11"]
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }
