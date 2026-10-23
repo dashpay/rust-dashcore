@@ -10,10 +10,17 @@ on:
     paths:
       - 'key-wallet-ffi/**'
       - 'dash-spv-ffi/**'
-      - 'dashcore/**'
-      - 'dashcore_hashes/**'
+      - 'dash/**'
+      - 'hashes/**'
+      - 'crypto/**'
+      - 'internals/**'
+      - 'dash-network/**'
       - 'key-wallet/**'
+      - 'key-wallet-manager/**'
       - 'dash-spv/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/sanitizer.yml'
 
 permissions:
   contents: read
