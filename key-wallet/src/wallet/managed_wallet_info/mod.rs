@@ -5,6 +5,7 @@
 
 pub mod asset_lock_builder;
 pub mod coin_selection;
+pub mod coinjoin_pools;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
