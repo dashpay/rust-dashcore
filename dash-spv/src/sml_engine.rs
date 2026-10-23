@@ -22,9 +22,10 @@ use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
 use dashcore::sml::quorum_validation_error::QuorumValidationError;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use dashcore::Network;
-use dashcore::{BlockHash, QuorumHash};
+use dashcore::{BlockHash, QuorumHash, Transaction};
 use tokio::sync::RwLock;
 
 /// Blocks between a rotation cycle's base and its work block (Dash Core's `WORK_DIFF_DEPTH`).
@@ -59,6 +60,7 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     rotated_quorums_per_cycle: BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
     network: Network,
+    latest_coinbase: Option<CoinbasePayload>,
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
@@ -166,7 +168,13 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             masternode_lists: BTreeMap::new(),
             rotated_quorums_per_cycle: BTreeMap::new(),
             network,
+            latest_coinbase: None,
         }
+    }
+
+    /// The coinbase payload of the newest block a validated diff proved it in.
+    pub fn latest_coinbase(&self) -> Option<&CoinbasePayload> {
+        self.latest_coinbase.as_ref()
     }
 
     /// The height of `block_hash` in the header chain. The genesis block, and
@@ -818,6 +826,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             let masternode_list =
                 MasternodeList::from_diff(masternode_list_diff, diff_end_height, self.network)?;
             self.masternode_lists.insert(diff_end_height, masternode_list);
+            self.observe_coinbase_if_higher(coinbase_tx);
             return Ok(());
         }
 
@@ -843,10 +852,26 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             }
         }
         self.masternode_lists.insert(diff_end_height, masternode_list);
+        self.observe_coinbase_if_higher(coinbase_tx);
         for (quorum_type, quorum_hash, status) in changes {
             self.set_quorum_status(quorum_type, quorum_hash, &status);
         }
         Ok(())
+    }
+
+    fn observe_coinbase_if_higher(&mut self, coinbase_tx: Option<Transaction>) {
+        let Some(payload) = coinbase_tx
+            .and_then(|tx| tx.special_transaction_payload)
+            .and_then(|payload| payload.to_coinbase_payload().ok())
+        else {
+            return;
+        };
+
+        if self.latest_coinbase.as_ref().is_some_and(|latest| latest.height > payload.height) {
+            return;
+        }
+
+        self.latest_coinbase = Some(payload);
     }
 
     /// Verifies the newest list's unverified non-rotating quorums against their
@@ -1400,6 +1425,9 @@ mod tests {
             .feed_qr_info(qr_info)
             .await
             .expect("first QRInfo on a fresh engine must feed cleanly");
+
+        let coinbase = engine.latest_coinbase().expect("observes the tip's coinbase");
+        assert_eq!((coinbase.height, coinbase.version), (2518986, 3));
 
         assert_eq!(feed_result.rotated_quorum_count, 32);
         assert_eq!(
