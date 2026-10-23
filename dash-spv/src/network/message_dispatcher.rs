@@ -11,9 +11,14 @@ use std::net::SocketAddr;
 
 use dashcore::network::message::NetworkMessage;
 use dashcore::BlockHash;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::network::MessageType;
+
+/// Capacity of each subscriber queue, one filter batch (the largest response burst a single
+/// sync request triggers). A full queue makes [`MessageDispatcher::dispatch`] wait, so the peer
+/// readers stop reading and TCP throttles the peers instead of memory growing.
+const MESSAGE_CHANNEL_CAPACITY: usize = 1000;
 
 /// A network message tagged with the peer that sent it.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,21 +80,18 @@ impl Message {
 /// Routes incoming network messages to subscribers based on message type.
 ///
 /// Subscribers call [`message_receiver`](Self::message_receiver) with the message types they
-/// want, receiving an unbounded channel. When [`dispatch`](Self::dispatch) is called, the
+/// want, receiving a bounded channel. When [`dispatch`](Self::dispatch) is called, the
 /// message is sent to all subscribers registered for that type. Dead channels are pruned
 /// automatically on dispatch.
 #[derive(Debug, Default)]
 pub struct MessageDispatcher {
-    senders: HashMap<MessageType, Vec<UnboundedSender<Message>>>,
+    senders: HashMap<MessageType, Vec<Sender<Message>>>,
 }
 
 impl MessageDispatcher {
     /// Creates and returns a receiver that yields only messages matching the provided message types.
-    pub fn message_receiver(
-        &mut self,
-        message_types: &[MessageType],
-    ) -> UnboundedReceiver<Message> {
-        let (sender, receiver) = unbounded_channel();
+    pub fn message_receiver(&mut self, message_types: &[MessageType]) -> Receiver<Message> {
+        let (sender, receiver) = channel(MESSAGE_CHANNEL_CAPACITY);
         let unique_types: HashSet<MessageType> = message_types.iter().copied().collect();
         for message_type in unique_types {
             self.senders.entry(message_type).or_default().push(sender.clone());
@@ -97,11 +99,15 @@ impl MessageDispatcher {
         receiver
     }
 
-    /// Distributes a message to all subscribers interested in its type. Prunes dead senders automatically.
-    pub fn dispatch(&mut self, message: &Message) {
+    /// Distributes a message to all subscribers interested in its type, waiting for queue
+    /// capacity. Prunes dead senders automatically.
+    pub async fn dispatch(&mut self, message: &Message) {
         let message_type = MessageType::from(message);
         if let Some(senders) = self.senders.get_mut(&message_type) {
-            senders.retain(|sender| sender.send(message.clone()).is_ok());
+            for sender in senders.iter() {
+                let _ = sender.send(message.clone()).await;
+            }
+            senders.retain(|sender| !sender.is_closed());
         };
     }
 }
@@ -110,6 +116,8 @@ impl MessageDispatcher {
 mod tests {
     use super::*;
     use crate::test_utils::test_socket_address;
+    use std::time::Duration;
+    use tokio::time::timeout;
 
     #[test]
     fn test_message_creation() {
@@ -139,7 +147,7 @@ mod tests {
         let mut receiver = message_dispatcher.message_receiver(&[MessageType::Inv]);
 
         let msg = Message::new(test_socket_address(1), NetworkMessage::Inv(vec![]));
-        message_dispatcher.dispatch(&msg);
+        message_dispatcher.dispatch(&msg).await;
 
         assert_eq!(receiver.recv().await.unwrap(), msg);
     }
@@ -150,18 +158,18 @@ mod tests {
         let mut receiver = message_dispatcher.message_receiver(&[MessageType::Headers]);
 
         let msg = Message::new(test_socket_address(1), NetworkMessage::Inv(vec![]));
-        message_dispatcher.dispatch(&msg);
+        message_dispatcher.dispatch(&msg).await;
 
         assert!(receiver.try_recv().is_err());
     }
 
-    #[test]
-    fn test_dispatch_no_subscribers() {
+    #[tokio::test]
+    async fn test_dispatch_no_subscribers() {
         let mut message_dispatcher = MessageDispatcher::default();
         let msg = Message::new(test_socket_address(1), NetworkMessage::Headers(vec![]));
 
         // Should not panic with no subscribers
-        message_dispatcher.dispatch(&msg);
+        message_dispatcher.dispatch(&msg).await;
     }
 
     #[tokio::test]
@@ -173,8 +181,8 @@ mod tests {
         let headers_msg = Message::new(test_socket_address(1), NetworkMessage::Headers(vec![]));
         let inv_msg = Message::new(test_socket_address(2), NetworkMessage::Inv(vec![]));
 
-        message_dispatcher.dispatch(&headers_msg);
-        message_dispatcher.dispatch(&inv_msg);
+        message_dispatcher.dispatch(&headers_msg).await;
+        message_dispatcher.dispatch(&inv_msg).await;
 
         assert_eq!(receiver1.recv().await.unwrap(), headers_msg);
         assert_eq!(receiver2.recv().await.unwrap(), inv_msg);
@@ -187,7 +195,7 @@ mod tests {
         let mut receiver2 = message_dispatcher.message_receiver(&[MessageType::Headers]);
 
         let msg = Message::new(test_socket_address(1), NetworkMessage::Headers(vec![]));
-        message_dispatcher.dispatch(&msg);
+        message_dispatcher.dispatch(&msg).await;
 
         assert_eq!(receiver1.recv().await.unwrap(), msg);
         assert_eq!(receiver2.recv().await.unwrap(), msg);
@@ -202,7 +210,7 @@ mod tests {
         drop(receiver1);
 
         let msg = Message::new(test_socket_address(1), NetworkMessage::Headers(vec![]));
-        message_dispatcher.dispatch(&msg);
+        message_dispatcher.dispatch(&msg).await;
 
         assert_eq!(receiver2.recv().await.unwrap(), msg);
     }
@@ -221,9 +229,9 @@ mod tests {
         let msg2 = Message::new(peer_2, NetworkMessage::Inv(vec![]));
         let msg3 = Message::new(peer_3, NetworkMessage::Headers(vec![]));
 
-        message_dispatcher.dispatch(&msg1);
-        message_dispatcher.dispatch(&msg2);
-        message_dispatcher.dispatch(&msg3);
+        message_dispatcher.dispatch(&msg1).await;
+        message_dispatcher.dispatch(&msg2).await;
+        message_dispatcher.dispatch(&msg3).await;
 
         assert_eq!(receiver.recv().await.unwrap().peer_address(), peer_1);
         assert_eq!(receiver.recv().await.unwrap().peer_address(), peer_2);
@@ -239,11 +247,27 @@ mod tests {
         let headers_msg = Message::new(test_socket_address(1), NetworkMessage::Headers(vec![]));
         let inv_msg = Message::new(test_socket_address(2), NetworkMessage::Inv(vec![]));
 
-        message_dispatcher.dispatch(&headers_msg);
-        message_dispatcher.dispatch(&inv_msg);
+        message_dispatcher.dispatch(&headers_msg).await;
+        message_dispatcher.dispatch(&inv_msg).await;
 
         assert_eq!(receiver.recv().await.unwrap(), headers_msg);
         assert_eq!(receiver.recv().await.unwrap(), inv_msg);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_waits_for_queue_capacity() {
+        let mut message_dispatcher = MessageDispatcher::default();
+        let mut receiver = message_dispatcher.message_receiver(&[MessageType::Inv]);
+        let msg = Message::new(test_socket_address(1), NetworkMessage::Inv(vec![]));
+        for _ in 0..MESSAGE_CHANNEL_CAPACITY {
+            message_dispatcher.dispatch(&msg).await;
+        }
+
+        let wait = Duration::from_millis(100);
+        assert!(timeout(wait, message_dispatcher.dispatch(&msg)).await.is_err());
+
+        receiver.recv().await.unwrap();
+        timeout(wait, message_dispatcher.dispatch(&msg)).await.unwrap();
     }
 
     #[tokio::test]
@@ -256,7 +280,7 @@ mod tests {
         ]);
 
         let msg = Message::new(test_socket_address(1), NetworkMessage::Headers(vec![]));
-        message_dispatcher.dispatch(&msg);
+        message_dispatcher.dispatch(&msg).await;
 
         assert_eq!(receiver.recv().await.unwrap(), msg);
         assert!(receiver.try_recv().is_err());
