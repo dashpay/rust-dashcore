@@ -1,28 +1,18 @@
-// Rust Dash Library
-// Originally written in 2014 by
-//     Dmitrii Golubev <dmitrii.golubev@dash.org>
-//     For Dash
-// Updated for Dash in 2022 by
-//     The Dash Core Developers
 //
-// To the extent possible under law, the author(s) have dedicated all
-// copyright and related and neighboring rights to this software to
-// the public domain worldwide. This software is distributed without
-// any warranty.
-//
-// You should have received a copy of the CC0 Public Domain Dedication
-// along with this software.
-// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+// This file is a part of rust-dashcore.
+// SPDX-License-Identifier: CC0-1.0
+// See the accompanying file LICENSE or https://creativecommons.org/publicdomain/zero/1.0
 //
 
-//! An implementation of a hash engine to support the X11 hash,
-//! which is a wrapper around the rs-x11-hash library.
+//! An implementation of a hash engine wrapper for the proof of work hash.
 
 use core::ops::Index;
 use core::slice::SliceIndex;
 use core::str;
 use std::io;
-use std::vec::Vec;
+
+use dash_pow::__deps::digest::Digest;
+use dash_pow::X11;
 
 use crate::{FromSliceError, HashEngine as _};
 
@@ -75,7 +65,7 @@ impl crate::Hash for Hash {
     const DISPLAY_BACKWARD: bool = true;
 
     fn from_engine(e: HashEngine) -> Self {
-        Hash(e.midstate())
+        Hash(e.hasher.finalize().into())
     }
 
     fn from_slice(sl: &[u8]) -> Result<Self, FromSliceError> {
@@ -101,10 +91,11 @@ impl crate::Hash for Hash {
     }
 }
 
-/// An X11 hashing engine. X11 is not incremental, so the input is buffered.
+/// An X11 hashing engine.
 #[derive(Clone, Default)]
 pub struct HashEngine {
-    buf: Vec<u8>,
+    hasher: X11,
+    length: usize,
 }
 
 impl crate::HashEngine for HashEngine {
@@ -113,15 +104,16 @@ impl crate::HashEngine for HashEngine {
     const BLOCK_SIZE: usize = 32;
 
     fn midstate(&self) -> [u8; 32] {
-        rs_x11_hash::get_x11_hash(self.buf.as_slice())
+        self.hasher.clone().finalize().into()
     }
 
     fn input(&mut self, data: &[u8]) {
-        self.buf.extend_from_slice(data);
+        self.hasher.update(data);
+        self.length += data.len();
     }
 
     fn n_bytes_hashed(&self) -> usize {
-        self.buf.len()
+        self.length
     }
 }
 
@@ -139,26 +131,21 @@ impl io::Write for HashEngine {
 #[cfg(test)]
 mod tests {
     use hex_conservative::hex;
+    use test_case::test_case;
 
     use crate::{hash_x11, Hash, HashEngine};
 
-    const HEADER: [u8; 80] = hex!("020000002cc0081be5039a54b686d24d5d8747ee9770d9973ec1ace02e5c0500000000008d7139724b11c52995db4370284c998b9114154b120ad3486f1a360a1d4253d310d40e55b8f70a1be8e32300");
-    const HEADER_HASH: [u8; 32] =
-        hex!("f29c0f286fd8071669286c6987eb941181134ff5f3978bf89f34070000000000");
+    #[test_case(&[], hex!("51b572209083576ea221c27e62b4e22063257571ccb6cc3dc3cd17eb67584eba"); "empty")]
+    #[test_case(&hex!("020000002cc0081be5039a54b686d24d5d8747ee9770d9973ec1ace02e5c0500000000008d7139724b11c52995db4370284c998b9114154b120ad3486f1a360a1d4253d310d40e55b8f70a1be8e32300"), hex!("f29c0f286fd8071669286c6987eb941181134ff5f3978bf89f34070000000000"); "header")]
+    #[test_case(&(0..123).collect::<Vec<u8>>(), hex!("132ead25e64bf5cda54d198b3dc77bd7032e856f724dcd39c503ef3183462b5d"); "123 bytes")]
+    fn hash(data: &[u8], expected: [u8; 32]) {
+        assert_eq!(hash_x11::Hash::hash(data).to_byte_array(), expected);
 
-    /// The block header vector from `rs-x11-hash`.
-    #[test]
-    fn block_header() {
-        assert_eq!(hash_x11::Hash::hash(&HEADER).to_byte_array(), HEADER_HASH);
-    }
-
-    /// A header split across writes hashes like the whole.
-    #[test]
-    fn split_header() {
         let mut engine = hash_x11::Hash::engine();
-        engine.input(&HEADER[..50]);
-        engine.input(&HEADER[50..]);
-        assert_eq!(engine.n_bytes_hashed(), 80);
-        assert_eq!(hash_x11::Hash::from_engine(engine).to_byte_array(), HEADER_HASH);
+        let (head, tail) = data.split_at(data.len() / 2);
+        engine.input(head);
+        engine.input(tail);
+        assert_eq!(engine.n_bytes_hashed(), data.len());
+        assert_eq!(hash_x11::Hash::from_engine(engine).to_byte_array(), expected);
     }
 }
