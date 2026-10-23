@@ -23,9 +23,41 @@ use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
 use key_wallet_manager::WalletInterface;
-use key_wallet_manager::{check_compact_filters_for_elements, FilterMatchKey, WalletId};
+use key_wallet_manager::{check_compact_filters_shard, FilterMatchKey, WalletId};
 use tokio::sync::RwLock;
 
+/// Fewest filters worth a task of their own.
+const MATCH_CHUNK: usize = 256;
+
+/// Matches `filters` against the scripts and elements on tokio tasks, one shard of the
+/// map per runtime worker, so a 5000-filter batch is not matched on one core.
+async fn match_filters(
+    filters: &Arc<HashMap<FilterMatchKey, BlockFilter>>,
+    scripts: Vec<ScriptBuf>,
+    elements: Vec<Vec<u8>>,
+    min_height: u32,
+) -> BTreeSet<FilterMatchKey> {
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let shards = filters.len().div_ceil(MATCH_CHUNK).clamp(1, workers);
+    let scripts: Arc<[ScriptBuf]> = scripts.into();
+    let elements: Arc<[Vec<u8>]> = elements.into();
+    let tasks: Vec<_> = (0..shards)
+        .map(|shard| {
+            let (filters, scripts, elements) =
+                (Arc::clone(filters), Arc::clone(&scripts), Arc::clone(&elements));
+            tokio::spawn(async move {
+                check_compact_filters_shard(
+                    &filters, &scripts, &elements, min_height, shard, shards,
+                )
+            })
+        })
+        .collect();
+    let mut matches = BTreeSet::new();
+    for task in tasks {
+        matches.extend(task.await.expect("filter matching task panicked"));
+    }
+    matches
+}
 /// Batch size for processing filters.
 const BATCH_PROCESSING_SIZE: u32 = 5000;
 
@@ -88,6 +120,8 @@ pub struct FiltersManager<
     /// `BlockProcessed` and the per-wallet record of which wallets already
     /// have a given processed block applied.
     pub(super) tracker: BlockMatchTracker,
+    /// Scripts found by processed blocks since the last tick, rescanned together.
+    pub(super) pending_new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -132,6 +166,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             active_batches: BTreeMap::new(),
             processing_height: 0,
             tracker: BlockMatchTracker::new(),
+            pending_new_scripts: BTreeMap::new(),
         }
     }
 
@@ -823,7 +858,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         if batch.filters().is_empty() {
             return Ok(vec![]);
         }
-        let batch_filters = batch.filters();
+        let batch_filters = batch.shared_filters();
 
         // Per-wallet `synced_height` snapshot so heights below the wallet's
         // own progress are skipped during the rescan.
@@ -839,8 +874,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             }
             let scripts_vec: Vec<ScriptBuf> = scripts.iter().cloned().collect();
             let min_synced = synced_heights.get(wallet_id).copied().unwrap_or(0);
-            let matches =
-                check_compact_filters_for_elements(batch_filters, &scripts_vec, &[], min_synced);
+            let matches = match_filters(&batch_filters, scripts_vec, Vec::new(), min_synced).await;
             for key in matches {
                 block_to_wallets.entry(key).or_default().insert(*wallet_id);
             }
@@ -992,14 +1026,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             let Some(batch) = self.active_batches.get(&batch_start) else {
                 return Ok(events);
             };
-            let batch_filters = batch.filters();
+            let batch_filters = batch.shared_filters();
 
-            let matches = check_compact_filters_for_elements(
-                batch_filters,
-                &union_scripts,
-                &union_elements,
-                min_synced,
-            );
+            let matches =
+                match_filters(&batch_filters, union_scripts, union_elements, min_synced).await;
             let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> =
                 BTreeMap::new();
             for key in matches {

@@ -2,6 +2,7 @@ use dashcore::bip158::BlockFilter;
 use dashcore::ScriptBuf;
 use key_wallet_manager::{FilterMatchKey, WalletId};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 /// A completed batch of compact block filters ready for verification.
 ///
@@ -14,8 +15,8 @@ pub(super) struct FiltersBatch {
     start_height: u32,
     /// Ending height of this batch (inclusive).
     end_height: u32,
-    /// Filters of this batch.
-    filters: HashMap<FilterMatchKey, BlockFilter>,
+    /// Filters of this batch, shared with the matching tasks.
+    filters: Arc<HashMap<FilterMatchKey, BlockFilter>>,
     /// Whether this batch was verified already (loaded from storage).
     verified: bool,
     /// Whether this batch was scanned already.
@@ -45,7 +46,7 @@ impl FiltersBatch {
         Self {
             start_height,
             end_height,
-            filters,
+            filters: Arc::new(filters),
             verified: false,
             scanned: false,
             pending_blocks: 0,
@@ -67,7 +68,11 @@ impl FiltersBatch {
     }
     /// Mutable reference to the loaded filters map of this batch.
     pub(super) fn filters_mut(&mut self) -> &mut HashMap<FilterMatchKey, BlockFilter> {
-        &mut self.filters
+        Arc::make_mut(&mut self.filters)
+    }
+    /// The filters map, shared rather than copied, for matching on other tasks.
+    pub(super) fn shared_filters(&self) -> Arc<HashMap<FilterMatchKey, BlockFilter>> {
+        Arc::clone(&self.filters)
     }
     /// Returns whether this batch is verified (filters verified against their headers).
     pub(super) fn verified(&self) -> bool {

@@ -72,6 +72,8 @@ impl std::fmt::Display for PeerId {
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// A new peer's in-flight byte cap until the controller has measured it.
+pub(crate) const INITIAL_CAP_BYTES: u64 = 256 * 1024;
 const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
 
 /// Per-peer request latency. Send times are queued FIFO; each completing response
@@ -116,12 +118,6 @@ impl Latency {
         };
         (count, avg_ms, max as f64 / 1e6)
     }
-
-    /// Cumulative (count, total ns); the controller diffs these over a window to
-    /// size this peer's in-flight cap by Little's Law.
-    fn totals(&self) -> (u64, u64) {
-        (self.count.load(Ordering::Relaxed), self.total_ns.load(Ordering::Relaxed))
-    }
 }
 
 /// Counts bytes read, globally and per peer, to size the in-flight budgets from
@@ -165,10 +161,14 @@ pub(crate) struct PeerHandle {
     network: Network,
     writer: Arc<Mutex<OwnedWriteHalf>>,
     in_flight: Arc<AtomicUsize>,
-    /// Requests this peer can have in flight before its responses queue (its
-    /// bandwidth-delay product), sized by the controller from its completion rate
-    /// and service time.
-    cap: Arc<AtomicUsize>,
+    /// Expected response bytes of the requests in flight, charged at send.
+    in_flight_bytes: Arc<AtomicU64>,
+    /// Response bytes this peer can have in flight before they queue (its
+    /// bandwidth-delay product), sized by the controller from its byte rate and
+    /// service time.
+    cap: Arc<AtomicU64>,
+    /// Bytes/s this peer serves while it has work, 0 until measured.
+    serving_rate: Arc<AtomicU64>,
     latency: Arc<Latency>,
     /// Ask this peer for compressed headers (DIP-25). Cleared by the reader if a
     /// `headers2` fails to decompress, falling back to plain `headers`.
@@ -188,20 +188,27 @@ impl PeerHandle {
         self.in_flight.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn cap(&self) -> usize {
+    pub(crate) fn in_flight_bytes(&self) -> u64 {
+        self.in_flight_bytes.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn cap(&self) -> u64 {
         self.cap.load(Ordering::Relaxed)
     }
 
-    pub(crate) async fn response_completed(&self, n: usize) {
+    /// Gives back one request and the `cost` it was charged at send.
+    pub(crate) async fn response_completed(&self, cost: u64) {
         let _ = self
             .in_flight
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(n)));
-        for _ in 0..n {
-            self.latency.complete_one().await;
-        }
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)));
+        let _ = self
+            .in_flight_bytes
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(cost)));
+        self.latency.complete_one().await;
     }
 
-    pub(crate) async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
+    /// `cost` is the expected response size, charged only for pipeline requests.
+    pub(crate) async fn send(&self, msg: &NetworkMessage, cost: u64) -> NetworkResult<()> {
         // The sync layer always declares plain `getheaders` since it doesn't know
         // the peer; upgrade here. The reader decompresses `Headers2` back to `Headers`.
         let upgraded = match msg {
@@ -224,6 +231,7 @@ impl PeerHandle {
         let accounted = is_pipeline_request(msg);
         if accounted {
             self.in_flight.fetch_add(1, Ordering::Relaxed);
+            self.in_flight_bytes.fetch_add(cost, Ordering::Relaxed);
             self.latency.on_send().await;
         }
 
@@ -240,6 +248,7 @@ impl PeerHandle {
         if let Err(reason) = outcome {
             if accounted {
                 self.in_flight.fetch_sub(1, Ordering::Relaxed);
+                self.in_flight_bytes.fetch_sub(cost, Ordering::Relaxed);
                 self.latency.cancel_one().await;
             }
             tracing::warn!("Disconnecting {} due to write error: {}", self.id, reason);
@@ -294,17 +303,13 @@ impl ConnectedPeer {
         }
     }
 
-    pub(crate) async fn response_completed(&self, n: usize) {
-        self.handle.response_completed(n).await
+    pub(crate) async fn response_completed(&self, cost: u64) {
+        self.handle.response_completed(cost).await
     }
 
     /// (completed requests, average ms, worst ms).
     pub(crate) fn latency_stats(&self) -> (u64, f64, f64) {
         self.handle.latency.snapshot()
-    }
-
-    pub(crate) fn latency_totals(&self) -> (u64, u64) {
-        self.handle.latency.totals()
     }
 
     /// Handshake round-trip latency in ms (0 if unmeasured).
@@ -320,8 +325,24 @@ impl ConnectedPeer {
         self.bytes.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn set_cap(&self, n: usize) {
-        self.handle.cap.store(n, Ordering::Relaxed);
+    pub(crate) fn in_flight_bytes(&self) -> u64 {
+        self.handle.in_flight_bytes()
+    }
+
+    pub(crate) fn set_cap(&self, bytes: u64) {
+        self.handle.cap.store(bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn cap(&self) -> u64 {
+        self.handle.cap()
+    }
+
+    pub(crate) fn serving_rate(&self) -> u64 {
+        self.handle.serving_rate.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_serving_rate(&self, bytes_per_sec: u64) {
+        self.handle.serving_rate.store(bytes_per_sec, Ordering::Relaxed);
     }
 }
 
@@ -489,7 +510,7 @@ impl DisconnectedPeer {
         let in_flight = Arc::new(AtomicUsize::new(0));
         let latency = Arc::new(Latency::default());
         // The controller grows it from the peer's measured serving rate.
-        let cap = Arc::new(AtomicUsize::new(2));
+        let cap = Arc::new(AtomicU64::new(INITIAL_CAP_BYTES));
         let token = shutdown.child_token();
         spawn_reader(
             id,
@@ -516,7 +537,9 @@ impl DisconnectedPeer {
                 network: self.network,
                 writer,
                 in_flight,
+                in_flight_bytes: Arc::new(AtomicU64::new(0)),
                 cap,
+                serving_rate: Arc::new(AtomicU64::new(0)),
                 latency,
                 headers2,
             },
