@@ -19,7 +19,8 @@ use hashes::Hash;
 use std::collections::BTreeMap;
 
 impl MasternodeList {
-    /// The list a diff from the genesis block builds, known at `known_height`.
+    /// The list a diff from the genesis block builds, known at `known_height`, once it matches
+    /// what the diff's coinbase commits to, as [`MasternodeList::apply_diff`] checks it.
     pub fn from_diff(
         diff: MnListDiff,
         known_height: CoreBlockHeight,
@@ -95,15 +96,9 @@ impl MasternodeList {
             },
         );
 
-        // Construct `MasternodeList`
-        Ok(MasternodeList {
-            block_hash: diff.block_hash,
-            known_height,
-            masternode_merkle_root: diff.merkle_hashes.first().cloned(),
-            llmq_merkle_root: None, // Adjust based on real data availability
-            masternodes: masternodes.into(),
-            quorums: quorums.into(),
-        })
+        // Construct the `MasternodeList` and return it once the coinbase vouches for it
+        MasternodeList::build(masternodes, quorums, diff.block_hash, known_height)
+            .build_matching_coinbase(&diff.coinbase_tx)
     }
 }
 
@@ -136,16 +131,13 @@ mod tests {
 
     #[test]
     fn pre_v20_allows_missing_chainlock_signatures() {
-        let mn_list_diff_bytes: &[u8] =
-            include_bytes!("../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let mut diff: MnListDiff =
-            deserialize(mn_list_diff_bytes).expect("expected to deserialize");
+        // Use a pre-V20 height on mainnet (V20 at 1,987,776)
+        let pre_v20_height = 1_900_000;
+        let mut diff = MnListDiff::mainnet_fixture_0_2227096().with_coinbase_height(pre_v20_height);
 
         // Clear signatures to simulate pre-V20 data
         diff.quorums_chainlock_signatures.clear();
 
-        // Use a pre-V20 height on mainnet (V20 at 1,987,776)
-        let pre_v20_height = 1_900_000;
         assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
 
         let result = MasternodeList::from_diff(diff, pre_v20_height, Network::Mainnet);

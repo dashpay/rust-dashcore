@@ -45,12 +45,15 @@ use hashes::Hash;
 
 use self::MerkleBlockError::*;
 use crate::blockdata::block::{self, Block};
-use crate::blockdata::constants::{MAX_BLOCK_WEIGHT, MIN_TRANSACTION_WEIGHT};
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::{TxMerkleNode, Txid};
 use crate::io;
 use crate::prelude::*;
+
+/// The most transactions a Dash block holds: its 2 MB size limit over the 60
+/// bytes of the smallest transaction, Dash Core's bound in `CPartialMerkleTree`.
+const MAX_BLOCK_TRANSACTIONS: u32 = 2_000_000 / 60;
 
 /// Data structure that represents a block header paired to a partial merkle tree.
 ///
@@ -223,6 +226,25 @@ impl PartialMerkleTree {
         &self.hashes
     }
 
+    /// Builds a partial merkle tree from the parts it is serialized as: the
+    /// block's transaction count, the hashes in depth-first order, and the flag
+    /// bits packed eight per byte, least significant bit first. Nothing is
+    /// validated here; [`Self::extract_matches`] does that.
+    pub(crate) fn from_parts(
+        num_transactions: u32,
+        hashes: Vec<TxMerkleNode>,
+        flag_bytes: &[u8],
+    ) -> Self {
+        let bits = (0..flag_bytes.len() * 8)
+            .map(|p| (flag_bytes[p / 8] & (1 << (p % 8) as u8)) != 0)
+            .collect();
+        PartialMerkleTree {
+            num_transactions,
+            hashes,
+            bits,
+        }
+    }
+
     /// Construct a partial merkle tree
     /// The `txids` are the transaction hashes of the block and the `matches` is the contains flags
     /// wherever a tx hash should be included in the proof.
@@ -284,7 +306,7 @@ impl PartialMerkleTree {
             return Err(NoTransactions);
         };
         // check for excessively high numbers of transactions
-        if self.num_transactions > MAX_BLOCK_WEIGHT / MIN_TRANSACTION_WEIGHT {
+        if self.num_transactions > MAX_BLOCK_TRANSACTIONS {
             return Err(TooManyTransactions);
         }
         // there can never be more hashes provided than one for every txid
@@ -454,18 +476,8 @@ impl Decodable for PartialMerkleTree {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
         let num_transactions: u32 = Decodable::consensus_decode(r)?;
         let hashes: Vec<TxMerkleNode> = Decodable::consensus_decode(r)?;
-
         let bytes: Vec<u8> = Decodable::consensus_decode(r)?;
-        let mut bits: Vec<bool> = vec![false; bytes.len() * 8];
-
-        for (p, bit) in bits.iter_mut().enumerate() {
-            *bit = (bytes[p / 8] & (1 << (p % 8) as u8)) != 0;
-        }
-        Ok(PartialMerkleTree {
-            num_transactions,
-            hashes,
-            bits,
-        })
+        Ok(PartialMerkleTree::from_parts(num_transactions, hashes, &bytes))
     }
 }
 
@@ -654,6 +666,32 @@ mod tests {
                 assert_ne!(merkle_root_3, merkle_root_1);
             }
         }
+    }
+
+    /// A Dash block holds up to 33,333 transactions: 2 MB over the 60-byte
+    /// smallest transaction, the bound Dash Core's `CPartialMerkleTree` allows.
+    /// A proof of a transaction in such a block is accepted; one claiming a
+    /// larger block is refused.
+    #[test]
+    fn a_partial_merkle_tree_spans_as_many_transactions_as_a_dash_block_holds() {
+        let tree = |count: u32| {
+            let txids: Vec<Txid> = (0..count)
+                .map(|i| {
+                    let mut bytes = [0u8; 32];
+                    bytes[..4].copy_from_slice(&i.to_le_bytes());
+                    <Txid as hashes::Hash>::from_byte_array(bytes)
+                })
+                .collect();
+            let mut matches = vec![false; count as usize];
+            matches[0] = true;
+            PartialMerkleTree::from_txids(&txids, &matches)
+        };
+
+        assert!(tree(33_333).extract_matches(&mut vec![], &mut vec![]).is_ok());
+        assert!(matches!(
+            tree(33_334).extract_matches(&mut vec![], &mut vec![]),
+            Err(MerkleBlockError::TooManyTransactions)
+        ));
     }
 
     #[test]

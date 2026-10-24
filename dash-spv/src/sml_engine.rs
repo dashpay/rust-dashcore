@@ -818,6 +818,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// Applies a QRInfo's diffs, then validates and stores its active rotation
     /// set and the previous cycle's. An invalid current-cycle quorum fails it.
     ///
+    /// Dash Core builds a QRInfo at the block it was asked for, so the QRInfo
+    /// has to be for the tip it was requested for: its cycle diffs and its
+    /// active rotation set are checked against that tip.
+    ///
     /// A QRInfo that fails, or whose feed is dropped part way as an aborted
     /// task drops it, leaves the engine as it was: its retry starts from the
     /// same lists, and no later message builds on lists of a QRInfo that was
@@ -866,7 +870,20 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
         let can_verify_previous = quorum_snapshot_and_mn_list_diff_at_h_minus_4c.is_some();
         let h_block_hash = mn_list_diff_h.block_hash;
+        let tip_block_hash = mn_list_diff_tip.block_hash;
         let rotation_quorum_type = self.rotation_quorum_type(&last_commitment_per_index);
+        self.check_cycle_work_blocks(
+            tip_block_hash,
+            [
+                Some(&mn_list_diff_h),
+                Some(&mn_list_diff_at_h_minus_c),
+                Some(&mn_list_diff_at_h_minus_2c),
+                Some(&mn_list_diff_at_h_minus_3c),
+                quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_ref().map(|(_, diff)| diff),
+            ],
+            rotation_quorum_type.params().dkg_params.interval,
+        )
+        .await?;
         let rotated_quorum_count = last_commitment_per_index.len();
 
         let mut snapshots = BTreeMap::new();
@@ -885,6 +902,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
         self.apply_and_prune(mn_list_diff_h).await?;
         self.apply_and_prune(mn_list_diff_tip).await?;
+        self.check_served_commitments(&last_commitment_per_index, tip_block_hash).await?;
 
         // Only the h-4c share brings the oldest quarters of the list at h.
         if can_verify_previous {
@@ -969,8 +987,79 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         })
     }
 
+    /// Checks that the diffs a QRInfo builds the rotation cycles from end where
+    /// Dash Core builds them for the requested tip, the only tip a QRInfo is
+    /// accepted for: the first at the work block of the tip's cycle (h), each
+    /// next one at the work block one cycle further back (h-c to h-4c). The
+    /// previous cycle is stored from the list at h, so a diff to another
+    /// block, such as one inside the current cycle's mining window, would
+    /// store a set mixing cycles under the current cycle's key, and the real
+    /// set could no longer replace it. A cycle below genesis has no work block
+    /// and is refused with `expected` 0. Fails with
+    /// [`FeedError::HeaderStorage`] when a height cannot be read.
+    async fn check_cycle_work_blocks(
+        &self,
+        tip_block_hash: BlockHash,
+        cycle_diffs: [Option<&MnListDiff>; 5],
+        interval: u32,
+    ) -> Result<(), FeedError<SmlError>> {
+        if interval == 0 {
+            return Ok(());
+        }
+        let tip_height = self.required_height_of(&tip_block_hash).await?;
+        let cycle_base = tip_height - tip_height % interval;
+        for (cycles_back, diff) in (0u32..).zip(cycle_diffs) {
+            let Some(diff) = diff else {
+                continue;
+            };
+            let expected = cycles_back
+                .checked_mul(interval)
+                .and_then(|back| cycle_base.checked_sub(back))
+                .and_then(|cycle| cycle.checked_sub(WORK_DIFF_DEPTH));
+            if expected.is_none() || self.height_of(&diff.block_hash).await? != expected {
+                return Err(SmlError::QRInfoDiffAtWrongHeight {
+                    block_hash: diff.block_hash,
+                    expected: expected.unwrap_or_default(),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks that every commitment of `served` is the one the list at
+    /// `tip_block_hash` holds for its quorum. Dash Core builds a QRInfo's
+    /// active rotation set at the block it was asked for, and a QRInfo is
+    /// accepted only for the tip it was asked for, so the served set is the
+    /// one its tip list, which its coinbase vouches for, holds. An entry
+    /// from another list, even a real older commitment of the same index,
+    /// would be stored as the current cycle's. Fails with
+    /// [`FeedError::HeaderStorage`] when the tip's height cannot be read.
+    async fn check_served_commitments(
+        &self,
+        served: &[QuorumEntry],
+        tip_block_hash: BlockHash,
+    ) -> Result<(), FeedError<SmlError>> {
+        let tip_list = match self.height_of(&tip_block_hash).await? {
+            Some(height) => self.masternode_lists.get(&height),
+            None => None,
+        };
+        for entry in served {
+            let held = tip_list
+                .and_then(|list| list.quorums.get(&entry.llmq_type)?.get(&entry.quorum_hash));
+            if held.is_none_or(|held| held.entry_hash != entry.calculate_entry_hash()) {
+                return Err(SmlError::CommitmentNotInTipList(entry.quorum_hash).into());
+            }
+        }
+        Ok(())
+    }
+
     /// Applies a diff, then verifies the newest list's non-rotating quorums: the
     /// diff may have brought one, or the work-block list one needs.
+    ///
+    /// The diff applies only if the stored header of its block proves its
+    /// coinbase and the list it builds matches what that coinbase commits to,
+    /// see [`MasternodeList::apply_diff`]. A refused diff changes nothing.
     pub async fn apply_diff(
         &mut self,
         masternode_list_diff: MnListDiff,
@@ -1005,6 +1094,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let base_block_hash = masternode_list_diff.base_block_hash;
         let base_height = self.required_height_of(&base_block_hash).await?;
         let diff_end_height = self.required_height_of(&block_hash).await?;
+        self.prove_coinbase(&masternode_list_diff, diff_end_height).await?;
         if base_height == 0 {
             let masternode_list =
                 MasternodeList::from_diff(masternode_list_diff, diff_end_height, self.network)?;
@@ -1038,6 +1128,31 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             self.set_quorum_status(quorum_type, quorum_hash, &status);
         }
         Ok(())
+    }
+
+    /// Checks that the stored header of the diff's block, at `height`, proves
+    /// the diff's coinbase. Building a list then checks it against what the
+    /// coinbase commits to, which ties the list to the header chain.
+    ///
+    /// A block the header chain does not hold at `height`, which includes the
+    /// all-zero hash `height_of` places at genesis, proves nothing and fails
+    /// with `SmlError::BlockHashLookupFailed`. A header that cannot be read
+    /// fails with [`FeedError::HeaderStorage`].
+    async fn prove_coinbase(
+        &self,
+        diff: &MnListDiff,
+        height: CoreBlockHeight,
+    ) -> Result<(), FeedError<SmlError>> {
+        let header = self
+            .headers
+            .read()
+            .await
+            .get_header(height)
+            .await
+            .inspect_err(|e| tracing::warn!("Could not read the header at {height}: {e}"))?
+            .filter(|header| *header.hash() == diff.block_hash)
+            .ok_or(SmlError::BlockHashLookupFailed(diff.block_hash))?;
+        Ok(diff.verify_coinbase_merkle_proof(header.header().merkle_root)?)
     }
 
     /// Verifies the newest list's unverified non-rotating quorums against their
@@ -1135,6 +1250,22 @@ pub(crate) mod test_support {
         heights_of(decode(bytes))
     }
 
+    /// Every masternode list diff a QRInfo carries, for a test to edit.
+    pub(crate) fn qr_info_diffs_mut(qr_info: &mut QRInfo) -> Vec<&mut MnListDiff> {
+        let mut diffs: Vec<&mut MnListDiff> = vec![
+            &mut qr_info.mn_list_diff_tip,
+            &mut qr_info.mn_list_diff_h,
+            &mut qr_info.mn_list_diff_at_h_minus_c,
+            &mut qr_info.mn_list_diff_at_h_minus_2c,
+            &mut qr_info.mn_list_diff_at_h_minus_3c,
+        ];
+        if let Some((_, diff)) = &mut qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            diffs.push(diff);
+        }
+        diffs.extend(qr_info.mn_list_diff_list.iter_mut());
+        diffs
+    }
+
     impl TestEngine {
         /// An empty engine with an empty header chain.
         pub(crate) fn empty(network: Network) -> Self {
@@ -1146,7 +1277,7 @@ pub(crate) mod test_support {
             network: Network,
             heights: HashMap<BlockHash, CoreBlockHeight>,
         ) -> Self {
-            Self::new(network, Arc::new(RwLock::new(MockHeaderStorage(heights))))
+            Self::new(network, Arc::new(RwLock::new(MockHeaderStorage::new(heights))))
         }
 
         pub(crate) fn headers(&self) -> Arc<RwLock<MockHeaderStorage>> {
@@ -1154,20 +1285,93 @@ pub(crate) mod test_support {
         }
 
         pub(crate) fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
-            self.headers.try_write().expect("unlocked").0.insert(block_hash, height);
+            self.headers.try_write().expect("unlocked").insert(block_hash, height);
         }
 
         pub(crate) fn forget_block(&mut self, block_hash: &BlockHash) {
-            self.headers.try_write().expect("unlocked").0.remove(block_hash);
+            self.headers.try_write().expect("unlocked").remove(block_hash);
         }
 
         pub(crate) fn block_height(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
-            self.headers.try_read().expect("unlocked").0.get(block_hash).copied()
+            self.headers.try_read().expect("unlocked").height(block_hash)
+        }
+
+        /// Gives the header of `diff`'s block the merkle root its coinbase
+        /// proof leads to.
+        pub(crate) fn prove(&self, diff: &MnListDiff) {
+            self.headers.try_write().expect("unlocked").prove(diff);
+        }
+
+        /// [`Self::prove`] for every diff of `qr_info`.
+        pub(crate) fn prove_qr_info(&self, qr_info: &QRInfo) {
+            for diff in qr_info_diffs(qr_info) {
+                self.prove(diff);
+            }
+        }
+
+        /// `diff` with a coinbase that commits to the list it builds on this
+        /// engine's list at its base, at the height of its block, and a header
+        /// of that block its proof holds against.
+        pub(crate) fn with_matching_coinbase(&self, diff: MnListDiff) -> MnListDiff {
+            let height = self.block_height(&diff.block_hash).expect("the block's height is known");
+            let base =
+                self.masternode_lists.values().find(|list| list.block_hash == diff.base_block_hash);
+            let diff = diff.committing_on(base, height);
+            self.prove(&diff);
+            diff
+        }
+
+        /// Gives every diff of `qr_info` a coinbase that commits to the list it
+        /// builds, each on the list the diff it builds on built. A test that
+        /// edits the commitments a QRInfo carries uses this, since its diffs no
+        /// longer match the coinbases of their blocks.
+        pub(crate) fn recommit(&self, qr_info: &mut QRInfo) {
+            let QRInfo {
+                mn_list_diff_tip,
+                mn_list_diff_h,
+                mn_list_diff_at_h_minus_c,
+                mn_list_diff_at_h_minus_2c,
+                mn_list_diff_at_h_minus_3c,
+                quorum_snapshot_and_mn_list_diff_at_h_minus_4c,
+                mn_list_diff_list,
+                ..
+            } = qr_info;
+            // The order `feed_qr_info` applies them in.
+            let in_feed_order = mn_list_diff_list
+                .iter_mut()
+                .chain(
+                    quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_mut().map(|(_, diff)| diff),
+                )
+                .chain([
+                    mn_list_diff_at_h_minus_3c,
+                    mn_list_diff_at_h_minus_2c,
+                    mn_list_diff_at_h_minus_c,
+                    mn_list_diff_h,
+                    mn_list_diff_tip,
+                ]);
+            let mut built: HashMap<BlockHash, MasternodeList> = HashMap::new();
+            for diff in in_feed_order {
+                let base = built.get(&diff.base_block_hash).cloned().or_else(|| {
+                    self.masternode_lists
+                        .values()
+                        .find(|list| list.block_hash == diff.base_block_hash)
+                        .cloned()
+                });
+                let height =
+                    self.block_height(&diff.block_hash).expect("the block's height is known");
+                *diff = diff.clone().committing_on(base.as_ref(), height);
+                self.prove(diff);
+                let list = match &base {
+                    Some(base) => base.apply_diff(diff.clone(), height, self.network),
+                    None => MasternodeList::from_diff(diff.clone(), height, self.network),
+                }
+                .expect("a recommitted diff applies");
+                built.insert(diff.block_hash, list);
+            }
         }
 
         pub(crate) fn block_hash_at(&self, height: CoreBlockHeight) -> Option<BlockHash> {
-            let headers = self.headers.try_read().expect("unlocked");
-            headers.0.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
+            self.headers.try_read().expect("unlocked").hash_at(height)
         }
 
         /// Verifies `chain_lock` as the ChainLock manager does.
@@ -1213,18 +1417,22 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{fixture_heights, quorum_entry, TestEngine};
+    use super::test_support::{fixture_heights, qr_info_diffs_mut, quorum_entry, TestEngine};
     use super::{
         build_cycle_quorum_map, FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH,
     };
+    use crate::chain::Checkpoint;
     use crate::error::{StorageError, StorageResult};
-    use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
+    use crate::storage::{
+        BlockHeaderStorage, BlockHeaderTip, PersistentBlockHeaderStorage, PersistentStorage,
+    };
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
     use dashcore::hashes::Hash;
+    use dashcore::network::constants::NetworkExt;
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
     use dashcore::prelude::CoreBlockHeight;
@@ -1241,11 +1449,12 @@ mod tests {
     };
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-    use dashcore::{BlockHash, Network, QuorumHash};
+    use dashcore::{BlockHash, Header, Network, QuorumHash};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+    use tempfile::TempDir;
     use tokio::sync::RwLock;
 
     fn make_qualified_quorum_entry(
@@ -1546,30 +1755,47 @@ mod tests {
                 "../../dash/tests/data/test_DML_diffs/block_container_2240504.dat"
             )),
         );
-        let diff: MnListDiff = deserialize(include_bytes!(
-            "../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
-        ))
-        .expect("expected to deserialize");
         engine.masternode_lists.insert(
             2227096,
-            MasternodeList::from_diff(diff, 2227096, Network::Mainnet).expect("first list"),
+            MasternodeList::from_diff(
+                MnListDiff::mainnet_fixture_0_2227096(),
+                2227096,
+                Network::Mainnet,
+            )
+            .expect("first list"),
         );
 
         let mn_list_diffs: BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff> =
             decode_fixture(include_bytes!(
                 "../../dash/tests/data/test_DML_diffs/mnlistdiffs_2240504.dat"
             ));
-        let qr_info: QRInfo = decode_fixture(include_bytes!(
+        let mut qr_info: QRInfo = decode_fixture(include_bytes!(
             "../../dash/tests/data/test_DML_diffs/qrinfo_2240504.dat"
         ));
+        for diff in qr_info_diffs_mut(&mut qr_info) {
+            restore_2240504_capture(diff);
+        }
+        engine.prove_qr_info(&qr_info);
 
-        for ((base_height, height), diff) in mn_list_diffs {
+        for ((base_height, height), mut diff) in mn_list_diffs {
+            restore_2240504_capture(&mut diff);
             engine.feed_block_height(base_height, diff.base_block_hash);
             engine.feed_block_height(height, diff.block_hash);
+            engine.prove(&diff);
             engine.apply_diff(diff).await.expect("expected to apply diff");
         }
 
         (engine, qr_info)
+    }
+
+    /// The 2240504 fixtures are bincode captures from a build that decoded an
+    /// unset service address as `0.0.0.0` and held platform node ids in Core's
+    /// wire order. Both feed the entry hash, so the lists they build match
+    /// `merkleRootMNList` only once the diff is back to what the current
+    /// decoder makes of Core's bytes.
+    fn restore_2240504_capture(diff: &mut MnListDiff) {
+        diff.restore_core_service_addresses();
+        diff.reverse_platform_node_ids();
     }
 
     /// Captured 2026-08-09 from a fresh mainnet sync at tip 2518986 (cycle
@@ -1588,7 +1814,179 @@ mod tests {
         let qr_info: QRInfo = decode_fixture(include_bytes!(
             "../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"
         ));
+        engine.prove_qr_info(&qr_info);
         (engine, qr_info)
+    }
+
+    /// A diff is applied only once the stored header of its block proves its
+    /// coinbase, which ties the list the coinbase commits to to the header
+    /// chain. A block the header chain does not hold at the diff's height, as
+    /// the all-zero hash standing for genesis, proves nothing.
+    #[tokio::test]
+    async fn a_diff_is_applied_only_when_its_block_header_proves_its_coinbase() {
+        let (base, tip) = (1_000_000, 1_000_001);
+        let mut engine = TestEngine::dummy_with_lists(&[base]);
+        engine.feed_block_height(tip, BlockHash::dummy(tip));
+        let diff = MnListDiff::dummy_between(base, tip);
+
+        let result = engine.apply_diff(diff.clone()).await;
+        assert!(
+            matches!(result, Err(FeedError::Refused(SmlError::CoinbaseMerkleRootMismatch { .. }))),
+            "a header that does not prove the coinbase, got {result:?}"
+        );
+        assert!(!engine.masternode_lists.contains_key(&tip));
+
+        let genesis = Network::Mainnet.known_genesis_block_hash().expect("mainnet genesis");
+        engine.feed_block_height(0, genesis);
+        let at_zero = MnListDiff {
+            block_hash: BlockHash::all_zeros(),
+            ..diff.clone()
+        };
+        let result = engine.apply_diff(at_zero).await;
+        assert!(
+            matches!(result, Err(FeedError::Refused(SmlError::BlockHashLookupFailed(_)))),
+            "a block hash the header chain does not hold, got {result:?}"
+        );
+
+        engine.prove(&diff);
+        engine.apply_diff(diff).await.expect("the header proves the coinbase");
+        assert!(engine.masternode_lists.contains_key(&tip));
+    }
+
+    /// A client starting from a checkpoint stores the checkpoint's headers, the
+    /// checkpoint block's last, and none below them. Its first diff, from
+    /// genesis to the checkpoint block, is proven against the stored header of
+    /// that block.
+    #[tokio::test]
+    async fn the_first_diff_after_a_checkpoint_start_is_proven_by_the_checkpoint_header() {
+        let height = 1_000_000;
+        let diff = MnListDiff {
+            base_block_hash: BlockHash::all_zeros(),
+            ..MnListDiff::dummy(0x00, 0x00)
+        }
+        .committing_on(None, height);
+        let mut headers = Checkpoint::dummy(height).headers().to_vec();
+        let block = headers.last_mut().expect("the checkpoint block");
+        *block = HashedBlockHeader::from(Header {
+            merkle_root: diff.proven_merkle_root(),
+            ..*block.header()
+        });
+        let checkpoint = Checkpoint::new(height, headers).expect("a checkpoint");
+        let diff = MnListDiff {
+            block_hash: *checkpoint.hash(),
+            ..diff
+        };
+
+        let dir = TempDir::new().unwrap();
+        let mut headers = PersistentBlockHeaderStorage::open(dir.path()).await.unwrap();
+        headers
+            .store_headers_at_height(checkpoint.headers(), checkpoint.start_height())
+            .await
+            .unwrap();
+        let mut engine =
+            MasternodeListEngine::new(Network::Mainnet, Arc::new(RwLock::new(headers)));
+
+        engine.apply_diff(diff).await.expect("the checkpoint header proves the coinbase");
+        assert!(engine.masternode_lists.contains_key(&height));
+    }
+
+    /// The active rotation set a QRInfo serves is stored for InstantSend only
+    /// if every entry is the commitment its tip list holds. A real, proven
+    /// commitment of the same index from the previous cycle verifies on its
+    /// own, but stored under the current cycle it would leave InstantSend
+    /// locks of that index unverifiable for the whole cycle.
+    #[tokio::test]
+    async fn a_served_commitment_its_tip_list_does_not_hold_is_refused() {
+        let (mut fed, qr_info) = load_qrinfo_2518986_fixture();
+        fed.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+        let isd_type = fed.network.isd_llmq_type();
+        let h_height = fed.block_height(&qr_info.mn_list_diff_h.block_hash).expect("h");
+        let (index, stale) = qr_info
+            .last_commitment_per_index
+            .iter()
+            .enumerate()
+            .find_map(|(index, served)| {
+                fed.masternode_lists[&h_height].quorums[&isd_type]
+                    .values()
+                    .map(|quorum| &quorum.quorum_entry)
+                    .find(|older| {
+                        older.quorum_index == served.quorum_index
+                            && older.quorum_hash != served.quorum_hash
+                    })
+                    .map(|older| (index, older.clone()))
+            })
+            .expect("the previous cycle has a commitment of an index the current one replaced");
+
+        let (mut engine, mut stale_set) = load_qrinfo_2518986_fixture();
+        stale_set.last_commitment_per_index[index] = stale;
+        let lists = engine.masternode_lists.clone();
+
+        let result = engine.feed_qr_info(stale_set).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(FeedError::Refused(QuorumValidationError::SMLError(
+                    SmlError::CommitmentNotInTipList(_)
+                )))
+            ),
+            "got {result:?}"
+        );
+        assert!(engine.masternode_lists == lists, "a refused QRInfo leaves the lists as they were");
+        assert!(engine.rotated_quorums_per_cycle.is_empty(), "and stores no cycle");
+    }
+
+    /// Dash Core builds the diffs of a QRInfo at the work blocks of the
+    /// requested tip's cycle (h) and of the cycles before it (h-c to h-4c).
+    /// The previous cycle is stored from the list at h, so a diff to another
+    /// block is refused, even a proven one building the same list: one inside
+    /// the current cycle's mining window would store a set mixing cycles under
+    /// the current cycle's key, and the real set could no longer replace it.
+    #[tokio::test]
+    async fn a_qr_info_whose_h_diff_is_not_at_the_cycle_work_block_is_refused() {
+        let (mut fed, qr_info) = load_qrinfo_2518986_fixture();
+        fed.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+        let height = |block_hash: &BlockHash| fed.block_height(block_hash).expect("known");
+        let h_height = height(&qr_info.mn_list_diff_h.block_hash);
+        let tip_height = height(&qr_info.mn_list_diff_tip.block_hash);
+        let list_at = |block_hash: &BlockHash| fed.masternode_lists[&height(block_hash)].clone();
+        let h_c_list = list_at(&qr_info.mn_list_diff_h.base_block_hash);
+        assert_eq!(qr_info.mn_list_diff_tip.base_block_hash, qr_info.mn_list_diff_h.block_hash);
+
+        // The same lists, with the one at h built at the block above it.
+        let (mut engine, mut moved) = load_qrinfo_2518986_fixture();
+        let off_cycle = BlockHash::dummy(h_height + 1);
+        engine.feed_block_height(h_height + 1, off_cycle);
+        moved.mn_list_diff_h = MnListDiff {
+            block_hash: off_cycle,
+            ..moved.mn_list_diff_h
+        }
+        .committing_on(Some(&h_c_list), h_height + 1);
+        let off_cycle_list = h_c_list
+            .apply_diff(moved.mn_list_diff_h.clone(), h_height + 1, Network::Mainnet)
+            .expect("the moved h diff applies");
+        moved.mn_list_diff_tip = MnListDiff {
+            base_block_hash: off_cycle,
+            ..moved.mn_list_diff_tip
+        }
+        .committing_on(Some(&off_cycle_list), tip_height);
+        engine.prove(&moved.mn_list_diff_h);
+        engine.prove(&moved.mn_list_diff_tip);
+
+        let result = engine.feed_qr_info(moved).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(FeedError::Refused(QuorumValidationError::SMLError(
+                    SmlError::QRInfoDiffAtWrongHeight {
+                        block_hash,
+                        expected,
+                    }
+                ))) if block_hash == off_cycle && expected == h_height
+            ),
+            "got {result:?}"
+        );
     }
 
     /// A QRInfo the engine refuses leaves it as it was, so a retry against
@@ -1815,12 +2213,12 @@ mod tests {
         // The post-V20 strict check requires every `new_quorums` slot to have
         // a matching `quorums_chainlock_signatures` entry, so clearing both
         // keeps `apply_diff` happy while leaving no signature that could be
-        // keyed to a quarter work height.
+        // keyed to an older quarter's work height. The tip diff keeps the
+        // served set, which its list has to hold.
         let strip = |diff: &mut MnListDiff| {
             diff.new_quorums.clear();
             diff.quorums_chainlock_signatures.clear();
         };
-        strip(&mut qr_info.mn_list_diff_tip);
         strip(&mut qr_info.mn_list_diff_h);
         strip(&mut qr_info.mn_list_diff_at_h_minus_c);
         strip(&mut qr_info.mn_list_diff_at_h_minus_2c);
@@ -1831,6 +2229,7 @@ mod tests {
         for diff in qr_info.mn_list_diff_list.iter_mut() {
             strip(diff);
         }
+        engine.recommit(&mut qr_info);
 
         let expected_cycle_key = served_cycle_key(&engine, &qr_info).await;
 
@@ -1869,6 +2268,32 @@ mod tests {
         );
     }
 
+    /// Gives the served commitment at `index` of `qr_info` the aggregate
+    /// signature of another quorum, in the served set and in every diff that
+    /// brings it, whose coinbases are then recommitted: the tip list holds the
+    /// corrupt commitment it serves, as a peer serving it would make it.
+    /// Returns the corrupted quorum's hash.
+    fn corrupt_served_commitment(
+        engine: &TestEngine,
+        qr_info: &mut QRInfo,
+        index: usize,
+    ) -> QuorumHash {
+        let target = qr_info.last_commitment_per_index[index].quorum_hash;
+        let foreign = foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        qr_info.last_commitment_per_index[index].all_commitment_aggregated_signature = foreign;
+        let mut brought = false;
+        for diff in qr_info_diffs_mut(qr_info) {
+            for quorum in diff.new_quorums.iter_mut().filter(|quorum| quorum.quorum_hash == target)
+            {
+                quorum.all_commitment_aggregated_signature = foreign;
+                brought = true;
+            }
+        }
+        assert!(brought, "a diff of the QRInfo brings the served commitment");
+        engine.recommit(qr_info);
+        target
+    }
+
     /// Another rotated commitment's aggregate signature: structurally sound,
     /// so it reaches the BLS check, where it does not verify.
     fn foreign_aggregate_signature(
@@ -1897,8 +2322,7 @@ mod tests {
 
         let cycle_key = served_cycle_key(&engine, &qr_info).await;
 
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        corrupt_served_commitment(&engine, &mut qr_info, 0);
 
         let err = engine.feed_qr_info(qr_info).await.expect_err("corrupt signature must reject");
         assert!(
@@ -1924,9 +2348,7 @@ mod tests {
     #[tokio::test]
     async fn a_qr_info_refused_after_its_diffs_applied_leaves_the_engine_as_it_was() {
         let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture().await;
-        let target = qr_info.last_commitment_per_index[0].quorum_hash;
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        corrupt_served_commitment(&engine, &mut qr_info, 0);
         let lists = engine.masternode_lists.clone();
         let cycles = engine.rotated_quorums_per_cycle.clone();
 
@@ -1965,10 +2387,8 @@ mod tests {
             }
         }
 
-        let target = qr_info.last_commitment_per_index[0].quorum_hash;
         let llmq_type = qr_info.last_commitment_per_index[0].llmq_type;
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        let target = corrupt_served_commitment(&engine, &mut qr_info, 0);
 
         let feed_result = engine
             .feed_qr_info(qr_info)
@@ -2085,7 +2505,7 @@ mod tests {
         readable: usize,
     ) -> MasternodeListEngine<FailingFrom> {
         let headers = Arc::new(RwLock::new(FailingFrom {
-            inner: MockHeaderStorage(engine.headers().try_read().expect("unlocked").0.clone()),
+            inner: engine.headers().try_read().expect("unlocked").clone(),
             unreadable,
             readable,
             reads: AtomicUsize::new(0),
@@ -2126,13 +2546,12 @@ mod tests {
                 engine.forget_block(&block_hash);
             }
         }
-        let target = qr_info.last_commitment_per_index[0].quorum_hash;
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        let target = corrupt_served_commitment(&engine, &mut qr_info, 0);
         let blocks = [
             BlockHash::from_byte_array(target.to_byte_array()),
             qr_info.mn_list_diff_h.block_hash,
             qr_info.mn_list_diff_h.base_block_hash,
+            qr_info.mn_list_diff_tip.block_hash,
         ];
 
         for unreadable in blocks {
@@ -2236,6 +2655,7 @@ mod tests {
             foreign_aggregate_signature(&qr_info.mn_list_diff_h.new_quorums, corrupted_quorum_hash);
         qr_info.mn_list_diff_h.new_quorums[corrupt_position].all_commitment_aggregated_signature =
             foreign_signature;
+        engine.recommit(&mut qr_info);
         let h_block_hash = qr_info.mn_list_diff_h.block_hash;
 
         let feed_result = engine
@@ -2694,7 +3114,8 @@ mod tests {
                 .await,
             vec![(BlockHash::dummy(older_list), BlockHash::dummy(work))]
         );
-        engine.apply_diff(MnListDiff::dummy_between(older_list, work)).await.expect("work list");
+        let work_list = engine.with_matching_coinbase(MnListDiff::dummy_between(older_list, work));
+        engine.apply_diff(work_list).await.expect("work list");
         assert!(
             matches!(status(&engine), Some(LLMQEntryVerificationStatus::Invalid(_))),
             "{:?}",
@@ -2703,7 +3124,8 @@ mod tests {
 
         let mut base = tip;
         for next in next_tips {
-            engine.apply_diff(MnListDiff::dummy_between(base, next)).await.expect("tip update");
+            let tip_update = engine.with_matching_coinbase(MnListDiff::dummy_between(base, next));
+            engine.apply_diff(tip_update).await.expect("tip update");
             base = next;
             assert!(
                 matches!(status(&engine), Some(LLMQEntryVerificationStatus::Invalid(_))),
