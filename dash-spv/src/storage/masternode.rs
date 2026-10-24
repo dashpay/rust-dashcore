@@ -547,6 +547,22 @@ mod tests {
         assert!(engine.masternode_lists.contains_key(&150), "the diff after it still applies");
     }
 
+    /// A stored message is proven again on replay: a list rebuilt at start-up
+    /// passes the same check as one built live.
+    #[tokio::test]
+    async fn replay_skips_a_message_its_block_header_does_not_prove() {
+        let dir = TempDir::new().unwrap();
+        let heights = [(0x00, 0), (0xAA, 100)];
+        let diff = dummy_chain(&[(0xAA, 100)]).remove(0);
+        open_storage(&dir, &heights, &[]).await.store_diff(100, &diff).await.unwrap();
+
+        let engine = open_storage(&dir, &heights, &[]).await.load_engine().await;
+        assert!(engine.masternode_lists.is_empty(), "a coinbase the header does not prove");
+
+        let engine = open_storage(&dir, &heights, &[&diff]).await.load_engine().await;
+        assert!(engine.masternode_lists.contains_key(&100), "the header that proves it");
+    }
+
     #[tokio::test]
     async fn storing_the_same_height_twice_keeps_the_newer_message() {
         let dir = TempDir::new().unwrap();
