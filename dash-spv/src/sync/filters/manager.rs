@@ -1280,6 +1280,7 @@ mod tests {
         while let Ok(request) = rx.try_recv() {
             let (NetworkRequest::SendMessage(msg)
             | NetworkRequest::SendMessageToPeer(msg, _)
+            | NetworkRequest::SendMessageAvoiding(msg, _)
             | NetworkRequest::BroadcastMessage(msg)) = request;
             if matches!(msg, NetworkMessage::GetCFilters(_)) {
                 count += 1;
@@ -3408,6 +3409,7 @@ mod tests {
         while let Ok(request) = rx.try_recv() {
             let (NetworkRequest::SendMessage(msg)
             | NetworkRequest::SendMessageToPeer(msg, _)
+            | NetworkRequest::SendMessageAvoiding(msg, _)
             | NetworkRequest::BroadcastMessage(msg)) = request;
             if let NetworkMessage::GetCFilters(get) = msg {
                 assert_eq!(get.start_height, 101, "unexpected filter re-download");
@@ -3462,6 +3464,7 @@ mod tests {
         while let Ok(request) = rx.try_recv() {
             let (NetworkRequest::SendMessage(msg)
             | NetworkRequest::SendMessageToPeer(msg, _)
+            | NetworkRequest::SendMessageAvoiding(msg, _)
             | NetworkRequest::BroadcastMessage(msg)) = request;
             if let NetworkMessage::GetCFilters(get) = msg {
                 assert_eq!(get.start_height, 101, "unexpected filter re-download");

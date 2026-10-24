@@ -49,6 +49,10 @@ pub enum NetworkRequest {
     SendMessage(NetworkMessage),
     /// Send a message to a specific peer.
     SendMessageToPeer(NetworkMessage, SocketAddr),
+    /// Send a request to one of the peers eligible for it, like the requests
+    /// `SendMessage` distributes, preferring any peer not listed. A listed peer
+    /// is used only when every eligible peer is listed.
+    SendMessageAvoiding(NetworkMessage, Vec<SocketAddr>),
     /// Broadcast a message to all connected peers.
     BroadcastMessage(NetworkMessage),
 }
@@ -82,6 +86,20 @@ impl RequestSender {
     ) -> NetworkResult<()> {
         self.tx
             .send(NetworkRequest::SendMessageToPeer(msg, peer_address))
+            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
+    }
+
+    /// Queue a request for any eligible peer, preferring one not in `avoid`.
+    fn send_message_avoiding(
+        &self,
+        msg: NetworkMessage,
+        avoid: &[SocketAddr],
+    ) -> NetworkResult<()> {
+        if avoid.is_empty() {
+            return self.send_message(msg);
+        }
+        self.tx
+            .send(NetworkRequest::SendMessageAvoiding(msg, avoid.to_vec()))
             .map_err(|e| NetworkError::ProtocolError(e.to_string()))
     }
 
@@ -156,10 +174,24 @@ impl RequestSender {
         base_block_hash: BlockHash,
         block_hash: BlockHash,
     ) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetMnListD(GetMnListDiff {
-            base_block_hash,
-            block_hash,
-        }))
+        self.request_mnlist_diff_avoiding(base_block_hash, block_hash, &[])
+    }
+
+    /// [`Self::request_mnlist_diff`], preferring an eligible peer not in
+    /// `avoid` and falling back to one in it.
+    pub fn request_mnlist_diff_avoiding(
+        &self,
+        base_block_hash: BlockHash,
+        block_hash: BlockHash,
+        avoid: &[SocketAddr],
+    ) -> NetworkResult<()> {
+        self.send_message_avoiding(
+            NetworkMessage::GetMnListD(GetMnListDiff {
+                base_block_hash,
+                block_hash,
+            }),
+            avoid,
+        )
     }
 
     pub fn request_qr_info(
@@ -168,11 +200,26 @@ impl RequestSender {
         target_block_hash: BlockHash,
         extra_share: bool,
     ) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetQRInfo(GetQRInfo {
-            base_block_hashes: known_block_hashes,
-            block_request_hash: target_block_hash,
-            extra_share,
-        }))
+        self.request_qr_info_avoiding(known_block_hashes, target_block_hash, extra_share, &[])
+    }
+
+    /// [`Self::request_qr_info`], preferring an eligible peer not in `avoid`
+    /// and falling back to one in it.
+    pub fn request_qr_info_avoiding(
+        &self,
+        known_block_hashes: Vec<BlockHash>,
+        target_block_hash: BlockHash,
+        extra_share: bool,
+        avoid: &[SocketAddr],
+    ) -> NetworkResult<()> {
+        self.send_message_avoiding(
+            NetworkMessage::GetQRInfo(GetQRInfo {
+                base_block_hashes: known_block_hashes,
+                block_request_hash: target_block_hash,
+                extra_share,
+            }),
+            avoid,
+        )
     }
 
     pub fn request_blocks(&self, hashes: Vec<BlockHash>) -> NetworkResult<()> {
