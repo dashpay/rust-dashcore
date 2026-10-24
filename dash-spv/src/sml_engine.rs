@@ -971,6 +971,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// Applies a diff, then verifies the newest list's non-rotating quorums: the
     /// diff may have brought one, or the work-block list one needs.
+    ///
+    /// The diff applies only if the stored header of its block proves its
+    /// coinbase and the list it builds matches what that coinbase commits to,
+    /// see [`MasternodeList::apply_diff`]. A refused diff changes nothing.
     pub async fn apply_diff(
         &mut self,
         masternode_list_diff: MnListDiff,
@@ -1005,6 +1009,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let base_block_hash = masternode_list_diff.base_block_hash;
         let base_height = self.required_height_of(&base_block_hash).await?;
         let diff_end_height = self.required_height_of(&block_hash).await?;
+        self.prove_coinbase(&masternode_list_diff, diff_end_height).await?;
         if base_height == 0 {
             let masternode_list =
                 MasternodeList::from_diff(masternode_list_diff, diff_end_height, self.network)?;
@@ -1038,6 +1043,31 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             self.set_quorum_status(quorum_type, quorum_hash, &status);
         }
         Ok(())
+    }
+
+    /// Checks that the stored header of the diff's block, at `height`, proves
+    /// the diff's coinbase. Building a list then checks it against what the
+    /// coinbase commits to, which ties the list to the header chain.
+    ///
+    /// A block the header chain does not hold at `height`, which includes the
+    /// all-zero hash `height_of` places at genesis, proves nothing and fails
+    /// with `SmlError::BlockHashLookupFailed`. A header that cannot be read
+    /// fails with [`FeedError::HeaderStorage`].
+    async fn prove_coinbase(
+        &self,
+        diff: &MnListDiff,
+        height: CoreBlockHeight,
+    ) -> Result<(), FeedError<SmlError>> {
+        let header = self
+            .headers
+            .read()
+            .await
+            .get_header(height)
+            .await
+            .inspect_err(|e| tracing::warn!("Could not read the header at {height}: {e}"))?
+            .filter(|header| *header.hash() == diff.block_hash)
+            .ok_or(SmlError::BlockHashLookupFailed(diff.block_hash))?;
+        Ok(diff.verify_coinbase_merkle_proof(header.header().merkle_root)?)
     }
 
     /// Verifies the newest list's unverified non-rotating quorums against their
@@ -1306,14 +1336,18 @@ mod tests {
     use super::{
         build_cycle_quorum_map, FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH,
     };
+    use crate::chain::Checkpoint;
     use crate::error::{StorageError, StorageResult};
-    use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
+    use crate::storage::{
+        BlockHeaderStorage, BlockHeaderTip, PersistentBlockHeaderStorage, PersistentStorage,
+    };
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
     use dashcore::hashes::Hash;
+    use dashcore::network::constants::NetworkExt;
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
     use dashcore::prelude::CoreBlockHeight;
@@ -1330,11 +1364,12 @@ mod tests {
     };
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-    use dashcore::{BlockHash, Network, QuorumHash};
+    use dashcore::{BlockHash, Header, Network, QuorumHash};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+    use tempfile::TempDir;
     use tokio::sync::RwLock;
 
     fn make_qualified_quorum_entry(
@@ -1696,6 +1731,78 @@ mod tests {
         ));
         engine.prove_qr_info(&qr_info);
         (engine, qr_info)
+    }
+
+    /// A diff is applied only once the stored header of its block proves its
+    /// coinbase, which ties the list the coinbase commits to to the header
+    /// chain. A block the header chain does not hold at the diff's height, as
+    /// the all-zero hash standing for genesis, proves nothing.
+    #[tokio::test]
+    async fn a_diff_is_applied_only_when_its_block_header_proves_its_coinbase() {
+        let (base, tip) = (1_000_000, 1_000_001);
+        let mut engine = TestEngine::dummy_with_lists(&[base]);
+        engine.feed_block_height(tip, BlockHash::dummy(tip));
+        let diff = MnListDiff::dummy_between(base, tip);
+
+        let result = engine.apply_diff(diff.clone()).await;
+        assert!(
+            matches!(result, Err(FeedError::Refused(SmlError::CoinbaseMerkleRootMismatch { .. }))),
+            "a header that does not prove the coinbase, got {result:?}"
+        );
+        assert!(!engine.masternode_lists.contains_key(&tip));
+
+        let genesis = Network::Mainnet.known_genesis_block_hash().expect("mainnet genesis");
+        engine.feed_block_height(0, genesis);
+        let at_zero = MnListDiff {
+            block_hash: BlockHash::all_zeros(),
+            ..diff.clone()
+        };
+        let result = engine.apply_diff(at_zero).await;
+        assert!(
+            matches!(result, Err(FeedError::Refused(SmlError::BlockHashLookupFailed(_)))),
+            "a block hash the header chain does not hold, got {result:?}"
+        );
+
+        engine.prove(&diff);
+        engine.apply_diff(diff).await.expect("the header proves the coinbase");
+        assert!(engine.masternode_lists.contains_key(&tip));
+    }
+
+    /// A client starting from a checkpoint stores the checkpoint's headers, the
+    /// checkpoint block's last, and none below them. Its first diff, from
+    /// genesis to the checkpoint block, is proven against the stored header of
+    /// that block.
+    #[tokio::test]
+    async fn the_first_diff_after_a_checkpoint_start_is_proven_by_the_checkpoint_header() {
+        let height = 1_000_000;
+        let diff = MnListDiff {
+            base_block_hash: BlockHash::all_zeros(),
+            ..MnListDiff::dummy(0x00, 0x00)
+        }
+        .committing_on(None, height);
+        let mut headers = Checkpoint::dummy(height).headers().to_vec();
+        let block = headers.last_mut().expect("the checkpoint block");
+        *block = HashedBlockHeader::from(Header {
+            merkle_root: diff.proven_merkle_root(),
+            ..*block.header()
+        });
+        let checkpoint = Checkpoint::new(height, headers).expect("a checkpoint");
+        let diff = MnListDiff {
+            block_hash: *checkpoint.hash(),
+            ..diff
+        };
+
+        let dir = TempDir::new().unwrap();
+        let mut headers = PersistentBlockHeaderStorage::open(dir.path()).await.unwrap();
+        headers
+            .store_headers_at_height(checkpoint.headers(), checkpoint.start_height())
+            .await
+            .unwrap();
+        let mut engine =
+            MasternodeListEngine::new(Network::Mainnet, Arc::new(RwLock::new(headers)));
+
+        engine.apply_diff(diff).await.expect("the checkpoint header proves the coinbase");
+        assert!(engine.masternode_lists.contains_key(&height));
     }
 
     /// A QRInfo the engine refuses leaves it as it was, so a retry against
