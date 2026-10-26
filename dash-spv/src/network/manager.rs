@@ -109,6 +109,8 @@ const MAX_ADDR_PER_MESSAGE: usize = 1000;
 /// How often the timeout monitor scans the outstanding-request registry.
 const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
 
+const KICKING_ATTEMPTS: u32 = 2;
+
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::NetworkManager;
 use crate::{
@@ -259,7 +261,7 @@ pub enum RequestKey {
 
 enum ReqState {
     /// In the `MsgQueue`, not yet sent; held here only for de-dup.
-    Queued,
+    Queued(u32),
     /// Sent and awaiting a response. Carries the message so the timeout monitor can
     /// retry it; boxed because a `NetworkMessage` dwarfs `Queued`.
     OnWire(Box<OnWire>),
@@ -280,6 +282,7 @@ struct OnWire {
     sent: Instant,
     /// The peer a copy was also sent to (endgame).
     hedge: Option<PeerId>,
+    attempts: u32,
 }
 
 pub struct PeerNetworkManager {
@@ -541,7 +544,7 @@ impl NetworkManager for PeerNetworkManager {
                 return; // already in play
             }
             for key in keys {
-                reqs.insert(key, ReqState::Queued);
+                reqs.insert(key, ReqState::Queued(0));
             }
         }
         self.msg_queue.push(height, msg).await;
@@ -759,6 +762,10 @@ async fn route_tick(
         for (height, msg, peer) in on_wire {
             for key in request_keys(&msg) {
                 if let Some(slot) = reqs.get_mut(&key) {
+                    let attempts = match slot {
+                        ReqState::Queued(attempts) => *attempts,
+                        ReqState::OnWire(o) => o.attempts,
+                    };
                     *slot = ReqState::OnWire(Box::new(OnWire {
                         peer: peer.id(),
                         msg: msg.clone(),
@@ -766,6 +773,7 @@ async fn route_tick(
                         last_progress: Instant::now(),
                         sent: Instant::now(),
                         hedge: None,
+                        attempts: attempts + 1,
                     }));
                 }
             }
@@ -1496,7 +1504,8 @@ async fn requeue_requests_from(
         })
         .collect();
     for key in keys {
-        if let Some(ReqState::OnWire(o)) = reqs.insert(key, ReqState::Queued) {
+        if let Some(ReqState::OnWire(o)) = reqs.remove(&key) {
+            reqs.insert(key, ReqState::Queued(o.attempts));
             reinject.push((o.height, o.msg));
         }
     }
@@ -1559,6 +1568,7 @@ fn spawn_timeout_monitor(
             };
             // A request that stopped making progress also condemns its peer: the
             // per-peer byte check above sees unrelated traffic and judges it healthy.
+            let mut retried = Vec::new();
             {
                 let timeouts: HashMap<PeerId, Duration> = connected
                     .lock()
@@ -1566,16 +1576,35 @@ fn spawn_timeout_monitor(
                     .iter()
                     .map(|p| (p.id(), request_timeout(p.lag_ms())))
                     .collect();
-                let reqs = requests.lock().await;
-                for state in reqs.values() {
+                let mut reqs = requests.lock().await;
+                let mut unanswerable = Vec::new();
+                for (key, state) in reqs.iter() {
                     if let ReqState::OnWire(o) = state {
                         let timeout = timeouts.get(&o.peer).copied().unwrap_or(REQUEST_TIMEOUT);
-                        if now.duration_since(o.last_progress) > timeout {
+                        if now.duration_since(o.last_progress) <= timeout {
+                            continue;
+                        }
+                        if o.attempts < KICKING_ATTEMPTS {
                             culprits.insert(o.peer);
+                        } else {
+                            unanswerable.push(key.clone());
                         }
                     }
                 }
+                for key in unanswerable {
+                    if let Some(ReqState::OnWire(o)) = reqs.remove(&key) {
+                        tracing::debug!(
+                            target: "dash_spv::network",
+                            "{key:?} unanswered after {} attempts, retrying without kicking {}",
+                            o.attempts,
+                            o.peer,
+                        );
+                        reqs.insert(key, ReqState::Queued(o.attempts));
+                        retried.push((o.height, o.msg));
+                    }
+                }
             }
+            queue.push_front_all(retried).await;
 
             if culprits.is_empty() {
                 continue;
@@ -1651,6 +1680,27 @@ fn spawn_pump(
                     let addr = peer.addr();
                     *recv_by_peer.entry(addr).or_insert(0) += 1;
                     total_recv += 1;
+
+                    if let NetworkMessage::NotFound(inv) = &*msg {
+                        let mut reqs = requests.lock().await;
+                        let mut retried = Vec::new();
+                        for item in inv {
+                            let Inventory::Block(hash) = item else {
+                                continue;
+                            };
+                            let key = RequestKey::Block(*hash);
+                            if matches!(reqs.get(&key), Some(ReqState::OnWire(o)) if o.peer == peer)
+                            {
+                                let Some(ReqState::OnWire(o)) = reqs.remove(&key) else {
+                                    unreachable!("matched just above");
+                                };
+                                reqs.insert(key, ReqState::Queued(o.attempts));
+                                retried.push((o.height, o.msg));
+                            }
+                        }
+                        drop(reqs);
+                        queue.push_front_all(retried).await;
+                    }
 
                     // A block is settled on arrival, not when the wallet gets to it: blocks
                     // are processed in height order, so one can wait long behind a gap, and
@@ -1986,6 +2036,7 @@ mod tests {
                 height: 0,
                 sent: Instant::now(),
                 hedge: None,
+                attempts: 1,
             };
             reqs.insert(key, ReqState::OnWire(Box::new(on_wire)));
         }
@@ -1993,7 +2044,7 @@ mod tests {
 
     async fn state_of(net: &PeerNetworkManager, key: &RequestKey) -> Option<&'static str> {
         net.requests.lock().await.get(key).map(|s| match s {
-            ReqState::Queued => "queued",
+            ReqState::Queued(_) => "queued",
             ReqState::OnWire(_) => "on_wire",
         })
     }
