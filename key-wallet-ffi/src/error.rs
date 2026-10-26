@@ -263,7 +263,6 @@ impl From<key_wallet::Error> for FFIError {
             Error::Bip32(_)
             | Error::Slip10(_)
             | Error::BLS(_)
-            | Error::Secp256k1(_)
             | Error::Base58
             | Error::KeyError(_) => FFIErrorCode::WalletError,
         };

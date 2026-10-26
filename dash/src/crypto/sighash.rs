@@ -1267,10 +1267,10 @@ mod tests {
             })
         }
 
-        use secp256k1::{self, SecretKey, XOnlyPublicKey};
-
         use crate::consensus::serde as con_serde;
-        use crate::taproot::{TapNodeHash, TapTweakHash};
+        use crate::crypto::ecdsa::EcdsaSecretKey;
+        use crate::crypto::key::{Keypair, XOnlyPublicKey};
+        use crate::taproot::{TapNodeHash, TapTweak, TapTweakHash};
 
         #[derive(serde::Deserialize)]
 
@@ -1303,7 +1303,7 @@ mod tests {
         #[serde(rename_all = "camelCase")]
         struct KpsInputSpendingGiven {
             txin_index: usize,
-            internal_privkey: SecretKey,
+            internal_privkey: EcdsaSecretKey,
             merkle_root: Option<TapNodeHash>,
             #[serde(deserialize_with = "sighash_deser_numeric")]
             hash_type: TapSighashType,
@@ -1314,7 +1314,7 @@ mod tests {
         struct KpsInputSpendingIntermediary {
             internal_pubkey: XOnlyPublicKey,
             tweak: TapTweakHash,
-            tweaked_privkey: SecretKey,
+            tweaked_privkey: EcdsaSecretKey,
             sig_msg: String,
             //precomputed_used: Vec<String>, // unused
             sig_hash: TapSighash,
@@ -1388,22 +1388,18 @@ mod tests {
 
             let expected = inp.intermediary;
             let sig_str = inp.expected.witness.remove(0);
-            let (expected_key_spend_sig, expected_hash_ty) = if sig_str.len() == 128 {
-                (
-                    secp256k1::schnorr::Signature::from_str(&sig_str).unwrap(),
-                    TapSighashType::Default,
-                )
+            let expected_hash_ty = if sig_str.len() == 128 {
+                TapSighashType::Default
             } else {
                 let hash_ty = u8::from_str_radix(&sig_str[128..130], 16).unwrap();
-                let hash_ty = TapSighashType::from_consensus_u8(hash_ty).unwrap();
-                (secp256k1::schnorr::Signature::from_str(&sig_str[..128]).unwrap(), hash_ty)
+                TapSighashType::from_consensus_u8(hash_ty).unwrap()
             };
 
             // tests
-            let keypair = secp256k1::Keypair::from_secret_key(&internal_priv_key);
-            let (internal_key, _parity) = XOnlyPublicKey::from_keypair(&keypair);
+            let keypair = Keypair::from(internal_priv_key);
+            let internal_key = XOnlyPublicKey::from_keypair(&keypair);
             let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
-            let tweaked_keypair = keypair.add_xonly_tweak(&tweak.to_scalar()).unwrap();
+            let tweaked_keypair = keypair.tap_tweak(merkle_root);
             let mut sig_msg = Vec::new();
             cache
                 .taproot_encode_signing_data_to(
@@ -1419,19 +1415,19 @@ mod tests {
                 .taproot_signature_hash(tx_ind, &Prevouts::All(&utxos), None, None, hash_ty)
                 .unwrap();
 
-            let msg = secp256k1::Message::from_digest(sighash.to_byte_array());
-            let key_spend_sig =
-                secp256k1::schnorr::sign_with_aux_rand(msg.as_ref(), &tweaked_keypair, &[0u8; 32]);
+            let key_spend_sig = tweaked_keypair
+                .as_keypair()
+                .raw_bip340_sign_with_aux_randomness(&sighash.to_byte_array(), &[0u8; 32]);
 
-            assert_eq!(expected.internal_pubkey, internal_key);
+            assert_eq!(expected.internal_pubkey.serialize().0, internal_key.serialize().0);
             assert_eq!(expected.tweak, tweak);
             assert_eq!(expected.sig_msg, sig_msg.to_lower_hex_string());
             assert_eq!(expected.sig_hash, sighash);
             assert_eq!(expected_hash_ty, hash_ty);
-            assert_eq!(expected_key_spend_sig, key_spend_sig);
+            assert_eq!(sig_str[..128], key_spend_sig.to_string());
 
-            let tweaked_priv_key = SecretKey::from_keypair(&tweaked_keypair);
-            assert_eq!(expected.tweaked_privkey, tweaked_priv_key);
+            let tweaked_priv_key = tweaked_keypair.as_keypair().to_secret_bytes();
+            assert_eq!(*expected.tweaked_privkey.to_bytes(), tweaked_priv_key);
         }
     }
 

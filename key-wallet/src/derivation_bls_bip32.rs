@@ -1709,6 +1709,7 @@ mod tests {
         #[test]
         fn secp_secret_above_the_order_is_reduced() {
             use crate::wallet::root_extended_keys::RootExtendedPrivKey;
+            use dashcore::ecdsa::EcdsaSecretKey;
 
             // secp256k1 draws from a larger field, so about half its secrets land
             // outside BLS's field, construct such a secret.
@@ -1716,7 +1717,7 @@ mod tests {
             secret[0] = 0x02;
             secret[31] = 0xff;
             let root = RootExtendedPrivKey {
-                root_private_key: secp256k1::SecretKey::from_secret_bytes(secret).unwrap(),
+                root_private_key: EcdsaSecretKey::from_bytes(&secret).unwrap(),
                 root_chain_code: ChainCode::from([3u8; 32]),
             };
 

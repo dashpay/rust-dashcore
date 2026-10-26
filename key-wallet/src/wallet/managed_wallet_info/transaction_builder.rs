@@ -15,12 +15,11 @@ use dashcore::blockdata::opcodes;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 use dashcore::sighash::{EcdsaSighashType, LegacySighash, SighashCache};
 use dashcore::Address;
 use dashcore::{Network, TxIn, TxOut};
 use dashcore_hashes::Hash;
-use secp256k1::ecdsa::Signature;
-use secp256k1::{Message, PublicKey};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
@@ -450,8 +449,84 @@ impl TransactionBuilder {
     ///
     /// [`add_funding`]: Self::add_funding
     fn assemble_unsigned(
-        mut self,
+        self,
     ) -> Result<(Transaction, Vec<Utxo>, Option<ReservationToken>), BuilderError> {
+        let trial = self.require_final_inputs.then(|| self.with_waiting_coins());
+        let funding = self.funding.clone();
+        let current_height = self.current_height;
+
+        let (transaction, selected_inputs) = match self.prepare() {
+            Ok(prepared) => prepared,
+            // Waiting coins can only make up for a funding failure.
+            Err(
+                e @ (BuilderError::InsufficientFunds {
+                    ..
+                }
+                | BuilderError::CoinSelection(_)
+                | BuilderError::TooManyInputs {
+                    ..
+                }),
+            ) => {
+                if let Some(Ok((_, inputs))) = trial.map(Self::prepare) {
+                    let waiting = inputs
+                        .iter()
+                        .filter(|utxo| !(utxo.is_confirmed || utxo.is_instantlocked))
+                        .map(Utxo::value)
+                        .sum();
+
+                    return Err(BuilderError::FundsAwaitingFinality {
+                        waiting,
+                    });
+                }
+
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
+
+        // Reserve the chosen inputs so a concurrent build skips them until the
+        // broadcast transaction is processed back into the wallet (which
+        // releases the reservation) or the TTL backstop reclaims it. Each
+        // account reserves the inputs it contributed, since its own set is the
+        // one its coin selection consults. Keep the stamped owner token so the
+        // caller can release only this reservation if the build is later
+        // abandoned (see `release_if_owner`).
+        let reservation_token = (!funding.is_empty()).then(|| {
+            let owner = ReservationToken::next();
+            for (reservations, candidates) in &funding {
+                let outpoints: Vec<OutPoint> = selected_inputs
+                    .iter()
+                    .map(|utxo| utxo.outpoint)
+                    .filter(|outpoint| candidates.contains(outpoint))
+                    .collect();
+                reservations.reserve(&outpoints, current_height, owner);
+            }
+            owner
+        });
+
+        Ok((transaction, selected_inputs, reservation_token))
+    }
+
+    /// This build with non-final coins as candidates too.
+    fn with_waiting_coins(&self) -> Self {
+        Self {
+            inputs: self.inputs.clone(),
+            change_addr: self.change_addr.clone(),
+            outputs: self.outputs.clone(),
+            fee_rate: self.fee_rate,
+            current_height: self.current_height,
+            selection_strategy: self.selection_strategy,
+            require_final_inputs: false,
+            preserve_output_order: self.preserve_output_order,
+            change_to_first_input: self.change_to_first_input,
+            special_payload: self.special_payload.clone(),
+            payload_finalizer: None,
+            funding: self.funding.clone(),
+        }
+    }
+
+    /// Select inputs and build the unsigned transaction, without reserving them.
+    fn prepare(mut self) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
         if let Some(TransactionPayload::AssetLockPayloadType(p)) = &self.special_payload {
             if p.credit_outputs.is_empty() {
                 return Err(BuilderError::NoOutputs);
@@ -668,27 +743,7 @@ impl TransactionBuilder {
             special_transaction_payload: self.special_payload,
         };
 
-        // Reserve the chosen inputs so a concurrent build skips them until the
-        // broadcast transaction is processed back into the wallet (which
-        // releases the reservation) or the TTL backstop reclaims it. Each
-        // account reserves the inputs it contributed, since its own set is the
-        // one its coin selection consults. Keep the stamped owner token so the
-        // caller can release only this reservation if the build is later
-        // abandoned (see `release_if_owner`).
-        let reservation_token = (!self.funding.is_empty()).then(|| {
-            let owner = ReservationToken::next();
-            for (reservations, candidates) in &self.funding {
-                let outpoints: Vec<OutPoint> = selected_inputs
-                    .iter()
-                    .map(|utxo| utxo.outpoint)
-                    .filter(|outpoint| candidates.contains(outpoint))
-                    .collect();
-                reservations.reserve(&outpoints, self.current_height, owner);
-            }
-            owner
-        });
-
-        return Ok((transaction, selected_inputs, reservation_token));
+        return Ok((transaction, selected_inputs));
 
         // BIP-69: Sort outputs by amount first, then by scriptPubKey
         // lexicographically.
@@ -940,7 +995,7 @@ pub trait TransactionSigner {
             let (sig, pubkey) = self.sig_and_pubkey(sighash, path).await?;
 
             let script_sig = Builder::new()
-                .push_slice(dashcore::ecdsa::Signature::sighash_all(sig).serialize())
+                .push_slice(dashcore::ecdsa::Signature::sighash_all(sig.into()).serialize())
                 .push_key(&dashcore::PublicKey::new(pubkey))
                 .into_script();
 
@@ -958,7 +1013,7 @@ pub trait TransactionSigner {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError>;
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError>;
 }
 
 #[async_trait::async_trait]
@@ -967,7 +1022,7 @@ impl TransactionSigner for Wallet {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError> {
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError> {
         let root_xpriv =
             self.root_extended_priv_key().map_err(|_| BuilderError::WatchOnlyWallet)?;
 
@@ -975,11 +1030,10 @@ impl TransactionSigner for Wallet {
         let derived_xpriv = root_ext_priv.derive_priv(&path).map_err(|e| {
             BuilderError::SigningFailed(format!("couldn't derive extended priv key: {}", e))
         })?;
-        let key = derived_xpriv.private_key;
+        let key = &derived_xpriv.private_key;
 
-        let message = Message::from_digest(*sighash.as_byte_array());
-        let signature = key.sign_ecdsa(message);
-        let pubkey = PublicKey::from_secret_key(&key);
+        let signature = key.sign(sighash.as_byte_array());
+        let pubkey = key.public_key();
 
         Ok((signature, pubkey))
     }
@@ -991,7 +1045,7 @@ impl<S: Signer> TransactionSigner for S {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError> {
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError> {
         if !self.supports(crate::signer::SignerMethod::Digest) {
             return Err(BuilderError::SigningFailed(format!(
                 "signer does not support required method {:?}",
@@ -1040,6 +1094,10 @@ pub enum BuilderError {
         len: usize,
         max: usize,
     },
+    /// Only non-final coins would fund the build, `waiting` duffs of them.
+    FundsAwaitingFinality {
+        waiting: u64,
+    },
 }
 
 impl fmt::Display for BuilderError {
@@ -1071,6 +1129,11 @@ impl fmt::Display for BuilderError {
                 max,
             } => {
                 write!(f, "OP_RETURN payload too large: {len} bytes (max {max})")
+            }
+            Self::FundsAwaitingFinality {
+                waiting,
+            } => {
+                write!(f, "Funds awaiting finality: {waiting} duffs of coins not final yet")
             }
         }
     }
@@ -1333,6 +1396,34 @@ mod tests {
 
         // estimate_transaction_size was removed in the new builder API; if a
         // future test needs full-size estimation, derive it from a real build.
+    }
+
+    #[test_case::test_case(800_000, true; "waiting coins cover it")]
+    #[test_case::test_case(2_000_000, false; "nothing covers it")]
+    fn test_funds_awaiting_finality(amount: u64, covered: bool) {
+        let utxos = vec![
+            Utxo::dummy(0, 400_000, 100, false, true),
+            Utxo::dummy(1, 600_000, 100, false, false),
+        ];
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_change_address(Address::dummy(Network::Testnet, 0))
+            .add_inputs(utxos)
+            .add_output(&Address::dummy(Network::Testnet, 1), amount)
+            .require_final_inputs()
+            .build_unsigned_reserved();
+
+        if covered {
+            assert!(matches!(
+                result,
+                Err(BuilderError::FundsAwaitingFinality {
+                    waiting: 600_000
+                })
+            ));
+        } else {
+            assert!(matches!(result, Err(BuilderError::CoinSelection(_))));
+        }
     }
 
     #[test]

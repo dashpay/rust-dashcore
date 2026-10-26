@@ -12,7 +12,7 @@ version.workspace = true
 
 [features]
 default = ["getrandom"]
-serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "secp256k1/serde", "dashcore/serde"]
+serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "dashcore/serde"]
 bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
@@ -35,7 +35,6 @@ keep-finalized-transactions = []
 internals = { path = "../internals", package = "dashcore-private" }
 dashcore_hashes = { path = "../hashes" }
 dashcore = { path="../dash" }
-secp256k1 = { workspace = true, features = ["recovery"] }
 bip39 = { version = "2.2.0", default-features = false, features = ["std", "chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
 unicode-normalization = "0.1"
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -51,6 +50,7 @@ tracing = "0.1"
 async-trait = "0.1"
 
 [dev-dependencies]
+bincode = { workspace = true, features = ["serde"] }
 criterion = "0.8.1"
 dashcore = { path="../dash", features = ["test-utils"] }
 key-wallet = { path = ".", features = ["test-utils", "serde", "bincode", "eddsa", "bls"] }

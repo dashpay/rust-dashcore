@@ -533,9 +533,9 @@ impl std::error::Error for MerkleBlockError {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "rand-std")]
-    use hashes::Hash;
+    use crate::crypto::key::rand::prelude::*;
     #[cfg(feature = "rand-std")]
-    use secp256k1::rand::prelude::*;
+    use hashes::Hash;
 
     use super::*;
     use crate::consensus::encode::{deserialize, serialize};
@@ -584,7 +584,7 @@ mod tests {
 
         use crate::merkle_tree;
 
-        let mut rng = secp256k1::rand::rng();
+        let mut rng = crate::crypto::key::rand::rng();
         // Create some fake tx ids
         let tx_ids = (1..=tx_count)
             .map(|i| format!("{:064x}", i).parse::<Txid>().unwrap())

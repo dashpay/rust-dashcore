@@ -40,15 +40,15 @@ use std::net::SocketAddr;
 use bincode::{Decode, Encode};
 use hashes::Hash;
 use hex_conservative::Case::Lower;
-use internals::impl_array_newtype;
 
 use crate::address::Payload;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::provider_update_service::ProTxVersion;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable, encode};
+use crate::crypto::ecdsa::{ECDSA_REC_SIG_LEN, EcdsaRecSignature};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash};
-use crate::internal_macros::{impl_bytes_newtype, impl_consensus_encoding};
+use crate::internal_macros::impl_consensus_encoding;
 use crate::platform_node_id::PlatformNodeId;
 use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeNetInfo;
@@ -127,32 +127,25 @@ impl Decodable for ProviderMasternodeType {
     }
 }
 
-/// A compact recoverable ECDSA signature of 65 bytes, written without a length prefix.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct CompactSignature([u8; 65]);
-
-impl_array_newtype!(CompactSignature, u8, 65);
-impl_bytes_newtype!(CompactSignature, 65);
-
-impl Encodable for CompactSignature {
+// Written without a length prefix, as Core does.
+impl Encodable for EcdsaRecSignature {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        w.write_all(&self.0)?;
-        Ok(self.0.len())
+        w.write_all(self.as_bytes())?;
+        Ok(ECDSA_REC_SIG_LEN)
     }
 }
 
-impl Decodable for CompactSignature {
+impl Decodable for EcdsaRecSignature {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
-        let mut bytes = [0; 65];
+        let mut bytes = [0; ECDSA_REC_SIG_LEN];
         r.read_exact(&mut bytes).map_err(encode::Error::Io)?;
-        Ok(CompactSignature(bytes))
+        Ok(EcdsaRecSignature::from(bytes))
     }
 }
 
 /// Encodes signatures as Core does: a `u8` count followed by the signatures.
 pub(crate) fn encode_compact_signatures<W: io::Write + ?Sized>(
-    signatures: &[CompactSignature],
+    signatures: &[EcdsaRecSignature],
     w: &mut W,
 ) -> Result<usize, io::Error> {
     let count = u8::try_from(signatures.len())
@@ -167,9 +160,9 @@ pub(crate) fn encode_compact_signatures<W: io::Write + ?Sized>(
 /// Decodes signatures written by [`encode_compact_signatures`].
 pub(crate) fn decode_compact_signatures<R: io::Read + ?Sized>(
     r: &mut R,
-) -> Result<Vec<CompactSignature>, encode::Error> {
+) -> Result<Vec<EcdsaRecSignature>, encode::Error> {
     let count = u8::consensus_decode(r)?;
-    (0..count).map(|_| CompactSignature::consensus_decode(r)).collect()
+    (0..count).map(|_| EcdsaRecSignature::consensus_decode(r)).collect()
 }
 
 /// One participant's contribution to the collateral of a shared masternode.
@@ -206,7 +199,7 @@ impl CollateralShare {
 pub struct SharedCollateral {
     pub shares: Vec<CollateralShare>,
     /// One consent signature per share, in share order.
-    pub join_sigs: Vec<CompactSignature>,
+    pub join_sigs: Vec<EcdsaRecSignature>,
     pub early_period_blocks: u32,
     /// Penalty in duffs for leaving within `early_period_blocks`.
     pub early_penalty: i64,
@@ -216,7 +209,7 @@ impl SharedCollateral {
     /// The size of the terms in bytes.
     pub fn size(&self) -> usize {
         1 + self.shares.iter().map(CollateralShare::size).sum::<usize>()
-            + 65 * self.join_sigs.len()
+            + ECDSA_REC_SIG_LEN * self.join_sigs.len()
             + 4
             + 8
     }
@@ -253,7 +246,7 @@ impl Decodable for SharedCollateral {
         let shares =
             (0..count).map(|_| CollateralShare::consensus_decode(r)).collect::<Result<_, _>>()?;
         let join_sigs =
-            (0..count).map(|_| CompactSignature::consensus_decode(r)).collect::<Result<_, _>>()?;
+            (0..count).map(|_| EcdsaRecSignature::consensus_decode(r)).collect::<Result<_, _>>()?;
         Ok(SharedCollateral {
             shares,
             join_sigs,
@@ -1503,7 +1496,7 @@ mod tests {
             }]),
             shared_collateral: Some(SharedCollateral {
                 shares: (0..shares).map(share).collect(),
-                join_sigs: (0..shares).map(|i| CompactSignature::from([i; 65])).collect(),
+                join_sigs: (0..shares).map(|i| EcdsaRecSignature::from([i; 65])).collect(),
                 early_period_blocks: 1000,
                 early_penalty: 100_000_000,
             }),

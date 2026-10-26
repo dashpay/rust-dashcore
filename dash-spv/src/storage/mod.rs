@@ -65,6 +65,10 @@ pub trait StorageManager:
     /// Deletes in-disk and in-memory data
     async fn clear(&mut self) -> StorageResult<()>;
 
+    /// Drops the block headers, filter headers, filters, blocks and masternode
+    /// messages above `height`.
+    async fn truncate_above(&mut self, height: u32) -> StorageResult<()>;
+
     /// Starts the background tasks, restarting them after a [`Self::stop`].
     async fn start(&mut self);
 
@@ -92,7 +96,8 @@ pub trait StorageManager:
 
 /// Disk-based storage manager with segmented files and async background saving.
 /// Only one instance of DiskStorageManager working on the same storage path
-/// can exist at a time.
+/// can exist at a time. The background saving runs from [`StorageManager::start`]
+/// until [`StorageManager::stop`] or drop.
 pub struct DiskStorageManager {
     storage_path: PathBuf,
     network: Network,
@@ -148,7 +153,7 @@ impl DiskStorageManager {
         let block_headers =
             Arc::new(RwLock::new(PersistentBlockHeaderStorage::open(&storage_path).await?));
 
-        let mut storage = Self {
+        Ok(Self {
             storage_path: storage_path.clone(),
             network: config.network,
 
@@ -171,11 +176,7 @@ impl DiskStorageManager {
             worker_handle: None,
 
             _lock_file: lock_file,
-        };
-
-        storage.start_worker().await;
-
-        Ok(storage)
+        })
     }
 
     #[cfg(test)]
@@ -235,8 +236,23 @@ impl DiskStorageManager {
     }
 }
 
+/// Aborts the background worker without saving, use [`StorageManager::stop`] to persist.
+impl Drop for DiskStorageManager {
+    fn drop(&mut self) {
+        self.stop_worker();
+    }
+}
+
 #[async_trait]
 impl StorageManager for DiskStorageManager {
+    async fn truncate_above(&mut self, height: u32) -> StorageResult<()> {
+        BlockHeaderStorage::truncate_above(self, height).await?;
+        FilterHeaderStorage::truncate_above(self, height).await?;
+        FilterStorage::truncate_above(self, height).await?;
+        BlockStorage::truncate_above(self, height).await?;
+        MasternodeStorage::truncate_above(self, height).await
+    }
+
     async fn clear(&mut self) -> StorageResult<()> {
         // First, stop the background worker to avoid races with file deletion
         let worker_was_running = self.worker_handle.is_some();
@@ -482,6 +498,10 @@ impl masternode::MasternodeStorage for DiskStorageManager {
     ) -> StorageResult<()> {
         self.masternodes.write().await.store_qr_info(height, qr_info).await
     }
+
+    async fn truncate_above(&mut self, height: CoreBlockHeight) -> StorageResult<()> {
+        self.masternodes.write().await.truncate_above(height).await
+    }
 }
 
 #[cfg(test)]
@@ -527,6 +547,20 @@ mod tests {
         let _storage_b = DiskStorageManager::new(&config_b).await?;
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_worker_runs_from_start_until_drop() {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        assert!(storage.worker_handle.is_none());
+
+        storage.start().await;
+        let block_headers = Arc::downgrade(&storage.block_headers());
+        drop(storage);
+        tokio::task::yield_now().await;
+
+        // Only the worker could still hold the storages.
+        assert!(block_headers.upgrade().is_none());
     }
 
     #[tokio::test]

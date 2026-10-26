@@ -1,5 +1,6 @@
 //! Sync coordination and orchestration.
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -13,14 +14,13 @@ use super::event_handler::{
 use super::DashSpvClient;
 use crate::error::Result;
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
 use crate::sync::SyncEvent;
 use crate::SpvError;
 use key_wallet_manager::WalletInterface;
 
 const SYNC_COORDINATOR_TICK_MS: Duration = Duration::from_millis(100);
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Start the client and run the sync loop in the background until `stop()` is called.
     ///
     /// Subscribes to all event channels internally and dispatches events to the
@@ -125,6 +125,8 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
                 spawn_reservation_sweep(self.wallet.clone(), ttl, monitor_shutdown.clone())
             });
 
+        // Set before the loop starts, so a loop failing right away clears it.
+        self.running.store(true, Ordering::Release);
         let client = self.clone();
         let shutdown = monitor_shutdown.clone();
 
@@ -171,6 +173,7 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
             };
 
             // Signal monitors to shut down before channels close
+            client.running.store(false, Ordering::Release);
             monitor_shutdown.cancel();
             tracing::info!("Stopping sync monitoring");
 

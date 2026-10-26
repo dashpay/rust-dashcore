@@ -497,7 +497,7 @@ pub trait ManagedAccountTrait {
             root_ext_priv.derive_priv(&info.path).map_err(|_| "Key derivation failed")?;
 
         let mut private_key = [0u8; 32];
-        private_key.copy_from_slice(&derived_xpriv.private_key[..]);
+        private_key.copy_from_slice(&derived_xpriv.private_key.to_bytes()[..]);
         Ok(private_key)
     }
 

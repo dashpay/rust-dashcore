@@ -1004,11 +1004,11 @@ mod tests {
     use super::*;
     use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
     use crate::blockdata::transaction::special_transaction::provider_dissolve::ProviderDissolvePayload;
-    use crate::blockdata::transaction::special_transaction::provider_registration::CompactSignature;
     use crate::blockdata::transaction::special_transaction::provider_update_share::ProviderUpdateSharePayload;
     use crate::blockdata::transaction::special_transaction::provider_update_shared_registrar::ProviderUpdateSharedRegistrarPayload;
     use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::encode::{deserialize, serialize};
+    use crate::crypto::ecdsa::EcdsaRecSignature;
     use crate::hash_types::PubkeyHash;
     use crate::internal_macros::hex;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
@@ -1340,7 +1340,7 @@ mod tests {
         version: 1,
         pro_tx_hash: Txid::all_zeros(),
         actor_index: 0,
-        signatures: vec![CompactSignature::from([1; 65])],
+        signatures: vec![EcdsaRecSignature::from([1; 65])],
     }); "ProDisTx")]
     #[test_case(11, TransactionPayload::ProviderUpdateSharePayloadType(ProviderUpdateSharePayload {
         version: 1,
@@ -1357,7 +1357,7 @@ mod tests {
             operator_public_key: BLSPublicKey::from([1; 48]),
             voting_key_hash: PubkeyHash::all_zeros(),
             inputs_hash: InputsHash::all_zeros(),
-            signatures: vec![CompactSignature::from([1; 65])],
+            signatures: vec![EcdsaRecSignature::from([1; 65])],
         }
     ); "ProUpSharedRegTx")]
     fn shared_masternode_types_decode_typed(tx_type: u16, payload: TransactionPayload) {

@@ -8,14 +8,14 @@ bincode = { package = "grovedb-bincode", version = "=2.1.0" }
 bincode_derive = { package = "grovedb-bincode-derive", version = "=2.1.0" }
 futures = "0.3"
 rayon = "1.11"
-secp256k1 = "0.33.1" # must match with version used in `bitcoin-crypto` and `dash-pkc`
 serde = { version = "1.0.219", default-features = false }
 zeroize = { version = "1.8", features = ["derive"] }
 
 # Packages from `dashpay/base-sdk`, MUST share same version ACROSS crates
-dash-num = { git = "https://github.com/dashpay/base-sdk", rev = "33fcc59e1868c803f9608e0e78ee8bddf3abcee7", default-features = false }
-dash-pkc = { git = "https://github.com/dashpay/base-sdk", rev = "33fcc59e1868c803f9608e0e78ee8bddf3abcee7", default-features = false }
-dash-types = { git = "https://github.com/dashpay/base-sdk", rev = "33fcc59e1868c803f9608e0e78ee8bddf3abcee7", default-features = false }
+dash-num = { git = "https://github.com/dashpay/base-sdk", rev = "addedfa16a56c77f435b41804cd2c0668b776e97", default-features = false }
+dash-pkc = { git = "https://github.com/dashpay/base-sdk", rev = "addedfa16a56c77f435b41804cd2c0668b776e97", default-features = false }
+dash-pow = { git = "https://github.com/dashpay/base-sdk", rev = "addedfa16a56c77f435b41804cd2c0668b776e97", default-features = false }
+dash-types = { git = "https://github.com/dashpay/base-sdk", rev = "addedfa16a56c77f435b41804cd2c0668b776e97", default-features = false }
 
 # Packages from `rust-bitcoin/rust-bitcoin`, `bitcoin-crypto` uses revision due to `secp256k1`
 base58ck = { version = "0.5.0" }
@@ -29,12 +29,10 @@ edition = "2024"
 license = "CC0-1.0"
 repository = "https://github.com/dashpay/rust-dashcore"
 rust-version = "1.89.0"
-version = "0.45.0"
+version = "0.46.0"
 
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }
-# Use directly from GitHub while we don't have ownership of the crate on crates.io
-rs-x11-hash = { git = "https://github.com/dashpay/rs-x11-hash", tag = "0.1.9" }
 
 [profile.release]
 # Default to unwinding for most crates
@@ -47,3 +45,7 @@ debug = 1
 
 [profile.dev]
 # Default to unwinding for most crates
+
+[profile.dev.package.dash-pow]
+# Unoptimized X11 is slow enough to stall header sync
+opt-level = 3

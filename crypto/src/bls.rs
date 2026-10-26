@@ -212,10 +212,10 @@ impl BlsPublicKey {
         match self.scheme {
             BlsScheme::Legacy => self
                 .point::<BlsScChia>()?
-                .verify(digest, &signature.as_scheme(self.scheme).point::<BlsScChia>()?),
+                .verify_digest(digest, &signature.as_scheme(self.scheme).point::<BlsScChia>()?),
             BlsScheme::Modern => self
                 .point::<BlsScIetf>()?
-                .verify(&digest[..], &signature.as_scheme(self.scheme).point::<BlsScIetf>()?),
+                .verify_digest(digest, &signature.as_scheme(self.scheme).point::<BlsScIetf>()?),
         }
         .map_err(|_| BlsError::VerificationFailed("signature did not verify".to_string()))
     }
@@ -398,8 +398,8 @@ impl BlsSignature {
         I: IntoIterator<Item = (BlsScheme, &'a BlsPkBytes)>,
     {
         match self.scheme {
-            BlsScheme::Legacy => self.verify_secure_in::<BlsScChia, I>(digest, keys, digest),
-            BlsScheme::Modern => self.verify_secure_in::<BlsScIetf, I>(digest, keys, &digest[..]),
+            BlsScheme::Legacy => self.verify_secure_in::<BlsScChia, I>(digest, keys),
+            BlsScheme::Modern => self.verify_secure_in::<BlsScIetf, I>(digest, keys),
         }
     }
 
@@ -407,17 +407,11 @@ impl BlsSignature {
         PkcSignature::<S>::from_bytes(self.bytes.as_bytes())
             .map_err(|_| BlsError::InvalidSignature(self.bytes.as_bytes().to_lower_hex_string()))
     }
-    fn verify_secure_in<'a, S, I>(
-        self,
-        digest: &[u8; 32],
-        keys: I,
-        msg: &S::Msg,
-    ) -> Result<(), BlsError>
+    fn verify_secure_in<'a, S, I>(self, digest: &[u8; 32], keys: I) -> Result<(), BlsError>
     where
         S: PkcScheme,
         I: IntoIterator<Item = (BlsScheme, &'a BlsPkBytes)>,
     {
-        let _ = digest;
         let carried: Vec<PkcPublicKey<S>> = keys
             .into_iter()
             .filter_map(|(encoding, key)| {
@@ -430,7 +424,7 @@ impl BlsSignature {
         let refs: Vec<&PkcPublicKey<S>> = carried.iter().collect();
 
         self.point::<S>()?
-            .secure_verify_aggregates(msg, &refs)
+            .secure_verify_aggregates_digest(digest, &refs)
             .map_err(|_| BlsError::VerificationFailed("aggregate did not verify".to_string()))
     }
 }

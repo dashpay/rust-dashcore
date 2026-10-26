@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use crate::error::{NetworkError, Result, SpvError};
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
 use crate::sync::{BroadcastResult, SyncEvent};
 use dashcore::network::message::NetworkMessage;
 use key_wallet_manager::WalletInterface;
@@ -16,7 +15,7 @@ use super::DashSpvClient;
 /// `Uncertain` event has time to propagate through the event bus.
 const AWAIT_GRACE: Duration = Duration::from_secs(5);
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Broadcast a transaction to the network.
     ///
     /// With mempool tracking enabled (the default), the transaction is sent to
