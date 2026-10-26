@@ -300,6 +300,7 @@ pub struct PeerNetworkManager {
     /// Service flags a peer must advertise to be kept (e.g. COMPACT_FILTERS when
     /// filters are enabled). Checked at handshake; `NONE` keeps every peer.
     required_services: ServiceFlags,
+    user_agent: Arc<str>,
     /// Total bytes read from all peers, handed to every peer `start` connects.
     bytes: Arc<AtomicU64>,
     /// Global bound for CPU-heavy headers2 decompression work.
@@ -470,6 +471,7 @@ impl PeerNetworkManager {
             best_tip,
             max_peers,
             required_services,
+            user_agent: config.user_agent.as_str().into(),
             bytes,
             headers2_decompression_semaphore: Arc::new(Semaphore::new(
                 headers2_decompression_parallelism(),
@@ -509,6 +511,7 @@ impl NetworkManager for PeerNetworkManager {
             self.peer_wake.clone(),
             self.headers2_decompression_semaphore.clone(),
             self.msg_queue.costs.clone(),
+            self.user_agent.clone(),
         );
     }
 
@@ -1162,6 +1165,7 @@ struct Supervisor {
     /// Handed to every peer it connects, so the bound is global.
     headers2_decompression_semaphore: Arc<Semaphore>,
     costs: Arc<ResponseCosts>,
+    user_agent: Arc<str>,
     /// Lowest handshake ping seen, the reference for the bad-lag threshold.
     best_lag_ms: AtomicU32,
     /// When a slow peer was last swapped out, for [`SWAP_COOLDOWN`].
@@ -1273,6 +1277,7 @@ impl Supervisor {
                     self.required_services,
                     self.headers2_decompression_semaphore.clone(),
                     self.costs.clone(),
+                    &self.user_agent,
                 )
                 .map(move |result| (addr, result))
             })
@@ -1439,6 +1444,7 @@ fn spawn_peer_supervisor(
     wake: Arc<Notify>,
     headers2_decompression_semaphore: Arc<Semaphore>,
     costs: Arc<ResponseCosts>,
+    user_agent: Arc<str>,
 ) -> JoinHandle<()> {
     tokio::spawn(
         Supervisor {
@@ -1455,6 +1461,7 @@ fn spawn_peer_supervisor(
             wake,
             headers2_decompression_semaphore,
             costs,
+            user_agent,
             best_lag_ms: AtomicU32::new(u32::MAX),
             last_swap: Mutex::new(None),
             failed_dials: Mutex::new(HashMap::new()),

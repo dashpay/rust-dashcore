@@ -76,7 +76,6 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const PING_INTERVAL: Duration = Duration::from_secs(120);
 /// A new peer's in-flight byte cap until the controller has measured it.
 pub const INITIAL_CAP_BYTES: u64 = 256 * 1024;
-const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
 
 /// Counts bytes read, globally and per peer, to size the in-flight budgets from
 /// measured throughput.
@@ -306,6 +305,7 @@ impl DisconnectedPeer {
         required_services: ServiceFlags,
         headers2_decompression_semaphore: Arc<Semaphore>,
         costs: Arc<ResponseCosts>,
+        user_agent: &str,
     ) -> NetworkResult<ConnectedPeer> {
         let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
             .await
@@ -332,8 +332,12 @@ impl DisconnectedPeer {
         );
         let magic = self.network.magic();
 
-        handshake_send(&mut writer, magic, NetworkMessage::Version(build_version(self.addr)))
-            .await?;
+        handshake_send(
+            &mut writer,
+            magic,
+            NetworkMessage::Version(build_version(self.addr, user_agent)),
+        )
+        .await?;
 
         let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
         let mut peer_version: Option<VersionMessage> = None;
@@ -653,7 +657,7 @@ fn spawn_reader(
     });
 }
 
-fn build_version(peer: SocketAddr) -> VersionMessage {
+fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let unspecified: SocketAddr = ([0u8, 0, 0, 0], 0).into();
     VersionMessage::new(
@@ -663,7 +667,7 @@ fn build_version(peer: SocketAddr) -> VersionMessage {
         Address::new(&peer, ServiceFlags::NETWORK),
         Address::new(&unspecified, ServiceFlags::NONE),
         rand::random(),
-        USER_AGENT.to_string(),
+        user_agent.to_string(),
         0,
         false,
         [0u8; 32],
