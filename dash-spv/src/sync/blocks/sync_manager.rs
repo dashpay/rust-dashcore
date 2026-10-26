@@ -74,7 +74,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
 
         let hashed_block = HashedBlock::from(block);
 
-        BlockValidator::new().validate(&hashed_block)?;
+        if let Err(e) = BlockValidator::new().validate(&hashed_block) {
+            self.pipeline.send_pending(network).await?;
+            return Err(e.into());
+        }
 
         // Check if this is a block we requested (pipeline handles buffering with height)
         if !self.pipeline.receive_block(&hashed_block) {
