@@ -100,6 +100,8 @@ fn request_timeout(lag_ms: u32) -> Duration {
     REQUEST_TIMEOUT.max(Duration::from_millis(lag_ms as u64) * REQUEST_TIMEOUT_LAGS)
 }
 
+const MAX_ADDR_PER_MESSAGE: usize = 1000;
+
 /// How often the timeout monitor scans the outstanding-request registry.
 const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
 
@@ -1597,6 +1599,7 @@ fn spawn_pump(
         // Per-peer received-message counter to check load balance across peers.
         let mut recv_by_peer: HashMap<SocketAddr, u64> = HashMap::new();
         let mut total_recv: u64 = 0;
+        let mut addr_answered: HashSet<PeerId> = HashSet::new();
         loop {
             let event = tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -1676,15 +1679,26 @@ fn spawn_pump(
                     // Addr gossip feeds the discovery pool, otherwise it stays frozen at the seeds and
                     // one DNS lookup. Both spellings: a peer that ignored `sendaddrv2` answers
                     // `getaddr` with legacy `addr`.
-                    let gossiped: Option<Vec<SocketAddr>> = match &*msg {
-                        NetworkMessage::AddrV2(addrs) => {
-                            Some(addrs.iter().filter_map(|a| a.socket_addr().ok()).collect())
+                    let gossiped: Option<Vec<(SocketAddr, u32)>> = match &*msg {
+                        NetworkMessage::AddrV2(addrs) if addrs.len() <= MAX_ADDR_PER_MESSAGE => {
+                            Some(
+                                addrs
+                                    .iter()
+                                    .filter(|a| a.services.has(ServiceFlags::NETWORK))
+                                    .filter_map(|a| Some((a.socket_addr().ok()?, a.time)))
+                                    .collect(),
+                            )
                         }
-                        NetworkMessage::Addr(addrs) => {
-                            Some(addrs.iter().filter_map(|(_, a)| a.socket_addr().ok()).collect())
-                        }
+                        NetworkMessage::Addr(addrs) if addrs.len() <= MAX_ADDR_PER_MESSAGE => Some(
+                            addrs
+                                .iter()
+                                .filter(|(_, a)| a.services.has(ServiceFlags::NETWORK))
+                                .filter_map(|(time, a)| Some((a.socket_addr().ok()?, *time)))
+                                .collect(),
+                        ),
                         _ => None,
-                    };
+                    }
+                    .filter(|_| addr_answered.insert(peer));
                     if let Some(gossiped) = gossiped {
                         let learned = discoverer.lock().await.learn(gossiped);
                         if learned > 0 {
@@ -1733,6 +1747,7 @@ fn spawn_pump(
                     }
                 }
                 PeerEvent::Disconnected(peer) => {
+                    addr_answered.remove(&peer);
                     let addr = peer.addr();
                     // By CONNECTION: this event can arrive for one that already left the set while
                     // the supervisor reconnected to the same address; matching by address would

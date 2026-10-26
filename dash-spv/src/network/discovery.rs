@@ -12,7 +12,9 @@
 //! Results from both sources are merged and deduplicated. Addresses gossiped by
 //! connected peers are folded in later via [`PeerDiscoverer::learn`].
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashcore::Network;
 use rand::seq::{IndexedRandom, SliceRandom};
@@ -21,6 +23,9 @@ use crate::network::peer::DisconnectedPeer;
 use crate::ClientConfig;
 
 const DNS_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const MAX_LEARNED: usize = 2000;
+const MAX_ADDR_AGE: u32 = 7 * 24 * 60 * 60;
+const MAX_ADDR_FUTURE: u32 = 10 * 60;
 
 pub struct PeerDiscoverer {
     network: Network,
@@ -30,6 +35,7 @@ pub struct PeerDiscoverer {
     /// Resolved once and kept. Not consumed as handed out: the reconnector comes back
     /// on every drop, and a drained pool would leave the client nothing to reconnect to.
     discovered: Option<Vec<SocketAddr>>,
+    learned: HashMap<SocketAddr, u32>,
 }
 
 impl PeerDiscoverer {
@@ -39,29 +45,33 @@ impl PeerDiscoverer {
             fixed: config.peers.clone(),
             restrict_to_configured_peers: config.restrict_to_configured_peers,
             discovered: None,
+            learned: HashMap::new(),
         }
     }
 
-    /// Fold `addr`/`addrv2` gossip into the pool (ignored when pinned to configured
-    /// peers). Returns how many were new, so the caller only wakes the supervisor then.
-    pub fn learn(&mut self, addresses: impl IntoIterator<Item = SocketAddr>) -> usize {
+    pub fn learn(&mut self, addresses: impl IntoIterator<Item = (SocketAddr, u32)>) -> usize {
         if !self.fixed.is_empty() || self.restrict_to_configured_peers {
             return 0;
         }
-        // Before the first `get` there is no pool; discovery will run then anyway.
-        let Some(pool) = self.discovered.as_mut() else {
-            return 0;
-        };
-        let known: std::collections::HashSet<SocketAddr> = pool.iter().copied().collect();
-        let fresh: Vec<SocketAddr> = addresses.into_iter().filter(|a| !known.contains(a)).collect();
-        // One `addrv2` can repeat an address.
-        let mut seen = std::collections::HashSet::new();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
         let mut added = 0;
-        for addr in fresh {
-            if seen.insert(addr) {
-                pool.push(addr);
-                added += 1;
+        for (addr, time) in addresses {
+            if time < now.saturating_sub(MAX_ADDR_AGE) || time > now + MAX_ADDR_FUTURE {
+                continue;
             }
+            match self.learned.insert(addr, time) {
+                None => added += 1,
+                Some(old) if old > time => {
+                    self.learned.insert(addr, old);
+                }
+                Some(_) => {}
+            }
+        }
+        if self.learned.len() > MAX_LEARNED {
+            let mut learned: Vec<_> = self.learned.drain().collect();
+            learned.sort_by_key(|(_, time)| std::cmp::Reverse(*time));
+            learned.truncate(MAX_LEARNED);
+            self.learned.extend(learned);
         }
         added
     }
@@ -69,7 +79,7 @@ impl PeerDiscoverer {
     /// Up to `count` addresses to try, sampled at random from whatever source applies.
     pub async fn get(&mut self, count: usize) -> Vec<DisconnectedPeer> {
         let pool = if !self.fixed.is_empty() {
-            &self.fixed
+            self.fixed.clone()
         } else if self.restrict_to_configured_peers {
             return Vec::new();
         } else {
@@ -77,7 +87,11 @@ impl PeerDiscoverer {
                 let found = Self::discover(self.network).await;
                 self.discovered = Some(found);
             }
-            self.discovered.as_ref().expect("just set")
+            let mut pool = self.discovered.clone().expect("just set");
+            pool.extend(self.learned.keys());
+            pool.sort();
+            pool.dedup();
+            pool
         };
 
         pool.choose_multiple(&mut rand::rng(), count)
