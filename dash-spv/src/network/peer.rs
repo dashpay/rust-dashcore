@@ -373,7 +373,7 @@ impl DisconnectedPeer {
         // A peer lacking a service silently ignores those requests, stalling its
         // slots until timeout, so drop it now.
         if !version.services.has(required_services) {
-            tracing::debug!(
+            tracing::warn!(
                 target: "dash_spv::network",
                 "dropping {}: lacks required services {:?} (advertises {:?})",
                 self.addr, required_services, version.services
