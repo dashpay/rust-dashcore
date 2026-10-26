@@ -861,20 +861,28 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let batch_filters = batch.shared_filters();
 
         // Per-wallet `synced_height` snapshot so heights below the wallet's
-        // own progress are skipped during the rescan.
-        let synced_heights: HashMap<WalletId, u32> = {
+        // own progress are skipped during the rescan, plus the bare
+        // owner/voting filter elements a compact filter carries beyond the
+        // wallet's scriptPubKeys.
+        let mut synced_heights: HashMap<WalletId, u32> = HashMap::new();
+        let mut filter_elements: HashMap<WalletId, Vec<Vec<u8>>> = HashMap::new();
+        {
             let wallet = self.wallet.read().await;
-            new_scripts.keys().map(|id| (*id, wallet.wallet_synced_height(id))).collect()
-        };
+            for id in new_scripts.keys() {
+                synced_heights.insert(*id, wallet.wallet_synced_height(id));
+                filter_elements.insert(*id, wallet.monitored_filter_elements_for(id));
+            }
+        }
 
         let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
         for (wallet_id, scripts) in new_scripts {
-            if scripts.is_empty() {
+            let elements = filter_elements.remove(wallet_id).unwrap_or_default();
+            if scripts.is_empty() && elements.is_empty() {
                 continue;
             }
             let scripts_vec: Vec<ScriptBuf> = scripts.iter().cloned().collect();
             let min_synced = synced_heights.get(wallet_id).copied().unwrap_or(0);
-            let matches = match_filters(&batch_filters, scripts_vec, Vec::new(), min_synced).await;
+            let matches = match_filters(&batch_filters, scripts_vec, elements, min_synced).await;
             for key in matches {
                 block_to_wallets.entry(key).or_default().insert(*wallet_id);
             }
