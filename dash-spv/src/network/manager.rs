@@ -36,7 +36,7 @@ fn headers2_decompression_parallelism() -> usize {
 
 /// Releases header messages in wire order because an announcement can depend on the preceding
 /// message from the same peer.
-pub(super) struct OrderedHeaderResults<T> {
+pub struct OrderedHeaderResults<T> {
     next_sequence: u64,
     completed: BTreeMap<u64, T>,
 }
@@ -51,7 +51,7 @@ impl<T> Default for OrderedHeaderResults<T> {
 }
 
 impl<T> OrderedHeaderResults<T> {
-    pub(super) fn complete(&mut self, sequence: u64, result: T) -> Vec<T> {
+    pub fn complete(&mut self, sequence: u64, result: T) -> Vec<T> {
         let replaced = self.completed.insert(sequence, result);
         debug_assert!(replaced.is_none(), "header sequence completed twice");
 
@@ -107,11 +107,9 @@ use crate::error::{NetworkError, NetworkResult};
 use crate::network::NetworkManager;
 use crate::{
     network::{
+        costs::ResponseCosts,
         discovery::PeerDiscoverer,
-        peer::{
-            is_pipeline_request, ConnectedPeer, DisconnectedPeer, PeerEvent, PeerHandle, PeerId,
-            INITIAL_CAP_BYTES,
-        },
+        peer::{ConnectedPeer, DisconnectedPeer, PeerEvent, PeerHandle, PeerId, INITIAL_CAP_BYTES},
     },
     ClientConfig,
 };
@@ -125,7 +123,7 @@ pub struct InboundMessage {
 }
 
 impl InboundMessage {
-    pub(crate) fn new(msg: NetworkMessage) -> Self {
+    pub fn new(msg: NetworkMessage) -> Self {
         Self {
             msg,
             header_hashes: None,
@@ -134,7 +132,7 @@ impl InboundMessage {
 
     /// Headers message carrying the hashes computed during DIP-25 decompression (which
     /// must hash every header to rebuild `prev_blockhash`), so they are not hashed twice.
-    pub(crate) fn new_headers(headers_with_hashes: Vec<(Header, BlockHash)>) -> Self {
+    pub fn new_headers(headers_with_hashes: Vec<(Header, BlockHash)>) -> Self {
         let (headers, hashes) = headers_with_hashes.into_iter().unzip();
         Self {
             msg: NetworkMessage::Headers(headers),
@@ -247,8 +245,7 @@ pub enum RequestKey {
     CfHeaders(dashcore::BlockHash),
     /// `getcfilters` — keyed by the start height.
     CFilters(u32),
-    /// `getmnlistdiff` — keyed by the target block hash. Tracked for de-dup and retry
-    /// only, not counted against a peer's in-flight budget.
+    /// `getmnlistdiff` — keyed by the target block hash.
     MnListDiff(dashcore::BlockHash),
     /// Block `getdata` — keyed by the requested block hash.
     Block(dashcore::BlockHash),
@@ -273,11 +270,9 @@ struct OnWire {
     msg: NetworkMessage,
     /// Queue order of `msg`, kept so a retry goes back to its place.
     height: u32,
-    /// Bytes charged to the peer at send, given back when answered.
-    cost: u64,
     /// When it was sent, for hedging a block stuck at a slow peer.
     sent: Instant,
-    /// The peer a copy was also sent to (endgame), charged the same `cost`.
+    /// The peer a copy was also sent to (endgame).
     hedge: Option<PeerId>,
 }
 
@@ -359,7 +354,7 @@ struct MsgQueue {
     front_seq: AtomicI64,
     len: AtomicUsize,
     notify: Notify,
-    sizes: ClassSizes,
+    costs: Arc<ResponseCosts>,
 }
 
 /// Downstream first: the stage closest to the wallet is the one waiting on the network,
@@ -368,72 +363,6 @@ const MSG_CLASSES: usize = 5;
 
 /// Requests per class kept on the wire ahead of [`DRAIN_PRIORITY`] while the class has work.
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
-
-/// Expected response bytes of one request per class before any has been answered.
-const RESP_BYTES_BOOTSTRAP: [u64; MSG_CLASSES] = [0, 32 << 10, 256 << 10, 64 << 10, 160 << 10];
-
-/// Weight of a new per-window sample in a class's expected response size.
-const RESP_BYTES_ALPHA: f64 = 0.3;
-
-/// Expected response bytes of one request per class, learned from what arrives, so the
-/// router charges a 1000-filter `getcfilters` and a one-block `getdata` what they cost.
-struct ClassSizes {
-    bytes: [AtomicU64; MSG_CLASSES],
-    answered: [AtomicU64; MSG_CLASSES],
-    expected: [AtomicU64; MSG_CLASSES],
-}
-
-impl ClassSizes {
-    fn new() -> Self {
-        Self {
-            bytes: Default::default(),
-            answered: Default::default(),
-            expected: RESP_BYTES_BOOTSTRAP.map(AtomicU64::new),
-        }
-    }
-
-    /// What `msg` is charged in flight; only pipeline requests are accounted.
-    fn cost(&self, msg: &NetworkMessage) -> u64 {
-        if is_pipeline_request(msg) {
-            self.expected[classify(msg) as usize].load(Ordering::Relaxed)
-        } else {
-            0
-        }
-    }
-
-    fn received(&self, msg: &NetworkMessage) {
-        let (class, size) = match msg {
-            NetworkMessage::Block(b) => (MsgClass::Blocks, b.size()),
-            NetworkMessage::CFilter(f) => (MsgClass::CFilters, f.filter.len() + 33),
-            NetworkMessage::CFHeaders(h) => (MsgClass::CfHeaders, h.filter_hashes.len() * 32 + 65),
-            NetworkMessage::Headers(h) => (MsgClass::Headers, h.len() * 81),
-            _ => return,
-        };
-        self.bytes[class as usize].fetch_add(size as u64, Ordering::Relaxed);
-    }
-
-    fn answered(&self, class: MsgClass) {
-        self.answered[class as usize].fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Folds what arrived since `last` into the estimates. A class with nothing answered
-    /// keeps accumulating bytes until it has: a batch streams in before it completes.
-    fn update(&self, last: &mut [(u64, u64); MSG_CLASSES]) {
-        for (c, last) in last.iter_mut().enumerate() {
-            let bytes = self.bytes[c].load(Ordering::Relaxed);
-            let answered = self.answered[c].load(Ordering::Relaxed);
-            let done = answered.saturating_sub(last.1);
-            if done == 0 {
-                continue;
-            }
-            let sample = bytes.saturating_sub(last.0) as f64 / done as f64;
-            *last = (bytes, answered);
-            let cur = self.expected[c].load(Ordering::Relaxed) as f64;
-            let next = RESP_BYTES_ALPHA * sample + (1.0 - RESP_BYTES_ALPHA) * cur;
-            self.expected[c].store(next.max(1.0) as u64, Ordering::Relaxed);
-        }
-    }
-}
 
 const DRAIN_PRIORITY: [MsgClass; MSG_CLASSES] =
     [MsgClass::Other, MsgClass::Blocks, MsgClass::CFilters, MsgClass::CfHeaders, MsgClass::Headers];
@@ -573,6 +502,7 @@ impl NetworkManager for PeerNetworkManager {
             self.required_services,
             self.peer_wake.clone(),
             self.headers2_decompression_semaphore.clone(),
+            self.msg_queue.costs.clone(),
         );
     }
 
@@ -622,7 +552,7 @@ impl NetworkManager for PeerNetworkManager {
             return false;
         };
 
-        match peer.send(&msg, self.msg_queue.sizes.cost(&msg)).await {
+        match peer.send(&msg).await {
             Ok(()) => true,
             Err(e) => {
                 tracing::warn!(target: "dash_spv::network", "send to {addr} failed: {e}");
@@ -632,17 +562,9 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn request_answered(&self, key: RequestKey) {
-        let Some(ReqState::OnWire(o)) = self.requests.lock().await.remove(&key) else {
-            return;
-        };
-        if !is_pipeline_request(&o.msg) {
+        if !matches!(self.requests.lock().await.remove(&key), Some(ReqState::OnWire(_))) {
             return;
         }
-        self.msg_queue.sizes.answered(classify(&o.msg));
-        if let Some(p) = self.connected_peers.lock().await.iter().find(|p| p.id() == o.peer) {
-            p.response_completed(o.cost).await;
-        }
-        // A freed unit is capacity the router can use right now.
         self.msg_queue.notify.notify_one();
     }
 
@@ -654,9 +576,7 @@ impl NetworkManager for PeerNetworkManager {
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
 
-        let cost = self.msg_queue.sizes.cost(&msg);
-        let mut writes: FuturesUnordered<_> =
-            handles.iter().map(|peer| peer.send(&msg, cost)).collect();
+        let mut writes: FuturesUnordered<_> = handles.iter().map(|peer| peer.send(&msg)).collect();
         let mut delivered = 0;
         while let Some(result) = writes.next().await {
             if result.is_ok() {
@@ -740,8 +660,8 @@ fn spawn_router(
 }
 
 /// Pipeline keys of a router-paced request, recorded in the registry. Empty for
-/// non-pipeline messages (mirrors `is_pipeline_request` in `peer`).
-pub(crate) fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
+/// non-pipeline messages.
+pub fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
     match msg {
         NetworkMessage::GetHeaders(m) | NetworkMessage::GetHeaders2(m) => {
             m.locator_hashes.first().map(|h| RequestKey::Headers(*h)).into_iter().collect()
@@ -792,13 +712,13 @@ async fn route_tick(
             *slot = slot.saturating_sub(1);
         }
     }
-    let msgs = queue.pop_guaranteed(budget, &guaranteed, |m| queue.sizes.cost(m)).await;
+    let msgs = queue.pop_guaranteed(budget, &guaranteed, |m| queue.costs.cost(m)).await;
     let mut sent = 0;
     // Anything popped but not sent goes BACK on the queue: its key is registered, so a
     // dropped message would never be re-sent nor time out and its pipeline would stall.
     let mut unsent: Vec<(u32, NetworkMessage)> = Vec::new();
     // Recorded in the broker under one lock after the send loop.
-    let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle, u64)> = Vec::new();
+    let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle)> = Vec::new();
     let mut msgs = msgs.into_iter();
     for (height, msg) in msgs.by_ref() {
         // Pick the least-loaded peer RELATIVE TO ITS OWN cap. Absolute free room
@@ -806,7 +726,6 @@ async fn route_tick(
         // others stay idle and never grow (measured: three identical peers split into one
         // at cap 12 and two stuck at 2). Cross-multiplied to avoid floats; neither side
         // can be zero (`cap >= FLOOR_BYTES`, full peers filtered above).
-        let cost = queue.sizes.cost(&msg);
         let Some(peer) = peers.iter().filter(|p| p.in_flight_bytes() < p.cap()).min_by(|a, b| {
             (a.in_flight_bytes() as u128 * b.cap() as u128)
                 .cmp(&(b.in_flight_bytes() as u128 * a.cap() as u128))
@@ -814,10 +733,10 @@ async fn route_tick(
             unsent.push((height, msg)); // every peer is at its measured cap
             break;
         };
-        if peer.send(&msg, cost).await.is_ok() {
+        if peer.send(&msg).await.is_ok() {
             sent += 1;
             // Record the peer so the monitor can attribute a stall to it.
-            on_wire.push((height, msg, peer.clone(), cost));
+            on_wire.push((height, msg, peer.clone()));
         } else {
             tracing::warn!(target: "dash_spv::network", "router: send to {} failed", peer.addr());
             unsent.push((height, msg));
@@ -827,35 +746,20 @@ async fn route_tick(
     queue.push_front_all(unsent).await;
 
     if !on_wire.is_empty() {
-        // Peers owed back a unit `send` charged for a request nobody tracks.
-        let mut refund: Vec<(PeerHandle, u64)> = Vec::new();
-        {
-            let mut reqs = requests.lock().await;
-            for (height, msg, peer, cost) in on_wire {
-                let mut tracked = false;
-                for key in request_keys(&msg) {
-                    // Queued -> OnWire, keeping the message for retry. A key settled while queued is
-                    // gone, so nothing would release the in-flight unit `send` charged: refund it.
-                    if let Some(slot) = reqs.get_mut(&key) {
-                        *slot = ReqState::OnWire(Box::new(OnWire {
-                            peer: peer.id(),
-                            msg: msg.clone(),
-                            height,
-                            last_progress: Instant::now(),
-                            cost,
-                            sent: Instant::now(),
-                            hedge: None,
-                        }));
-                        tracked = true;
-                    }
-                }
-                if !tracked && is_pipeline_request(&msg) {
-                    refund.push((peer, cost));
+        let mut reqs = requests.lock().await;
+        for (height, msg, peer) in on_wire {
+            for key in request_keys(&msg) {
+                if let Some(slot) = reqs.get_mut(&key) {
+                    *slot = ReqState::OnWire(Box::new(OnWire {
+                        peer: peer.id(),
+                        msg: msg.clone(),
+                        height,
+                        last_progress: Instant::now(),
+                        sent: Instant::now(),
+                        hedge: None,
+                    }));
                 }
             }
-        }
-        for (peer, cost) in refund {
-            peer.response_completed(cost).await;
         }
     }
 
@@ -878,8 +782,12 @@ const HEDGE_AFTER: Duration = Duration::from_secs(2);
 /// order, so one block stuck at a slow peer stalls everything after it while the other
 /// peers sit idle. Ask an idle peer for the lowest such blocks too; the first copy to
 /// arrive settles both.
-async fn hedge_stalled_blocks(peers: &[PeerHandle], requests: &Registry) -> usize {
-    let mut plan: Vec<(RequestKey, NetworkMessage, u64, PeerHandle)> = Vec::new();
+async fn hedge_stalled_blocks(
+    peers: &[PeerHandle],
+    requests: &Registry,
+    costs: &ResponseCosts,
+) -> usize {
+    let mut plan: Vec<(RequestKey, NetworkMessage, PeerHandle)> = Vec::new();
     {
         let reqs = requests.lock().await;
         let mut stalled: Vec<(u32, &RequestKey, &OnWire)> = reqs
@@ -908,25 +816,19 @@ async fn hedge_stalled_blocks(peers: &[PeerHandle], requests: &Registry) -> usiz
             else {
                 break;
             };
-            *left = left.saturating_sub(o.cost.max(1));
-            plan.push((key.clone(), o.msg.clone(), o.cost, peer.clone()));
+            *left = left.saturating_sub(costs.cost(&o.msg));
+            plan.push((key.clone(), o.msg.clone(), peer.clone()));
         }
     }
     let mut hedged = 0;
-    for (key, msg, cost, peer) in plan {
-        if peer.send(&msg, cost).await.is_err() {
+    for (key, msg, peer) in plan {
+        if peer.send(&msg).await.is_err() {
             continue;
         }
-        let mut reqs = requests.lock().await;
-        match reqs.get_mut(&key) {
-            Some(ReqState::OnWire(o)) if o.hedge.is_none() => {
+        if let Some(ReqState::OnWire(o)) = requests.lock().await.get_mut(&key) {
+            if o.hedge.is_none() {
                 o.hedge = Some(peer.id());
                 hedged += 1;
-            }
-            // Settled or re-queued meanwhile: nothing will give the unit back.
-            _ => {
-                drop(reqs);
-                peer.response_completed(cost).await;
             }
         }
     }
@@ -1110,7 +1012,6 @@ fn spawn_flow_controller(
     tokio::spawn(async move {
         let mut global = ByteLimiter::new(MIN_CAP_BYTES, bytes.load(Ordering::Relaxed));
         let mut peers: HashMap<PeerId, PeerFlow> = HashMap::new();
-        let mut last_sizes = [(0u64, 0u64); MSG_CLASSES];
         let mut last_underserving: Option<SocketAddr> = None;
         let mut ticks = 0u64;
         let mut ticker = tokio::time::interval(FLOW_TICK);
@@ -1120,7 +1021,6 @@ fn spawn_flow_controller(
                 _ = ticker.tick() => {}
             }
             ticks += 1;
-            queue.sizes.update(&mut last_sizes);
 
             let g = connected.lock().await;
             if g.is_empty() {
@@ -1166,10 +1066,9 @@ fn spawn_flow_controller(
                     let flow = &peers[&p.id()];
                     tracing::debug!(
                         target: "peer_speed",
-                        "peer {}: cap={} KB in_flight={} ({} KB) rate={:.2} MB/s rtt={:.0}ms base={:.0}ms lag={}ms total={:.1} MB",
+                        "peer {}: cap={} KB in_flight={} KB rate={:.2} MB/s rtt={:.0}ms base={:.0}ms lag={}ms total={:.1} MB",
                         p.addr(),
                         p.cap() >> 10,
-                        p.in_flight(),
                         p.in_flight_bytes() >> 10,
                         flow.limiter.rate / 1e6,
                         flow.limiter.rtt() * 1e3,
@@ -1198,7 +1097,7 @@ fn spawn_flow_controller(
                     global.rtt() * 1e3,
                     global.base_rtt * 1e3,
                     g.len(),
-                    queue.sizes.expected.each_ref().map(|e| e.load(Ordering::Relaxed) >> 10),
+                    queue.costs.expected_kb(),
                 );
             }
 
@@ -1208,7 +1107,7 @@ fn spawn_flow_controller(
             let handles: Vec<PeerHandle> = g.iter().map(|p| p.handle()).collect();
             drop(g);
             if queue.len() == 0 {
-                let hedged = hedge_stalled_blocks(&handles, &requests).await;
+                let hedged = hedge_stalled_blocks(&handles, &requests, &queue.costs).await;
                 if hedged > 0 {
                     tracing::debug!(target: "dash_spv::network", "endgame: hedged {} block request(s)", hedged);
                 }
@@ -1256,6 +1155,7 @@ struct Supervisor {
     wake: Arc<Notify>,
     /// Handed to every peer it connects, so the bound is global.
     headers2_decompression_semaphore: Arc<Semaphore>,
+    costs: Arc<ResponseCosts>,
     /// Lowest handshake ping seen, the reference for the bad-lag threshold.
     best_lag_ms: AtomicU32,
     /// When a slow peer was last swapped out, for [`SWAP_COOLDOWN`].
@@ -1358,6 +1258,7 @@ impl Supervisor {
                     self.bytes.clone(),
                     self.required_services,
                     self.headers2_decompression_semaphore.clone(),
+                    self.costs.clone(),
                 )
             })
             .collect();
@@ -1511,6 +1412,7 @@ fn spawn_peer_supervisor(
     required_services: ServiceFlags,
     wake: Arc<Notify>,
     headers2_decompression_semaphore: Arc<Semaphore>,
+    costs: Arc<ResponseCosts>,
 ) -> JoinHandle<()> {
     tokio::spawn(
         Supervisor {
@@ -1526,6 +1428,7 @@ fn spawn_peer_supervisor(
             required_services,
             wake,
             headers2_decompression_semaphore,
+            costs,
             best_lag_ms: AtomicU32::new(u32::MAX),
             last_swap: Mutex::new(None),
         }
@@ -1589,8 +1492,8 @@ fn spawn_timeout_monitor(
             let now = Instant::now();
 
             // Judged on the peer's own counters, not just the registry: streaming in-flight
-            // units are freed on the peer separately, so a wedged peer can sit at
-            // `in_flight == cap` with no registry entries. Pending work plus a byte counter
+            // bytes are freed on the peer separately, so a wedged peer can sit at its cap
+            // with no registry entries. Pending work plus a byte counter
             // frozen for REQUEST_TIMEOUT means stuck, whatever the registry thinks.
             let mut culprits: HashSet<PeerId> = {
                 let peers = connected.lock().await;
@@ -1604,7 +1507,7 @@ fn spawn_timeout_monitor(
                     if bytes > entry.0 {
                         *entry = (bytes, now);
                     }
-                    if peer.in_flight() > 0
+                    if peer.in_flight_bytes() > 0
                         && now.duration_since(entry.1) > request_timeout(peer.lag_ms())
                     {
                         culprits.insert(addr);
@@ -1706,27 +1609,17 @@ fn spawn_pump(
                     *recv_by_peer.entry(addr).or_insert(0) += 1;
                     total_recv += 1;
 
-                    queue.sizes.received(&msg);
-
                     // A block is settled on arrival, not when the wallet gets to it: blocks
                     // are processed in height order, so one can wait long behind a gap, and
                     // charging that wait to the peer reads as a queue and shrinks its cap.
-                    // The first copy of a hedged block settles both: the other is a cancel.
+                    // The first copy of a hedged block settles it: the other is a cancel.
                     if let NetworkMessage::Block(block) = &*msg {
                         let key = RequestKey::Block(block.block_hash());
                         let mut reqs = requests.lock().await;
                         if matches!(reqs.get(&key), Some(ReqState::OnWire(o)) if o.peer == peer || o.hedge == Some(peer))
                         {
-                            let Some(ReqState::OnWire(o)) = reqs.remove(&key) else {
-                                unreachable!("matched just above");
-                            };
+                            reqs.remove(&key);
                             drop(reqs);
-                            queue.sizes.answered(MsgClass::Blocks);
-                            for p in connected.lock().await.iter() {
-                                if p.id() == o.peer || Some(p.id()) == o.hedge {
-                                    p.response_completed(o.cost).await;
-                                }
-                            }
                             queue.notify.notify_one();
                         }
                     }
@@ -1891,7 +1784,7 @@ impl MsgQueue {
             front_seq: AtomicI64::new(-1),
             len: AtomicUsize::new(0),
             notify: Notify::new(),
-            sizes: ClassSizes::new(),
+            costs: Arc::new(ResponseCosts::new()),
         }
     }
 
@@ -2036,7 +1929,6 @@ mod tests {
                 last_progress: Instant::now(),
                 msg: msg.clone(),
                 height: 0,
-                cost: 0,
                 sent: Instant::now(),
                 hedge: None,
             };

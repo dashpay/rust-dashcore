@@ -1,3 +1,4 @@
+mod costs;
 mod discovery;
 mod manager;
 mod peer;
@@ -110,7 +111,7 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Inject a message into the local pump as if received from a peer.
     async fn dispatch_local(&self, msg: NetworkMessage);
 
-    /// Stops timeout/retry tracking of `key` and returns the serving peer's in-flight unit.
+    /// Stops timeout/retry tracking of `key`.
     async fn request_answered(&self, key: RequestKey);
 
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound>;

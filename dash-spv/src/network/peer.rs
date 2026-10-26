@@ -10,11 +10,10 @@ use dashcore::{
     Network,
 };
 use futures::lock::Mutex;
-use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::{
@@ -25,9 +24,11 @@ use tokio::{
     },
 };
 use tokio_stream::StreamExt;
-use tokio_util::codec::FramedRead;
+use tokio_util::bytes::BytesMut;
+use tokio_util::codec::{Decoder, FramedRead};
 use tokio_util::sync::CancellationToken;
 
+use crate::network::costs::{Ledger, ResponseCosts};
 use crate::network::manager::{InboundMessage, OrderedHeaderResults};
 use crate::{error::NetworkResult, NetworkError};
 
@@ -36,18 +37,18 @@ static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
 /// Identifies one connection, not one address: a late close event from an old
 /// connection must not evict a newer live connection to the same address.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct PeerId {
+pub struct PeerId {
     addr: SocketAddr,
     connection: u64,
 }
 
 impl PeerId {
-    pub(crate) fn addr(&self) -> SocketAddr {
+    pub fn addr(&self) -> SocketAddr {
         self.addr
     }
 
     #[cfg(test)]
-    pub(crate) fn for_test(addr: SocketAddr, connection: u64) -> Self {
+    pub fn for_test(addr: SocketAddr, connection: u64) -> Self {
         PeerId {
             addr,
             connection,
@@ -55,7 +56,7 @@ impl PeerId {
     }
 
     /// Not a real connection: the sentinel `dispatch_local` injects under.
-    pub(crate) fn synthetic(addr: SocketAddr) -> Self {
+    pub fn synthetic(addr: SocketAddr) -> Self {
         PeerId {
             addr,
             connection: u64::MAX,
@@ -73,52 +74,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// A new peer's in-flight byte cap until the controller has measured it.
-pub(crate) const INITIAL_CAP_BYTES: u64 = 256 * 1024;
+pub const INITIAL_CAP_BYTES: u64 = 256 * 1024;
 const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
-
-/// Per-peer request latency. Send times are queued FIFO; each completing response
-/// pops the oldest.
-#[derive(Default)]
-pub(crate) struct Latency {
-    pending: Mutex<VecDeque<Instant>>,
-    total_ns: AtomicU64,
-    count: AtomicU64,
-    max_ns: AtomicU64,
-}
-
-impl Latency {
-    async fn on_send(&self) {
-        self.pending.lock().await.push_back(Instant::now());
-    }
-
-    /// Undo an `on_send` whose write then failed, so the queue does not drift.
-    async fn cancel_one(&self) {
-        self.pending.lock().await.pop_back();
-    }
-
-    async fn complete_one(&self) {
-        let sent = self.pending.lock().await.pop_front();
-        if let Some(sent) = sent {
-            let ns = sent.elapsed().as_nanos() as u64;
-            self.total_ns.fetch_add(ns, Ordering::Relaxed);
-            self.count.fetch_add(1, Ordering::Relaxed);
-            self.max_ns.fetch_max(ns, Ordering::Relaxed);
-        }
-    }
-
-    /// (completed request count, average ms, worst ms).
-    fn snapshot(&self) -> (u64, f64, f64) {
-        let count = self.count.load(Ordering::Relaxed);
-        let total = self.total_ns.load(Ordering::Relaxed);
-        let max = self.max_ns.load(Ordering::Relaxed);
-        let avg_ms = if count > 0 {
-            total as f64 / count as f64 / 1e6
-        } else {
-            0.0
-        };
-        (count, avg_ms, max as f64 / 1e6)
-    }
-}
 
 /// Counts bytes read, globally and per peer, to size the in-flight budgets from
 /// measured throughput.
@@ -145,7 +102,20 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
     }
 }
 
-type PeerReader = FramedRead<CountingReader<OwnedReadHalf>, RawNetworkMessageCodec>;
+struct SizedCodec;
+
+impl Decoder for SizedCodec {
+    type Item = (RawNetworkMessage, u64);
+    type Error = encode::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let before = src.len();
+        let raw = RawNetworkMessageCodec.decode(src)?;
+        Ok(raw.map(|raw| (raw, (before - src.len()) as u64)))
+    }
+}
+
+type PeerReader = FramedRead<CountingReader<OwnedReadHalf>, SizedCodec>;
 
 // Boxing every message would penalise the common small ones.
 #[allow(clippy::large_enum_variant)]
@@ -156,59 +126,40 @@ pub enum PeerEvent {
 
 /// Cloneable view of a peer, so the router can write without holding the peer-set lock.
 #[derive(Clone)]
-pub(crate) struct PeerHandle {
+pub struct PeerHandle {
     id: PeerId,
     network: Network,
     writer: Arc<Mutex<OwnedWriteHalf>>,
-    in_flight: Arc<AtomicUsize>,
-    /// Expected response bytes of the requests in flight, charged at send.
-    in_flight_bytes: Arc<AtomicU64>,
+    ledger: Arc<Ledger>,
     /// Response bytes this peer can have in flight before they queue (its
     /// bandwidth-delay product), sized by the controller from its byte rate and
     /// service time.
     cap: Arc<AtomicU64>,
     /// Bytes/s this peer serves while it has work, 0 until measured.
     serving_rate: Arc<AtomicU64>,
-    latency: Arc<Latency>,
     /// Ask this peer for compressed headers (DIP-25). Cleared by the reader if a
     /// `headers2` fails to decompress, falling back to plain `headers`.
     headers2: Arc<AtomicBool>,
 }
 
 impl PeerHandle {
-    pub(crate) fn addr(&self) -> SocketAddr {
+    pub fn addr(&self) -> SocketAddr {
         self.id.addr()
     }
 
-    pub(crate) fn id(&self) -> PeerId {
+    pub fn id(&self) -> PeerId {
         self.id
     }
 
-    pub(crate) fn in_flight(&self) -> usize {
-        self.in_flight.load(Ordering::Relaxed)
+    pub fn in_flight_bytes(&self) -> u64 {
+        self.ledger.in_flight_bytes()
     }
 
-    pub(crate) fn in_flight_bytes(&self) -> u64 {
-        self.in_flight_bytes.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn cap(&self) -> u64 {
+    pub fn cap(&self) -> u64 {
         self.cap.load(Ordering::Relaxed)
     }
 
-    /// Gives back one request and the `cost` it was charged at send.
-    pub(crate) async fn response_completed(&self, cost: u64) {
-        let _ = self
-            .in_flight
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)));
-        let _ = self
-            .in_flight_bytes
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(cost)));
-        self.latency.complete_one().await;
-    }
-
-    /// `cost` is the expected response size, charged only for pipeline requests.
-    pub(crate) async fn send(&self, msg: &NetworkMessage, cost: u64) -> NetworkResult<()> {
+    pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
         // The sync layer always declares plain `getheaders` since it doesn't know
         // the peer; upgrade here. The reader decompresses `Headers2` back to `Headers`.
         let upgraded = match msg {
@@ -226,14 +177,7 @@ impl PeerHandle {
         };
         let serialized = encode::serialize(&raw);
 
-        // Count BEFORE the write: the reply can arrive before this task runs again,
-        // and the saturating decrement would then be lost, leaking the slot.
-        let accounted = is_pipeline_request(msg);
-        if accounted {
-            self.in_flight.fetch_add(1, Ordering::Relaxed);
-            self.in_flight_bytes.fetch_add(cost, Ordering::Relaxed);
-            self.latency.on_send().await;
-        }
+        let charged = self.ledger.charge(msg).await;
 
         let write = async {
             let mut writer = self.writer.lock().await;
@@ -246,11 +190,7 @@ impl PeerHandle {
             Err(_) => Err(format!("Write stalled for {}s", WRITE_TIMEOUT.as_secs())),
         };
         if let Err(reason) = outcome {
-            if accounted {
-                self.in_flight.fetch_sub(1, Ordering::Relaxed);
-                self.in_flight_bytes.fetch_sub(cost, Ordering::Relaxed);
-                self.latency.cancel_one().await;
-            }
+            self.ledger.uncharge(&charged).await;
             tracing::warn!("Disconnecting {} due to write error: {}", self.id, reason);
             return Err(NetworkError::ConnectionFailed(reason));
         }
@@ -279,7 +219,7 @@ impl ConnectedPeer {
         self.handle.addr()
     }
 
-    pub(crate) fn id(&self) -> PeerId {
+    pub fn id(&self) -> PeerId {
         self.handle.id()
     }
 
@@ -287,12 +227,8 @@ impl ConnectedPeer {
         &self.version
     }
 
-    pub(crate) fn handle(&self) -> PeerHandle {
+    pub fn handle(&self) -> PeerHandle {
         self.handle.clone()
-    }
-
-    pub fn in_flight(&self) -> usize {
-        self.handle.in_flight()
     }
 
     pub fn disconnect(self) -> DisconnectedPeer {
@@ -303,67 +239,42 @@ impl ConnectedPeer {
         }
     }
 
-    pub(crate) async fn response_completed(&self, cost: u64) {
-        self.handle.response_completed(cost).await
-    }
-
     /// (completed requests, average ms, worst ms).
-    pub(crate) fn latency_stats(&self) -> (u64, f64, f64) {
-        self.handle.latency.snapshot()
+    pub fn latency_stats(&self) -> (u64, f64, f64) {
+        self.handle.ledger.latency_stats()
     }
 
     /// Handshake round-trip latency in ms (0 if unmeasured).
-    pub(crate) fn lag_ms(&self) -> u32 {
+    pub fn lag_ms(&self) -> u32 {
         self.lag_ms.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn close(&self) {
+    pub fn close(&self) {
         self.token.cancel();
     }
 
-    pub(crate) fn bytes_read(&self) -> u64 {
+    pub fn bytes_read(&self) -> u64 {
         self.bytes.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn in_flight_bytes(&self) -> u64 {
+    pub fn in_flight_bytes(&self) -> u64 {
         self.handle.in_flight_bytes()
     }
 
-    pub(crate) fn set_cap(&self, bytes: u64) {
+    pub fn set_cap(&self, bytes: u64) {
         self.handle.cap.store(bytes, Ordering::Relaxed);
     }
 
-    pub(crate) fn cap(&self) -> u64 {
+    pub fn cap(&self) -> u64 {
         self.handle.cap()
     }
 
-    pub(crate) fn serving_rate(&self) -> u64 {
+    pub fn serving_rate(&self) -> u64 {
         self.handle.serving_rate.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn set_serving_rate(&self, bytes_per_sec: u64) {
+    pub fn set_serving_rate(&self, bytes_per_sec: u64) {
         self.handle.serving_rate.store(bytes_per_sec, Ordering::Relaxed);
-    }
-}
-
-/// Requests charged one in-flight unit; only these give a unit back when answered.
-/// Ones tracked only for de-dup/retry (e.g. `getmnlistdiff`) cost nothing.
-pub(super) fn is_pipeline_request(msg: &NetworkMessage) -> bool {
-    match msg {
-        NetworkMessage::GetHeaders(_)
-        | NetworkMessage::GetHeaders2(_)
-        | NetworkMessage::GetCFHeaders(_)
-        | NetworkMessage::GetCFilters(_) => true,
-        // Block `getdata` carries one block per message, so it is one unit. Other
-        // `getdata` has replies that can't be attributed one-for-one; counting it
-        // would leak slots.
-        NetworkMessage::GetData(inv) => {
-            !inv.is_empty()
-                && inv
-                    .iter()
-                    .all(|i| matches!(i, dashcore::network::message_blockdata::Inventory::Block(_)))
-        }
-        _ => false,
     }
 }
 
@@ -381,7 +292,7 @@ impl DisconnectedPeer {
     }
 
     /// `None` (never probed) sorts as worst when ranking backups.
-    pub(crate) fn lag_ms(&self) -> Option<u32> {
+    pub fn lag_ms(&self) -> Option<u32> {
         self.lag_ms
     }
 
@@ -393,6 +304,7 @@ impl DisconnectedPeer {
         bytes: Arc<AtomicU64>,
         required_services: ServiceFlags,
         headers2_decompression_semaphore: Arc<Semaphore>,
+        costs: Arc<ResponseCosts>,
     ) -> NetworkResult<ConnectedPeer> {
         let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
             .await
@@ -415,7 +327,7 @@ impl DisconnectedPeer {
                 bytes,
                 peer_bytes: peer_bytes.clone(),
             },
-            RawNetworkMessageCodec,
+            SizedCodec,
         );
         let magic = self.network.magic();
 
@@ -431,7 +343,7 @@ impl DisconnectedPeer {
                 Err(_) => return Err(NetworkError::Timeout),
                 Ok(None) => return Err(NetworkError::PeerDisconnected),
                 Ok(Some(Err(e))) => return Err(e.into()),
-                Ok(Some(Ok(raw))) => raw,
+                Ok(Some(Ok((raw, _)))) => raw,
             };
             if raw.magic != magic {
                 return Err(NetworkError::ProtocolError("wrong network magic".into()));
@@ -483,7 +395,9 @@ impl DisconnectedPeer {
         let ping_sent = tokio::time::Instant::now();
         if handshake_send(&mut writer, magic, NetworkMessage::Ping(ping_nonce)).await.is_ok() {
             let deadline = ping_sent + HANDSHAKE_TIMEOUT;
-            while let Ok(Some(Ok(raw))) = tokio::time::timeout_at(deadline, reader.next()).await {
+            while let Ok(Some(Ok((raw, _)))) =
+                tokio::time::timeout_at(deadline, reader.next()).await
+            {
                 if raw.magic != magic {
                     continue;
                 }
@@ -507,8 +421,7 @@ impl DisconnectedPeer {
             connection: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
         };
         let writer = Arc::new(Mutex::new(writer));
-        let in_flight = Arc::new(AtomicUsize::new(0));
-        let latency = Arc::new(Latency::default());
+        let ledger = Arc::new(Ledger::new(costs));
         // The controller grows it from the peer's measured serving rate.
         let cap = Arc::new(AtomicU64::new(INITIAL_CAP_BYTES));
         let token = shutdown.child_token();
@@ -521,6 +434,7 @@ impl DisconnectedPeer {
             token.clone(),
             headers2.clone(),
             headers2_decompression_semaphore,
+            ledger.clone(),
         );
 
         tracing::debug!(
@@ -536,11 +450,9 @@ impl DisconnectedPeer {
                 id,
                 network: self.network,
                 writer,
-                in_flight,
-                in_flight_bytes: Arc::new(AtomicU64::new(0)),
+                ledger,
                 cap,
                 serving_rate: Arc::new(AtomicU64::new(0)),
-                latency,
                 headers2,
             },
             version,
@@ -578,6 +490,7 @@ fn spawn_reader(
     shutdown: CancellationToken,
     headers2: Arc<AtomicBool>,
     headers2_decompression_semaphore: Arc<Semaphore>,
+    ledger: Arc<Ledger>,
 ) {
     tokio::spawn(async move {
         // Header messages leave this reader in wire order even though the
@@ -595,10 +508,11 @@ fn spawn_reader(
                     tracing::error!("NETWORK: reader {} stopped: {}", addr, e);
                     break;
                 }
-                Some(Ok(raw)) => {
+                Some(Ok((raw, size))) => {
                     if raw.magic != magic {
                         continue;
                     }
+                    ledger.settle(&raw.payload, size).await;
                     match raw.payload {
                         NetworkMessage::Ping(nonce) => {
                             let pong = RawNetworkMessage {
