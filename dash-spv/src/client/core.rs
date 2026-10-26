@@ -181,11 +181,6 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         self.storage.lock().await.clear().await?;
 
         self.sync_coordinator.lock().await.reset_progress();
-        if let Some(engine) = &self.masternode_engine {
-            let network = self.config.read().await.network;
-            let headers = self.storage.lock().await.block_headers();
-            *engine.write().await = MasternodeListEngine::new(network, headers);
-        }
 
         Ok(())
     }

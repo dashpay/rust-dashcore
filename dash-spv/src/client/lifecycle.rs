@@ -53,8 +53,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
         let masternode_engine = {
             if config.enable_masternodes {
-                let engine = storage.masternodes().read().await.load_engine().await;
-                Some(Arc::new(RwLock::new(engine)))
+                Some(storage.masternodes().read().await.engine())
             } else {
                 None
             }
@@ -284,12 +283,9 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         height: u32,
     ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.wallet.write().await.truncate_above(height)?;
+
         let truncated =
             StorageManager::truncate_above(&mut *self.storage.lock().await, height).await;
-
-        if let Some(engine) = &self.masternode_engine {
-            engine.write().await.truncate_above(height).await;
-        }
 
         Ok(truncated?)
     }

@@ -12,12 +12,11 @@ use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
 use super::pipeline::MnListDiffPipeline;
-use crate::error::{StorageResult, SyncError, SyncResult};
+use crate::error::{SyncError, SyncResult};
 use crate::network::RequestSender;
-use crate::storage::{BlockHeaderStorage, MasternodeStorage, PersistentMasternodeStorage};
+use crate::storage::{BlockHeaderStorage, PersistentMasternodeStorage};
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
-use dashcore::network::message_sml::MnListDiff;
 use dashcore::BlockHash;
 use std::collections::BTreeSet;
 
@@ -260,8 +259,8 @@ pub struct MasternodesManager<H: BlockHeaderStorage> {
     network: dashcore::Network,
     /// Sync state tracking.
     pub(super) sync_state: MasternodeSyncState,
-    /// Where the messages that built the engine are kept for the next start.
-    message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
+    /// Where the engine is kept for the next start.
+    engine_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
 }
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
@@ -270,7 +269,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         header_storage: Arc<RwLock<H>>,
         engine: Arc<RwLock<MasternodeListEngine<H>>>,
         network: dashcore::Network,
-        message_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
+        engine_storage: Option<Arc<RwLock<PersistentMasternodeStorage<H>>>>,
     ) -> Self {
         // Recover sync state from the engine's stored masternode lists so that a
         // restart can resume from where the previous run left off.
@@ -295,28 +294,20 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             engine,
             network,
             sync_state,
-            message_storage,
+            engine_storage,
         }
     }
 
-    /// Messages are stored only until the sync reaches the tip. Once synced,
-    /// nothing is, and the next start catches up from the last stored message.
-    fn storage_while_syncing(&self) -> Option<&Arc<RwLock<PersistentMasternodeStorage<H>>>> {
-        self.message_storage.as_ref().filter(|_| self.state() != SyncState::Synced)
-    }
-
-    pub(super) async fn store_diff(&self, height: u32, diff: &MnListDiff) -> StorageResult<()> {
-        let Some(storage) = self.storage_while_syncing() else {
-            return Ok(());
+    /// Stores the engine for the next start. A failure is logged and only
+    /// costs a sync from the network on the next start.
+    async fn store_engine(&self) {
+        let Some(storage) = &self.engine_storage else {
+            return;
         };
-        storage.write().await.store_diff(height, diff).await
-    }
 
-    pub(super) async fn store_qr_info(&self, height: u32, qr_info: &QRInfo) -> StorageResult<()> {
-        let Some(storage) = self.storage_while_syncing() else {
-            return Ok(());
-        };
-        storage.write().await.store_qr_info(height, qr_info).await
+        if let Err(e) = storage.write().await.persist().await {
+            tracing::warn!("Could not store the masternode engine, a restart syncs it again: {e}");
+        }
     }
 
     /// Decide which [`PipelineMode`] to use when a new header lands at `tip_height`
@@ -613,6 +604,9 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
 
         drop(engine);
+
+        // Once per QRInfo, so at each start and rotation cycle, not per block.
+        self.store_engine().await;
 
         if is_initial_sync {
             self.set_state(SyncState::Synced);
