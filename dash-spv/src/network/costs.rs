@@ -26,7 +26,7 @@ const RESP_BYTES_BOOTSTRAP: [u64; 9] = [
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Reply {
+enum Reply {
     Headers,
     CfHeaders(BlockHash),
     CFilters(BlockHash),
@@ -166,28 +166,17 @@ impl Ledger {
         (count, avg_ms, self.latency_max_ns.load(Ordering::Relaxed) as f64 / 1e6)
     }
 
-    pub async fn charge(&self, msg: &NetworkMessage) -> Vec<Reply> {
-        let replies = Reply::awaited(msg);
+    pub async fn charge(&self, msg: &NetworkMessage) {
         let mut awaited = self.awaited.lock().await;
-        for reply in &replies {
-            let cost = self.costs.expected(reply);
+        for reply in Reply::awaited(msg) {
+            let cost = self.costs.expected(&reply);
             self.in_flight_bytes.fetch_add(cost, Ordering::Relaxed);
             awaited.push(Awaited {
-                reply: *reply,
+                reply,
                 cost,
                 sent: Instant::now(),
                 bytes: 0,
             });
-        }
-        replies
-    }
-
-    pub async fn uncharge(&self, replies: &[Reply]) {
-        let mut awaited = self.awaited.lock().await;
-        for reply in replies {
-            if let Some(i) = awaited.iter().rposition(|a| a.reply == *reply) {
-                self.release(awaited.remove(i).cost);
-            }
         }
     }
 

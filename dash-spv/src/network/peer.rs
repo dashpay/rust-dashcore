@@ -140,6 +140,8 @@ pub struct PeerHandle {
     /// Ask this peer for compressed headers (DIP-25). Cleared by the reader if a
     /// `headers2` fails to decompress, falling back to plain `headers`.
     headers2: Arc<AtomicBool>,
+    /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
+    token: CancellationToken,
 }
 
 impl PeerHandle {
@@ -177,7 +179,7 @@ impl PeerHandle {
         };
         let serialized = encode::serialize(&raw);
 
-        let charged = self.ledger.charge(msg).await;
+        self.ledger.charge(msg).await;
 
         let write = async {
             let mut writer = self.writer.lock().await;
@@ -190,8 +192,8 @@ impl PeerHandle {
             Err(_) => Err(format!("Write stalled for {}s", WRITE_TIMEOUT.as_secs())),
         };
         if let Err(reason) = outcome {
-            self.ledger.uncharge(&charged).await;
             tracing::warn!("Disconnecting {} due to write error: {}", self.id, reason);
+            self.token.cancel();
             return Err(NetworkError::ConnectionFailed(reason));
         }
         Ok(())
@@ -203,8 +205,6 @@ pub struct ConnectedPeer {
     version: VersionMessage,
     lag_ms: AtomicU32,
     bytes: Arc<AtomicU64>,
-    /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
-    token: CancellationToken,
 }
 
 pub struct DisconnectedPeer {
@@ -250,7 +250,7 @@ impl ConnectedPeer {
     }
 
     pub fn close(&self) {
-        self.token.cancel();
+        self.handle.token.cancel();
     }
 
     pub fn bytes_read(&self) -> u64 {
@@ -457,11 +457,11 @@ impl DisconnectedPeer {
                 cap,
                 serving_rate: Arc::new(AtomicU64::new(0)),
                 headers2,
+                token,
             },
             version,
             lag_ms: AtomicU32::new(lag_ms),
             bytes: peer_bytes,
-            token,
         })
     }
 }
