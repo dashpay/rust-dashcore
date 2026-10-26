@@ -16,6 +16,7 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::{BlockHash, Header};
 use futures::stream::{FuturesUnordered, StreamExt};
+use futures::FutureExt;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{broadcast, Mutex, Notify, Semaphore};
 use tokio::task::JoinHandle;
@@ -76,6 +77,9 @@ const SWAP_COOLDOWN: Duration = Duration::from_secs(60);
 
 /// How often the supervisor re-checks a below-cap set and probes to keep filling.
 const FILL_TICK: Duration = Duration::from_secs(2);
+
+const DIAL_MARGIN: usize = 2;
+const MAX_DIAL_BACKOFF: Duration = Duration::from_secs(60);
 
 /// Cap on remembered (ranked) backup addresses, as a multiple of `max_peers`.
 const BACKUP_MULTIPLE: usize = 8;
@@ -1162,6 +1166,7 @@ struct Supervisor {
     best_lag_ms: AtomicU32,
     /// When a slow peer was last swapped out, for [`SWAP_COOLDOWN`].
     last_swap: Mutex<Option<Instant>>,
+    failed_dials: Mutex<HashMap<SocketAddr, (u32, Instant)>>,
 }
 
 impl Supervisor {
@@ -1193,8 +1198,14 @@ impl Supervisor {
         }
         let live: HashSet<SocketAddr> =
             self.connected.lock().await.iter().map(|p| p.addr()).collect();
+        let now = Instant::now();
+        let failed = self.failed_dials.lock().await;
         let mut seen = HashSet::new();
-        out.retain(|p| !live.contains(&p.addr()) && seen.insert(p.addr()));
+        out.retain(|p| {
+            !live.contains(&p.addr())
+                && failed.get(&p.addr()).is_none_or(|(_, retry)| *retry <= now)
+                && seen.insert(p.addr())
+        });
         out
     }
 
@@ -1242,7 +1253,7 @@ impl Supervisor {
 
         // Scale the probe to the need: a few candidates to find one replacement, a
         // full chunk when several slots are open and sync is waiting on them.
-        let want = (deficit.max(1) * 4).min(CONNECT_CHUNK);
+        let want = (deficit.max(1) + DIAL_MARGIN).min(CONNECT_CHUNK);
         let batch = self.next_candidates(want).await;
         if batch.is_empty() {
             return;
@@ -1254,6 +1265,7 @@ impl Supervisor {
         let mut inflight: FuturesUnordered<_> = batch
             .into_iter()
             .map(|c| {
+                let addr = c.addr();
                 c.connect(
                     self.inbound.clone(),
                     self.shutdown.clone(),
@@ -1262,16 +1274,23 @@ impl Supervisor {
                     self.headers2_decompression_semaphore.clone(),
                     self.costs.clone(),
                 )
+                .map(move |result| (addr, result))
             })
             .collect();
 
         let mut accepted = 0usize;
         let mut replaced: Option<SocketAddr> = None;
         let mut leftover: Vec<ConnectedPeer> = Vec::new();
-        while let Some(result) = inflight.next().await {
+        while let Some((addr, result)) = inflight.next().await {
             let Ok(peer) = result else {
+                let mut failed = self.failed_dials.lock().await;
+                let fails = failed.get(&addr).map_or(0, |(fails, _)| *fails) + 1;
+                let backoff = MAX_DIAL_BACKOFF.min(Duration::from_secs(1 << fails.min(6)));
+                failed.insert(addr, (fails, Instant::now() + backoff));
                 continue;
             };
+            self.failed_dials.lock().await.remove(&addr);
+            let handle = peer.handle();
             self.best_tip.fetch_max(peer.version().start_height.max(0) as u32, Ordering::Relaxed);
 
             let lag = peer.lag_ms();
@@ -1336,6 +1355,7 @@ impl Supervisor {
             // Announce only real changes: an arrival or a swap. A candidate benched as a
             // backup changed nothing.
             if changed {
+                let _ = handle.send(&NetworkMessage::GetAddr).await;
                 self.announce_update().await;
             }
         }
@@ -1353,8 +1373,10 @@ impl Supervisor {
                 addr,
                 peer.lag_ms(),
             );
+            let handle = peer.handle();
             self.connected.lock().await.push(peer);
             let _ = self.events.send(NetworkEvent::PeerConnected(addr));
+            let _ = handle.send(&NetworkMessage::GetAddr).await;
             self.announce_update().await;
             accepted += 1;
         }
@@ -1435,6 +1457,7 @@ fn spawn_peer_supervisor(
             costs,
             best_lag_ms: AtomicU32::new(u32::MAX),
             last_swap: Mutex::new(None),
+            failed_dials: Mutex::new(HashMap::new()),
         }
         .run(),
     )

@@ -415,8 +415,6 @@ impl DisconnectedPeer {
             }
         }
 
-        let _ = handshake_send(&mut writer, magic, NetworkMessage::GetAddr).await;
-
         let id = PeerId {
             addr: self.addr,
             connection: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
