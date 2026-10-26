@@ -1711,7 +1711,15 @@ mod tests {
             tip.new_masternodes.push(MasternodeListEntry::dummy(0x11));
             let tip_hash = tip.block_hash;
             let result = engine.feed_qr_info(qr_info).await;
-            assert_eq!(result, Err(SmlError::CoinbaseCommitmentMismatch(tip_hash).into()));
+            assert!(
+                matches!(
+                    result,
+                    Err(FeedError::Refused(QuorumValidationError::SMLError(
+                        SmlError::CoinbaseCommitmentMismatch(hash)
+                    ))) if hash == tip_hash
+                ),
+                "got {result:?}"
+            );
             return;
         }
 
@@ -2148,14 +2156,22 @@ mod tests {
         unreadable: BlockHash,
         readable: usize,
     ) -> MasternodeListEngine<FailingFrom> {
+        let inner = {
+            let headers = engine.headers();
+            let headers = headers.try_read().expect("unlocked");
+            MockHeaderStorage {
+                heights: headers.heights.clone(),
+                merkle_roots: headers.merkle_roots.clone(),
+            }
+        };
         let headers = Arc::new(RwLock::new(FailingFrom {
-            inner: MockHeaderStorage(engine.headers().try_read().expect("unlocked").0.clone()),
+            inner,
             unreadable,
             readable,
             reads: AtomicUsize::new(0),
             hangs: false,
         }));
-        let mut failing = MasternodeListEngine::new(engine.network, headers);
+        let mut failing = MasternodeListEngine::new_without_validation(engine.network, headers);
         failing.masternode_lists = engine.masternode_lists.clone();
         failing.rotated_quorums_per_cycle = engine.rotated_quorums_per_cycle.clone();
         failing
