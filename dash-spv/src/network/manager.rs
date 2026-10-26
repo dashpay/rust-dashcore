@@ -1315,11 +1315,12 @@ impl Supervisor {
 
             if let Some(old) = displaced {
                 let old_addr = old.addr();
+                let new_addr = replaced.expect("set with the displacing peer");
                 tracing::info!(
                     target: "dash_spv::network",
                     "peer supervisor: swapped out slow {} for {}",
                     old_addr,
-                    replaced.expect("set with the displacing peer"),
+                    new_addr,
                 );
                 // Close it: the pump requeues every request routed to THIS connection, as for any
                 // lost peer. Safe because the departure names a connection, not an address, so a
@@ -1327,6 +1328,7 @@ impl Supervisor {
                 old.close();
                 *self.last_swap.lock().await = Some(Instant::now());
                 let _ = self.events.send(NetworkEvent::PeerDisconnected(old_addr));
+                let _ = self.events.send(NetworkEvent::PeerConnected(new_addr));
             }
 
             // Announce only real changes: an arrival or a swap. A candidate benched as a
