@@ -94,9 +94,15 @@ pub(super) async fn default_handle_network_event<M: SyncManager + ?Sized>(
     // `PeersUpdated` kicks off the initial requests: the network manager connects in
     // `start`, after every manager has subscribed, so it is the first thing we hear.
     if let NetworkEvent::PeersUpdated {
+        connected_count,
         ..
     } = event
     {
+        if *connected_count == 0 {
+            tracing::info!("{} - no peers available, stopping sync", manager.identifier());
+            manager.stop_sync();
+            return Ok(vec![]);
+        }
         manager.update_target_height(network.tip());
         if manager.state() == SyncState::WaitingForConnections {
             tracing::info!("{} - peers available, starting sync", manager.identifier());
