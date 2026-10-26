@@ -258,8 +258,13 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         headers: Arc<RwLock<H>>,
         bytes: &[u8],
     ) -> Result<Self, bincode::error::DecodeError> {
-        let ((masternode_lists, rotated_quorums_per_cycle), _) =
+        let ((masternode_lists, rotated_quorums_per_cycle), read) =
             bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+
+        if read != bytes.len() {
+            return Err(bincode::error::DecodeError::Other("trailing bytes after the snapshot"));
+        }
+
         Ok(Self {
             headers,
             masternode_lists,
