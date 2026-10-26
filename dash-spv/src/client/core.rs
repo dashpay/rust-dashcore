@@ -120,6 +120,8 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager> {
 
 /// The background task of a running client.
 pub(super) struct SyncLoop {
+    /// Tells this loop apart from the ones `run` starts after it.
+    pub(super) id: u64,
     pub(super) task: JoinHandle<()>,
     /// Stops the loop and the event monitors it runs.
     pub(super) shutdown: CancellationToken,

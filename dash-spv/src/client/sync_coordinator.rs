@@ -1,6 +1,6 @@
 //! Sync coordination and orchestration.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -47,6 +47,9 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         if sync_loop.is_some() {
             return Ok(());
         }
+
+        static NEXT_LOOP_ID: AtomicU64 = AtomicU64::new(0);
+        let loop_id = NEXT_LOOP_ID.fetch_add(1, Ordering::Relaxed);
 
         let handlers = self.event_handlers.clone();
         let monitor_shutdown = CancellationToken::new();
@@ -147,12 +150,12 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     }
                     Ok(SyncEvent::ForkDetected { fork_height }) = fork_rx.recv() => {
                         // Recovering stops this task, so it runs in a task of its own,
-                        // which only acts on a loop whose token is cancelled.
+                        // which only acts on this loop.
                         monitor_shutdown.cancel();
                         let recovering = client.clone();
 
                         client.detached_tasks.lock().await.spawn(async move {
-                            if let Err(e) = recovering.handle_fork(fork_height).await {
+                            if let Err(e) = recovering.handle_fork(fork_height, loop_id).await {
                                 tracing::warn!("Error recovering from the fork: {}", e);
                             }
                         });
@@ -198,11 +201,12 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     .detached_tasks
                     .lock()
                     .await
-                    .spawn(async move { stopping.stop_failed().await });
+                    .spawn(async move { stopping.stop_failed(loop_id).await });
             }
         });
 
         *sync_loop = Some(SyncLoop {
+            id: loop_id,
             task,
             shutdown,
         });
