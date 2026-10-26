@@ -16,7 +16,6 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::{BlockHash, Header};
 use futures::stream::{FuturesUnordered, StreamExt};
-use futures::FutureExt;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{broadcast, Mutex, Notify, Semaphore};
 use tokio::task::JoinHandle;
@@ -79,6 +78,7 @@ const SWAP_COOLDOWN: Duration = Duration::from_secs(60);
 const FILL_TICK: Duration = Duration::from_secs(2);
 
 const DIAL_MARGIN: usize = 2;
+const CONNECT_DEADLINE: Duration = Duration::from_secs(20);
 const MAX_DIAL_BACKOFF: Duration = Duration::from_secs(60);
 
 /// Cap on remembered (ranked) backup addresses, as a multiple of `max_peers`.
@@ -1270,7 +1270,7 @@ impl Supervisor {
             .into_iter()
             .map(|c| {
                 let addr = c.addr();
-                c.connect(
+                let connect = c.connect(
                     self.inbound.clone(),
                     self.shutdown.clone(),
                     self.bytes.clone(),
@@ -1278,8 +1278,16 @@ impl Supervisor {
                     self.headers2_decompression_semaphore.clone(),
                     self.costs.clone(),
                     &self.user_agent,
-                )
-                .map(move |result| (addr, result))
+                );
+                async move {
+                    let result = tokio::select! {
+                        _ = self.shutdown.cancelled() => Err(NetworkError::Timeout),
+                        result = tokio::time::timeout(CONNECT_DEADLINE, connect) => {
+                            result.unwrap_or(Err(NetworkError::Timeout))
+                        }
+                    };
+                    (addr, result)
+                }
             })
             .collect();
 
