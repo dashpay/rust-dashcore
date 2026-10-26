@@ -73,6 +73,7 @@ impl std::fmt::Display for PeerId {
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const PING_INTERVAL: Duration = Duration::from_secs(120);
 /// A new peer's in-flight byte cap until the controller has measured it.
 pub const INITIAL_CAP_BYTES: u64 = 256 * 1024;
 const USER_AGENT: &str = concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/");
@@ -497,11 +498,31 @@ fn spawn_reader(
         // compressed ones are decoded off-thread and finish out of order.
         let header_order = Arc::new(Mutex::new(OrderedHeaderResults::default()));
         let mut header_sequence = 0_u64;
+        let mut ping =
+            tokio::time::interval_at(tokio::time::Instant::now() + PING_INTERVAL, PING_INTERVAL);
+        let mut last_ping = None;
+        let mut last_seen = tokio::time::Instant::now();
         loop {
             let next = tokio::select! {
                 _ = shutdown.cancelled() => break,
+                _ = ping.tick() => {
+                    if last_ping.is_some_and(|sent| last_seen < sent) {
+                        tracing::warn!("NETWORK: {} did not answer a ping in {}s", addr, PING_INTERVAL.as_secs());
+                        break;
+                    }
+                    last_ping = Some(tokio::time::Instant::now());
+                    let ping = RawNetworkMessage {
+                        magic,
+                        payload: NetworkMessage::Ping(rand::random()),
+                    };
+                    if writer.lock().await.write_all(&encode::serialize(&ping)).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 next = reader.next() => next,
             };
+            last_seen = tokio::time::Instant::now();
             match next {
                 None => break,
                 Some(Err(e)) => {
