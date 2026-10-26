@@ -238,6 +238,7 @@ fn proreg_tx_and_owner_match() -> (Transaction, AccountMatch) {
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::bls_sig_utils::BLSPublicKey;
     use dashcore::hash_types::InputsHash;
+    use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use dashcore::{OutPoint, PubkeyHash, ScriptBuf, Txid};
     use std::net::SocketAddr;
     use std::str::FromStr;

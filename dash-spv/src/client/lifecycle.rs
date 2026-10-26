@@ -15,19 +15,13 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::{
-    BlockHeaderStorage, BlockStorage, DiskStorageManager, FilterHeaderStorage, FilterStorage,
-    PersistentBlockHeaderStorage, StorageManager,
+    BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, StorageManager,
 };
 use crate::sync::{
     BlockHeadersManager, BlocksManager, ChainLockManager, FilterHeadersManager, FiltersManager,
     InstantSendManager, Managers, MasternodesManager, MempoolManager, SyncCoordinator,
 };
-use crate::types::HashedBlockHeader;
-use dashcore::block::{Header as BlockHeader, Version};
 use dashcore::network::constants::NetworkExt;
-use dashcore::pow::CompactTarget;
-use dashcore::TxMerkleNode;
-use dashcore_hashes::Hash;
 use key_wallet_manager::WalletInterface;
 use std::future::Future;
 use std::pin::Pin;
@@ -125,7 +119,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     ) -> Result<SyncManagers<W>> {
         let mut managers: SyncManagers<W> = Managers::default();
 
-        let checkpoint_manager = Arc::new(CheckpointManager::for_network(config.network));
+        let checkpoint_manager = CheckpointManager::for_network(config.network);
         managers.block_headers = Some(
             BlockHeadersManager::new(
                 storage.block_headers(),
@@ -269,26 +263,35 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             self.stop_locked(forked).await;
 
             tracing::warn!("Fork at height {}, dropping the stored chain above it", fork_height);
-            // The wallets go first: a wallet refusing the fork leaves storage as
-            // it is, and storage failing after them keeps the fork unstored, so
-            // it is detected and retried.
-            let truncated = async {
-                self.wallet.write().await.truncate_above(fork_height)?;
-                let mut storage = self.storage.lock().await;
-                BlockHeaderStorage::truncate_above(&mut *storage, fork_height).await?;
-                FilterHeaderStorage::truncate_above(&mut *storage, fork_height).await?;
-                FilterStorage::truncate_above(&mut *storage, fork_height).await?;
-                BlockStorage::truncate_above(&mut *storage, fork_height).await?;
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
-            }
-            .await;
-
-            if let Err(e) = truncated {
+            if let Err(e) = self.truncate_chain_above(fork_height).await {
                 tracing::warn!("Fork at height {} not followed: {}", fork_height, e);
             }
 
             self.run_locked(&mut sync_loop).await
         })
+    }
+
+    /// Drops what the wallets, the stored chain and the masternode engine hold
+    /// above `height`.
+    ///
+    /// The wallets go first: a wallet refusing the fork leaves storage as it
+    /// is, and storage failing after them keeps the fork unstored, so it is
+    /// detected and retried. The engine goes after the storage, whose headers
+    /// it looks rotated cycles up in, even if the storage fails part way, so it
+    /// never holds lists above the stored tip.
+    async fn truncate_chain_above(
+        &self,
+        height: u32,
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.wallet.write().await.truncate_above(height)?;
+        let truncated =
+            StorageManager::truncate_above(&mut *self.storage.lock().await, height).await;
+
+        if let Some(engine) = &self.masternode_engine {
+            engine.write().await.truncate_above(height).await;
+        }
+
+        Ok(truncated?)
     }
 
     /// Stop `sync_loop` and everything it drives. The caller holds the lock.
@@ -349,45 +352,23 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             // Find the best checkpoint at or before the requested height
             if let Some(checkpoint) = checkpoint_manager.last_checkpoint_before_height(start_height)
             {
-                if checkpoint.height > 0 {
-                    tracing::info!(
-                        "🚀 Starting sync from checkpoint at height {} instead of genesis (requested start height: {})",
-                        checkpoint.height,
-                        start_height
-                    );
+                tracing::info!(
+                    "🚀 Starting sync from checkpoint at height {} instead of genesis (requested start height: {})",
+                    checkpoint.height(),
+                    start_height
+                );
 
-                    // The checkpoint stores the trusted block hash but not the block version,
-                    // so a reconstructed header cannot be hashed back to that value. Anchor on
-                    // the trusted hash directly: chain linkage compares against the stored hash,
-                    // and `time`/`bits` (used for difficulty checks of later headers) come from
-                    // the checkpoint. The version is irrelevant since the hash is never recomputed.
-                    let checkpoint_header = BlockHeader {
-                        version: Version::from_consensus(0),
-                        prev_blockhash: checkpoint.prev_blockhash,
-                        merkle_root: checkpoint
-                            .merkle_root
-                            .map(|h| TxMerkleNode::from_byte_array(*h.as_byte_array()))
-                            .unwrap_or_else(TxMerkleNode::all_zeros),
-                        time: checkpoint.timestamp,
-                        bits: CompactTarget::from_consensus(
-                            checkpoint.target.to_compact_lossy().to_consensus(),
-                        ),
-                        nonce: checkpoint.nonce,
-                    };
-                    let anchor = HashedBlockHeader::with_trusted_hash(
-                        checkpoint_header,
-                        checkpoint.block_hash,
-                    );
-                    storage.store_headers_at_height(&[anchor], checkpoint.height).await?;
+                storage
+                    .store_headers_at_height(checkpoint.headers(), checkpoint.start_height())
+                    .await?;
 
-                    tracing::info!(
-                        "✅ Initialized from checkpoint at height {}, skipping {} headers",
-                        checkpoint.height,
-                        checkpoint.height
-                    );
+                tracing::info!(
+                    "✅ Initialized from checkpoint at height {}, skipping {} headers",
+                    checkpoint.height(),
+                    checkpoint.start_height()
+                );
 
-                    return Ok(());
-                }
+                return Ok(());
             }
         }
 
@@ -443,5 +424,42 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         tracing::info!("Wallet data loading is handled by the wallet implementation");
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::MockNetworkManager;
+    use dashcore::sml::masternode_list::MasternodeList;
+    use dashcore::BlockHash;
+    use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet_manager::WalletManager;
+    use tempfile::TempDir;
+
+    /// Following a fork drops the masternode lists built above it, so they stop
+    /// answering for blocks that left the chain.
+    #[tokio::test]
+    async fn following_a_fork_drops_the_masternode_lists_above_it() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config =
+            ClientConfig::mainnet().without_filters().with_storage_path(temp_dir.path());
+        config.start_from_height = Some(2_500_000);
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let client = DashSpvClient::new(config, MockNetworkManager::new(), wallet, vec![])
+            .await
+            .expect("client construction must succeed");
+        let fork = client.tip_header().await.expect("anchored at the checkpoint").height();
+
+        let engine = client.masternode_list_engine().expect("masternodes are enabled");
+        for height in [fork - 1, fork, fork + 1, fork + 2] {
+            let list = MasternodeList::empty(BlockHash::dummy(height), height);
+            engine.write().await.masternode_lists.insert(height, list);
+        }
+
+        client.truncate_chain_above(fork).await.expect("nothing refuses the fork");
+
+        let heights: Vec<_> = engine.read().await.masternode_lists.keys().copied().collect();
+        assert_eq!(heights, vec![fork - 1, fork]);
     }
 }

@@ -31,7 +31,7 @@ pub use wallet::{
 
 pub(crate) use node::DashCoreConfig;
 
-pub use crate::sml_engine::{MasternodeListEngine, WORK_DIFF_DEPTH};
+pub use crate::sml_engine::{FeedError, MasternodeListEngine, WORK_DIFF_DEPTH};
 
 /// Storage types for tests and benches that open the client's storage directly.
 pub use crate::storage::{
