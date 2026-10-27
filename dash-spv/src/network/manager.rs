@@ -1263,10 +1263,10 @@ fn spawn_pump(
                     // By CONNECTION: this event can arrive for one that already left the set while
                     // the supervisor reconnected to the same address; matching by address would
                     // evict the live one.
-                    let remaining = {
+                    let (remaining, reconnected) = {
                         let mut guard = connected.lock().await;
                         guard.retain(|p| p.id() != peer);
-                        guard.len()
+                        (guard.len(), guard.iter().any(|p| p.addr() == addr))
                     };
 
                     if remaining < *max_peers {
@@ -1286,7 +1286,11 @@ fn spawn_pump(
                     );
                     broker.wake();
 
-                    let _ = events.send(NetworkEvent::PeerDisconnected(addr));
+                    // Subscribers know peers by address only: a late disconnect of the old
+                    // connection would make them drop the live one that replaced it.
+                    if !reconnected {
+                        let _ = events.send(NetworkEvent::PeerDisconnected(addr));
+                    }
 
                     let _ = events.send(NetworkEvent::PeersUpdated {
                         connected_count: remaining as u32,
