@@ -27,12 +27,6 @@ use crate::pow::CompactTarget;
 
 /// How many satoshis are in "one dash".
 pub const COIN_VALUE: u64 = 100_000_000;
-/// How many seconds between blocks we expect on average.
-pub const TARGET_BLOCK_SPACING: u32 = 600;
-/// How many blocks between diffchanges.
-pub const DIFFCHANGE_INTERVAL: u32 = 2016;
-/// How much time on average should occur between diffchanges.
-pub const DIFFCHANGE_TIMESPAN: u32 = 14 * 24 * 3600;
 /// The maximum allowed weight for a block, see BIP 141 (network rule).
 pub const MAX_BLOCK_WEIGHT: u32 = 4_000_000;
 /// The minimum transaction weight for a valid serialized transaction.
@@ -55,11 +49,6 @@ pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 19;
 // 0x13
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
-/// How many blocks between halvings.
-pub const SUBSIDY_HALVING_INTERVAL: u32 = 210_000;
-/// Maximum allowed value for an integer in Script.
-pub const MAX_SCRIPTNUM_VALUE: u32 = 0x80000000;
-// 2^31
 /// Number of blocks needed for an output from a coinbase transaction to be spendable.
 pub const COINBASE_MATURITY: u32 = 100;
 
