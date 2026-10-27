@@ -23,8 +23,6 @@
 use core::convert::From;
 use core::{fmt, ops};
 
-use hashes::Hash;
-
 pub use dash_network::{Network, ParseNetworkError};
 
 use crate::consensus::encode::{self, Decodable, Encodable};
@@ -59,8 +57,8 @@ pub const PROTOCOL_VERSION: u32 = 70237;
 pub const MAINNET_HD_ACTIVATION_HEIGHT: u32 = 227121;
 
 pub trait NetworkExt {
-    /// Returns the known genesis block hash for `network`, if one is hardcoded.
-    fn known_genesis_block_hash(&self) -> Option<BlockHash>;
+    /// Returns the known genesis block hash for `network`.
+    fn known_genesis_block_hash(&self) -> BlockHash;
 
     /// Earliest block height worth syncing for HD/BIP39 wallets, or `0` when the network
     /// has no floor (sync from genesis). Mainnet is floored at
@@ -69,41 +67,15 @@ pub trait NetworkExt {
 }
 
 impl NetworkExt for Network {
-    fn known_genesis_block_hash(&self) -> Option<BlockHash> {
-        match self {
-            Network::Mainnet => {
-                let mut block_hash = hex_conservative::decode_to_vec(
-                    "00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6",
-                )
-                .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
+    fn known_genesis_block_hash(&self) -> BlockHash {
+        let hash = match self {
+            Network::Mainnet => "00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6",
+            Network::Testnet => "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
+            Network::Devnet | Network::Regtest => {
+                "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e"
             }
-            Network::Testnet => {
-                let mut block_hash = hex_conservative::decode_to_vec(
-                    "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
-                )
-                .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-            Network::Devnet => {
-                let mut block_hash = hex_conservative::decode_to_vec(
-                    "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e",
-                )
-                .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-            Network::Regtest => {
-                let mut block_hash = hex_conservative::decode_to_vec(
-                    "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e",
-                )
-                .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-        }
+        };
+        hash.parse().expect("valid genesis block hash")
     }
 
     fn hd_wallet_sync_floor(&self) -> u32 {

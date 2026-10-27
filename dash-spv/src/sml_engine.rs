@@ -278,7 +278,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         block_hash: &BlockHash,
     ) -> StorageResult<Option<CoreBlockHeight>> {
         if *block_hash == BlockHash::all_zeros()
-            || self.network.known_genesis_block_hash() == Some(*block_hash)
+            || self.network.known_genesis_block_hash() == *block_hash
         {
             return Ok(Some(0));
         }

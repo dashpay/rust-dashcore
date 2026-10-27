@@ -390,10 +390,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         }
 
         // Get the genesis block hash for this network
-        let genesis_hash = config
-            .network
-            .known_genesis_block_hash()
-            .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
+        let genesis_hash = config.network.known_genesis_block_hash();
 
         tracing::info!(
             "Initializing genesis block for network {:?}: {}",
