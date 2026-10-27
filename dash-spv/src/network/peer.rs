@@ -231,10 +231,6 @@ impl ConnectedPeer {
         self.handle.ledger.latency_stats()
     }
 
-    pub fn take_min_latency(&self) -> Option<f64> {
-        self.handle.ledger.take_min_latency()
-    }
-
     /// Handshake round-trip latency in ms (0 if unmeasured).
     pub fn lag_ms(&self) -> u32 {
         self.lag_ms.load(Ordering::Relaxed)
