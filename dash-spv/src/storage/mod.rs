@@ -240,11 +240,20 @@ impl Drop for DiskStorageManager {
 #[async_trait]
 impl StorageManager for DiskStorageManager {
     async fn truncate_above(&mut self, height: u32) -> StorageResult<()> {
-        BlockHeaderStorage::truncate_above(self, height).await?;
-        FilterHeaderStorage::truncate_above(self, height).await?;
-        FilterStorage::truncate_above(self, height).await?;
-        BlockStorage::truncate_above(self, height).await?;
-        MasternodeStorage::truncate_above(self, height).await
+        let chain = async {
+            BlockHeaderStorage::truncate_above(self, height).await?;
+            FilterHeaderStorage::truncate_above(self, height).await?;
+            FilterStorage::truncate_above(self, height).await?;
+            BlockStorage::truncate_above(self, height).await
+        }
+        .await;
+
+        // The engine goes last, as it looks rotated cycles up in the headers,
+        // and even when the chain fails part way, so it never holds lists
+        // above the stored tip.
+        let masternodes = MasternodeStorage::truncate_above(self, height).await;
+
+        chain.and(masternodes)
     }
 
     async fn clear(&mut self) -> StorageResult<()> {
