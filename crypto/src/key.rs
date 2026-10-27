@@ -27,6 +27,7 @@ use dash_types::serialize::hex as serde_hex;
 use hashes::{hash160, hash_newtype, Hash as _};
 use hex_conservative::DisplayHex;
 use thiserror::Error as ThisError;
+use zeroize::Zeroizing;
 
 use crate::base58;
 use crate::ecdsa::{
@@ -269,7 +270,8 @@ impl PrivateKey {
 
     /// Parse WIF encoded private key.
     pub fn from_wif(wif: &str) -> Result<PrivateKey, Error> {
-        let data = base58::decode_check(wif)?;
+        // The payload holds the secret key; wipe it on every return path.
+        let data = Zeroizing::new(base58::decode_check(wif)?);
 
         // Core's `DecodeSecret` takes a 34th byte as the compression flag
         // only when it is exactly 0x01.
