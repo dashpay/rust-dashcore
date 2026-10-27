@@ -33,7 +33,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// How far below the newest list the engine still reads a list: the QRInfo
     /// base and quarters, the work block of every active quorum, and Platform's
     /// walk-back.
-    fn retention_window(&self) -> CoreBlockHeight {
+    pub(super) fn retention_window(&self) -> CoreBlockHeight {
         let rotation_interval = self.network.isd_llmq_type().dkg_interval();
         let qr_info = (QRINFO_BASE_CYCLES_BEHIND + 1).saturating_mul(rotation_interval);
         let platform = self
