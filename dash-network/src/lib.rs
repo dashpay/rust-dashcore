@@ -2,9 +2,9 @@
 //! `dashcore` crate so that lightweight consumers can depend on it without
 //! pulling in the full protocol library.
 //!
-//! This crate carries **no** dependencies beyond its optional `serde` /
-//! `bincode` impls. If you need Network::known_genesis_block_hash — which
-//! returns a `BlockHash` — use the extension trait provided by `dashcore`.
+//! Parameters come from `dash-params`, except for devnets, which are set at
+//! runtime. If you need Network::known_genesis_block_hash — which returns a
+//! `BlockHash` — use the extension trait provided by `dashcore`.
 //!
 //! # Example
 //!
@@ -18,6 +18,8 @@
 //! ```
 
 use core::fmt;
+
+use dash_params::{ChainParams, Network as CoreNetwork};
 
 #[cfg(feature = "ffi")]
 pub mod ffi;
@@ -43,62 +45,62 @@ pub enum Network {
 }
 
 impl Network {
-    /// Creates a `Network` from the network magic bytes.
-    pub const fn from_magic(magic: u32) -> Option<Network> {
-        // Note: any new entries here must be added to `magic` below.
-        match magic {
-            0xBD6B0CBF => Some(Network::Mainnet),
-            0xFFCAE2CE => Some(Network::Testnet),
-            0xCEFFCAE2 => Some(Network::Devnet),
-            0xDCB7C1FC => Some(Network::Regtest),
-            _ => None,
+    /// Every network, in declaration order.
+    const ALL: [Network; 4] =
+        [Network::Mainnet, Network::Testnet, Network::Devnet, Network::Regtest];
+
+    /// The chain parameters of this network, or `None` for devnets,
+    /// whose parameters are set at runtime.
+    pub const fn chain_params(self) -> Option<&'static ChainParams> {
+        match self {
+            Network::Mainnet => Some(CoreNetwork::Main.chain()),
+            Network::Testnet => Some(CoreNetwork::Testnet3.chain()),
+            Network::Devnet => None,
+            Network::Regtest => Some(CoreNetwork::Regtest.chain()),
         }
+    }
+
+    /// Creates a `Network` from the network magic bytes.
+    pub fn from_magic(magic: u32) -> Option<Network> {
+        Self::ALL.into_iter().find(|network| network.magic() == magic)
     }
 
     /// Return the network magic bytes, which should be encoded little-endian
     /// at the start of every message
     pub const fn magic(self) -> u32 {
-        // Note: any new entries here must be added to `from_magic` above.
-        match self {
-            Network::Mainnet => 0xBD6B0CBF,
-            Network::Testnet => 0xFFCAE2CE,
-            Network::Devnet => 0xCEFFCAE2,
-            Network::Regtest => 0xDCB7C1FC,
+        match self.chain_params() {
+            Some(chain) => u32::from_le_bytes(chain.message_start),
+            None => 0xCEFFCAE2,
         }
     }
 
     /// The block height at which Dash consensus version 20 activates.
     ///
-    /// Devnet and regtest activate V20 immediately (height 0).
+    /// 0 on devnets and regtest, which set it at runtime.
     pub const fn v20_activation_height(self) -> u32 {
-        match self {
-            Network::Mainnet => 1_987_776,
-            Network::Testnet => 905_100,
-            // Devnet and regtest activate V20 immediately.
-            Network::Devnet | Network::Regtest => 0,
+        match (self, self.chain_params()) {
+            (Network::Mainnet | Network::Testnet, Some(chain)) => {
+                chain.consensus.v20_height.to_u32()
+            }
+            _ => 0,
         }
     }
 
     /// The default P2P port for this network.
     ///
-    /// Regtest's default is the typical Dash Core regtest value; devnets can
-    /// vary and should usually come from configuration.
+    /// Devnets can vary and should usually take theirs from configuration.
     pub const fn default_p2p_port(self) -> u16 {
-        match self {
-            Network::Mainnet => 9999,
-            Network::Testnet => 19999,
-            Network::Devnet => 19799,
-            Network::Regtest => 19899,
+        match self.chain_params() {
+            Some(chain) => chain.default_port,
+            None => 19799,
         }
     }
 
-    /// DNS seed hostnames for this network. Empty for networks without
-    /// public DNS seeds (Devnet, Regtest).
+    /// DNS seed hostnames for this network. Empty for devnets.
     pub const fn dns_seeds(self) -> &'static [&'static str] {
-        match self {
-            Network::Mainnet => &["dnsseed.dash.org"],
-            Network::Testnet => &["testnet-seed.dashdot.io"],
-            Network::Devnet | Network::Regtest => &[],
+        match self.chain_params() {
+            Some(chain) => chain.dns_seeds,
+            None => &[],
         }
     }
 }
@@ -145,11 +147,13 @@ impl std::error::Error for ParseNetworkError {}
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     #[test]
     fn magic_round_trip_covers_all_variants() {
-        for n in [Network::Mainnet, Network::Testnet, Network::Devnet, Network::Regtest] {
+        for n in Network::ALL {
             let magic = n.magic();
             assert_eq!(Network::from_magic(magic), Some(n), "round-trip failed for {:?}", n);
         }
@@ -186,11 +190,13 @@ mod tests {
         assert_eq!(Network::Regtest.to_string(), "regtest");
     }
 
-    #[test]
-    fn activation_heights_are_stable() {
-        assert_eq!(Network::Mainnet.v20_activation_height(), 1_987_776);
-        assert_eq!(Network::Testnet.v20_activation_height(), 905_100);
-        assert_eq!(Network::Devnet.v20_activation_height(), 0);
-        assert_eq!(Network::Regtest.v20_activation_height(), 0);
+    #[test_case(Network::Mainnet, 0xBD6B0CBF, 9999, 1_987_776)]
+    #[test_case(Network::Testnet, 0xFFCAE2CE, 19999, 905_100)]
+    #[test_case(Network::Devnet, 0xCEFFCAE2, 19799, 0)]
+    #[test_case(Network::Regtest, 0xDCB7C1FC, 19899, 0)]
+    fn parameters_match_dash_core(network: Network, magic: u32, port: u16, v20_height: u32) {
+        assert_eq!(network.magic(), magic);
+        assert_eq!(network.default_p2p_port(), port);
+        assert_eq!(network.v20_activation_height(), v20_height);
     }
 }
