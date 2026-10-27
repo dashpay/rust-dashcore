@@ -1,4 +1,5 @@
 mod bans;
+mod broker;
 mod costs;
 mod discovery;
 mod manager;
@@ -15,10 +16,11 @@ use std::net::SocketAddr;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+pub use broker::RequestKey;
 pub use manager::NetworkEvent;
-pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager, RequestKey};
+pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager};
 // Used by the mock network manager to enforce the same de-duplication contract.
-pub(crate) use manager::request_keys;
+pub(crate) use broker::request_keys;
 
 pub trait Request: Send + 'static {
     fn height(&self) -> u32;

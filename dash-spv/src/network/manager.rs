@@ -1,8 +1,8 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
     sync::{
-        atomic::{AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU32, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -13,7 +13,6 @@ use tokio::time::Instant;
 
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
-use dashcore::network::message_blockdata::Inventory;
 use dashcore::{BlockHash, Header};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -68,10 +67,9 @@ const MAX_ADDR_PER_MESSAGE: usize = 1000;
 /// How often the timeout monitor scans the outstanding-request registry.
 const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
 
-const KICKING_ATTEMPTS: u32 = 2;
-
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::bans::{Ban, Bans};
+use crate::network::broker::{Broker, RequestKey};
 use crate::network::NetworkManager;
 use crate::{
     network::{
@@ -136,15 +134,6 @@ impl From<NetworkMessage> for InboundMessage {
 pub type Inbound = (SocketAddr, Arc<InboundMessage>);
 type Subscribers = Mutex<HashMap<MessageType, Vec<UnboundedSender<Inbound>>>>;
 
-/// Every pipeline request the broker is handling, from `send` until the owning
-/// manager reports it answered (`request_answered`) or cancels it. The single home
-/// of request state: pipelines just declare what they want and the broker
-/// de-duplicates, paces, times out and retries.
-///
-/// - Membership is the de-dup set: `send` ignores a key already present.
-/// - `OnWire` entries carry the message so the timeout monitor can re-inject it.
-type Registry = Mutex<HashMap<RequestKey, ReqState>>;
-
 /// Message kinds a sync manager can subscribe to; the pump routes by mapping `cmd()` back to one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MessageType {
@@ -204,54 +193,12 @@ pub enum NetworkEvent {
     PeerDisconnected(SocketAddr),
 }
 
-/// Identity of a broker-tracked pipeline request: the de-dup, timeout and retry key.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum RequestKey {
-    /// `getheaders` — keyed by the locator's first hash (the segment tip).
-    Headers(dashcore::BlockHash),
-    /// `getcfheaders` — keyed by the stop hash.
-    CfHeaders(dashcore::BlockHash),
-    /// `getcfilters` — keyed by the start height.
-    CFilters(u32),
-    /// `getmnlistdiff` — keyed by the target block hash.
-    MnListDiff(dashcore::BlockHash),
-    /// Block `getdata` — keyed by the requested block hash.
-    Block(dashcore::BlockHash),
-}
-
-pub enum ReqState {
-    /// In the `MsgQueue`, not yet sent; held here only for de-dup.
-    Queued(u32),
-    /// Sent and awaiting a response. Carries the message so the timeout monitor can
-    /// retry it; boxed because a `NetworkMessage` dwarfs `Queued`.
-    OnWire(Box<OnWire>),
-}
-
-pub struct OnWire {
-    /// The CONNECTION the request was routed to, not the address: a close event for an
-    /// earlier connection to the same address must not pull back the new one's work.
-    peer: PeerId,
-    /// When this request last made progress: set on send, refreshed by every piece of
-    /// a streaming response, so a peer streaming steadily is not judged stalled.
-    last_progress: Instant,
-    /// Re-queued verbatim on timeout; requests are self-contained, so resending is a valid retry.
-    msg: NetworkMessage,
-    /// Queue order of `msg`, kept so a retry goes back to its place.
-    height: u32,
-    /// When it was sent, for hedging a block stuck at a slow peer.
-    sent: Instant,
-    /// The peer a copy was also sent to (endgame).
-    hedge: Option<PeerId>,
-    attempts: u32,
-}
-
 pub struct NetworkState {
     pub connected: Mutex<Vec<ConnectedPeer>>,
     pub backups: Mutex<Vec<DisconnectedPeer>>,
     pub discoverer: Mutex<PeerDiscoverer>,
     pub bans: Bans,
-    pub requests: Registry,
-    pub queue: MsgQueue,
+    pub broker: Broker,
     pub subscribers: Subscribers,
     pub events: broadcast::Sender<NetworkEvent>,
     pub inbound: UnboundedSender<PeerEvent>,
@@ -276,61 +223,6 @@ impl Drop for PeerNetworkManager {
         self.shutdown.cancel();
     }
 }
-
-/// Scheduling class of a queued message. The router drains classes by strict priority
-/// ([`DRAIN_PRIORITY`]), so a backlog of one type never blocks another.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum MsgClass {
-    /// Control traffic (mempool, tx, ping, chainlock/islock `getdata`,
-    /// `filterload`…): always first, few, and usually something is blocked on it.
-    Other,
-    Blocks,
-    CFilters,
-    CfHeaders,
-    Headers,
-}
-
-fn classify(msg: &NetworkMessage) -> MsgClass {
-    match msg {
-        NetworkMessage::GetData(inv)
-            if !inv.is_empty() && inv.iter().all(|i| matches!(i, Inventory::Block(_))) =>
-        {
-            MsgClass::Blocks
-        }
-        NetworkMessage::GetCFilters(_) => MsgClass::CFilters,
-        NetworkMessage::GetCFHeaders(_) => MsgClass::CfHeaders,
-        NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => MsgClass::Headers,
-        _ => MsgClass::Other,
-    }
-}
-
-/// One queue per class, each behind its own lock, so a pipeline enqueuing a burst
-/// only contends with itself.
-/// `(height, seq)`: lowest height first, then FIFO. Front inserts take negative seqs so
-/// they go before everything of the same height.
-type QueueKey = (u32, i64);
-
-pub struct MsgQueue {
-    other: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
-    blocks: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
-    cfilters: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
-    cfheaders: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
-    headers: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
-    back_seq: AtomicI64,
-    front_seq: AtomicI64,
-    len: AtomicUsize,
-    notify: Notify,
-}
-
-/// Downstream first: the stage closest to the wallet is the one waiting on the network,
-/// while the head of the chain has a full backlog and only waits for room.
-const MSG_CLASSES: usize = 5;
-
-/// Requests per class kept on the wire ahead of [`DRAIN_PRIORITY`] while the class has work.
-const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
-
-const DRAIN_PRIORITY: [MsgClass; MSG_CLASSES] =
-    [MsgClass::Other, MsgClass::Blocks, MsgClass::CFilters, MsgClass::CfHeaders, MsgClass::Headers];
 
 impl PeerNetworkManager {
     pub async fn new(config: &ClientConfig) -> Self {
@@ -357,8 +249,7 @@ impl PeerNetworkManager {
             backups: Mutex::new(Vec::with_capacity(30)),
             discoverer: Mutex::new(PeerDiscoverer::new(config)),
             bans: Bans::default(),
-            requests: Mutex::new(HashMap::new()),
-            queue: MsgQueue::new(),
+            broker: Broker::new(),
             subscribers: Mutex::new(HashMap::new()),
             events: broadcast::channel(4096).0,
             inbound,
@@ -410,8 +301,7 @@ impl NetworkManager for PeerNetworkManager {
         tracing::info!(target: "dash_spv::network", "network manager stopping: cancelling peers");
         self.session.lock().await.cancel();
         self.state.connected.lock().await.clear();
-        self.state.requests.lock().await.clear();
-        self.state.queue.pop_n(self.state.queue.len()).await;
+        self.state.broker.clear().await;
     }
 
     /// Ask the broker to make a request. De-duplicated by [`RequestKey`]: a request already
@@ -419,21 +309,7 @@ impl NetworkManager for PeerNetworkManager {
     /// set every tick. Keyless messages (tx, mempool, control `getdata`) are queued
     /// untracked.
     async fn enqueue(&self, height: u32, msg: NetworkMessage) {
-        let keys = request_keys(&msg);
-        if keys.is_empty() {
-            self.state.queue.push(height, msg).await;
-            return;
-        }
-        {
-            let mut reqs = self.state.requests.lock().await;
-            if keys.iter().any(|k| reqs.contains_key(k)) {
-                return; // already in play
-            }
-            for key in keys {
-                reqs.insert(key, ReqState::Queued(0));
-            }
-        }
-        self.state.queue.push(height, msg).await;
+        self.state.broker.enqueue(height, msg).await;
     }
 
     /// Send to one specific peer, bypassing the router. Needed for messages that set
@@ -460,10 +336,7 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn request_answered(&self, key: RequestKey) {
-        if !matches!(self.state.requests.lock().await.remove(&key), Some(ReqState::OnWire(_))) {
-            return;
-        }
-        self.state.queue.notify.notify_one();
+        self.state.broker.answered(&key).await;
     }
 
     /// Broadcast a message to all connected peers
@@ -527,8 +400,10 @@ impl NetworkManager for PeerNetworkManager {
 fn spawn_router(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
-            queue,
+            broker,
             connected,
+            costs,
+            global_cap,
             ..
         } = &*state;
         loop {
@@ -537,16 +412,16 @@ fn spawn_router(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHa
             }
             // Wait for work. `notify` fires both when a message is queued and
             // when a response frees a peer slot.
-            if queue.len() == 0 {
+            if broker.len() == 0 {
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
-                    _ = queue.notify.notified() => continue,
+                    _ = broker.notified() => continue,
                 }
             }
 
             let peers: Vec<PeerHandle> =
                 connected.lock().await.iter().map(|p| p.handle()).collect();
-            let sent = route_tick(&state, &peers).await;
+            let sent = broker.route(&peers, global_cap.load(Ordering::Relaxed), costs).await;
             drop(peers);
 
             if sent == 0 {
@@ -554,196 +429,12 @@ fn spawn_router(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHa
                 // a slot (both notify). The sleep is only a backstop against a missed wake.
                 tokio::select! {
                     _ = shutdown.cancelled() => break,
-                    _ = queue.notify.notified() => {},
+                    _ = broker.notified() => {},
                     _ = tokio::time::sleep(STALL_CHECK) => {},
                 }
             }
         }
     })
-}
-
-/// Pipeline keys of a router-paced request, recorded in the registry. Empty for
-/// non-pipeline messages.
-pub fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
-    match msg {
-        NetworkMessage::GetHeaders(m) | NetworkMessage::GetHeaders2(m) => {
-            m.locator_hashes.first().map(|h| RequestKey::Headers(*h)).into_iter().collect()
-        }
-        NetworkMessage::GetCFHeaders(m) => vec![RequestKey::CfHeaders(m.stop_hash)],
-        NetworkMessage::GetCFilters(m) => vec![RequestKey::CFilters(m.start_height)],
-        NetworkMessage::GetMnListD(m) => vec![RequestKey::MnListDiff(m.block_hash)],
-        // One `getdata` may name several blocks; each is its own tracked request.
-        NetworkMessage::GetData(inv) => inv
-            .iter()
-            .filter_map(|i| match i {
-                Inventory::Block(h) => Some(RequestKey::Block(*h)),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-async fn route_tick(state: &NetworkState, peers: &[PeerHandle]) -> usize {
-    let NetworkState {
-        queue,
-        requests,
-        costs,
-        ..
-    } = state;
-    let global_cap = state.global_cap.load(Ordering::Relaxed);
-    if peers.is_empty() {
-        return 0;
-    }
-
-    // Free capacity this round = min(sum of per-peer room, global room). Each peer's
-    // cap is its measured bandwidth-delay product; the global cap is our measured
-    // download capacity. Whichever binds first limits the round.
-    let total_in_flight: u64 = peers.iter().map(PeerHandle::in_flight_bytes).sum();
-    let per_peer_room: u64 =
-        peers.iter().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
-    let global_room = global_cap.saturating_sub(total_in_flight);
-    let budget = per_peer_room.min(global_room);
-    if budget == 0 {
-        return 0;
-    }
-
-    // A class with work queued but almost nothing on the wire goes first, so strict
-    // priority never parks a stage: headers are tiny yet head the whole chain.
-    let mut guaranteed = [MIN_IN_FLIGHT_PER_CLASS; MSG_CLASSES];
-    for state in requests.lock().await.values() {
-        if let ReqState::OnWire(o) = state {
-            let slot = &mut guaranteed[classify(&o.msg) as usize];
-            *slot = slot.saturating_sub(1);
-        }
-    }
-    let msgs = queue.pop_guaranteed(budget, &guaranteed, |m| costs.cost(m)).await;
-    let mut sent = 0;
-    // Anything popped but not sent goes BACK on the queue: its key is registered, so a
-    // dropped message would never be re-sent nor time out and its pipeline would stall.
-    let mut unsent: Vec<(u32, NetworkMessage)> = Vec::new();
-    // Recorded in the broker under one lock after the send loop.
-    let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle)> = Vec::new();
-    let mut msgs = msgs.into_iter();
-    for (height, msg) in msgs.by_ref() {
-        // Pick the least-loaded peer RELATIVE TO ITS OWN cap. Absolute free room
-        // concentrates load: the biggest cap wins every round and keeps growing while the
-        // others stay idle and never grow (measured: three identical peers split into one
-        // at cap 12 and two stuck at 2). Cross-multiplied to avoid floats; neither side
-        // can be zero (`cap >= FLOOR_BYTES`, full peers filtered above).
-        let Some(peer) = peers.iter().filter(|p| p.in_flight_bytes() < p.cap()).min_by(|a, b| {
-            (a.in_flight_bytes() as u128 * b.cap() as u128)
-                .cmp(&(b.in_flight_bytes() as u128 * a.cap() as u128))
-        }) else {
-            unsent.push((height, msg)); // every peer is at its measured cap
-            break;
-        };
-        if peer.send(&msg).await.is_ok() {
-            sent += 1;
-            // Record the peer so the monitor can attribute a stall to it.
-            on_wire.push((height, msg, peer.clone()));
-        } else {
-            tracing::warn!(target: "dash_spv::network", "router: send to {} failed", peer.addr());
-            unsent.push((height, msg));
-        }
-    }
-    unsent.extend(msgs); // whatever the loop never reached
-    queue.push_front_all(unsent).await;
-
-    if !on_wire.is_empty() {
-        let mut reqs = requests.lock().await;
-        for (height, msg, peer) in on_wire {
-            for key in request_keys(&msg) {
-                if let Some(slot) = reqs.get_mut(&key) {
-                    let attempts = match slot {
-                        ReqState::Queued(attempts) => *attempts,
-                        ReqState::OnWire(o) => o.attempts,
-                    };
-                    *slot = ReqState::OnWire(Box::new(OnWire {
-                        peer: peer.id(),
-                        msg: msg.clone(),
-                        height,
-                        last_progress: Instant::now(),
-                        sent: Instant::now(),
-                        hedge: None,
-                        attempts: attempts + 1,
-                    }));
-                }
-            }
-        }
-    }
-
-    if sent > 0 {
-        tracing::debug!(
-            target: "dash_spv::network",
-            "router: sent {} | peers={} queue={}",
-            sent,
-            peers.len(),
-            queue.len(),
-        );
-    }
-    sent
-}
-
-/// How long a block request waits at its peer before an idle peer is also asked.
-const HEDGE_AFTER: Duration = Duration::from_secs(2);
-
-/// Endgame (as in BitTorrent): with nothing queued, blocks are processed in height
-/// order, so one block stuck at a slow peer stalls everything after it while the other
-/// peers sit idle. Ask an idle peer for the lowest such blocks too; the first copy to
-/// arrive settles both.
-async fn hedge_stalled_blocks(state: &NetworkState, peers: &[PeerHandle]) -> usize {
-    let NetworkState {
-        requests,
-        costs,
-        ..
-    } = state;
-    let mut plan: Vec<(RequestKey, NetworkMessage, PeerHandle)> = Vec::new();
-    {
-        let reqs = requests.lock().await;
-        let mut stalled: Vec<(u32, &RequestKey, &OnWire)> = reqs
-            .iter()
-            .filter_map(|(key, state)| match state {
-                ReqState::OnWire(o)
-                    if matches!(key, RequestKey::Block(_))
-                        && o.hedge.is_none()
-                        && o.sent.elapsed() >= HEDGE_AFTER =>
-                {
-                    Some((o.height, key, o.as_ref()))
-                }
-                _ => None,
-            })
-            .collect();
-        stalled.sort_by_key(|(height, _, _)| *height);
-        let mut room: Vec<(PeerHandle, u64)> = peers
-            .iter()
-            .map(|p| (p.clone(), p.cap().saturating_sub(p.in_flight_bytes())))
-            .collect();
-        for (_, key, o) in stalled {
-            let Some((peer, left)) = room
-                .iter_mut()
-                .filter(|(p, left)| p.id() != o.peer && *left > 0)
-                .max_by_key(|(_, left)| *left)
-            else {
-                break;
-            };
-            *left = left.saturating_sub(costs.cost(&o.msg));
-            plan.push((key.clone(), o.msg.clone(), peer.clone()));
-        }
-    }
-    let mut hedged = 0;
-    for (key, msg, peer) in plan {
-        if peer.send(&msg).await.is_err() {
-            continue;
-        }
-        if let Some(ReqState::OnWire(o)) = requests.lock().await.get_mut(&key) {
-            if o.hedge.is_none() {
-                o.hedge = Some(peer.id());
-                hedged += 1;
-            }
-        }
-    }
-    hedged
 }
 
 /// How often the flow controller re-measures rates and re-sizes the byte caps.
@@ -925,7 +616,7 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             global_cap,
             connected,
             peer_wake,
-            queue,
+            broker,
             costs,
             ..
         } = &*state;
@@ -1032,8 +723,8 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             let underserving = underserving_peer(&g);
             let handles: Vec<PeerHandle> = g.iter().map(|p| p.handle()).collect();
             drop(g);
-            if queue.len() == 0 {
-                let hedged = hedge_stalled_blocks(&state, &handles).await;
+            if broker.len() == 0 {
+                let hedged = broker.hedge(&handles, costs).await;
                 if hedged > 0 {
                     tracing::debug!(target: "dash_spv::network", "endgame: hedged {} block request(s)", hedged);
                 }
@@ -1339,32 +1030,6 @@ fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) 
     )
 }
 
-/// Pull every on-wire request routed to one of `gone` back to `Queued`, returning
-/// the messages to re-queue. Shared by both ways of losing a peer (monitor kick,
-/// socket close); otherwise the request is stranded since the monitor only watches
-/// connected peers. The key stays registered so de-dup still holds while queued.
-async fn requeue_requests_from(
-    requests: &Registry,
-    gone: &HashSet<PeerId>,
-) -> Vec<(u32, NetworkMessage)> {
-    let mut reinject = Vec::new();
-    let mut reqs = requests.lock().await;
-    let keys: Vec<RequestKey> = reqs
-        .iter()
-        .filter_map(|(k, s)| match s {
-            ReqState::OnWire(o) if gone.contains(&o.peer) => Some(k.clone()),
-            _ => None,
-        })
-        .collect();
-    for key in keys {
-        if let Some(ReqState::OnWire(o)) = reqs.remove(&key) {
-            reqs.insert(key, ReqState::Queued(o.attempts));
-            reinject.push((o.height, o.msg));
-        }
-    }
-    reinject
-}
-
 /// Time requests out and evict the peers that stalled on them.
 ///
 /// A peer is a culprit when it has in-flight work and no bytes have arrived from it
@@ -1378,9 +1043,8 @@ async fn requeue_requests_from(
 fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
-            requests,
+            broker,
             connected,
-            queue,
             peer_wake,
             max_peers,
             bans,
@@ -1423,43 +1087,15 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             };
             // A request that stopped making progress also condemns its peer: the
             // per-peer byte check above sees unrelated traffic and judges it healthy.
-            let mut retried = Vec::new();
-            {
-                let timeouts: HashMap<PeerId, Duration> = connected
-                    .lock()
-                    .await
-                    .iter()
-                    .map(|p| (p.id(), request_timeout(p.lag_ms())))
-                    .collect();
-                let mut reqs = requests.lock().await;
-                let mut unanswerable = Vec::new();
-                for (key, state) in reqs.iter() {
-                    if let ReqState::OnWire(o) = state {
-                        let timeout = timeouts.get(&o.peer).copied().unwrap_or(REQUEST_TIMEOUT);
-                        if now.duration_since(o.last_progress) <= timeout {
-                            continue;
-                        }
-                        if o.attempts < KICKING_ATTEMPTS {
-                            culprits.insert(o.peer);
-                        } else {
-                            unanswerable.push(key.clone());
-                        }
-                    }
-                }
-                for key in unanswerable {
-                    if let Some(ReqState::OnWire(o)) = reqs.remove(&key) {
-                        tracing::debug!(
-                            target: "dash_spv::network",
-                            "{key:?} unanswered after {} attempts, retrying without kicking {}",
-                            o.attempts,
-                            o.peer,
-                        );
-                        reqs.insert(key, ReqState::Queued(o.attempts));
-                        retried.push((o.height, o.msg));
-                    }
-                }
-            }
-            queue.push_front_all(retried).await;
+            let timeouts: HashMap<PeerId, Duration> = connected
+                .lock()
+                .await
+                .iter()
+                .map(|p| (p.id(), request_timeout(p.lag_ms())))
+                .collect();
+            culprits.extend(
+                broker.expire(|peer| timeouts.get(peer).copied().unwrap_or(REQUEST_TIMEOUT)).await,
+            );
 
             if culprits.is_empty() {
                 continue;
@@ -1467,7 +1103,7 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             // Re-queue every on-wire request of a culprit (fresh ones too: the connection is
             // going away), keeping keys as Queued so de-dup holds.
-            let reinject = requeue_requests_from(requests, &culprits).await;
+            let retried = broker.requeue_from(&culprits).await;
 
             // Drop culprits still in the set (some may already be gone).
             let (dropped, remaining) = {
@@ -1496,12 +1132,9 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 "request timeout: kicked {} peer(s) {:?}, retried {} request(s)",
                 dropped,
                 culprits,
-                reinject.len(),
+                retried,
             );
-
-            queue.push_front_all(reinject).await;
-            // Freed capacity (dropped peers) — wake the router to re-evaluate.
-            queue.notify.notify_one();
+            broker.wake();
         }
     })
 }
@@ -1516,8 +1149,7 @@ fn spawn_pump(
             subscribers,
             connected,
             events,
-            queue,
-            requests,
+            broker,
             peer_wake,
             max_peers,
             discoverer,
@@ -1543,24 +1175,7 @@ fn spawn_pump(
                     total_recv += 1;
 
                     if let NetworkMessage::NotFound(inv) = &*msg {
-                        let mut reqs = requests.lock().await;
-                        let mut retried = Vec::new();
-                        for item in inv {
-                            let Inventory::Block(hash) = item else {
-                                continue;
-                            };
-                            let key = RequestKey::Block(*hash);
-                            if matches!(reqs.get(&key), Some(ReqState::OnWire(o)) if o.peer == peer)
-                            {
-                                let Some(ReqState::OnWire(o)) = reqs.remove(&key) else {
-                                    unreachable!("matched just above");
-                                };
-                                reqs.insert(key, ReqState::Queued(o.attempts));
-                                retried.push((o.height, o.msg));
-                            }
-                        }
-                        drop(reqs);
-                        queue.push_front_all(retried).await;
+                        broker.not_found(peer, inv).await;
                     }
 
                     // A block is settled on arrival, not when the wallet gets to it: blocks
@@ -1568,14 +1183,7 @@ fn spawn_pump(
                     // charging that wait to the peer reads as a queue and shrinks its cap.
                     // The first copy of a hedged block settles it: the other is a cancel.
                     if let NetworkMessage::Block(block) = &*msg {
-                        let key = RequestKey::Block(block.block_hash());
-                        let mut reqs = requests.lock().await;
-                        if matches!(reqs.get(&key), Some(ReqState::OnWire(o)) if o.peer == peer || o.hedge == Some(peer))
-                        {
-                            reqs.remove(&key);
-                            drop(reqs);
-                            queue.notify.notify_one();
-                        }
+                        broker.block_arrived(peer, block.block_hash()).await;
                     }
 
                     // Peers answer in order, so any answer means the peer is working
@@ -1589,15 +1197,7 @@ fn spawn_pump(
                             | NetworkMessage::Headers(_)
                             | NetworkMessage::Headers2(_)
                     ) {
-                        let now = Instant::now();
-                        let mut reqs = requests.lock().await;
-                        for state in reqs.values_mut() {
-                            if let ReqState::OnWire(o) = state {
-                                if o.peer == peer {
-                                    o.last_progress = now;
-                                }
-                            }
-                        }
+                        broker.progress(peer).await;
                     }
                     if total_recv.is_multiple_of(250_000) {
                         let mut dist: Vec<(SocketAddr, u64)> =
@@ -1668,7 +1268,7 @@ fn spawn_pump(
                     // Early router wake on inbound traffic (`request_answered` notifies again for the
                     // real capacity). `cfilter` is skipped: only the last of ~1000 frees anything.
                     if mt != Some(MessageType::CFilter) {
-                        queue.notify.notify_one();
+                        broker.wake();
                     }
 
                     {
@@ -1713,18 +1313,16 @@ fn spawn_pump(
 
                     // Requeue the departed peer's in-flight requests; the timeout monitor only watches
                     // connected peers, so they would otherwise leak in the registry.
-                    let reinject = requeue_requests_from(requests, &HashSet::from([peer])).await;
+                    let retried = broker.requeue_from(&HashSet::from([peer])).await;
 
                     tracing::info!(
                         target: "dash_spv::network",
                         "peer disconnected: {} | {} peers remaining | {} request(s) re-queued",
                         addr,
                         remaining,
-                        reinject.len(),
+                        retried,
                     );
-
-                    queue.push_front_all(reinject).await;
-                    queue.notify.notify_one();
+                    broker.wake();
 
                     let _ = events.send(NetworkEvent::PeerDisconnected(addr));
 
@@ -1738,119 +1336,15 @@ fn spawn_pump(
     })
 }
 
-impl MsgQueue {
-    fn new() -> Self {
-        Self {
-            other: Mutex::new(BTreeMap::new()),
-            blocks: Mutex::new(BTreeMap::new()),
-            cfilters: Mutex::new(BTreeMap::new()),
-            cfheaders: Mutex::new(BTreeMap::new()),
-            headers: Mutex::new(BTreeMap::new()),
-            back_seq: AtomicI64::new(0),
-            front_seq: AtomicI64::new(-1),
-            len: AtomicUsize::new(0),
-            notify: Notify::new(),
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.len.load(Ordering::SeqCst)
-    }
-
-    fn queue(&self, class: MsgClass) -> &Mutex<BTreeMap<QueueKey, NetworkMessage>> {
-        match class {
-            MsgClass::Other => &self.other,
-            MsgClass::Blocks => &self.blocks,
-            MsgClass::CFilters => &self.cfilters,
-            MsgClass::CfHeaders => &self.cfheaders,
-            MsgClass::Headers => &self.headers,
-        }
-    }
-
-    /// Take up to `n` messages in strict [`DRAIN_PRIORITY`] order, fully draining a
-    /// class (up to the budget) before touching the next.
-    async fn pop_n(&self, n: usize) -> Vec<(u32, NetworkMessage)> {
-        self.pop_guaranteed(n as u64, &[0; MSG_CLASSES], |_| 1).await
-    }
-
-    /// [`pop_n`](Self::pop_n) by `cost` until it reaches `budget` (the last one may
-    /// overshoot), first taking up to `guaranteed[class]` from each class.
-    async fn pop_guaranteed(
-        &self,
-        budget: u64,
-        guaranteed: &[usize; MSG_CLASSES],
-        cost: impl Fn(&NetworkMessage) -> u64,
-    ) -> Vec<(u32, NetworkMessage)> {
-        let mut out: Vec<(u32, NetworkMessage)> = Vec::new();
-        let mut spent = 0u64;
-        for class in DRAIN_PRIORITY {
-            let mut q = self.queue(class).lock().await;
-            let mut take = guaranteed[class as usize];
-            while take > 0 && spent < budget {
-                let Some(((height, _), msg)) = q.pop_first() else {
-                    break;
-                };
-                spent += cost(&msg);
-                out.push((height, msg));
-                take -= 1;
-            }
-        }
-        for class in DRAIN_PRIORITY {
-            let mut q = self.queue(class).lock().await;
-            while spent < budget {
-                let Some(((height, _), msg)) = q.pop_first() else {
-                    break;
-                };
-                spent += cost(&msg);
-                out.push((height, msg));
-            }
-        }
-        self.len.fetch_sub(out.len(), Ordering::SeqCst);
-        out
-    }
-
-    async fn push(&self, height: u32, msg: NetworkMessage) {
-        let key = (height, self.back_seq.fetch_add(1, Ordering::SeqCst));
-        self.queue(classify(&msg)).lock().await.insert(key, msg);
-        self.len.fetch_add(1, Ordering::SeqCst);
-        self.notify.notify_one();
-    }
-
-    /// Put messages first among their height, preserving order: popped-but-unsent ones
-    /// (dropping one would stall its pipeline forever, see `route_tick`) and retries.
-    async fn push_front_all(&self, msgs: Vec<(u32, NetworkMessage)>) {
-        if msgs.is_empty() {
-            return;
-        }
-        let n = msgs.len();
-        for (height, msg) in msgs.into_iter().rev() {
-            let key = (height, self.front_seq.fetch_sub(1, Ordering::SeqCst));
-            self.queue(classify(&msg)).lock().await.insert(key, msg);
-        }
-        self.len.fetch_add(n, Ordering::SeqCst);
-        self.notify.notify_one();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::client::ClientConfig;
-    use crate::network::SendRequest;
     use crate::test_utils::test_socket_address;
-    use dashcore::network::message_blockdata::GetHeadersMessage;
-    use dashcore::network::message_filter::{CFilter, GetCFHeaders, GetCFilters};
-    use dashcore::network::message_sml::GetMnListDiff;
-    use dashcore::{BlockHash, Txid};
-    use dashcore_hashes::Hash;
+    use dashcore::network::message_blockdata::Inventory;
+    use dashcore::network::message_filter::{CFilter, GetCFilters};
+    use dashcore::BlockHash;
     use test_case::test_case;
-
-    fn get_headers(locator: u32) -> NetworkMessage {
-        NetworkMessage::GetHeaders(GetHeadersMessage::new(
-            vec![BlockHash::dummy(locator)],
-            BlockHash::dummy(0),
-        ))
-    }
 
     fn get_cfilters(start: u32) -> NetworkMessage {
         NetworkMessage::GetCFilters(GetCFilters {
@@ -1860,20 +1354,8 @@ mod tests {
         })
     }
 
-    fn get_cfheaders(stop: u32) -> NetworkMessage {
-        NetworkMessage::GetCFHeaders(GetCFHeaders {
-            filter_type: 0,
-            start_height: 0,
-            stop_hash: BlockHash::dummy(stop),
-        })
-    }
-
     fn block(n: u32) -> Inventory {
         Inventory::Block(BlockHash::dummy(n))
-    }
-
-    fn tx(n: u8) -> Inventory {
-        Inventory::Transaction(Txid::from_byte_array([n; 32]))
     }
 
     fn conn(addr: u8, n: u64) -> PeerId {
@@ -1886,38 +1368,6 @@ mod tests {
         PeerNetworkManager::new(&config).await
     }
 
-    async fn mark_on_wire(net: &PeerNetworkManager, msg: &NetworkMessage, peer: PeerId) {
-        let mut reqs = net.state.requests.lock().await;
-        for key in request_keys(msg) {
-            let on_wire = OnWire {
-                peer,
-                last_progress: Instant::now(),
-                msg: msg.clone(),
-                height: 0,
-                sent: Instant::now(),
-                hedge: None,
-                attempts: 1,
-            };
-            reqs.insert(key, ReqState::OnWire(Box::new(on_wire)));
-        }
-    }
-
-    async fn state_of(net: &PeerNetworkManager, key: &RequestKey) -> Option<&'static str> {
-        net.state.requests.lock().await.get(key).map(|s| match s {
-            ReqState::Queued(_) => "queued",
-            ReqState::OnWire(_) => "on_wire",
-        })
-    }
-
-    fn start_heights(msgs: &[(u32, NetworkMessage)]) -> Vec<u32> {
-        msgs.iter()
-            .map(|(_, m)| match m {
-                NetworkMessage::GetCFilters(g) => g.start_height,
-                other => panic!("unexpected {other:?}"),
-            })
-            .collect()
-    }
-
     #[test]
     fn headers_carry_the_hashes_computed_while_decompressing_them() {
         let header = Header::dummy(1);
@@ -1927,78 +1377,6 @@ mod tests {
         assert_eq!(msg.header_hashes(), Some([hash].as_slice()));
         assert_eq!(*msg, NetworkMessage::Headers(vec![header]));
         assert_eq!(InboundMessage::new(NetworkMessage::Verack).header_hashes(), None);
-    }
-
-    #[test_case(get_headers(1) => vec![RequestKey::Headers(BlockHash::dummy(1))]; "getheaders")]
-    #[test_case(get_cfheaders(2) => vec![RequestKey::CfHeaders(BlockHash::dummy(2))]; "getcfheaders")]
-    #[test_case(get_cfilters(100) => vec![RequestKey::CFilters(100)]; "getcfilters")]
-    #[test_case(NetworkMessage::GetMnListD(GetMnListDiff {
-        base_block_hash: BlockHash::dummy(3),
-        block_hash: BlockHash::dummy(4),
-    }) => vec![RequestKey::MnListDiff(BlockHash::dummy(4))]; "getmnlistd")]
-    #[test_case(NetworkMessage::GetData(vec![block(1), tx(7), block(2)])
-        => vec![RequestKey::Block(BlockHash::dummy(1)), RequestKey::Block(BlockHash::dummy(2))];
-        "getdata splits per block and ignores other inventory")]
-    #[test_case(NetworkMessage::GetData(vec![tx(1)]) => Vec::<RequestKey>::new(); "getdata tx")]
-    #[test_case(NetworkMessage::MemPool => Vec::<RequestKey>::new(); "mempool")]
-    fn request_keys_identify_tracked_requests(msg: NetworkMessage) -> Vec<RequestKey> {
-        request_keys(&msg)
-    }
-
-    #[test_case(conn(1, 0), conn(2, 0), conn(1, 0), &[0]; "another peer's work is untouched")]
-    #[test_case(conn(1, 0), conn(1, 1), conn(1, 0), &[0]; "the closed connection gives its work back")]
-    #[test_case(conn(1, 1), conn(2, 0), conn(1, 0), &[]; "a late close leaves the replacement's work")]
-    #[tokio::test]
-    async fn losing_a_connection_requeues_only_its_requests(
-        carrier_of_0: PeerId,
-        carrier_of_1000: PeerId,
-        gone: PeerId,
-        expected: &[u32],
-    ) {
-        let net = broker().await;
-        mark_on_wire(&net, &get_cfilters(0), carrier_of_0).await;
-        mark_on_wire(&net, &get_cfilters(1000), carrier_of_1000).await;
-
-        let requeued = requeue_requests_from(&net.state.requests, &HashSet::from([gone])).await;
-
-        assert_eq!(start_heights(&requeued), expected);
-        for height in [0, 1000] {
-            let want = if expected.contains(&height) {
-                "queued"
-            } else {
-                "on_wire"
-            };
-            assert_eq!(state_of(&net, &RequestKey::CFilters(height)).await, Some(want));
-        }
-    }
-
-    #[tokio::test]
-    async fn a_requeued_request_dedups_until_its_response_arrives() {
-        let net = broker().await;
-        let peer = conn(1, 0);
-        mark_on_wire(&net, &get_cfilters(0), peer).await;
-        requeue_requests_from(&net.state.requests, &HashSet::from([peer])).await;
-        assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, Some("queued"));
-
-        net.send(get_cfilters(0)).await;
-        assert_eq!(net.state.queue.len(), 0);
-
-        net.request_answered(RequestKey::CFilters(0)).await;
-        assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, None);
-        net.send(get_cfilters(0)).await;
-        assert_eq!(net.state.queue.len(), 1);
-    }
-
-    #[test_case(vec![get_cfilters(0), get_cfilters(0), get_cfilters(1000)], 2, 2; "a request in play is dropped")]
-    #[test_case(vec![NetworkMessage::MemPool, NetworkMessage::MemPool], 2, 0; "untracked traffic is never deduplicated")]
-    #[tokio::test]
-    async fn send_dedups_by_request_key(msgs: Vec<NetworkMessage>, queued: usize, tracked: usize) {
-        let net = broker().await;
-        for msg in msgs {
-            net.send(msg).await;
-        }
-        assert_eq!(net.state.queue.len(), queued);
-        assert_eq!(net.state.requests.lock().await.len(), tracked);
     }
 
     /// Zero is what the sync layer acts on, so the count must fall as well as rise.
@@ -2036,7 +1414,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_timeout_monitor_requeues_stalled_requests(streamer: Option<u8>, stalls: bool) {
         let net = broker().await;
-        mark_on_wire(&net, &get_cfilters(0), conn(1, 0)).await;
+        net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
 
         // Two gaps that each stay under the deadline but together exceed it.
         for _ in 0..2 {
@@ -2062,57 +1440,8 @@ mod tests {
         } else {
             "on_wire"
         };
-        assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, Some(want));
-        assert_eq!(net.state.queue.len(), stalls as usize);
-    }
-
-    #[test_case(get_headers(1) => MsgClass::Headers)]
-    #[test_case(get_cfheaders(1) => MsgClass::CfHeaders)]
-    #[test_case(get_cfilters(0) => MsgClass::CFilters)]
-    #[test_case(NetworkMessage::GetData(vec![block(1)]) => MsgClass::Blocks; "getdata blocks")]
-    #[test_case(NetworkMessage::GetData(vec![tx(1)]) => MsgClass::Other; "getdata tx is control traffic")]
-    #[test_case(NetworkMessage::MemPool => MsgClass::Other)]
-    fn classify_cases(msg: NetworkMessage) -> MsgClass {
-        classify(&msg)
-    }
-
-    #[tokio::test]
-    async fn queue_drains_in_strict_priority_order() {
-        let q = MsgQueue::new();
-        q.push(0, get_cfilters(0)).await;
-        q.push(0, NetworkMessage::GetData(vec![block(1)])).await;
-        q.push(0, get_cfheaders(1)).await;
-        q.push(0, get_headers(1)).await;
-        q.push(0, NetworkMessage::MemPool).await;
-
-        let drained: Vec<MsgClass> = q.pop_n(5).await.iter().map(|(_, m)| classify(m)).collect();
-        assert_eq!(
-            drained,
-            [
-                MsgClass::Other,
-                MsgClass::Blocks,
-                MsgClass::CFilters,
-                MsgClass::CfHeaders,
-                MsgClass::Headers
-            ]
-        );
-        assert_eq!(q.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn pop_n_respects_its_budget_and_unsent_messages_go_back_to_the_front() {
-        let q = MsgQueue::new();
-        for start in [0, 1000, 2000] {
-            q.push(start, get_cfilters(start)).await;
-        }
-
-        let popped = q.pop_n(1).await;
-        assert_eq!(start_heights(&popped), [0]);
-        assert!(q.pop_n(0).await.is_empty());
-        assert_eq!(q.len(), 2);
-
-        q.push_front_all(popped).await;
-        assert_eq!(start_heights(&q.pop_n(3).await), [0, 1000, 2000]);
+        assert_eq!(net.state.broker.state_of(&RequestKey::CFilters(0)).await, Some(want));
+        assert_eq!(net.state.broker.len(), stalls as usize);
     }
 
     #[test_case(&[&[MessageType::Inv], &[MessageType::Inv]], 0, &[1, 1]; "every subscriber of the type")]
