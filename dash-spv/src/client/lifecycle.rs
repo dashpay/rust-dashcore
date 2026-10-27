@@ -28,6 +28,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinSet;
 
 impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Create a new SPV client with the given configuration, network and wallet.
@@ -78,6 +79,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             sync_coordinator: Arc::new(Mutex::new(SyncCoordinator::new(initial_progress.clone()))),
             sync_loop: Arc::new(Mutex::new(None)),
             running: Arc::new(AtomicBool::new(false)),
+            detached_tasks: Arc::new(Mutex::new(JoinSet::new())),
             event_handlers: Arc::new(event_handlers),
         };
 
@@ -125,6 +127,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                 storage.block_headers(),
                 storage.metadata(),
                 checkpoint_manager,
+                config.network,
             )
             .await?,
         );
@@ -217,36 +220,50 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         Ok(())
     }
 
-    /// Stop the SPV client.
+    /// Stop the SPV client. Returns once nothing the client started holds its
+    /// storage any more.
     pub async fn stop(&self) {
         let mut sync_loop = self.sync_loop.lock().await;
         if let Some(running) = sync_loop.take() {
             self.stop_locked(running).await;
         }
+        drop(sync_loop);
+
+        // Joined under the lock, so a concurrent `stop` waits for them too. A
+        // task only stops the loop that spawned it, which has already spawned
+        // all it does, so none waits on a loop that waits on this lock.
+        let mut tasks = self.detached_tasks.lock().await;
+        while let Some(result) = tasks.join_next().await {
+            if let Err(e) = result {
+                tracing::warn!("Detached client task failed: {}", e);
+            }
+        }
     }
 
-    /// Stop the client if its sync loop failed. A loop that was stopped or
-    /// replaced by a later `run` in the meantime is left alone.
-    pub(super) async fn stop_failed(&self) {
+    /// Stop the client if its sync loop `loop_id` failed. A loop that was
+    /// stopped or replaced by a later `run` in the meantime is left alone.
+    pub(super) async fn stop_failed(&self, loop_id: u64) {
         let mut sync_loop = self.sync_loop.lock().await;
-        if let Some(failed) = sync_loop.take_if(|running| running.shutdown.is_cancelled()) {
+        if let Some(failed) = sync_loop.take_if(|running| running.id == loop_id) {
             self.stop_locked(failed).await;
         }
     }
 
-    /// Recover from a fork at `fork_height`: stop the client, drop the stored
-    /// chain and what the wallets recorded above the fork, and run again, so
-    /// the client syncs onto the branch the network follows. A loop that was
-    /// stopped or replaced in the meantime is left alone.
+    /// Recover from a fork the sync loop `loop_id` detected at `fork_height`:
+    /// stop the client, drop the stored chain and what the wallets recorded
+    /// above the fork, and run again, so the client syncs onto the branch the
+    /// network follows. A loop that was stopped or replaced in the meantime is
+    /// left alone.
     ///
     /// Boxed because the client it runs again can recover from a fork too.
     pub(super) fn handle_fork(
         &self,
         fork_height: u32,
+        loop_id: u64,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             let mut sync_loop = self.sync_loop.lock().await;
-            let Some(forked) = sync_loop.take_if(|running| running.shutdown.is_cancelled()) else {
+            let Some(forked) = sync_loop.take_if(|running| running.id == loop_id) else {
                 return Ok(());
             };
             self.stop_locked(forked).await;
@@ -287,6 +304,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     pub(super) async fn stop_locked(
         &self,
         SyncLoop {
+            id: _,
             task,
             shutdown,
         }: SyncLoop,

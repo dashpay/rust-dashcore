@@ -38,7 +38,7 @@ pub struct MockNetworkManager {
     /// it never correlated fails here instead of hanging against a real broker.
     in_play: Mutex<HashSet<RequestKey>>,
     subscribers: Mutex<Vec<Subscriber>>,
-    events_tx: broadcast::Sender<NetworkEvent>,
+    events_tx: Mutex<broadcast::Sender<NetworkEvent>>,
     tip: AtomicU32,
     connected: AtomicU32,
 }
@@ -59,10 +59,16 @@ impl MockNetworkManager {
             answered: Mutex::new(Vec::new()),
             in_play: Mutex::new(HashSet::new()),
             subscribers: Mutex::new(Vec::new()),
-            events_tx,
+            events_tx: Mutex::new(events_tx),
             tip: AtomicU32::new(0),
             connected: AtomicU32::new(1),
         }
+    }
+
+    /// Close the network event bus, which fails the sync loop of a client
+    /// running on this network.
+    pub fn close_network_events(&self) {
+        *self.events_tx.lock().expect("mock mutex poisoned") = broadcast::Sender::new(1);
     }
 
     pub fn sent_messages(&self) -> Vec<NetworkMessage> {
@@ -124,7 +130,7 @@ impl MockNetworkManager {
     }
 
     pub fn emit_event(&self, event: NetworkEvent) {
-        let _ = self.events_tx.send(event);
+        let _ = self.events_tx.lock().expect("mock mutex poisoned").send(event);
     }
 }
 
@@ -180,7 +186,7 @@ impl NetworkManager for MockNetworkManager {
     }
 
     fn events(&self) -> broadcast::Receiver<NetworkEvent> {
-        self.events_tx.subscribe()
+        self.events_tx.lock().expect("mock mutex poisoned").subscribe()
     }
 
     fn tip(&self) -> u32 {

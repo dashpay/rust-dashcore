@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             headers.push(client.header_at(h).await?.ok_or(format!("header {h} not stored"))?);
         }
 
-        BlockHeaderValidator::new()
+        BlockHeaderValidator::new(network, vec![], height - CHECKPOINT_HEADERS as u32)
             .validate(&headers)
             .map_err(|e| format!("checkpoint {height} is invalid: {e}"))?;
 

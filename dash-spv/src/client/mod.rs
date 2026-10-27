@@ -46,8 +46,10 @@ mod tests {
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::WalletManager;
     use std::sync::Arc;
+    use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::RwLock;
+    use tokio::time::{sleep, timeout};
 
     const TEST_MNEMONIC: &str =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -107,6 +109,36 @@ mod tests {
         // Explicit `start_from_height` wins over the wallet birth height and is honored
         // even below the floor.
         assert_eq!(anchored_tip(120_000, Some(60_000)).await.0, 50_000);
+    }
+
+    /// A failed sync loop is stopped by a task of its own, and `stop` waits for
+    /// it, so it no longer holds the storage once `stop` returns.
+    #[tokio::test]
+    async fn stop_waits_for_the_stop_of_a_failed_loop() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = ClientConfig::testnet()
+            .without_filters()
+            .without_masternodes()
+            .with_storage_path(temp_dir.path());
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let client =
+            DashSpvClient::new(config, MockNetworkManager::new(), wallet, vec![Arc::new(())])
+                .await
+                .expect("client construction must succeed");
+
+        client.run().await.expect("client must start");
+        client.network.close_network_events();
+
+        timeout(Duration::from_secs(5), async {
+            while client.detached_tasks.lock().await.is_empty() {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the failed loop must be stopped by a detached task");
+
+        client.stop().await;
+        assert_eq!(Arc::strong_count(&client.storage), 1);
     }
 
     #[tokio::test]
