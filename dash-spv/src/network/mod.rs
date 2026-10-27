@@ -1,3 +1,4 @@
+mod bans;
 mod costs;
 mod discovery;
 mod manager;
@@ -122,6 +123,9 @@ pub trait NetworkManager: Send + Sync + 'static {
     fn tip(&self) -> u32;
 
     async fn connected_count(&self) -> u32;
+
+    /// Closes the peer and refuses to dial it again for a day.
+    async fn ban_peer(&self, addr: SocketAddr);
 }
 
 /// `send` on any [`NetworkManager`], including `dyn NetworkManager`.

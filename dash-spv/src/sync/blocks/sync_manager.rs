@@ -64,7 +64,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
 
     async fn handle_message(
         &mut self,
-        _peer: SocketAddr,
+        peer: SocketAddr,
         msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
@@ -75,6 +75,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         let hashed_block = HashedBlock::from(block);
 
         if let Err(e) = BlockValidator::new().validate(&hashed_block) {
+            network.ban_peer(peer).await;
             self.pipeline.send_pending(network).await?;
             return Err(e.into());
         }

@@ -79,7 +79,6 @@ const FILL_TICK: Duration = Duration::from_secs(2);
 
 const DIAL_MARGIN: usize = 2;
 const CONNECT_DEADLINE: Duration = Duration::from_secs(20);
-const MAX_DIAL_BACKOFF: Duration = Duration::from_secs(60);
 
 /// Cap on remembered (ranked) backup addresses, as a multiple of `max_peers`.
 const BACKUP_MULTIPLE: usize = 8;
@@ -112,6 +111,7 @@ const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
 const KICKING_ATTEMPTS: u32 = 2;
 
 use crate::error::{NetworkError, NetworkResult};
+use crate::network::bans::{Ban, Bans};
 use crate::network::NetworkManager;
 use crate::{
     network::{
@@ -308,6 +308,7 @@ pub struct PeerNetworkManager {
     bytes: Arc<AtomicU64>,
     /// Global bound for CPU-heavy headers2 decompression work.
     headers2_decompression_semaphore: Arc<Semaphore>,
+    bans: Arc<Bans>,
     // Cancelled on drop to tear down the router, pump, timeout monitor and bandwidth controller.
     shutdown: CancellationToken,
     // Cancelled by `stop()` to tear down the supervisor and peer readers; `start()`
@@ -439,6 +440,7 @@ impl PeerNetworkManager {
             requests.clone(),
         );
 
+        let bans = Arc::new(Bans::default());
         spawn_timeout_monitor(
             requests.clone(),
             connected_peers.clone(),
@@ -446,6 +448,7 @@ impl PeerNetworkManager {
             shutdown.clone(),
             peer_wake.clone(),
             max_peers,
+            bans.clone(),
         );
 
         spawn_flow_controller(
@@ -479,6 +482,7 @@ impl PeerNetworkManager {
             headers2_decompression_semaphore: Arc::new(Semaphore::new(
                 headers2_decompression_parallelism(),
             )),
+            bans,
             session: Mutex::new(shutdown.child_token()),
             shutdown,
         }
@@ -515,6 +519,7 @@ impl NetworkManager for PeerNetworkManager {
             self.headers2_decompression_semaphore.clone(),
             self.msg_queue.costs.clone(),
             self.user_agent.clone(),
+            self.bans.clone(),
         );
     }
 
@@ -624,6 +629,13 @@ impl NetworkManager for PeerNetworkManager {
 
     async fn connected_count(&self) -> u32 {
         self.connected_peers.lock().await.len() as u32
+    }
+
+    async fn ban_peer(&self, addr: SocketAddr) {
+        self.bans.ban(addr, Ban::Misbehaved).await;
+        for peer in self.connected_peers.lock().await.iter().filter(|p| p.addr() == addr) {
+            peer.close();
+        }
     }
 
     fn events(&self) -> broadcast::Receiver<NetworkEvent> {
@@ -1192,7 +1204,7 @@ struct Supervisor {
     best_lag_ms: AtomicU32,
     /// When a slow peer was last swapped out, for [`SWAP_COOLDOWN`].
     last_swap: Mutex<Option<Instant>>,
-    failed_dials: Mutex<HashMap<SocketAddr, (u32, Instant)>>,
+    bans: Arc<Bans>,
 }
 
 impl Supervisor {
@@ -1224,13 +1236,10 @@ impl Supervisor {
         }
         let live: HashSet<SocketAddr> =
             self.connected.lock().await.iter().map(|p| p.addr()).collect();
-        let now = Instant::now();
-        let failed = self.failed_dials.lock().await;
+        let banned = self.bans.banned().await;
         let mut seen = HashSet::new();
         out.retain(|p| {
-            !live.contains(&p.addr())
-                && failed.get(&p.addr()).is_none_or(|(_, retry)| *retry <= now)
-                && seen.insert(p.addr())
+            !live.contains(&p.addr()) && !banned.contains(&p.addr()) && seen.insert(p.addr())
         });
         out
     }
@@ -1300,6 +1309,7 @@ impl Supervisor {
                     self.headers2_decompression_semaphore.clone(),
                     self.costs.clone(),
                     &self.user_agent,
+                    self.bans.clone(),
                 );
                 async move {
                     let result = tokio::select! {
@@ -1318,13 +1328,10 @@ impl Supervisor {
         let mut leftover: Vec<ConnectedPeer> = Vec::new();
         while let Some((addr, result)) = inflight.next().await {
             let Ok(peer) = result else {
-                let mut failed = self.failed_dials.lock().await;
-                let fails = failed.get(&addr).map_or(0, |(fails, _)| *fails) + 1;
-                let backoff = MAX_DIAL_BACKOFF.min(Duration::from_secs(1 << fails.min(6)));
-                failed.insert(addr, (fails, Instant::now() + backoff));
+                self.bans.ban(addr, Ban::DialFailed).await;
                 continue;
             };
-            self.failed_dials.lock().await.remove(&addr);
+            self.bans.dialed(addr).await;
             let handle = peer.handle();
             self.best_tip.fetch_max(peer.version().start_height.max(0) as u32, Ordering::Relaxed);
 
@@ -1475,6 +1482,7 @@ fn spawn_peer_supervisor(
     headers2_decompression_semaphore: Arc<Semaphore>,
     costs: Arc<ResponseCosts>,
     user_agent: Arc<str>,
+    bans: Arc<Bans>,
 ) -> JoinHandle<()> {
     tokio::spawn(
         Supervisor {
@@ -1494,7 +1502,7 @@ fn spawn_peer_supervisor(
             user_agent,
             best_lag_ms: AtomicU32::new(u32::MAX),
             last_swap: Mutex::new(None),
-            failed_dials: Mutex::new(HashMap::new()),
+            bans,
         }
         .run(),
     )
@@ -1543,6 +1551,7 @@ fn spawn_timeout_monitor(
     shutdown: CancellationToken,
     peer_wake: Arc<Notify>,
     max_peers: usize,
+    bans: Arc<Bans>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(TIMEOUT_CHECK);
@@ -1642,6 +1651,9 @@ fn spawn_timeout_monitor(
                 });
                 (before - peers.len(), peers.len())
             };
+            for peer in &culprits {
+                bans.ban(peer.addr(), Ban::Kicked).await;
+            }
             // The set is now short: wake the supervisor, which otherwise idles.
             if dropped > 0 && remaining < max_peers {
                 peer_wake.notify_one();

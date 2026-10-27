@@ -190,6 +190,8 @@ impl NetworkManager for MockNetworkManager {
     async fn connected_count(&self) -> u32 {
         self.connected.load(Ordering::SeqCst)
     }
+
+    async fn ban_peer(&self, _addr: SocketAddr) {}
 }
 
 #[cfg(test)]

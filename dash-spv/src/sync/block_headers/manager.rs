@@ -130,6 +130,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     /// Handle incoming headers message (used for both initial sync and post-sync).
     pub(super) async fn handle_headers_pipeline(
         &mut self,
+        peer: SocketAddr,
         headers: &[HashedBlockHeader],
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
@@ -150,7 +151,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         };
 
         // Route headers to the pipeline, validates checkpoint match.
-        let matched = self.pipeline.receive_headers(headers)?;
+        let matched = match self.pipeline.receive_headers(headers) {
+            Ok(matched) => matched,
+            Err(e) => {
+                network.ban_peer(peer).await;
+                return Err(e);
+            }
+        };
 
         if matched.is_some() {
             if let Some(locator) = answered_locator {
@@ -623,7 +630,10 @@ mod tests {
             .map(HashedBlockHeader::from)
             .collect::<Vec<_>>();
 
-        let events = manager.handle_headers_pipeline(&headers, &network).await.unwrap();
+        let events = manager
+            .handle_headers_pipeline(test_socket_address(1), &headers, &network)
+            .await
+            .unwrap();
 
         // Header should have been stored
         assert_eq!(events.len(), 1);
@@ -685,7 +695,10 @@ mod tests {
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
 
-        let events = manager.handle_headers_pipeline(&[chain[0].into()], &network).await.unwrap();
+        let events = manager
+            .handle_headers_pipeline(test_socket_address(1), &[chain[0].into()], &network)
+            .await
+            .unwrap();
 
         assert_eq!(events.len(), ACTIVE_SEGMENT_WINDOW);
         let sent = mock.sent_messages();
@@ -788,7 +801,10 @@ mod tests {
         // segment's current_tip_hash to advanced_hash.
         let header = Header::dummy_chain(1, initial_locator).remove(0);
         let advanced_hash = header.block_hash();
-        manager.handle_headers_pipeline(&[header.into()], &network).await.unwrap();
+        manager
+            .handle_headers_pipeline(test_socket_address(1), &[header.into()], &network)
+            .await
+            .unwrap();
 
         // Drain the follow-up GetHeaders that send_pending issued.
         let sent = mock.sent_messages();
@@ -886,7 +902,8 @@ mod tests {
         mock.clear_sent();
 
         // Peer responds with empty headers (same height as us)
-        let events = manager.handle_headers_pipeline(&[], &network).await.unwrap();
+        let events =
+            manager.handle_headers_pipeline(test_socket_address(1), &[], &network).await.unwrap();
 
         // No events emitted, no requests sent, tip segment stays complete
         assert!(events.is_empty());

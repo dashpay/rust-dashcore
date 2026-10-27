@@ -91,7 +91,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
     async fn handle_message(
         &mut self,
-        _peer: SocketAddr,
+        peer: SocketAddr,
         msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
@@ -117,7 +117,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                         headers.iter().map(crate::types::HashedBlockHeader::from).collect()
                     };
                 // Always route through pipeline when initialized
-                self.handle_headers_pipeline(&hashed_headers, network).await
+                self.handle_headers_pipeline(peer, &hashed_headers, network).await
             }
 
             NetworkMessage::Inv(inv) => {

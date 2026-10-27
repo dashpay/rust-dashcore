@@ -11,7 +11,7 @@ use dashcore::{
 };
 use futures::lock::Mutex;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::UnboundedSender;
@@ -28,6 +28,7 @@ use tokio_util::bytes::BytesMut;
 use tokio_util::codec::{Decoder, FramedRead};
 use tokio_util::sync::CancellationToken;
 
+use crate::network::bans::{Ban, Bans};
 use crate::network::costs::{Ledger, ResponseCosts};
 use crate::network::manager::{InboundMessage, OrderedHeaderResults};
 use crate::{error::NetworkResult, NetworkError};
@@ -137,9 +138,7 @@ pub struct PeerHandle {
     cap: Arc<AtomicU64>,
     /// Bytes/s this peer serves while it has work, 0 until measured.
     serving_rate: Arc<AtomicU64>,
-    /// Ask this peer for compressed headers (DIP-25). Cleared by the reader if a
-    /// `headers2` fails to decompress, falling back to plain `headers`.
-    headers2: Arc<AtomicBool>,
+    headers2: bool,
     /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
     token: CancellationToken,
 }
@@ -165,7 +164,7 @@ impl PeerHandle {
         // The sync layer always declares plain `getheaders` since it doesn't know
         // the peer; upgrade here. The reader decompresses `Headers2` back to `Headers`.
         let upgraded = match msg {
-            NetworkMessage::GetHeaders(m) if self.headers2.load(Ordering::Relaxed) => {
+            NetworkMessage::GetHeaders(m) if self.headers2 => {
                 Some(NetworkMessage::GetHeaders2(m.clone()))
             }
             _ => None,
@@ -310,6 +309,7 @@ impl DisconnectedPeer {
         headers2_decompression_semaphore: Arc<Semaphore>,
         costs: Arc<ResponseCosts>,
         user_agent: &str,
+        bans: Arc<Bans>,
     ) -> NetworkResult<ConnectedPeer> {
         let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
             .await
@@ -390,8 +390,8 @@ impl DisconnectedPeer {
 
         // Announce sendheaders only after the handshake is fully complete, compressed
         // (DIP-25, ~half the bytes) if the peer advertises it.
-        let headers2 = Arc::new(AtomicBool::new(version.services.has(NODE_HEADERS_COMPRESSED)));
-        let announce = if headers2.load(Ordering::Relaxed) {
+        let headers2 = version.services.has(NODE_HEADERS_COMPRESSED);
+        let announce = if headers2 {
             NetworkMessage::SendHeaders2
         } else {
             NetworkMessage::SendHeaders
@@ -439,9 +439,9 @@ impl DisconnectedPeer {
             writer.clone(),
             inbound,
             token.clone(),
-            headers2.clone(),
             headers2_decompression_semaphore,
             ledger.clone(),
+            bans,
         );
 
         tracing::debug!(
@@ -495,9 +495,9 @@ fn spawn_reader(
     writer: Arc<Mutex<OwnedWriteHalf>>,
     inbound: UnboundedSender<PeerEvent>,
     shutdown: CancellationToken,
-    headers2: Arc<AtomicBool>,
     headers2_decompression_semaphore: Arc<Semaphore>,
     ledger: Arc<Ledger>,
+    bans: Arc<Bans>,
 ) {
     tokio::spawn(async move {
         // Header messages leave this reader in wire order even though the
@@ -533,6 +533,9 @@ fn spawn_reader(
                 None => break,
                 Some(Err(e)) => {
                     tracing::error!("NETWORK: reader {} stopped: {}", addr, e);
+                    if !matches!(e, encode::Error::Io(_)) {
+                        bans.ban(addr.addr(), Ban::Misbehaved).await;
+                    }
                     break;
                 }
                 Some(Ok((raw, size))) => {
@@ -573,7 +576,7 @@ fn spawn_reader(
 
                             let order = header_order.clone();
                             let inbound = inbound.clone();
-                            let headers2 = headers2.clone();
+                            let bans = bans.clone();
                             let shutdown = shutdown.clone();
                             tokio::spawn(async move {
                                 let decoded = tokio::task::spawn_blocking(move || {
@@ -595,16 +598,14 @@ fn spawn_reader(
                                         Some(InboundMessage::new_headers(decompressed))
                                     }
                                     Ok(Err(e)) => {
-                                        // The broker times the request out and re-sends
-                                        // it as plain `getheaders` now the flag is off.
                                         tracing::warn!(
                                             target: "dash_spv::network",
-                                            "headers2 from {} failed to decompress ({}); \
-                                             falling back to uncompressed headers for this peer",
+                                            "headers2 from {} failed to decompress: {}",
                                             addr,
                                             e
                                         );
-                                        headers2.store(false, Ordering::Relaxed);
+                                        bans.ban(addr.addr(), Ban::Misbehaved).await;
+                                        shutdown.cancel();
                                         None
                                     }
                                     Err(e) => {
