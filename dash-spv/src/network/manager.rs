@@ -243,7 +243,7 @@ impl PeerNetworkManager {
         let state = Arc::new(NetworkState {
             connected: Mutex::new(Vec::with_capacity(30)),
             discoverer: Mutex::new(PeerDiscoverer::new(config)),
-            bans: Bans::default(),
+            bans: Bans::new(config.peers.iter().copied()),
             broker: Broker::new(),
             subscribers: Mutex::new(HashMap::new()),
             events: broadcast::channel(4096).0,

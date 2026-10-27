@@ -15,13 +15,25 @@ pub enum Ban {
     Misbehaved,
 }
 
-#[derive(Default)]
 pub struct Bans {
     entries: Mutex<HashMap<SocketAddr, (u32, Instant)>>,
+    /// The configured peers: never kicked out of the dial set, only backed off on a
+    /// failed dial. Banning one can leave a restricted client with nothing to dial.
+    configured: HashSet<SocketAddr>,
 }
 
 impl Bans {
+    pub fn new(configured: impl IntoIterator<Item = SocketAddr>) -> Self {
+        Self {
+            entries: Mutex::default(),
+            configured: configured.into_iter().collect(),
+        }
+    }
+
     pub async fn ban(&self, addr: SocketAddr, ban: Ban) {
+        if self.configured.contains(&addr) && !matches!(ban, Ban::DialFailed) {
+            return;
+        }
         let mut entries = self.entries.lock().await;
         let now = Instant::now();
         let (fails, until) = entries.entry(addr).or_insert((0, now));
