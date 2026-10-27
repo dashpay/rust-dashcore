@@ -62,8 +62,13 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         engine.blocking_read().latest_masternode_list().cloned()
     }
 
-    /// Get a quorum entry by type and hash at a specific block height. Only
-    /// heights within the lists the engine holds resolve.
+    /// Get a quorum entry by type and hash at a specific block height.
+    ///
+    /// Only heights the engine holds lists for resolve. It keeps lists within
+    /// its retention window below its newest list, a few days of blocks, and
+    /// right after a restart only up to the newest list it stored, until sync
+    /// catches up with the tip.
+    ///
     /// Returns `SpvError::QuorumLookupError` if the quorum is not found.
     pub async fn get_quorum_at_height(
         &self,
