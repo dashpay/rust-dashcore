@@ -960,7 +960,7 @@ mod tests {
             manager.sync_state.qrinfo_in_flight.is_some(),
             "the catch-up branch must mark a QRInfo as in flight"
         );
-        let sent = mock.sent_messages();
+        let sent = mock.sent_messages().await;
         assert!(
             sent.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
             "the catch-up must send a `GetQRInfo`, got {:?}",
@@ -978,7 +978,7 @@ mod tests {
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(manager.sync_state.qrinfo_in_flight.is_some());
         assert_eq!(manager.progress.qr_infos_requested(), 1);
-        let sent = mock.sent_messages();
+        let sent = mock.sent_messages().await;
         assert!(
             sent.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
             "send_qrinfo_for_tip must send a `GetQRInfo`, got {:?}",
@@ -1007,7 +1007,7 @@ mod tests {
             "no QRInfo must be requested when the gate picks Incremental"
         );
         assert!(
-            mock.sent_messages().is_empty(),
+            mock.sent_messages().await.is_empty(),
             "no request must be sent when the gate picks Incremental"
         );
     }

@@ -742,10 +742,10 @@ mod tests {
         assert_eq!(manager.state(), SyncState::Syncing);
         let tip_hash = manager.sync_state.qrinfo_in_flight.expect("QRInfo in flight").tip;
         assert!(
-            mock.sent_messages().iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
+            mock.sent_messages().await.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
             "initial GetQRInfo is queued"
         );
-        mock.clear_sent();
+        mock.clear_sent().await;
         (manager, network, mock, tip_hash)
     }
 
@@ -820,7 +820,7 @@ mod tests {
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
         manager.send_tip_mnlistdiff_update(&network).await.unwrap();
-        assert_eq!(diff_requests(&mock).len(), 1, "the tip update is sent");
+        assert_eq!(diff_requests(&mock).await.len(), 1, "the tip update is sent");
         (manager, engine, network, mock, hashes)
     }
 
@@ -892,16 +892,17 @@ mod tests {
     }
 
     /// Drains the `(base, target)` MnListDiff requests sent so far.
-    fn diff_requests(mock: &MockNetworkManager) -> Vec<(BlockHash, BlockHash)> {
+    async fn diff_requests(mock: &MockNetworkManager) -> Vec<(BlockHash, BlockHash)> {
         let requests = mock
             .sent_messages()
+            .await
             .into_iter()
             .filter_map(|msg| match msg {
                 NetworkMessage::GetMnListD(get) => Some((get.base_block_hash, get.block_hash)),
                 _ => None,
             })
             .collect();
-        mock.clear_sent();
+        mock.clear_sent().await;
         requests
     }
 
@@ -939,7 +940,7 @@ mod tests {
             "the tip list cannot verify the quorum without its work-block list"
         );
         assert!(events.is_empty(), "the update must not complete before the work-block list");
-        let requests = diff_requests(&mock);
+        let requests = diff_requests(&mock).await;
         assert_eq!(
             requests,
             vec![(hashes[OLDER as usize], hashes[work as usize])],
@@ -976,7 +977,7 @@ mod tests {
             ),
             "the update completes at the tip once the work-block list is applied, got {events:?}"
         );
-        assert!(diff_requests(&mock).is_empty(), "nothing more to fetch");
+        assert!(diff_requests(&mock).await.is_empty(), "nothing more to fetch");
     }
 
     /// A tip update the engine rejects leaves the state unchanged, so it
@@ -995,7 +996,7 @@ mod tests {
 
         assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
         assert!(events.is_empty(), "a rejected tip update must not complete, got {events:?}");
-        assert!(diff_requests(&mock).is_empty(), "a rejected tip update asks for nothing");
+        assert!(diff_requests(&mock).await.is_empty(), "a rejected tip update asks for nothing");
     }
 
     /// A work-block list that fails to apply leaves the tip update it was
@@ -1006,7 +1007,7 @@ mod tests {
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         deliver(&mut manager, &network, tip_update).await;
         let (_, block_hash) =
-            *diff_requests(&mock).first().expect("the work-block list is asked for");
+            *diff_requests(&mock).await.first().expect("the work-block list is asked for");
 
         let unusable = MnListDiff {
             // No list at this base, so the engine cannot apply it.
@@ -1073,14 +1074,17 @@ mod tests {
             manager.tick(&network).await.expect("tick retries the rejected attempt");
             assert_eq!(manager.sync_state.qrinfo_retry_count, attempt + 1);
             assert!(
-                mock.sent_messages().iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
+                mock.sent_messages()
+                    .await
+                    .iter()
+                    .any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
                 "tick must dispatch a retry GetQRInfo"
             );
             assert!(
                 !manager.sync_state.qrinfo_in_flight.expect("slot re-armed").rejected,
                 "the retry must start as a clean attempt"
             );
-            mock.clear_sent();
+            mock.clear_sent().await;
         }
 
         // Budget spent. The last rejection must terminate rather than dispatch
@@ -1091,7 +1095,7 @@ mod tests {
             .expect_err("the engine must reject this filler QRInfo");
         let _ = manager.tick(&network).await;
         assert!(
-            !mock.sent_messages().iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
+            !mock.sent_messages().await.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
             "the retry budget must stop dispatching after MAX_RETRY_ATTEMPTS"
         );
         assert_eq!(
@@ -1124,7 +1128,7 @@ mod tests {
 
         manager.tick(&network).await.expect("tick succeeds");
         assert!(
-            !mock.sent_messages().iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
+            !mock.sent_messages().await.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
             "the watchdog must stay quiet until its interval has elapsed"
         );
 
@@ -1136,7 +1140,7 @@ mod tests {
 
         manager.tick(&network).await.expect("the watchdog re-dispatch succeeds");
         assert!(
-            mock.sent_messages().iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
+            mock.sent_messages().await.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
             "the watchdog must re-dispatch a GetQRInfo"
         );
         assert!(
@@ -1193,7 +1197,7 @@ mod tests {
         let target = BlockHash::from_slice(&[0x22; 32]).unwrap();
         manager.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base, target)]);
         manager.sync_state.mnlistdiff_pipeline.send_pending(&network).await.expect("send succeeds");
-        mock.clear_sent();
+        mock.clear_sent().await;
 
         manager.on_disconnect();
         assert!(
@@ -1202,11 +1206,11 @@ mod tests {
         );
         // The broker drops a keyed duplicate while the original is in play; releasing
         // the slots mirrors what it does on a real disconnect.
-        mock.release_requests_in_play();
+        mock.release_requests_in_play().await;
 
         manager.tick(&network).await.expect("tick reissues the requeued request");
         assert!(
-            mock.sent_messages().iter().any(|m| matches!(m, NetworkMessage::GetMnListD(_))),
+            mock.sent_messages().await.iter().any(|m| matches!(m, NetworkMessage::GetMnListD(_))),
             "tick must reissue the GetMnListDiff"
         );
     }

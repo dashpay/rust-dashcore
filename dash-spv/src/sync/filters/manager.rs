@@ -1320,13 +1320,14 @@ mod tests {
     }
 
     /// Drain every `GetCFilters` request sent on `mock`.
-    fn drain_getcfilters(mock: &MockNetworkManager) -> usize {
+    async fn drain_getcfilters(mock: &MockNetworkManager) -> usize {
         let count = mock
             .sent_messages()
+            .await
             .iter()
             .filter(|msg| matches!(msg, NetworkMessage::GetCFilters(_)))
             .count();
-        mock.clear_sent();
+        mock.clear_sent().await;
         count
     }
 
@@ -2992,7 +2993,7 @@ mod tests {
         // ...and both the store cursor and the download restart from
         // scan_start rather than stored_filters_tip + 1.
         assert_eq!(manager.next_batch_to_store, 100);
-        match mock.sent_messages().first().expect("a filter request must have been sent") {
+        match mock.sent_messages().await.first().expect("a filter request must have been sent") {
             NetworkMessage::GetCFilters(gcf) => {
                 assert_eq!(gcf.start_height, 100);
             }
@@ -3052,7 +3053,7 @@ mod tests {
         // Nothing left to download: everything through the filter header tip
         // is already stored.
         assert_eq!(manager.next_batch_to_store, 1001);
-        assert!(mock.sent_messages().is_empty(), "no filter request expected");
+        assert!(mock.sent_messages().await.is_empty(), "no filter request expected");
     }
 
     /// Genesis-only storage: a single filter at height 0, scanning from 0.
@@ -3107,7 +3108,7 @@ mod tests {
         // filter request goes out for the already-stored genesis height.
         assert_eq!(manager.next_batch_to_store, 1);
         assert!(
-            mock.sent_messages().is_empty(),
+            mock.sent_messages().await.is_empty(),
             "no filter request expected for the genesis-only store"
         );
     }
@@ -3446,7 +3447,7 @@ mod tests {
 
         // Only the boundary body may be requested: a pipeline left unparked
         // would re-request every filter from height 1 here.
-        for msg in mock.sent_messages() {
+        for msg in mock.sent_messages().await {
             if let NetworkMessage::GetCFilters(get) = msg {
                 assert_eq!(get.start_height, 101, "unexpected filter re-download");
             }
@@ -3497,7 +3498,7 @@ mod tests {
         assert!(manager.active_batches.contains_key(&101));
 
         let mut requested_boundary = false;
-        for msg in mock.sent_messages() {
+        for msg in mock.sent_messages().await {
             if let NetworkMessage::GetCFilters(get) = msg {
                 assert_eq!(get.start_height, 101, "unexpected filter re-download");
                 requested_boundary = true;
@@ -3759,7 +3760,7 @@ mod tests {
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
 
         assert_eq!(
-            drain_getcfilters(&mock),
+            drain_getcfilters(&mock).await,
             1,
             "the initial download issues exactly one getcfilters"
         );

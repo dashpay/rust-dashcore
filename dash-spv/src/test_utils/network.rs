@@ -1,19 +1,14 @@
 //! In-memory [`NetworkManager`] for unit tests: records sends, injects inbound
 //! messages and peer events.
 
-// Sync mutex: no guard here ever crosses an `.await`, so the crate-wide ban does
-// not apply, and a tokio mutex would force `broadcast` to become async or spawn.
-#![allow(clippy::disallowed_types)]
-
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Mutex;
 
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
-use tokio::sync::broadcast;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::network::{
     request_keys, Inbound, InboundMessage, MessageType, NetworkEvent, NetworkManager, RequestKey,
@@ -38,7 +33,7 @@ pub struct MockNetworkManager {
     /// it never correlated fails here instead of hanging against a real broker.
     in_play: Mutex<HashSet<RequestKey>>,
     subscribers: Mutex<Vec<Subscriber>>,
-    events_tx: Mutex<broadcast::Sender<NetworkEvent>>,
+    events_tx: RwLock<broadcast::Sender<NetworkEvent>>,
     tip: AtomicU32,
     connected: AtomicU32,
 }
@@ -59,7 +54,7 @@ impl MockNetworkManager {
             answered: Mutex::new(Vec::new()),
             in_play: Mutex::new(HashSet::new()),
             subscribers: Mutex::new(Vec::new()),
-            events_tx: Mutex::new(events_tx),
+            events_tx: RwLock::new(events_tx),
             tip: AtomicU32::new(0),
             connected: AtomicU32::new(1),
         }
@@ -67,42 +62,42 @@ impl MockNetworkManager {
 
     /// Close the network event bus, which fails the sync loop of a client
     /// running on this network.
-    pub fn close_network_events(&self) {
-        *self.events_tx.lock().expect("mock mutex poisoned") = broadcast::Sender::new(1);
+    pub async fn close_network_events(&self) {
+        *self.events_tx.write().await = broadcast::Sender::new(1);
     }
 
-    pub fn sent_messages(&self) -> Vec<NetworkMessage> {
-        self.sent.lock().expect("mock mutex poisoned").clone()
+    pub async fn sent_messages(&self) -> Vec<NetworkMessage> {
+        self.sent.lock().await.clone()
     }
 
-    pub fn sent_to_messages(&self) -> Vec<(SocketAddr, NetworkMessage)> {
-        self.sent_to.lock().expect("mock mutex poisoned").clone()
+    pub async fn sent_to_messages(&self) -> Vec<(SocketAddr, NetworkMessage)> {
+        self.sent_to.lock().await.clone()
     }
 
-    pub fn broadcast_messages(&self) -> Vec<NetworkMessage> {
-        self.broadcasts.lock().expect("mock mutex poisoned").clone()
+    pub async fn broadcast_messages(&self) -> Vec<NetworkMessage> {
+        self.broadcasts.lock().await.clone()
     }
 
-    pub fn answered_keys(&self) -> Vec<RequestKey> {
-        self.answered.lock().expect("mock mutex poisoned").clone()
+    pub async fn answered_keys(&self) -> Vec<RequestKey> {
+        self.answered.lock().await.clone()
     }
 
     /// Clears the recorders but not the in-play requests, which stay de-duplicated
     /// until answered or [`Self::release_requests_in_play`].
-    pub fn clear_sent(&self) {
-        self.sent.lock().expect("mock mutex poisoned").clear();
-        self.sent_to.lock().expect("mock mutex poisoned").clear();
-        self.broadcasts.lock().expect("mock mutex poisoned").clear();
+    pub async fn clear_sent(&self) {
+        self.sent.lock().await.clear();
+        self.sent_to.lock().await.clear();
+        self.broadcasts.lock().await.clear();
     }
 
     /// Simulates the broker re-queueing requests when their peers are lost; call it
     /// where a test's disconnect happens so the keys stop de-duplicating.
-    pub fn release_requests_in_play(&self) {
-        self.in_play.lock().expect("mock mutex poisoned").clear();
+    pub async fn release_requests_in_play(&self) {
+        self.in_play.lock().await.clear();
     }
 
-    pub fn requests_in_play(&self) -> usize {
-        self.in_play.lock().expect("mock mutex poisoned").len()
+    pub async fn requests_in_play(&self) -> usize {
+        self.in_play.lock().await.len()
     }
 
     pub fn set_tip(&self, tip: u32) {
@@ -113,15 +108,15 @@ impl MockNetworkManager {
         self.connected.store(n, Ordering::SeqCst);
     }
 
-    pub fn inject(&self, peer: SocketAddr, msg: NetworkMessage) {
-        self.inject_inbound(peer, msg.into())
+    pub async fn inject(&self, peer: SocketAddr, msg: NetworkMessage) {
+        self.inject_inbound(peer, msg.into()).await
     }
 
     /// Like [`Self::inject`], with the decode-time data (e.g. `headers2` hashes).
-    pub fn inject_inbound(&self, peer: SocketAddr, msg: InboundMessage) {
+    pub async fn inject_inbound(&self, peer: SocketAddr, msg: InboundMessage) {
         let kind = MessageType::from_cmd(msg.cmd());
         let shared = std::sync::Arc::new(msg);
-        let subs = self.subscribers.lock().expect("mock mutex poisoned");
+        let subs = self.subscribers.lock().await;
         for sub in subs.iter() {
             if kind.map(|k| sub.kinds.contains(&k)).unwrap_or(false) {
                 let _ = sub.tx.send((peer, shared.clone()));
@@ -129,8 +124,8 @@ impl MockNetworkManager {
         }
     }
 
-    pub fn emit_event(&self, event: NetworkEvent) {
-        let _ = self.events_tx.lock().expect("mock mutex poisoned").send(event);
+    pub async fn emit_event(&self, event: NetworkEvent) {
+        let _ = self.events_tx.read().await.send(event);
     }
 }
 
@@ -145,22 +140,22 @@ impl NetworkManager for MockNetworkManager {
         // keyless traffic is never de-duplicated.
         let keys = request_keys(&msg);
         if !keys.is_empty() {
-            let mut in_play = self.in_play.lock().expect("mock mutex poisoned");
+            let mut in_play = self.in_play.lock().await;
             if keys.iter().any(|key| in_play.contains(key)) {
                 return;
             }
             in_play.extend(keys);
         }
-        self.sent.lock().expect("mock mutex poisoned").push(msg);
+        self.sent.lock().await.push(msg);
     }
 
     async fn send_to(&self, addr: SocketAddr, msg: NetworkMessage) -> bool {
-        self.sent_to.lock().expect("mock mutex poisoned").push((addr, msg));
+        self.sent_to.lock().await.push((addr, msg));
         true
     }
 
     async fn broadcast(&self, msg: NetworkMessage) -> crate::error::NetworkResult<()> {
-        self.broadcasts.lock().expect("mock mutex poisoned").push(msg);
+        self.broadcasts.lock().await.push(msg);
         if self.connected.load(Ordering::SeqCst) == 0 {
             return Err(crate::NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
@@ -168,17 +163,17 @@ impl NetworkManager for MockNetworkManager {
     }
 
     async fn dispatch_local(&self, msg: NetworkMessage) {
-        self.inject(test_socket_address(0), msg);
+        self.inject(test_socket_address(0), msg).await;
     }
 
     async fn request_answered(&self, key: RequestKey) {
-        self.in_play.lock().expect("mock mutex poisoned").remove(&key);
-        self.answered.lock().expect("mock mutex poisoned").push(key);
+        self.in_play.lock().await.remove(&key);
+        self.answered.lock().await.push(key);
     }
 
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound> {
         let (tx, rx) = unbounded_channel();
-        self.subscribers.lock().expect("mock mutex poisoned").push(Subscriber {
+        self.subscribers.lock().await.push(Subscriber {
             kinds: kinds.to_vec(),
             tx,
         });
@@ -186,7 +181,8 @@ impl NetworkManager for MockNetworkManager {
     }
 
     fn events(&self) -> broadcast::Receiver<NetworkEvent> {
-        self.events_tx.lock().expect("mock mutex poisoned").subscribe()
+        // Only `close_network_events` writes, and never while a client subscribes.
+        self.events_tx.try_read().expect("event bus is being replaced").subscribe()
     }
 
     fn tip(&self) -> u32 {
@@ -221,10 +217,14 @@ mod tests {
 
         mock.send(get_cfilters(0)).await;
         mock.send(get_cfilters(0)).await;
-        assert_eq!(mock.sent_messages().len(), 1, "the re-declaration must not reach the wire");
+        assert_eq!(
+            mock.sent_messages().await.len(),
+            1,
+            "the re-declaration must not reach the wire"
+        );
 
         mock.send(get_cfilters(1000)).await;
-        assert_eq!(mock.sent_messages().len(), 2, "a different key is a different request");
+        assert_eq!(mock.sent_messages().await.len(), 2, "a different key is a different request");
     }
 
     #[tokio::test]
@@ -233,13 +233,17 @@ mod tests {
 
         mock.send(get_cfilters(0)).await;
         mock.send(get_cfilters(0)).await;
-        assert_eq!(mock.sent_messages().len(), 1);
+        assert_eq!(mock.sent_messages().await.len(), 1);
 
         mock.request_answered(RequestKey::CFilters(0)).await;
-        assert_eq!(mock.requests_in_play(), 0);
+        assert_eq!(mock.requests_in_play().await, 0);
 
         mock.send(get_cfilters(0)).await;
-        assert_eq!(mock.sent_messages().len(), 2, "an answered request may be declared again");
+        assert_eq!(
+            mock.sent_messages().await.len(),
+            2,
+            "an answered request may be declared again"
+        );
     }
 
     #[tokio::test]
@@ -249,8 +253,8 @@ mod tests {
         mock.send(NetworkMessage::MemPool).await;
         mock.send(NetworkMessage::MemPool).await;
 
-        assert_eq!(mock.sent_messages().len(), 2);
-        assert_eq!(mock.requests_in_play(), 0);
+        assert_eq!(mock.sent_messages().await.len(), 2);
+        assert_eq!(mock.requests_in_play().await, 0);
     }
 
     #[tokio::test]
@@ -258,12 +262,12 @@ mod tests {
         let mock = MockNetworkManager::new();
 
         mock.send(get_cfilters(0)).await;
-        mock.clear_sent();
+        mock.clear_sent().await;
         mock.send(get_cfilters(0)).await;
-        assert!(mock.sent_messages().is_empty(), "still in play, so still de-duplicated");
+        assert!(mock.sent_messages().await.is_empty(), "still in play, so still de-duplicated");
 
-        mock.release_requests_in_play();
+        mock.release_requests_in_play().await;
         mock.send(get_cfilters(0)).await;
-        assert_eq!(mock.sent_messages().len(), 1);
+        assert_eq!(mock.sent_messages().await.len(), 1);
     }
 }

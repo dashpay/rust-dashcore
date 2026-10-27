@@ -519,6 +519,7 @@ mod tests {
         assert_eq!(declared, 1);
         let starts: Vec<u32> = mock
             .sent_messages()
+            .await
             .iter()
             .filter_map(|m| match m {
                 NetworkMessage::GetCFilters(gcf) => Some(gcf.start_height),

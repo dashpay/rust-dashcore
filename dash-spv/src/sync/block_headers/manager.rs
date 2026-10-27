@@ -672,8 +672,8 @@ mod tests {
         ));
 
         // No GetHeaders request should have been sent
-        assert!(mock.sent_messages().is_empty());
-        assert!(mock.sent_to_messages().is_empty());
+        assert!(mock.sent_messages().await.is_empty());
+        assert!(mock.sent_to_messages().await.is_empty());
 
         // Tip segment marked complete again for the next unsolicited header
         assert!(manager.pipeline.is_tip_complete());
@@ -728,7 +728,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(events.len(), ACTIVE_SEGMENT_WINDOW);
-        let sent = mock.sent_messages();
+        let sent = mock.sent_messages().await;
         assert_eq!(sent.len(), 1, "response cycle did not refill active window");
         match &sent[0] {
             NetworkMessage::GetHeaders(request) => {
@@ -752,14 +752,14 @@ mod tests {
         let events = manager.handle_network_event(&connect, &network).await.unwrap();
         assert!(events.is_empty());
         assert!(manager.announced_peers.contains(&addr));
-        let sent_to = mock.sent_to_messages();
+        let sent_to = mock.sent_to_messages().await;
         assert_eq!(sent_to.len(), 1);
         assert_eq!(sent_to[0].0, addr);
         assert!(matches!(sent_to[0].1, NetworkMessage::GetHeaders(_)));
 
         // Same peer again sends nothing (already announced)
         manager.handle_network_event(&connect, &network).await.unwrap();
-        assert_eq!(mock.sent_to_messages().len(), 1);
+        assert_eq!(mock.sent_to_messages().await.len(), 1);
 
         // Disconnect removes from announced set
         let disconnect = NetworkEvent::PeerDisconnected(addr);
@@ -769,7 +769,7 @@ mod tests {
         // Reconnect sends GetHeaders again
         manager.handle_network_event(&connect, &network).await.unwrap();
         assert!(manager.announced_peers.contains(&addr));
-        assert_eq!(mock.sent_to_messages().len(), 2);
+        assert_eq!(mock.sent_to_messages().await.len(), 2);
     }
 
     #[tokio::test]
@@ -783,7 +783,7 @@ mod tests {
 
         manager.handle_network_event(&connect, &network).await.unwrap();
         assert!(!manager.announced_peers.contains(&addr));
-        assert!(mock.sent_to_messages().is_empty());
+        assert!(mock.sent_to_messages().await.is_empty());
 
         // Active catch-up: peer connect skipped while pipeline has pending request
         let mut manager = create_synced_manager().await;
@@ -791,11 +791,11 @@ mod tests {
         let network: Arc<dyn NetworkManager> = mock.clone();
         manager.pipeline.reset_tip_segment();
         manager.pipeline.send_pending(&network).await.unwrap();
-        assert!(!mock.sent_messages().is_empty());
+        assert!(!mock.sent_messages().await.is_empty());
 
         manager.handle_network_event(&connect, &network).await.unwrap();
         assert!(!manager.announced_peers.contains(&addr));
-        assert!(mock.sent_to_messages().is_empty());
+        assert!(mock.sent_to_messages().await.is_empty());
     }
 
     #[tokio::test]
@@ -815,13 +815,13 @@ mod tests {
         assert!(manager.pipeline.is_initialized());
         assert_eq!(manager.pipeline.segment_count(), 1);
 
-        let sent = mock.sent_messages();
+        let sent = mock.sent_messages().await;
         assert_eq!(sent.len(), 1, "initial GetHeaders not sent");
         let initial_locator = match &sent[0] {
             NetworkMessage::GetHeaders(msg) => msg.locator_hashes[0],
             other => panic!("Expected GetHeaders, got {:?}", other),
         };
-        mock.clear_sent();
+        mock.clear_sent().await;
 
         // Simulate a peer response. The single tip segment drains its buffer
         // through take_ready_to_store, advancing the storage tip and the
@@ -834,7 +834,7 @@ mod tests {
             .unwrap();
 
         // Drain the follow-up GetHeaders that send_pending issued.
-        let sent = mock.sent_messages();
+        let sent = mock.sent_messages().await;
         assert_eq!(sent.len(), 1, "follow-up GetHeaders not sent");
         match &sent[0] {
             NetworkMessage::GetHeaders(msg) => {
@@ -842,7 +842,7 @@ mod tests {
             }
             other => panic!("Expected GetHeaders, got {:?}", other),
         }
-        mock.clear_sent();
+        mock.clear_sent().await;
 
         let disconnect_event = NetworkEvent::PeersUpdated {
             connected_count: 0,
@@ -850,7 +850,7 @@ mod tests {
         };
         manager.handle_network_event(&disconnect_event, &network).await.unwrap();
         // The broker re-queues in-flight requests on disconnect, so the resumed request can go out.
-        mock.release_requests_in_play();
+        mock.release_requests_in_play().await;
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert!(
             manager.pipeline.is_initialized(),
@@ -863,7 +863,7 @@ mod tests {
         manager.handle_network_event(&initial_event, &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::Syncing);
 
-        let sent = mock.sent_messages();
+        let sent = mock.sent_messages().await;
         assert_eq!(sent.len(), 1, "resumed GetHeaders not sent");
         let resumed_locator = match &sent[0] {
             NetworkMessage::GetHeaders(msg) => msg.locator_hashes[0],
@@ -893,7 +893,7 @@ mod tests {
         };
         manager.handle_network_event(&disconnect_event, &network).await.unwrap();
         // The broker re-queues in-flight requests on disconnect, so the resumed request can go out.
-        mock.release_requests_in_play();
+        mock.release_requests_in_play().await;
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert!(manager.pipeline.is_initialized());
 
@@ -905,7 +905,7 @@ mod tests {
         manager.handle_network_event(&reconnect_event, &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::Syncing);
 
-        let sent = mock.sent_messages();
+        let sent = mock.sent_messages().await;
         assert_eq!(sent.len(), 1, "resumed GetHeaders not sent");
         let resumed_locator = match &sent[0] {
             NetworkMessage::GetHeaders(msg) => msg.locator_hashes[0],
@@ -925,8 +925,8 @@ mod tests {
         let addr = test_socket_address(1);
         let connect = NetworkEvent::PeerConnected(addr);
         manager.handle_network_event(&connect, &network).await.unwrap();
-        assert_eq!(mock.sent_to_messages().len(), 1); // the GetHeaders announcement
-        mock.clear_sent();
+        assert_eq!(mock.sent_to_messages().await.len(), 1); // the GetHeaders announcement
+        mock.clear_sent().await;
 
         // Peer responds with empty headers (same height as us)
         let events =
@@ -934,8 +934,8 @@ mod tests {
 
         // No events emitted, no requests sent, tip segment stays complete
         assert!(events.is_empty());
-        assert!(mock.sent_messages().is_empty());
-        assert!(mock.sent_to_messages().is_empty());
+        assert!(mock.sent_messages().await.is_empty());
+        assert!(mock.sent_to_messages().await.is_empty());
         assert!(manager.pipeline.is_tip_complete());
     }
 }

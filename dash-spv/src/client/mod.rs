@@ -127,7 +127,7 @@ mod tests {
                 .expect("client construction must succeed");
 
         client.run().await.expect("client must start");
-        client.network.close_network_events();
+        client.network.close_network_events().await;
 
         timeout(Duration::from_secs(5), async {
             while client.detached_tasks.lock().await.is_empty() {

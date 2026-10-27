@@ -275,7 +275,7 @@ mod tests {
         assert!(events.is_empty());
 
         assert!(
-            !mock.sent_messages().is_empty(),
+            !mock.sent_messages().await.is_empty(),
             "expected a getdata to be declared for the needed block"
         );
     }

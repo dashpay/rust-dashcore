@@ -917,7 +917,7 @@ mod tests {
         manager.activate_peer(peer, &requests).await.unwrap();
 
         // FetchAll activation sends filterclear then mempool to the chosen peer
-        let sent = rx.sent_to_messages();
+        let sent = rx.sent_to_messages().await;
         assert!(matches!(&sent[0], (p, NetworkMessage::FilterClear) if *p == peer));
         assert!(matches!(&sent[1], (p, NetworkMessage::MemPool) if *p == peer));
         assert!(matches!(manager.peers.get(&peer), Some(Some(_))));
@@ -930,7 +930,7 @@ mod tests {
 
         // No addresses in mock wallet, so only MemPool should be sent (no FilterLoad)
         let mut found_filter_load = false;
-        for msg in rx.sent_to_messages() {
+        for msg in rx.sent_to_messages().await {
             if matches!(msg, (_, NetworkMessage::FilterLoad(_))) {
                 found_filter_load = true;
             }
@@ -1308,7 +1308,7 @@ mod tests {
         manager.activate_peer(test_socket_address(1), &requests).await.unwrap();
 
         let mut found_filter_load = false;
-        for msg in rx.sent_to_messages() {
+        for msg in rx.sent_to_messages().await {
             if matches!(msg, (_, NetworkMessage::FilterLoad(_))) {
                 found_filter_load = true;
             }
@@ -1909,12 +1909,12 @@ mod tests {
         manager.activate_peer(peer, &requests).await.unwrap();
 
         // Drain activation messages
-        rx.clear_sent();
+        rx.clear_sent().await;
 
         manager.rebuild_filter(&requests).await.unwrap();
 
         // Verify message sequence: FilterClear, FilterLoad, MemPool
-        let sent = rx.sent_to_messages();
+        let sent = rx.sent_to_messages().await;
         assert!(matches!(sent[0], (_, NetworkMessage::FilterClear)));
         assert!(matches!(sent[1], (_, NetworkMessage::FilterLoad(_))));
         assert!(matches!(sent[2], (_, NetworkMessage::MemPool)));
@@ -1927,7 +1927,7 @@ mod tests {
         assert!(manager.peers.values().all(|v| v.is_none()));
 
         manager.rebuild_filter(&requests).await.unwrap();
-        assert!(rx.sent_to_messages().is_empty());
+        assert!(rx.sent_to_messages().await.is_empty());
     }
 
     #[tokio::test]
@@ -2111,7 +2111,7 @@ mod tests {
         manager.rebroadcast_if_due_at(&requests, later).await;
 
         // Pending entries are resent via targeted sends (respecting the holdout)
-        let msg = rx.sent_to_messages().pop().expect("expected a rebroadcast message");
+        let msg = rx.sent_to_messages().await.pop().expect("expected a rebroadcast message");
         assert!(
             matches!(msg, (p, NetworkMessage::Tx(_)) if p == peer),
             "expected send_to(Tx), got {:?}",
@@ -2120,9 +2120,12 @@ mod tests {
 
         // Timestamp should be reset to `later`, so a second call at the same instant
         // must not rebroadcast.
-        rx.clear_sent();
+        rx.clear_sent().await;
         manager.rebroadcast_if_due_at(&requests, later).await;
-        assert!(rx.sent_to_messages().is_empty(), "should not rebroadcast immediately after reset");
+        assert!(
+            rx.sent_to_messages().await.is_empty(),
+            "should not rebroadcast immediately after reset"
+        );
     }
 
     #[tokio::test]
@@ -2144,7 +2147,7 @@ mod tests {
 
         manager.rebroadcast_if_due_at(&requests, later).await;
 
-        let msg = rx.broadcast_messages().pop().expect("expected a rebroadcast message");
+        let msg = rx.broadcast_messages().await.pop().expect("expected a rebroadcast message");
         assert!(matches!(msg, NetworkMessage::Tx(_)), "expected broadcast(Tx), got {:?}", msg);
     }
 
@@ -2165,7 +2168,7 @@ mod tests {
         manager.rebroadcast_if_due(&requests).await;
 
         assert!(
-            rx.sent_to_messages().is_empty() && rx.broadcast_messages().is_empty(),
+            rx.sent_to_messages().await.is_empty() && rx.broadcast_messages().await.is_empty(),
             "recently sent transactions should not be rebroadcast"
         );
     }
@@ -2193,14 +2196,14 @@ mod tests {
     const LOCAL_SENTINEL: SocketAddr =
         SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0);
 
-    fn drain_tx_sends(rx: &MockNetworkManager) -> Vec<SocketAddr> {
+    async fn drain_tx_sends(rx: &MockNetworkManager) -> Vec<SocketAddr> {
         let mut sends = Vec::new();
-        for msg in rx.sent_to_messages() {
+        for msg in rx.sent_to_messages().await {
             if let (peer, NetworkMessage::Tx(_)) = msg {
                 sends.push(peer);
             }
         }
-        rx.clear_sent();
+        rx.clear_sent().await;
         sends
     }
 
@@ -2230,7 +2233,7 @@ mod tests {
         let txid = tx.txid();
         manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
 
-        let sends = drain_tx_sends(&rx);
+        let sends = drain_tx_sends(&rx).await;
         assert_eq!(sends.len(), 2, "should send to half of 4 peers");
 
         let state = manager.broadcasts.get(&txid).expect("broadcast tracked");
@@ -2242,7 +2245,7 @@ mod tests {
         // A second local dispatch of the same tx must not resend
         let tx = test_transaction(20);
         manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
-        assert!(drain_tx_sends(&rx).is_empty(), "idempotent per txid");
+        assert!(drain_tx_sends(&rx).await.is_empty(), "idempotent per txid");
     }
 
     #[tokio::test]
@@ -2255,7 +2258,7 @@ mod tests {
         let txid = tx.txid();
         manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
 
-        assert_eq!(drain_tx_sends(&rx), vec![peer]);
+        assert_eq!(drain_tx_sends(&rx).await, vec![peer]);
         let state = manager.broadcasts.get(&txid).unwrap();
         assert!(state.holdout.is_empty(), "single peer leaves nobody to hold out");
     }
@@ -2274,7 +2277,7 @@ mod tests {
         state.sent_to.insert(recipient);
         state.holdout.insert(holdout);
         manager.broadcasts.insert(txid, state);
-        drain_tx_sends(&rx);
+        drain_tx_sends(&rx).await;
 
         let inv = vec![Inventory::Transaction(txid)];
 
@@ -2371,14 +2374,14 @@ mod tests {
         let tx = test_transaction(29);
         let txid = tx.txid();
         manager.handle_tx(tx, LOCAL_SENTINEL, &requests).await.unwrap();
-        assert!(drain_tx_sends(&rx).is_empty());
+        assert!(drain_tx_sends(&rx).await.is_empty());
         assert!(manager.broadcasts[&txid].sent_to.is_empty());
 
         // A peer connects; the never-sent broadcast is due immediately
         let peer = test_socket_address(1);
         manager.peers.insert(peer, None);
         manager.rebroadcast_if_due(&requests).await;
-        assert_eq!(drain_tx_sends(&rx), vec![peer]);
+        assert_eq!(drain_tx_sends(&rx).await, vec![peer]);
         assert!(manager.broadcasts[&txid].sent_to.contains(&peer));
     }
 
@@ -2402,7 +2405,7 @@ mod tests {
         manager.rebroadcast_if_due_at(&requests, later).await;
 
         // Only the original recipient is resent to; the holdout stays withheld
-        assert_eq!(drain_tx_sends(&rx), vec![recipient]);
+        assert_eq!(drain_tx_sends(&rx).await, vec![recipient]);
         assert_eq!(manager.broadcasts[&txid].holdout, [holdout].into_iter().collect());
     }
 
@@ -2428,7 +2431,7 @@ mod tests {
 
         // The never-sent connected peer becomes the replacement holdout,
         // so the resend goes only to the original recipient.
-        assert_eq!(drain_tx_sends(&rx), vec![recipient]);
+        assert_eq!(drain_tx_sends(&rx).await, vec![recipient]);
         assert!(manager.broadcasts[&txid].holdout.contains(&new_peer));
         assert!(!manager.broadcasts[&txid].sent_to.contains(&new_peer));
     }

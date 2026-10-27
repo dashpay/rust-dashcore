@@ -370,6 +370,7 @@ mod tests {
         assert_eq!(pipeline.send_pending(&network).await.unwrap(), 3);
         let mut reissued: Vec<(u32, BlockHash)> = mock
             .sent_messages()
+            .await
             .into_iter()
             .filter_map(|msg| match msg {
                 NetworkMessage::GetCFHeaders(get) => Some((get.start_height, get.stop_hash)),

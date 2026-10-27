@@ -760,7 +760,7 @@ mod tests {
         manager.handle_sync_event(&sync, &network).await.unwrap();
 
         // Drain activation messages
-        network_mock.clear_sent();
+        network_mock.clear_sent().await;
 
         // BlockProcessed does not eagerly rebuild — the tick handles it via
         // the revision check. Verify no FilterLoad is sent from the event handler.
@@ -775,6 +775,7 @@ mod tests {
 
         let has_filter_load = network_mock
             .sent_to_messages()
+            .await
             .into_iter()
             .any(|(_, req)| matches!(req, NetworkMessage::FilterLoad(_)));
         assert!(!has_filter_load, "BlockProcessed should not eagerly rebuild filter");
@@ -838,12 +839,12 @@ mod tests {
         assert_eq!(manager.state(), SyncState::Synced);
 
         // Drain activation messages
-        network_mock.clear_sent();
+        network_mock.clear_sent().await;
 
         // tick with unchanged revision should not rebuild
         manager.tick(&network).await.unwrap();
         assert!(
-            network_mock.sent_to_messages().is_empty(),
+            network_mock.sent_to_messages().await.is_empty(),
             "no messages expected when revision unchanged"
         );
 
@@ -865,7 +866,7 @@ mod tests {
         manager.tick(&network).await.unwrap();
 
         let mut found_filter_load = false;
-        for (_, msg) in network_mock.sent_to_messages() {
+        for (_, msg) in network_mock.sent_to_messages().await {
             if matches!(msg, NetworkMessage::FilterLoad(_)) {
                 found_filter_load = true;
             }
@@ -873,10 +874,10 @@ mod tests {
         assert!(found_filter_load, "expected FilterLoad after monitor revision change");
 
         // Subsequent tick should not rebuild again (revision was snapshotted)
-        network_mock.clear_sent();
+        network_mock.clear_sent().await;
         manager.tick(&network).await.unwrap();
         assert!(
-            network_mock.sent_to_messages().is_empty(),
+            network_mock.sent_to_messages().await.is_empty(),
             "no messages expected after revision re-snapshot"
         );
     }
@@ -902,7 +903,7 @@ mod tests {
             tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &network).await.unwrap();
-        network_mock.clear_sent();
+        network_mock.clear_sent().await;
 
         // Bump revision
         {
@@ -913,7 +914,7 @@ mod tests {
         // tick should not send any filter messages for FetchAll
         manager.tick(&network).await.unwrap();
         let mut found_filter = false;
-        for (_, msg) in network_mock.sent_to_messages() {
+        for (_, msg) in network_mock.sent_to_messages().await {
             if matches!(msg, NetworkMessage::FilterLoad(_) | NetworkMessage::FilterClear) {
                 found_filter = true;
             }
@@ -953,7 +954,7 @@ mod tests {
             tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &network).await.unwrap();
-        network_mock.clear_sent();
+        network_mock.clear_sent().await;
 
         // Simulate UTXO set change (new outpoint added)
         {
@@ -969,6 +970,7 @@ mod tests {
 
         let found_filter_load = network_mock
             .sent_to_messages()
+            .await
             .into_iter()
             .any(|(_, msg)| matches!(msg, NetworkMessage::FilterLoad(_)));
         assert!(found_filter_load, "expected FilterLoad after outpoint change");
@@ -1004,7 +1006,7 @@ mod tests {
             tip_height: 1000,
         };
         manager.handle_sync_event(&sync, &network).await.unwrap();
-        network_mock.clear_sent();
+        network_mock.clear_sent().await;
 
         // handle_tx with a relevant transaction should NOT eagerly rebuild
         let tx = dashcore::Transaction {
@@ -1018,6 +1020,7 @@ mod tests {
 
         let has_filter_load = network_mock
             .sent_to_messages()
+            .await
             .into_iter()
             .any(|(_, msg)| matches!(msg, NetworkMessage::FilterLoad(_)));
         assert!(!has_filter_load, "handle_tx should not eagerly rebuild filter");
@@ -1032,6 +1035,7 @@ mod tests {
 
         let found_filter_load = network_mock
             .sent_to_messages()
+            .await
             .into_iter()
             .any(|(_, msg)| matches!(msg, NetworkMessage::FilterLoad(_)));
         assert!(found_filter_load, "tick should rebuild after revision change");

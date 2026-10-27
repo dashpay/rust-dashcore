@@ -499,6 +499,7 @@ mod tests {
         // What has to be true is that a request for the new range went out.
         let requested_stops: Vec<_> = mock
             .sent_messages()
+            .await
             .into_iter()
             .filter_map(|msg| match msg {
                 NetworkMessage::GetCFHeaders(get) => Some(get.stop_hash),
@@ -592,7 +593,7 @@ mod tests {
         mock: &Arc<MockNetworkManager>,
         msg: CFHeaders,
     ) -> (Vec<(u32, u32)>, Vec<(u32, BlockHash)>) {
-        mock.clear_sent();
+        mock.clear_sent().await;
         let network: Arc<dyn NetworkManager> = mock.clone();
         let peer = "127.0.0.1:19999".parse().unwrap();
         let manager: &mut TestSyncManager = manager;
@@ -602,6 +603,7 @@ mod tests {
             .unwrap();
         let requests = mock
             .sent_messages()
+            .await
             .into_iter()
             .filter_map(|msg| match msg {
                 NetworkMessage::GetCFHeaders(get) => Some((get.start_height, get.stop_hash)),

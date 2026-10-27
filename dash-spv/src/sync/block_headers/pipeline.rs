@@ -345,8 +345,9 @@ mod tests {
         Network::Testnet.known_genesis_block_hash().unwrap()
     }
 
-    fn declared_locators(mock: &MockNetworkManager) -> Vec<BlockHash> {
+    async fn declared_locators(mock: &MockNetworkManager) -> Vec<BlockHash> {
         mock.sent_messages()
+            .await
             .iter()
             .map(|msg| match msg {
                 NetworkMessage::GetHeaders(request) => request.locator_hashes[0],
@@ -406,10 +407,10 @@ mod tests {
         assert_eq!(sent, ACTIVE_SEGMENT_WINDOW.min(pipeline.segment_count()));
 
         assert_eq!(
-            declared_locators(&mock),
+            declared_locators(&mock).await,
             pipeline.segments[..sent].iter().map(|s| s.current_tip_hash).collect::<Vec<_>>()
         );
-        mock.clear_sent();
+        mock.clear_sent().await;
 
         if pipeline.segment_count() > ACTIVE_SEGMENT_WINDOW {
             pipeline.segments[0].complete = true;
@@ -419,6 +420,7 @@ mod tests {
             // head exposed the next segment.
             assert_eq!(pipeline.send_pending(&network).await.unwrap(), ACTIVE_SEGMENT_WINDOW);
             assert!(declared_locators(&mock)
+                .await
                 .contains(&pipeline.segments[ACTIVE_SEGMENT_WINDOW].current_tip_hash));
         }
     }
@@ -531,7 +533,7 @@ mod tests {
         assert_eq!(pipeline.send_pending(&network).await.unwrap(), 1);
 
         assert_eq!(
-            declared_locators(&mock),
+            declared_locators(&mock).await,
             vec![BlockHash::dummy(ACTIVE_SEGMENT_WINDOW as u32)],
             "newly exposed segment was not requested"
         );
