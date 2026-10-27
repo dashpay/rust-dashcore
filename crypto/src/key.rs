@@ -245,10 +245,7 @@ impl PrivateKey {
     /// Format the private key to WIF format.
     pub fn fmt_wif(&self, fmt: &mut dyn Write) -> fmt::Result {
         let mut ret = [0; 34];
-        ret[0] = match self.network {
-            Network::Mainnet => 204,
-            Network::Testnet | Network::Devnet | Network::Regtest => 239,
-        };
+        ret[0] = self.network.addr_params().secret_key;
         ret[1..33].copy_from_slice(&*self.inner.to_bytes());
         let privkey = if self.compressed {
             ret[33] = 1;

@@ -19,7 +19,7 @@
 
 use core::fmt;
 
-use dash_params::{ChainParams, Network as CoreNetwork};
+use dash_params::{AddrParams, ChainParams, Network as CoreNetwork};
 
 #[cfg(feature = "ffi")]
 pub mod ffi;
@@ -57,6 +57,15 @@ impl Network {
             Network::Testnet => Some(CoreNetwork::Testnet3.chain()),
             Network::Devnet => None,
             Network::Regtest => Some(CoreNetwork::Regtest.chain()),
+        }
+    }
+
+    /// The address and key prefixes of this network. Devnets share testnet's.
+    pub const fn addr_params(self) -> &'static AddrParams {
+        match self {
+            Network::Mainnet => CoreNetwork::Main.addr(),
+            Network::Testnet | Network::Devnet => CoreNetwork::Testnet3.addr(),
+            Network::Regtest => CoreNetwork::Regtest.addr(),
         }
     }
 
