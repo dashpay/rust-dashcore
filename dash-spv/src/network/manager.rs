@@ -39,9 +39,6 @@ const FILL_TICK: Duration = Duration::from_secs(2);
 const DIAL_MARGIN: usize = 2;
 const CONNECT_DEADLINE: Duration = Duration::from_secs(20);
 
-/// Cap on remembered (ranked) backup addresses, as a multiple of `max_peers`.
-const BACKUP_MULTIPLE: usize = 8;
-
 /// How long the router sleeps on a full-capacity stall before re-evaluating. It
 /// wakes early whenever a response frees a slot or the timeout monitor kicks a
 /// peer; this is just a backstop so it never sleeps on a notify that never comes.
@@ -195,7 +192,6 @@ pub enum NetworkEvent {
 
 pub struct NetworkState {
     pub connected: Mutex<Vec<ConnectedPeer>>,
-    pub backups: Mutex<Vec<DisconnectedPeer>>,
     pub discoverer: Mutex<PeerDiscoverer>,
     pub bans: Bans,
     pub broker: Broker,
@@ -246,7 +242,6 @@ impl PeerNetworkManager {
         let (inbound, inbound_rx) = mpsc::unbounded_channel();
         let state = Arc::new(NetworkState {
             connected: Mutex::new(Vec::with_capacity(30)),
-            backups: Mutex::new(Vec::with_capacity(30)),
             discoverer: Mutex::new(PeerDiscoverer::new(config)),
             bans: Bans::default(),
             broker: Broker::new(),
@@ -755,7 +750,7 @@ fn lag_key(peer: &ConnectedPeer) -> u32 {
 ///   bad peer is taken only when the set would otherwise be empty.
 /// - At cap it waits to be woken by a lost or underserving peer, then probes for a
 ///   replacement. No periodic improvement pass: each probe costs a full handshake.
-/// - Probed-but-unused peers are closed and kept as ranked backups (`others`) so
+/// - Probed-but-unused peers are closed and remembered in the discoverer so
 ///   later rounds reconnect the best without probing blindly.
 struct Supervisor {
     state: Arc<NetworkState>,
@@ -781,18 +776,8 @@ impl Supervisor {
         }
     }
 
-    /// Up to `want` candidate addresses to probe: best-ranked backups first, then
-    /// fresh discovery, de-duplicated against each other and the live set.
     async fn next_candidates(&self, want: usize) -> Vec<DisconnectedPeer> {
-        let mut out: Vec<DisconnectedPeer> = {
-            let mut o = self.state.backups.lock().await;
-            o.sort_by_key(|p| p.lag_ms().unwrap_or(u32::MAX));
-            let take = want.min(o.len());
-            o.drain(..take).collect()
-        };
-        if out.len() < want {
-            out.extend(self.state.discoverer.lock().await.get(want - out.len()).await);
-        }
+        let mut out = self.state.discoverer.lock().await.get(want).await;
         let live: HashSet<SocketAddr> =
             self.state.connected.lock().await.iter().map(|p| p.addr()).collect();
         let banned = self.state.bans.banned().await;
@@ -803,22 +788,13 @@ impl Supervisor {
         out
     }
 
-    /// Close probed-but-unused peers and remember them as ranked backups, keeping the
-    /// list de-duplicated (best ping per address) and bounded.
+    /// Closes probed-but-unused peers and remembers them for the next round.
     async fn stash_backups(&self, peers: impl IntoIterator<Item = ConnectedPeer>) {
-        let mut o = self.state.backups.lock().await;
+        let mut discoverer = self.state.discoverer.lock().await;
         for peer in peers {
             peer.close();
-            o.push(peer.disconnect());
+            discoverer.probed(peer.addr(), peer.lag_ms());
         }
-        o.sort_by(|a, b| {
-            a.addr()
-                .cmp(&b.addr())
-                .then(a.lag_ms().unwrap_or(u32::MAX).cmp(&b.lag_ms().unwrap_or(u32::MAX)))
-        });
-        o.dedup_by_key(|p| p.addr());
-        o.sort_by_key(|p| p.lag_ms().unwrap_or(u32::MAX));
-        o.truncate(self.state.max_peers * BACKUP_MULTIPLE);
     }
 
     async fn announce_update(&self) {

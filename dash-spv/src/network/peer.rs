@@ -207,8 +207,6 @@ pub struct ConnectedPeer {
 pub struct DisconnectedPeer {
     network: Network,
     addr: SocketAddr,
-    /// Handshake ping from the last connection, used to rank backups.
-    lag_ms: Option<u32>,
 }
 
 impl ConnectedPeer {
@@ -226,14 +224,6 @@ impl ConnectedPeer {
 
     pub fn handle(&self) -> PeerHandle {
         self.handle.clone()
-    }
-
-    pub fn disconnect(self) -> DisconnectedPeer {
-        DisconnectedPeer {
-            network: self.handle.network,
-            addr: self.handle.addr(),
-            lag_ms: (self.lag_ms() > 0).then(|| self.lag_ms()),
-        }
     }
 
     /// (completed requests, average ms, worst ms).
@@ -284,17 +274,11 @@ impl DisconnectedPeer {
         DisconnectedPeer {
             network,
             addr,
-            lag_ms: None,
         }
     }
 
     pub fn addr(&self) -> SocketAddr {
         self.addr
-    }
-
-    /// `None` (never probed) sorts as worst when ranking backups.
-    pub fn lag_ms(&self) -> Option<u32> {
-        self.lag_ms
     }
 
     pub async fn connect(

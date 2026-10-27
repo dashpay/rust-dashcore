@@ -26,6 +26,7 @@ const DNS_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5
 const MAX_LEARNED: usize = 2000;
 const MAX_ADDR_AGE: u32 = 7 * 24 * 60 * 60;
 const MAX_ADDR_FUTURE: u32 = 10 * 60;
+const MAX_PROBED: usize = 32;
 
 pub struct PeerDiscoverer {
     network: Network,
@@ -36,6 +37,8 @@ pub struct PeerDiscoverer {
     /// on every drop, and a drained pool would leave the client nothing to reconnect to.
     discovered: Option<Vec<SocketAddr>>,
     learned: HashMap<SocketAddr, u32>,
+    /// Handshake ping of peers probed but not kept, tried first next time.
+    probed: HashMap<SocketAddr, u32>,
 }
 
 impl PeerDiscoverer {
@@ -46,6 +49,7 @@ impl PeerDiscoverer {
             restrict_to_configured_peers: config.restrict_to_configured_peers,
             discovered: None,
             learned: HashMap::new(),
+            probed: HashMap::new(),
         }
     }
 
@@ -76,8 +80,29 @@ impl PeerDiscoverer {
         added
     }
 
-    /// Up to `count` addresses to try, sampled at random from whatever source applies.
+    pub fn probed(&mut self, addr: SocketAddr, lag_ms: u32) {
+        let lag_ms = if lag_ms == 0 {
+            u32::MAX
+        } else {
+            lag_ms
+        };
+        let best = self.probed.entry(addr).or_insert(lag_ms);
+        *best = (*best).min(lag_ms);
+        if self.probed.len() > MAX_PROBED {
+            let worst = self.probed.iter().max_by_key(|(_, lag)| **lag).map(|(addr, _)| *addr);
+            worst.map(|addr| self.probed.remove(&addr));
+        }
+    }
+
+    /// Up to `count` addresses to try: the best probed first, then a random sample.
     pub async fn get(&mut self, count: usize) -> Vec<DisconnectedPeer> {
+        let mut best: Vec<(SocketAddr, u32)> = self.probed.drain().collect();
+        best.sort_by_key(|(_, lag)| *lag);
+        self.probed.extend(best.split_off(count.min(best.len())));
+        let mut out: Vec<DisconnectedPeer> =
+            best.into_iter().map(|(addr, _)| DisconnectedPeer::new(addr, self.network)).collect();
+        let count = count - out.len();
+
         let pool = if !self.fixed.is_empty() {
             self.fixed.clone()
         } else if self.restrict_to_configured_peers {
@@ -94,9 +119,11 @@ impl PeerDiscoverer {
             pool
         };
 
-        pool.choose_multiple(&mut rand::rng(), count)
-            .map(|addr| DisconnectedPeer::new(*addr, self.network))
-            .collect()
+        out.extend(
+            pool.choose_multiple(&mut rand::rng(), count)
+                .map(|addr| DisconnectedPeer::new(*addr, self.network)),
+        );
+        out
     }
 
     async fn discover(network: Network) -> Vec<SocketAddr> {
