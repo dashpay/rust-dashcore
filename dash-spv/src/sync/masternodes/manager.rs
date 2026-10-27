@@ -11,7 +11,7 @@ use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
-use super::pipeline::MnListDiffPipeline;
+use super::pipeline::{Attempt, MnListDiffPipeline, MAX_MNLISTDIFF_ATTEMPTS};
 use crate::error::{StorageResult, SyncError, SyncResult};
 use crate::network::RequestSender;
 use crate::storage::{BlockHeaderStorage, MasternodeStorage, PersistentMasternodeStorage};
@@ -19,7 +19,8 @@ use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message_qrinfo::QRInfo;
 use dashcore::network::message_sml::MnListDiff;
 use dashcore::BlockHash;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::net::SocketAddr;
 
 /// Single enum that serves two roles in the masternode-sync flow:
 ///
@@ -126,6 +127,48 @@ pub(super) struct MasternodeSyncState {
     /// without sending (no stored tip, tip at genesis) cannot turn it into a
     /// per-tick retry loop.
     pub(super) last_qrinfo_dispatch: Option<Instant>,
+    /// Peers whose QRInfo for the tip it names was rejected. Another QRInfo
+    /// from one of them for that tip is ignored. It outlives a budget at the
+    /// same tip, so peers sending bad QRInfos cannot spend budget after budget,
+    /// and goes when the requested tip changes.
+    pub(super) qrinfo_refusers: Option<(BlockHash, Vec<SocketAddr>)>,
+    /// Target of the last tip update given up. It is not asked for again
+    /// while it is the header tip: the `Synced` tick would otherwise ask for
+    /// it on every pass until the next block.
+    pub(super) given_up_tip: Option<BlockHash>,
+    /// Work-block lists given up, by target, with when each is asked for
+    /// again: see [`WorkListRetry`]. A list is forgotten once it is applied,
+    /// or once no quorum of the newest list needs it when it is due.
+    pub(super) given_up_work_lists: BTreeMap<BlockHash, WorkListRetry>,
+}
+
+/// The most tip updates a given-up work-block list waits for before it is
+/// asked for again.
+const MAX_TIPS_BETWEEN_WORK_LIST_RETRIES: u32 = 32;
+
+/// When a work-block list given up is asked for again, with fresh attempts:
+/// with the next tip update applied after it was first given up, then after
+/// twice as many tip updates each time it is given up again, up to every
+/// [`MAX_TIPS_BETWEEN_WORK_LIST_RETRIES`]th. A list no peer serves would
+/// otherwise hold back every tip update for its whole lifetime.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct WorkListRetry {
+    /// Times the list was given up after the first.
+    given_up_again: u32,
+    /// Tip updates still to apply before the list is asked for again.
+    tips_to_wait: u32,
+}
+
+impl WorkListRetry {
+    /// Whether the list is asked for with the tip update being applied, and
+    /// otherwise counts that update.
+    pub(super) fn due(&mut self) -> bool {
+        if self.tips_to_wait == 0 {
+            return true;
+        }
+        self.tips_to_wait -= 1;
+        false
+    }
 }
 
 impl MasternodeSyncState {
@@ -168,11 +211,16 @@ impl MasternodeSyncState {
         self.current_cycle_attempts = self.current_cycle_attempts.saturating_add(1);
     }
 
-    /// Arm the QRInfo slot for a request that has just gone out on the wire.
+    /// Arm the QRInfo slot for a request that has just gone out on the wire. A
+    /// request for another tip forgets the peers that refused a QRInfo for the
+    /// last one.
     ///
     /// `last_qrinfo_dispatch` is stamped here rather than at the call site so the
     /// stall watchdog's clock can never drift from the actual dispatch.
     fn start_waiting_for_qrinfo(&mut self, expected_tip: BlockHash) {
+        if self.qrinfo_refusers.as_ref().is_some_and(|(tip, _)| *tip != expected_tip) {
+            self.qrinfo_refusers = None;
+        }
         let now = Instant::now();
         self.qrinfo_in_flight = Some(QRInfoInFlight {
             tip: expected_tip,
@@ -190,6 +238,58 @@ impl MasternodeSyncState {
     /// flight, which no `tick` branch can recover from.
     pub(super) fn qrinfo_received(&mut self) {
         self.qrinfo_in_flight = None;
+        self.qrinfo_refusers = None;
+    }
+
+    /// Records that `peer` sent the in-flight QRInfo a response that was
+    /// rejected.
+    pub(super) fn qrinfo_refused_by(&mut self, peer: SocketAddr) {
+        let Some(in_flight) = self.qrinfo_in_flight else {
+            return;
+        };
+        let (tip, peers) = self.qrinfo_refusers.get_or_insert_with(|| (in_flight.tip, Vec::new()));
+        if *tip != in_flight.tip {
+            *tip = in_flight.tip;
+            peers.clear();
+        }
+        if !peers.contains(&peer) {
+            peers.push(peer);
+        }
+    }
+
+    /// Whether `peer` already sent a rejected QRInfo for `tip`.
+    pub(super) fn has_refused_qrinfo(&self, tip: BlockHash, peer: SocketAddr) -> bool {
+        self.qrinfo_refusers
+            .as_ref()
+            .is_some_and(|(refused_tip, peers)| *refused_tip == tip && peers.contains(&peer))
+    }
+
+    /// Forgets the peers that refused a QRInfo, for a new set of peers.
+    pub(super) fn forget_qrinfo_refusers(&mut self) {
+        self.qrinfo_refusers = None;
+    }
+
+    /// Has every work-block list given up asked for again with the next tip
+    /// update, forgetting how often the old peers did not serve it, for a new
+    /// set of peers.
+    pub(super) fn forget_work_list_waits(&mut self) {
+        for retry in self.given_up_work_lists.values_mut() {
+            *retry = WorkListRetry::default();
+        }
+    }
+
+    /// Records that the work-block list `target` was given up.
+    pub(super) fn work_list_given_up(&mut self, target: BlockHash) {
+        let Some(retry) = self.given_up_work_lists.get_mut(&target) else {
+            self.given_up_work_lists.insert(target, WorkListRetry::default());
+            return;
+        };
+        retry.given_up_again = retry.given_up_again.saturating_add(1);
+        let tips_between = 1u32
+            .checked_shl(retry.given_up_again)
+            .unwrap_or(u32::MAX)
+            .min(MAX_TIPS_BETWEEN_WORK_LIST_RETRIES);
+        retry.tips_to_wait = tips_between - 1;
     }
 
     /// Mark the in-flight QRInfo attempt as answered-but-unusable.
@@ -442,6 +542,9 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 None => return Ok(vec![]),
             }
         };
+        if self.sync_state.given_up_tip == Some(new_tip_hash) {
+            return Ok(vec![]);
+        }
 
         let Some(base_hash) =
             self.engine.read().await.latest_masternode_list().map(|list| list.block_hash)
@@ -459,6 +562,71 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         self.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base_hash, new_tip_hash)]);
         self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
         Ok(vec![])
+    }
+
+    /// Spends an attempt of `target`, whose response could not be used, then
+    /// sends its retry, or gives it up and moves the pipeline on. `refused_by`
+    /// is the peer whose response the engine refused, `None` when the fault is
+    /// ours, and `tip_update` tells whether `target` was a tip update.
+    pub(super) async fn retry_or_give_up(
+        &mut self,
+        target: BlockHash,
+        refused_by: Option<SocketAddr>,
+        tip_update: bool,
+        requests: &RequestSender,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        match self.sync_state.mnlistdiff_pipeline.retry_or_give_up(target, refused_by) {
+            Attempt::Retried => {
+                self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+                Ok(vec![])
+            }
+            Attempt::GivenUp => {
+                tracing::warn!(
+                    "Giving up on the MnListDiff for {target} after {MAX_MNLISTDIFF_ATTEMPTS} \
+                     attempts"
+                );
+                if tip_update {
+                    self.sync_state.given_up_tip = Some(target);
+                } else {
+                    self.sync_state.work_list_given_up(target);
+                }
+                self.progress.add_diffs_processed(1);
+                self.continue_diff_pipeline(tip_update, requests).await
+            }
+        }
+    }
+
+    /// Sends what the diff pipeline has pending and completes it once it
+    /// drained. `gave_up_tip_update` tells whether a tip update was just given
+    /// up.
+    pub(super) async fn continue_diff_pipeline(
+        &mut self,
+        gave_up_tip_update: bool,
+        requests: &RequestSender,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        self.sync_state.mnlistdiff_pipeline.send_pending(requests)?;
+        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
+            return Ok(vec![]);
+        }
+        // In `Incremental` mode, a tip update given up leaves the engine state
+        // unchanged. Skip completion to avoid emitting a spurious
+        // `MasternodeStateUpdated` for stale state. A work-block list given up
+        // leaves the tip it was fetched for applied, so that pipeline still
+        // completes.
+        if gave_up_tip_update && matches!(self.sync_state.pipeline_mode, PipelineMode::Incremental)
+        {
+            return Ok(vec![]);
+        }
+        tracing::info!("MnListDiff pipeline complete");
+        self.complete_pipeline(requests).await
+    }
+
+    /// Whether the header tip is the target of the last tip update given up.
+    pub(super) async fn tip_update_given_up(&self) -> bool {
+        let Some(given_up) = self.sync_state.given_up_tip else {
+            return false;
+        };
+        self.header_storage.read().await.get_tip().await.is_some_and(|tip| *tip.hash() == given_up)
     }
 
     /// Dispatch pipeline completion based on the current `PipelineMode`. Called when
@@ -607,9 +775,12 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 qr_info_result,
             });
         } else if is_initial_sync {
-            drop(engine);
-            self.set_state(SyncState::Error);
-            return Err(SyncError::MasternodeSyncFailed("No masternode lists available".into()));
+            // Nothing leaves `Error`, so the manager stays `Syncing` with
+            // nothing in flight, the state the stall watchdog restarts from.
+            return Err(SyncError::MasternodeSyncFailed(
+                "No masternode list after every QRInfo attempt failed, the stall watchdog retries"
+                    .into(),
+            ));
         }
 
         drop(engine);
@@ -645,6 +816,25 @@ mod tests {
     use tokio::sync::mpsc;
 
     type TestMasternodesManager = MasternodesManager<PersistentBlockHeaderStorage>;
+
+    /// Peers that sent a rejected QRInfo are ignored for that tip only: they
+    /// stay recorded while QRInfos for it go out, and a request for another tip
+    /// forgets them, so a deterministic failure cannot leave every peer ignored
+    /// for longer than a block.
+    #[test]
+    fn qrinfo_refusers_are_forgotten_for_another_tip() {
+        let tip_a = BlockHash::from_byte_array([0xAA; 32]);
+        let tip_b = BlockHash::from_byte_array([0xBB; 32]);
+        let peer: SocketAddr = "127.0.0.1:19999".parse().unwrap();
+        let mut state = MasternodeSyncState::default();
+        state.start_waiting_for_qrinfo(tip_a);
+        state.qrinfo_refused_by(peer);
+
+        state.start_waiting_for_qrinfo(tip_a);
+        assert!(state.has_refused_qrinfo(tip_a, peer));
+        state.start_waiting_for_qrinfo(tip_b);
+        assert!(!state.has_refused_qrinfo(tip_a, peer));
+    }
 
     async fn create_test_manager_for(network: dashcore::Network) -> TestMasternodesManager {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
