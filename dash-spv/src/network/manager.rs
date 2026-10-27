@@ -17,52 +17,12 @@ use dashcore::network::message_blockdata::Inventory;
 use dashcore::{BlockHash, Header};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{broadcast, Mutex, Notify, Semaphore};
+use tokio::sync::{broadcast, Mutex, Notify};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 /// Bounded concurrent handshakes per probe round.
 const CONNECT_CHUNK: usize = 16;
-
-/// Ceiling on concurrent `headers2` decompressions across all peers: CPU-bound work
-/// on the shared blocking pool, so it gets a few cores but never all of them.
-const MAX_CONCURRENT_HEADERS2_DECOMPRESSIONS: usize = 4;
-
-fn headers2_decompression_parallelism() -> usize {
-    std::thread::available_parallelism()
-        .map(|parallelism| parallelism.get().min(MAX_CONCURRENT_HEADERS2_DECOMPRESSIONS))
-        .unwrap_or(1)
-}
-
-/// Releases header messages in wire order because an announcement can depend on the preceding
-/// message from the same peer.
-pub struct OrderedHeaderResults<T> {
-    next_sequence: u64,
-    completed: BTreeMap<u64, T>,
-}
-
-impl<T> Default for OrderedHeaderResults<T> {
-    fn default() -> Self {
-        Self {
-            next_sequence: 0,
-            completed: BTreeMap::new(),
-        }
-    }
-}
-
-impl<T> OrderedHeaderResults<T> {
-    pub fn complete(&mut self, sequence: u64, result: T) -> Vec<T> {
-        let replaced = self.completed.insert(sequence, result);
-        debug_assert!(replaced.is_none(), "header sequence completed twice");
-
-        let mut ready = Vec::new();
-        while let Some(result) = self.completed.remove(&self.next_sequence) {
-            ready.push(result);
-            self.next_sequence += 1;
-        }
-        ready
-    }
-}
 
 /// A peer is "very bad", taken only as a last resort when the set would otherwise be
 /// empty, at a handshake ping of this multiple of the best ping seen, and never below
@@ -300,7 +260,6 @@ pub struct NetworkState {
     pub best_tip: AtomicU32,
     pub peer_wake: Notify,
     pub costs: Arc<ResponseCosts>,
-    pub headers2_semaphore: Arc<Semaphore>,
     pub max_peers: usize,
     pub required_services: ServiceFlags,
     pub user_agent: String,
@@ -408,7 +367,6 @@ impl PeerNetworkManager {
             best_tip: AtomicU32::new(0),
             peer_wake: Notify::new(),
             costs: Arc::new(ResponseCosts::new()),
-            headers2_semaphore: Arc::new(Semaphore::new(headers2_decompression_parallelism())),
             max_peers,
             required_services,
             user_agent: config.user_agent.clone(),
@@ -1958,15 +1916,6 @@ mod tests {
                 other => panic!("unexpected {other:?}"),
             })
             .collect()
-    }
-
-    #[test]
-    fn completed_decompressions_are_released_in_receive_order() {
-        let mut results = OrderedHeaderResults::default();
-
-        assert!(results.complete(2, "third").is_empty());
-        assert_eq!(results.complete(0, "first"), ["first"]);
-        assert_eq!(results.complete(1, "second"), ["second", "third"]);
     }
 
     #[test]

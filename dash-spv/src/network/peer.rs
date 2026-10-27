@@ -14,8 +14,6 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncRead, AsyncWriteExt, ReadBuf},
     net::{
@@ -30,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::network::bans::Ban;
 use crate::network::costs::Ledger;
-use crate::network::manager::{InboundMessage, NetworkState, OrderedHeaderResults};
+use crate::network::manager::{InboundMessage, NetworkState};
 use crate::{error::NetworkResult, NetworkError};
 
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
@@ -454,23 +452,6 @@ impl DisconnectedPeer {
     }
 }
 
-/// A header message in the reorder buffer. Holding the permit until dispatch is
-/// what bounds the buffer. `None` for a failed batch, which must still complete
-/// its sequence or everything behind it waits forever.
-type HeaderSlot = (Option<InboundMessage>, OwnedSemaphorePermit);
-
-/// Returns whether the receiver is still there.
-fn dispatch_headers(
-    inbound: &UnboundedSender<PeerEvent>,
-    addr: PeerId,
-    ready: Vec<HeaderSlot>,
-) -> bool {
-    ready
-        .into_iter()
-        .filter_map(|(msg, _permit)| msg)
-        .all(|msg| inbound.send(PeerEvent::Message(addr, msg)).is_ok())
-}
-
 fn spawn_reader(
     addr: PeerId,
     magic: u32,
@@ -482,10 +463,6 @@ fn spawn_reader(
 ) {
     tokio::spawn(async move {
         let inbound = &state.inbound;
-        // Header messages leave this reader in wire order even though the
-        // compressed ones are decoded off-thread and finish out of order.
-        let header_order = Arc::new(Mutex::new(OrderedHeaderResults::default()));
-        let mut header_sequence = 0_u64;
         let mut ping =
             tokio::time::interval_at(tokio::time::Instant::now() + PING_INTERVAL, PING_INTERVAL);
         let mut last_ping = None;
@@ -542,90 +519,25 @@ fn spawn_reader(
                             }
                         }
                         NetworkMessage::Headers2(compressed) => {
-                            // CPU-bound, so decoded on the blocking pool, several at
-                            // once. DIP-25 resets compression state per `headers2`, so
-                            // batches are independent. The permit, held until the batch
-                            // is dispatched, bounds the reorder buffer.
-                            let permit = tokio::select! {
-                                permit = state.headers2_semaphore.clone().acquire_owned() => match permit {
-                                    Ok(permit) => permit,
-                                    Err(_) => break,
-                                },
-                                _ = shutdown.cancelled() => break,
-                            };
-                            let sequence = header_sequence;
-                            header_sequence += 1;
-
-                            let order = header_order.clone();
-                            let state = state.clone();
-                            let shutdown = shutdown.clone();
-                            tokio::spawn(async move {
-                                let decoded = tokio::task::spawn_blocking(move || {
-                                    CompressionState::default()
-                                        .process_headers_with_hashes(&compressed.headers)
-                                })
-                                .await;
-                                if shutdown.is_cancelled() {
-                                    return;
+                            match CompressionState::default()
+                                .process_headers_with_hashes(&compressed.headers)
+                            {
+                                Ok(headers) => {
+                                    let msg = InboundMessage::new_headers(headers);
+                                    if inbound.send(PeerEvent::Message(addr, msg)).is_err() {
+                                        break;
+                                    }
                                 }
-                                let decompressed = match decoded {
-                                    Ok(Ok(decompressed)) => {
-                                        tracing::debug!(
-                                            target: "dash_spv::network",
-                                            "decompressed {} headers from {}",
-                                            decompressed.len(),
-                                            addr
-                                        );
-                                        Some(InboundMessage::new_headers(decompressed))
-                                    }
-                                    Ok(Err(e)) => {
-                                        tracing::warn!(
-                                            target: "dash_spv::network",
-                                            "headers2 from {} failed to decompress: {}",
-                                            addr,
-                                            e
-                                        );
-                                        state.bans.ban(addr.addr(), Ban::Misbehaved).await;
-                                        shutdown.cancel();
-                                        None
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            target: "dash_spv::network",
-                                            "headers2 decompression task for {} failed: {}",
-                                            addr,
-                                            e
-                                        );
-                                        None
-                                    }
-                                };
-                                // Hold the lock through dispatch so another batch
-                                // cannot overtake this one.
-                                let mut order = order.lock().await;
-                                let ready = order.complete(sequence, (decompressed, permit));
-                                dispatch_headers(&state.inbound, addr, ready);
-                            });
-                        }
-                        NetworkMessage::Headers(headers) => {
-                            // Same queue as `headers2`, else a plain reply could
-                            // overtake a batch still decoding (the pipeline matches by
-                            // the tip it extends). Takes a permit to keep it bounded.
-                            let permit = tokio::select! {
-                                permit = state.headers2_semaphore.clone().acquire_owned() => match permit {
-                                    Ok(permit) => permit,
-                                    Err(_) => break,
-                                },
-                                _ = shutdown.cancelled() => break,
-                            };
-                            let sequence = header_sequence;
-                            header_sequence += 1;
-                            let mut order = header_order.lock().await;
-                            let ready = order.complete(
-                                sequence,
-                                (Some(NetworkMessage::Headers(headers).into()), permit),
-                            );
-                            if !dispatch_headers(inbound, addr, ready) {
-                                break;
+                                Err(e) => {
+                                    tracing::warn!(
+                                        target: "dash_spv::network",
+                                        "headers2 from {} failed to decompress: {}",
+                                        addr,
+                                        e
+                                    );
+                                    state.bans.ban(addr.addr(), Ban::Misbehaved).await;
+                                    break;
+                                }
                             }
                         }
                         payload => {
