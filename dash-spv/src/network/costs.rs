@@ -142,6 +142,7 @@ pub struct Ledger {
     latency_ns: AtomicU64,
     latency_count: AtomicU64,
     latency_max_ns: AtomicU64,
+    latency_min_ns: AtomicU64,
 }
 
 impl Ledger {
@@ -153,6 +154,7 @@ impl Ledger {
             latency_ns: AtomicU64::new(0),
             latency_count: AtomicU64::new(0),
             latency_max_ns: AtomicU64::new(0),
+            latency_min_ns: AtomicU64::new(u64::MAX),
         }
     }
 
@@ -164,6 +166,11 @@ impl Ledger {
         let count = self.latency_count.load(Ordering::Relaxed);
         let avg_ms = self.latency_ns.load(Ordering::Relaxed) as f64 / count.max(1) as f64 / 1e6;
         (count, avg_ms, self.latency_max_ns.load(Ordering::Relaxed) as f64 / 1e6)
+    }
+
+    pub fn take_min_latency(&self) -> Option<f64> {
+        let ns = self.latency_min_ns.swap(u64::MAX, Ordering::Relaxed);
+        (ns != u64::MAX).then(|| ns as f64 / 1e9)
     }
 
     pub async fn charge(&self, msg: &NetworkMessage) {
@@ -220,6 +227,7 @@ impl Ledger {
         self.latency_ns.fetch_add(ns, Ordering::Relaxed);
         self.latency_count.fetch_add(1, Ordering::Relaxed);
         self.latency_max_ns.fetch_max(ns, Ordering::Relaxed);
+        self.latency_min_ns.fetch_min(ns, Ordering::Relaxed);
     }
 
     fn release(&self, cost: u64) {

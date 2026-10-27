@@ -871,6 +871,8 @@ const MIN_CAP_BYTES: u64 = INITIAL_CAP_BYTES;
 /// peer (adjusted once per two long round trips) ramps as fast as a near one.
 const CAP_STEP_BYTES_PER_SEC: f64 = 512.0 * 1024.0;
 
+const MAX_STEP_SECS: f64 = 2.0;
+
 /// Added in-flight must buy at least this share of a proportional rate gain, or the
 /// path is full and the addition only queued.
 const MIN_ELASTICITY: f64 = 0.3;
@@ -896,9 +898,9 @@ const SLOW_RATE_FRACTION: f64 = 0.25;
 /// Sizes a byte cap from throughput alone. Grows it linearly while each addition of
 /// in-flight bytes still buys proportionally more bytes/s; once the rate stops
 /// following, scales it back by how much of the addition did not pay. As a guard,
-/// by Little's law the round trip is `in_flight / rate` and its 30 s minimum the
-/// path's base, so `in_flight - rate · base_rtt` is what sits queued (TCP Vegas):
-/// more than a bandwidth-delay product of it cuts the cap by the excess.
+/// the quickest request answered in the last 30 s is the path's base round trip,
+/// so `in_flight - rate · base_rtt` is what sits queued (TCP Vegas): more than a
+/// bandwidth-delay product of it cuts the cap by the excess.
 struct ByteLimiter {
     cap: f64,
     min_cap: f64,
@@ -942,9 +944,9 @@ impl ByteLimiter {
         self.in_flight / self.rate.max(1.0)
     }
 
-    /// One tick with the cumulative bytes received and the bytes in flight now;
-    /// `step` is the linear growth per second.
-    fn tick(&mut self, bytes: u64, in_flight: u64, step: f64) -> u64 {
+    /// One tick with the cumulative bytes received, the bytes in flight now and the
+    /// quickest request answered since the last tick; `step` is the linear growth per second.
+    fn tick(&mut self, bytes: u64, in_flight: u64, step: f64, latency: Option<f64>) -> u64 {
         let tick_s = FLOW_TICK.as_secs_f64();
         let got = bytes.saturating_sub(self.last_bytes) as f64;
         self.last_bytes = bytes;
@@ -952,27 +954,32 @@ impl ByteLimiter {
         self.in_flight += FLOW_EMA_ALPHA * (in_flight as f64 - self.in_flight);
         self.ticks += 1;
 
+        if let Some(rtt) = latency {
+            while self.rtts.back().is_some_and(|&(_, r)| r >= rtt) {
+                self.rtts.pop_back();
+            }
+            self.rtts.push_back((self.ticks, rtt));
+        }
+        while self.rtts.front().is_some_and(|&(t, _)| t + BASE_RTT_TICKS < self.ticks) {
+            self.rtts.pop_front();
+        }
+        let Some(&(_, base_rtt)) = self.rtts.front() else {
+            return self.cap as u64;
+        };
+        self.base_rtt = base_rtt;
+
         // Nothing asked or nothing arriving says nothing about the path.
         if in_flight == 0 || self.rate < 1.0 || self.in_flight < 1.0 {
             return self.cap as u64;
         }
-        let rtt = self.rtt();
-        while self.rtts.back().is_some_and(|&(_, r)| r >= rtt) {
-            self.rtts.pop_back();
-        }
-        self.rtts.push_back((self.ticks, rtt));
-        while self.rtts.front().is_some_and(|&(t, _)| t + BASE_RTT_TICKS < self.ticks) {
-            self.rtts.pop_front();
-        }
-        self.base_rtt = self.rtts.front().map_or(rtt, |&(_, r)| r);
 
         // One adjustment per two round trips, so each judges the last one's effect.
         self.since_adjust += 1;
-        let period = ((2.0 * rtt / tick_s).ceil() as u32).max(MIN_PERIOD_TICKS);
+        let period = ((2.0 * self.base_rtt / tick_s).ceil() as u32).max(MIN_PERIOD_TICKS);
         if self.since_adjust < period {
             return self.cap as u64;
         }
-        let step = step * self.since_adjust as f64 * tick_s;
+        let step = step * (self.since_adjust as f64 * tick_s).min(MAX_STEP_SECS);
         self.since_adjust = 0;
         let (prev_rate, prev_in_flight) = (self.prev_rate, self.prev_in_flight);
         self.prev_rate = self.rate;
@@ -1047,7 +1054,12 @@ fn spawn_flow_controller(
             peers.retain(|id, _| live.contains(id));
 
             let mut total_in_flight = 0u64;
+            let mut min_latency: Option<f64> = None;
             for p in g.iter() {
+                let latency = p.take_min_latency();
+                if let Some(latency) = latency {
+                    min_latency = Some(min_latency.map_or(latency, |m: f64| m.min(latency)));
+                }
                 let in_flight = p.in_flight_bytes();
                 total_in_flight += in_flight;
                 let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow {
@@ -1055,7 +1067,8 @@ fn spawn_flow_controller(
                     serving_rate: 0.0,
                     serving_ticks: 0,
                 });
-                let cap = flow.limiter.tick(p.bytes_read(), in_flight, CAP_STEP_BYTES_PER_SEC);
+                let cap =
+                    flow.limiter.tick(p.bytes_read(), in_flight, CAP_STEP_BYTES_PER_SEC, latency);
                 p.set_cap(cap);
                 if in_flight > 0 {
                     flow.serving_ticks += 1;
@@ -1074,7 +1087,8 @@ fn spawn_flow_controller(
             global.min_cap = (MIN_CAP_BYTES * g.len() as u64) as f64;
             global.cap = global.cap.max(global.min_cap);
             let step = CAP_STEP_BYTES_PER_SEC * g.len() as f64;
-            let cap = global.tick(bytes.load(Ordering::Relaxed), total_in_flight, step);
+            let cap =
+                global.tick(bytes.load(Ordering::Relaxed), total_in_flight, step, min_latency);
             global_cap.store(cap, Ordering::Relaxed);
 
             if ticks.is_multiple_of(2) {
