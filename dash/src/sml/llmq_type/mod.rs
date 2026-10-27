@@ -568,6 +568,16 @@ impl LLMQType {
     pub fn active_quorum_count(&self) -> u32 {
         self.params().signing_active_quorum_count
     }
+
+    /// Blocks between the starts of two DKG cycles.
+    pub fn dkg_interval(&self) -> u32 {
+        self.params().dkg_params.interval
+    }
+
+    /// Blocks a quorum stays active for: one DKG interval per active quorum.
+    pub fn active_window(&self) -> u32 {
+        self.active_quorum_count() * self.dkg_interval()
+    }
 }
 
 impl From<u8> for LLMQType {
@@ -677,14 +687,18 @@ impl LLMQType {
 
     /// Calculate the cycle base height for a given block height
     pub fn get_cycle_base_height(&self, height: u32) -> u32 {
-        let interval = self.params().dkg_params.interval;
+        let interval = self.dkg_interval();
         (height / interval) * interval
     }
 
     /// Get the DKG window that would contain a commitment mined at the given height
     pub fn get_dkg_window_for_height(&self, height: u32) -> DKGWindow {
+        self.dkg_window_at_cycle(self.get_cycle_base_height(height))
+    }
+
+    /// The DKG window of the cycle that starts at `cycle_start`.
+    pub fn dkg_window_at_cycle(&self, cycle_start: u32) -> DKGWindow {
         let params = self.params();
-        let cycle_start = self.get_cycle_base_height(height);
 
         // For rotating quorums, the mining window calculation is different
         let mining_start = if self.is_rotating_quorum_type() {
@@ -714,7 +728,7 @@ impl LLMQType {
     /// - Return only windows where mining could occur within our range
     pub fn get_dkg_windows_in_range(&self, start: u32, end: u32) -> Vec<DKGWindow> {
         let params = self.params();
-        let interval = params.dkg_params.interval;
+        let interval = self.dkg_interval();
 
         let mut windows = Vec::new();
 
