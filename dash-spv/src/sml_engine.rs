@@ -98,15 +98,11 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
-/// mining window it overlaps, and never more than are active at once. Without
-/// a DKG interval, one per block.
+/// mining window it overlaps, and never more than are active at once.
 fn max_new_quorums(llmq_type: LLMQType, blocks: CoreBlockHeight) -> usize {
     let window = llmq_type.dkg_window_at_cycle(0);
-    let windows = blocks
-        .saturating_add(window.mining_end - window.mining_start)
-        .saturating_sub(1)
-        .checked_div(llmq_type.dkg_interval())
-        .map_or(blocks, |windows| windows.saturating_add(1));
+    let span = blocks.saturating_add(window.mining_end - window.mining_start);
+    let windows = span.saturating_sub(1) / llmq_type.dkg_interval() + 1;
     windows.min(llmq_type.active_quorum_count()) as usize
 }
 

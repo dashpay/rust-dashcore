@@ -335,13 +335,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// This applies only to the incremental-update path while state is `Synced`.
     /// Initial sync and explicit retry paths (timeout) bypass it.
     pub(super) fn next_pipeline_mode(&mut self, tip_height: u32) -> PipelineMode {
-        let isd_type = self.network.isd_llmq_type();
-        if isd_type.dkg_interval() == 0 {
-            return PipelineMode::QuorumValidation {
-                qr_info_result: None,
-            };
-        }
-        let window = isd_type.get_dkg_window_for_height(tip_height);
+        let window = self.network.isd_llmq_type().get_dkg_window_for_height(tip_height);
         let cycle_height = window.cycle_start;
 
         // Reset per-cycle tracking when the tip enters a new cycle.

@@ -24,13 +24,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// its h-4c cycle. `None` sends it without a base.
     pub fn qr_info_base_list(&self, tip: CoreBlockHeight) -> Option<&MasternodeList> {
         let isd_type = self.network.isd_llmq_type();
-        let interval = isd_type.dkg_interval();
-        if interval == 0 {
-            return None;
-        }
         let reach = isd_type
             .get_cycle_base_height(tip)
-            .checked_sub(QRINFO_BASE_CYCLES_BEHIND * interval)?;
+            .checked_sub(QRINFO_BASE_CYCLES_BEHIND * isd_type.dkg_interval())?;
         self.masternode_lists.range(..=reach).next_back().map(|(_, list)| list)
     }
 
