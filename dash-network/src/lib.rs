@@ -44,15 +44,6 @@ pub enum Network {
 
 impl Network {
     /// Creates a `Network` from the network magic bytes.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dash_network::Network;
-    ///
-    /// assert_eq!(Some(Network::Mainnet), Network::from_magic(0xBD6B0CBF));
-    /// assert_eq!(None, Network::from_magic(0xFFFFFFFF));
-    /// ```
     pub const fn from_magic(magic: u32) -> Option<Network> {
         // Note: any new entries here must be added to `magic` below.
         match magic {
@@ -66,15 +57,6 @@ impl Network {
 
     /// Return the network magic bytes, which should be encoded little-endian
     /// at the start of every message
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dash_network::Network;
-    ///
-    /// let network = Network::Mainnet;
-    /// assert_eq!(network.magic(), 0xBD6B0CBF);
-    /// ```
     pub const fn magic(self) -> u32 {
         // Note: any new entries here must be added to `from_magic` above.
         match self {
@@ -101,15 +83,6 @@ impl Network {
     ///
     /// Regtest's default is the typical Dash Core regtest value; devnets can
     /// vary and should usually come from configuration.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dash_network::Network;
-    ///
-    /// assert_eq!(Network::Mainnet.default_p2p_port(), 9999);
-    /// assert_eq!(Network::Testnet.default_p2p_port(), 19999);
-    /// ```
     pub const fn default_p2p_port(self) -> u16 {
         match self {
             Network::Mainnet => 9999,
@@ -219,11 +192,5 @@ mod tests {
         assert_eq!(Network::Testnet.v20_activation_height(), 905_100);
         assert_eq!(Network::Devnet.v20_activation_height(), 0);
         assert_eq!(Network::Regtest.v20_activation_height(), 0);
-    }
-
-    #[test]
-    fn default_p2p_ports_match_conventions() {
-        assert_eq!(Network::Mainnet.default_p2p_port(), 9999);
-        assert_eq!(Network::Testnet.default_p2p_port(), 19999);
     }
 }

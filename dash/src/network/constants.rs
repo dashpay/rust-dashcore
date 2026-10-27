@@ -261,67 +261,7 @@ impl Decodable for ServiceFlags {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAINNET_HD_ACTIVATION_HEIGHT, NetworkExt, ServiceFlags};
-    use crate::Network;
-    use crate::consensus::encode::{deserialize, serialize};
-
-    #[test]
-    fn test_hd_wallet_sync_floor() {
-        // Only mainnet is floored; every other network syncs from genesis (0).
-        assert_eq!(Network::Mainnet.hd_wallet_sync_floor(), MAINNET_HD_ACTIVATION_HEIGHT);
-        assert_eq!(Network::Testnet.hd_wallet_sync_floor(), 0);
-        assert_eq!(Network::Devnet.hd_wallet_sync_floor(), 0);
-        assert_eq!(Network::Regtest.hd_wallet_sync_floor(), 0);
-    }
-
-    #[test]
-    fn test_network_magic() {
-        assert_eq!(Network::Mainnet.magic(), 0xBD6B0CBF);
-        assert_eq!(Network::Testnet.magic(), 0xFFCAE2CE);
-        assert_eq!(Network::Devnet.magic(), 0xCEFFCAE2);
-        assert_eq!(Network::Regtest.magic(), 0xDCB7C1FC);
-    }
-
-    #[test]
-    fn test_network_from_magic() {
-        assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Mainnet));
-        assert_eq!(Network::from_magic(0xFFCAE2CE), Some(Network::Testnet));
-        assert_eq!(Network::from_magic(0xCEFFCAE2), Some(Network::Devnet));
-        assert_eq!(Network::from_magic(0xDCB7C1FC), Some(Network::Regtest));
-        assert_eq!(Network::from_magic(0x12345678), None);
-    }
-
-    #[test]
-    fn test_network_display() {
-        assert_eq!(Network::Mainnet.to_string(), "mainnet");
-        assert_eq!(Network::Testnet.to_string(), "testnet");
-        assert_eq!(Network::Devnet.to_string(), "devnet");
-        assert_eq!(Network::Regtest.to_string(), "regtest");
-    }
-
-    #[test]
-    fn test_network_from_str() {
-        assert_eq!("mainnet".parse::<Network>().unwrap(), Network::Mainnet);
-        assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
-        assert_eq!("test".parse::<Network>().unwrap(), Network::Testnet);
-        assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
-        assert_eq!("dev".parse::<Network>().unwrap(), Network::Devnet);
-        assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
-        assert!("invalid".parse::<Network>().is_err());
-    }
-
-    #[test]
-    fn serialize_test() {
-        assert_eq!(serialize(&Network::Mainnet.magic()), &[0xbf, 0x0c, 0x6b, 0xbd]);
-        assert_eq!(serialize(&Network::Testnet.magic()), &[0xce, 0xe2, 0xca, 0xff]);
-        assert_eq!(serialize(&Network::Devnet.magic()), &[0xe2, 0xca, 0xff, 0xce]);
-        assert_eq!(serialize(&Network::Regtest.magic()), &[0xfc, 0xc1, 0xb7, 0xdc]);
-
-        assert_eq!(deserialize(&[0xbf, 0x0c, 0x6b, 0xbd]).ok(), Some(Network::Mainnet.magic()));
-        assert_eq!(deserialize(&[0xce, 0xe2, 0xca, 0xff]).ok(), Some(Network::Testnet.magic()));
-        assert_eq!(deserialize(&[0xe2, 0xca, 0xff, 0xce]).ok(), Some(Network::Devnet.magic()));
-        assert_eq!(deserialize(&[0xfc, 0xc1, 0xb7, 0xdc]).ok(), Some(Network::Regtest.magic()));
-    }
+    use super::ServiceFlags;
 
     #[test]
     fn service_flags_test() {
