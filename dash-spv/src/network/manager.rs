@@ -174,7 +174,7 @@ impl From<NetworkMessage> for InboundMessage {
 /// An inbound message on its way to its subscribers. `Arc` so the pump does not
 /// deep-copy a `block`/`cfilter` payload per subscriber.
 pub type Inbound = (SocketAddr, Arc<InboundMessage>);
-type Subscribers = Arc<Mutex<HashMap<MessageType, Vec<UnboundedSender<Inbound>>>>>;
+type Subscribers = Mutex<HashMap<MessageType, Vec<UnboundedSender<Inbound>>>>;
 
 /// Every pipeline request the broker is handling, from `send` until the owning
 /// manager reports it answered (`request_answered`) or cancels it. The single home
@@ -183,7 +183,7 @@ type Subscribers = Arc<Mutex<HashMap<MessageType, Vec<UnboundedSender<Inbound>>>
 ///
 /// - Membership is the de-dup set: `send` ignores a key already present.
 /// - `OnWire` entries carry the message so the timeout monitor can re-inject it.
-type Registry = Arc<Mutex<HashMap<RequestKey, ReqState>>>;
+type Registry = Mutex<HashMap<RequestKey, ReqState>>;
 
 /// Message kinds a sync manager can subscribe to; the pump routes by mapping `cmd()` back to one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -259,7 +259,7 @@ pub enum RequestKey {
     Block(dashcore::BlockHash),
 }
 
-enum ReqState {
+pub enum ReqState {
     /// In the `MsgQueue`, not yet sent; held here only for de-dup.
     Queued(u32),
     /// Sent and awaiting a response. Carries the message so the timeout monitor can
@@ -267,7 +267,7 @@ enum ReqState {
     OnWire(Box<OnWire>),
 }
 
-struct OnWire {
+pub struct OnWire {
     /// The CONNECTION the request was routed to, not the address: a close event for an
     /// earlier connection to the same address must not pull back the new one's work.
     peer: PeerId,
@@ -285,34 +285,30 @@ struct OnWire {
     attempts: u32,
 }
 
+pub struct NetworkState {
+    pub connected: Mutex<Vec<ConnectedPeer>>,
+    pub backups: Mutex<Vec<DisconnectedPeer>>,
+    pub discoverer: Mutex<PeerDiscoverer>,
+    pub bans: Bans,
+    pub requests: Registry,
+    pub queue: MsgQueue,
+    pub subscribers: Subscribers,
+    pub events: broadcast::Sender<NetworkEvent>,
+    pub inbound: UnboundedSender<PeerEvent>,
+    pub bytes: AtomicU64,
+    pub global_cap: AtomicU64,
+    pub best_tip: AtomicU32,
+    pub peer_wake: Notify,
+    pub costs: Arc<ResponseCosts>,
+    pub headers2_semaphore: Arc<Semaphore>,
+    pub max_peers: usize,
+    pub required_services: ServiceFlags,
+    pub user_agent: String,
+}
+
 pub struct PeerNetworkManager {
-    /// Wakes the peer supervisor when a peer was lost or measured as underserving.
-    peer_wake: Arc<Notify>,
-    connected_peers: Arc<Mutex<Vec<ConnectedPeer>>>,
-    other_peers: Arc<Mutex<Vec<DisconnectedPeer>>>,
-    discoverer: Arc<Mutex<PeerDiscoverer>>,
-    msg_queue: Arc<MsgQueue>,
-    inbound_tx: UnboundedSender<PeerEvent>,
-    subscribers: Subscribers,
-    requests: Registry,
-    events_tx: broadcast::Sender<NetworkEvent>,
-    /// Best tip advertised by the peers, shared with the supervisor so its
-    /// `PeersUpdated` carries the real height.
-    best_tip: Arc<AtomicU32>,
-    max_peers: usize,
-    /// Service flags a peer must advertise to be kept (e.g. COMPACT_FILTERS when
-    /// filters are enabled). Checked at handshake; `NONE` keeps every peer.
-    required_services: ServiceFlags,
-    user_agent: Arc<str>,
-    /// Total bytes read from all peers, handed to every peer `start` connects.
-    bytes: Arc<AtomicU64>,
-    /// Global bound for CPU-heavy headers2 decompression work.
-    headers2_decompression_semaphore: Arc<Semaphore>,
-    bans: Arc<Bans>,
-    // Cancelled on drop to tear down the router, pump, timeout monitor and bandwidth controller.
+    state: Arc<NetworkState>,
     shutdown: CancellationToken,
-    // Cancelled by `stop()` to tear down the supervisor and peer readers; `start()`
-    // replaces a cancelled one so a stopped manager can start again.
     session: Mutex<CancellationToken>,
 }
 
@@ -355,7 +351,7 @@ fn classify(msg: &NetworkMessage) -> MsgClass {
 /// they go before everything of the same height.
 type QueueKey = (u32, i64);
 
-struct MsgQueue {
+pub struct MsgQueue {
     other: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
     blocks: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
     cfilters: Mutex<BTreeMap<QueueKey, NetworkMessage>>,
@@ -365,7 +361,6 @@ struct MsgQueue {
     front_seq: AtomicI64,
     len: AtomicUsize,
     notify: Notify,
-    costs: Arc<ResponseCosts>,
 }
 
 /// Downstream first: the stage closest to the wallet is the one waiting on the network,
@@ -380,7 +375,6 @@ const DRAIN_PRIORITY: [MsgClass; MSG_CLASSES] =
 
 impl PeerNetworkManager {
     pub async fn new(config: &ClientConfig) -> Self {
-        let discoverer = Arc::new(Mutex::new(PeerDiscoverer::new(config)));
         let max_peers = config.max_peers.max(1) as usize;
         // NETWORK is unconditional: the block pipeline asks for full blocks at
         // arbitrary historical heights (and the gap-limit rescan far more so), which
@@ -398,91 +392,36 @@ impl PeerNetworkManager {
             required_services |= ServiceFlags::BLOOM;
         }
 
-        let connected_peers = Arc::new(Mutex::new(Vec::with_capacity(30)));
-        let other_peers = Arc::new(Mutex::new(Vec::with_capacity(30)));
-        let msg_queue = Arc::new(MsgQueue::new());
-
-        let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
-        let subscribers: Subscribers = Arc::new(Mutex::new(HashMap::new()));
-        let requests: Registry = Arc::new(Mutex::new(HashMap::new()));
-        // Sized generously: peer-connect churn plus one `RequestTimedOut` per
-        // dead request during a bad-peer storm.
-        let (events_tx, _) = broadcast::channel(4096);
-        let shutdown = CancellationToken::new();
-        // Download-only byte counter and the global in-flight budget. The budget starts at a
-        // tiny bootstrap and `spawn_bandwidth_controller` sizes it from measured capacity.
-        let bytes = Arc::new(AtomicU64::new(0));
-        let global_cap = Arc::new(AtomicU64::new(MIN_CAP_BYTES * max_peers as u64));
-        let best_tip = Arc::new(AtomicU32::new(0));
-        let peer_wake = Arc::new(Notify::new());
-
-        // Detached like the bandwidth controller and timeout monitor: torn down via the
-        // shutdown token, not by holding their handles.
-        spawn_pump(
-            inbound_rx,
-            subscribers.clone(),
-            connected_peers.clone(),
-            events_tx.clone(),
-            msg_queue.clone(),
-            requests.clone(),
-            shutdown.clone(),
-            peer_wake.clone(),
-            max_peers,
-            discoverer.clone(),
-            best_tip.clone(),
-        );
-
-        spawn_router(
-            msg_queue.clone(),
-            connected_peers.clone(),
-            shutdown.clone(),
-            global_cap.clone(),
-            requests.clone(),
-        );
-
-        let bans = Arc::new(Bans::default());
-        spawn_timeout_monitor(
-            requests.clone(),
-            connected_peers.clone(),
-            msg_queue.clone(),
-            shutdown.clone(),
-            peer_wake.clone(),
-            max_peers,
-            bans.clone(),
-        );
-
-        spawn_flow_controller(
-            bytes.clone(),
-            global_cap.clone(),
-            connected_peers.clone(),
-            shutdown.clone(),
-            peer_wake.clone(),
-            msg_queue.clone(),
-            requests.clone(),
-        );
-
-        // The peer supervisor is spawned by `start()`, not here: it must not emit
-        // `PeersUpdated` until the sync managers have subscribed (see `start`).
-
-        PeerNetworkManager {
-            peer_wake,
-            connected_peers,
-            other_peers,
-            discoverer,
-            msg_queue,
-            inbound_tx,
-            subscribers,
-            requests,
-            events_tx,
-            best_tip,
+        let (inbound, inbound_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(NetworkState {
+            connected: Mutex::new(Vec::with_capacity(30)),
+            backups: Mutex::new(Vec::with_capacity(30)),
+            discoverer: Mutex::new(PeerDiscoverer::new(config)),
+            bans: Bans::default(),
+            requests: Mutex::new(HashMap::new()),
+            queue: MsgQueue::new(),
+            subscribers: Mutex::new(HashMap::new()),
+            events: broadcast::channel(4096).0,
+            inbound,
+            bytes: AtomicU64::new(0),
+            global_cap: AtomicU64::new(MIN_CAP_BYTES * max_peers as u64),
+            best_tip: AtomicU32::new(0),
+            peer_wake: Notify::new(),
+            costs: Arc::new(ResponseCosts::new()),
+            headers2_semaphore: Arc::new(Semaphore::new(headers2_decompression_parallelism())),
             max_peers,
             required_services,
-            user_agent: config.user_agent.as_str().into(),
-            bytes,
-            headers2_decompression_semaphore: Arc::new(Semaphore::new(
-                headers2_decompression_parallelism(),
-            )),
-            bans,
+            user_agent: config.user_agent.clone(),
+        });
+        let shutdown = CancellationToken::new();
+
+        spawn_pump(state.clone(), inbound_rx, shutdown.clone());
+        spawn_router(state.clone(), shutdown.clone());
+        spawn_timeout_monitor(state.clone(), shutdown.clone());
+        spawn_flow_controller(state.clone(), shutdown.clone());
+
+        PeerNetworkManager {
+            state,
             session: Mutex::new(shutdown.child_token()),
             shutdown,
         }
@@ -504,23 +443,7 @@ impl NetworkManager for PeerNetworkManager {
         };
         // Non-blocking: the supervisor connects peers in the background and announces each,
         // so sync starts on the first decent one.
-        spawn_peer_supervisor(
-            self.discoverer.clone(),
-            self.connected_peers.clone(),
-            self.other_peers.clone(),
-            self.inbound_tx.clone(),
-            session,
-            self.bytes.clone(),
-            self.events_tx.clone(),
-            self.best_tip.clone(),
-            self.max_peers,
-            self.required_services,
-            self.peer_wake.clone(),
-            self.headers2_decompression_semaphore.clone(),
-            self.msg_queue.costs.clone(),
-            self.user_agent.clone(),
-            self.bans.clone(),
-        );
+        spawn_peer_supervisor(self.state.clone(), session);
     }
 
     /// Disconnect every peer and forget the requests in play, so none of them
@@ -528,9 +451,9 @@ impl NetworkManager for PeerNetworkManager {
     async fn stop(&self) {
         tracing::info!(target: "dash_spv::network", "network manager stopping: cancelling peers");
         self.session.lock().await.cancel();
-        self.connected_peers.lock().await.clear();
-        self.requests.lock().await.clear();
-        self.msg_queue.pop_n(self.msg_queue.len()).await;
+        self.state.connected.lock().await.clear();
+        self.state.requests.lock().await.clear();
+        self.state.queue.pop_n(self.state.queue.len()).await;
     }
 
     /// Ask the broker to make a request. De-duplicated by [`RequestKey`]: a request already
@@ -540,11 +463,11 @@ impl NetworkManager for PeerNetworkManager {
     async fn enqueue(&self, height: u32, msg: NetworkMessage) {
         let keys = request_keys(&msg);
         if keys.is_empty() {
-            self.msg_queue.push(height, msg).await;
+            self.state.queue.push(height, msg).await;
             return;
         }
         {
-            let mut reqs = self.requests.lock().await;
+            let mut reqs = self.state.requests.lock().await;
             if keys.iter().any(|k| reqs.contains_key(k)) {
                 return; // already in play
             }
@@ -552,7 +475,7 @@ impl NetworkManager for PeerNetworkManager {
                 reqs.insert(key, ReqState::Queued(0));
             }
         }
-        self.msg_queue.push(height, msg).await;
+        self.state.queue.push(height, msg).await;
     }
 
     /// Send to one specific peer, bypassing the router. Needed for messages that set
@@ -562,7 +485,7 @@ impl NetworkManager for PeerNetworkManager {
         // Drop the peer-set lock before writing: holding it across a socket write blocks
         // the router, monitor, supervisor and bandwidth controller for up to `WRITE_TIMEOUT`.
         let handle = {
-            let peers = self.connected_peers.lock().await;
+            let peers = self.state.connected.lock().await;
             peers.iter().find(|p| p.addr() == addr).map(|p| p.handle())
         };
         let Some(peer) = handle else {
@@ -579,16 +502,16 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     async fn request_answered(&self, key: RequestKey) {
-        if !matches!(self.requests.lock().await.remove(&key), Some(ReqState::OnWire(_))) {
+        if !matches!(self.state.requests.lock().await.remove(&key), Some(ReqState::OnWire(_))) {
             return;
         }
-        self.msg_queue.notify.notify_one();
+        self.state.queue.notify.notify_one();
     }
 
     /// Broadcast a message to all connected peers
     async fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()> {
         let handles: Vec<PeerHandle> =
-            self.connected_peers.lock().await.iter().map(|p| p.handle()).collect();
+            self.state.connected.lock().await.iter().map(|p| p.handle()).collect();
         if handles.is_empty() {
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
@@ -611,12 +534,12 @@ impl NetworkManager for PeerNetworkManager {
     /// address that managers treat as locally-originated.
     async fn dispatch_local(&self, msg: NetworkMessage) {
         let local: SocketAddr = ([0, 0, 0, 0], 0).into();
-        let _ = self.inbound_tx.send(PeerEvent::Message(PeerId::synthetic(local), msg.into()));
+        let _ = self.state.inbound.send(PeerEvent::Message(PeerId::synthetic(local), msg.into()));
     }
 
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let mut subscribers = self.subscribers.lock().await;
+        let mut subscribers = self.state.subscribers.lock().await;
         for kind in kinds.iter().copied().collect::<HashSet<_>>() {
             subscribers.entry(kind).or_default().push(tx.clone());
         }
@@ -624,33 +547,32 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     fn tip(&self) -> u32 {
-        self.best_tip.load(Ordering::Relaxed)
+        self.state.best_tip.load(Ordering::Relaxed)
     }
 
     async fn connected_count(&self) -> u32 {
-        self.connected_peers.lock().await.len() as u32
+        self.state.connected.lock().await.len() as u32
     }
 
     async fn ban_peer(&self, addr: SocketAddr) {
-        self.bans.ban(addr, Ban::Misbehaved).await;
-        for peer in self.connected_peers.lock().await.iter().filter(|p| p.addr() == addr) {
+        self.state.bans.ban(addr, Ban::Misbehaved).await;
+        for peer in self.state.connected.lock().await.iter().filter(|p| p.addr() == addr) {
             peer.close();
         }
     }
 
     fn events(&self) -> broadcast::Receiver<NetworkEvent> {
-        self.events_tx.subscribe()
+        self.state.events.subscribe()
     }
 }
 
-fn spawn_router(
-    queue: Arc<MsgQueue>,
-    connected: Arc<Mutex<Vec<ConnectedPeer>>>,
-    shutdown: CancellationToken,
-    global_cap: Arc<AtomicU64>,
-    requests: Registry,
-) -> JoinHandle<()> {
+fn spawn_router(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let NetworkState {
+            queue,
+            connected,
+            ..
+        } = &*state;
         loop {
             if shutdown.is_cancelled() {
                 break;
@@ -666,8 +588,7 @@ fn spawn_router(
 
             let peers: Vec<PeerHandle> =
                 connected.lock().await.iter().map(|p| p.handle()).collect();
-            let sent =
-                route_tick(&queue, &peers, global_cap.load(Ordering::Relaxed), &requests).await;
+            let sent = route_tick(&state, &peers).await;
             drop(peers);
 
             if sent == 0 {
@@ -705,12 +626,14 @@ pub fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
     }
 }
 
-async fn route_tick(
-    queue: &MsgQueue,
-    peers: &[PeerHandle],
-    global_cap: u64,
-    requests: &Registry,
-) -> usize {
+async fn route_tick(state: &NetworkState, peers: &[PeerHandle]) -> usize {
+    let NetworkState {
+        queue,
+        requests,
+        costs,
+        ..
+    } = state;
+    let global_cap = state.global_cap.load(Ordering::Relaxed);
     if peers.is_empty() {
         return 0;
     }
@@ -736,7 +659,7 @@ async fn route_tick(
             *slot = slot.saturating_sub(1);
         }
     }
-    let msgs = queue.pop_guaranteed(budget, &guaranteed, |m| queue.costs.cost(m)).await;
+    let msgs = queue.pop_guaranteed(budget, &guaranteed, |m| costs.cost(m)).await;
     let mut sent = 0;
     // Anything popped but not sent goes BACK on the queue: its key is registered, so a
     // dropped message would never be re-sent nor time out and its pipeline would stall.
@@ -811,11 +734,12 @@ const HEDGE_AFTER: Duration = Duration::from_secs(2);
 /// order, so one block stuck at a slow peer stalls everything after it while the other
 /// peers sit idle. Ask an idle peer for the lowest such blocks too; the first copy to
 /// arrive settles both.
-async fn hedge_stalled_blocks(
-    peers: &[PeerHandle],
-    requests: &Registry,
-    costs: &ResponseCosts,
-) -> usize {
+async fn hedge_stalled_blocks(state: &NetworkState, peers: &[PeerHandle]) -> usize {
+    let NetworkState {
+        requests,
+        costs,
+        ..
+    } = state;
     let mut plan: Vec<(RequestKey, NetworkMessage, PeerHandle)> = Vec::new();
     {
         let reqs = requests.lock().await;
@@ -1036,16 +960,17 @@ struct PeerFlow {
 /// Sizes the byte caps of every peer and of the client's own link, each with a
 /// [`ByteLimiter`] on its own throughput: the router sends while both have room.
 /// Also reports how fast each peer serves while it has work, for [`underserving_peer`].
-fn spawn_flow_controller(
-    bytes: Arc<AtomicU64>,
-    global_cap: Arc<AtomicU64>,
-    connected: Arc<Mutex<Vec<ConnectedPeer>>>,
-    shutdown: CancellationToken,
-    peer_wake: Arc<Notify>,
-    queue: Arc<MsgQueue>,
-    requests: Registry,
-) -> JoinHandle<()> {
+fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let NetworkState {
+            bytes,
+            global_cap,
+            connected,
+            peer_wake,
+            queue,
+            costs,
+            ..
+        } = &*state;
         let mut global = ByteLimiter::new(MIN_CAP_BYTES, bytes.load(Ordering::Relaxed));
         let mut peers: HashMap<PeerId, PeerFlow> = HashMap::new();
         let mut last_underserving: Option<SocketAddr> = None;
@@ -1140,7 +1065,7 @@ fn spawn_flow_controller(
                     global.rtt() * 1e3,
                     global.base_rtt * 1e3,
                     g.len(),
-                    queue.costs.expected_kb(),
+                    costs.expected_kb(),
                 );
             }
 
@@ -1150,7 +1075,7 @@ fn spawn_flow_controller(
             let handles: Vec<PeerHandle> = g.iter().map(|p| p.handle()).collect();
             drop(g);
             if queue.len() == 0 {
-                let hedged = hedge_stalled_blocks(&handles, &requests, &queue.costs).await;
+                let hedged = hedge_stalled_blocks(&state, &handles).await;
                 if hedged > 0 {
                     tracing::debug!(target: "dash_spv::network", "endgame: hedged {} block request(s)", hedged);
                 }
@@ -1184,27 +1109,12 @@ fn lag_key(peer: &ConnectedPeer) -> u32 {
 /// - Probed-but-unused peers are closed and kept as ranked backups (`others`) so
 ///   later rounds reconnect the best without probing blindly.
 struct Supervisor {
-    discoverer: Arc<Mutex<PeerDiscoverer>>,
-    connected: Arc<Mutex<Vec<ConnectedPeer>>>,
-    others: Arc<Mutex<Vec<DisconnectedPeer>>>,
-    inbound: UnboundedSender<PeerEvent>,
+    state: Arc<NetworkState>,
     shutdown: CancellationToken,
-    bytes: Arc<AtomicU64>,
-    events: broadcast::Sender<NetworkEvent>,
-    best_tip: Arc<AtomicU32>,
-    max_peers: usize,
-    required_services: ServiceFlags,
-    /// Fired when a peer was lost or measured as underserving; the supervisor idles otherwise.
-    wake: Arc<Notify>,
-    /// Handed to every peer it connects, so the bound is global.
-    headers2_decompression_semaphore: Arc<Semaphore>,
-    costs: Arc<ResponseCosts>,
-    user_agent: Arc<str>,
     /// Lowest handshake ping seen, the reference for the bad-lag threshold.
     best_lag_ms: AtomicU32,
     /// When a slow peer was last swapped out, for [`SWAP_COOLDOWN`].
     last_swap: Mutex<Option<Instant>>,
-    bans: Arc<Bans>,
 }
 
 impl Supervisor {
@@ -1212,11 +1122,11 @@ impl Supervisor {
         loop {
             self.repair_round().await;
 
-            let short = self.connected.lock().await.len() < self.max_peers;
+            let short = self.state.connected.lock().await.len() < self.state.max_peers;
 
             tokio::select! {
                 _ = self.shutdown.cancelled() => break,
-                _ = self.wake.notified() => {}
+                _ = self.state.peer_wake.notified() => {}
                 _ = tokio::time::sleep(FILL_TICK), if short => {}
             }
         }
@@ -1226,17 +1136,17 @@ impl Supervisor {
     /// fresh discovery, de-duplicated against each other and the live set.
     async fn next_candidates(&self, want: usize) -> Vec<DisconnectedPeer> {
         let mut out: Vec<DisconnectedPeer> = {
-            let mut o = self.others.lock().await;
+            let mut o = self.state.backups.lock().await;
             o.sort_by_key(|p| p.lag_ms().unwrap_or(u32::MAX));
             let take = want.min(o.len());
             o.drain(..take).collect()
         };
         if out.len() < want {
-            out.extend(self.discoverer.lock().await.get(want - out.len()).await);
+            out.extend(self.state.discoverer.lock().await.get(want - out.len()).await);
         }
         let live: HashSet<SocketAddr> =
-            self.connected.lock().await.iter().map(|p| p.addr()).collect();
-        let banned = self.bans.banned().await;
+            self.state.connected.lock().await.iter().map(|p| p.addr()).collect();
+        let banned = self.state.bans.banned().await;
         let mut seen = HashSet::new();
         out.retain(|p| {
             !live.contains(&p.addr()) && !banned.contains(&p.addr()) && seen.insert(p.addr())
@@ -1247,7 +1157,7 @@ impl Supervisor {
     /// Close probed-but-unused peers and remember them as ranked backups, keeping the
     /// list de-duplicated (best ping per address) and bounded.
     async fn stash_backups(&self, peers: impl IntoIterator<Item = ConnectedPeer>) {
-        let mut o = self.others.lock().await;
+        let mut o = self.state.backups.lock().await;
         for peer in peers {
             peer.close();
             o.push(peer.disconnect());
@@ -1259,14 +1169,14 @@ impl Supervisor {
         });
         o.dedup_by_key(|p| p.addr());
         o.sort_by_key(|p| p.lag_ms().unwrap_or(u32::MAX));
-        o.truncate(self.max_peers * BACKUP_MULTIPLE);
+        o.truncate(self.state.max_peers * BACKUP_MULTIPLE);
     }
 
     async fn announce_update(&self) {
-        let count = self.connected.lock().await.len() as u32;
-        let _ = self.events.send(NetworkEvent::PeersUpdated {
+        let count = self.state.connected.lock().await.len() as u32;
+        let _ = self.state.events.send(NetworkEvent::PeersUpdated {
             connected_count: count,
-            best_height: self.best_tip.load(Ordering::Relaxed),
+            best_height: self.state.best_tip.load(Ordering::Relaxed),
         });
     }
 
@@ -1274,8 +1184,8 @@ impl Supervisor {
     /// underserving the rest, or both.
     async fn repair_round(&self) {
         let (deficit, slow) = {
-            let peers = self.connected.lock().await;
-            let deficit = self.max_peers.saturating_sub(peers.len());
+            let peers = self.state.connected.lock().await;
+            let deficit = self.state.max_peers.saturating_sub(peers.len());
             // Only look for a laggard once full: below cap every arrival is wanted anyway.
             // Each swap re-sends the work the old peer held, so at most one per cooldown.
             let cooled = self.last_swap.lock().await.is_none_or(|t| t.elapsed() >= SWAP_COOLDOWN);
@@ -1301,16 +1211,7 @@ impl Supervisor {
             .into_iter()
             .map(|c| {
                 let addr = c.addr();
-                let connect = c.connect(
-                    self.inbound.clone(),
-                    self.shutdown.clone(),
-                    self.bytes.clone(),
-                    self.required_services,
-                    self.headers2_decompression_semaphore.clone(),
-                    self.costs.clone(),
-                    &self.user_agent,
-                    self.bans.clone(),
-                );
+                let connect = c.connect(self.state.clone(), self.shutdown.clone());
                 async move {
                     let result = tokio::select! {
                         _ = self.shutdown.cancelled() => Err(NetworkError::Timeout),
@@ -1328,12 +1229,14 @@ impl Supervisor {
         let mut leftover: Vec<ConnectedPeer> = Vec::new();
         while let Some((addr, result)) = inflight.next().await {
             let Ok(peer) = result else {
-                self.bans.ban(addr, Ban::DialFailed).await;
+                self.state.bans.ban(addr, Ban::DialFailed).await;
                 continue;
             };
-            self.bans.dialed(addr).await;
+            self.state.bans.dialed(addr).await;
             let handle = peer.handle();
-            self.best_tip.fetch_max(peer.version().start_height.max(0) as u32, Ordering::Relaxed);
+            self.state
+                .best_tip
+                .fetch_max(peer.version().start_height.max(0) as u32, Ordering::Relaxed);
 
             let lag = peer.lag_ms();
             if lag > 0 {
@@ -1351,11 +1254,11 @@ impl Supervisor {
 
             let mut changed = true;
             let displaced = {
-                let mut peers = self.connected.lock().await;
-                if peers.len() < self.max_peers {
+                let mut peers = self.state.connected.lock().await;
+                if peers.len() < self.state.max_peers {
                     let addr = peer.addr();
                     peers.push(peer);
-                    let _ = self.events.send(NetworkEvent::PeerConnected(addr));
+                    let _ = self.state.events.send(NetworkEvent::PeerConnected(addr));
                     accepted += 1;
                     None
                 } else if let Some(pos) = slow
@@ -1390,8 +1293,8 @@ impl Supervisor {
                 // reconnection to the same peer is not disturbed.
                 old.close();
                 *self.last_swap.lock().await = Some(Instant::now());
-                let _ = self.events.send(NetworkEvent::PeerDisconnected(old_addr));
-                let _ = self.events.send(NetworkEvent::PeerConnected(new_addr));
+                let _ = self.state.events.send(NetworkEvent::PeerDisconnected(old_addr));
+                let _ = self.state.events.send(NetworkEvent::PeerConnected(new_addr));
             }
 
             // Announce only real changes: an arrival or a swap. A candidate benched as a
@@ -1405,7 +1308,7 @@ impl Supervisor {
         // Last resort: never sit at zero peers. If nothing decent connected and the
         // set is empty, take the least-bad handshake we got so sync can start; a
         // later round upgrades it once a decent peer appears.
-        if accepted == 0 && self.connected.lock().await.is_empty() && !leftover.is_empty() {
+        if accepted == 0 && self.state.connected.lock().await.is_empty() && !leftover.is_empty() {
             leftover.sort_by_key(lag_key);
             let peer = leftover.remove(0);
             let addr = peer.addr();
@@ -1416,8 +1319,8 @@ impl Supervisor {
                 peer.lag_ms(),
             );
             let handle = peer.handle();
-            self.connected.lock().await.push(peer);
-            let _ = self.events.send(NetworkEvent::PeerConnected(addr));
+            self.state.connected.lock().await.push(peer);
+            let _ = self.state.events.send(NetworkEvent::PeerConnected(addr));
             let _ = handle.send(&NetworkMessage::GetAddr).await;
             self.announce_update().await;
             accepted += 1;
@@ -1430,7 +1333,7 @@ impl Supervisor {
                 target: "dash_spv::network",
                 "peer supervisor: +{} peers -> {}",
                 accepted,
-                self.connected.lock().await.len(),
+                self.state.connected.lock().await.len(),
             );
         }
     }
@@ -1466,43 +1369,13 @@ fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn spawn_peer_supervisor(
-    discoverer: Arc<Mutex<PeerDiscoverer>>,
-    connected: Arc<Mutex<Vec<ConnectedPeer>>>,
-    others: Arc<Mutex<Vec<DisconnectedPeer>>>,
-    inbound: UnboundedSender<PeerEvent>,
-    shutdown: CancellationToken,
-    bytes: Arc<AtomicU64>,
-    events: broadcast::Sender<NetworkEvent>,
-    best_tip: Arc<AtomicU32>,
-    max_peers: usize,
-    required_services: ServiceFlags,
-    wake: Arc<Notify>,
-    headers2_decompression_semaphore: Arc<Semaphore>,
-    costs: Arc<ResponseCosts>,
-    user_agent: Arc<str>,
-    bans: Arc<Bans>,
-) -> JoinHandle<()> {
+fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(
         Supervisor {
-            discoverer,
-            connected,
-            others,
-            inbound,
+            state,
             shutdown,
-            bytes,
-            events,
-            best_tip,
-            max_peers,
-            required_services,
-            wake,
-            headers2_decompression_semaphore,
-            costs,
-            user_agent,
             best_lag_ms: AtomicU32::new(u32::MAX),
             last_swap: Mutex::new(None),
-            bans,
         }
         .run(),
     )
@@ -1544,16 +1417,17 @@ async fn requeue_requests_from(
 /// A culprit is kicked immediately and ALL its on-wire requests are re-queued for
 /// other peers; leaving it connected would just route the freed work back to it.
 /// The supervisor refills the set.
-fn spawn_timeout_monitor(
-    requests: Registry,
-    connected: Arc<Mutex<Vec<ConnectedPeer>>>,
-    queue: Arc<MsgQueue>,
-    shutdown: CancellationToken,
-    peer_wake: Arc<Notify>,
-    max_peers: usize,
-    bans: Arc<Bans>,
-) -> JoinHandle<()> {
+fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let NetworkState {
+            requests,
+            connected,
+            queue,
+            peer_wake,
+            max_peers,
+            bans,
+            ..
+        } = &*state;
         let mut ticker = tokio::time::interval(TIMEOUT_CHECK);
         // Per-peer liveness: (bytes read at last progress, when it last rose).
         let mut progress: HashMap<PeerId, (u64, Instant)> = HashMap::new();
@@ -1635,7 +1509,7 @@ fn spawn_timeout_monitor(
 
             // Re-queue every on-wire request of a culprit (fresh ones too: the connection is
             // going away), keeping keys as Queued so de-dup holds.
-            let reinject = requeue_requests_from(&requests, &culprits).await;
+            let reinject = requeue_requests_from(requests, &culprits).await;
 
             // Drop culprits still in the set (some may already be gone).
             let (dropped, remaining) = {
@@ -1655,7 +1529,7 @@ fn spawn_timeout_monitor(
                 bans.ban(peer.addr(), Ban::Kicked).await;
             }
             // The set is now short: wake the supervisor, which otherwise idles.
-            if dropped > 0 && remaining < max_peers {
+            if dropped > 0 && remaining < *max_peers {
                 peer_wake.notify_one();
             }
 
@@ -1674,21 +1548,24 @@ fn spawn_timeout_monitor(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn spawn_pump(
+    state: Arc<NetworkState>,
     mut inbound: UnboundedReceiver<PeerEvent>,
-    subscribers: Subscribers,
-    connected: Arc<Mutex<Vec<ConnectedPeer>>>,
-    events: broadcast::Sender<NetworkEvent>,
-    queue: Arc<MsgQueue>,
-    requests: Registry,
     shutdown: CancellationToken,
-    peer_wake: Arc<Notify>,
-    max_peers: usize,
-    discoverer: Arc<Mutex<PeerDiscoverer>>,
-    best_tip: Arc<AtomicU32>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let NetworkState {
+            subscribers,
+            connected,
+            events,
+            queue,
+            requests,
+            peer_wake,
+            max_peers,
+            discoverer,
+            best_tip,
+            ..
+        } = &*state;
         // Per-peer received-message counter to check load balance across peers.
         let mut recv_by_peer: HashMap<SocketAddr, u64> = HashMap::new();
         let mut total_recv: u64 = 0;
@@ -1823,7 +1700,7 @@ fn spawn_pump(
                                 addr
                             );
                             // Fresh candidates are what a short set is waiting for.
-                            if connected.lock().await.len() < max_peers {
+                            if connected.lock().await.len() < *max_peers {
                                 peer_wake.notify_one();
                             }
                         }
@@ -1872,13 +1749,13 @@ fn spawn_pump(
                         guard.len()
                     };
 
-                    if remaining < max_peers {
+                    if remaining < *max_peers {
                         peer_wake.notify_one();
                     }
 
                     // Requeue the departed peer's in-flight requests; the timeout monitor only watches
                     // connected peers, so they would otherwise leak in the registry.
-                    let reinject = requeue_requests_from(&requests, &HashSet::from([peer])).await;
+                    let reinject = requeue_requests_from(requests, &HashSet::from([peer])).await;
 
                     tracing::info!(
                         target: "dash_spv::network",
@@ -1915,7 +1792,6 @@ impl MsgQueue {
             front_seq: AtomicI64::new(-1),
             len: AtomicUsize::new(0),
             notify: Notify::new(),
-            costs: Arc::new(ResponseCosts::new()),
         }
     }
 
@@ -2053,7 +1929,7 @@ mod tests {
     }
 
     async fn mark_on_wire(net: &PeerNetworkManager, msg: &NetworkMessage, peer: PeerId) {
-        let mut reqs = net.requests.lock().await;
+        let mut reqs = net.state.requests.lock().await;
         for key in request_keys(msg) {
             let on_wire = OnWire {
                 peer,
@@ -2069,7 +1945,7 @@ mod tests {
     }
 
     async fn state_of(net: &PeerNetworkManager, key: &RequestKey) -> Option<&'static str> {
-        net.requests.lock().await.get(key).map(|s| match s {
+        net.state.requests.lock().await.get(key).map(|s| match s {
             ReqState::Queued(_) => "queued",
             ReqState::OnWire(_) => "on_wire",
         })
@@ -2134,7 +2010,7 @@ mod tests {
         mark_on_wire(&net, &get_cfilters(0), carrier_of_0).await;
         mark_on_wire(&net, &get_cfilters(1000), carrier_of_1000).await;
 
-        let requeued = requeue_requests_from(&net.requests, &HashSet::from([gone])).await;
+        let requeued = requeue_requests_from(&net.state.requests, &HashSet::from([gone])).await;
 
         assert_eq!(start_heights(&requeued), expected);
         for height in [0, 1000] {
@@ -2152,16 +2028,16 @@ mod tests {
         let net = broker().await;
         let peer = conn(1, 0);
         mark_on_wire(&net, &get_cfilters(0), peer).await;
-        requeue_requests_from(&net.requests, &HashSet::from([peer])).await;
+        requeue_requests_from(&net.state.requests, &HashSet::from([peer])).await;
         assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, Some("queued"));
 
         net.send(get_cfilters(0)).await;
-        assert_eq!(net.msg_queue.len(), 0);
+        assert_eq!(net.state.queue.len(), 0);
 
         net.request_answered(RequestKey::CFilters(0)).await;
         assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, None);
         net.send(get_cfilters(0)).await;
-        assert_eq!(net.msg_queue.len(), 1);
+        assert_eq!(net.state.queue.len(), 1);
     }
 
     #[test_case(vec![get_cfilters(0), get_cfilters(0), get_cfilters(1000)], 2, 2; "a request in play is dropped")]
@@ -2172,8 +2048,8 @@ mod tests {
         for msg in msgs {
             net.send(msg).await;
         }
-        assert_eq!(net.msg_queue.len(), queued);
-        assert_eq!(net.requests.lock().await.len(), tracked);
+        assert_eq!(net.state.queue.len(), queued);
+        assert_eq!(net.state.requests.lock().await.len(), tracked);
     }
 
     /// Zero is what the sync layer acts on, so the count must fall as well as rise.
@@ -2182,7 +2058,7 @@ mod tests {
         let net = broker().await;
         let mut events = net.events();
 
-        net.inbound_tx.send(PeerEvent::Disconnected(conn(1, 0))).expect("the pump is running");
+        net.state.inbound.send(PeerEvent::Disconnected(conn(1, 0))).expect("the pump is running");
 
         let mut next = async || {
             tokio::time::timeout(Duration::from_secs(2), events.recv())
@@ -2223,7 +2099,8 @@ mod tests {
                     block_hash: BlockHash::dummy(1),
                     filter: vec![0u8; 4],
                 });
-                net.inbound_tx
+                net.state
+                    .inbound
                     .send(PeerEvent::Message(conn(peer, 0), piece.into()))
                     .expect("the pump is running");
             }
@@ -2237,7 +2114,7 @@ mod tests {
             "on_wire"
         };
         assert_eq!(state_of(&net, &RequestKey::CFilters(0)).await, Some(want));
-        assert_eq!(net.msg_queue.len(), stalls as usize);
+        assert_eq!(net.state.queue.len(), stalls as usize);
     }
 
     #[test_case(get_headers(1) => MsgClass::Headers)]

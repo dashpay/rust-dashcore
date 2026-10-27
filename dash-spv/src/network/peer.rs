@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::{
     io::{AsyncRead, AsyncWriteExt, ReadBuf},
     net::{
@@ -28,9 +28,9 @@ use tokio_util::bytes::BytesMut;
 use tokio_util::codec::{Decoder, FramedRead};
 use tokio_util::sync::CancellationToken;
 
-use crate::network::bans::{Ban, Bans};
-use crate::network::costs::{Ledger, ResponseCosts};
-use crate::network::manager::{InboundMessage, OrderedHeaderResults};
+use crate::network::bans::Ban;
+use crate::network::costs::Ledger;
+use crate::network::manager::{InboundMessage, NetworkState, OrderedHeaderResults};
 use crate::{error::NetworkResult, NetworkError};
 
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
@@ -82,7 +82,7 @@ pub const INITIAL_CAP_BYTES: u64 = 256 * 1024;
 /// measured throughput.
 struct CountingReader<R> {
     inner: R,
-    bytes: Arc<AtomicU64>,
+    state: Arc<NetworkState>,
     peer_bytes: Arc<AtomicU64>,
 }
 
@@ -96,7 +96,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
         let r = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
         if let std::task::Poll::Ready(Ok(())) = &r {
             let n = (buf.filled().len() - before) as u64;
-            self.bytes.fetch_add(n, Ordering::Relaxed);
+            self.state.bytes.fetch_add(n, Ordering::Relaxed);
             self.peer_bytes.fetch_add(n, Ordering::Relaxed);
         }
         r
@@ -299,17 +299,10 @@ impl DisconnectedPeer {
         self.lag_ms
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn connect(
         self,
-        inbound: UnboundedSender<PeerEvent>,
+        state: Arc<NetworkState>,
         shutdown: CancellationToken,
-        bytes: Arc<AtomicU64>,
-        required_services: ServiceFlags,
-        headers2_decompression_semaphore: Arc<Semaphore>,
-        costs: Arc<ResponseCosts>,
-        user_agent: &str,
-        bans: Arc<Bans>,
     ) -> NetworkResult<ConnectedPeer> {
         let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
             .await
@@ -329,7 +322,7 @@ impl DisconnectedPeer {
         let mut reader = FramedRead::new(
             CountingReader {
                 inner: read_half,
-                bytes,
+                state: state.clone(),
                 peer_bytes: peer_bytes.clone(),
             },
             SizedCodec,
@@ -339,7 +332,7 @@ impl DisconnectedPeer {
         handshake_send(
             &mut writer,
             magic,
-            NetworkMessage::Version(build_version(self.addr, user_agent)),
+            NetworkMessage::Version(build_version(self.addr, &state.user_agent)),
         )
         .await?;
 
@@ -376,6 +369,7 @@ impl DisconnectedPeer {
 
         // A peer lacking a service silently ignores those requests, stalling its
         // slots until timeout, so drop it now.
+        let required_services = state.required_services;
         if !version.services.has(required_services) {
             tracing::warn!(
                 target: "dash_spv::network",
@@ -428,21 +422,11 @@ impl DisconnectedPeer {
             connection: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
         };
         let writer = Arc::new(Mutex::new(writer));
-        let ledger = Arc::new(Ledger::new(costs));
+        let ledger = Arc::new(Ledger::new(state.costs.clone()));
         // The controller grows it from the peer's measured serving rate.
         let cap = Arc::new(AtomicU64::new(INITIAL_CAP_BYTES));
         let token = shutdown.child_token();
-        spawn_reader(
-            id,
-            magic,
-            reader,
-            writer.clone(),
-            inbound,
-            token.clone(),
-            headers2_decompression_semaphore,
-            ledger.clone(),
-            bans,
-        );
+        spawn_reader(id, magic, reader, writer.clone(), state, token.clone(), ledger.clone());
 
         tracing::debug!(
             target: "dash_spv::network",
@@ -487,19 +471,17 @@ fn dispatch_headers(
         .all(|msg| inbound.send(PeerEvent::Message(addr, msg)).is_ok())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn spawn_reader(
     addr: PeerId,
     magic: u32,
     mut reader: PeerReader,
     writer: Arc<Mutex<OwnedWriteHalf>>,
-    inbound: UnboundedSender<PeerEvent>,
+    state: Arc<NetworkState>,
     shutdown: CancellationToken,
-    headers2_decompression_semaphore: Arc<Semaphore>,
     ledger: Arc<Ledger>,
-    bans: Arc<Bans>,
 ) {
     tokio::spawn(async move {
+        let inbound = &state.inbound;
         // Header messages leave this reader in wire order even though the
         // compressed ones are decoded off-thread and finish out of order.
         let header_order = Arc::new(Mutex::new(OrderedHeaderResults::default()));
@@ -534,7 +516,7 @@ fn spawn_reader(
                 Some(Err(e)) => {
                     tracing::error!("NETWORK: reader {} stopped: {}", addr, e);
                     if !matches!(e, encode::Error::Io(_)) {
-                        bans.ban(addr.addr(), Ban::Misbehaved).await;
+                        state.bans.ban(addr.addr(), Ban::Misbehaved).await;
                     }
                     break;
                 }
@@ -565,7 +547,7 @@ fn spawn_reader(
                             // batches are independent. The permit, held until the batch
                             // is dispatched, bounds the reorder buffer.
                             let permit = tokio::select! {
-                                permit = headers2_decompression_semaphore.clone().acquire_owned() => match permit {
+                                permit = state.headers2_semaphore.clone().acquire_owned() => match permit {
                                     Ok(permit) => permit,
                                     Err(_) => break,
                                 },
@@ -575,8 +557,7 @@ fn spawn_reader(
                             header_sequence += 1;
 
                             let order = header_order.clone();
-                            let inbound = inbound.clone();
-                            let bans = bans.clone();
+                            let state = state.clone();
                             let shutdown = shutdown.clone();
                             tokio::spawn(async move {
                                 let decoded = tokio::task::spawn_blocking(move || {
@@ -604,7 +585,7 @@ fn spawn_reader(
                                             addr,
                                             e
                                         );
-                                        bans.ban(addr.addr(), Ban::Misbehaved).await;
+                                        state.bans.ban(addr.addr(), Ban::Misbehaved).await;
                                         shutdown.cancel();
                                         None
                                     }
@@ -622,7 +603,7 @@ fn spawn_reader(
                                 // cannot overtake this one.
                                 let mut order = order.lock().await;
                                 let ready = order.complete(sequence, (decompressed, permit));
-                                dispatch_headers(&inbound, addr, ready);
+                                dispatch_headers(&state.inbound, addr, ready);
                             });
                         }
                         NetworkMessage::Headers(headers) => {
@@ -630,7 +611,7 @@ fn spawn_reader(
                             // overtake a batch still decoding (the pipeline matches by
                             // the tip it extends). Takes a permit to keep it bounded.
                             let permit = tokio::select! {
-                                permit = headers2_decompression_semaphore.clone().acquire_owned() => match permit {
+                                permit = state.headers2_semaphore.clone().acquire_owned() => match permit {
                                     Ok(permit) => permit,
                                     Err(_) => break,
                                 },
@@ -643,7 +624,7 @@ fn spawn_reader(
                                 sequence,
                                 (Some(NetworkMessage::Headers(headers).into()), permit),
                             );
-                            if !dispatch_headers(&inbound, addr, ready) {
+                            if !dispatch_headers(inbound, addr, ready) {
                                 break;
                             }
                         }
