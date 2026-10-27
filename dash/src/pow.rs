@@ -13,6 +13,9 @@ use core::ops::{Add, Sub};
 use dash_num::Arith256;
 use dash_types::Numeric;
 
+use crate::Network;
+use crate::block::Header;
+use crate::consensus::Params;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::BlockHash;
 use crate::io::{self, Read, Write};
@@ -416,6 +419,97 @@ impl Decodable for CompactTarget {
     }
 }
 
+pub const DGW_PAST_BLOCKS: usize = 24;
+
+impl Params {
+    pub fn next_work_required(
+        &self,
+        window: &[Header],
+        last_height: u32,
+        time: u32,
+    ) -> Option<CompactTarget> {
+        if self.network == Network::Devnet || last_height.saturating_add(1) < self.pow_dgw_height {
+            return None;
+        }
+
+        if self.no_pow_retargeting {
+            return Some(self.pow_limit.to_compact_lossy());
+        }
+
+        let last = window.last()?;
+        let elapsed = i64::from(time) - i64::from(last.time);
+        let spacing = self.pow_target_spacing as i64;
+
+        if self.allow_min_difficulty_blocks && elapsed > 2 * 60 * 60 {
+            return Some(self.pow_limit.to_compact_lossy());
+        }
+
+        if self.allow_min_difficulty_blocks && elapsed > spacing * 4 {
+            let target = Target(Target::from_compact(last.bits).0 * 10);
+            return Some(target.min(self.pow_limit).to_compact_lossy());
+        }
+
+        let window = &window[window.len().checked_sub(DGW_PAST_BLOCKS)?..];
+
+        Some(self.dark_gravity_wave(window).to_compact_lossy())
+    }
+
+    /// Whether `bits` meets the `required` difficulty at `height`, as Core's
+    /// `ContextualCheckBlockHeader` judges it.
+    pub fn bits_meet_required(
+        &self,
+        height: u32,
+        bits: CompactTarget,
+        required: CompactTarget,
+    ) -> bool {
+        if self.pow_dgw_tolerant_height.is_some_and(|tolerant| height <= tolerant) {
+            let actual = bits_to_difficulty(bits);
+            let required = bits_to_difficulty(required);
+            return (actual - required).abs() <= actual * 0.5;
+        }
+        bits == required
+    }
+
+    /// Dash Core's `DarkGravityWave` over exactly [`DGW_PAST_BLOCKS`] headers, oldest first.
+    fn dark_gravity_wave(&self, window: &[Header]) -> Target {
+        // Not quite an average, but the one Core computes, newest first.
+        let mut average = Arith256::ZERO;
+        for (count, header) in (1u32..).zip(window.iter().rev()) {
+            let target = Target::from_compact(header.bits).0;
+            average = if count == 1 {
+                target
+            } else {
+                (average * count + target) / u64::from(count + 1)
+            };
+        }
+
+        // Spans one interval fewer than the target timespan, as in Core.
+        let target_timespan = DGW_PAST_BLOCKS as i64 * self.pow_target_spacing as i64;
+        let actual_timespan = (i64::from(window[DGW_PAST_BLOCKS - 1].time)
+            - i64::from(window[0].time))
+        .clamp(target_timespan / 3, target_timespan * 3);
+
+        let target = Target(average * actual_timespan as u32 / target_timespan as u64);
+        target.min(self.pow_limit)
+    }
+}
+
+/// Dash Core's `ConvertBitsToDouble`.
+fn bits_to_difficulty(bits: CompactTarget) -> f64 {
+    let bits = bits.to_consensus();
+    let mut shift = (bits >> 24) & 0xff;
+    let mut difficulty = f64::from(0x0000ffff) / f64::from(bits & 0x00ffffff);
+    while shift < 29 {
+        difficulty *= 256.0;
+        shift += 1;
+    }
+    while shift > 29 {
+        difficulty /= 256.0;
+        shift -= 1;
+    }
+    difficulty
+}
+
 // Target::MAX as a float value. Calculated with `Arith256::to_f64`.
 // This is validated in the unit tests as well.
 const TARGET_MAX_F64: f64 = 2.695953529101131e67;
@@ -460,6 +554,49 @@ mod tests {
         fn from(x: T) -> Self {
             Self(Arith256::from_u128(x.into()))
         }
+    }
+
+    #[test_case(Network::Mainnet, 1_999_999, 182, Some(0x194c14f3); "mainnet dgw")]
+    #[test_case(Network::Devnet, 2_000_000, 0, None; "devnet")]
+    #[test_case(Network::Mainnet, 34_138, 0, None; "before dgw")]
+    #[test_case(Network::Regtest, 34_139, 0, Some(0x207fffff); "regtest")]
+    #[test_case(Network::Testnet, 2_000_000, 2 * 60 * 60 + 1, Some(0x1e0fffff); "testnet after two hours")]
+    #[test_case(Network::Testnet, 2_000_000, 4 * 150 + 1, Some(0x1a03023d); "testnet after four spacings")]
+    fn next_work_required_rules(
+        network: Network,
+        last_height: u32,
+        elapsed: u32,
+        required: Option<u32>,
+    ) {
+        let headers = Header::mainnet_fixture();
+        let window = &headers[..DGW_PAST_BLOCKS];
+        let time = window[DGW_PAST_BLOCKS - 1].time + elapsed;
+
+        assert_eq!(
+            Params::new(network).next_work_required(window, last_height, time),
+            required.map(CompactTarget::from_consensus)
+        );
+    }
+
+    // The first DGW header on mainnet, 34140, whose bits differ from DGW's.
+    #[test_case(Network::Mainnet, 34_140, 0x1c00f8a9, true; "mainnet first dgw header")]
+    #[test_case(Network::Mainnet, 68_589, 0x1c00f8a9, true; "mainnet last tolerant height")]
+    #[test_case(Network::Mainnet, 68_590, 0x1c00f8a9, false; "mainnet first exact height")]
+    #[test_case(Network::Mainnet, 68_590, 0x1c00f987, true; "mainnet exact bits")]
+    #[test_case(Network::Mainnet, 68_589, 0x1c01f154, false; "mainnet under half the difficulty")]
+    #[test_case(Network::Mainnet, 68_589, 0x1c007cc0, false; "mainnet over twice the difficulty")]
+    #[test_case(Network::Testnet, 34_140, 0x1c00f8a9, false; "testnet")]
+    fn bits_meet_required_rules(network: Network, height: u32, bits: u32, meets: bool) {
+        let required = CompactTarget::from_consensus(0x1c00f987);
+
+        assert_eq!(
+            Params::new(network).bits_meet_required(
+                height,
+                CompactTarget::from_consensus(bits),
+                required
+            ),
+            meets
+        );
     }
 
     #[test]

@@ -55,6 +55,9 @@ pub struct Params {
     pub no_pow_retargeting: bool,
     /// Block height from which the difficulty follows Dark Gravity Wave.
     pub pow_dgw_height: u32,
+    /// Last block height whose bits only have to be within 50% of Dark Gravity Wave's, as early
+    /// mainnet ran its first versions.
+    pub pow_dgw_tolerant_height: Option<u32>,
 }
 
 impl Params {
@@ -73,6 +76,7 @@ impl Params {
         allow_min_difficulty_blocks: false,
         no_pow_retargeting: false,
         pow_dgw_height: 34140,
+        pow_dgw_tolerant_height: Some(68589),
     };
 
     /// Testnet parameters.
@@ -90,6 +94,7 @@ impl Params {
         allow_min_difficulty_blocks: true,
         no_pow_retargeting: false,
         pow_dgw_height: 4002,
+        pow_dgw_tolerant_height: None,
     };
 
     /// Devnet parameters, with Dash Core's defaults: each devnet can override its difficulty rules.
@@ -107,6 +112,7 @@ impl Params {
         allow_min_difficulty_blocks: true,
         no_pow_retargeting: false,
         pow_dgw_height: 4001,
+        pow_dgw_tolerant_height: None,
     };
 
     /// Regtest parameters.
@@ -124,6 +130,7 @@ impl Params {
         allow_min_difficulty_blocks: true,
         no_pow_retargeting: true,
         pow_dgw_height: 34140,
+        pow_dgw_tolerant_height: None,
     };
 
     /// The parameters of `network`.

@@ -127,6 +127,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                 storage.block_headers(),
                 storage.metadata(),
                 checkpoint_manager,
+                config.network,
             )
             .await?,
         );
