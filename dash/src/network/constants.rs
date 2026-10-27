@@ -23,8 +23,11 @@
 use core::convert::From;
 use core::{fmt, ops};
 
+use hashes::Hash;
+
 pub use dash_network::{Network, ParseNetworkError};
 
+use crate::blockdata::constants::genesis_chain_params;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::{BlockHash, io};
 
@@ -68,14 +71,8 @@ pub trait NetworkExt {
 
 impl NetworkExt for Network {
     fn known_genesis_block_hash(&self) -> BlockHash {
-        let hash = match self {
-            Network::Mainnet => "00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6",
-            Network::Testnet => "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
-            Network::Devnet | Network::Regtest => {
-                "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e"
-            }
-        };
-        hash.parse().expect("valid genesis block hash")
+        let hash = genesis_chain_params(*self).consensus.hash_genesis_block;
+        BlockHash::from_byte_array(*hash.as_bytes())
     }
 
     fn hd_wallet_sync_floor(&self) -> u32 {
