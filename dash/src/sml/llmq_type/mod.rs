@@ -511,27 +511,23 @@ pub enum LLMQType {
 
 impl Display for LLMQType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                LLMQType::LlmqtypeUnknown => "0_Unknown",
-                LLMQType::Llmqtype50_60 => "1_50/60",
-                LLMQType::Llmqtype400_60 => "2_400/60",
-                LLMQType::Llmqtype400_85 => "3_400/85",
-                LLMQType::Llmqtype100_67 => "4_100/67",
-                LLMQType::Llmqtype60_75 => "5_60/75",
-                LLMQType::Llmqtype25_67 => "6_25/67",
-                LLMQType::LlmqtypeTest => "100_Test",
-                LLMQType::LlmqtypeDevnet => "101_Dev",
-                LLMQType::LlmqtypeTestV17 => "102_Test-v17",
-                LLMQType::LlmqtypeTestDIP0024 => "103_Test-dip-24",
-                LLMQType::LlmqtypeTestInstantSend => "104_Test-IS",
-                LLMQType::LlmqtypeDevnetDIP0024 => "105_Dev-dip-24",
-                LLMQType::LlmqtypeTestnetPlatform => "106_Test-Platform",
-                LLMQType::LlmqtypeDevnetPlatform => "107_Dev-Platform",
-            }
-        )
+        f.write_str(match self {
+            LLMQType::LlmqtypeUnknown => "0_Unknown",
+            LLMQType::Llmqtype50_60 => "1_50/60",
+            LLMQType::Llmqtype400_60 => "2_400/60",
+            LLMQType::Llmqtype400_85 => "3_400/85",
+            LLMQType::Llmqtype100_67 => "4_100/67",
+            LLMQType::Llmqtype60_75 => "5_60/75",
+            LLMQType::Llmqtype25_67 => "6_25/67",
+            LLMQType::LlmqtypeTest => "100_Test",
+            LLMQType::LlmqtypeDevnet => "101_Dev",
+            LLMQType::LlmqtypeTestV17 => "102_Test-v17",
+            LLMQType::LlmqtypeTestDIP0024 => "103_Test-dip-24",
+            LLMQType::LlmqtypeTestInstantSend => "104_Test-IS",
+            LLMQType::LlmqtypeDevnetDIP0024 => "105_Dev-dip-24",
+            LLMQType::LlmqtypeTestnetPlatform => "106_Test-Platform",
+            LLMQType::LlmqtypeDevnetPlatform => "107_Dev-Platform",
+        })
     }
 }
 
@@ -602,44 +598,7 @@ impl From<u8> for LLMQType {
 
 impl From<LLMQType> for u8 {
     fn from(value: LLMQType) -> Self {
-        match value {
-            LLMQType::LlmqtypeUnknown => 0,
-            LLMQType::Llmqtype50_60 => 1,
-            LLMQType::Llmqtype400_60 => 2,
-            LLMQType::Llmqtype400_85 => 3,
-            LLMQType::Llmqtype100_67 => 4,
-            LLMQType::Llmqtype60_75 => 5,
-            LLMQType::Llmqtype25_67 => 6,
-            LLMQType::LlmqtypeTest => 100,
-            LLMQType::LlmqtypeDevnet => 101,
-            LLMQType::LlmqtypeTestV17 => 102,
-            LLMQType::LlmqtypeTestDIP0024 => 103,
-            LLMQType::LlmqtypeTestInstantSend => 104,
-            LLMQType::LlmqtypeDevnetDIP0024 => 105,
-            LLMQType::LlmqtypeTestnetPlatform => 106,
-            LLMQType::LlmqtypeDevnetPlatform => 107,
-        }
-    }
-}
-impl From<&LLMQType> for u64 {
-    fn from(value: &LLMQType) -> Self {
-        match value {
-            LLMQType::LlmqtypeUnknown => 0,
-            LLMQType::Llmqtype50_60 => 1,
-            LLMQType::Llmqtype400_60 => 2,
-            LLMQType::Llmqtype400_85 => 3,
-            LLMQType::Llmqtype100_67 => 4,
-            LLMQType::Llmqtype60_75 => 5,
-            LLMQType::Llmqtype25_67 => 6,
-            LLMQType::LlmqtypeTest => 100,
-            LLMQType::LlmqtypeDevnet => 101,
-            LLMQType::LlmqtypeTestV17 => 102,
-            LLMQType::LlmqtypeTestDIP0024 => 103,
-            LLMQType::LlmqtypeTestInstantSend => 104,
-            LLMQType::LlmqtypeDevnetDIP0024 => 105,
-            LLMQType::LlmqtypeTestnetPlatform => 106,
-            LLMQType::LlmqtypeDevnetPlatform => 107,
-        }
+        value as u8
     }
 }
 
