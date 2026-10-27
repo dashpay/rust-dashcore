@@ -8,8 +8,12 @@ use std::sync::OnceLock;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::Network;
+use dash_params::LlmqType as CoreLlmqType;
+use dash_types::Numeric;
+
 use crate::consensus::{Decodable, Encodable, encode};
+
+pub use dash_params::LlmqParams;
 
 /// Represents a DKG (Distributed Key Generation) mining window
 /// This is the range of blocks where a quorum commitment can be mined
@@ -23,30 +27,6 @@ pub struct DKGWindow {
     pub mining_end: u32,
 }
 
-#[repr(C)]
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
-pub struct DKGParams {
-    pub interval: u32, // one DKG per hour
-    pub phase_blocks: u32,
-    pub mining_window_start: u32, // dkg_phase_blocks * 5 = after finalization
-    pub mining_window_end: u32,
-    pub bad_votes_threshold: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
-pub struct LLMQParams {
-    pub quorum_type: LLMQType,
-    pub name: &'static str,
-    pub size: u32,
-    pub min_size: u32,
-    pub threshold: u32,
-    pub dkg_params: DKGParams,
-    pub signing_active_quorum_count: u32, // just a few ones to allow easier testing
-    pub keep_old_connections: u32,
-    pub recovery_members: u32,
-}
-
 /// Blocks below the tip whose active LLMQ set a signing session picks its quorum
 /// from, per DIP-0007. Type-independent: it applies to every signing session,
 /// ChainLocks among them.
@@ -57,174 +37,15 @@ pub const LLMQ_SIGN_HEIGHT_OFFSET: u32 = 8;
 /// still being mined, which Dash Core needs for evoDB consistency.
 pub const QUORUM_MEMBER_LIST_OFFSET: u32 = 8;
 
-pub const DKG_TEST: DKGParams = DKGParams {
-    interval: 24,
-    phase_blocks: 2,
-    mining_window_start: 10,
-    mining_window_end: 18,
-    bad_votes_threshold: 2,
-};
-
-pub const DKG_DEVNET: DKGParams = DKGParams {
-    interval: 24,
-    phase_blocks: 2,
-    mining_window_start: 10,
-    mining_window_end: 18,
-    bad_votes_threshold: 7,
-};
-pub const DKG_DEVNET_DIP_0024: DKGParams = DKGParams {
-    interval: 48,
-    phase_blocks: 2,
-    mining_window_start: 12,
-    mining_window_end: 20,
-    bad_votes_threshold: 7,
-};
-pub const DKG_50_60: DKGParams = DKGParams {
-    interval: 24,
-    phase_blocks: 2,
-    mining_window_start: 10,
-    mining_window_end: 18,
-    bad_votes_threshold: 40,
-};
-pub const DKG_400_60: DKGParams = DKGParams {
-    interval: 24 * 12,
-    phase_blocks: 4,
-    mining_window_start: 20,
-    mining_window_end: 28,
-    bad_votes_threshold: 300,
-};
-pub const DKG_400_85: DKGParams = DKGParams {
-    interval: 24 * 24,
-    phase_blocks: 4,
-    mining_window_start: 20,
-    mining_window_end: 48,
-    bad_votes_threshold: 300,
-};
-pub const DKG_100_67: DKGParams = DKGParams {
-    interval: 24,
-    phase_blocks: 2,
-    mining_window_start: 10,
-    mining_window_end: 18,
-    bad_votes_threshold: 80,
-};
-
-pub const DKG_60_75: DKGParams = DKGParams {
-    interval: 24 * 12,
-    phase_blocks: 2,
-    mining_window_start: 42,
-    mining_window_end: 50,
-    bad_votes_threshold: 48,
-};
-
-pub const DKG_25_67: DKGParams = DKGParams {
-    interval: 24,
-    phase_blocks: 2,
-    mining_window_start: 10,
-    mining_window_end: 18,
-    bad_votes_threshold: 22,
-};
-
-pub const DKG_TEST_DIP0024: DKGParams = DKGParams {
-    interval: 24,
-    phase_blocks: 2,
-    mining_window_start: 12,
-    mining_window_end: 20,
-    bad_votes_threshold: 2,
-};
-
-pub const DKG_PLATFORM_TESTNET: DKGParams = DKGParams {
-    interval: 24,
-    phase_blocks: 2,
-    mining_window_start: 10,
-    mining_window_end: 18,
-    bad_votes_threshold: 2,
-};
-
-pub const DKG_PLATFORM_DEVNET: DKGParams = DKGParams {
-    interval: 24,
-    phase_blocks: 2,
-    mining_window_start: 10,
-    mining_window_end: 18,
-    bad_votes_threshold: 7,
-};
-
-pub const LLMQ_TEST: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeTest,
-    name: "llmq_test",
-    size: 3,
-    min_size: 2,
-    threshold: 2,
-    dkg_params: DKG_TEST,
-    signing_active_quorum_count: 2,
-    keep_old_connections: 3,
-    recovery_members: 3,
-};
-pub const LLMQ_V017: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeTestV17,
-    name: "llmq_test_v17",
-    size: 3,
-    min_size: 2,
-    threshold: 2,
-    dkg_params: DKG_TEST,
-    signing_active_quorum_count: 2,
-    keep_old_connections: 3,
-    recovery_members: 3,
-};
-pub const LLMQ_0024: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeDevnetDIP0024,
-    name: "llmq_devnet_dip0024",
-    size: 8,
-    min_size: 6,
-    threshold: 4,
-    dkg_params: DKG_DEVNET_DIP_0024,
-    signing_active_quorum_count: 2,
-    keep_old_connections: 4,
-    recovery_members: 4,
-};
-pub const LLMQ_TEST_DIP00024: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeTestDIP0024,
-    name: "llmq_test_dip0024",
-    size: 4,
-    min_size: 4,
-    threshold: 3,
-    dkg_params: DKG_TEST_DIP0024,
-    signing_active_quorum_count: 2,
-    keep_old_connections: 4,
-    recovery_members: 3,
-};
-pub const LLMQ_TEST_INSTANT_SEND: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeTestInstantSend,
-    name: "llmq_test_instantsend",
-    size: 3,
-    min_size: 2,
-    threshold: 2,
-    dkg_params: DKG_TEST,
-    signing_active_quorum_count: 2,
-    keep_old_connections: 3,
-    recovery_members: 3,
-};
-
-pub const LLMQ_DEVNET: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeDevnet,
-    name: "llmq_devnet",
-    size: 12,
-    min_size: 7,
-    threshold: 6,
-    dkg_params: DKG_DEVNET,
-    signing_active_quorum_count: 4,
-    keep_old_connections: 5,
-    recovery_members: 6,
-};
-
 /// Runtime override values for `LLMQ_DEVNET`, matching Dash Core's
 /// `-llmqdevnetparams=<size>:<threshold>`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct LlmqDevnetParams {
     /// Quorum size (total members).
-    pub size: u32,
+    pub size: u16,
     /// Signing threshold (also used as min_size and bad_votes_threshold).
-    pub threshold: u32,
+    pub threshold: u16,
 }
 
 /// Runtime override for `LLMQ_DEVNET` params, matching Dash Core's `-llmqdevnetparams`.
@@ -244,8 +65,8 @@ pub fn set_llmq_devnet_params(params: LlmqDevnetParams) -> Result<(), &'static s
 }
 
 /// Get the effective `LLMQ_DEVNET` params, applying any runtime override.
-pub fn llmq_devnet_params() -> LLMQParams {
-    let mut params = LLMQ_DEVNET;
+pub fn llmq_devnet_params() -> LlmqParams {
+    let mut params = LlmqParams::LLMQ_DEVNET;
     if let Some(&LlmqDevnetParams {
         size,
         threshold,
@@ -254,7 +75,7 @@ pub fn llmq_devnet_params() -> LLMQParams {
         params.size = size;
         params.min_size = threshold;
         params.threshold = threshold;
-        params.dkg_params.bad_votes_threshold = threshold;
+        params.dkg_bad_votes_threshold = threshold;
     }
     params
 }
@@ -271,7 +92,7 @@ static DEVNET_PLATFORM_OVERRIDE: OnceLock<LLMQType> = OnceLock::new();
 
 /// LLMQ types registered on devnet by Dash Core (`chainparams.cpp` `CDevNetParams`
 /// `AddLLMQ` calls). Routing overrides accept any of these as a target.
-const DEVNET_REGISTERED_LLMQ_TYPES: [LLMQType; 8] = [
+pub(crate) const DEVNET_REGISTERED_LLMQ_TYPES: [LLMQType; 8] = [
     LLMQType::Llmqtype50_60,
     LLMQType::Llmqtype60_75,
     LLMQType::Llmqtype400_60,
@@ -286,8 +107,7 @@ const DEVNET_REGISTERED_LLMQ_TYPES: [LLMQType; 8] = [
 /// registers on devnet so `-llmqchainlocks` / `-llmqinstantsenddip0024` /
 /// `-llmqplatform` accept the same strings as `dashd`.
 ///
-/// `llmq_dev_platform` is accepted as an alias for `llmq_devnet_platform` because
-/// this crate's own `LLMQ_DEV_PLATFORM` constant uses the shorter spelling.
+/// `llmq_dev_platform` is accepted as an alias for `llmq_devnet_platform`.
 pub fn devnet_llmq_type_from_name(name: &str) -> Result<LLMQType, String> {
     match name {
         "llmq_50_60" => Ok(LLMQType::Llmqtype50_60),
@@ -394,98 +214,6 @@ pub fn devnet_platform_type_override() -> Option<LLMQType> {
     DEVNET_PLATFORM_OVERRIDE.get().copied()
 }
 
-pub const LLMQ_50_60: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::Llmqtype50_60,
-    name: "llmq_50_60",
-    size: 50,
-    min_size: 40,
-    threshold: 30,
-    dkg_params: DKG_50_60,
-    signing_active_quorum_count: 24,
-    keep_old_connections: 25,
-    recovery_members: 25,
-};
-pub const LLMQ_400_60: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::Llmqtype400_60,
-    name: "llmq_400_60",
-    size: 400,
-    min_size: 300,
-    threshold: 240,
-    dkg_params: DKG_400_60,
-    signing_active_quorum_count: 4,
-    keep_old_connections: 5,
-    recovery_members: 100,
-};
-pub const LLMQ_400_85: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::Llmqtype400_60,
-    name: "llmq_400_85",
-    size: 400,
-    min_size: 350,
-    threshold: 340,
-    dkg_params: DKG_400_85,
-    signing_active_quorum_count: 4,
-    keep_old_connections: 5,
-    recovery_members: 100,
-};
-pub const LLMQ_100_67: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::Llmqtype100_67,
-    name: "llmq_100_67",
-    size: 100,
-    min_size: 80,
-    threshold: 67,
-    dkg_params: DKG_100_67,
-    signing_active_quorum_count: 24,
-    keep_old_connections: 25,
-    recovery_members: 50,
-};
-pub const LLMQ_60_75: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::Llmqtype60_75,
-    name: "llmq_60_75",
-    size: 60,
-    min_size: 50,
-    threshold: 45,
-    dkg_params: DKG_60_75,
-    signing_active_quorum_count: 32,
-    keep_old_connections: 64,
-    recovery_members: 25,
-};
-
-pub const LLMQ_25_67: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::Llmqtype25_67,
-    name: "llmq_25_67",
-    size: 25,
-    min_size: 22,
-    threshold: 17,
-    dkg_params: DKG_25_67,
-    signing_active_quorum_count: 24,
-    keep_old_connections: 25,
-    recovery_members: 12,
-};
-
-pub const LLMQ_TEST_PLATFORM: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeTestnetPlatform,
-    name: "llmq_test_platform",
-    size: 3,
-    min_size: 2,
-    threshold: 2,
-    dkg_params: DKG_PLATFORM_TESTNET,
-    signing_active_quorum_count: 2,
-    keep_old_connections: 4,
-    recovery_members: 3,
-};
-
-pub const LLMQ_DEV_PLATFORM: LLMQParams = LLMQParams {
-    quorum_type: LLMQType::LlmqtypeDevnetPlatform,
-    name: "llmq_devnet_platform",
-    size: 12,
-    min_size: 9,
-    threshold: 8,
-    dkg_params: DKG_PLATFORM_DEVNET,
-    signing_active_quorum_count: 4,
-    keep_old_connections: 5,
-    recovery_members: 6,
-};
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -532,40 +260,29 @@ impl Display for LLMQType {
 }
 
 impl LLMQType {
-    pub fn params(&self) -> LLMQParams {
+    pub fn params(&self) -> LlmqParams {
         match self {
-            LLMQType::Llmqtype50_60 => LLMQ_50_60,
-            LLMQType::Llmqtype400_60 => LLMQ_400_60,
-            LLMQType::Llmqtype400_85 => LLMQ_400_85,
-            LLMQType::Llmqtype100_67 => LLMQ_100_67,
-            LLMQType::Llmqtype60_75 => LLMQ_60_75,
-            LLMQType::Llmqtype25_67 => LLMQ_25_67,
-            LLMQType::LlmqtypeTest => LLMQ_TEST,
-            LLMQType::LlmqtypeDevnet => llmq_devnet_params(),
-            LLMQType::LlmqtypeTestV17 => LLMQ_V017,
-            LLMQType::LlmqtypeTestDIP0024 => LLMQ_TEST_DIP00024,
-            LLMQType::LlmqtypeTestInstantSend => LLMQ_TEST_INSTANT_SEND,
-            LLMQType::LlmqtypeDevnetDIP0024 => LLMQ_0024,
-            LLMQType::LlmqtypeTestnetPlatform => LLMQ_TEST_PLATFORM,
-            LLMQType::LlmqtypeDevnetPlatform => LLMQ_DEV_PLATFORM,
-            LLMQType::LlmqtypeUnknown => llmq_devnet_params(),
+            LLMQType::LlmqtypeDevnet | LLMQType::LlmqtypeUnknown => llmq_devnet_params(),
+            _ => CoreLlmqType::new(self.index())
+                .params()
+                .expect("every named LLMQ type but devnet has fixed parameters"),
         }
     }
     pub fn size(&self) -> u32 {
-        self.params().size
+        self.params().size.into()
     }
 
     pub fn threshold(&self) -> u32 {
-        self.params().threshold
+        self.params().threshold.into()
     }
 
     pub fn active_quorum_count(&self) -> u32 {
-        self.params().signing_active_quorum_count
+        self.params().signing_active_quorum_count.into()
     }
 
     /// Blocks between the starts of two DKG cycles.
     pub fn dkg_interval(&self) -> u32 {
-        self.params().dkg_params.interval
+        self.params().dkg_interval.into()
     }
 
     /// Blocks a quorum stays active for: one DKG interval per active quorum.
@@ -596,6 +313,12 @@ impl From<u8> for LLMQType {
     }
 }
 
+impl From<CoreLlmqType> for LLMQType {
+    fn from(llmq_type: CoreLlmqType) -> Self {
+        LLMQType::from(llmq_type.to_base())
+    }
+}
+
 impl From<LLMQType> for u8 {
     fn from(value: LLMQType) -> Self {
         value as u8
@@ -614,14 +337,6 @@ impl Decodable for LLMQType {
     }
 }
 
-pub fn dkg_rotation_params(network: Network) -> DKGParams {
-    if network == Network::Devnet {
-        DKG_DEVNET_DIP_0024
-    } else {
-        DKG_60_75
-    }
-}
-
 impl LLMQType {
     pub fn index(&self) -> u8 {
         u8::from(*self)
@@ -634,12 +349,7 @@ impl LLMQType {
     }
 
     pub fn is_rotating_quorum_type(&self) -> bool {
-        matches!(
-            self,
-            LLMQType::Llmqtype60_75
-                | LLMQType::LlmqtypeDevnetDIP0024
-                | LLMQType::LlmqtypeTestDIP0024
-        )
+        self.params().use_rotation
     }
 
     /// Calculate the cycle base height for a given block height
@@ -660,13 +370,15 @@ impl LLMQType {
         // For rotating quorums, the mining window calculation is different
         let mining_start = if self.is_rotating_quorum_type() {
             // For rotating quorums: signingActiveQuorumCount + dkgPhaseBlocks * 5
-            cycle_start + params.signing_active_quorum_count + params.dkg_params.phase_blocks * 5
+            cycle_start
+                + u32::from(params.signing_active_quorum_count)
+                + u32::from(params.dkg_phase_blocks) * 5
         } else {
             // For non-rotating quorums: use the standard mining window start
-            cycle_start + params.dkg_params.mining_window_start
+            cycle_start + u32::from(params.dkg_mining_window_start)
         };
 
-        let mining_end = cycle_start + params.dkg_params.mining_window_end;
+        let mining_end = cycle_start + u32::from(params.dkg_mining_window_end);
 
         DKGWindow {
             cycle_start,
@@ -679,6 +391,7 @@ impl LLMQType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Network;
     use crate::sml::llmq_type::network::NetworkLLMQExt;
 
     #[test]
@@ -713,17 +426,6 @@ mod tests {
         assert_eq!(window.mining_end, 338); // 288 + 50 (mining_window_end)
     }
 
-    #[test]
-    fn test_platform_quorum_dkg_params() {
-        let llmq = LLMQType::Llmqtype100_67; // Platform consensus
-        let params = llmq.params();
-
-        assert_eq!(params.dkg_params.interval, 24);
-        assert_eq!(params.size, 100);
-        assert_eq!(params.threshold, 67);
-        assert_eq!(params.signing_active_quorum_count, 24);
-    }
-
     // Each devnet `OnceLock` accepts only one value per process; the full contract
     // must be exercised in a single test per lock.
 
@@ -739,7 +441,7 @@ mod tests {
         assert_eq!(params.size, 8);
         assert_eq!(params.min_size, 5);
         assert_eq!(params.threshold, 5);
-        assert_eq!(params.dkg_params.bad_votes_threshold, 5);
+        assert_eq!(params.dkg_bad_votes_threshold, 5);
 
         set_llmq_devnet_params(LlmqDevnetParams {
             size: 8,
