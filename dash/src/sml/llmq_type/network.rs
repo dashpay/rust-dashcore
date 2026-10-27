@@ -1,31 +1,19 @@
 use crate::Network;
 use crate::sml::llmq_type::{
-    DKGWindow, LLMQType, devnet_chain_locks_type_override, devnet_isd_type_override,
+    LLMQType, devnet_chain_locks_type_override, devnet_isd_type_override,
     devnet_platform_type_override,
 };
-use std::collections::BTreeMap;
 
 /// Extension trait for Network to add LLMQ-specific methods
 pub trait NetworkLLMQExt {
-    fn is_llmq_type(&self) -> LLMQType;
     fn isd_llmq_type(&self) -> LLMQType;
     fn chain_locks_type(&self) -> LLMQType;
     fn platform_type(&self) -> LLMQType;
     fn enabled_llmq_types(&self) -> Vec<LLMQType>;
-    fn get_all_dkg_windows(&self, start: u32, end: u32) -> BTreeMap<u32, Vec<DKGWindow>>;
     fn should_skip_quorum_type(&self, llmq_type: &LLMQType, height: u32) -> bool;
 }
 
 impl NetworkLLMQExt for Network {
-    fn is_llmq_type(&self) -> LLMQType {
-        match self {
-            Network::Mainnet => LLMQType::Llmqtype50_60,
-            Network::Testnet => LLMQType::Llmqtype50_60,
-            Network::Devnet => LLMQType::LlmqtypeDevnet,
-            Network::Regtest => LLMQType::LlmqtypeTestInstantSend,
-        }
-    }
-
     fn isd_llmq_type(&self) -> LLMQType {
         match self {
             Network::Mainnet => LLMQType::Llmqtype60_75,
@@ -93,53 +81,6 @@ impl NetworkLLMQExt for Network {
         }
     }
 
-    /// Get all DKG windows in the given range for all active quorum types
-    fn get_all_dkg_windows(&self, start: u32, end: u32) -> BTreeMap<u32, Vec<DKGWindow>> {
-        let mut windows_by_height: BTreeMap<u32, Vec<DKGWindow>> = BTreeMap::new();
-
-        tracing::debug!(
-            "get_all_dkg_windows: Calculating DKG windows for range {}-{} on network {:?}",
-            start,
-            end,
-            self
-        );
-
-        for llmq_type in self.enabled_llmq_types() {
-            let type_windows = llmq_type.get_dkg_windows_in_range(start, end);
-            tracing::debug!(
-                "LLMQ type {:?}: found {} DKG windows in range {}-{}",
-                llmq_type,
-                type_windows.len(),
-                start,
-                end
-            );
-
-            for window in type_windows {
-                // Skip platform quorums before activation if needed
-                if self.should_skip_quorum_type(&llmq_type, window.mining_start) {
-                    tracing::trace!(
-                        "Skipping {:?} for height {} (activation threshold not met)",
-                        llmq_type,
-                        window.mining_start
-                    );
-                    continue;
-                }
-
-                // Group windows by their mining start for efficient fetching
-                windows_by_height.entry(window.mining_start).or_default().push(window);
-            }
-        }
-
-        tracing::info!(
-            "get_all_dkg_windows: Total {} unique mining heights with DKG windows for range {}-{}",
-            windows_by_height.len(),
-            start,
-            end
-        );
-
-        windows_by_height
-    }
-
     /// Check if a quorum type should be skipped at the given height
     fn should_skip_quorum_type(&self, llmq_type: &LLMQType, height: u32) -> bool {
         match (self, llmq_type) {
@@ -189,20 +130,5 @@ mod tests {
         assert!(Network::Mainnet.should_skip_quorum_type(&LLMQType::Llmqtype50_60, 1_738_698));
         // Testnet keeps it for ChainLocks.
         assert!(!Network::Testnet.should_skip_quorum_type(&LLMQType::Llmqtype50_60, 1_738_698));
-    }
-
-    #[test]
-    fn test_get_all_dkg_windows() {
-        let network = Network::Testnet;
-        let windows = network.get_all_dkg_windows(100, 200);
-
-        // Should have windows for multiple quorum types
-        assert!(!windows.is_empty());
-
-        // Check that windows are grouped by mining start
-        for (height, window_list) in &windows {
-            assert!(*height >= 100 || window_list.iter().any(|w| w.mining_end >= 100));
-            assert!(*height <= 200);
-        }
     }
 }
