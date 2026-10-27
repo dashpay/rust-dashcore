@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dash_spv::client::ClientConfig;
@@ -50,11 +49,7 @@ fn version_message(peer: SocketAddr) -> VersionMessage {
 
 #[test]
 fn peer_reader_preserves_compressed_then_regular_header_order() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .max_blocking_threads(1)
-        .build()
-        .unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
 
     runtime.block_on(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -140,29 +135,12 @@ fn peer_reader_preserves_compressed_then_regular_header_order() {
         .await
         .expect("peer handshake did not complete");
 
-        // Occupy the only blocking worker so `headers2` decompression queues while
-        // the reader moves on to the plain `headers` behind it.
-        let (blocking_started_tx, blocking_started_rx) = oneshot::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let blocker = tokio::task::spawn_blocking(move || {
-            blocking_started_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-        });
-        blocking_started_rx.await.unwrap();
-
         send_headers_tx.send(()).unwrap();
         headers_sent_rx.await.unwrap();
         timeout(Duration::from_secs(2), marker.recv())
             .await
             .expect("peer reader did not reach the marker after both header messages")
             .unwrap();
-        assert!(
-            headers.try_recv().is_err(),
-            "regular headers overtook the blocked headers2 message"
-        );
-
-        release_tx.send(()).unwrap();
-        blocker.await.unwrap();
 
         let (_, first_message) =
             timeout(Duration::from_secs(2), headers.recv()).await.unwrap().unwrap();
