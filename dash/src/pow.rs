@@ -421,6 +421,9 @@ impl Decodable for CompactTarget {
 
 pub const DGW_PAST_BLOCKS: usize = 24;
 
+/// Last mainnet height whose bits need only be within 50% of DGW's.
+pub const MAINNET_DGW_TOLERANT_HEIGHT: u32 = 68_589;
+
 impl Params {
     pub fn next_work_required(
         &self,
@@ -462,7 +465,7 @@ impl Params {
         bits: CompactTarget,
         required: CompactTarget,
     ) -> bool {
-        if self.pow_dgw_tolerant_height.is_some_and(|tolerant| height <= tolerant) {
+        if self.network == Network::Mainnet && height <= MAINNET_DGW_TOLERANT_HEIGHT {
             let actual = bits_to_difficulty(bits);
             let required = bits_to_difficulty(required);
             return (actual - required).abs() <= actual * 0.5;
