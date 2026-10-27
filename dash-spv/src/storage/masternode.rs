@@ -20,7 +20,6 @@ pub trait MasternodeStorage: Send + Sync + 'static {
 
 pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
     storage_path: PathBuf,
-    headers: Arc<RwLock<H>>,
     network: Network,
     engine: Arc<RwLock<MasternodeListEngine<H>>>,
 }
@@ -54,12 +53,10 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
             }
         };
 
-        let engine =
-            engine.unwrap_or_else(|| MasternodeListEngine::new(network, Arc::clone(&headers)));
+        let engine = engine.unwrap_or_else(|| MasternodeListEngine::new(network, headers));
 
         PersistentMasternodeStorage {
             storage_path,
-            headers,
             network,
             engine: Arc::new(RwLock::new(engine)),
         }
@@ -134,7 +131,6 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     }
 
     pub async fn clear(&mut self, headers: Arc<RwLock<H>>) {
-        self.headers = Arc::clone(&headers);
         *self.engine.write().await = MasternodeListEngine::new(self.network, headers);
     }
 }
