@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `EcdsaSecretKey::generate` with the `rand` feature
 - `EcdsaSignature::is_low_s`
 - `TryFrom<&[u8]>` for `PublicKey`
+- `ExtNetInfo::validate_ports_and_duplicates` in `dashcore`, which checks a version-3 address map
+  against the port and duplicate-entry rules of Dash Core v24 and names what it breaks in an
+  `ExtNetInfoError`, and `NetInfoEntry::port`
 
 ### Changed
 
