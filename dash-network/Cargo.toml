@@ -32,3 +32,6 @@ test-case = "3.3"
 
 [build-dependencies]
 cbindgen = "0.29"
+
+[lints]
+workspace = true

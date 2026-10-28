@@ -29,3 +29,6 @@ key-wallet = { path = "../key-wallet", default-features = false, features=["serd
 dashcore = { path = "../dash", features=["rand-std", "signer", "serde"] }
 
 bincode = { workspace = true, features = ["serde"] }
+
+[lints]
+workspace = true

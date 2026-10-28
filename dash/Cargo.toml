@@ -80,4 +80,5 @@ name = "transaction"
 harness = false
 
 [lints.rust]
+unnameable_types = "deny"
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', 'cfg(kani)'] }

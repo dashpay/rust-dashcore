@@ -2,6 +2,9 @@
 members = ["dash", "crypto", "dash-network", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test", "key-wallet", "key-wallet-manager", "key-wallet-ffi", "dash-spv", "dash-spv-ffi", "git-state", "dash-network-seeds", "masternode-seeds-fetcher", "dash-spv-bench"]
 resolver = "2"
 
+[workspace.lints.rust]
+unnameable_types = "deny"
+
 [workspace.dependencies]
 # Packages shared across crates
 bincode = { package = "grovedb-bincode", version = "=2.1.0" }

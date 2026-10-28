@@ -128,11 +128,6 @@ impl DashCoreConfig {
             extra_args: Vec::new(),
         })
     }
-
-    pub fn with_extra_args(mut self, args: Vec<String>) -> Self {
-        self.extra_args.extend(args);
-        self
-    }
 }
 
 /// Test infrastructure for managing a Dash Core node.
@@ -143,7 +138,7 @@ pub struct DashCoreNode {
 
 impl DashCoreNode {
     /// Create a new Dash Core node with custom configuration
-    pub fn with_config(config: DashCoreConfig) -> Self {
+    pub(crate) fn with_config(config: DashCoreConfig) -> Self {
         Self {
             config,
             process: None,

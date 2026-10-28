@@ -43,3 +43,6 @@ cbindgen = "0.29"
 [[bin]]
 name = "dash-spv-ffi"
 path = "src/bin/ffi_cli.rs"
+
+[lints]
+workspace = true

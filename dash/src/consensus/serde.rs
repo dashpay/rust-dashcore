@@ -53,6 +53,7 @@ pub mod hex {
     pub enum Upper {}
 
     mod sealed {
+        #[allow(unnameable_types)] // Sealed: consumers must not name or implement it.
         pub trait Case {
             /// Internal detail, don't depend on it!!!
             const INTERNAL_CASE: hex_conservative::Case;
