@@ -20,6 +20,7 @@ pub use broker::RequestKey;
 pub use manager::NetworkEvent;
 pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager};
 // Used by the mock network manager to enforce the same de-duplication contract.
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) use broker::request_keys;
 
 pub trait Request: Send + 'static {
