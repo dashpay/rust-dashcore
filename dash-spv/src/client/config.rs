@@ -53,9 +53,8 @@ pub struct ClientConfig {
     /// Maximum number of peers to connect to.
     pub max_peers: u32,
 
-    /// Optional user agent string to advertise in the P2P version message.
-    /// If not set, a sensible default is used (includes crate version).
-    pub user_agent: Option<String>,
+    /// User agent string to advertise in the P2P version message.
+    pub user_agent: String,
 
     // Mempool configuration
     /// Enable tracking of unconfirmed (mempool) transactions.
@@ -112,7 +111,7 @@ impl Default for ClientConfig {
             enable_filters: true,
             enable_masternodes: true,
             max_peers: 3,
-            user_agent: None,
+            user_agent: concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/").to_string(),
             // Mempool defaults
             enable_mempool_tracking: true,
             mempool_strategy: MempoolStrategy::FetchAll,
@@ -192,7 +191,7 @@ impl ClientConfig {
     /// Set custom user agent string for the P2P handshake.
     /// The library will lightly validate and normalize it during handshake.
     pub fn with_user_agent(mut self, agent: impl Into<String>) -> Self {
-        self.user_agent = Some(agent.into());
+        self.user_agent = agent.into();
         self
     }
 

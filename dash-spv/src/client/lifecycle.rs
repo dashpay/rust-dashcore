@@ -71,7 +71,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
         let client = Self {
             config: Arc::new(RwLock::new(config)),
-            network: Arc::new(Mutex::new(network)),
+            network: Arc::new(network),
             storage,
             wallet,
             masternode_engine,
@@ -205,24 +205,13 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
         // Start all sync tasks before connecting to the network to make sure initial connection
         // events are handled correctly in the sync coordinator.
-        if let Err(e) = self
-            .sync_coordinator
-            .lock()
-            .await
-            .start(managers, &mut *self.network.lock().await)
-            .await
-        {
+        let network: Arc<dyn NetworkManager> = self.network.clone();
+        if let Err(e) = self.sync_coordinator.lock().await.start(managers, &network).await {
             tracing::error!("Failed to start sync coordinator: {}", e);
             return Err(SpvError::Sync(e));
         }
 
-        // Start the network
-        if let Err(e) = self.network.lock().await.start().await {
-            if let Err(e) = self.sync_coordinator.lock().await.shutdown().await {
-                tracing::warn!("Error shutting down sync coordinator: {}", e);
-            }
-            return Err(e.into());
-        }
+        self.network.start().await;
 
         // Start persisting last, so a failed start leaves nothing to stop.
         self.storage.lock().await.start().await;
@@ -292,22 +281,15 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     ///
     /// The wallets go first: a wallet refusing the fork leaves storage as it
     /// is, and storage failing after them keeps the fork unstored, so it is
-    /// detected and retried. The engine goes after the storage, whose headers
-    /// it looks rotated cycles up in, even if the storage fails part way, so it
-    /// never holds lists above the stored tip.
+    /// detected and retried. The storage truncates the engine it shares with
+    /// the client.
     async fn truncate_chain_above(
         &self,
         height: u32,
     ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.wallet.write().await.truncate_above(height)?;
-        let truncated =
-            StorageManager::truncate_above(&mut *self.storage.lock().await, height).await;
-
-        if let Some(engine) = &self.masternode_engine {
-            engine.write().await.truncate_above(height).await;
-        }
-
-        Ok(truncated?)
+        StorageManager::truncate_above(&mut *self.storage.lock().await, height).await?;
+        Ok(())
     }
 
     /// Stop `sync_loop` and everything it drives. The caller holds the lock.
@@ -335,7 +317,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         }
 
         // Stop the network
-        self.network.lock().await.stop().await;
+        self.network.stop().await;
 
         // Stop storage to ensure all data is persisted
         {
@@ -390,10 +372,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         }
 
         // Get the genesis block hash for this network
-        let genesis_hash = config
-            .network
-            .known_genesis_block_hash()
-            .ok_or_else(|| SpvError::Config("No known genesis hash for network".to_string()))?;
+        let genesis_hash = config.network.known_genesis_block_hash();
 
         tracing::info!(
             "Initializing genesis block for network {:?}: {}",

@@ -102,11 +102,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         sigs: [BLSSignature; 4],
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
     ) -> Result<Vec<Vec<&QualifiedMasternodeListEntry>>, QuorumValidationError> {
-        let params = llmq_type.params();
-        let [h_3c, h_2c, h_c, h] =
-            cycle_quarter_work_heights(cycle_base, params.dkg_params.interval).map(|height| {
-                height.ok_or(QuorumValidationError::CycleBaseHeightTooLow(cycle_base))
-            });
+        let [h_3c, h_2c, h_c, h] = cycle_quarter_work_heights(cycle_base, llmq_type)
+            .map(|height| height.ok_or(QuorumValidationError::CycleBaseHeightTooLow(cycle_base)));
         let snapshot_quarter = |height, sig| {
             self.quarter_members(
                 llmq_type,
@@ -129,7 +126,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             snapshots,
         )?;
 
-        let quorum_count = params.signing_active_quorum_count as usize;
+        let quorum_count = llmq_type.active_quorum_count() as usize;
         let mut members: Vec<Vec<&QualifiedMasternodeListEntry>> = vec![Vec::new(); quorum_count];
         for (index, quorum_members) in members.iter_mut().enumerate() {
             for quarter in [&q_3c, &q_2c, &q_c, &q_h] {
@@ -149,14 +146,13 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         work_block_sig: BLSSignature,
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
     ) -> Result<Vec<Vec<&'a QualifiedMasternodeListEntry>>, QuorumValidationError> {
-        let params = llmq_type.params();
         let masternode_list = self
             .masternode_lists
             .get(&work_block_height)
             .ok_or(QuorumValidationError::RequiredMasternodeListNotPresent(work_block_height))?;
         let work_block_hash = masternode_list.block_hash;
-        let quorum_count = params.signing_active_quorum_count as usize;
-        let quarter_size = params.size as usize / 4;
+        let quorum_count = llmq_type.active_quorum_count() as usize;
+        let quarter_size = llmq_type.size() as usize / 4;
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(
             llmq_type,
             work_block_hash,
@@ -411,7 +407,7 @@ mod tests {
     #[tokio::test]
     async fn a_quorum_without_rotating_signatures_leaves_its_cycle_open() {
         let mut engine = TestEngine::empty(Network::Mainnet);
-        let cycle_base = LLMQType::Llmqtype60_75.params().dkg_params.interval * 100;
+        let cycle_base = LLMQType::Llmqtype60_75.dkg_interval() * 100;
         let without_sigs_hash = QuorumHash::from_byte_array([1; 32]);
         let with_sigs_hash = QuorumHash::from_byte_array([2; 32]);
         engine.feed_block_height(cycle_base, without_sigs_hash);

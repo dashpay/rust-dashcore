@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -20,7 +21,6 @@ pub trait MasternodeStorage: Send + Sync + 'static {
 
 pub struct PersistentMasternodeStorage<H: BlockHeaderStorage> {
     storage_path: PathBuf,
-    headers: Arc<RwLock<H>>,
     network: Network,
     engine: Arc<RwLock<MasternodeListEngine<H>>>,
 }
@@ -29,9 +29,10 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     const FOLDER_NAME: &str = "masternodes";
     const FILE_NAME: &str = "engine.dat";
 
-    /// Opens the storage and restores the engine from the snapshot when its
-    /// newest list is still in the header chain at its height. The engine
-    /// starts empty otherwise.
+    /// Opens the storage and restores the engine from the snapshot, up to its
+    /// newest list still in the header chain at its height. The engine starts
+    /// empty when no list is, or the snapshot cannot be read. Only a snapshot
+    /// that does not decode is removed: one failing to read may read later.
     pub async fn open(
         storage_path: impl Into<PathBuf> + Send,
         headers: Arc<RwLock<H>>,
@@ -42,24 +43,17 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         let path = storage_path.join(Self::FOLDER_NAME).join(Self::FILE_NAME);
 
         let engine = match Self::read_snapshot(network, &headers, &path).await {
-            Ok(Some(engine)) => Some(engine),
-            Ok(None) => None,
+            Ok(engine) => engine,
             Err(e) => {
-                if path.exists() {
-                    tokio::fs::remove_file(&path).await.ok();
-                }
-
                 tracing::warn!("Not restoring the masternode engine snapshot: {e}");
                 None
             }
         };
 
-        let engine =
-            engine.unwrap_or_else(|| MasternodeListEngine::new(network, Arc::clone(&headers)));
+        let engine = engine.unwrap_or_else(|| MasternodeListEngine::new(network, headers));
 
         PersistentMasternodeStorage {
             storage_path,
-            headers,
             network,
             engine: Arc::new(RwLock::new(engine)),
         }
@@ -70,32 +64,49 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         headers: &Arc<RwLock<H>>,
         path: &Path,
     ) -> StorageResult<Option<MasternodeListEngine<H>>> {
-        if !path.exists() {
-            return Ok(None);
-        }
+        let bytes = match tokio::fs::read(path).await {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
 
-        let bytes = tokio::fs::read(path).await?;
+        let mut engine =
+            match MasternodeListEngine::from_snapshot(network, Arc::clone(headers), &bytes) {
+                Ok(engine) => engine,
+                Err(e) => {
+                    tracing::warn!("Removing the undecodable masternode engine snapshot: {e}");
+                    tokio::fs::remove_file(path).await?;
+                    return Ok(None);
+                }
+            };
 
-        let engine = MasternodeListEngine::from_snapshot(network, Arc::clone(headers), &bytes)
-            .map_err(|e| StorageError::ReadFailed(e.to_string()))?;
-
-        let Some(engine_tip) = engine.latest_masternode_list() else {
-            tracing::warn!("The masternode engine snapshot has no lists, ignoring it");
+        let Some(in_chain) = Self::newest_list_in_chain(&engine).await? else {
+            tracing::warn!("No list of the masternode engine snapshot is in the header chain");
             return Ok(None);
         };
 
-        let in_chain =
-            headers.read().await.get_header_height_by_hash(&engine_tip.block_hash).await?;
-
-        if in_chain != Some(engine_tip.known_height) {
-            tracing::warn!(
-                "The masternode engine snapshot's tip {} is not in the header chain, ignoring it",
-                engine_tip.known_height
+        if engine.latest_masternode_list().is_some_and(|tip| tip.known_height != in_chain) {
+            tracing::info!(
+                "Restoring the masternode engine snapshot up to {in_chain}, the newest list in the header chain"
             );
-            return Ok(None);
+            engine.truncate_above(in_chain).await;
         }
 
         Ok(Some(engine))
+    }
+
+    /// The height of the newest list whose block is in the header chain at
+    /// that height. Headers are stored apart from the snapshot, so after a
+    /// crash the snapshot may hold lists above the stored tip.
+    async fn newest_list_in_chain(
+        engine: &MasternodeListEngine<H>,
+    ) -> StorageResult<Option<CoreBlockHeight>> {
+        for (height, list) in engine.masternode_lists.iter().rev() {
+            if engine.height_of(&list.block_hash).await? == Some(*height) {
+                return Ok(Some(*height));
+            }
+        }
+        Ok(None)
     }
 
     /// Shared access to the engine this storage persists.
@@ -134,7 +145,6 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
     }
 
     pub async fn clear(&mut self, headers: Arc<RwLock<H>>) {
-        self.headers = Arc::clone(&headers);
         *self.engine.write().await = MasternodeListEngine::new(self.network, headers);
     }
 }
@@ -264,16 +274,24 @@ mod tests {
         assert_eq!(list_heights(&open_storage(&dir, headers).await).await, kept);
     }
 
+    #[test_case(&[0xBB], &[100]; "above the headers restores the lists below")]
+    #[test_case(&[0xAA, 0xBB], &[]; "entirely off the chain is not restored")]
     #[tokio::test]
-    async fn a_snapshot_whose_block_left_the_chain_is_not_restored() {
+    async fn a_snapshot_is_restored_up_to_its_newest_list_in_the_chain(
+        forgotten: &[u8],
+        restored: &[u32],
+    ) {
         let dir = TempDir::new().unwrap();
         let heights = [(0xAA, 100), (0xBB, 200)];
         let mut chain = engine_with_lists(&heights);
         persist(&mut open_storage(&dir, chain.headers()).await, engine_with_lists(&heights)).await;
 
-        chain.forget_block(&hash(0xBB));
+        for byte in forgotten {
+            chain.forget_block(&hash(*byte));
+        }
 
-        assert!(list_heights(&open_storage(&dir, chain.headers()).await).await.is_empty());
+        assert_eq!(list_heights(&open_storage(&dir, chain.headers()).await).await, restored);
+        assert!(snapshot_file(&dir).exists());
     }
 
     #[test_case(&[]; "empty")]
@@ -287,6 +305,18 @@ mod tests {
         let storage = open_storage(&dir, engine_with_lists(&[]).headers()).await;
 
         assert!(list_heights(&storage).await.is_empty());
+        assert!(!snapshot_file(&dir).exists());
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_failing_to_read_is_kept() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(snapshot_file(&dir)).unwrap();
+
+        let storage = open_storage(&dir, engine_with_lists(&[]).headers()).await;
+
+        assert!(list_heights(&storage).await.is_empty());
+        assert!(snapshot_file(&dir).exists());
     }
 
     #[tokio::test]

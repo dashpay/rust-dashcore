@@ -259,13 +259,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
 
     // Create network manager
-    let network_manager = match dash_spv::network::manager::PeerNetworkManager::new(&config).await {
-        Ok(nm) => nm,
-        Err(e) => {
-            eprintln!("Failed to create network manager: {}", e);
-            process::exit(1);
-        }
-    };
+    let network_manager = dash_spv::network::PeerNetworkManager::new(&config).await;
 
     run_client(config, network_manager, wallet).await?;
 
@@ -362,9 +356,9 @@ fn parse_llmq_devnet_params(raw: &str) -> Result<LlmqDevnetParams, String> {
     let (size_str, threshold_str) = raw
         .split_once(':')
         .ok_or_else(|| format!("--llmq-devnet-params expects SIZE:THRESHOLD, got '{}'", raw))?;
-    let size: u32 =
+    let size: u16 =
         size_str.parse().map_err(|e| format!("invalid LLMQ_DEVNET size '{}': {}", size_str, e))?;
-    let threshold: u32 = threshold_str
+    let threshold: u16 = threshold_str
         .parse()
         .map_err(|e| format!("invalid LLMQ_DEVNET threshold '{}': {}", threshold_str, e))?;
     Ok(LlmqDevnetParams {
@@ -375,13 +369,13 @@ fn parse_llmq_devnet_params(raw: &str) -> Result<LlmqDevnetParams, String> {
 
 async fn run_client(
     config: ClientConfig,
-    network_manager: dash_spv::network::manager::PeerNetworkManager,
+    network_manager: dash_spv::network::PeerNetworkManager,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
     let client = match DashSpvClient::<
         WalletManager<ManagedWalletInfo>,
-        dash_spv::network::manager::PeerNetworkManager,
+        dash_spv::network::PeerNetworkManager,
     >::new(config.clone(), network_manager, wallet.clone(), Vec::new())
     .await
     {

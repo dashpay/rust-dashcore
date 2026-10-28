@@ -99,7 +99,7 @@ pub(super) type SyncManagers<W> = Managers<
 /// The generic design is an intentional, beneficial architectural choice for a library.
 pub struct DashSpvClient<W: WalletInterface, N: NetworkManager> {
     pub(super) config: Arc<RwLock<ClientConfig>>,
-    pub(super) network: Arc<Mutex<N>>,
+    pub(super) network: Arc<N>,
     pub(super) storage: Arc<Mutex<DiskStorageManager>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,

@@ -31,6 +31,7 @@ quorum_validation = ["bls"]
 message_verification = ["bls"]
 bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore-crypto/bincode", "dashcore_hashes/bincode", "dash-network/bincode" ]
 test-utils = []
+tokio = ["dep:tokio-util", "dep:bytes"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -43,6 +44,7 @@ dashcore_hashes = { path = "../hashes" }
 dashcore-crypto = { path = "../crypto" }
 dash-network = { path = "../dash-network" }
 dash-num = { workspace = true }
+dash-params = { workspace = true }
 dash-types = { workspace = true }
 serde = { workspace = true, features = ["derive", "alloc", "rc"], optional = true }
 
@@ -52,6 +54,8 @@ anyhow = { version= "1.0" }
 hex-conservative = { workspace = true }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
+tokio-util = { version = "0.7", default-features = false, features = ["codec"], optional = true }
+bytes = { version = "1", optional = true }
 blake3 = "1.8.1"
 thiserror = "2"
 bitvec = "1.0"

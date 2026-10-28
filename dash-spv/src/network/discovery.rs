@@ -9,52 +9,145 @@
 //!    not fatal — as long as the embedded list yields at least one peer, the
 //!    client can bootstrap.
 //!
-//! Results from both sources are merged and deduplicated.
+//! Results from both sources are merged and deduplicated. Addresses gossiped by
+//! connected peers are folded in later via [`PeerDiscoverer::learn`].
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashcore::Network;
-use rand::seq::SliceRandom;
-use std::net::SocketAddr;
+use rand::seq::{IndexedRandom, SliceRandom};
 
-/// DNS discovery for finding initial peers.
-///
-/// Despite the name (kept for backwards compatibility), this type also returns
-/// hardcoded masternode seeds embedded at compile time; DNS is used as a
-/// fallback.
-#[derive(Default)]
-pub struct DnsDiscovery {}
+use crate::network::peer::DisconnectedPeer;
+use crate::ClientConfig;
 
-impl DnsDiscovery {
-    /// Create a new DNS discovery instance
-    pub fn new() -> Self {
-        Self {}
+const DNS_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const MAX_LEARNED: usize = 2000;
+const MAX_ADDR_AGE: u32 = 7 * 24 * 60 * 60;
+const MAX_ADDR_FUTURE: u32 = 10 * 60;
+const MAX_PROBED: usize = 32;
+
+pub struct PeerDiscoverer {
+    network: Network,
+    // Empty means "discover" from the compiled-in seeds, then DNS.
+    fixed: Vec<SocketAddr>,
+    restrict_to_configured_peers: bool,
+    /// Resolved once and kept. Not consumed as handed out: the reconnector comes back
+    /// on every drop, and a drained pool would leave the client nothing to reconnect to.
+    discovered: Option<Vec<SocketAddr>>,
+    learned: HashMap<SocketAddr, u32>,
+    /// Handshake ping of peers probed but not kept, tried first next time.
+    probed: HashMap<SocketAddr, u32>,
+}
+
+impl PeerDiscoverer {
+    pub fn new(config: &ClientConfig) -> PeerDiscoverer {
+        PeerDiscoverer {
+            network: config.network,
+            fixed: config.peers.clone(),
+            restrict_to_configured_peers: config.restrict_to_configured_peers,
+            discovered: None,
+            learned: HashMap::new(),
+            probed: HashMap::new(),
+        }
     }
 
-    /// Discover peers for the given network.
-    ///
-    /// Returns the union of the embedded hardcoded masternode seeds and any
-    /// addresses resolved via DNS. DNS resolution failures are logged at warn
-    /// level but do not cause this function to fail — the embedded list acts
-    /// as the primary source and DNS is a best-effort backup.
-    pub async fn discover_peers(&self, network: Network) -> Vec<SocketAddr> {
-        let seeds = network.dns_seeds();
-        let port = network.default_p2p_port();
+    pub fn learn(&mut self, addresses: impl IntoIterator<Item = (SocketAddr, u32)>) -> usize {
+        if !self.fixed.is_empty() || self.restrict_to_configured_peers {
+            return 0;
+        }
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
+        let mut added = 0;
+        for (addr, time) in addresses {
+            if time < now.saturating_sub(MAX_ADDR_AGE) || time > now + MAX_ADDR_FUTURE {
+                continue;
+            }
+            match self.learned.insert(addr, time) {
+                None => added += 1,
+                Some(old) if old > time => {
+                    self.learned.insert(addr, old);
+                }
+                Some(_) => {}
+            }
+        }
+        if self.learned.len() > MAX_LEARNED {
+            let mut learned: Vec<_> = self.learned.drain().collect();
+            learned.sort_by_key(|(_, time)| std::cmp::Reverse(*time));
+            learned.truncate(MAX_LEARNED);
+            self.learned.extend(learned);
+        }
+        added
+    }
+
+    pub fn probed(&mut self, addr: SocketAddr, lag_ms: u32) {
+        let lag_ms = if lag_ms == 0 {
+            u32::MAX
+        } else {
+            lag_ms
+        };
+        let best = self.probed.entry(addr).or_insert(lag_ms);
+        *best = (*best).min(lag_ms);
+        if self.probed.len() > MAX_PROBED {
+            let worst = self.probed.iter().max_by_key(|(_, lag)| **lag).map(|(addr, _)| *addr);
+            worst.map(|addr| self.probed.remove(&addr));
+        }
+    }
+
+    /// Up to `count` addresses to try: the best probed first, then a random sample.
+    pub async fn get(&mut self, count: usize) -> Vec<DisconnectedPeer> {
+        let mut best: Vec<(SocketAddr, u32)> = self.probed.drain().collect();
+        best.sort_by_key(|(_, lag)| *lag);
+        self.probed.extend(best.split_off(count.min(best.len())));
+        let mut out: Vec<DisconnectedPeer> =
+            best.into_iter().map(|(addr, _)| DisconnectedPeer::new(addr, self.network)).collect();
+        let count = count - out.len();
+
+        let pool = if !self.fixed.is_empty() {
+            self.fixed.clone()
+        } else if self.restrict_to_configured_peers {
+            return Vec::new();
+        } else {
+            if self.discovered.is_none() {
+                let found = Self::discover(self.network).await;
+                self.discovered = Some(found);
+            }
+            let mut pool = self.discovered.clone().expect("just set");
+            pool.extend(self.learned.keys());
+            pool.sort();
+            pool.dedup();
+            pool
+        };
+
+        out.extend(
+            pool.choose_multiple(&mut rand::rng(), count)
+                .map(|addr| DisconnectedPeer::new(*addr, self.network)),
+        );
+        out
+    }
+
+    async fn discover(network: Network) -> Vec<SocketAddr> {
         let mut addresses = dash_network_seeds::addresses(network);
 
-        let embedded_count = addresses.len();
-        tracing::info!("Loaded {} hardcoded masternode seed(s) for {:?}", embedded_count, network);
-
-        for seed in seeds {
-            tracing::debug!("Querying DNS seed: {}", seed);
-
-            match tokio::net::lookup_host((*seed, port)).await {
-                Ok(iter) => {
+        let port = network.default_p2p_port();
+        for seed in network.dns_seeds() {
+            match tokio::time::timeout(DNS_LOOKUP_TIMEOUT, tokio::net::lookup_host((*seed, port)))
+                .await
+            {
+                Ok(Ok(iter)) => {
                     let resolved: Vec<SocketAddr> = iter.collect();
                     tracing::info!("DNS seed {} returned {} addresses", seed, resolved.len());
                     addresses.extend(resolved);
                 }
-                Err(e) => {
-                    // DNS is a best-effort backup; do not propagate the error.
+                Ok(Err(e)) => {
                     tracing::warn!("Failed to resolve DNS seed {} (backup source): {}", seed, e);
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "DNS seed {} did not resolve within {:?} (backup source)",
+                        seed,
+                        DNS_LOOKUP_TIMEOUT
+                    );
                 }
             }
         }
@@ -66,20 +159,7 @@ impl DnsDiscovery {
         // onto a handful of nodes. Shuffle so clients fan out across the set.
         addresses.shuffle(&mut rand::rng());
 
-        tracing::info!(
-            "Discovered {} unique peer addresses for {:?} ({} from embedded seeds + DNS)",
-            addresses.len(),
-            network,
-            embedded_count
-        );
         addresses
-    }
-
-    /// Discover peers with a limit on the number returned
-    pub async fn discover_peers_limited(&self, network: Network, limit: usize) -> Vec<SocketAddr> {
-        let mut peers = self.discover_peers(network).await;
-        peers.truncate(limit);
-        peers
     }
 }
 
@@ -88,29 +168,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore] // Requires network access
-    async fn test_dns_discovery_mainnet() {
-        let discovery = DnsDiscovery::new();
-        let peers = discovery.discover_peers(Network::Mainnet).await;
-
-        // Print discovered peers for debugging
-        println!("Discovered {} mainnet peers:", peers.len());
-        for peer in &peers {
-            println!("  {}", peer);
-        }
-
-        // All peers should use the correct port
-        for peer in &peers {
-            assert_eq!(peer.port(), Network::Mainnet.default_p2p_port());
-        }
-    }
-
-    #[tokio::test]
     async fn test_dns_discovery_testnet_returns_embedded_when_dns_fails() {
         // This test does not require network access: even if DNS resolution
         // fails, the embedded seed file must yield peers.
-        let discovery = DnsDiscovery::new();
-        let peers = discovery.discover_peers(Network::Testnet).await;
+        let peers = PeerDiscoverer::discover(Network::Testnet).await;
 
         assert!(
             peers.len() >= 29,
@@ -124,8 +185,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dns_discovery_regtest() {
-        let discovery = DnsDiscovery::new();
-        let peers = discovery.discover_peers(Network::Regtest).await;
+        let peers = PeerDiscoverer::discover(Network::Regtest).await;
 
         // Should return empty for regtest (no DNS seeds and no embedded list)
         assert!(peers.is_empty());

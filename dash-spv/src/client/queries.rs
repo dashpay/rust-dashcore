@@ -27,12 +27,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
     /// Get the number of connected peers.
     pub async fn peer_count(&self) -> usize {
-        self.network.lock().await.peer_count()
-    }
-
-    /// Disconnect a specific peer.
-    pub async fn disconnect_peer(&self, addr: &std::net::SocketAddr, reason: &str) -> Result<()> {
-        Ok(self.network.lock().await.disconnect_peer(addr, reason).await?)
+        self.network.connected_count().await as usize
     }
 
     // ============ Masternode Queries ============
@@ -67,8 +62,13 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         engine.blocking_read().latest_masternode_list().cloned()
     }
 
-    /// Get a quorum entry by type and hash at a specific block height. Only
-    /// heights within the lists the engine holds resolve.
+    /// Get a quorum entry by type and hash at a specific block height.
+    ///
+    /// Only heights the engine holds lists for resolve. It keeps lists within
+    /// its retention window below its newest list, a few days of blocks, and
+    /// right after a restart only up to the newest list it stored, until sync
+    /// catches up with the tip.
+    ///
     /// Returns `SpvError::QuorumLookupError` if the quorum is not found.
     pub async fn get_quorum_at_height(
         &self,

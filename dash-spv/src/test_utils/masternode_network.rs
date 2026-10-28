@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dashcore::sml::llmq_type::{LLMQType, LLMQ_TEST_DIP00024};
+use dashcore::sml::llmq_type::LLMQType;
 use dashcore::BlockHash;
 use dashcore_rpc::{Auth, Client, RpcApi};
 use serde::Deserialize;
@@ -958,9 +958,10 @@ impl MasternodeTestContext {
             .unwrap_or(0) as u32
             / dkg_interval)
             * dkg_interval;
-        // LLMQ_TEST_DIP0024 mining window end, sourced from the params struct
+        // LLMQ_TEST_DIP0024 mining window end, sourced from the quorum type
         // so an `-llmqtestparams` regtest override would be honoured.
-        let mining_window_end = cycle_start + LLMQ_TEST_DIP00024.dkg_params.mining_window_end;
+        let mining_window_end =
+            LLMQType::LlmqtypeTestDIP0024.dkg_window_at_cycle(cycle_start).mining_end;
         for _ in 0..8 {
             self.mine_block_with_cl_then_notify(&mut on_block_mined, 15);
         }
