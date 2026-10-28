@@ -47,6 +47,9 @@ hex-conservative = { workspace = true }
 # Parallelization
 rayon = { workspace = true }
 
+# Masternode engine snapshots
+bincode = { workspace = true, features = ["serde"] }
+
 # Test utilities (optional)
 tempfile = { version = "3.0", optional = true }
 dashcore-rpc = { path = "../rpc-client", optional = true }
@@ -56,7 +59,6 @@ serde = { workspace = true, features = ["std", "derive"] }
 serde_json = "1.0"
 
 [dev-dependencies]
-bincode = { workspace = true }
 dash-spv = { path = ".", features = ["test-utils"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
 key-wallet = { path = "../key-wallet", features = ["test-utils"] }

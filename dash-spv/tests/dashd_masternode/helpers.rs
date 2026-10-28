@@ -56,7 +56,7 @@ pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
     ("metadata", "sync checkpoints"),
     ("version.json", "the storage version system"),
     ("peers", "peer set and reputations"),
-    ("masternodes", "the masternode messages this session stored"),
+    ("masternodes", "the masternode engine snapshot this session stored"),
 ];
 
 pub(super) fn assert_storage_persisted(snapshot: &BTreeMap<String, usize>, what: &str) {
