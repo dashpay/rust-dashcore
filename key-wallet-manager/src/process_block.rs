@@ -152,6 +152,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         tx: &Transaction,
         instant_lock: Option<InstantLock>,
     ) -> MempoolTransactionResult {
+        // DEBUG BUILD ONLY (funds-still-confirming repro): InstantSend locks are ignored,
+        // so incoming funds stay unconfirmed until they are mined.
+        if instant_lock.is_some() {
+            tracing::warn!("DEBUG-NO-ISLOCK: ignoring InstantLock for mempool tx {}", tx.txid());
+        }
+        let instant_lock: Option<InstantLock> = None;
         let context = match instant_lock.as_ref() {
             Some(lock) => {
                 debug_assert_eq!(lock.txid, tx.txid(), "InstantLock txid must match transaction");
@@ -499,6 +505,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn process_instant_send_lock(&mut self, instant_lock: InstantLock) {
         let txid = instant_lock.txid;
+        // DEBUG BUILD ONLY (funds-still-confirming repro): see process_mempool_transaction.
+        tracing::warn!("DEBUG-NO-ISLOCK: ignoring InstantLock for {}", txid);
+        if !cfg!(test) {
+            return;
+        }
 
         // `mark_instant_send_utxos` recomputes balances internally when any
         // UTXO is newly marked, so we have to snapshot per-account balances
