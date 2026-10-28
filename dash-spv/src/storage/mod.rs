@@ -20,10 +20,7 @@ use crate::types::{HashedBlock, HashedBlockHeader};
 use crate::ClientConfig;
 use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
-use dashcore::network::message_qrinfo::QRInfo;
-use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::Network;
 use serde::de::DeserializeOwned;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -66,7 +63,7 @@ pub trait StorageManager:
     async fn clear(&mut self) -> StorageResult<()>;
 
     /// Drops the block headers, filter headers, filters, blocks and masternode
-    /// messages above `height`.
+    /// engine snapshots above `height`.
     async fn truncate_above(&mut self, height: u32) -> StorageResult<()>;
 
     /// Starts the background tasks, restarting them after a [`Self::stop`].
@@ -100,7 +97,6 @@ pub trait StorageManager:
 /// until [`StorageManager::stop`] or drop.
 pub struct DiskStorageManager {
     storage_path: PathBuf,
-    network: Network,
 
     block_headers: Arc<RwLock<PersistentBlockHeaderStorage>>,
     filter_headers: Arc<RwLock<PersistentFilterHeaderStorage>>,
@@ -155,7 +151,6 @@ impl DiskStorageManager {
 
         Ok(Self {
             storage_path: storage_path.clone(),
-            network: config.network,
 
             filter_headers: Arc::new(RwLock::new(
                 PersistentFilterHeaderStorage::open(&storage_path).await?,
@@ -169,7 +164,7 @@ impl DiskStorageManager {
                     Arc::clone(&block_headers),
                     config.network,
                 )
-                .await?,
+                .await,
             )),
             block_headers,
 
@@ -233,6 +228,7 @@ impl DiskStorageManager {
         let _ = self.filters.write().await.persist(storage_path).await;
         let _ = self.blocks.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
+        let _ = self.masternodes.write().await.persist().await;
     }
 }
 
@@ -287,14 +283,7 @@ impl StorageManager for DiskStorageManager {
         self.filters = Arc::new(RwLock::new(PersistentFilterStorage::open(storage_path).await?));
         self.blocks = Arc::new(RwLock::new(PersistentBlockStorage::open(storage_path).await?));
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
-        self.masternodes = Arc::new(RwLock::new(
-            PersistentMasternodeStorage::open(
-                storage_path,
-                Arc::clone(&self.block_headers),
-                self.network,
-            )
-            .await?,
-        ));
+        self.masternodes.write().await.clear(Arc::clone(&self.block_headers)).await;
 
         if worker_was_running {
             self.start_worker().await;
@@ -483,22 +472,6 @@ impl metadata::MetadataStorage for DiskStorageManager {
 
 #[async_trait]
 impl masternode::MasternodeStorage for DiskStorageManager {
-    async fn store_diff(
-        &mut self,
-        height: CoreBlockHeight,
-        diff: &MnListDiff,
-    ) -> StorageResult<()> {
-        self.masternodes.write().await.store_diff(height, diff).await
-    }
-
-    async fn store_qr_info(
-        &mut self,
-        height: CoreBlockHeight,
-        qr_info: &QRInfo,
-    ) -> StorageResult<()> {
-        self.masternodes.write().await.store_qr_info(height, qr_info).await
-    }
-
     async fn truncate_above(&mut self, height: CoreBlockHeight) -> StorageResult<()> {
         self.masternodes.write().await.truncate_above(height).await
     }
