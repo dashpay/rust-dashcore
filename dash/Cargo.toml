@@ -44,6 +44,7 @@ dashcore_hashes = { path = "../hashes" }
 dashcore-crypto = { path = "../crypto" }
 dash-network = { path = "../dash-network" }
 dash-num = { workspace = true }
+dash-params = { workspace = true }
 dash-types = { workspace = true }
 serde = { workspace = true, features = ["derive", "alloc", "rc"], optional = true }
 

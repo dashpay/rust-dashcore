@@ -114,12 +114,7 @@ pub unsafe extern "C" fn dash_spv_ffi_config_add_peer(
     null_check!(addr);
 
     let cfg = unsafe { &mut *((*config).inner as *mut ClientConfig) };
-    let default_port = match cfg.network {
-        dashcore::Network::Mainnet => 9999,
-        dashcore::Network::Testnet => 19999,
-        dashcore::Network::Regtest => 19899,
-        dashcore::Network::Devnet => 29999,
-    };
+    let default_port = cfg.network.default_p2p_port();
 
     let addr_str = match CStr::from_ptr(addr).to_str() {
         Ok(s) => s.trim(),

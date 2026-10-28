@@ -98,18 +98,12 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
-/// mining window it overlaps, and never more than are active at once. Without
-/// a DKG interval, one per block.
+/// mining window it overlaps, and never more than are active at once.
 fn max_new_quorums(llmq_type: LLMQType, blocks: CoreBlockHeight) -> usize {
-    let params = llmq_type.params();
-    let dkg = params.dkg_params;
-    let window = dkg.mining_window_end.saturating_sub(dkg.mining_window_start);
-    let windows = blocks
-        .saturating_add(window)
-        .saturating_sub(1)
-        .checked_div(dkg.interval)
-        .map_or(blocks, |windows| windows.saturating_add(1));
-    windows.min(params.signing_active_quorum_count) as usize
+    let window = llmq_type.dkg_window_at_cycle(0);
+    let span = blocks.saturating_add(window.mining_end - window.mining_start);
+    let windows = span.saturating_sub(1) / llmq_type.dkg_interval() + 1;
+    windows.min(llmq_type.active_quorum_count()) as usize
 }
 
 /// A cycle's quorums keyed by quorum index. Rejects a missing, out-of-range or
@@ -169,7 +163,7 @@ fn rotated_cycle_base_height(
         return None;
     }
     let cycle_base = quorum_block_height.checked_sub(quorum_index)?;
-    (cycle_base % quorum.llmq_type.params().dkg_params.interval == 0).then_some(cycle_base)
+    (quorum.llmq_type.get_cycle_base_height(cycle_base) == cycle_base).then_some(cycle_base)
 }
 
 /// The rotated quorums a `quorumsCLSigs` group of `diff` signs for.
@@ -184,12 +178,14 @@ fn signed_rotated_quorums<'a>(
         .filter(|quorum| quorum.llmq_type.is_rotating_quorum_type())
 }
 
-/// The quarter work block heights of the cycle based at `B` with DKG interval
-/// `c`, oldest first: `[B-3c-8, B-2c-8, B-c-8, B-8]`. `None` below genesis.
+/// The quarter work block heights of the `llmq_type` cycle based at `B`, whose
+/// DKG interval is `c`, oldest first: `[B-3c-8, B-2c-8, B-c-8, B-8]`. `None`
+/// below genesis.
 fn cycle_quarter_work_heights(
     cycle_base: CoreBlockHeight,
-    interval: u32,
+    llmq_type: LLMQType,
 ) -> [Option<CoreBlockHeight>; 4] {
+    let interval = llmq_type.dkg_interval();
     [3, 2, 1, 0]
         .map(|cycles_back: u32| cycle_base.checked_sub(cycles_back * interval + WORK_DIFF_DEPTH))
 }
@@ -282,7 +278,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         block_hash: &BlockHash,
     ) -> StorageResult<Option<CoreBlockHeight>> {
         if *block_hash == BlockHash::all_zeros()
-            || self.network.known_genesis_block_hash() == Some(*block_hash)
+            || self.network.known_genesis_block_hash() == *block_hash
         {
             return Ok(Some(0));
         }
@@ -725,7 +721,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// For a diff ending at a work block, the work block of the newest cycle
     /// whose commitments it can carry: one interval below its end.
     fn diff_newest_work_height(&self, end_height: CoreBlockHeight) -> Option<CoreBlockHeight> {
-        let interval = self.network.isd_llmq_type().params().dkg_params.interval;
+        let interval = self.network.isd_llmq_type().dkg_interval();
         (end_height % interval == interval - WORK_DIFF_DEPTH)
             .then(|| end_height.checked_sub(interval))
             .flatten()
@@ -746,9 +742,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let Some(cycle_base) = self.rotated_quorum_cycle_base(quorum).await? else {
             return Ok(None);
         };
-        let interval = quorum.llmq_type.params().dkg_params.interval;
         let [Some(h3), Some(h2), Some(h1), Some(h0)] =
-            cycle_quarter_work_heights(cycle_base, interval)
+            cycle_quarter_work_heights(cycle_base, quorum.llmq_type)
         else {
             return Ok(None);
         };
@@ -1321,7 +1316,7 @@ mod tests {
     #[tokio::test]
     async fn rotation_cl_sigs_by_work_height_keys_each_cycle_to_its_own_work_block() {
         let isd_type = Network::Mainnet.isd_llmq_type();
-        let interval = isd_type.params().dkg_params.interval;
+        let interval = isd_type.dkg_interval();
         assert_eq!(interval, 288, "the heights below assume the mainnet DKG interval");
 
         let cycle_base = interval * 100;
@@ -1731,7 +1726,7 @@ mod tests {
         // height in the captured chain, so its cycle cannot be derived and it
         // settles as skipped. The verified rest of the set must still be
         // stored so IS locks referencing the previous cycle verify.
-        let dkg_interval = engine.network.isd_llmq_type().params().dkg_params.interval;
+        let dkg_interval = engine.network.isd_llmq_type().dkg_interval();
         let previous_cycle_hash = engine
             .block_hash_at(current_cycle_base - dkg_interval)
             .expect("expected previous cycle hash");
@@ -2221,7 +2216,7 @@ mod tests {
     #[tokio::test]
     async fn a_fork_drops_a_rotated_cycle_whose_base_cannot_be_read() {
         let fork = 1_000_000;
-        let window_end = Network::Mainnet.isd_llmq_type().params().dkg_params.mining_window_end;
+        let window_end = Network::Mainnet.isd_llmq_type().dkg_window_at_cycle(0).mining_end;
         let mut engine = TestEngine::dummy_with_lists(&[fork]);
         let readable = fork - window_end;
         let unreadable = readable - 24;
@@ -2596,7 +2591,7 @@ mod tests {
         let work = |mined: CoreBlockHeight| mined - QUORUM_MEMBER_LIST_OFFSET;
         let tip = 2_000_000;
         let older_list = 1_000_000;
-        let interval = LLMQType::Llmqtype400_60.params().dkg_params.interval;
+        let interval = LLMQType::Llmqtype400_60.dkg_interval();
         let active = LLMQType::Llmqtype400_60.active_quorum_count();
         assert_eq!((interval, active), (288, 4), "the heights below assume mainnet 400_60");
         // One 400_60 quorum per interval, newest first, one more than are active.
@@ -2662,16 +2657,19 @@ mod tests {
     /// window may bring the quorums of both.
     #[test]
     fn max_new_quorums_counts_the_mining_windows_a_run_overlaps() {
-        let params = LLMQType::Llmqtype100_67.params();
-        let dkg = &params.dkg_params;
-        assert_eq!((dkg.interval, dkg.mining_window_start, dkg.mining_window_end), (24, 10, 18));
+        let llmq_type = LLMQType::Llmqtype100_67;
+        let window = llmq_type.dkg_window_at_cycle(0);
+        assert_eq!(
+            (llmq_type.dkg_interval(), window.mining_start, window.mining_end),
+            (24, 10, 18)
+        );
         // After the commitment at 18, the next window starts at 24 + 10.
         assert_eq!(super::max_new_quorums(LLMQType::Llmqtype100_67, 16), 1, "19..=34");
         assert_eq!(super::max_new_quorums(LLMQType::Llmqtype100_67, 17), 2, "18..=34");
         assert_eq!(super::max_new_quorums(LLMQType::Llmqtype100_67, 1), 1);
         assert_eq!(
             super::max_new_quorums(LLMQType::Llmqtype100_67, 100_000),
-            params.signing_active_quorum_count as usize
+            llmq_type.active_quorum_count() as usize
         );
     }
 

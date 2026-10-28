@@ -53,10 +53,7 @@ use internals::write_err;
 use serde::{Deserialize, Serialize};
 
 use crate::base58;
-use crate::blockdata::constants::{
-    MAX_SCRIPT_ELEMENT_SIZE, PUBKEY_ADDRESS_PREFIX_MAIN, PUBKEY_ADDRESS_PREFIX_TEST,
-    SCRIPT_ADDRESS_PREFIX_MAIN, SCRIPT_ADDRESS_PREFIX_TEST,
-};
+use crate::blockdata::constants::MAX_SCRIPT_ELEMENT_SIZE;
 use crate::blockdata::opcodes;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script::{
@@ -1026,14 +1023,11 @@ impl<V: NetworkValidation> Address<V> {
 
     /// Format the address for the usage by `Debug` and `Display` implementations.
     fn fmt_internal(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        let p2pkh_prefix = match self.0.prefix {
-            AddressPrefix::Mainnet => PUBKEY_ADDRESS_PREFIX_MAIN,
-            _ => PUBKEY_ADDRESS_PREFIX_TEST,
-        };
-        let p2sh_prefix = match self.0.prefix {
-            AddressPrefix::Mainnet => SCRIPT_ADDRESS_PREFIX_MAIN,
-            _ => SCRIPT_ADDRESS_PREFIX_TEST,
-        };
+        let addr_params = match self.0.prefix {
+            AddressPrefix::Mainnet => Network::Mainnet,
+            _ => Network::Testnet,
+        }
+        .addr_params();
         let bech32_hrp = match self.0.prefix {
             AddressPrefix::Mainnet => "ds",
             AddressPrefix::Testnet => "tb",
@@ -1041,8 +1035,8 @@ impl<V: NetworkValidation> Address<V> {
         };
         let encoding = AddressEncoding {
             payload: self.payload(),
-            p2pkh_prefix,
-            p2sh_prefix,
+            p2pkh_prefix: addr_params.pubkey_addr,
+            p2sh_prefix: addr_params.script_addr,
             bech32_hrp,
         };
 
@@ -1400,17 +1394,19 @@ impl FromStr for Address<NetworkUnchecked> {
             return Err(Error::InvalidBase58PayloadLength(data.len()));
         }
 
+        let main = Network::Mainnet.addr_params();
+        let test = Network::Testnet.addr_params();
         let (network, payload) = match data[0] {
-            PUBKEY_ADDRESS_PREFIX_MAIN => {
+            x if x == main.pubkey_addr => {
                 (Network::Mainnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
             }
-            SCRIPT_ADDRESS_PREFIX_MAIN => {
+            x if x == main.script_addr => {
                 (Network::Mainnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
             }
-            PUBKEY_ADDRESS_PREFIX_TEST => {
+            x if x == test.pubkey_addr => {
                 (Network::Testnet, Payload::PubkeyHash(PubkeyHash::from_slice(&data[1..]).unwrap()))
             }
-            SCRIPT_ADDRESS_PREFIX_TEST => {
+            x if x == test.script_addr => {
                 (Network::Testnet, Payload::ScriptHash(ScriptHash::from_slice(&data[1..]).unwrap()))
             }
             x => return Err(Error::InvalidAddressVersion(x)),
@@ -1419,33 +1415,6 @@ impl FromStr for Address<NetworkUnchecked> {
         Ok(Address::new(network, payload))
     }
 }
-
-// // Alternate formatting `{:#}` is used to return uppercase version of bech32 addresses which should
-// // be used in QR codes, see [`Address::to_qr_uri`].
-// impl fmt::Display for Address {
-//     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-//         let p2pkh_prefix = match self.network {
-//             Network::Mainnet => PUBKEY_ADDRESS_PREFIX_MAIN,
-//             Network::Testnet | Network::Devnet | Network::Regtest => PUBKEY_ADDRESS_PREFIX_TEST,
-//         };
-//         let p2sh_prefix = match self.network {
-//             Network::Mainnet => SCRIPT_ADDRESS_PREFIX_MAIN,
-//             Network::Testnet | Network::Devnet | Network::Regtest => SCRIPT_ADDRESS_PREFIX_TEST,
-//         };
-//         let bech32_hrp = match self.network {
-//             Network::Mainnet => "ds",
-//             Network::Testnet | Network::Devnet => "td",
-//             Network::Regtest => "dsrt",
-//         };
-//         let encoding = AddressEncoding {
-//             payload: &self.payload,
-//             p2pkh_prefix,
-//             p2sh_prefix,
-//             bech32_hrp,
-//         };
-//         encoding.fmt(fmt)
-//     }
-// }
 
 struct UpperWriter<W: fmt::Write>(W);
 

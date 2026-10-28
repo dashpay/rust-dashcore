@@ -1,6 +1,6 @@
 [package]
 name = "dash-network"
-description = "The `Network` enum and its pure helpers (magic bytes, activation heights, default P2P ports) extracted from `dashcore` into a minimal-dependency crate so that lightweight consumers can depend on it without pulling in the full protocol library."
+description = "The `Network` enum and its pure helpers (magic bytes, activation heights, default P2P ports) extracted from `dashcore` into a lightweight crate so that lightweight consumers can depend on it without pulling in the full protocol library."
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -22,9 +22,13 @@ bincode = ["dep:bincode", "dep:bincode_derive"]
 ffi = []
 
 [dependencies]
+dash-params = { workspace = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
+
+[dev-dependencies]
+test-case = "3.3"
 
 [build-dependencies]
 cbindgen = "0.29"

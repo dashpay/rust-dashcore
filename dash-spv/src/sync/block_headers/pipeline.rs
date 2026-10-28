@@ -342,7 +342,7 @@ mod tests {
     }
 
     fn testnet_genesis_hash() -> BlockHash {
-        Network::Testnet.known_genesis_block_hash().unwrap()
+        Network::Testnet.known_genesis_block_hash()
     }
 
     async fn declared_locators(mock: &MockNetworkManager) -> Vec<BlockHash> {

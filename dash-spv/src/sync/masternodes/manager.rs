@@ -320,16 +320,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// This applies only to the incremental-update path while state is `Synced`.
     /// Initial sync and explicit retry paths (timeout) bypass it.
     pub(super) fn next_pipeline_mode(&mut self, tip_height: u32) -> PipelineMode {
-        let params = self.network.isd_llmq_type().params();
-        let dkg_interval = params.dkg_params.interval;
-        if dkg_interval == 0 {
-            return PipelineMode::QuorumValidation {
-                qr_info_result: None,
-            };
-        }
-        let mining_start = params.dkg_params.mining_window_start;
-        let mining_end = params.dkg_params.mining_window_end;
-        let cycle_height = tip_height - (tip_height % dkg_interval);
+        let window = self.network.isd_llmq_type().get_dkg_window_for_height(tip_height);
+        let cycle_height = window.cycle_start;
 
         // Reset per-cycle tracking when the tip enters a new cycle.
         if self.sync_state.current_cycle_height != Some(cycle_height) {
@@ -344,11 +336,11 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             return PipelineMode::Incremental;
         }
         // Before mining window opens: QRInfo would fail at the `tip` slot. Keep tip list fresh.
-        if tip_height < cycle_height + mining_start {
+        if tip_height < window.mining_start {
             return PipelineMode::Incremental;
         }
         // Past mining window without success.
-        if tip_height > cycle_height + mining_end {
+        if tip_height > window.mining_end {
             // If we never attempted QRInfo for this cycle (all blocks arrived
             // in a batch that overshot the window), fire ONE QRInfo now so the
             // cycle's rotated quorums get stored. Without this, IS locks from
@@ -365,8 +357,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             }
             tracing::warn!(
                 cycle_height,
-                mining_window_start = cycle_height + mining_start,
-                mining_window_end = cycle_height + mining_end,
+                mining_window_start = window.mining_start,
+                mining_window_end = window.mining_end,
                 attempts = self.sync_state.current_cycle_attempts,
                 "Rotated quorum fresh validation failed for cycle: mining window \
                  closed without a successful QRInfo response. Falling back to \

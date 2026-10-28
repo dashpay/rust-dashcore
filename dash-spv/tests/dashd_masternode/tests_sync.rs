@@ -725,8 +725,8 @@ async fn test_quorum_mined_after_start_is_verified_on_arrival() {
     // block before the DIP24 mining window opens and the client asks for a
     // QRInfo. Mining the next block only once the client published that one
     // keeps the two out of one header batch.
-    let llmq_test_window = LLMQType::LlmqtypeTest.params().dkg_params.mining_window_start;
-    let dip24_window = LLMQType::LlmqtypeTestDIP0024.params().dkg_params.mining_window_start;
+    let llmq_test_window = LLMQType::LlmqtypeTest.dkg_window_at_cycle(0).mining_start;
+    let dip24_window = LLMQType::LlmqtypeTestDIP0024.dkg_window_at_cycle(0).mining_start;
     assert!(llmq_test_window < dip24_window, "the llmq_test window must open first");
     let before_dip24_window = next_quorum_height + dip24_window - 1;
     let quorum_hash = ctx

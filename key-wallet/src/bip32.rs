@@ -1411,12 +1411,7 @@ impl ExtendedPrivKey {
     /// Extended private key binary encoding according to BIP 32
     fn encode_32(&self) -> [u8; 78] {
         let mut ret = [0; 78];
-        ret[0..4].copy_from_slice(
-            &match self.network {
-                Network::Mainnet => [0x04, 0x88, 0xAD, 0xE4],
-                _ => [0x04, 0x35, 0x83, 0x94], // Testnet/Devnet/Regtest/Unknown
-            }[..],
-        );
+        ret[0..4].copy_from_slice(&self.network.addr_params().ext_secret);
         ret[4] = self.depth;
         ret[5..9].copy_from_slice(&self.parent_fingerprint[..]);
         ret[9..13].copy_from_slice(&u32::from(self.child_number).to_be_bytes());
@@ -1684,12 +1679,7 @@ impl ExtendedPubKey {
     /// Extended public key binary encoding according to BIP 32
     pub fn encode_32(&self) -> [u8; 78] {
         let mut ret = [0; 78];
-        ret[0..4].copy_from_slice(
-            &match self.network {
-                Network::Mainnet => [0x04u8, 0x88, 0xB2, 0x1E],
-                _ => [0x04u8, 0x35, 0x87, 0xCF], // Testnet/Devnet/Regtest/Unknown
-            }[..],
-        );
+        ret[0..4].copy_from_slice(&self.network.addr_params().ext_pubkey);
         ret[4] = self.depth;
         ret[5..9].copy_from_slice(&self.parent_fingerprint[..]);
         ret[9..13].copy_from_slice(&u32::from(self.child_number).to_be_bytes());
