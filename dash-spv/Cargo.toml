@@ -54,7 +54,7 @@ hex-conservative = { workspace = true }
 # Parallelization
 
 # Masternode engine snapshots
-bincode = { workspace = true, features = ["serde"] }
+bincode = { workspace = true }
 
 # Test utilities (optional)
 tempfile = { version = "3.0", optional = true }

@@ -1,5 +1,6 @@
 mod helpers;
 mod rotated_quorum_construction;
+mod snapshot_codec;
 mod validation;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -242,10 +243,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// The engine's lists and rotated cycles as bytes, see [`Self::from_snapshot`].
     pub fn snapshot(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
-        bincode::serde::encode_to_vec(
-            (&self.masternode_lists, &self.rotated_quorums_per_cycle),
-            bincode::config::standard(),
-        )
+        bincode::encode_to_vec(self, snapshot_codec::config())
     }
 
     /// An engine holding the lists and rotated cycles [`Self::snapshot`] encoded.
@@ -254,19 +252,17 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         headers: Arc<RwLock<H>>,
         bytes: &[u8],
     ) -> Result<Self, bincode::error::DecodeError> {
-        let ((masternode_lists, rotated_quorums_per_cycle), read) =
-            bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        let (engine, read) = bincode::decode_from_slice_with_context(
+            bytes,
+            snapshot_codec::config(),
+            (network, headers),
+        )?;
 
         if read != bytes.len() {
             return Err(bincode::error::DecodeError::Other("trailing bytes after the snapshot"));
         }
 
-        Ok(Self {
-            headers,
-            masternode_lists,
-            rotated_quorums_per_cycle,
-            network,
-        })
+        Ok(engine)
     }
 
     /// The height of `block_hash` in the header chain, `None` when the chain
@@ -1102,9 +1098,15 @@ pub(crate) mod test_support {
     use super::*;
     use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSPublicKey;
+    use dashcore::consensus::deserialize;
     use dashcore::hash_types::QuorumVVecHash;
+    use dashcore::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
+    use dashcore::ProTxHash;
 
     pub(crate) type TestEngine = MasternodeListEngine<MockHeaderStorage>;
+
+    type MasternodeChange = (ProTxHash, Option<Arc<QualifiedMasternodeListEntry>>);
+    type QuorumChange = (LLMQType, QuorumHash, Option<Arc<QualifiedQuorumEntry>>);
 
     /// The block container the engine kept before it read the header chain,
     /// as `block_container_*.dat` fixtures hold it.
@@ -1230,6 +1232,113 @@ pub(crate) mod test_support {
                 engine
                     .masternode_lists
                     .insert(height, MasternodeList::empty(BlockHash::dummy(height), height));
+            }
+            engine
+        }
+
+        /// A mainnet engine following the tip for `lists` blocks from 2227096,
+        /// holding a list per block. Each block takes its share of the
+        /// masternode and quorum changes between the 2227096 and 2241332
+        /// fixture lists at their average rate per block, and shares the rest
+        /// of the previous list as `MasternodeList::apply_diff` does. New
+        /// quorums arrive verified. `churn` multiplies the rates, replaying the
+        /// changes as fresh entries once they run out.
+        pub(crate) fn mainnet_list_chain(lists: usize, churn: usize) -> Self {
+            const BASE_HEIGHT: CoreBlockHeight = 2_227_096;
+            const END_HEIGHT: CoreBlockHeight = 2_241_332;
+
+            let base_diff: MnListDiff = deserialize(include_bytes!(
+                "../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+            ))
+            .expect("base diff");
+            let diff: MnListDiff = deserialize(include_bytes!(
+                "../../dash/tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin"
+            ))
+            .expect("diff");
+            let base =
+                MasternodeList::from_diff(base_diff, BASE_HEIGHT, Network::Mainnet).expect("base");
+            let end = base.apply_diff(diff, END_HEIGHT, Network::Mainnet).expect("end");
+
+            let mut masternode_changes: Vec<MasternodeChange> = base
+                .masternodes
+                .keys()
+                .filter(|key| !end.masternodes.contains_key(*key))
+                .map(|key| (*key, None))
+                .collect();
+            masternode_changes.extend(
+                end.masternodes
+                    .iter()
+                    .filter(|(key, entry)| base.masternodes.get(*key) != Some(*entry))
+                    .map(|(key, entry)| (*key, Some(Arc::clone(entry)))),
+            );
+            let mut quorum_changes: Vec<QuorumChange> = Vec::new();
+            for (llmq_type, quorums) in base.quorums.iter() {
+                for quorum_hash in quorums.keys() {
+                    if end.quorums.get(llmq_type).is_none_or(|end| !end.contains_key(quorum_hash)) {
+                        quorum_changes.push((*llmq_type, *quorum_hash, None));
+                    }
+                }
+            }
+            for (llmq_type, quorums) in end.quorums.iter() {
+                for (quorum_hash, quorum) in quorums {
+                    if base
+                        .quorums
+                        .get(llmq_type)
+                        .is_none_or(|base| !base.contains_key(quorum_hash))
+                    {
+                        let mut quorum = QualifiedQuorumEntry::clone(quorum);
+                        quorum.verified = LLMQEntryVerificationStatus::Verified;
+                        quorum_changes.push((*llmq_type, *quorum_hash, Some(Arc::new(quorum))));
+                    }
+                }
+            }
+
+            let blocks = (END_HEIGHT - BASE_HEIGHT) as usize;
+            let mut engine = Self::empty(Network::Mainnet);
+            let mut list = base;
+            for block in 0..lists {
+                let height = BASE_HEIGHT + block as CoreBlockHeight;
+                let share = |changes: usize| {
+                    (block * changes * churn / blocks)..((block + 1) * changes * churn / blocks)
+                };
+                let masternodes: Vec<_> = share(masternode_changes.len())
+                    .map(|index| &masternode_changes[index % masternode_changes.len()])
+                    .collect();
+                if !masternodes.is_empty() {
+                    let map = Arc::make_mut(&mut list.masternodes);
+                    for (key, entry) in masternodes {
+                        match entry {
+                            Some(entry) => map
+                                .insert(*key, Arc::new(QualifiedMasternodeListEntry::clone(entry))),
+                            None => map.remove(key),
+                        };
+                    }
+                }
+                let quorums: Vec<_> = share(quorum_changes.len())
+                    .map(|index| &quorum_changes[index % quorum_changes.len()])
+                    .collect();
+                if !quorums.is_empty() {
+                    let map = Arc::make_mut(&mut list.quorums);
+                    for (llmq_type, quorum_hash, quorum) in quorums {
+                        match quorum {
+                            Some(quorum) => {
+                                map.entry(*llmq_type).or_default().insert(
+                                    *quorum_hash,
+                                    Arc::new(QualifiedQuorumEntry::clone(quorum)),
+                                );
+                            }
+                            None => {
+                                if let Some(by_hash) = map.get_mut(llmq_type) {
+                                    by_hash.remove(quorum_hash);
+                                }
+                            }
+                        }
+                    }
+                }
+                list.block_hash = BlockHash::dummy(height);
+                list.known_height = height;
+                engine.feed_block_height(height, list.block_hash);
+                engine.masternode_lists.insert(height, list.clone());
             }
             engine
         }
