@@ -83,7 +83,11 @@ pub use error::{
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
 pub use storage::BlockHeaderTip;
-pub use sync::{BroadcastHoldout, BroadcastResult};
+pub use sync::{
+    BlockHeadersProgress, BlocksProgress, BroadcastHoldout, BroadcastResult, ChainLockProgress,
+    FilterHeadersProgress, FiltersProgress, InstantSendProgress, ManagerIdentifier,
+    MasternodesProgress, MempoolProgress, ProgressPercentage, SyncEvent, SyncProgress, SyncState,
+};
 pub use tracing::level_filters::LevelFilter;
 pub use types::{FilterMatch, ValidationMode};
 
