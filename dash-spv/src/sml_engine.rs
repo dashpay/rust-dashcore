@@ -357,6 +357,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// non-rotating quorum of the newest list still to validate, oldest first.
     /// A retired quorum type is never validated, so it needs none. Fails when
     /// the header storage cannot read a block it looks up.
+    #[cfg(test)]
     pub async fn missing_work_block_list_requests(
         &self,
     ) -> StorageResult<Vec<(BlockHash, BlockHash)>> {
