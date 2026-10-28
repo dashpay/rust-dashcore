@@ -122,13 +122,14 @@ scn() { "${YQ}" "$1" "${SCN_FILE}"; }
 
 # `tc netem` arguments for the link described at yq path $1.
 netem_args() {
-  local lat jit loss rate corrupt reorder a=""
-  read -r lat jit loss rate corrupt reorder <<<"$(scn "$1 | [.latency_ms // 0, .jitter_ms // 0, .loss_pct // 0, .rate_kbit // 0, .corrupt_pct // 0, .reorder_pct // 0] | @tsv")"
+  local lat jit loss rate corrupt reorder limit a=""
+  read -r lat jit loss rate corrupt reorder limit <<<"$(scn "$1 | [.latency_ms // 0, .jitter_ms // 0, .loss_pct // 0, .rate_kbit // 0, .corrupt_pct // 0, .reorder_pct // 0, .limit_pkts // 0] | @tsv")"
   [ "${lat}" != 0 ] && { a="delay ${lat}ms"; [ "${jit}" != 0 ] && a="${a} ${jit}ms"; }
   [ "${loss}" != 0 ] && a="${a} loss ${loss}%"
   [ "${rate}" != 0 ] && a="${a} rate ${rate}kbit"
   [ "${corrupt}" != 0 ] && a="${a} corrupt ${corrupt}%"
   [ "${reorder}" != 0 ] && a="${a} reorder ${reorder}%"
+  [ "${limit}" != 0 ] && a="${a} limit ${limit}"
   echo "${a# }"
 }
 
@@ -191,7 +192,9 @@ SERVICE
     cpuset: "${BENCH_CPUS}"}
     environment:
       NETEM_ARGS: "${CLIENT_NETEM}"
-      INGRESS_RATE_KBIT: "${CLIENT_RATE_KBIT}"${RUST_LOG:+
+      INGRESS_RATE_KBIT: "${CLIENT_RATE_KBIT}"
+      INGRESS_LIMIT: "${CLIENT_LIMIT_PKTS}"
+      RATE_PROFILE: "${CLIENT_RATE_PROFILE}"${RUST_LOG:+
       RUST_LOG: "${RUST_LOG}"}
       BENCH_MODE: "${MODE}"
       BENCH_PEERS: "\${BENCH_PEERS:-}"
@@ -216,9 +219,23 @@ SERVICE
             && tc qdisc add dev eth0 handle ffff: ingress \
             && tc filter add dev eth0 parent ffff: protocol all prio 1 u32 \
                  match u32 0 0 action mirred egress redirect dev ifb0 \
-            && tc qdisc add dev ifb0 root netem rate \$\${INGRESS_RATE_KBIT}kbit \
+            && tc qdisc add dev ifb0 root netem rate \$\${INGRESS_RATE_KBIT}kbit \$\${INGRESS_LIMIT:+limit \$\${INGRESS_LIMIT}} \
             || { echo "ERROR: cannot shape the client's downloads (no ifb in this kernel?)"; exit 1; }
-          echo "client netem (ingress): rate \$\${INGRESS_RATE_KBIT}kbit via ifb0"
+          echo "client netem (ingress): rate \$\${INGRESS_RATE_KBIT}kbit\$\${INGRESS_LIMIT:+ limit \$\${INGRESS_LIMIT}} via ifb0"
+        fi
+        if [ -n "\$\${RATE_PROFILE:-}" ]; then
+          # Cycles the download rate through the profile for the whole run; the
+          # queue keeps its limit, so a rate drop backs it up like a real link.
+          (
+            while :; do
+              for step in \$\${RATE_PROFILE}; do
+                tc qdisc change dev ifb0 root netem rate \$\${step#*:}kbit \$\${INGRESS_LIMIT:+limit \$\${INGRESS_LIMIT}} \
+                  || echo "WARNING: rate profile step \$\${step} failed"
+                sleep \$\${step%%:*}
+              done
+            done
+          ) &
+          echo "client netem (ingress): rate profile [secs:kbit] \$\${RATE_PROFILE}"
         fi
         exec /usr/local/bin/dash-spv-bench
 SERVICE
@@ -233,6 +250,20 @@ CLIENT_RATE_KBIT="$(scn '.client.rate_kbit // 0')"
 case "${CLIENT_RATE_KBIT}" in
   '' | *[!0-9]*) echo "Error: client.rate_kbit must be a whole number of kbit (got '${CLIENT_RATE_KBIT}')" >&2; exit 1 ;;
 esac
+CLIENT_LIMIT_PKTS="$(scn '.client.limit_pkts // ""')"
+case "${CLIENT_LIMIT_PKTS}" in
+  *[!0-9]*) echo "Error: client.limit_pkts must be a whole number of packets (got '${CLIENT_LIMIT_PKTS}')" >&2; exit 1 ;;
+esac
+CLIENT_RATE_PROFILE="$(scn '.client.rate_profile // [] | map((.secs | tostring) + ":" + (.rate_kbit | tostring)) | join(" ")')"
+for step in ${CLIENT_RATE_PROFILE}; do
+  case "${step}" in
+    *[!0-9:]* | :* | *: | *:*:*) echo "Error: client.rate_profile entries need whole secs and rate_kbit (got '${step}')" >&2; exit 1 ;;
+  esac
+done
+if [ -n "${CLIENT_RATE_PROFILE}" ] && [ "${CLIENT_RATE_KBIT}" = 0 ]; then
+  echo "Error: client.rate_profile needs client.rate_kbit, the rate the run starts at" >&2
+  exit 1
+fi
 BENCH_CPUS="$(scn '.cpus // ""')"
 BENCH_MAX_PEERS="$(scn '.max_peers // ""')"
 export BENCH_MAX_PEERS
