@@ -370,6 +370,8 @@ async fn test_spend_change_balance() {
     let funded_height = ctx.dashd.initial_height + 1;
     wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
     wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+    // Drop the funding transaction's mempool event.
+    client_handle.wallet_event_receiver = client_handle.wallet_event_receiver.resubscribe();
 
     let dest_a = Address::dummy(Network::Regtest, 1);
     let (tx_a, _) =
@@ -435,6 +437,8 @@ async fn test_concurrent_builds_do_not_double_spend() {
     let funded_height = ctx.dashd.initial_height + 1;
     wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
     wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+    // Drop the funding transactions' mempool events.
+    client_handle.wallet_event_receiver = client_handle.wallet_event_receiver.resubscribe();
 
     // Build both transactions before broadcasting either, so neither spend has
     // been processed back into the wallet when the second build selects inputs.
@@ -566,6 +570,8 @@ async fn test_drain_account_into_another() {
     let funded_height = ctx.dashd.initial_height + 1;
     wait_for_sync(&mut client_handle.progress_receiver, funded_height).await;
     wait_for_wallet_synced(&wallet, &wallet_id, funded_height).await;
+    // Drop the funding transactions' mempool events.
+    client_handle.wallet_event_receiver = client_handle.wallet_event_receiver.resubscribe();
 
     // Drain the BIP32 account into the BIP44 destination (amount ignored under `All`).
     let (tx, _) = {

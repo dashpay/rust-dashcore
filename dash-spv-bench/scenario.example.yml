@@ -20,6 +20,11 @@ max_peers: 3           # optional. Max simultaneous peers. Omit => the ClientCon
 #   rate_kbit: 8000      # the client's total bandwidth, shared across all peers
 #   corrupt_pct: 0
 #   reorder_pct: 0
+#   limit_pkts: 1000     # netem queue length (default 1000). A large one is a bufferbloated link:
+#                        # a rate drop then backs requests up for seconds or minutes instead of dropping.
+#   rate_profile:        # optional: cycle the DOWNLOAD rate through these steps for the whole run,
+#     - { secs: 60, rate_kbit: 24000 }   # starting at rate_kbit (required with a profile).
+#     - { secs: 30, rate_kbit: 800 }     # Uploads stay at rate_kbit.
 
 
 # ---------------------------------------------------------------------------------------------

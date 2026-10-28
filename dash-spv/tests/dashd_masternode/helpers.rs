@@ -55,7 +55,6 @@ pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
     ("filter_headers", "filter headers synced to the tip"),
     ("metadata", "sync checkpoints"),
     ("version.json", "the storage version system"),
-    ("peers", "peer set and reputations"),
     ("masternodes", "the masternode engine snapshot this session stored"),
 ];
 

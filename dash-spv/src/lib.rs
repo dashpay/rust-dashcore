@@ -27,7 +27,7 @@
 //!         .with_storage_path("./.tmp/example-storage");
 //!
 //!     // Create the required components
-//!     let network = PeerNetworkManager::new(&config).await?;
+//!     let network = PeerNetworkManager::new(&config).await;
 //!     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 //!
 //!     // Create and run the client

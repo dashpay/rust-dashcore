@@ -1,273 +1,144 @@
-//! Network layer for the Dash SPV client.
-
-pub mod addrv2;
-pub mod constants;
-pub mod discovery;
-mod event;
-pub mod handshake;
-mod latency;
-pub mod manager;
-mod message_dispatcher;
-pub mod peer;
-pub mod pool;
-mod reputation;
-
-mod message_type;
-#[cfg(test)]
-mod tests;
-
-pub use event::NetworkEvent;
-
-use async_trait::async_trait;
-use tokio::sync::{broadcast, mpsc};
+mod bans;
+mod broker;
+mod costs;
+mod discovery;
+mod manager;
+mod peer;
 
 use crate::error::NetworkResult;
-use crate::NetworkError;
+use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::{GetHeadersMessage, Inventory};
-use dashcore::network::message_bloom::FilterLoad;
 use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
-use dashcore::network::message_qrinfo::GetQRInfo;
-use dashcore::network::message_sml::GetMnListDiff;
 use dashcore::BlockHash;
 use dashcore_hashes::Hash;
-pub use handshake::{HandshakeManager, HandshakeState};
-pub use manager::PeerNetworkManager;
-pub use message_dispatcher::{Message, MessageDispatcher};
-pub use message_type::MessageType;
-pub use peer::Peer;
-pub(crate) use reputation::PeerReputation;
 use std::net::SocketAddr;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-const FILTER_TYPE_DEFAULT: u8 = 0;
+pub use broker::RequestKey;
+pub use manager::NetworkEvent;
+pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager};
+// Used by the mock network manager to enforce the same de-duplication contract.
+pub(crate) use broker::request_keys;
 
-/// Request to send to network.
-#[derive(Debug)]
-pub enum NetworkRequest {
-    /// Send a message to the network.
-    SendMessage(NetworkMessage),
-    /// Send a message to a specific peer.
-    SendMessageToPeer(NetworkMessage, SocketAddr),
-    /// Broadcast a message to all connected peers.
-    BroadcastMessage(NetworkMessage),
+pub trait Request: Send + 'static {
+    fn height(&self) -> u32;
+    fn into_message(self) -> NetworkMessage;
 }
 
-/// Handle for managers to queue outgoing network requests.
-#[derive(Clone)]
-pub struct RequestSender {
-    tx: mpsc::UnboundedSender<NetworkRequest>,
-}
-
-impl RequestSender {
-    /// Create a new RequestSender.
-    pub fn new(tx: mpsc::UnboundedSender<NetworkRequest>) -> Self {
-        Self {
-            tx,
+impl Request for NetworkMessage {
+    fn height(&self) -> u32 {
+        match self {
+            NetworkMessage::GetCFilters(m) => m.start_height,
+            NetworkMessage::GetCFHeaders(m) => m.start_height,
+            _ => 0,
         }
     }
 
-    /// Queue a message to be sent to the network.
-    fn send_message(&self, msg: NetworkMessage) -> NetworkResult<()> {
-        self.tx
-            .send(NetworkRequest::SendMessage(msg))
-            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
-    }
-
-    /// Queue a message to be sent to a specific peer.
-    fn send_message_to_peer(
-        &self,
-        msg: NetworkMessage,
-        peer_address: SocketAddr,
-    ) -> NetworkResult<()> {
-        self.tx
-            .send(NetworkRequest::SendMessageToPeer(msg, peer_address))
-            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
-    }
-
-    /// Queue a message to be broadcast to all connected peers.
-    pub(crate) fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()> {
-        self.tx
-            .send(NetworkRequest::BroadcastMessage(msg))
-            .map_err(|e| NetworkError::ProtocolError(e.to_string()))
-    }
-
-    /// Send a transaction to a specific peer.
-    pub(crate) fn send_transaction(
-        &self,
-        tx: dashcore::Transaction,
-        peer_address: SocketAddr,
-    ) -> NetworkResult<()> {
-        self.send_message_to_peer(NetworkMessage::Tx(Box::new(tx)), peer_address)
-    }
-
-    /// Request inventory from a specific peer.
-    pub fn request_inventory(
-        &self,
-        inventory: Vec<Inventory>,
-        peer_address: SocketAddr,
-    ) -> NetworkResult<()> {
-        self.send_message_to_peer(NetworkMessage::GetData(inventory), peer_address)
-    }
-
-    pub fn request_block_headers(&self, start_hash: BlockHash) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetHeaders(GetHeadersMessage::new(
-            vec![start_hash],
-            BlockHash::all_zeros(),
-        )))
-    }
-
-    pub fn request_block_headers_from_peer(
-        &self,
-        start_hash: BlockHash,
-        address: SocketAddr,
-    ) -> NetworkResult<()> {
-        self.send_message_to_peer(
-            NetworkMessage::GetHeaders(GetHeadersMessage::new(
-                vec![start_hash],
-                BlockHash::all_zeros(),
-            )),
-            address,
-        )
-    }
-
-    pub fn request_filter_headers(
-        &self,
-        start_height: u32,
-        stop_hash: BlockHash,
-    ) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetCFHeaders(GetCFHeaders {
-            filter_type: FILTER_TYPE_DEFAULT,
-            start_height,
-            stop_hash,
-        }))
-    }
-
-    pub fn request_filters(&self, start_height: u32, stop_hash: BlockHash) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetCFilters(GetCFilters {
-            filter_type: FILTER_TYPE_DEFAULT,
-            start_height,
-            stop_hash,
-        }))
-    }
-
-    pub fn request_mnlist_diff(
-        &self,
-        base_block_hash: BlockHash,
-        block_hash: BlockHash,
-    ) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetMnListD(GetMnListDiff {
-            base_block_hash,
-            block_hash,
-        }))
-    }
-
-    pub fn request_qr_info(
-        &self,
-        known_block_hashes: Vec<BlockHash>,
-        target_block_hash: BlockHash,
-        extra_share: bool,
-    ) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetQRInfo(GetQRInfo {
-            base_block_hashes: known_block_hashes,
-            block_request_hash: target_block_hash,
-            extra_share,
-        }))
-    }
-
-    pub fn request_blocks(&self, hashes: Vec<BlockHash>) -> NetworkResult<()> {
-        self.send_message(NetworkMessage::GetData(
-            hashes.into_iter().map(Inventory::Block).collect(),
-        ))
-    }
-
-    /// Send a filterload message to a specific peer.
-    pub fn send_filter_load(&self, filter_load: FilterLoad, peer: SocketAddr) -> NetworkResult<()> {
-        self.send_message_to_peer(NetworkMessage::FilterLoad(filter_load), peer)
-    }
-
-    /// Send a filterclear message to a specific peer.
-    pub fn send_filter_clear(&self, peer: SocketAddr) -> NetworkResult<()> {
-        self.send_message_to_peer(NetworkMessage::FilterClear, peer)
-    }
-
-    /// Send a mempool message to request inventory from a specific peer.
-    pub fn request_mempool(&self, peer: SocketAddr) -> NetworkResult<()> {
-        self.send_message_to_peer(NetworkMessage::MemPool, peer)
+    fn into_message(self) -> NetworkMessage {
+        self
     }
 }
 
-/// Network manager trait for abstracting network operations.
-#[async_trait]
-pub trait NetworkManager: Send + Sync + 'static {
-    /// Creates and returns a receiver that yields only messages of the matching the provided message types.
-    async fn message_receiver(&mut self, types: &[MessageType]) -> UnboundedReceiver<Message>;
-
-    /// Get a sender for queuing outgoing network requests.
-    ///
-    /// Messages sent via this sender are delivered to the network asynchronously.
-    fn request_sender(&self) -> RequestSender;
-
-    /// Connects to the network, restarting it after a [`Self::stop`].
-    async fn start(&mut self) -> NetworkResult<()>;
-
-    /// Disconnects from the network and stops all background tasks.
-    async fn stop(&mut self);
-
-    /// Send a message to a peer.
-    async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()>;
-
-    /// Get the number of connected peers.
-    fn peer_count(&self) -> usize;
-
-    /// Request QRInfo from the network.
-    ///
-    /// # Arguments
-    /// * `base_block_hashes` - Array of base block hashes for the masternode lists the light client already knows
-    /// * `block_request_hash` - Hash of the block for which the masternode list diff is requested
-    /// * `extra_share` - Optional flag to indicate if an extra share is requested
-    async fn request_qr_info(
-        &mut self,
-        base_block_hashes: Vec<BlockHash>,
-        block_request_hash: BlockHash,
-        extra_share: bool,
-    ) -> NetworkResult<()> {
-        use dashcore::network::message_qrinfo::GetQRInfo;
-
-        let get_qr_info = GetQRInfo {
-            base_block_hashes: base_block_hashes.clone(),
-            block_request_hash,
-            extra_share,
-        };
-
-        let base_hashes_count = get_qr_info.base_block_hashes.len();
-
-        self.send_message(NetworkMessage::GetQRInfo(get_qr_info)).await?;
-
-        tracing::debug!(
-            "Requested QRInfo with {} base hashes for block {}, extra_share={}",
-            base_hashes_count,
-            block_request_hash,
-            extra_share
-        );
-
-        Ok(())
+impl Request for GetCFilters {
+    fn height(&self) -> u32 {
+        self.start_height
     }
 
-    /// Broadcast a message to all connected peers.
-    async fn broadcast(&self, _message: NetworkMessage) -> NetworkResult<()>;
+    fn into_message(self) -> NetworkMessage {
+        NetworkMessage::GetCFilters(self)
+    }
+}
 
-    /// Inject a message into the local message dispatcher as if received from a peer.
-    ///
-    /// Used for locally-originated messages (e.g., self-broadcast transactions) that
-    /// should be processed through the same pipeline as peer-received messages.
-    async fn dispatch_local(&self, message: NetworkMessage);
+impl Request for GetCFHeaders {
+    fn height(&self) -> u32 {
+        self.start_height
+    }
 
-    /// Disconnect a specific peer by address.
-    async fn disconnect_peer(&self, _addr: &SocketAddr, _reason: &str) -> NetworkResult<()>;
+    fn into_message(self) -> NetworkMessage {
+        NetworkMessage::GetCFHeaders(self)
+    }
+}
 
-    /// Subscribe to network events (peer connections, disconnections).
-    ///
-    /// Returns a broadcast receiver for network events.
-    fn subscribe_network_events(&self) -> broadcast::Receiver<NetworkEvent>;
+/// `getdata` for one block.
+pub struct BlockRequest {
+    pub height: u32,
+    pub hash: BlockHash,
+}
+
+impl Request for BlockRequest {
+    fn height(&self) -> u32 {
+        self.height
+    }
+    fn into_message(self) -> NetworkMessage {
+        NetworkMessage::GetData(vec![Inventory::Block(self.hash)])
+    }
+}
+
+/// `getheaders` from the header at `height`, whose hash is `locator`.
+pub struct HeadersRequest {
+    pub height: u32,
+    pub locator: BlockHash,
+}
+
+impl Request for HeadersRequest {
+    fn height(&self) -> u32 {
+        self.height
+    }
+    fn into_message(self) -> NetworkMessage {
+        NetworkMessage::GetHeaders(GetHeadersMessage::new(
+            vec![self.locator],
+            BlockHash::all_zeros(),
+        ))
+    }
+}
+
+/// Peer-to-peer network surface the sync layer depends on, so it can be mocked in tests.
+#[async_trait]
+pub trait NetworkManager: Send + Sync + 'static {
+    /// Call after every consumer has subscribed, so the initial peer events are seen.
+    async fn start(&self);
+
+    async fn stop(&self);
+
+    /// Fire-and-forget: keyed requests are de-duplicated, paced, timed out and retried.
+    /// Within a message class, the lowest `height` is sent first. Use [`SendRequest::send`].
+    async fn enqueue(&self, height: u32, msg: NetworkMessage);
+
+    /// Returns `false` if the peer is not connected or the write failed.
+    async fn send_to(&self, addr: SocketAddr, msg: NetworkMessage) -> bool;
+
+    async fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()>;
+
+    /// Inject a message into the local pump as if received from a peer.
+    async fn dispatch_local(&self, msg: NetworkMessage);
+
+    /// Stops timeout/retry tracking of `key`.
+    async fn request_answered(&self, key: RequestKey);
+
+    async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound>;
+
+    fn events(&self) -> broadcast::Receiver<NetworkEvent>;
+
+    /// Best tip height advertised across connected peers.
+    fn tip(&self) -> u32;
+
+    async fn connected_count(&self) -> u32;
+
+    /// Closes the peer and refuses to dial it again for a day.
+    async fn ban_peer(&self, addr: SocketAddr);
+}
+
+/// `send` on any [`NetworkManager`], including `dyn NetworkManager`.
+#[async_trait]
+pub trait SendRequest {
+    async fn send<R: Request>(&self, request: R);
+}
+
+#[async_trait]
+impl<T: NetworkManager + ?Sized> SendRequest for T {
+    async fn send<R: Request>(&self, request: R) {
+        self.enqueue(request.height(), request.into_message()).await
+    }
 }

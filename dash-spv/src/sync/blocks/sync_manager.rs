@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, RequestSender};
+use crate::network::{InboundMessage, MessageType, NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, BlockStorage};
 use crate::sync::sync_manager::ensure_not_started;
 use crate::sync::{
@@ -12,6 +12,8 @@ use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use key_wallet_manager::{FilterMatchKey, WalletId, WalletInterface};
 use std::collections::BTreeSet;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[async_trait]
 impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncManager
@@ -33,7 +35,10 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         &[MessageType::Block]
     }
 
-    async fn start_sync(&mut self, _requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
+    async fn start_sync(
+        &mut self,
+        _network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         ensure_not_started(self.state(), self.identifier())?;
         // Check if filters already completed (event received before start_sync)
         if self.filters_sync_complete && self.pipeline.is_complete() {
@@ -53,38 +58,35 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         Ok(vec![])
     }
 
-    /// Keep the entire pipeline (downloaded blocks, pending queue, per-block
-    /// wallet routing) and the `filters_sync_complete` flag, and move in-flight
-    /// `getdata`s back to the front of `pending` so the next `send_pending`
-    /// reissues them to the new peer immediately. Without this preservation,
-    /// `FiltersManager`'s tracker would re-track the same block hashes after a
-    /// re-scan and leak `pending_blocks` counters that never reach zero.
-    fn on_disconnect(&mut self) {
-        self.pipeline.requeue_in_flight();
-    }
-
-    fn on_peer_disconnect(&mut self) {
-        self.pipeline.requeue_in_flight();
-    }
+    /// Keep the whole pipeline across a disconnect: dropping it would make
+    /// `FiltersManager` re-track the same blocks and leak `pending_blocks` counters.
+    fn on_disconnect(&mut self) {}
 
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        peer: SocketAddr,
+        msg: InboundMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        let NetworkMessage::Block(block) = msg.inner() else {
+        let NetworkMessage::Block(block) = &*msg else {
             return Ok(vec![]);
         };
 
         let hashed_block = HashedBlock::from(block);
 
-        BlockValidator::new().validate(&hashed_block)?;
+        if let Err(e) = BlockValidator::new().validate(&hashed_block) {
+            network.ban_peer(peer).await;
+            self.pipeline.send_pending(network).await?;
+            return Err(e.into());
+        }
 
         // Check if this is a block we requested (pipeline handles buffering with height)
         if !self.pipeline.receive_block(&hashed_block) {
             tracing::debug!("Received unrequested block {}", hashed_block.hash());
             return Ok(vec![]);
         }
+
+        network.request_answered(RequestKey::Block(*hashed_block.hash())).await;
 
         // Look up height for storage
         let height = self
@@ -107,20 +109,15 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
 
         self.progress.add_downloaded(1);
 
-        // Process buffered blocks
-        let events = self.process_buffered_blocks().await?;
-
-        if self.pipeline.has_pending_requests() {
-            self.send_pending(requests).await?;
-        }
-
-        Ok(events)
+        // No `send_pending` here: the wanted blocks are already declared and the
+        // broker paces them out as capacity frees.
+        self.process_buffered_blocks().await
     }
 
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // React to BlocksNeeded events
         if let SyncEvent::BlocksNeeded {
@@ -164,13 +161,13 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
             drop(block_storage);
 
             // Queue all blocks that need downloading
-            self.pipeline.queue(to_download);
+            let newly_wanted = self.pipeline.queue(to_download);
+            self.progress.add_requested(newly_wanted as u32);
 
             self.progress.set_state(SyncState::Syncing);
 
-            // Send batched request for blocks not in storage
             if self.pipeline.has_pending_requests() {
-                self.send_pending(requests).await?;
+                self.send_pending(network).await?;
             }
 
             // Process any blocks we loaded from storage
@@ -199,13 +196,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         Ok(vec![])
     }
 
-    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        // Handle timeouts
-        self.pipeline.handle_timeouts();
-
-        self.send_pending(requests).await?;
-
-        // Try to process any buffered blocks
+    async fn tick(&mut self, _network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
         self.process_buffered_blocks().await
     }
 

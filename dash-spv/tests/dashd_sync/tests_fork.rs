@@ -124,7 +124,7 @@ async fn test_sync_follows_reorg() {
     // longer holds the storage, so a new client can open it.
     client_handle.stop().await;
     drop(client_handle);
-    let network_manager = PeerNetworkManager::new(&config).await.expect("network manager");
+    let network_manager = PeerNetworkManager::new(&config).await;
     DashSpvClient::new(config, network_manager, wallet, vec![])
         .await
         .expect("the storage must be released once stop returns");
