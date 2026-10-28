@@ -13,7 +13,9 @@ pub mod locktime;
 pub mod opcodes;
 pub mod script;
 pub mod transaction;
-pub mod weight;
+pub mod weight {
+    pub use bitcoin_units::weight::*;
+}
 pub mod witness;
 
 pub use weight::Weight;
