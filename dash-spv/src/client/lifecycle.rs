@@ -281,22 +281,15 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     ///
     /// The wallets go first: a wallet refusing the fork leaves storage as it
     /// is, and storage failing after them keeps the fork unstored, so it is
-    /// detected and retried. The engine goes after the storage, whose headers
-    /// it looks rotated cycles up in, even if the storage fails part way, so it
-    /// never holds lists above the stored tip.
+    /// detected and retried. The storage truncates the engine it shares with
+    /// the client.
     async fn truncate_chain_above(
         &self,
         height: u32,
     ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.wallet.write().await.truncate_above(height)?;
-        let truncated =
-            StorageManager::truncate_above(&mut *self.storage.lock().await, height).await;
-
-        if let Some(engine) = &self.masternode_engine {
-            engine.write().await.truncate_above(height).await;
-        }
-
-        Ok(truncated?)
+        StorageManager::truncate_above(&mut *self.storage.lock().await, height).await?;
+        Ok(())
     }
 
     /// Stop `sync_loop` and everything it drives. The caller holds the lock.
