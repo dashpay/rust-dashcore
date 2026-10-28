@@ -5,7 +5,6 @@
 
 pub mod asset_lock_builder;
 pub mod coin_selection;
-pub mod coinjoin_pools;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
@@ -614,6 +613,30 @@ impl ManagedWalletInfo {
         };
 
         address
+    }
+
+    /// Derive both pools of every CoinJoin account up to and including `last_index`.
+    ///
+    /// Call it on fresh wallet state, before the first sync from birth: blocks
+    /// already processed are not scanned again for the new addresses.
+    pub fn extend_coinjoin_pools(
+        &mut self,
+        wallet: &Wallet,
+        last_index: u32,
+    ) -> crate::error::Result<()> {
+        for (index, account) in self.accounts.coinjoin_accounts.iter_mut() {
+            let key_source = wallet.key_source_for_account(crate::AccountType::CoinJoin {
+                index: *index,
+            });
+
+            for pool in account.managed_account_type_mut().address_pools_mut() {
+                pool.generate_up_to(last_index, &key_source)?;
+            }
+
+            account.bump_monitor_revision();
+        }
+
+        Ok(())
     }
 }
 
