@@ -38,9 +38,6 @@ impl BlockHeaderStorage for MockHeaderStorage {
     async fn get_start_height(&self) -> Option<u32> {
         None
     }
-    async fn get_stored_headers_len(&self) -> u32 {
-        0
-    }
     async fn get_header(&self, height: u32) -> StorageResult<Option<HashedBlockHeader>> {
         Ok(self.0.iter().find(|(_, h)| **h == height).map(|(hash, _)| {
             HashedBlockHeader::with_trusted_hash(BlockHeader::dummy(height), *hash)
