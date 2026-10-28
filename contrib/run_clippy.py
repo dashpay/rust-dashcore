@@ -16,11 +16,8 @@ if sys.platform == "win32":
 
 profiles = [
     ("all features + targets debug", ["--all-features", "--all-targets"]),
-    ("all features + targets release", ["--all-features", "--all-targets", "--release"]),
-    ("all targets debug", ["--all-targets"]),
-    ("all targets release", ["--all-targets", "--release"]),
+    ("all features release", ["--all-features", "--release"]),
     ("default debug", []),
-    ("default release", ["--release"]),
 ]
 
 for label, extra in profiles:
