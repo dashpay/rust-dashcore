@@ -7,6 +7,7 @@ use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::Transaction;
 use tokio::sync::RwLock;
 
+use crate::sml_engine::FeedError;
 use crate::storage::BlockHeaderStorage;
 
 /// Validates a masternode list diff against its block: its merkle proof must
@@ -23,25 +24,26 @@ impl<H: BlockHeaderStorage> MasternodeListValidator<H> {
         }
     }
 
+    /// Fails with `HeaderStorage` when the header cannot be read, and refuses
+    /// the diff when its block is not the one stored at `height` or its proof
+    /// does not match the header's merkle root.
     pub async fn validate_coinbase_proof(
         &self,
         diff: &MnListDiff,
         height: CoreBlockHeight,
-    ) -> Result<(), SmlError> {
-        let header = match self.headers.read().await.get_header(height).await {
-            Ok(header) => header,
-            Err(e) => {
-                tracing::warn!("Could not look up the block at {height}: {e}");
-                None
-            }
-        };
-
-        let header = header
+    ) -> Result<(), FeedError<SmlError>> {
+        let header = self
+            .headers
+            .read()
+            .await
+            .get_header(height)
+            .await
+            .map_err(FeedError::HeaderStorage)?
             .filter(|header| *header.hash() == diff.block_hash)
             .ok_or(SmlError::BlockHashLookupFailed(diff.block_hash))?;
 
         if diff.coinbase_merkle_root()? != header.header().merkle_root {
-            return Err(SmlError::InvalidCoinbaseProof(diff.block_hash));
+            return Err(SmlError::InvalidCoinbaseProof(diff.block_hash).into());
         }
 
         Ok(())

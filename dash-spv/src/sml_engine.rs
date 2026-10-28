@@ -1299,6 +1299,7 @@ mod tests {
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
+    use crate::validation::MasternodeListValidator;
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -2251,6 +2252,38 @@ mod tests {
             for readable in 0..reads {
                 let (result, _) =
                     feed_with_reads_failing(&engine, &qr_info, unreadable, readable).await;
+                assert!(
+                    !matches!(result, Err(FeedError::Refused(_))),
+                    "reading {unreadable} failing from its read {readable} on refused the \
+                     QRInfo: {result:?}"
+                );
+            }
+        }
+    }
+
+    /// Our header storage failing to read a diff's block while its coinbase
+    /// proof is checked fails the feed with `HeaderStorage` rather than
+    /// refusing the QRInfo, for every diff the QRInfo carries.
+    #[tokio::test]
+    async fn a_header_storage_failure_never_refuses_a_validated_qr_info() {
+        let (engine, qr_info) = load_qrinfo_2518986_fixture();
+        let blocks: Vec<BlockHash> =
+            qr_info_diffs(&qr_info).iter().map(|diff| diff.block_hash).collect();
+
+        for unreadable in blocks {
+            let validating = |readable| {
+                let mut failing = with_reads_failing(&engine, unreadable, readable);
+                failing.validator =
+                    Some(MasternodeListValidator::new(Arc::clone(&failing.headers)));
+                failing
+            };
+            let mut fed = validating(usize::MAX);
+            let result = fed.feed_qr_info(qr_info.clone()).await;
+            assert!(result.is_ok(), "the QRInfo feeds while the storage reads, got {result:?}");
+            let reads = fed.headers.read().await.reads.load(Ordering::Relaxed);
+            assert!(reads > 0, "the feed reads {unreadable}");
+            for readable in 0..reads {
+                let result = validating(readable).feed_qr_info(qr_info.clone()).await;
                 assert!(
                     !matches!(result, Err(FeedError::Refused(_))),
                     "reading {unreadable} failing from its read {readable} on refused the \
