@@ -54,8 +54,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
         let masternode_engine = {
             if config.enable_masternodes {
-                let engine = storage.masternodes().read().await.load_engine().await;
-                Some(Arc::new(RwLock::new(engine)))
+                Some(storage.masternodes().read().await.engine())
             } else {
                 None
             }

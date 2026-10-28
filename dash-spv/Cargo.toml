@@ -10,7 +10,14 @@ version.workspace = true
 
 [dependencies]
 # Core Dash libraries
-dashcore = { path = "../dash", features = ["serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation", "tokio"] }
+dashcore = { path = "../dash", features = [
+    "serde",
+    "core-block-hash-use-x11",
+    "message_verification",
+    "bls",
+    "quorum_validation",
+    "tokio",
+] }
 dashcore_hashes = { path = "../hashes" }
 dash-network-seeds = { path = "../dash-network-seeds" }
 key-wallet = { path = "../key-wallet" }
@@ -46,6 +53,9 @@ hex-conservative = { workspace = true }
 
 # Parallelization
 
+# Masternode engine snapshots
+bincode = { workspace = true, features = ["serde"] }
+
 # Test utilities (optional)
 tempfile = { version = "3.0", optional = true }
 dashcore-rpc = { path = "../rpc-client", optional = true }
@@ -55,11 +65,12 @@ serde = { workspace = true, features = ["std", "derive"] }
 serde_json = "1.0"
 
 [dev-dependencies]
-bincode = { workspace = true }
 dash-spv = { path = ".", features = ["test-utils"] }
 dashcore = { path = "../dash", features = ["test-utils"] }
 key-wallet = { path = "../key-wallet", features = ["test-utils"] }
-key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
+key-wallet-manager = { path = "../key-wallet-manager", features = [
+    "test-utils",
+] }
 criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
 tokio-test = "0.4"
@@ -82,4 +93,9 @@ name = "dash_spv"
 path = "src/lib.rs"
 
 [features]
-test-utils = ["dashcore/test-utils", "key-wallet-manager/test-utils", "dep:tempfile", "dep:dashcore-rpc"]
+test-utils = [
+    "dashcore/test-utils",
+    "key-wallet-manager/test-utils",
+    "dep:tempfile",
+    "dep:dashcore-rpc",
+]

@@ -115,16 +115,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 };
 
                 let request_pairs = engine.readable_missing_work_block_list_requests().await;
-                let tip_height = engine.height_if_known(&qr_info.mn_list_diff_tip.block_hash).await;
                 drop(engine);
-
-                if let Some(height) = tip_height {
-                    if let Err(e) = self.store_qr_info(height, qr_info).await {
-                        tracing::warn!(
-                            "Could not store QRInfo at {height}, a restart syncs it again: {e}"
-                        );
-                    }
-                }
 
                 tracing::info!(
                     "QRInfo processed: stored_cycle_height={:?}, rotated_quorum_count={}/{}, fully_verified_count={}",
@@ -227,15 +218,6 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     Vec::new()
                 };
                 drop(engine);
-
-                if apply_ok {
-                    if let Err(e) = self.store_diff(target_height, diff).await {
-                        tracing::warn!(
-                            "Could not store MnListDiff at {target_height}, a restart syncs it \
-                             again: {e}"
-                        );
-                    }
-                }
 
                 self.progress.add_diffs_processed(1);
                 self.sync_state.mnlistdiff_pipeline.receive(diff);
@@ -567,7 +549,7 @@ mod tests {
     use crate::sync::{MasternodesManager, SyncEvent, SyncManager, SyncState};
     use crate::test_utils::MockNetworkManager;
     use crate::types::HashedBlockHeader;
-    use crate::{ClientConfig, SyncError};
+    use crate::SyncError;
     use dashcore::block::Header;
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::network::message::NetworkMessage;
@@ -585,7 +567,6 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
-    use test_case::test_case;
     use tokio::sync::RwLock;
 
     /// The QRInfo retry budget escalates: a tight first timeout fails over
@@ -749,43 +730,12 @@ mod tests {
         (manager, network, mock, tip_hash)
     }
 
-    /// Diffs are stored only until the sync reaches the tip. Once synced,
-    /// nothing is, and the next start catches up from the last stored message.
-    #[test_case(SyncState::Syncing, true; "while syncing")]
-    #[test_case(SyncState::Synced, false; "once synced")]
-    #[tokio::test]
-    async fn a_diff_is_stored_only_until_the_sync_reaches_the_tip(state: SyncState, stored: bool) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let storage =
-            DiskStorageManager::new(&ClientConfig::testnet().with_storage_path(dir.path()))
-                .await
-                .unwrap();
-        let (mut manager, engine, network, _mock, hashes) =
-            manager_after_a_tip_update_request(&storage, true, |hashes| {
-                vec![MasternodeList::empty(hashes[TIP as usize], TIP)]
-            })
-            .await;
-        manager.set_state(state);
-
-        let diff = MnListDiff {
-            base_block_hash: hashes[TIP as usize],
-            block_hash: hashes[TIP as usize + 1],
-            ..MnListDiff::dummy_between(0, 0)
-        };
-        deliver(&mut manager, &network, diff).await;
-
-        assert!(engine.read().await.masternode_lists.contains_key(&(TIP + 1)));
-        let file = dir.path().join("masternodes").join(format!("diff_{}.dat", TIP + 1));
-        assert_eq!(file.exists(), stored);
-    }
-
     /// A synced manager over `storage`, whose header chain runs to `TIP + 1`
     /// and whose engine holds the lists `lists` builds from the block hashes,
-    /// once it sent the tip update from `TIP` to `TIP + 1`. With
-    /// `store_diffs`, it stores diffs in `storage`.
+    /// once it sent the tip update from `TIP` to `TIP + 1`. Returns the manager, its
+    /// engine, the request channel, and the block hash at each height.
     async fn manager_after_a_tip_update_request(
         storage: &DiskStorageManager,
-        store_diffs: bool,
         lists: impl FnOnce(&[BlockHash]) -> Vec<MasternodeList>,
     ) -> (
         MasternodesManager<PersistentBlockHeaderStorage>,
@@ -808,13 +758,9 @@ mod tests {
             engine.masternode_lists.insert(list.known_height, list);
         }
         let engine = Arc::new(RwLock::new(engine));
-        let mut manager = MasternodesManager::new(
-            block_headers,
-            Arc::clone(&engine),
-            Network::Regtest,
-            store_diffs.then(|| storage.masternodes()),
-        )
-        .await;
+        let mut manager =
+            MasternodesManager::new(block_headers, Arc::clone(&engine), Network::Regtest, None)
+                .await;
         manager.set_state(SyncState::Synced);
         manager.progress.update_block_header_tip_height(TIP + 1);
         let mock = Arc::new(MockNetworkManager::new());
@@ -839,7 +785,7 @@ mod tests {
     ) {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let (manager, engine, network, mock, hashes) =
-            manager_after_a_tip_update_request(&storage, false, |hashes| {
+            manager_after_a_tip_update_request(&storage, |hashes| {
                 let old = Arc::new(test_quorum(hashes[OLD_MINED as usize]).into());
                 let quorums = BTreeMap::from([(
                     LLMQType::LlmqtypeTest,
