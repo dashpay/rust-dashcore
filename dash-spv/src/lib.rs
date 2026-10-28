@@ -82,6 +82,7 @@ pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
+pub use sml_engine::QRInfoFeedResult;
 pub use storage::BlockHeaderTip;
 pub use sync::{
     BlockHeadersProgress, BlocksProgress, BroadcastHoldout, BroadcastResult, ChainLockProgress,
