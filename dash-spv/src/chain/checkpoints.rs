@@ -233,9 +233,12 @@ mod tests {
         assert!(manager.checkpoints().next().is_some(), "{network} must have checkpoints");
 
         for checkpoint in manager.checkpoints() {
-            BlockHeaderValidator::new().validate(checkpoint.headers()).unwrap_or_else(|e| {
-                panic!("checkpoint {} of {network} is invalid: {e}", checkpoint.height())
-            });
+            let before = checkpoint.height() - CHECKPOINT_HEADERS as u32;
+            BlockHeaderValidator::new(network, vec![], before)
+                .validate(checkpoint.headers())
+                .unwrap_or_else(|e| {
+                    panic!("checkpoint {} of {network} is invalid: {e}", checkpoint.height())
+                });
         }
     }
 

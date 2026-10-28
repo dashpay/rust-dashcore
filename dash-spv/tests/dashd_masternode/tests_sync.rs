@@ -156,8 +156,8 @@ async fn test_masternode_list_sync_with_restart() {
     let mut client_handle = create_client(&config, Arc::clone(&wallet)).await;
 
     // Read before the run loop is spawned, so nothing has come off the network yet:
-    // this is what replaying the stored messages produced on its own.
-    let replayed_tip = {
+    // this is what the stored engine restored on its own.
+    let restored_tip = {
         let engine = client_handle.engine.read().await;
         engine
             .masternode_lists
@@ -166,7 +166,7 @@ async fn test_masternode_list_sync_with_restart() {
             .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
     };
     assert_eq!(
-        replayed_tip, first_tip,
+        restored_tip, first_tip,
         "startup must rebuild the first session's masternode list from storage, \
          not default and let a fresh dashd sync cover for it"
     );
@@ -192,10 +192,10 @@ async fn test_masternode_list_sync_with_restart() {
     client_handle.stop().await;
     drop(client_handle);
 
-    // The second session requested a QRInfo for the same tip. Storing it in place
-    // of the first one, which built the list it is based on, broke the next replay.
+    // The second session stored the engine again at the same tip, in place of
+    // the first session's snapshot.
     let client_handle = create_client(&config, Arc::clone(&wallet)).await;
-    let replayed_tip = {
+    let restored_tip = {
         let engine = client_handle.engine.read().await;
         engine
             .masternode_lists
@@ -203,7 +203,7 @@ async fn test_masternode_list_sync_with_restart() {
             .next_back()
             .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
     };
-    assert_eq!(replayed_tip, first_tip, "a second restart must still replay the stored list");
+    assert_eq!(restored_tip, first_tip, "a second restart must still restore the stored list");
 }
 
 /// Sync to pre-generated height, generate new blocks, verify incremental update.

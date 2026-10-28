@@ -261,6 +261,34 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
     }
 
+    /// The engine's lists and rotated cycles as bytes, see [`Self::from_snapshot`].
+    pub fn snapshot(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+        bincode::serde::encode_to_vec(
+            (&self.masternode_lists, &self.rotated_quorums_per_cycle),
+            bincode::config::standard(),
+        )
+    }
+
+    /// An engine holding the lists and rotated cycles [`Self::snapshot`] encoded.
+    pub fn from_snapshot(
+        network: Network,
+        headers: Arc<RwLock<H>>,
+        bytes: &[u8],
+    ) -> Result<Self, bincode::error::DecodeError> {
+        let ((masternode_lists, rotated_quorums_per_cycle), read) =
+            bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+
+        if read != bytes.len() {
+            return Err(bincode::error::DecodeError::Other("trailing bytes after the snapshot"));
+        }
+
+        Ok(Self {
+            masternode_lists,
+            rotated_quorums_per_cycle,
+            ..Self::new(network, headers)
+        })
+    }
+
     /// The height of `block_hash` in the header chain, `None` when the chain
     /// does not hold it. The genesis block, and the all-zero hash standing for
     /// it, is at 0 even when the chain starts at a checkpoint. Fails when the

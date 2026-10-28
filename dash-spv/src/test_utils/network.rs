@@ -51,6 +51,12 @@ impl MockNetworkManager {
         }
     }
 
+    /// Close the network event bus, which fails the sync loop of a client
+    /// running on this network.
+    pub fn close_network_events(&mut self) {
+        self.network_event_sender = broadcast::Sender::new(1);
+    }
+
     pub fn take_receiver(&mut self) -> Option<UnboundedReceiver<NetworkRequest>> {
         self.request_rx.take()
     }

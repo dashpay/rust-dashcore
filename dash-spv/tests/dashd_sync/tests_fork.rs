@@ -1,7 +1,8 @@
 use std::time::Duration;
 
+use dash_spv::network::PeerNetworkManager;
 use dash_spv::test_utils::{create_test_wallet, next_unused_receive_address, TestChain};
-use dash_spv::Network;
+use dash_spv::{DashSpvClient, Network};
 use dashcore::{Address, Amount};
 use key_wallet_manager::WalletEvent;
 use serde_json::json;
@@ -119,5 +120,12 @@ async fn test_sync_follows_reorg() {
         "the persister is told what to drop and what to restore"
     );
 
+    // Fork recovery ran in a task of its own: once `stop` returns, it no
+    // longer holds the storage, so a new client can open it.
     client_handle.stop().await;
+    drop(client_handle);
+    let network_manager = PeerNetworkManager::new(&config).await.expect("network manager");
+    DashSpvClient::new(config, network_manager, wallet, vec![])
+        .await
+        .expect("the storage must be released once stop returns");
 }

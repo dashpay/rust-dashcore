@@ -26,7 +26,8 @@ use crate::validation::{BlockHeaderValidator, Validator};
 use dashcore::block::Header;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::network::message_blockdata::Inventory;
-use dashcore::BlockHash;
+use dashcore::pow::DGW_PAST_BLOCKS;
+use dashcore::{BlockHash, Network};
 use tokio::sync::RwLock;
 
 /// Headers manager for downloading and validating block headers.
@@ -52,6 +53,8 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Peers we've sent a GetHeaders to after sync, so Dash Core knows our tip
     /// and can send us header announcements instead of inv.
     pub(super) announced_peers: HashSet<SocketAddr>,
+    /// Network whose difficulty rules new headers are checked against.
+    network: Network,
 }
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for BlockHeadersManager<H, M> {
@@ -69,6 +72,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
         checkpoint_manager: &'static CheckpointManager,
+        network: Network,
     ) -> SyncResult<Self> {
         let tip = header_storage
             .read()
@@ -96,6 +100,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             checkpoint_manager,
             pending_announcements: HashMap::new(),
             announced_peers: HashSet::new(),
+            network,
         })
     }
 
@@ -112,8 +117,23 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
         debug_assert!(!headers.is_empty());
 
-        // Validate batch for internal continuity and PoW
-        BlockHeaderValidator::new().validate(headers)?;
+        // Validate batch for internal continuity, PoW and difficulty
+        let tip = self.tip().await?;
+        let storage = self.header_storage.read().await;
+
+        // A storage started at a checkpoint holds less history than a full window.
+        let first = tip
+            .height()
+            .saturating_sub(DGW_PAST_BLOCKS as u32 - 1)
+            .max(storage.get_start_height().await.unwrap_or(0));
+
+        let ancestors = storage.load_headers(first..tip.height() + 1).await?;
+
+        drop(storage);
+
+        let ancestors = ancestors.iter().map(|header| *header.header()).collect();
+
+        BlockHeaderValidator::new(self.network, ancestors, tip.height()).validate(headers)?;
 
         // Store headers
         self.header_storage.write().await.store_headers(headers).await?;
@@ -395,9 +415,14 @@ mod tests {
             .await
             .unwrap();
         let checkpoint_manager = create_test_checkpoint_manager();
-        BlockHeadersManager::new(storage.block_headers(), storage.metadata(), checkpoint_manager)
-            .await
-            .expect("Failed to create BlockHeadersManager")
+        BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            checkpoint_manager,
+            Network::Regtest,
+        )
+        .await
+        .expect("Failed to create BlockHeadersManager")
     }
 
     #[test_case(None, 5, Some(5); "no ChainLock")]
@@ -424,6 +449,7 @@ mod tests {
             storage.block_headers(),
             storage.metadata(),
             create_test_checkpoint_manager(),
+            Network::Regtest,
         )
         .await
         .unwrap();
@@ -459,6 +485,7 @@ mod tests {
             storage.block_headers(),
             storage.metadata(),
             create_test_checkpoint_manager(),
+            Network::Regtest,
         )
         .await
         .unwrap();

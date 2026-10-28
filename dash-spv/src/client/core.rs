@@ -11,7 +11,7 @@ use crate::sml_engine::MasternodeListEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
 use super::ClientConfig;
@@ -113,11 +113,15 @@ pub struct DashSpvClient<W: WalletInterface, N: NetworkManager> {
     /// Whether the sync loop is running, readable without locking `sync_loop`.
     /// Set once `run` started it, cleared as soon as it stops or fails.
     pub(super) running: Arc<AtomicBool>,
+    /// Tasks the sync loop detached, each holding a client clone. `stop` joins them.
+    pub(super) detached_tasks: Arc<Mutex<JoinSet<()>>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
 /// The background task of a running client.
 pub(super) struct SyncLoop {
+    /// Tells this loop apart from the ones `run` starts after it.
+    pub(super) id: u64,
     pub(super) task: JoinHandle<()>,
     /// Stops the loop and the event monitors it runs.
     pub(super) shutdown: CancellationToken,
@@ -134,6 +138,7 @@ impl<W: WalletInterface, N: NetworkManager> Clone for DashSpvClient<W, N> {
             sync_coordinator: Arc::clone(&self.sync_coordinator),
             sync_loop: Arc::clone(&self.sync_loop),
             running: Arc::clone(&self.running),
+            detached_tasks: Arc::clone(&self.detached_tasks),
             event_handlers: Arc::clone(&self.event_handlers),
         }
     }
@@ -181,11 +186,6 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         self.storage.lock().await.clear().await?;
 
         self.sync_coordinator.lock().await.reset_progress();
-        if let Some(engine) = &self.masternode_engine {
-            let network = self.config.read().await.network;
-            let headers = self.storage.lock().await.block_headers();
-            *engine.write().await = MasternodeListEngine::new(network, headers);
-        }
 
         Ok(())
     }
