@@ -33,6 +33,25 @@ mod tests {
     }
 
     #[test]
+    fn wif_rejects_bad_payload_length_and_version() {
+        let mut data =
+            crate::base58::decode_check("cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy")
+                .unwrap();
+        let encode = |d: &[u8]| crate::base58::Base58CkString::encode_unbounded(d);
+
+        assert_eq!(
+            PrivateKey::from_wif(encode(&data[..32]).as_str()),
+            Err(crate::crypto::key::Error::InvalidBase58PayloadLength(32))
+        );
+
+        data[0] = 0x80;
+        assert_eq!(
+            PrivateKey::from_wif(encode(&data).as_str()),
+            Err(crate::crypto::key::Error::InvalidAddressVersion(0x80))
+        );
+    }
+
+    #[test]
     fn test_key_derivation() {
         // testnet compressed
         let sk =

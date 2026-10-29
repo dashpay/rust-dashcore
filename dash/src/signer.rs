@@ -56,10 +56,12 @@ pub fn sign_hash(
     data_hash: &[u8],
     private_key: &[u8],
 ) -> Result<[u8; ECDSA_REC_SIG_LEN], anyhow::Error> {
-    let private_key: [u8; 32] = private_key
+    // Borrow the caller's bytes; a by-value `[u8; 32]` would leave an unwiped
+    // copy of the secret key on the stack.
+    let private_key: &[u8; 32] = private_key
         .try_into()
         .map_err(|_| anyhow!("Invalid ECDSA private key: must be 32 bytes"))?;
-    let pk = EcdsaSecretKey::from_bytes(&private_key)
+    let pk = EcdsaSecretKey::from_bytes(private_key)
         .map_err(|e| anyhow!("Invalid ECDSA private key: {}", e))?;
 
     let data_hash: &[u8; 32] = data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?;
@@ -117,6 +119,33 @@ mod test {
 
         verify_data_signature(&data, &signature, &k.public_key_compressed)
             .expect("verification shouldn't fail")
+    }
+
+    /// Pins the deterministic (RFC 6979) signature so the key handling in
+    /// `sign_hash` can change without changing its output.
+    #[test]
+    fn sign_hash_output_is_unchanged() {
+        let k = get_keys();
+        let data_hash = double_sha(hex!("fafafa"));
+
+        let signature = sign_hash(&data_hash, &k.private_key).expect("signing shouldn't fail");
+
+        assert_eq!(
+            signature.to_vec(),
+            hex!(
+                "208f7395d4f8d36f8b53c3b8b34edfda5b618f3ec53e8b9f1f508e75dc8fc8569329909bd47bcd17bd19eab6c0027f66dbbb7b76f7abb7ee4ed89f97212b0e37cf"
+            )
+        );
+    }
+
+    #[test]
+    fn sign_hash_rejects_wrong_private_key_length() {
+        let k = get_keys();
+        let data_hash = double_sha(hex!("fafafa"));
+
+        let result = sign_hash(&data_hash, &k.private_key[..31]);
+
+        assert_error_contains!(result, "must be 32 bytes");
     }
 
     #[test]
