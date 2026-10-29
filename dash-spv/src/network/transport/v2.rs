@@ -115,8 +115,9 @@ fn decode_message(plaintext: &[u8]) -> Result<Option<NetworkMessage>, encode::Er
 /// Frames V2 packets off a byte stream, yielding each decoded message with the
 /// number of bytes its packet took on the wire.
 ///
-/// Decoy packets and messages [`decode_message`] drops are skipped. Any error leaves
-/// the inbound cipher unusable, so the connection must be closed.
+/// Decoy packets are skipped, as are messages Dash Core drops: unassigned short IDs
+/// and malformed commands. Any error leaves the inbound cipher unusable, so the
+/// connection must be closed.
 pub struct V2Decoder {
     magic: u32,
     cipher: InboundCipher,
