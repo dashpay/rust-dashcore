@@ -53,4 +53,5 @@ name = "filter_scan"
 harness = false
 
 [lints.rust]
+unnameable_types = "deny"
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }

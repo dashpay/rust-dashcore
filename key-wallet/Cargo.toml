@@ -61,3 +61,6 @@ tokio = { version = "1", features = ["macros", "rt"] }
 [[bench]]
 name = "address_generation"
 harness = false
+
+[lints]
+workspace = true

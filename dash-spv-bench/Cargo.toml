@@ -35,3 +35,6 @@ heap-profile = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]
 [[bin]]
 name = "dash-spv-bench"
 path = "src/main.rs"
+
+[lints]
+workspace = true

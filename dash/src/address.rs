@@ -673,6 +673,7 @@ impl<'a> fmt::Display for AddressEncoding<'a> {
 }
 
 mod sealed {
+    #[allow(unnameable_types)] // Sealed: consumers must not name or implement it.
     pub trait NetworkValidation {}
     impl NetworkValidation for super::NetworkChecked {}
     impl NetworkValidation for super::NetworkUnchecked {}
