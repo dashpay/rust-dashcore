@@ -7,8 +7,7 @@ use dash_spv::test_utils::{
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    sync::{ProgressPercentage, SyncEvent, SyncProgress},
-    LoggingGuard, Network,
+    LoggingGuard, Network, ProgressPercentage, SyncEvent, SyncProgress,
 };
 use dashcore::Txid;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;

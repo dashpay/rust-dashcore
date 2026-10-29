@@ -3,8 +3,8 @@ use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 use std::time::Duration;
 
-use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::Network;
+use dash_spv::{SyncEvent, SyncProgress};
 
 use super::helpers::{
     get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete,

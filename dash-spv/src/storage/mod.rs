@@ -366,10 +366,6 @@ impl BlockHeaderStorage for DiskStorageManager {
         self.block_headers.read().await.get_start_height().await
     }
 
-    async fn get_stored_headers_len(&self) -> u32 {
-        self.block_headers.read().await.get_stored_headers_len().await
-    }
-
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,
@@ -384,10 +380,6 @@ impl BlockHeaderStorage for DiskStorageManager {
 
 #[async_trait]
 impl FilterHeaderStorage for DiskStorageManager {
-    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
-        self.filter_headers.write().await.store_filter_headers(headers).await
-    }
-
     async fn store_filter_headers_at_height(
         &mut self,
         headers: &[FilterHeader],
@@ -615,7 +607,8 @@ mod tests {
             storage: &DiskStorageManager,
             headers: &[HashedBlockHeader],
         ) -> StorageResult<()> {
-            assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
+            assert_eq!(storage.get_start_height().await, Some(CHECKPOINT_HEIGHT));
+            assert_eq!(storage.get_tip_height().await, Some(CHECKPOINT_HEIGHT + 99));
 
             let header_at_base = storage.get_header(CHECKPOINT_HEIGHT).await?;
             assert_eq!(header_at_base, Some(headers[0].clone()));

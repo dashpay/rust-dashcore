@@ -2448,13 +2448,71 @@ mod tests {
             [0x01; 32],
             [0x02; 32],
             ApplicationKeyPurpose::Encryption,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            path.to_string(),
+            format!("m/9'/5'/5'/7'/0'/0x{}'/0x{}'/1'/0'", "01".repeat(32), "02".repeat(32))
+        );
+
+        let path = DerivationPath::application_encryption_path(
+            Network::Testnet,
+            [0x01; 32],
+            [0x02; 32],
+            ApplicationKeyPurpose::Decryption,
+            7,
+        )
+        .unwrap();
+        assert_eq!(
+            path.to_string(),
+            format!("m/9'/1'/5'/7'/0'/0x{}'/0x{}'/2'/7'", "01".repeat(32), "02".repeat(32))
+        );
+
+        // The largest rotation fits in 31 bits; anything with the hardened bit set is rejected.
+        let max = (1u32 << 31) - 1;
+        let path = DerivationPath::application_encryption_path(
+            Network::Mainnet,
+            [0x01; 32],
+            [0x02; 32],
+            ApplicationKeyPurpose::Encryption,
+            max,
+        )
+        .unwrap();
+        assert_eq!(
+            path[path.len() - 1],
+            ChildNumber::Hardened {
+                index: max
+            }
+        );
+        for rotation in [1u32 << 31, u32::MAX] {
+            assert_eq!(
+                DerivationPath::application_encryption_path(
+                    Network::Mainnet,
+                    [0x01; 32],
+                    [0x02; 32],
+                    ApplicationKeyPurpose::Encryption,
+                    rotation,
+                ),
+                Err(Error::InvalidChildNumber(rotation))
+            );
+        }
+    }
+
+    #[test]
+    fn test_application_encryption_path_without_rotation() {
+        let path = DerivationPath::application_encryption_path_without_rotation(
+            Network::Mainnet,
+            [0x01; 32],
+            [0x02; 32],
+            ApplicationKeyPurpose::Encryption,
         );
         assert_eq!(
             path.to_string(),
             format!("m/9'/5'/5'/7'/0'/0x{}'/0x{}'/1'", "01".repeat(32), "02".repeat(32))
         );
 
-        let path = DerivationPath::application_encryption_path(
+        let path = DerivationPath::application_encryption_path_without_rotation(
             Network::Testnet,
             [0x01; 32],
             [0x02; 32],
@@ -2496,9 +2554,22 @@ mod tests {
                 Network::Testnet,
             )
         };
-        let encryption = |identity_id, contract_id, key_purpose| {
+        let encryption = |identity_id, contract_id, key_purpose, rotation| {
             public_key_hex(
                 DerivationPath::application_encryption_path(
+                    Network::Mainnet,
+                    identity_id,
+                    contract_id,
+                    key_purpose,
+                    rotation,
+                )
+                .unwrap(),
+                Network::Mainnet,
+            )
+        };
+        let legacy_encryption = |identity_id, contract_id, key_purpose| {
+            public_key_hex(
+                DerivationPath::application_encryption_path_without_rotation(
                     Network::Mainnet,
                     identity_id,
                     contract_id,
@@ -2513,19 +2584,43 @@ mod tests {
             "022c8b2e806244482374b1caf8306146dc03aad3b99a5954efd5e70a0eddd37a5d"
         );
         assert_eq!(
-            encryption([0x35; 32], [0x6B; 32], ApplicationKeyPurpose::Encryption),
-            "03e989de1b62f137231cc06659c810c17100becd1f5e23d5710faa7602769fe434"
-        );
-        assert_eq!(
             session(ascending, descending),
             "0278ad78c1a220924bf0e06e1111c61422efeace068f30efa825604b436970b230"
         );
+
+        // Keys under the DIP-13 layout, which ends with the hardened rotation level.
         assert_eq!(
-            encryption(ascending, descending, ApplicationKeyPurpose::Encryption),
+            encryption([0x35; 32], [0x6B; 32], ApplicationKeyPurpose::Encryption, 0),
+            "031a882c119e2b1f8e0349b444d877afa2599efeef49a26930fd25518cb6e9d57a"
+        );
+        assert_eq!(
+            encryption([0x35; 32], [0x6B; 32], ApplicationKeyPurpose::Encryption, 1),
+            "03d0f6f0f48d968b9554d8e7fe467d7135bacf29d5c4994ca593bd10ebeed696f6"
+        );
+        assert_eq!(
+            encryption(ascending, descending, ApplicationKeyPurpose::Encryption, 0),
+            "02dfed57ddaaea8c0758e8da44513520038eb8d6b0b92109953c14d6ab1087259b"
+        );
+        assert_eq!(
+            encryption(ascending, descending, ApplicationKeyPurpose::Decryption, 0),
+            "020bcde800f41ad1f924477a9502f111445224cc9ab70114ae4e5099ba02bdd034"
+        );
+        assert_eq!(
+            encryption(ascending, descending, ApplicationKeyPurpose::Decryption, 1),
+            "021b97869c21933673076a938337c28848c8bf8094bbe6883e3a4acbf33c639072"
+        );
+
+        // Pre-DIP keys that wallets derive only to recognise earlier registrations.
+        assert_eq!(
+            legacy_encryption([0x35; 32], [0x6B; 32], ApplicationKeyPurpose::Encryption),
+            "03e989de1b62f137231cc06659c810c17100becd1f5e23d5710faa7602769fe434"
+        );
+        assert_eq!(
+            legacy_encryption(ascending, descending, ApplicationKeyPurpose::Encryption),
             "03c4e462229f176595ec17e28e9096d3cfbc42496fb8ed4d48f8f58355d6105aa9"
         );
         assert_eq!(
-            encryption(ascending, descending, ApplicationKeyPurpose::Decryption),
+            legacy_encryption(ascending, descending, ApplicationKeyPurpose::Decryption),
             "031fd0a3cfc01bebb89d43c2e12a6321c37ebdacb62c09495899e5b65a24fa5c99"
         );
 
@@ -2544,6 +2639,24 @@ mod tests {
                 ascending,
                 descending,
             )
+        );
+        let parsed: DerivationPath = format!(
+            "m/9'/5'/5'/7'/0'/0x{}'/0x{}'/2'/1'",
+            ascending.to_lower_hex_string(),
+            descending.to_lower_hex_string()
+        )
+        .parse()
+        .unwrap();
+        assert_eq!(
+            parsed,
+            DerivationPath::application_encryption_path(
+                Network::Mainnet,
+                ascending,
+                descending,
+                ApplicationKeyPurpose::Decryption,
+                1,
+            )
+            .unwrap()
         );
     }
 

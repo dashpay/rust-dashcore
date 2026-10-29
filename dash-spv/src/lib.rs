@@ -62,6 +62,7 @@
 
 mod sml_engine;
 mod storage;
+mod sync;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -71,7 +72,6 @@ pub mod client;
 pub mod error;
 pub mod logging;
 pub mod network;
-pub mod sync;
 pub mod types;
 pub mod validation;
 
@@ -82,8 +82,13 @@ pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
 };
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
+pub use sml_engine::QRInfoFeedResult;
 pub use storage::BlockHeaderTip;
-pub use sync::{BroadcastHoldout, BroadcastResult};
+pub use sync::{
+    BlockHeadersProgress, BlocksProgress, BroadcastHoldout, BroadcastResult, ChainLockProgress,
+    FilterHeadersProgress, FiltersProgress, InstantSendProgress, ManagerIdentifier,
+    MasternodesProgress, MempoolProgress, ProgressPercentage, SyncEvent, SyncProgress, SyncState,
+};
 pub use tracing::level_filters::LevelFilter;
 pub use types::{FilterMatch, ValidationMode};
 
