@@ -161,6 +161,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **Breaking:** remove the `dash-spv-ffi` crate, the C bindings for the SPV client
 - **Breaking:** remove BIP38 from `key-wallet` (the `bip38` feature, `Bip38EncryptedKey`,
   `Bip38Mode`, `encrypt_private_key`, `generate_intermediate_code` and the `Wallet` BIP38
   export/import methods) and the unimplemented `bip38_*` functions from `key-wallet-ffi`
