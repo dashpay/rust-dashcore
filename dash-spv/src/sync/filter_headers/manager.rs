@@ -5,12 +5,13 @@
 
 use std::sync::Arc;
 
-use dashcore::network::message_filter::CFHeaders;
+use dashcore::network::message_filter::{CFHeaders, GetCFHeaders};
+use dashcore::BlockHash;
 use tokio::sync::RwLock;
 
-use super::pipeline::FilterHeadersPipeline;
+use super::pipeline::{FilterHeadersPipeline, FILTER_HEADERS_BATCH_SIZE};
 use crate::error::{SyncError, SyncResult};
-use crate::network::NetworkManager;
+use crate::network::{NetworkManager, SendRequest};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage};
 use crate::sync::filter_headers::util::compute_filter_headers;
 use crate::sync::progress::ProgressPercentage;
@@ -40,6 +41,8 @@ pub struct FilterHeadersManager<H: BlockHeaderStorage, FH: FilterHeaderStorage> 
     /// Whether block header sync has completed. Gates FilterHeadersSyncComplete emission
     /// to ensure it never fires before BlockHeaderSyncComplete.
     pub(super) block_headers_synced: bool,
+    /// Start and stop hash of the batch requested below the stored filter headers.
+    pub(super) lower_batch: Option<(u32, BlockHash)>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH> {
@@ -101,6 +104,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
             pipeline: FilterHeadersPipeline::default(),
             checkpoint_start_height: None,
             block_headers_synced: false,
+            lower_batch: None,
         })
     }
 
@@ -182,6 +186,75 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         self.progress.add_processed(count);
 
         Ok(count)
+    }
+
+    /// Request the batch ending at the lowest stored filter header while block
+    /// headers reach below it. Each batch is checked against the stored header
+    /// it ends at, so the range fills downwards without gaps.
+    pub(super) async fn extend_down(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<()> {
+        let header_storage = self.header_storage.read().await;
+        let header_start = header_storage.get_start_height().await;
+        let filter_start = self.filter_header_storage.read().await.get_filter_start_height().await;
+        // A chain anchored at a checkpoint holds the filter header below it too.
+        let (Some(header_start), Some(end)) = (header_start, filter_start) else {
+            return Ok(());
+        };
+        if end <= header_start.saturating_sub(1) {
+            return Ok(());
+        }
+        let start = header_start.max(end.saturating_sub(FILTER_HEADERS_BATCH_SIZE - 1));
+        let stop_hash = *header_storage
+            .get_header(end)
+            .await?
+            .ok_or_else(|| SyncError::Storage(format!("Missing header at height {end}")))?
+            .hash();
+        drop(header_storage);
+
+        self.lower_batch = Some((start, stop_hash));
+        network
+            .send(GetCFHeaders {
+                filter_type: 0,
+                start_height: start,
+                stop_hash,
+            })
+            .await;
+        Ok(())
+    }
+
+    /// Store a batch [`Self::extend_down`] requested, if it ends at the stored
+    /// filter header it was requested for.
+    pub(super) async fn store_lower_batch(
+        &mut self,
+        start: u32,
+        cfheaders: &CFHeaders,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        self.lower_batch = None;
+        let mut headers = compute_filter_headers(cfheaders);
+        let end = (start + headers.len() as u32).saturating_sub(1);
+        let mut storage = self.filter_header_storage.write().await;
+        if headers.is_empty()
+            || storage.get_filter_start_height().await != Some(end)
+            || headers.pop() != storage.get_filter_header(end).await?
+        {
+            tracing::warn!(
+                "CFHeaders batch at {} does not end at the stored filter headers",
+                start
+            );
+            return Ok(vec![]);
+        }
+        if start > 0 {
+            headers.insert(0, cfheaders.previous_filter_header);
+        }
+        let first = start.saturating_sub(1);
+        storage.store_filter_headers_at_height(&headers, first).await?;
+        Ok(vec![SyncEvent::FilterHeadersStored {
+            start_height: first,
+            end_height: end - 1,
+            tip_height: self.progress.current_height(),
+        }])
     }
 
     /// Start or resume filter header download.

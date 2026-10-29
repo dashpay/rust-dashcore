@@ -32,6 +32,8 @@ pub struct HeadersPipeline {
     checkpoint_manager: &'static CheckpointManager,
     /// Whether the pipeline has been initialized.
     initialized: bool,
+    /// Segment syncing below the stored headers, stored whole once complete.
+    below: Option<SegmentState>,
 }
 
 impl std::fmt::Debug for HeadersPipeline {
@@ -52,6 +54,7 @@ impl HeadersPipeline {
             next_to_store: 0,
             checkpoint_manager,
             initialized: false,
+            below: None,
         }
     }
 
@@ -60,6 +63,7 @@ impl HeadersPipeline {
         self.segments.clear();
         self.next_to_store = 0;
         self.initialized = true;
+        self.below = None;
 
         // Find checkpoints between current_height and target_height
         let mut boundaries: Vec<(u32, BlockHash)> = Vec::new();
@@ -111,6 +115,34 @@ impl HeadersPipeline {
         );
     }
 
+    /// Download `(start_height, end_height]` below the stored headers, the
+    /// block at `end_height` being `end_hash`.
+    pub(super) fn sync_below(
+        &mut self,
+        start_height: u32,
+        start_hash: BlockHash,
+        end_height: u32,
+        end_hash: BlockHash,
+    ) {
+        self.below = Some(SegmentState::new(
+            self.segments.len(),
+            start_height,
+            start_hash,
+            Some(end_height),
+            Some(end_hash),
+        ));
+    }
+
+    /// Whether a [`Self::sync_below`] segment is still to be stored.
+    pub(super) fn is_syncing_below(&self) -> bool {
+        self.below.is_some()
+    }
+
+    /// Headers of the [`Self::sync_below`] segment, once complete.
+    pub(super) fn take_below(&mut self) -> Option<Vec<HashedBlockHeader>> {
+        self.below.take_if(|below| below.complete).map(|mut below| below.take_buffered())
+    }
+
     /// Get the number of segments in the pipeline.
     pub fn segment_count(&self) -> usize {
         self.segments.len()
@@ -127,6 +159,10 @@ impl HeadersPipeline {
                 continue;
             }
             segment.send_request(network).await;
+            sent += 1;
+        }
+        if let Some(below) = self.below.as_mut().filter(|below| below.can_send()) {
+            below.send_request(network).await;
             sent += 1;
         }
         Ok(sent)
@@ -155,6 +191,13 @@ impl HeadersPipeline {
         }
 
         let prev_hash = headers[0].header().prev_blockhash;
+
+        if let Some(below) =
+            self.below.as_mut().filter(|below| !below.complete && below.matches(&prev_hash))
+        {
+            below.receive_headers(headers)?;
+            return Ok(Some(below.segment_id));
+        }
 
         // Find the segment that matches
         for (idx, segment) in self.segments.iter_mut().enumerate() {
@@ -246,7 +289,8 @@ impl HeadersPipeline {
 
     /// Check if all segments are complete.
     pub fn is_complete(&self) -> bool {
-        self.segments.iter().all(|s| s.complete && s.buffered_headers.is_empty())
+        self.below.is_none()
+            && self.segments.iter().all(|s| s.complete && s.buffered_headers.is_empty())
     }
 
     /// Get the total number of buffered headers across all segments.

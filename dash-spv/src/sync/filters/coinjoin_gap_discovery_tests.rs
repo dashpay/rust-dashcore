@@ -82,6 +82,7 @@ async fn setup() -> (CjFiltersManager, Arc<RwLock<WalletManager<ManagedWalletInf
         storage.block_headers(),
         storage.filter_headers(),
         storage.filters(),
+        0,
     )
     .await;
     manager.set_state(SyncState::Syncing);
