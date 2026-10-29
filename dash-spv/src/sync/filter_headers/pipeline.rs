@@ -12,7 +12,7 @@ use crate::network::{NetworkManager, SendRequest};
 use crate::storage::BlockHeaderStorage;
 
 /// Batch size for filter header requests.
-const FILTER_HEADERS_BATCH_SIZE: u32 = 2000;
+pub(super) const FILTER_HEADERS_BATCH_SIZE: u32 = 2000;
 
 /// Pipeline for downloading compact block filter headers.
 #[derive(Debug)]
