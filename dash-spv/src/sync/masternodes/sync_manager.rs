@@ -707,7 +707,10 @@ mod tests {
             )
             .await
             .unwrap();
-        let engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
+        let engine = MasternodeListEngine::new_without_validation(
+            Network::Regtest,
+            Arc::clone(&block_headers),
+        );
         let mut manager = MasternodesManager::new(
             block_headers,
             Arc::new(RwLock::new(engine)),
@@ -753,7 +756,10 @@ mod tests {
             .await
             .unwrap();
         let hashes: Vec<BlockHash> = headers.iter().map(|header| header.block_hash()).collect();
-        let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
+        let mut engine = MasternodeListEngine::new_without_validation(
+            Network::Regtest,
+            Arc::clone(&block_headers),
+        );
         for list in lists(&hashes) {
             engine.masternode_lists.insert(list.known_height, list);
         }

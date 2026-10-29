@@ -2,8 +2,10 @@
 use bincode::{Decode, Encode};
 
 use crate::bls_sig_utils::BLSSignature;
-use crate::hash_types::MerkleRootMasternodeList;
+use crate::hash_types::{MerkleRootMasternodeList, TxMerkleNode};
 use crate::internal_macros::impl_consensus_encoding;
+use crate::merkle_tree::PartialMerkleTree;
+use crate::sml::error::SmlError;
 use crate::sml::llmq_type::LLMQType;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
@@ -76,6 +78,26 @@ impl_consensus_encoding!(
     quorums_chainlock_signatures
 );
 
+impl MnListDiff {
+    /// The block merkle root the proof yields, once it proves `coinbase_tx` first.
+    pub fn coinbase_merkle_root(&self) -> Result<TxMerkleNode, SmlError> {
+        let proof = PartialMerkleTree::from_mn_list_diff(self);
+
+        let mut matches = vec![];
+        let mut indexes = vec![];
+
+        let root = proof
+            .extract_matches(&mut matches, &mut indexes)
+            .map_err(|_| SmlError::InvalidCoinbaseProof(self.block_hash))?;
+
+        if matches != [self.coinbase_tx.txid()] || indexes != [0] {
+            return Err(SmlError::InvalidCoinbaseProof(self.block_hash));
+        }
+
+        Ok(root)
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -100,9 +122,30 @@ impl_consensus_encoding!(DeletedQuorum, llmq_type, quorum_hash);
 mod tests {
     use assert_matches::assert_matches;
 
+    use test_case::test_case;
+
     use crate::consensus::{deserialize, serialize};
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::network::message_sml::MnListDiff;
+    use crate::sml::error::SmlError;
+
+    #[test_case(|_| {}, true; "proving its coinbase")]
+    #[test_case(|diff| diff.coinbase_tx.lock_time += 1, false; "of another coinbase")]
+    #[test_case(|diff| diff.merkle_flags.clear(), false; "malformed")]
+    fn coinbase_merkle_root(tamper: fn(&mut MnListDiff), proves: bool) {
+        let mut diff: MnListDiff = deserialize(include_bytes!(
+            "../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("expected to deserialize");
+        tamper(&mut diff);
+
+        let result = diff.coinbase_merkle_root();
+
+        assert_eq!(result.is_ok(), proves);
+        if !proves {
+            assert_eq!(result, Err(SmlError::InvalidCoinbaseProof(diff.block_hash)));
+        }
+    }
 
     #[test]
     fn deserialize_mn_list_diff() {

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::BlockHeaderStorage;
+use crate::validation::MasternodeListValidator;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
 use dashcore::network::constants::NetworkExt;
@@ -96,6 +97,7 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     rotated_quorums_per_cycle: BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
     network: Network,
+    validator: Option<MasternodeListValidator<H>>,
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
@@ -233,11 +235,26 @@ impl<H: BlockHeaderStorage> Drop for QRInfoRollback<'_, H> {
 impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// An empty engine for `network` that looks block heights up in `headers`.
     pub fn new(network: Network, headers: Arc<RwLock<H>>) -> Self {
+        let validator = MasternodeListValidator::new(Arc::clone(&headers));
+        Self::with_validator(network, headers, Some(validator))
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_without_validation(network: Network, headers: Arc<RwLock<H>>) -> Self {
+        Self::with_validator(network, headers, None)
+    }
+
+    fn with_validator(
+        network: Network,
+        headers: Arc<RwLock<H>>,
+        validator: Option<MasternodeListValidator<H>>,
+    ) -> Self {
         Self {
             headers,
             masternode_lists: BTreeMap::new(),
             rotated_quorums_per_cycle: BTreeMap::new(),
             network,
+            validator,
         }
     }
 
@@ -1026,9 +1043,23 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let base_block_hash = masternode_list_diff.base_block_hash;
         let base_height = self.required_height_of(&base_block_hash).await?;
         let diff_end_height = self.required_height_of(&block_hash).await?;
+
+        let coinbase_tx = match &self.validator {
+            Some(validator) => {
+                validator.validate_coinbase_proof(&masternode_list_diff, diff_end_height).await?;
+                Some(masternode_list_diff.coinbase_tx.clone())
+            }
+            None => None,
+        };
+
         if base_height == 0 {
             let masternode_list =
                 MasternodeList::from_diff(masternode_list_diff, diff_end_height, self.network)?;
+
+            if let (Some(validator), Some(coinbase_tx)) = (&self.validator, &coinbase_tx) {
+                validator.validate_coinbase_roots(&masternode_list, coinbase_tx)?;
+            }
+
             self.masternode_lists.insert(diff_end_height, masternode_list);
             return Ok(());
         }
@@ -1038,6 +1069,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         };
         let masternode_list =
             base_masternode_list.apply_diff(masternode_list_diff, diff_end_height, self.network)?;
+
+        if let (Some(validator), Some(coinbase_tx)) = (&self.validator, &coinbase_tx) {
+            validator.validate_coinbase_roots(&masternode_list, coinbase_tx)?;
+        }
+
         // A quorum the diff brings may already have a status in another list.
         let mut changes = Vec::new();
         for (quorum_type, quorums) in masternode_list.quorums.iter() {
@@ -1173,28 +1209,43 @@ pub(crate) mod test_support {
             network: Network,
             heights: HashMap<BlockHash, CoreBlockHeight>,
         ) -> Self {
-            Self::new(network, Arc::new(RwLock::new(MockHeaderStorage(heights))))
+            Self::new_without_validation(
+                network,
+                Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
+            )
         }
 
         pub(crate) fn headers(&self) -> Arc<RwLock<MockHeaderStorage>> {
             self.headers.clone()
         }
 
+        /// Stands in for the headers a fixture lacks.
+        pub(crate) fn feed_merkle_roots<'a>(
+            &mut self,
+            diffs: impl IntoIterator<Item = &'a MnListDiff>,
+        ) {
+            let mut headers = self.headers.try_write().expect("unlocked");
+            for diff in diffs {
+                let merkle_root = diff.coinbase_merkle_root().expect("proves its coinbase");
+                headers.merkle_roots.insert(diff.block_hash, merkle_root);
+            }
+        }
+
         pub(crate) fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
-            self.headers.try_write().expect("unlocked").0.insert(block_hash, height);
+            self.headers.try_write().expect("unlocked").heights.insert(block_hash, height);
         }
 
         pub(crate) fn forget_block(&mut self, block_hash: &BlockHash) {
-            self.headers.try_write().expect("unlocked").0.remove(block_hash);
+            self.headers.try_write().expect("unlocked").heights.remove(block_hash);
         }
 
         pub(crate) fn block_height(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
-            self.headers.try_read().expect("unlocked").0.get(block_hash).copied()
+            self.headers.try_read().expect("unlocked").heights.get(block_hash).copied()
         }
 
         pub(crate) fn block_hash_at(&self, height: CoreBlockHeight) -> Option<BlockHash> {
             let headers = self.headers.try_read().expect("unlocked");
-            headers.0.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
+            headers.heights.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
         }
 
         /// Verifies `chain_lock` as the ChainLock manager does.
@@ -1348,13 +1399,13 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
-    use super::{
-        build_cycle_quorum_map, FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH,
-    };
+    use super::{build_cycle_quorum_map, qr_info_diffs};
+    use super::{FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
+    use crate::validation::MasternodeListValidator;
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -1370,6 +1421,7 @@ mod tests {
     use dashcore::sml::llmq_type::network::NetworkLLMQExt;
     use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
     use dashcore::sml::masternode_list::MasternodeList;
+    use dashcore::sml::masternode_list_entry::MasternodeListEntry;
     use dashcore::sml::quorum_entry::qualified_quorum_entry::{
         QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
     };
@@ -1380,6 +1432,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+    use test_case::test_case;
     use tokio::sync::RwLock;
 
     fn make_qualified_quorum_entry(
@@ -1713,15 +1766,17 @@ mod tests {
     /// engine state mirrors production cold start: empty masternode lists
     /// over the captured header heights.
     fn load_qrinfo_2518986_fixture() -> (TestEngine, QRInfo) {
-        let engine = TestEngine::knowing(
+        let heights = fixture_heights(include_bytes!(
+            "../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
+        ));
+        let mut engine = TestEngine::new(
             Network::Mainnet,
-            fixture_heights(include_bytes!(
-                "../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
-            )),
+            Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
         );
         let qr_info: QRInfo = decode_fixture(include_bytes!(
             "../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"
         ));
+        engine.feed_merkle_roots(qr_info_diffs(&qr_info));
         (engine, qr_info)
     }
 
@@ -1781,9 +1836,27 @@ mod tests {
         );
     }
 
+    #[test_case(true; "matching its commitments")]
+    #[test_case(false; "off its masternode list root")]
     #[tokio::test]
-    async fn validate_first_qr_info_on_fresh_engine_with_mixed_cycle_quorums() {
-        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+    async fn validate_first_qr_info_on_fresh_engine_with_mixed_cycle_quorums(committed: bool) {
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        if !committed {
+            let tip = &mut qr_info.mn_list_diff_tip;
+            tip.new_masternodes.push(MasternodeListEntry::dummy(0x11));
+            let tip_hash = tip.block_hash;
+            let result = engine.feed_qr_info(qr_info).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(FeedError::Refused(QuorumValidationError::SMLError(
+                        SmlError::CoinbaseCommitmentMismatch(hash)
+                    ))) if hash == tip_hash
+                ),
+                "got {result:?}"
+            );
+            return;
+        }
 
         // The fixture's active set mixes cycles: quorum index 0 carries the
         // previous cycle's commitment (its DKG failed in the current cycle),
@@ -2215,14 +2288,22 @@ mod tests {
         unreadable: BlockHash,
         readable: usize,
     ) -> MasternodeListEngine<FailingFrom> {
+        let inner = {
+            let headers = engine.headers();
+            let headers = headers.try_read().expect("unlocked");
+            MockHeaderStorage {
+                heights: headers.heights.clone(),
+                merkle_roots: headers.merkle_roots.clone(),
+            }
+        };
         let headers = Arc::new(RwLock::new(FailingFrom {
-            inner: MockHeaderStorage(engine.headers().try_read().expect("unlocked").0.clone()),
+            inner,
             unreadable,
             readable,
             reads: AtomicUsize::new(0),
             hangs: false,
         }));
-        let mut failing = MasternodeListEngine::new(engine.network, headers);
+        let mut failing = MasternodeListEngine::new_without_validation(engine.network, headers);
         failing.masternode_lists = engine.masternode_lists.clone();
         failing.rotated_quorums_per_cycle = engine.rotated_quorums_per_cycle.clone();
         failing
@@ -2274,6 +2355,38 @@ mod tests {
             for readable in 0..reads {
                 let (result, _) =
                     feed_with_reads_failing(&engine, &qr_info, unreadable, readable).await;
+                assert!(
+                    !matches!(result, Err(FeedError::Refused(_))),
+                    "reading {unreadable} failing from its read {readable} on refused the \
+                     QRInfo: {result:?}"
+                );
+            }
+        }
+    }
+
+    /// Our header storage failing to read a diff's block while its coinbase
+    /// proof is checked fails the feed with `HeaderStorage` rather than
+    /// refusing the QRInfo, for every diff the QRInfo carries.
+    #[tokio::test]
+    async fn a_header_storage_failure_never_refuses_a_validated_qr_info() {
+        let (engine, qr_info) = load_qrinfo_2518986_fixture();
+        let blocks: Vec<BlockHash> =
+            qr_info_diffs(&qr_info).iter().map(|diff| diff.block_hash).collect();
+
+        for unreadable in blocks {
+            let validating = |readable| {
+                let mut failing = with_reads_failing(&engine, unreadable, readable);
+                failing.validator =
+                    Some(MasternodeListValidator::new(Arc::clone(&failing.headers)));
+                failing
+            };
+            let mut fed = validating(usize::MAX);
+            let result = fed.feed_qr_info(qr_info.clone()).await;
+            assert!(result.is_ok(), "the QRInfo feeds while the storage reads, got {result:?}");
+            let reads = fed.headers.read().await.reads.load(Ordering::Relaxed);
+            assert!(reads > 0, "the feed reads {unreadable}");
+            for readable in 0..reads {
+                let result = validating(readable).feed_qr_info(qr_info.clone()).await;
                 assert!(
                     !matches!(result, Err(FeedError::Refused(_))),
                     "reading {unreadable} failing from its read {readable} on refused the \

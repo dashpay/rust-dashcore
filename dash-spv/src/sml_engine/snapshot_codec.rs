@@ -375,10 +375,9 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
         }
 
         Ok(Self {
-            headers,
             masternode_lists,
             rotated_quorums_per_cycle,
-            network,
+            ..Self::new(network, headers)
         })
     }
 }

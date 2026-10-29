@@ -93,15 +93,7 @@ impl MasternodeList {
             },
         );
 
-        // Construct `MasternodeList`
-        Ok(MasternodeList {
-            block_hash: diff.block_hash,
-            known_height,
-            masternode_merkle_root: diff.merkle_hashes.first().cloned(),
-            llmq_merkle_root: None, // Adjust based on real data availability
-            masternodes: masternodes.into(),
-            quorums: quorums.into(),
-        })
+        Ok(MasternodeList::build(masternodes, quorums, diff.block_hash, known_height).build())
     }
 }
 

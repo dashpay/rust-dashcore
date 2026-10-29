@@ -50,6 +50,7 @@ use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::{TxMerkleNode, Txid};
 use crate::io;
+use crate::network::message_sml::MnListDiff;
 use crate::prelude::*;
 
 /// Data structure that represents a block header paired to a partial merkle tree.
@@ -208,6 +209,34 @@ pub struct PartialMerkleTree {
 }
 
 impl PartialMerkleTree {
+    /// Constructs a partial merkle tree from the given `MnListDiff`.
+    pub fn from_mn_list_diff(mn_list_diff: &MnListDiff) -> Self {
+        PartialMerkleTree::from_parts(
+            mn_list_diff.total_transactions,
+            mn_list_diff
+                .merkle_hashes
+                .iter()
+                .map(|hash| TxMerkleNode::from_raw_hash(hash.to_raw_hash()))
+                .collect(),
+            &mn_list_diff.merkle_flags,
+        )
+    }
+
+    /// `bytes` packs the bits per 8 in a byte, least significant bit first.
+    fn from_parts(num_transactions: u32, hashes: Vec<TxMerkleNode>, bytes: &[u8]) -> Self {
+        let mut bits: Vec<bool> = vec![false; bytes.len() * 8];
+
+        for (p, bit) in bits.iter_mut().enumerate() {
+            *bit = (bytes[p / 8] & (1 << (p % 8) as u8)) != 0;
+        }
+
+        PartialMerkleTree {
+            num_transactions,
+            bits,
+            hashes,
+        }
+    }
+
     /// Returns the total number of transactions in the block.
     pub fn num_transactions(&self) -> u32 {
         self.num_transactions
@@ -456,16 +485,7 @@ impl Decodable for PartialMerkleTree {
         let hashes: Vec<TxMerkleNode> = Decodable::consensus_decode(r)?;
 
         let bytes: Vec<u8> = Decodable::consensus_decode(r)?;
-        let mut bits: Vec<bool> = vec![false; bytes.len() * 8];
-
-        for (p, bit) in bits.iter_mut().enumerate() {
-            *bit = (bytes[p / 8] & (1 << (p % 8) as u8)) != 0;
-        }
-        Ok(PartialMerkleTree {
-            num_transactions,
-            hashes,
-            bits,
-        })
+        Ok(PartialMerkleTree::from_parts(num_transactions, hashes, &bytes))
     }
 }
 
