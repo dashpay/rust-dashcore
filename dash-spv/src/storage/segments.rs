@@ -342,10 +342,6 @@ impl<I: Persistable> SegmentCache<I> {
         Ok(Some(item).filter(|item| *item != I::sentinel()))
     }
 
-    pub async fn store_items(&mut self, items: &[I]) -> StorageResult<()> {
-        self.store_items_at_height(items, self.next_height()).await
-    }
-
     pub async fn store_items_at_height(
         &mut self,
         items: &[I],
@@ -783,7 +779,7 @@ mod tests {
 
         let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2);
 
-        cache.store_items(&items).await.expect("Failed to store items");
+        cache.store_items_at_height(&items, 0).await.expect("Failed to store items");
 
         assert_eq!(
             items[0..ITEMS_PER_SEGMENT as usize],

@@ -9,8 +9,6 @@ use tokio::sync::RwLock;
 
 #[async_trait]
 pub trait FilterHeaderStorage: Send + Sync + 'static {
-    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()>;
-
     async fn store_filter_headers_at_height(
         &mut self,
         headers: &[FilterHeader],
@@ -93,10 +91,6 @@ impl PersistentStorage for PersistentFilterHeaderStorage {
 
 #[async_trait]
 impl FilterHeaderStorage for PersistentFilterHeaderStorage {
-    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
-        self.filter_headers.write().await.store_items(headers).await
-    }
-
     async fn store_filter_headers_at_height(
         &mut self,
         headers: &[FilterHeader],
@@ -133,7 +127,7 @@ mod tests {
         let mut storage = PersistentFilterHeaderStorage::open(tmp_dir.path()).await.unwrap();
 
         let headers = FilterHeader::dummy_batch(0..5);
-        storage.store_filter_headers(&headers).await.unwrap();
+        storage.store_filter_headers_at_height(&headers, 0).await.unwrap();
 
         storage.truncate_above(2).await.unwrap();
 

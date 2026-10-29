@@ -2200,9 +2200,6 @@ mod tests {
         async fn get_start_height(&self) -> Option<u32> {
             self.inner.get_start_height().await
         }
-        async fn get_stored_headers_len(&self) -> u32 {
-            self.inner.get_stored_headers_len().await
-        }
         async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
             self.read(hash, self.inner.get_header_height_by_hash(hash).await).await
         }
