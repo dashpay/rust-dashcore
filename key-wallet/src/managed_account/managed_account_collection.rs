@@ -10,7 +10,7 @@ use dashcore::Transaction;
 
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::gap_limit::DIP17_GAP_LIMIT;
-use crate::managed_account::address_pool::AddressPoolType;
+use crate::managed_account::address_pool::{AddressInfo, AddressPoolType};
 use crate::managed_account::managed_account_ref::{
     ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount,
 };
@@ -1034,7 +1034,7 @@ impl ManagedAccountCollection {
         &mut self,
         probe_gap: u32,
         key_source_for: F,
-    ) -> Vec<crate::managed_account::address_pool::AddressInfo>
+    ) -> Vec<AddressInfo>
     where
         F: Fn(AccountType) -> KeySource,
     {
