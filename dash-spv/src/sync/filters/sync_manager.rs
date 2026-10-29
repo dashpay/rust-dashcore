@@ -220,6 +220,9 @@ impl<
                     for wallet_id in wallets {
                         self.probe_levels.remove(wallet_id);
                     }
+                    // Activity for the probe ladder, which runs at the commit of
+                    // the batch covering this height.
+                    self.wallet_activity.entry(*height).or_default().extend(wallets);
                 }
 
                 let mut events = Vec::new();

@@ -45,6 +45,8 @@ pub struct MockWallet {
     /// Monitor revision counter for staleness detection.
     monitor_revision: u64,
     reapply_heights: BTreeMap<u32, BTreeSet<u32>>,
+    /// Recorded `probe_extend_gap` calls, as `(wallet_id, probe_gap)`.
+    probe_requests: Vec<(WalletId, u32)>,
 }
 
 impl Default for MockWallet {
@@ -73,7 +75,13 @@ impl MockWallet {
             processed_instant_locks: Arc::new(Mutex::new(Vec::new())),
             monitor_revision: 0,
             reapply_heights: BTreeMap::new(),
+            probe_requests: Vec::new(),
         }
+    }
+
+    /// The `probe_extend_gap` calls made so far, as `(wallet_id, probe_gap)`.
+    pub fn probe_requests(&self) -> &[(WalletId, u32)] {
+        &self.probe_requests
     }
 
     pub fn set_reapply_heights(&mut self, height: u32, heights: BTreeSet<u32>) {
@@ -248,6 +256,11 @@ impl WalletInterface for MockWallet {
         if wallet_id == &self.wallet_id && height > self.last_processed_height {
             self.last_processed_height = height;
         }
+    }
+
+    fn probe_extend_gap(&mut self, wallet_id: &WalletId, probe_gap: u32) -> Vec<ScriptBuf> {
+        self.probe_requests.push((*wallet_id, probe_gap));
+        Vec::new()
     }
 
     fn monitor_revision(&self) -> u64 {

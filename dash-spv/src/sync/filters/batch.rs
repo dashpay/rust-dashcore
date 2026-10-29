@@ -1,7 +1,7 @@
 use dashcore::bip158::BlockFilter;
 use dashcore::ScriptBuf;
 use key_wallet_manager::{FilterMatchKey, WalletId};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// A completed batch of compact block filters ready for verification.
@@ -34,13 +34,6 @@ pub(super) struct FiltersBatch {
     scanned_wallets: BTreeMap<WalletId, u64>,
     /// Every script already matched against this batch's filters, per wallet.
     tested_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
-    /// Wallets for which at least one of this batch's filters matched during
-    /// any scan or rescan — the "activity batch" marker for adaptive
-    /// gap-probe escalation. Commit runs the probe ladder only for wallets in
-    /// this set, so batches a wallet had no activity in never pay for a
-    /// probe. Filter false positives can land here; that only costs a probe
-    /// pass, never correctness.
-    matched_wallets: BTreeSet<WalletId>,
 }
 
 impl FiltersBatch {
@@ -59,7 +52,6 @@ impl FiltersBatch {
             pending_blocks: 0,
             scanned_wallets: BTreeMap::new(),
             tested_scripts: HashMap::new(),
-            matched_wallets: BTreeSet::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -128,21 +120,6 @@ impl FiltersBatch {
     ) -> impl Iterator<Item = &'a ScriptBuf> {
         let tested = self.tested_scripts.get(wallet_id);
         monitored.iter().filter(move |script| tested.is_none_or(|t| !t.contains(*script)))
-    }
-
-    /// Record wallets whose queries matched at least one of this batch's
-    /// filters during a scan or rescan (the "activity batch" marker).
-    pub(super) fn note_matched_wallets<'a>(
-        &mut self,
-        wallets: impl IntoIterator<Item = &'a WalletId>,
-    ) {
-        self.matched_wallets.extend(wallets.into_iter().copied());
-    }
-
-    /// Wallets with at least one filter match in this batch across all scan
-    /// and rescan passes.
-    pub(super) fn matched_wallets(&self) -> &BTreeSet<WalletId> {
-        &self.matched_wallets
     }
 
     /// Record the wallets that were behind for this batch at scan time, each

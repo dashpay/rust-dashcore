@@ -163,6 +163,16 @@ pub struct FiltersManager<
     /// derive-nothing rungs (each a cheap no-op against the already-derived
     /// pool tail) before reaching the recorded depth again.
     pub(super) probe_levels: HashMap<WalletId, usize>,
+    /// Heights at which `BlockProcessed` reported a relevant transaction
+    /// confirmed, with the wallets the block was processed for. The probe
+    /// ladder runs at commit only for wallets with activity inside the
+    /// committing batch, so batches a wallet had no activity in never pay for
+    /// a probe; a filter match alone does not count, because compact-filter
+    /// false positives would fire the full ladder for wallets with no history.
+    /// Kept per height rather than per batch, and across `reset_for_rescan`,
+    /// so activity from a block that lands while no batch covers its height
+    /// still counts once one does. Pruned as batches commit.
+    pub(super) wallet_activity: BTreeMap<u32, BTreeSet<WalletId>>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -209,6 +219,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             tracker: BlockMatchTracker::new(),
             pending_new_scripts: BTreeMap::new(),
             probe_levels: HashMap::new(),
+            wallet_activity: BTreeMap::new(),
         }
     }
 
@@ -748,6 +759,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             // `tick` rescan trigger, which already wipes the map via
             // `reset_for_rescan`, so older entries can never be consulted.
             self.tracker.prune_at_or_below(end);
+            self.wallet_activity = self.wallet_activity.split_off(&end.saturating_add(1));
             self.processing_height = end + 1;
 
             tracing::info!(
@@ -764,8 +776,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     /// Run the adaptive gap-probe ladder for the committing batch.
     ///
     /// Called only at the batch's commit fixpoint (reconciliation clean, no
-    /// blocks in flight anywhere). For every wallet that had at least one
-    /// filter match in this batch, walk [`PROBE_GAP_LADDER`] from the
+    /// blocks in flight anywhere). For every wallet that had a relevant
+    /// transaction confirmed in this batch, walk [`PROBE_GAP_LADDER`] from the
     /// wallet's recorded rung: derive the widened window via
     /// [`WalletInterface::probe_extend_gap`], and re-match the freshly
     /// derived scripts against this batch and every later already-scanned
@@ -788,11 +800,13 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             .active_batches
             .get(&batch_start)
             .map(|batch| {
-                batch
-                    .matched_wallets()
-                    .iter()
+                self.wallet_activity
+                    .range(batch.start_height()..=batch.end_height())
+                    .flat_map(|(_, wallets)| wallets)
                     .filter(|id| batch.scanned_wallets().contains_key(*id))
                     .copied()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
                     .collect()
             })
             .unwrap_or_default();
@@ -1089,11 +1103,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         if !block_to_wallets.is_empty() {
             self.progress.add_matched(block_to_wallets.len() as u32);
-            // Activity marker for the gap-probe ladder: this wallet has
-            // matches in this batch's range.
-            if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                batch.note_matched_wallets(block_to_wallets.values().flatten());
-            }
         }
         for (key, wallets) in block_to_wallets {
             match self.tracker.track_for_new_scripts(&key, batch_start, wallets) {
@@ -1285,11 +1294,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
 
         self.progress.add_matched(block_to_wallets.len() as u32);
-        // Activity marker for the gap-probe ladder: these wallets have
-        // matches in this batch's range.
-        if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-            batch.note_matched_wallets(block_to_wallets.values().flatten());
-        }
 
         // Either (re)queue the block via `BlocksNeeded` or skip if every
         // candidate wallet already has it processed. In-flight blocks still
@@ -1798,6 +1802,79 @@ mod tests {
         // No wallets were recorded as scanned for this batch, so the per-wallet
         // synced_height stays at its initial value.
         assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 0);
+    }
+
+    /// A scanned, block-free batch `start..=end` that `MOCK_WALLET_ID` was behind for.
+    async fn insert_probe_candidate_batch(manager: &mut TestFiltersManager, start: u32, end: u32) {
+        let generation = manager.wallet.read().await.wallet_account_generation(&MOCK_WALLET_ID);
+        let mut batch = FiltersBatch::new(start, end, HashMap::new());
+        batch.mark_scanned();
+        batch.set_scanned_wallets(BTreeMap::from([(MOCK_WALLET_ID, generation)]));
+        manager.active_batches.insert(start, batch);
+    }
+
+    fn block_processed_at(height: u32, confirmed_txids: Vec<dashcore::Txid>) -> SyncEvent {
+        SyncEvent::BlockProcessed {
+            block_hash: dashcore::BlockHash::all_zeros(),
+            height,
+            wallets: BTreeSet::from([MOCK_WALLET_ID]),
+            new_scripts: BTreeMap::new(),
+            confirmed_txids,
+        }
+    }
+
+    async fn probe_gaps(manager: &TestFiltersManager) -> Vec<u32> {
+        manager.wallet.read().await.probe_requests().iter().map(|(_, gap)| *gap).collect()
+    }
+
+    /// The probe ladder runs only for wallets with a relevant transaction
+    /// confirmed inside the committing batch: a filter match alone (a
+    /// false positive, or a block with nothing relevant) never probes.
+    #[tokio::test]
+    async fn test_gap_probe_needs_confirmed_activity_in_batch() {
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let mut manager = create_test_manager().await;
+        manager.set_state(SyncState::Syncing);
+        insert_probe_candidate_batch(&mut manager, 0, 4999).await;
+
+        // Processed with nothing relevant: no activity, so batch 0 commits unprobed.
+        manager.handle_sync_event(&block_processed_at(100, vec![]), &network).await.unwrap();
+        assert!(manager.wallet_activity.is_empty());
+        manager.try_commit_batches().await.unwrap();
+        assert!(manager.active_batches.is_empty());
+        assert!(probe_gaps(&manager).await.is_empty());
+
+        insert_probe_candidate_batch(&mut manager, 5000, 9999).await;
+
+        // A confirmed relevant transaction in batch 5000 walks the whole ladder
+        // (the mock derives nothing, so every rung escalates) before it commits.
+        let txid = dashcore::Txid::all_zeros();
+        manager.handle_sync_event(&block_processed_at(5100, vec![txid]), &network).await.unwrap();
+        manager.try_commit_batches().await.unwrap();
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(probe_gaps(&manager).await, PROBE_GAP_LADDER.to_vec());
+        // Committing prunes the activity it consumed.
+        assert!(manager.wallet_activity.is_empty());
+    }
+
+    /// Activity from a block applied while no batch covers its height (a
+    /// queued block landing right after `reset_for_rescan`) still probes once
+    /// a batch covering that height commits.
+    #[tokio::test]
+    async fn test_gap_probe_activity_survives_until_a_batch_covers_it() {
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let mut manager = create_test_manager().await;
+        manager.set_state(SyncState::Syncing);
+
+        let txid = dashcore::Txid::all_zeros();
+        manager.handle_sync_event(&block_processed_at(300, vec![txid]), &network).await.unwrap();
+        manager.reset_for_rescan();
+        assert!(manager.wallet_activity.contains_key(&300));
+
+        insert_probe_candidate_batch(&mut manager, 0, 4999).await;
+        manager.try_commit_batches().await.unwrap();
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(probe_gaps(&manager).await, PROBE_GAP_LADDER.to_vec());
     }
 
     async fn last_processed(multi: &Arc<RwLock<MultiMockWallet>>, id: &WalletId) -> u32 {
