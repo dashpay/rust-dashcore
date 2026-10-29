@@ -5,9 +5,15 @@ use key_wallet_manager::WalletManager;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+use test_case::test_case;
 use tokio::sync::RwLock;
 
-use dash_spv::Network;
+use dash_spv::chain::checkpoints::CHECKPOINT_HEADERS;
+use dash_spv::test_utils::{BlockHeaderStorage, DashCoreNode, DiskStorageManager, StorageManager};
+use dash_spv::types::HashedBlockHeader;
+use dash_spv::{ClientConfig, Network};
+use dashcore::block::Header;
+use dashcore::consensus::deserialize;
 use dashcore::{Address, Amount};
 
 use super::helpers::{
@@ -615,4 +621,74 @@ async fn test_runtime_add_with_tip_advance_during_rescan() {
     assert!(w2_has_funding, "W2 should hold funding tx {}", w2_funding_txid);
 
     client_handle.stop().await;
+}
+
+/// Stores the headers a checkpoint at `height` of `node`'s chain holds, so the
+/// client anchors there as on a bundled one.
+async fn anchor_at_checkpoint(config: &ClientConfig, node: &DashCoreNode, height: u32) {
+    let start = height + 1 - CHECKPOINT_HEADERS as u32;
+    let headers: Vec<HashedBlockHeader> = (start..=height)
+        .map(|h| {
+            let hash = node.get_block_hash(h).to_string();
+            let hex = node.try_rpc_call("getblockheader", &[hash.into(), false.into()]).unwrap();
+            let bytes = hex_conservative::decode_to_vec(hex.as_str().unwrap()).unwrap();
+            deserialize::<Header>(&bytes).unwrap().into()
+        })
+        .collect();
+    let mut storage = DiskStorageManager::new(config).await.unwrap();
+    storage.store_headers_at_height(&headers, start).await.unwrap();
+    storage.stop().await;
+}
+
+/// A wallet born at genesis, added after the client anchored on a checkpoint
+/// above it synced one born at the tip, gets its full history, optionally
+/// across a restart and a block mined meanwhile.
+#[test_case(false, false ; "at runtime")]
+#[test_case(false, true ; "at runtime mining")]
+#[test_case(true, false ; "across restart")]
+#[test_case(true, true ; "across restart mining")]
+#[tokio::test]
+async fn test_wallet_added_below_synced_wallet(restart: bool, mine: bool) {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    if mine && !ctx.dashd.supports_mining {
+        return;
+    }
+    let height = ctx.dashd.initial_height;
+    anchor_at_checkpoint(&ctx.client_config, &ctx.dashd.node, height / 2).await;
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    let tip_id = wallet
+        .write()
+        .await
+        .create_wallet_from_mnemonic(EMPTY_MNEMONIC, height, default_test_account_options())
+        .unwrap();
+    let mut handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut handle.progress_receiver, height).await;
+
+    if restart {
+        handle.stop().await;
+    }
+    let history_id = wallet
+        .write()
+        .await
+        .create_wallet_from_mnemonic(&ctx.dashd.wallet.mnemonic, 0, default_test_account_options())
+        .unwrap();
+    if restart {
+        drop(handle);
+        handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
+    }
+
+    let tip = height + mine as u32;
+    if mine {
+        let miner = ctx.dashd.node.get_new_address_from_wallet("default");
+        ctx.dashd.node.generate_blocks(1, &miner);
+    }
+    wait_for_sync(&mut handle.progress_receiver, tip).await;
+    wait_for_wallet_synced(&wallet, &history_id, tip).await;
+    wait_for_wallet_synced(&wallet, &tip_id, tip).await;
+
+    ctx.assert_wallet_synced_at(&handle.client.progress().await, &wallet, &history_id, tip).await;
+    assert_eq!(count_wallet_transactions(&wallet, &tip_id).await, 0);
+    handle.stop().await;
 }
