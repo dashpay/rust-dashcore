@@ -801,10 +801,38 @@ impl DerivationPath {
     }
 
     /// DIP-13 application encryption key path,
-    /// `m/9'/coin_type'/5'/7'/0'/identity_id'/contract_id'/key_purpose'`. The identity id and
-    /// contract id are DIP-14 256-bit hardened children, which only secp256k1 derivation defines,
-    /// so the key type level is always ECDSA (`0'`).
+    /// `m/9'/coin_type'/5'/7'/0'/identity_id'/contract_id'/key_purpose'/rotation'`. The identity
+    /// id and contract id are DIP-14 256-bit hardened children, which only secp256k1 derivation
+    /// defines, so the key type level is always ECDSA (`0'`). `rotation` is the hardened 31-bit
+    /// rotation level, starting at `0`, that lets an identity replace its encryption key for a
+    /// contract.
+    ///
+    /// Returns [`Error::InvalidChildNumber`] if `rotation` is not below `2^31`.
     pub fn application_encryption_path(
+        network: Network,
+        identity_id: [u8; 32],
+        contract_id: [u8; 32],
+        key_purpose: ApplicationKeyPurpose,
+        rotation: u32,
+    ) -> Result<Self, Error> {
+        let rotation = ChildNumber::from_hardened_idx(rotation)?;
+        Ok(Self::application_encryption_path_without_rotation(
+            network,
+            identity_id,
+            contract_id,
+            key_purpose,
+        )
+        .extend([rotation]))
+    }
+
+    /// The pre-DIP application encryption key path without a rotation level,
+    /// `m/9'/coin_type'/5'/7'/0'/identity_id'/contract_id'/key_purpose'`.
+    ///
+    /// This is the layout wallets used before DIP-13 added the rotation level. Wallets derive it
+    /// only to recognise encryption keys registered under it on testnet or devnet; new keys must
+    /// use [`Self::application_encryption_path`]. The rotation paths are hardened children of
+    /// this one, so their keys differ from the key at this path.
+    pub fn application_encryption_path_without_rotation(
         network: Network,
         identity_id: [u8; 32],
         contract_id: [u8; 32],
