@@ -370,14 +370,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     ) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
 
-        if let Some(below) = self.pipeline.take_below() {
-            let start = self.header_storage.read().await.get_start_height().await;
-            let start = start.ok_or_else(|| {
-                SyncError::MissingDependency("no headers stored to sync below".to_string())
-            })?;
-            self.store_below(start, &below).await?;
-        }
-
         for (_start_height, batch_headers) in ready_batches {
             if !batch_headers.is_empty() {
                 // Validate chain continuity with current tip
@@ -404,6 +396,16 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                     tip_height: new_tip.height(),
                 });
             }
+        }
+
+        // Last, as the batches above already left the pipeline and a failure
+        // here would otherwise drop them.
+        if let Some(below) = self.pipeline.take_below() {
+            let start = self.header_storage.read().await.get_start_height().await;
+            let start = start.ok_or_else(|| {
+                SyncError::MissingDependency("no headers stored to sync below".to_string())
+            })?;
+            self.store_below(start, &below).await?;
         }
 
         Ok(events)
@@ -681,6 +683,47 @@ mod tests {
             events.iter().any(|e| matches!(e, SyncEvent::BlockHeaderSyncComplete { .. })),
             "completion must be announced, or downstream managers never start"
         );
+    }
+
+    /// Headers below the stored ones that fail to store must not take the
+    /// forward batches stored alongside them down too: those already left the
+    /// pipeline, so nothing would download them again.
+    #[tokio::test]
+    async fn test_failed_store_below_keeps_forward_batches() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let stored: Vec<HashedBlockHeader> = Header::dummy_chain(3, BlockHash::dummy(1))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        storage.block_headers().write().await.store_headers_at_height(&stored, 10).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        let tip = manager.tip().await.unwrap();
+        manager.pipeline.init(tip.height(), *tip.hash(), tip.height() + 2);
+
+        // Headers below that join neither the anchor nor the stored ones.
+        let below: Vec<HashedBlockHeader> = Header::dummy_chain(1, BlockHash::dummy(2))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        manager.pipeline.sync_below(0, BlockHash::dummy(2), 1, *below[0].hash());
+        manager.pipeline.receive_headers(&below).unwrap();
+
+        let forward: Vec<HashedBlockHeader> =
+            Header::dummy_chain(2, *tip.hash()).iter().map(HashedBlockHeader::from).collect();
+        manager.pipeline.receive_headers(&forward).unwrap();
+        let ready = manager.pipeline.take_ready_to_store();
+        assert!(!ready.is_empty(), "precondition: the forward batch is ready");
+
+        let _ = manager.store_ready_batches(ready).await;
+
+        assert_eq!(manager.tip().await.unwrap().height(), tip.height() + 2);
     }
 
     #[tokio::test]
