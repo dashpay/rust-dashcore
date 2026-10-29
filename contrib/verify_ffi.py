@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
-FFI_CRATES = ["key-wallet-ffi", "dash-spv-ffi"]
+FFI_CRATES = ["key-wallet-ffi"]
 
 
 def generate_ffi_docs(crate_dir: Path) -> tuple[str, int, str]:
@@ -49,7 +49,7 @@ def main():
     # Check if docs changed
     docs_result = subprocess.run(
         ["git", "diff", "--exit-code", "--quiet", "--",
-         "key-wallet-ffi/FFI_API.md", "dash-spv-ffi/FFI_API.md"],
+         "key-wallet-ffi/FFI_API.md"],
         cwd=repo_root
     )
 
@@ -59,7 +59,7 @@ def main():
         print("Documentation changes detected:")
         subprocess.run(
             ["git", "--no-pager", "diff", "--",
-             "key-wallet-ffi/FFI_API.md", "dash-spv-ffi/FFI_API.md"],
+             "key-wallet-ffi/FFI_API.md"],
             cwd=repo_root
         )
         print()
