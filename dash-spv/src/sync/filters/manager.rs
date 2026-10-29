@@ -606,6 +606,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 break;
             }
 
+            // A block in flight for ANY active batch may still derive new
+            // scripts when it lands, and those scripts may match THIS
+            // batch's filters. Sealing now would race that delivery: a
+            // committed batch leaves `active_batches`, so neither the per-tick
+            // rescan nor reconciliation would ever match it again. Hold the
+            // commit until nothing is in flight anywhere; the pending blocks
+            // drain through the normal event flow, and the reconciliation
+            // below then sees every script they derived.
+            if self.active_batches.values().any(|other| other.pending_blocks() > 0) {
+                break;
+            }
+
             events.extend(self.reconcile_untested_scripts(batch_start).await?);
             if let Some(batch) = self.active_batches.get(&batch_start) {
                 if batch.pending_blocks() > 0 {
