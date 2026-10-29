@@ -1,3 +1,4 @@
+use bip324::OutboundCipher;
 use dashcore::{
     consensus::encode,
     network::{
@@ -10,12 +11,13 @@ use dashcore::{
     Network,
 };
 use futures::lock::Mutex;
+use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::{
-    io::{AsyncRead, AsyncWriteExt, ReadBuf},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt, Chain, ReadBuf},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
@@ -29,6 +31,10 @@ use tokio_util::sync::CancellationToken;
 use crate::network::bans::Ban;
 use crate::network::costs::Ledger;
 use crate::network::manager::{InboundMessage, NetworkState};
+use crate::network::transport::{
+    encrypt_message, TransportPreference, V2Decoder, V2HandshakeManager, V2HandshakeResult,
+    V2Session,
+};
 use crate::{error::NetworkResult, NetworkError};
 
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
@@ -101,20 +107,79 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
     }
 }
 
-struct SizedCodec;
+enum SizedCodec {
+    V1,
+    V2(V2Decoder),
+}
 
 impl Decoder for SizedCodec {
     type Item = (RawNetworkMessage, u64);
     type Error = encode::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let before = src.len();
-        let raw = RawNetworkMessageCodec.decode(src)?;
-        Ok(raw.map(|raw| (raw, (before - src.len()) as u64)))
+        match self {
+            SizedCodec::V1 => {
+                let before = src.len();
+                let raw = RawNetworkMessageCodec.decode(src)?;
+                Ok(raw.map(|raw| (raw, (before - src.len()) as u64)))
+            }
+            SizedCodec::V2(decoder) => decoder.decode(src),
+        }
     }
 }
 
-type PeerReader = FramedRead<CountingReader<OwnedReadHalf>, SizedCodec>;
+/// The socket's write half, framing each message for the connection's transport.
+struct PeerWriter {
+    half: OwnedWriteHalf,
+    framing: Framing,
+}
+
+enum Framing {
+    V1 {
+        magic: u32,
+    },
+    /// Packets must be encrypted in the order they are written, so the cipher
+    /// lives behind the same lock as the socket.
+    V2(OutboundCipher),
+}
+
+impl PeerWriter {
+    async fn write_message(&mut self, msg: &NetworkMessage) -> std::io::Result<()> {
+        let bytes = match &mut self.framing {
+            // TODO: Take a reference to msg instead of cloning it
+            Framing::V1 {
+                magic,
+            } => encode::serialize(&RawNetworkMessage {
+                magic: *magic,
+                payload: msg.clone(),
+            }),
+            Framing::V2(cipher) => encrypt_message(cipher, msg),
+        };
+        self.half.write_all(&bytes).await
+    }
+}
+
+/// A TCP connection with its transport negotiated, ready for the version handshake.
+enum Link {
+    V1(TcpStream),
+    V2(Box<V2Session>),
+}
+
+/// Whether a failed V2 handshake should be retried over V1.
+///
+/// A V1-only peer closes the connection (or replies with V1 magic) once it sees our
+/// 64-byte key, which surfaces as a failed or unsupported handshake. Timeouts and
+/// connect errors are propagated instead, so an unreachable or stalled peer is not
+/// dialled a second time. (Dash Core reconnects over V1 on any disconnect before the
+/// peer sent anything, timeouts included.)
+fn should_fall_back_to_v1(error: &NetworkError) -> bool {
+    matches!(error, NetworkError::V2HandshakeFailed(_) | NetworkError::V2NotSupported)
+}
+
+/// Reads the bytes the V2 handshake took off the socket past its version packet
+/// first. Seeding them into `FramedRead`'s buffer instead would leave them undecoded
+/// until the socket next became readable.
+type PeerReader = FramedRead<CountingReader<Chain<Cursor<Vec<u8>>, OwnedReadHalf>>, SizedCodec>;
 
 // Boxing every message would penalise the common small ones.
 #[allow(clippy::large_enum_variant)]
@@ -127,8 +192,7 @@ pub enum PeerEvent {
 #[derive(Clone)]
 pub struct PeerHandle {
     id: PeerId,
-    network: Network,
-    writer: Arc<Mutex<OwnedWriteHalf>>,
+    writer: Arc<Mutex<PeerWriter>>,
     ledger: Arc<Ledger>,
     /// Response bytes this peer can have in flight before they queue (its
     /// bandwidth-delay product), sized by the controller from its byte rate and
@@ -169,18 +233,11 @@ impl PeerHandle {
         };
         let msg = upgraded.as_ref().unwrap_or(msg);
 
-        // TODO: Take a reference to msg instead of cloning it
-        let raw = RawNetworkMessage {
-            magic: self.network.magic(),
-            payload: msg.clone(),
-        };
-        let serialized = encode::serialize(&raw);
-
         self.ledger.charge(msg).await;
 
         let write = async {
             let mut writer = self.writer.lock().await;
-            writer.write_all(&serialized).await
+            writer.write_message(msg).await
         };
         let outcome = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
             Ok(Ok(())) => Ok(()),
@@ -277,12 +334,8 @@ impl DisconnectedPeer {
         self.addr
     }
 
-    pub async fn connect(
-        self,
-        state: Arc<NetworkState>,
-        shutdown: CancellationToken,
-    ) -> NetworkResult<ConnectedPeer> {
-        let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
+    async fn open(&self) -> NetworkResult<TcpStream> {
+        tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
             .await
             .map_err(|_| {
                 NetworkError::ConnectionFailed(format!(
@@ -293,23 +346,90 @@ impl DisconnectedPeer {
             })?
             .map_err(|e| {
                 NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", self.addr, e))
-            })?;
+            })
+    }
 
+    /// Connect and negotiate the transport: BIP324 V2 unless `preference` is
+    /// `V1Only`, reconnecting over V1 if `V2Preferred` and the peer doesn't speak V2.
+    async fn open_link(&self, preference: TransportPreference) -> NetworkResult<Link> {
+        if preference == TransportPreference::V1Only {
+            return Ok(Link::V1(self.open().await?));
+        }
+
+        let stream = self.open().await?;
+        stream.set_nodelay(true).map_err(|e| {
+            NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
+        })?;
+        let handshake =
+            V2HandshakeManager::new_initiator(self.network, self.addr).perform_handshake(stream);
+        let error = match handshake.await {
+            Ok(V2HandshakeResult::Success(session)) => return Ok(Link::V2(session)),
+            Ok(V2HandshakeResult::FallbackToV1) => NetworkError::V2NotSupported,
+            Err(e) => e,
+        };
+
+        if preference == TransportPreference::V2Preferred && should_fall_back_to_v1(&error) {
+            tracing::debug!(
+                target: "dash_spv::network",
+                "V2 handshake with {} failed ({}), reconnecting over V1",
+                self.addr, error
+            );
+            // The peer has already consumed our V2 key bytes, so the original stream
+            // cannot be reused.
+            return Ok(Link::V1(self.open().await?));
+        }
+        Err(error)
+    }
+
+    pub async fn connect(
+        self,
+        state: Arc<NetworkState>,
+        shutdown: CancellationToken,
+    ) -> NetworkResult<ConnectedPeer> {
+        let magic = self.network.magic();
+        let (stream, codec, framing, pending) =
+            match self.open_link(state.transport_preference).await? {
+                Link::V1(stream) => {
+                    let framing = Framing::V1 {
+                        magic,
+                    };
+                    (stream, SizedCodec::V1, framing, Vec::new())
+                }
+                Link::V2(session) => {
+                    let V2Session {
+                        stream,
+                        cipher,
+                        pending,
+                        ..
+                    } = *session;
+                    let (inbound, outbound) = cipher.into_split();
+                    let codec = SizedCodec::V2(V2Decoder::new(magic, inbound));
+                    (stream, codec, Framing::V2(outbound), pending)
+                }
+            };
+
+        let transport_version = if matches!(framing, Framing::V2(_)) {
+            2
+        } else {
+            1
+        };
         let peer_bytes = Arc::new(AtomicU64::new(0));
-        let (read_half, mut writer) = stream.into_split();
+        let (read_half, half) = stream.into_split();
+        let mut writer = PeerWriter {
+            half,
+            framing,
+        };
         let mut reader = FramedRead::new(
             CountingReader {
-                inner: read_half,
+                inner: Cursor::new(pending).chain(read_half),
                 state: state.clone(),
                 peer_bytes: peer_bytes.clone(),
             },
-            SizedCodec,
+            codec,
         );
-        let magic = self.network.magic();
 
         handshake_send(
             &mut writer,
-            magic,
             NetworkMessage::Version(build_version(self.addr, &state.user_agent)),
         )
         .await?;
@@ -331,13 +451,13 @@ impl DisconnectedPeer {
             match raw.payload {
                 NetworkMessage::Version(v) => {
                     // BIP155: sendaddrv2 must be sent BEFORE verack.
-                    handshake_send(&mut writer, magic, NetworkMessage::SendAddrV2).await?;
-                    handshake_send(&mut writer, magic, NetworkMessage::Verack).await?;
+                    handshake_send(&mut writer, NetworkMessage::SendAddrV2).await?;
+                    handshake_send(&mut writer, NetworkMessage::Verack).await?;
                     peer_version = Some(v);
                 }
                 NetworkMessage::Verack => got_verack = true,
                 NetworkMessage::Ping(n) => {
-                    handshake_send(&mut writer, magic, NetworkMessage::Pong(n)).await?
+                    handshake_send(&mut writer, NetworkMessage::Pong(n)).await?
                 }
                 _ => {}
             }
@@ -368,13 +488,13 @@ impl DisconnectedPeer {
         } else {
             NetworkMessage::SendHeaders
         };
-        handshake_send(&mut writer, magic, announce).await?;
+        handshake_send(&mut writer, announce).await?;
 
         // Pinging before the handshake completes makes some peers drop us.
         let mut lag_ms: u32 = 0;
         let ping_nonce: u64 = rand::random();
         let ping_sent = tokio::time::Instant::now();
-        if handshake_send(&mut writer, magic, NetworkMessage::Ping(ping_nonce)).await.is_ok() {
+        if handshake_send(&mut writer, NetworkMessage::Ping(ping_nonce)).await.is_ok() {
             let deadline = ping_sent + HANDSHAKE_TIMEOUT;
             while let Ok(Some(Ok((raw, _)))) =
                 tokio::time::timeout_at(deadline, reader.next()).await
@@ -388,7 +508,7 @@ impl DisconnectedPeer {
                         break;
                     }
                     NetworkMessage::Ping(n) => {
-                        let _ = handshake_send(&mut writer, magic, NetworkMessage::Pong(n)).await;
+                        let _ = handshake_send(&mut writer, NetworkMessage::Pong(n)).await;
                     }
                     _ => {}
                 }
@@ -408,8 +528,9 @@ impl DisconnectedPeer {
 
         tracing::debug!(
             target: "dash_spv::network",
-            "peer connected: {} | lag={}ms height={}",
+            "peer connected: {} | v{} lag={}ms height={}",
             self.addr,
+            transport_version,
             lag_ms,
             version.start_height,
         );
@@ -417,7 +538,6 @@ impl DisconnectedPeer {
         Ok(ConnectedPeer {
             handle: PeerHandle {
                 id,
-                network: self.network,
                 writer,
                 ledger,
                 cap,
@@ -436,7 +556,7 @@ fn spawn_reader(
     addr: PeerId,
     magic: u32,
     mut reader: PeerReader,
-    writer: Arc<Mutex<OwnedWriteHalf>>,
+    writer: Arc<Mutex<PeerWriter>>,
     state: Arc<NetworkState>,
     shutdown: CancellationToken,
     ledger: Arc<Ledger>,
@@ -456,11 +576,8 @@ fn spawn_reader(
                         break;
                     }
                     last_ping = Some(tokio::time::Instant::now());
-                    let ping = RawNetworkMessage {
-                        magic,
-                        payload: NetworkMessage::Ping(rand::random()),
-                    };
-                    if writer.lock().await.write_all(&encode::serialize(&ping)).await.is_err() {
+                    let ping = NetworkMessage::Ping(rand::random());
+                    if writer.lock().await.write_message(&ping).await.is_err() {
                         break;
                     }
                     continue;
@@ -484,17 +601,8 @@ fn spawn_reader(
                     ledger.settle(&raw.payload, size).await;
                     match raw.payload {
                         NetworkMessage::Ping(nonce) => {
-                            let pong = RawNetworkMessage {
-                                magic,
-                                payload: NetworkMessage::Pong(nonce),
-                            };
-                            if writer
-                                .lock()
-                                .await
-                                .write_all(&encode::serialize(&pong))
-                                .await
-                                .is_err()
-                            {
+                            let pong = NetworkMessage::Pong(nonce);
+                            if writer.lock().await.write_message(&pong).await.is_err() {
                                 break;
                             }
                         }
@@ -552,22 +660,32 @@ fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
     )
 }
 
-async fn handshake_send(
-    writer: &mut OwnedWriteHalf,
-    magic: u32,
-    payload: NetworkMessage,
-) -> NetworkResult<()> {
-    let raw = RawNetworkMessage {
-        magic,
-        payload,
-    };
+async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> NetworkResult<()> {
     writer
-        .write_all(&encode::serialize(&raw))
+        .write_message(&payload)
         .await
         .map_err(|e| NetworkError::ConnectionFailed(format!("handshake write failed: {}", e)))?;
     writer
+        .half
         .flush()
         .await
         .map_err(|e| NetworkError::ConnectionFailed(format!("handshake flush failed: {}", e)))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v1_fallback_only_on_v2_protocol_failures() {
+        // A V1-only peer hangs up or answers with V1 magic: retry over V1.
+        assert!(should_fall_back_to_v1(&NetworkError::V2HandshakeFailed("eof".into())));
+        assert!(should_fall_back_to_v1(&NetworkError::V2NotSupported));
+
+        // Connectivity problems are surfaced rather than masked by a V1 retry.
+        assert!(!should_fall_back_to_v1(&NetworkError::Timeout));
+        assert!(!should_fall_back_to_v1(&NetworkError::ConnectionFailed("refused".into())));
+        assert!(!should_fall_back_to_v1(&NetworkError::PeerDisconnected));
+    }
 }

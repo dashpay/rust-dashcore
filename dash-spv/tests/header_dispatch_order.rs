@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dash_spv::client::ClientConfig;
-use dash_spv::network::{MessageType, NetworkManager, PeerNetworkManager};
+use dash_spv::network::{MessageType, NetworkManager, PeerNetworkManager, TransportPreference};
 use dashcore::consensus::encode::{deserialize_partial, serialize};
 use dashcore::network::address::Address;
 use dashcore::network::constants::{ServiceFlags, PROTOCOL_VERSION};
@@ -122,6 +122,9 @@ fn peer_reader_preserves_compressed_then_regular_header_order() {
         config.restrict_to_configured_peers = true;
         config.enable_filters = false;
         config.enable_masternodes = false;
+        // The mock peer above speaks V1 only and accepts a single connection, so the
+        // default V2Preferred probe (which reconnects after detecting a V1 peer) can't be used.
+        config.transport_preference = TransportPreference::V1Only;
 
         let manager = PeerNetworkManager::new(&config).await;
         let mut headers = manager.subscribe(&[MessageType::Headers]).await;

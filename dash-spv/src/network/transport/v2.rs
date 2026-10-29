@@ -1,486 +1,237 @@
-//! V2 Transport - BIP324 encrypted Dash P2P protocol transport.
+//! BIP324 V2 packet codec for the Dash P2P protocol.
 //!
-//! This implements the BIP324 encrypted transport protocol:
+//! Each packet on the wire is:
 //! - 3 bytes: Encrypted length
-//! - 1 byte: Header (flags, short message ID or 0x00 for extended)
-//! - Variable: Contents (for extended format: 12-byte command + payload)
+//! - 1 byte: Header (flags, set by the bip324 cipher)
+//! - Variable: Contents (a short message ID + payload, or `0x00` + 12-byte command + payload)
 //! - 16 bytes: Authentication tag (ChaCha20-Poly1305)
 
-use std::net::SocketAddr;
-
-use async_trait::async_trait;
-use bip324::{CipherSession, PacketType, NUM_LENGTH_BYTES};
-use dashcore::network::message::{NetworkMessage, MAX_MSG_SIZE};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use bip324::{InboundCipher, OutboundCipher, PacketType, NUM_HEADER_BYTES, NUM_LENGTH_BYTES};
+use dashcore::consensus::encode;
+use dashcore::network::message::{NetworkMessage, RawNetworkMessage, MAX_MSG_SIZE};
+use tokio_util::bytes::BytesMut;
+use tokio_util::codec::Decoder;
 
 use super::message_ids::{network_message_to_short_id, short_id_to_command, MSG_ID_EXTENDED};
-use super::v2_handshake::V2Session;
-use super::Transport;
-use crate::error::{NetworkError, NetworkResult};
-
-/// Read buffer size for TCP reads.
-const READ_BUFFER_SIZE: usize = 8192;
 
 /// Extended command length in bytes.
 const COMMAND_LEN: usize = 12;
 
-/// V2 Transport implementation for BIP324 encrypted P2P communication.
-pub struct V2Transport {
-    /// The underlying TCP stream.
-    stream: TcpStream,
-    /// The cipher session for encryption/decryption.
-    cipher: CipherSession,
-    /// Session ID for optional MitM verification.
-    session_id: [u8; 32],
-    /// Stateful receive buffer for partial reads.
-    receive_buffer: Vec<u8>,
-    /// Remote peer address (for logging).
-    peer_address: SocketAddr,
-    /// Bytes sent counter.
-    bytes_sent: u64,
-    /// Bytes received counter.
-    bytes_received: u64,
-    /// Whether the connection is active.
-    connected: bool,
-    /// Cached decrypted packet length (to avoid re-decrypting on partial reads).
-    /// This is needed because `decrypt_packet_len` advances the cipher state.
-    pending_packet_len: Option<usize>,
+/// Authentication tag length in bytes.
+const TAG_LEN: usize = 16;
+
+/// Largest packet (header + contents + tag) a peer may announce: a maximum-size
+/// payload in the extended format. Above bip324's `decrypt_to_vec` cap, so packets are
+/// decrypted with `decrypt` into a buffer sized here.
+const MAX_PACKET_LEN: usize = NUM_HEADER_BYTES + 1 + COMMAND_LEN + MAX_MSG_SIZE + TAG_LEN;
+
+/// Encode a NetworkMessage into V2 contents.
+///
+/// Format:
+/// - Short format (common messages): `[short_id] + payload`
+/// - Extended format: `[0x00] + 12-byte null-padded command + payload`
+///
+/// The bip324 cipher prepends its own packet-type header byte on encryption, so
+/// this returns only the contents that follow it.
+fn encode_message(message: &NetworkMessage) -> Vec<u8> {
+    let payload = message.consensus_encode_payload();
+
+    if let Some(short_id) = network_message_to_short_id(message) {
+        let mut contents = Vec::with_capacity(1 + payload.len());
+        contents.push(short_id);
+        contents.extend_from_slice(&payload);
+        contents
+    } else {
+        // Use `command()` rather than `cmd()`: the latter returns the static string
+        // "unknown" for `NetworkMessage::Unknown`, which would discard the real command
+        // name on the wire. `CommandString` is at most 12 bytes by construction.
+        let command = message.command();
+        let cmd_bytes = command.as_ref().as_bytes();
+        let mut command_field = [0u8; COMMAND_LEN];
+        let copy_len = std::cmp::min(cmd_bytes.len(), COMMAND_LEN);
+        command_field[..copy_len].copy_from_slice(&cmd_bytes[..copy_len]);
+
+        let mut contents = Vec::with_capacity(1 + COMMAND_LEN + payload.len());
+        contents.push(MSG_ID_EXTENDED);
+        contents.extend_from_slice(&command_field);
+        contents.extend_from_slice(&payload);
+        contents
+    }
 }
 
-impl V2Transport {
-    /// Create a new V2 transport from a successful handshake.
-    ///
-    /// Any ciphertext the handshake already read past the version packet is seeded
-    /// into the receive buffer so the peer's first message is not lost.
-    ///
-    /// # Arguments
-    /// * `session` - Session produced by [`super::V2HandshakeManager::perform_handshake`]
-    /// * `peer_address` - Remote peer address (for logging)
-    pub fn new(session: V2Session, peer_address: SocketAddr) -> Self {
-        let V2Session {
-            stream,
-            cipher,
-            session_id,
-            pending,
-        } = session;
-        let bytes_received = pending.len() as u64;
-        let mut receive_buffer = Vec::with_capacity(READ_BUFFER_SIZE.max(pending.len()));
-        receive_buffer.extend_from_slice(&pending);
+/// Encrypt `message` into one complete V2 packet.
+pub fn encrypt_message(cipher: &mut OutboundCipher, message: &NetworkMessage) -> Vec<u8> {
+    cipher.encrypt_to_vec(&encode_message(message), PacketType::Genuine, None)
+}
+
+/// Read the command of extended-format contents (after the `0x00` marker), following
+/// Dash Core: printable ASCII up to the first NUL, and only NULs after it.
+fn extended_command(field: &[u8]) -> Option<&str> {
+    let len = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+    let (command, padding) = field.split_at(len);
+    if command.iter().any(|&b| !(b' '..=0x7f).contains(&b)) || padding.iter().any(|&b| b != 0) {
+        return None;
+    }
+    std::str::from_utf8(command).ok()
+}
+
+/// Decode a V2 plaintext into a NetworkMessage.
+///
+/// `plaintext` is as returned by the bip324 cipher: the crate's packet-type header
+/// byte, followed by the short ID (or `0x00` + 12-byte command), followed by the
+/// payload.
+///
+/// Returns `Ok(None)` for contents Dash Core would drop without disconnecting: an
+/// unassigned short ID (a newer peer may use IDs we don't know yet) or a malformed
+/// command. A known command whose payload doesn't decode is an error.
+fn decode_message(plaintext: &[u8]) -> Result<Option<NetworkMessage>, encode::Error> {
+    let Some((&message_id, rest)) = plaintext.get(NUM_HEADER_BYTES..).and_then(<[u8]>::split_first)
+    else {
+        return Ok(None);
+    };
+
+    let (cmd, payload) = if message_id == MSG_ID_EXTENDED {
+        if rest.len() < COMMAND_LEN {
+            return Ok(None);
+        }
+        let (field, payload) = rest.split_at(COMMAND_LEN);
+        match extended_command(field) {
+            Some(cmd) => (cmd, payload),
+            None => return Ok(None),
+        }
+    } else {
+        match short_id_to_command(message_id) {
+            Some(cmd) => (cmd, rest),
+            None => {
+                tracing::debug!("V2: dropping message with unknown short ID {}", message_id);
+                return Ok(None);
+            }
+        }
+    };
+
+    NetworkMessage::consensus_decode_payload(cmd, payload).map(Some)
+}
+
+/// Frames V2 packets off a byte stream, yielding each decoded message with the
+/// number of bytes its packet took on the wire.
+///
+/// Decoy packets and messages [`decode_message`] drops are skipped. Any error leaves
+/// the inbound cipher unusable, so the connection must be closed.
+pub struct V2Decoder {
+    magic: u32,
+    cipher: InboundCipher,
+    /// Decrypted length of the packet being buffered. `decrypt_packet_len` advances
+    /// the cipher, so it must run exactly once per packet even across partial reads.
+    packet_len: Option<usize>,
+}
+
+impl V2Decoder {
+    /// `magic` is stamped on the decoded messages so they look like V1 frames to callers.
+    pub fn new(magic: u32, cipher: InboundCipher) -> Self {
         Self {
-            stream,
+            magic,
             cipher,
-            session_id,
-            receive_buffer,
-            peer_address,
-            bytes_sent: 0,
-            bytes_received,
-            connected: true,
-            pending_packet_len: None,
-        }
-    }
-
-    /// Get the session ID for optional out-of-band MitM verification.
-    pub fn session_id(&self) -> &[u8; 32] {
-        &self.session_id
-    }
-
-    /// Encode a NetworkMessage into V2 plaintext format.
-    ///
-    /// Format:
-    /// - Short format (common messages): `[short_id] + payload`
-    /// - Extended format: `[0x00] + 12-byte null-padded command + payload`
-    ///
-    /// The bip324 cipher prepends its own packet-type header byte on encryption, so
-    /// this returns only the contents that follow it.
-    fn encode_message(message: &NetworkMessage) -> Vec<u8> {
-        // Serialize the message payload using dashcore's canonical serialization
-        let payload = message.consensus_encode_payload();
-
-        if let Some(short_id) = network_message_to_short_id(message) {
-            let mut plaintext = Vec::with_capacity(1 + payload.len());
-            plaintext.push(short_id);
-            plaintext.extend_from_slice(&payload);
-            plaintext
-        } else {
-            // Use `command()` rather than `cmd()`: the latter returns the static string
-            // "unknown" for `NetworkMessage::Unknown`, which would discard the real command
-            // name on the wire. `CommandString` is at most 12 bytes by construction.
-            let command = message.command();
-            let cmd_bytes = command.as_ref().as_bytes();
-            let mut command_field = [0u8; COMMAND_LEN];
-            let copy_len = std::cmp::min(cmd_bytes.len(), COMMAND_LEN);
-            command_field[..copy_len].copy_from_slice(&cmd_bytes[..copy_len]);
-
-            let mut plaintext = Vec::with_capacity(1 + COMMAND_LEN + payload.len());
-            plaintext.push(MSG_ID_EXTENDED);
-            plaintext.extend_from_slice(&command_field);
-            plaintext.extend_from_slice(&payload);
-            plaintext
-        }
-    }
-
-    /// Decode a V2 plaintext into a NetworkMessage.
-    ///
-    /// # Arguments
-    /// * `plaintext` - Decrypted plaintext as returned by the bip324 cipher: the crate's
-    ///   packet-type header byte, followed by the short ID (or `0x00` + 12-byte command),
-    ///   followed by the payload.
-    fn decode_message(plaintext: &[u8]) -> NetworkResult<NetworkMessage> {
-        // The bip324 crate prepends a "packet type" byte (0 for Genuine, 128 for Decoy)
-        // Our actual message ID/content starts at byte 1
-        if plaintext.len() < 2 {
-            return Err(NetworkError::ProtocolError("V2 message too short".to_string()));
-        }
-
-        // Byte 0 is the crate's packet type indicator (always 0 for genuine messages)
-        // Byte 1 is our actual message ID (short ID or 0 for extended format)
-        let message_id = plaintext[1];
-
-        // Trace: log first bytes of decrypted plaintext (verbose, for debugging only)
-        let preview_len = std::cmp::min(20, plaintext.len());
-        tracing::trace!(
-            "V2Transport: Decrypted message preview ({} bytes total): {:02x?}, message_id={}",
-            plaintext.len(),
-            &plaintext[..preview_len],
-            message_id
-        );
-
-        let (cmd, payload) = if message_id == MSG_ID_EXTENDED {
-            // Extended format: 12-byte command + payload (starting at byte 2)
-            if plaintext.len() < 2 + COMMAND_LEN {
-                return Err(NetworkError::ProtocolError(
-                    "V2 extended message too short".to_string(),
-                ));
-            }
-
-            let command_bytes = &plaintext[2..2 + COMMAND_LEN];
-            let payload = &plaintext[2 + COMMAND_LEN..];
-
-            // Find null terminator in command
-            let cmd_end = command_bytes.iter().position(|&b| b == 0).unwrap_or(COMMAND_LEN);
-            let cmd = std::str::from_utf8(&command_bytes[..cmd_end]).map_err(|_| {
-                NetworkError::ProtocolError("Invalid UTF-8 in V2 command".to_string())
-            })?;
-
-            tracing::trace!(
-                "V2Transport: Decoding extended format message '{}' ({} bytes payload)",
-                cmd,
-                payload.len()
-            );
-
-            (cmd, payload)
-        } else {
-            // Short format: message_id is the short message ID, payload starts at byte 2
-            let payload = &plaintext[2..];
-
-            let cmd = short_id_to_command(message_id).ok_or_else(|| {
-                NetworkError::ProtocolError(format!("Unknown V2 short message ID: {}", message_id))
-            })?;
-
-            tracing::trace!(
-                "V2Transport: Decoding short format message '{}' (ID={}, {} bytes payload)",
-                cmd,
-                message_id,
-                payload.len()
-            );
-
-            (cmd, payload)
-        };
-
-        // Decode the NetworkMessage using dashcore's canonical decoder
-        NetworkMessage::consensus_decode_payload(cmd, payload)
-            .map_err(|e| NetworkError::ProtocolError(format!("Failed to decode '{}': {}", cmd, e)))
-    }
-
-    /// Helper function to read some bytes into the receive buffer.
-    async fn read_some(&mut self) -> std::io::Result<usize> {
-        let mut tmp = [0u8; READ_BUFFER_SIZE];
-        match self.stream.read(&mut tmp).await {
-            Ok(0) => Ok(0),
-            Ok(n) => {
-                self.receive_buffer.extend_from_slice(&tmp[..n]);
-                self.bytes_received += n as u64;
-                Ok(n)
-            }
-            Err(e) => Err(e),
+            packet_len: None,
         }
     }
 }
 
-#[async_trait]
-impl Transport for V2Transport {
-    async fn send_message(&mut self, message: NetworkMessage) -> NetworkResult<()> {
-        if !self.connected {
-            return Err(NetworkError::ConnectionFailed("Not connected".to_string()));
-        }
+impl Decoder for V2Decoder {
+    type Item = (RawNetworkMessage, u64);
+    type Error = encode::Error;
 
-        // Encode the message to V2 plaintext format
-        let plaintext = Self::encode_message(&message);
-
-        tracing::debug!(
-            "V2Transport: Encoding message {:?} ({} bytes plaintext) for {}",
-            message.cmd(),
-            plaintext.len(),
-            self.peer_address
-        );
-
-        // Encrypt the message
-        // Note: The bip324 crate handles the header byte internally, but we're
-        // putting our message type in the plaintext, so we use Genuine packet type
-        let encrypted =
-            self.cipher.outbound().encrypt_to_vec(&plaintext, PacketType::Genuine, None);
-
-        // Write the encrypted packet
-        match self.stream.write_all(&encrypted).await {
-            Ok(_) => {
-                // Flush to ensure data is sent immediately
-                if let Err(e) = self.stream.flush().await {
-                    tracing::warn!(
-                        "V2Transport: Failed to flush socket {}: {}",
-                        self.peer_address,
-                        e
-                    );
-                }
-                self.bytes_sent += encrypted.len() as u64;
-                tracing::debug!(
-                    "V2Transport: Sent encrypted message to {}: {:?} ({} bytes)",
-                    self.peer_address,
-                    message.cmd(),
-                    encrypted.len()
-                );
-                Ok(())
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "V2Transport: Disconnecting {} due to write error: {}",
-                    self.peer_address,
-                    e
-                );
-                self.connected = false;
-                Err(NetworkError::ConnectionFailed(format!("Write failed: {}", e)))
-            }
-        }
-    }
-
-    async fn receive_message(&mut self) -> NetworkResult<Option<NetworkMessage>> {
-        if !self.connected {
-            return Err(NetworkError::ConnectionFailed("Not connected".to_string()));
-        }
-
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         loop {
-            // Step 1: Ensure we have at least 3 bytes for the length
-            while self.receive_buffer.len() < NUM_LENGTH_BYTES {
-                match self.read_some().await {
-                    Ok(0) => {
-                        tracing::info!(
-                            "V2Transport: Peer {} closed connection (EOF)",
-                            self.peer_address
-                        );
-                        self.connected = false;
-                        return Err(NetworkError::PeerDisconnected);
+            let packet_len = match self.packet_len {
+                Some(len) => len,
+                None => {
+                    let Some(len_bytes) = src.get(..NUM_LENGTH_BYTES) else {
+                        return Ok(None);
+                    };
+                    let len = self
+                        .cipher
+                        .decrypt_packet_len(len_bytes.try_into().expect("3 length bytes"));
+                    if len > MAX_PACKET_LEN {
+                        return Err(encode::Error::ParseFailed("V2 packet exceeds MAX_MSG_SIZE"));
                     }
-                    Ok(_) => {}
-                    Err(ref e)
-                        if e.kind() == std::io::ErrorKind::ConnectionAborted
-                            || e.kind() == std::io::ErrorKind::ConnectionReset =>
-                    {
-                        tracing::info!(
-                            "V2Transport: Peer {} connection reset/aborted",
-                            self.peer_address
-                        );
-                        self.connected = false;
-                        return Err(NetworkError::PeerDisconnected);
-                    }
-                    Err(e) => {
-                        self.connected = false;
-                        return Err(NetworkError::ConnectionFailed(format!("Read failed: {}", e)));
-                    }
+                    self.packet_len = Some(len);
+                    len
                 }
-            }
-
-            // Step 2: Decrypt the length (only if we haven't already for this packet)
-            // IMPORTANT: decrypt_packet_len advances the cipher state, so we must
-            // cache the result if we don't have enough bytes for the full packet yet.
-            let packet_len = if let Some(cached_len) = self.pending_packet_len {
-                cached_len
-            } else {
-                let len_bytes: [u8; NUM_LENGTH_BYTES] =
-                    self.receive_buffer[..NUM_LENGTH_BYTES].try_into().expect("3 bytes for length");
-
-                // Note: decrypt_packet_len returns the length of remaining data to read
-                // (header + contents + tag), NOT just the contents length
-                let decrypted_len = self.cipher.inbound().decrypt_packet_len(len_bytes);
-
-                // Validate packet length
-                if decrypted_len > MAX_MSG_SIZE + 1 + 16 {
-                    // MAX_MSG_SIZE + header + tag. The inbound cipher has already
-                    // advanced past these length bytes, so the session can't recover.
-                    self.connected = false;
-                    return Err(NetworkError::ProtocolError(format!(
-                        "V2 packet too large: {} bytes",
-                        decrypted_len
-                    )));
-                }
-
-                // Cache the length in case we need to return early
-                self.pending_packet_len = Some(decrypted_len);
-                decrypted_len
             };
 
             let total_len = NUM_LENGTH_BYTES + packet_len;
-
-            // Step 3: Ensure we have the complete packet
-            while self.receive_buffer.len() < total_len {
-                match self.read_some().await {
-                    Ok(0) => {
-                        tracing::info!(
-                            "V2Transport: Peer {} closed connection (EOF)",
-                            self.peer_address
-                        );
-                        self.connected = false;
-                        return Err(NetworkError::PeerDisconnected);
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        self.connected = false;
-                        return Err(NetworkError::ConnectionFailed(format!("Read failed: {}", e)));
-                    }
-                }
+            if src.len() < total_len {
+                src.reserve(total_len - src.len());
+                return Ok(None);
             }
+            let packet = src.split_to(total_len);
+            self.packet_len = None;
 
-            // Step 4: Extract and decrypt the packet (excluding length bytes which are already consumed)
-            let ciphertext = &self.receive_buffer[NUM_LENGTH_BYTES..total_len];
-
-            let (packet_type, plaintext) =
-                match self.cipher.inbound().decrypt_to_vec(ciphertext, None) {
-                    Ok(decrypted) => decrypted,
-                    Err(e) => {
-                        // An authentication failure leaves the cipher state unusable.
-                        self.connected = false;
-                        return Err(NetworkError::V2DecryptionFailed(format!(
-                            "Decryption failed: {}",
-                            e
-                        )));
-                    }
-                };
-
-            // Consume the packet from the buffer and clear cached length
-            self.receive_buffer.drain(0..total_len);
-            self.pending_packet_len = None;
-
-            // Step 5: Handle decoy packets
+            let ciphertext = &packet[NUM_LENGTH_BYTES..];
+            let mut plaintext = vec![0u8; ciphertext.len().saturating_sub(TAG_LEN)];
+            let packet_type = self
+                .cipher
+                .decrypt(ciphertext, &mut plaintext, None)
+                .map_err(|_| encode::Error::ParseFailed("V2 packet failed authentication"))?;
             if packet_type == PacketType::Decoy {
-                tracing::debug!(
-                    "V2Transport: Received decoy packet from {}, ignoring",
-                    self.peer_address
-                );
-                continue; // Read next packet
+                continue;
             }
-
-            // Step 6: Decode the message
-            // Note: plaintext includes the header byte at position 0
-            let message = Self::decode_message(&plaintext).map_err(|e| {
-                tracing::warn!(
-                    "V2Transport: Failed to decode message from {}: {}",
-                    self.peer_address,
-                    e
-                );
-                e
-            })?;
-
-            tracing::trace!(
-                "V2Transport: Successfully decoded message from {}: {:?}",
-                self.peer_address,
-                message.cmd()
-            );
-
-            return Ok(Some(message));
+            if let Some(payload) = decode_message(&plaintext)? {
+                let raw = RawNetworkMessage {
+                    magic: self.magic,
+                    payload,
+                };
+                return Ok(Some((raw, total_len as u64)));
+            }
         }
-    }
-
-    fn is_connected(&self) -> bool {
-        self.connected
-    }
-
-    fn protocol_version(&self) -> u8 {
-        2
-    }
-
-    fn bytes_sent(&self) -> u64 {
-        self.bytes_sent
-    }
-
-    fn bytes_received(&self) -> u64 {
-        self.bytes_received
-    }
-
-    async fn shutdown(&mut self) -> NetworkResult<()> {
-        if self.connected {
-            let _ = self.stream.shutdown().await;
-            self.connected = false;
-            tracing::info!("V2Transport: Shutdown connection to {}", self.peer_address);
-        }
-        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dashcore::network::message::CommandString;
 
-    #[test]
-    fn test_command_len() {
-        // Verify command length constant
-        assert_eq!(COMMAND_LEN, 12);
+    /// Decode contents as the bip324 cipher returns them, behind a genuine header byte.
+    fn decode_contents(contents: &[u8]) -> Result<Option<NetworkMessage>, encode::Error> {
+        let mut plaintext = vec![0u8];
+        plaintext.extend_from_slice(contents);
+        decode_message(&plaintext)
     }
 
     #[test]
-    fn test_short_id_encoding() {
-        // Verify ping/pong use short IDs
-        assert!(network_message_to_short_id(&NetworkMessage::Ping(0)).is_some());
-        assert!(network_message_to_short_id(&NetworkMessage::Pong(0)).is_some());
-    }
-
-    /// Helper: Encode a message with the real transport encoder.
-    fn test_encode_v2_message(message: &NetworkMessage) -> Vec<u8> {
-        V2Transport::encode_message(message)
-    }
-
-    /// Helper: Decode a V2 message with the real transport decoder, prepending the
-    /// packet-type header byte (0 = genuine) exactly as the bip324 cipher does.
-    fn test_decode_v2_message(plaintext: &[u8]) -> Result<NetworkMessage, NetworkError> {
-        let mut with_header = vec![0u8];
-        with_header.extend_from_slice(plaintext);
-        V2Transport::decode_message(&with_header)
-    }
-
-    #[test]
-    fn test_decode_rejects_truncated_input() {
+    fn test_decode_drops_what_dash_core_drops() {
         // Only the crate header byte, no message ID
-        assert!(matches!(V2Transport::decode_message(&[0u8]), Err(NetworkError::ProtocolError(_))));
+        assert!(matches!(decode_message(&[0u8]), Ok(None)));
         // Extended marker without a full 12-byte command
-        assert!(matches!(
-            test_decode_v2_message(&[MSG_ID_EXTENDED, b'v', b'e', b'r']),
-            Err(NetworkError::ProtocolError(_))
-        ));
-        // Reserved / unassigned short ID
-        assert!(matches!(
-            test_decode_v2_message(&[29u8, 0, 0]),
-            Err(NetworkError::ProtocolError(_))
-        ));
+        assert!(matches!(decode_contents(&[MSG_ID_EXTENDED, b'v', b'e', b'r']), Ok(None)));
+        // Unassigned short ID
+        assert!(matches!(decode_contents(&[29u8, 0, 0]), Ok(None)));
+        // Non-printable command, and a non-NUL byte after the padding starts
+        let mut bad = [0u8; 1 + COMMAND_LEN];
+        bad[1] = 0x01;
+        assert!(matches!(decode_contents(&bad), Ok(None)));
+        let mut bad = [0u8; 1 + COMMAND_LEN];
+        bad[1..4].copy_from_slice(b"inv");
+        bad[5] = b'x';
+        assert!(matches!(decode_contents(&bad), Ok(None)));
+    }
+
+    #[test]
+    fn test_decode_rejects_malformed_payload() {
+        let ping = network_message_to_short_id(&NetworkMessage::Ping(0)).unwrap();
+        // A ping nonce is 8 bytes.
+        assert!(decode_contents(&[ping, 1, 2, 3]).is_err());
     }
 
     #[test]
     fn test_unknown_message_preserves_command_name() {
-        use dashcore::network::message::CommandString;
-
         let original = NetworkMessage::Unknown {
             command: CommandString::try_from_static("custom").unwrap(),
             payload: vec![0xaa, 0xbb, 0xcc, 0xdd],
         };
 
-        let encoded = test_encode_v2_message(&original);
+        let encoded = encode_message(&original);
 
         // Unknown messages have no short ID, so they must use the extended format
         assert_eq!(encoded[0], MSG_ID_EXTENDED);
@@ -493,13 +244,12 @@ mod tests {
         // Payload is the raw bytes with no length prefix
         assert_eq!(&encoded[1 + COMMAND_LEN..], &[0xaa, 0xbb, 0xcc, 0xdd]);
 
-        let decoded = test_decode_v2_message(&encoded).expect("Failed to decode unknown message");
-        assert_eq!(original, decoded, "Unknown message round-trip failed");
+        let decoded = decode_contents(&encoded).unwrap();
+        assert_eq!(Some(original), decoded, "Unknown message round-trip failed");
     }
 
     #[test]
     fn test_short_id_round_trip_common_messages() {
-        // Messages that should use short format (1 byte ID)
         let short_format_messages: Vec<NetworkMessage> = vec![
             NetworkMessage::Ping(0x1234567890abcdef),
             NetworkMessage::Pong(0xfedcba0987654321),
@@ -512,9 +262,8 @@ mod tests {
             NetworkMessage::SendDsq(true),
         ];
 
-        for original in &short_format_messages {
-            // Verify it uses short format (first byte is the short ID, not 0x00)
-            let encoded = test_encode_v2_message(original);
+        for original in short_format_messages {
+            let encoded = encode_message(&original);
             assert_ne!(
                 encoded[0],
                 MSG_ID_EXTENDED,
@@ -522,10 +271,14 @@ mod tests {
                 original.cmd()
             );
 
-            // Verify round-trip
-            let decoded = test_decode_v2_message(&encoded)
+            let decoded = decode_contents(&encoded)
                 .unwrap_or_else(|e| panic!("Failed to decode {}: {}", original.cmd(), e));
-            assert_eq!(original, &decoded, "Round-trip failed for {} message", original.cmd());
+            assert_eq!(
+                Some(&original),
+                decoded.as_ref(),
+                "Round-trip failed for {}",
+                original.cmd()
+            );
         }
     }
 
@@ -558,18 +311,14 @@ mod tests {
         // Version message should use extended format (no short ID)
         let original = NetworkMessage::Version(version);
 
-        let encoded = test_encode_v2_message(&original);
-
-        // Verify extended format: first byte should be 0x00
+        let encoded = encode_message(&original);
         assert_eq!(encoded[0], MSG_ID_EXTENDED, "Version message should use extended format");
 
-        // Verify command is in bytes 1-12
         let cmd_bytes = &encoded[1..1 + COMMAND_LEN];
         let cmd = std::str::from_utf8(cmd_bytes).unwrap().trim_end_matches('\0');
         assert_eq!(cmd, "version", "Command should be 'version'");
 
-        // Verify round-trip
-        let decoded = test_decode_v2_message(&encoded).expect("Failed to decode version message");
-        assert_eq!(original, decoded, "Version round-trip failed");
+        let decoded = decode_contents(&encoded).expect("Failed to decode version message");
+        assert_eq!(Some(original), decoded, "Version round-trip failed");
     }
 }
