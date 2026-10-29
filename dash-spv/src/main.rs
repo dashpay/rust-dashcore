@@ -122,9 +122,12 @@ struct Args {
 
     /// Wallet birth height. Header, filter-header and filter sync anchor at the
     /// nearest checkpoint at or before this height instead of genesis, unless
-    /// `--start-height` sets the anchor explicitly. Use 'now'
-    /// for the latest checkpoint (a brand-new wallet with no prior history).
-    /// Defaults to genesis (0) so an unspecified wallet still does a full scan.
+    /// `--start-height` sets the anchor explicitly. Use 'now' for the latest
+    /// checkpoint (a brand-new wallet with no prior history). 'now' moves forward
+    /// whenever the bundled checkpoints are refreshed, so pass the logged numeric
+    /// height on later runs against the same data directory. Defaults to 0, which
+    /// scans every block an HD wallet can have used: on mainnet sync still anchors
+    /// at the checkpoint below HD wallet activation rather than at genesis.
     #[arg(long, value_name = "HEIGHT")]
     birth_height: Option<String>,
 
@@ -260,6 +263,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve the wallet birth height, mapping 'now' to the latest checkpoint.
     let birth_height = resolve_birth_height(&args.birth_height, config.network)?;
+    tracing::info!("Wallet birth height: {}", birth_height);
 
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
@@ -471,6 +475,9 @@ mod tests {
             resolve_birth_height(&Some("latest".to_string()), Network::Mainnet).unwrap(),
             latest
         );
+
+        // Without bundled checkpoints 'now' falls back to genesis, the only valid anchor.
+        assert_eq!(resolve_birth_height(&Some("now".to_string()), Network::Devnet).unwrap(), 0);
 
         // Non-numeric junk is rejected.
         assert!(resolve_birth_height(&Some("abc".to_string()), Network::Mainnet).is_err());
