@@ -29,6 +29,7 @@ pub struct MockNetworkManager {
     sent_to: Mutex<Vec<(SocketAddr, NetworkMessage)>>,
     broadcasts: Mutex<Vec<NetworkMessage>>,
     released: Mutex<Vec<RequestKey>>,
+    banned: Mutex<Vec<SocketAddr>>,
     /// Mirrors the broker's de-duplication, so a manager that re-declares a request
     /// it never correlated fails here instead of hanging against a real broker.
     in_play: Mutex<HashSet<RequestKey>>,
@@ -52,6 +53,7 @@ impl MockNetworkManager {
             sent_to: Mutex::new(Vec::new()),
             broadcasts: Mutex::new(Vec::new()),
             released: Mutex::new(Vec::new()),
+            banned: Mutex::new(Vec::new()),
             in_play: Mutex::new(HashSet::new()),
             subscribers: Mutex::new(Vec::new()),
             events_tx: RwLock::new(events_tx),
@@ -80,6 +82,10 @@ impl MockNetworkManager {
 
     pub async fn released_keys(&self) -> Vec<RequestKey> {
         self.released.lock().await.clone()
+    }
+
+    pub async fn banned_peers(&self) -> Vec<SocketAddr> {
+        self.banned.lock().await.clone()
     }
 
     /// Clears the recorders but not the in-play requests, which stay de-duplicated
@@ -193,7 +199,9 @@ impl NetworkManager for MockNetworkManager {
         self.connected.load(Ordering::SeqCst)
     }
 
-    async fn ban_peer(&self, _addr: SocketAddr) {}
+    async fn ban_peer(&self, addr: SocketAddr) {
+        self.banned.lock().await.push(addr);
+    }
 }
 
 #[cfg(test)]

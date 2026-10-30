@@ -71,6 +71,34 @@ pub enum FeedError<E> {
     Refused(#[from] E),
 }
 
+impl FeedError<SmlError> {
+    /// Whether the refusal proves the peer sent a bad diff. Only a diff that contradicts itself
+    /// or its block header does. Any other refusal can come from our side, such as a missing or
+    /// stale base list, a bug, or network-specific activation heights.
+    pub(crate) fn blames_peer(&self) -> bool {
+        match self {
+            FeedError::Refused(
+                SmlError::InvalidCoinbaseProof(_) | SmlError::InvalidIndexInSignatureSet(_),
+            ) => true,
+            // `IncompleteMnListDiff` also fires on honest diffs: a list from genesis to a block
+            // before any masternode registered is empty, and Core sends it that way.
+            FeedError::HeaderStorage(_)
+            | FeedError::Refused(
+                SmlError::BlockHashLookupFailed(_)
+                | SmlError::MissingStartMasternodeList(_)
+                | SmlError::BaseBlockHashMismatch {
+                    ..
+                }
+                | SmlError::BaseBlockNotGenesis(_)
+                | SmlError::CorruptedCodeExecution(_)
+                | SmlError::IncompleteMnListDiff
+                | SmlError::IncompleteSignatureSet
+                | SmlError::CoinbaseCommitmentMismatch(_),
+            ) => false,
+        }
+    }
+}
+
 impl From<StorageError> for FeedError<SmlError> {
     fn from(error: StorageError) -> Self {
         FeedError::HeaderStorage(error)
@@ -2964,5 +2992,22 @@ mod tests {
                 "at {next}: an invalid quorum is never served"
             );
         }
+    }
+
+    #[test_case(FeedError::HeaderStorage(StorageError::ReadFailed("unreadable".into())) => false; "header storage")]
+    #[test_case(SmlError::BlockHashLookupFailed(BlockHash::dummy(1)).into() => false; "block hash lookup failed")]
+    #[test_case(SmlError::MissingStartMasternodeList(BlockHash::dummy(1)).into() => false; "missing start list")]
+    #[test_case(SmlError::BaseBlockHashMismatch { expected: BlockHash::dummy(1), found: BlockHash::dummy(2) }.into() => false; "base block hash mismatch")]
+    #[test_case(SmlError::BaseBlockNotGenesis(BlockHash::dummy(1)).into() => false; "base block not genesis")]
+    #[test_case(SmlError::CorruptedCodeExecution("bug".into()).into() => false; "corrupted code execution")]
+    #[test_case(SmlError::InvalidCoinbaseProof(BlockHash::dummy(1)).into() => true; "invalid coinbase proof")]
+    #[test_case(SmlError::InvalidIndexInSignatureSet(3).into() => true; "invalid signature set index")]
+    #[test_case(SmlError::IncompleteMnListDiff.into() => false; "incomplete diff")]
+    #[test_case(SmlError::IncompleteSignatureSet.into() => false; "incomplete signature set")]
+    #[test_case(SmlError::CoinbaseCommitmentMismatch(BlockHash::dummy(1)).into() => false; "coinbase commitment mismatch")]
+    fn a_refused_diff_is_blamed_only_when_our_state_cannot_explain_it(
+        error: FeedError<SmlError>,
+    ) -> bool {
+        error.blames_peer()
     }
 }

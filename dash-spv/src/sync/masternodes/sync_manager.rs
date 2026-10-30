@@ -83,7 +83,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
     async fn handle_message(
         &mut self,
-        _peer: SocketAddr,
+        peer: SocketAddr,
         msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
@@ -185,6 +185,18 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     Ok(()) => {
                         tracing::debug!("Applied MnListDiff for {}", diff.block_hash);
                         DiffOutcome::Applied
+                    }
+                    Err(e) if e.blames_peer() => {
+                        drop(engine);
+                        // Kept wanted. The ban closes the connection and the broker sends
+                        // the request to another peer.
+                        tracing::warn!(
+                            "Banning {} for an MnListDiff the engine refused: {}",
+                            peer,
+                            e
+                        );
+                        network.ban_peer(peer).await;
+                        return Err(SyncError::MasternodeSyncFailed(e.to_string()));
                     }
                     Err(e) => {
                         tracing::warn!("Giving up MnListDiff for {}: {}", diff.block_hash, e);
@@ -534,7 +546,7 @@ mod tests {
         BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, StorageManager,
     };
     use crate::sync::{MasternodesManager, SyncEvent, SyncManager, SyncState};
-    use crate::test_utils::MockNetworkManager;
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
     use crate::types::HashedBlockHeader;
     use crate::SyncError;
     use dashcore::block::Header;
@@ -551,6 +563,7 @@ mod tests {
     use dashcore::{BlockHash, Network, QuorumHash};
     use dashcore_hashes::Hash;
     use std::collections::BTreeMap;
+    use std::net::SocketAddr;
     use std::sync::Arc;
     use std::time::Duration;
     use std::time::Instant;
@@ -850,7 +863,15 @@ mod tests {
         network: &Arc<dyn NetworkManager>,
         diff: MnListDiff,
     ) -> Vec<SyncEvent> {
-        let peer = "127.0.0.1:19999".parse().unwrap();
+        deliver_from(manager, network, test_socket_address(1), diff).await
+    }
+
+    async fn deliver_from(
+        manager: &mut MasternodesManager<PersistentBlockHeaderStorage>,
+        network: &Arc<dyn NetworkManager>,
+        peer: SocketAddr,
+        diff: MnListDiff,
+    ) -> Vec<SyncEvent> {
         manager
             .handle_message(peer, NetworkMessage::MnListDiff(Box::new(diff)).into(), network)
             .await
@@ -919,10 +940,11 @@ mod tests {
         assert!(diff_requests(&mock).await.is_empty(), "nothing more to fetch");
     }
 
-    /// A tip update the engine refuses leaves the state unchanged, so it
-    /// publishes nothing and asks for no work-block list.
+    /// A refused tip update changes nothing, so it publishes nothing and asks for no work-block
+    /// list. A missing ChainLock signature can come from our own activation heights, so the
+    /// update is given up without banning the peer.
     #[tokio::test]
-    async fn a_refused_tip_update_is_given_up() {
+    async fn a_refused_tip_update_is_given_up_without_a_ban() {
         let (mut manager, engine, network, mock, tip_update, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         let target = hashes[TIP as usize + 1];
@@ -937,13 +959,62 @@ mod tests {
         assert!(events.is_empty(), "a given-up tip update publishes nothing, got {events:?}");
         assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target)]);
         assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
-        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
-        assert_eq!(manager.sync_state.given_up_tip.map(|(tip, _)| tip), Some(target));
         assert!(diff_requests(&mock).await.is_empty(), "a refused tip update asks for nothing");
+        assert!(mock.banned_peers().await.is_empty(), "the peer is not proven wrong");
     }
 
-    /// A tip update the engine cannot apply, here for a base list it no longer
-    /// holds, is given up. It is not asked for again on every tick, only once
+    /// A work-block list with a ChainLock signature for a quorum it does not contain contradicts
+    /// itself, so its peer is banned. The list stays wanted, and another peer's answer completes
+    /// the tip update.
+    #[tokio::test]
+    async fn a_work_block_list_that_contradicts_itself_bans_its_peer() {
+        let (mut manager, _engine, network, mock, tip_update, _hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        deliver(&mut manager, &network, tip_update).await;
+        let (base_block_hash, block_hash) =
+            *diff_requests(&mock).await.first().expect("the work-block list is asked for");
+        let contradictory = MnListDiff {
+            base_block_hash,
+            block_hash,
+            quorums_chainlock_signatures: vec![QuorumCLSigObject {
+                signature: BLSSignature::from([2; 96]),
+                index_set: vec![0],
+            }],
+            ..MnListDiff::dummy_between(0, 0)
+        };
+
+        let result = manager
+            .handle_message(
+                test_socket_address(1),
+                NetworkMessage::MnListDiff(Box::new(contradictory)).into(),
+                &network,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::MasternodeSyncFailed(_))), "got {result:?}");
+        assert_eq!(mock.banned_peers().await, vec![test_socket_address(1)]);
+        assert!(
+            !mock.released_keys().await.contains(&RequestKey::MnListDiff(block_hash)),
+            "the work-block list must stay at the broker"
+        );
+
+        let honest = MnListDiff {
+            base_block_hash,
+            block_hash,
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let events = deliver_from(&mut manager, &network, test_socket_address(2), honest).await;
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated { height, .. }] if *height == TIP + 1
+            ),
+            "the honest answer completes the tip update, got {events:?}"
+        );
+    }
+
+    /// A tip update that fails on our side, here because the engine dropped its base list, is
+    /// given up without blaming the peer. It is not asked for again on every tick, only once
     /// the header tip moves.
     #[tokio::test]
     async fn a_tip_update_given_up_is_not_asked_again_until_the_tip_moves() {
@@ -963,14 +1034,8 @@ mod tests {
             ..MnListDiff::dummy_between(0, 0)
         };
 
-        let events = deliver(&mut manager, &network, tip_update).await;
-
-        assert!(events.is_empty(), "a given-up tip update publishes nothing, got {events:?}");
-        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
-        assert_eq!(
-            mock.released_keys().await,
-            vec![RequestKey::MnListDiff(hashes[TIP as usize + 1])]
-        );
+        deliver(&mut manager, &network, tip_update).await;
+        assert!(mock.banned_peers().await.is_empty(), "a gap of ours is not the peer's fault");
 
         manager.tick(&network).await.unwrap();
         assert!(diff_requests(&mock).await.is_empty(), "the given-up tip is not asked again");
@@ -1052,6 +1117,7 @@ mod tests {
             "the tip update completes once its work-block list is given up, got {events:?}"
         );
         assert!(mock.released_keys().await.contains(&RequestKey::MnListDiff(work_target)));
+        assert!(mock.banned_peers().await.is_empty(), "silence is not a refusal");
         assert_eq!(manager.progress.diffs_processed(), 1, "a silent minute is not progress");
 
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
