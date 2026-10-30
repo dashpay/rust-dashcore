@@ -144,12 +144,15 @@ pub(super) async fn wait_for_wallet_synced(
     if synced >= target {
         return;
     }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let deadline = tokio::time::Instant::now() + SYNC_TIMEOUT;
     loop {
         let recv = tokio::time::timeout_at(deadline, events.recv()).await;
         match recv {
             Err(_) => {
-                panic!("wallet did not reach synced_height {} within 30s, got {}", target, synced)
+                panic!(
+                    "wallet did not reach synced_height {} within {:?}, got {}",
+                    target, SYNC_TIMEOUT, synced
+                )
             }
             Ok(Err(_)) => {
                 panic!("wallet event channel error before reaching synced_height {}", target);
