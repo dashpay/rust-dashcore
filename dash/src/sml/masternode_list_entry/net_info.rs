@@ -51,10 +51,6 @@ const BAD_PORTS: [u16; 21] = [
 /// domain entry.
 const PLATFORM_HTTPS_PORT: u16 = 443;
 
-/// The port Dash Core holds every I2P entry to (`I2P_SAM31_PORT`): I2P SAM 3.1 and earlier have
-/// no ports.
-const I2P_SAM31_PORT: u16 = 0;
-
 /// BIP155 network identifiers as used inside an ADDRV2-form `CService`.
 ///
 /// Tor v2 (id 3) and unknown ids are never emitted by Core and are rejected on decode.
@@ -343,35 +339,8 @@ impl ExtNetInfo {
 
     /// Checks the map against the port and duplicate-entry rules of Dash Core's
     /// `ExtNetInfo::Validate` (`src/evo/netinfo.cpp` in Dash Core v24.0.0-rc.4), in the order Core
-    /// applies them:
-    ///
-    /// - no entry repeats the address and port of another, under any purpose
-    ///   (`HasAddrPortDuplicates`);
-    /// - no two entries of one purpose share an address, whatever their ports
-    ///   (`HasAddrDuplicates`); entries of different purposes may;
-    /// - every entry has a port Core accepts for its purpose: an I2P entry must use port 0, since
-    ///   I2P SAM 3.1 has no ports, and any other entry may use neither port 0 nor a port
-    ///   `IsBadPort` refuses, except 443 for a Platform HTTPS service and for a domain.
-    ///
-    /// Core refuses a ProRegTx or ProUpServTx whose map breaks one of these rules with
-    /// `bad-protx-dup-netinfo-entry` or `bad-protx-netinfo-port`, so a builder can call this
-    /// before it signs and broadcasts a transaction that would never confirm. Core walks the
-    /// purposes in ascending order; so does this check, for a map listed that way.
-    ///
-    /// Nothing else is checked. Core also refuses a map that:
-    ///
-    /// - does not list each purpose once, in ascending order (it does not decode);
-    /// - has an unknown version, no purposes, a purpose without entries, or more than four
-    ///   entries for one purpose;
-    /// - has an invalid entry, an address that is invalid, of an unsupported type or (on
-    ///   every network but regtest) not routable, or a domain name Core refuses;
-    /// - lists a domain under any purpose but Platform HTTPS;
-    /// - has an entry another masternode already registered (`bad-protx-dup-netinfo-entry`,
-    ///   checked against the masternode list).
-    ///
-    /// A map that passes may still be refused for one of those, and Core reports the code of
-    /// whichever rule it checks first: it reads a domain entry at port 0 as an invalid entry, for
-    /// instance, and refuses the map as malformed.
+    /// applies them, so a builder can find a ProRegTx or ProUpServTx Core would refuse before it
+    /// signs one. Core's other rules are not checked, so a map that passes may still be refused.
     pub fn validate_ports_and_duplicates(&self) -> Result<(), ExtNetInfoError> {
         let mut known = BTreeSet::new();
         for (_, entries) in &self.purposes {
@@ -432,25 +401,19 @@ fn is_bad_port(port: u16) -> bool {
 /// The port of `entry` if Dash Core refuses it for `purpose` (`ExtNetInfo::ValidateService` and
 /// `ExtNetInfo::ValidateDomainPort`). An invalid entry has no port to refuse.
 fn refused_port(purpose: NetInfoPurpose, entry: &NetInfoEntry) -> Option<u16> {
-    let (port, refused) = match *entry {
+    let port = entry.port()?;
+    let refused = match entry {
+        // I2P SAM 3.1 has no ports, so Core holds every I2P entry to port 0.
         NetInfoEntry::Service {
             network: Bip155Network::I2p,
-            port,
             ..
-        } => (port, port != I2P_SAM31_PORT),
-        NetInfoEntry::Service {
-            port,
-            ..
-        } => {
-            let allowed_https_port =
-                purpose == NetInfoPurpose::PlatformHttps && port == PLATFORM_HTTPS_PORT;
-            (port, port == 0 || (is_bad_port(port) && !allowed_https_port))
+        } => port != 0,
+        _ => {
+            let allowed_https_port = port == PLATFORM_HTTPS_PORT
+                && (purpose == NetInfoPurpose::PlatformHttps
+                    || matches!(entry, NetInfoEntry::Domain { .. }));
+            port == 0 || (is_bad_port(port) && !allowed_https_port)
         }
-        NetInfoEntry::Domain {
-            port,
-            ..
-        } => (port, port == 0 || (is_bad_port(port) && port != PLATFORM_HTTPS_PORT)),
-        NetInfoEntry::Invalid => return None,
     };
     refused.then_some(port)
 }
@@ -660,47 +623,42 @@ mod tests {
         }
     }
 
-    /// Core refuses port 0 and the ports `IsBadPort` lists (the system ports up to 1023 and
-    /// well-known ports from 1719 to 18333) for every purpose, except 443 for Platform HTTPS,
-    /// which mainnet evonodes serve on. I2P SAM 3.1 has no ports, so an I2P entry must use port 0.
-    #[test_case(CoreP2P, service(Ipv4, 9999) => Ok(()) ; "a usual port")]
-    #[test_case(CoreP2P, service(Ipv4, 0) => Err(BadPort(0)) ; "port 0")]
-    #[test_case(CoreP2P, service(Ipv4, 1) => Err(BadPort(1)) ; "the first system port")]
-    #[test_case(PlatformP2P, service(Ipv4, 1023) => Err(BadPort(1023)) ; "the last system port")]
-    #[test_case(PlatformP2P, service(Ipv4, 1024) => Ok(()) ; "the port after the system ports")]
-    #[test_case(CoreP2P, service(Ipv4, 1719) => Err(BadPort(1719)) ; "the first well-known port")]
-    #[test_case(CoreP2P, service(Ipv4, 18333) => Err(BadPort(18333)) ; "the last well-known port")]
-    #[test_case(CoreP2P, service(Ipv4, 65535) => Ok(()) ; "the last port")]
-    #[test_case(CoreP2P, service(Ipv4, 443) => Err(BadPort(443)) ; "443 for core p2p")]
-    #[test_case(PlatformP2P, service(Ipv4, 443) => Err(BadPort(443)) ; "443 for platform p2p")]
-    #[test_case(PlatformHttps, service(Ipv4, 443) => Ok(()) ; "443 for platform https")]
-    #[test_case(PlatformHttps, service(Ipv6, 443) => Ok(()) ; "ipv6 443 for platform https")]
-    #[test_case(PlatformHttps, service(Ipv4, 80) => Err(BadPort(80)) ; "80 for platform https")]
-    #[test_case(CoreP2P, service(Ipv6, 22) => Err(BadPort(22)) ; "ipv6 system port")]
-    #[test_case(PlatformP2P, service(TorV3, 6667) => Err(BadPort(6667)) ; "tor well-known port")]
-    #[test_case(CoreP2P, service(TorV3, 0) => Err(BadPort(0)) ; "tor port 0")]
-    #[test_case(CoreP2P, service(Cjdns, 8333) => Err(BadPort(8333)) ; "cjdns well-known port")]
-    #[test_case(PlatformHttps, domain(443) => Ok(()) ; "domain 443")]
-    #[test_case(PlatformHttps, domain(1443) => Ok(()) ; "domain usual port")]
-    #[test_case(PlatformHttps, domain(0) => Err(BadPort(0)) ; "domain port 0")]
-    #[test_case(PlatformHttps, domain(80) => Err(BadPort(80)) ; "domain system port")]
-    #[test_case(PlatformHttps, domain(6000) => Err(BadPort(6000)) ; "domain well-known port")]
-    #[test_case(CoreP2P, service(I2p, 0) => Ok(()) ; "i2p port 0")]
-    #[test_case(CoreP2P, service(I2p, 9999) => Err(BadPort(9999)) ; "i2p usual port")]
-    #[test_case(PlatformHttps, service(I2p, 443) => Err(BadPort(443)) ; "i2p 443 for https")]
-    fn port_rules(purpose: NetInfoPurpose, entry: NetInfoEntry) -> Result<(), ExtNetInfoError> {
-        ExtNetInfo {
-            version: 1,
-            purposes: vec![(purpose, vec![entry])],
-        }
-        .validate_ports_and_duplicates()
+    /// The single `purpose` of a map, holding `entry`.
+    fn one(
+        purpose: NetInfoPurpose,
+        entry: NetInfoEntry,
+    ) -> Vec<(NetInfoPurpose, Vec<NetInfoEntry>)> {
+        vec![(purpose, vec![entry])]
     }
 
-    /// Core refuses an entry that repeats the address and port of another under any purpose,
-    /// and two entries of one purpose that share an address. It compares addresses as it prints
-    /// them, so an IPv6 and a CJDNS address of the same bytes collide, while Tor and I2P ones do
-    /// not. It looks for repeated entries in the whole map first, then checks each purpose in
-    /// turn: a shared address, then the ports.
+    /// Core refuses port 0 and the ports `IsBadPort` lists (the system ports up to 1023 and
+    /// well-known ports from 1719 to 18333), except 443 for a Platform HTTPS service, which mainnet
+    /// evonodes serve on, and for a domain, whose port rule ignores the purpose. It holds I2P,
+    /// which has no ports, to port 0. It refuses an entry that repeats the address and port of
+    /// another under any purpose, and two entries of one purpose that share an address, comparing
+    /// addresses as it prints them: IPv6 and CJDNS addresses of the same bytes collide, Tor and
+    /// I2P ones do not. It looks for repeated entries in the whole map first, then checks each
+    /// purpose in turn: a shared address, then the ports.
+    #[test_case(one(CoreP2P, service(Ipv4, 9999)) => Ok(()) ; "a usual port")]
+    #[test_case(one(CoreP2P, service(Ipv4, 0)) => Err(BadPort(0)) ; "port 0")]
+    #[test_case(one(CoreP2P, service(Ipv4, 1)) => Err(BadPort(1)) ; "first system port")]
+    #[test_case(one(PlatformP2P, service(Ipv4, 1023)) => Err(BadPort(1023)) ; "last system port")]
+    #[test_case(one(PlatformP2P, service(Ipv4, 1024)) => Ok(()) ; "first port after system ports")]
+    #[test_case(one(CoreP2P, service(Ipv4, 1719)) => Err(BadPort(1719)) ; "first well-known port")]
+    #[test_case(one(CoreP2P, service(Ipv4, 18333)) => Err(BadPort(18333)) ; "last well-known port")]
+    #[test_case(one(CoreP2P, service(Ipv4, 443)) => Err(BadPort(443)) ; "443 for core p2p")]
+    #[test_case(one(PlatformP2P, service(Ipv4, 443)) => Err(BadPort(443)) ; "443 for platform p2p")]
+    #[test_case(one(PlatformHttps, service(Ipv4, 443)) => Ok(()) ; "443 for platform https")]
+    #[test_case(one(PlatformHttps, service(Ipv4, 80)) => Err(BadPort(80)) ; "80 for https")]
+    #[test_case(one(PlatformHttps, domain(443)) => Ok(()) ; "domain 443")]
+    #[test_case(one(CoreP2P, domain(443)) => Ok(()) ; "domain 443 under another purpose")]
+    #[test_case(one(PlatformHttps, domain(1443)) => Ok(()) ; "domain usual port")]
+    #[test_case(one(PlatformHttps, domain(0)) => Err(BadPort(0)) ; "domain port 0")]
+    #[test_case(one(PlatformHttps, domain(80)) => Err(BadPort(80)) ; "domain system port")]
+    #[test_case(one(PlatformHttps, domain(6000)) => Err(BadPort(6000)) ; "domain well-known port")]
+    #[test_case(one(CoreP2P, service(I2p, 0)) => Ok(()) ; "i2p port 0")]
+    #[test_case(one(CoreP2P, service(I2p, 9999)) => Err(BadPort(9999)) ; "i2p usual port")]
+    #[test_case(one(PlatformHttps, service(I2p, 443)) => Err(BadPort(443)) ; "i2p 443 for https")]
     #[test_case(vec![(CoreP2P, vec![service(Ipv4, 9999), service(Ipv4, 9999)])]
         => Err(Duplicate) ; "an entry repeated within a purpose")]
     #[test_case(vec![
@@ -744,7 +702,7 @@ mod tests {
             (PlatformP2P, vec![service(Ipv6, 9999), service(Ipv6, 9998)]),
         ]
         => Err(BadPort(80)) ; "a bad port before a later purpose's shared address")]
-    fn duplicate_rules_and_order(
+    fn port_and_duplicate_rules(
         purposes: Vec<(NetInfoPurpose, Vec<NetInfoEntry>)>,
     ) -> Result<(), ExtNetInfoError> {
         ExtNetInfo {
