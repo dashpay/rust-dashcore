@@ -797,26 +797,6 @@ impl InputWeightPrediction {
         witness_size: 1 + 1 + 73 + 1 + 33,
     };
 
-    /// Input weight prediction corresponding to spending of taproot output using the key and
-    /// default sighash.
-    ///
-    /// If the input in your transaction uses Taproot key spend you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    pub const P2TR_KEY_DEFAULT_SIGHASH: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 64,
-    };
-
-    /// Input weight prediction corresponding to spending of taproot output using the key and
-    /// **non**-default sighash.
-    ///
-    /// If the input in your transaction uses Taproot key spend you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    pub const P2TR_KEY_NON_DEFAULT_SIGHASH: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 65,
-    };
-
     /// Input weight prediction corresponding to spending of P2WPKH output using [signature
     /// grinding].
     ///

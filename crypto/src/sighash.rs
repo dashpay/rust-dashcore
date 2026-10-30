@@ -6,7 +6,7 @@
 
 //! Signature hash types.
 
-use hashes::{hash_newtype, sha256d, sha256t_hash_newtype};
+use hashes::{hash_newtype, sha256d};
 
 hash_newtype! {
     /// Hash of a transaction according to the legacy signature algorithm.
@@ -18,19 +18,9 @@ hash_newtype! {
     pub struct SegwitV0Sighash(sha256d::Hash);
 }
 
-sha256t_hash_newtype! {
-    pub struct TapSighashTag = hash_str("TapSighash");
-
-    /// Taproot-tagged hash with tag \"TapSighash\".
-    ///
-    /// This hash type is used for computing taproot signature hash."
-    #[hash_newtype(forward)]
-    pub struct TapSighash(_);
-}
-
 pub use bitcoin_crypto::sighash::{
     EcdsaSighashType, InvalidSighashTypeError, NonStandardSighashType, NonStandardSighashTypeError,
-    SighashTypeParseError, TapSighashType,
+    SighashTypeParseError,
 };
 
 /// Splits a sighash flag into the "real" flag and the `SIGHASH_ANYONECANPAY` bit.
@@ -61,21 +51,6 @@ impl SplitAnyoneCanPay for EcdsaSighashType {
                     _ => (All, acp),
                 }
             }
-        }
-    }
-}
-
-impl SplitAnyoneCanPay for TapSighashType {
-    fn split_anyonecanpay_flag(self) -> (TapSighashType, bool) {
-        use TapSighashType::*;
-        match self {
-            Default => (Default, false),
-            All => (All, false),
-            None => (None, false),
-            Single => (Single, false),
-            AllPlusAnyoneCanPay => (All, true),
-            NonePlusAnyoneCanPay => (None, true),
-            SinglePlusAnyoneCanPay => (Single, true),
         }
     }
 }

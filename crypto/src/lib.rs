@@ -22,12 +22,3 @@ pub mod ecdsa;
 pub mod eddsa;
 pub mod key;
 pub mod sighash;
-
-/// Taproot signatures.
-pub mod taproot {
-    pub use bitcoin_crypto::taproot::{
-        ParseSignatureError, SerializedSignature, SigFromSliceError, Signature,
-    };
-
-    pub type Error = SigFromSliceError;
-}

@@ -45,7 +45,6 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
 
-use crate::crypto::key::XOnlyPublicKey;
 use bech32;
 use hashes::{Hash, HashEngine, sha256};
 use internals::write_err;
@@ -59,12 +58,11 @@ use crate::blockdata::opcodes::all::*;
 use crate::blockdata::script::{
     self, Instruction, PushBytes, PushBytesBuf, PushBytesErrorReport, Script, ScriptBuf,
 };
-use crate::crypto::key::{PublicKey, TweakedPublicKey, UntweakedPublicKey};
+use crate::crypto::key::PublicKey;
 use crate::error::ParseIntError;
 use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::network::constants::Network;
 use crate::prelude::*;
-use crate::taproot::{TapNodeHash, TapTweak};
 
 /// Address error.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -201,8 +199,6 @@ pub enum AddressType {
     P2wpkh,
     /// Pay to witness script hash.
     P2wsh,
-    /// Pay to taproot.
-    P2tr,
 }
 
 impl fmt::Display for AddressType {
@@ -212,7 +208,6 @@ impl fmt::Display for AddressType {
             AddressType::P2sh => "p2sh",
             AddressType::P2wpkh => "p2wpkh",
             AddressType::P2wsh => "p2wsh",
-            AddressType::P2tr => "p2tr",
         })
     }
 }
@@ -225,7 +220,6 @@ impl FromStr for AddressType {
             "p2sh" => Ok(AddressType::P2sh),
             "p2wpkh" => Ok(AddressType::P2wpkh),
             "p2wsh" => Ok(AddressType::P2wsh),
-            "p2tr" => Ok(AddressType::P2tr),
             _ => Err(Error::UnknownAddressType(s.to_owned())),
         }
     }
@@ -593,23 +587,6 @@ impl Payload {
         Payload::ScriptHash(ws.script_hash())
     }
 
-    /// Create a pay to taproot payload from untweaked key
-    pub fn p2tr(internal_key: UntweakedPublicKey, merkle_root: Option<TapNodeHash>) -> Payload {
-        let (output_key, _parity) = internal_key.tap_tweak(merkle_root);
-        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.serialize())
-            .expect("taproot output key has len 32 <= 40");
-        Payload::WitnessProgram(prog)
-    }
-
-    /// Create a pay to taproot payload from a pre-tweaked output key.
-    ///
-    /// This method is not recommended for use and [Payload::p2tr()] should be used where possible.
-    pub fn p2tr_tweaked(output_key: TweakedPublicKey) -> Payload {
-        let prog = WitnessProgram::new(WitnessVersion::V1, output_key.serialize())
-            .expect("taproot output key has len 32 <= 40");
-        Payload::WitnessProgram(prog)
-    }
-
     fn is_legacy(&self) -> bool {
         matches!(self, Payload::PubkeyHash(_) | Payload::ScriptHash(_))
     }
@@ -955,7 +932,6 @@ impl<C> bincode::Decode<C> for AddressType {
             1 => Ok(AddressType::P2sh),
             2 => Ok(AddressType::P2wpkh),
             3 => Ok(AddressType::P2wsh),
-            4 => Ok(AddressType::P2tr),
             _ => Err(bincode::error::DecodeError::OtherString("invalid address type".to_string())),
         }
     }
@@ -972,7 +948,6 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for AddressType {
             1 => Ok(AddressType::P2sh),
             2 => Ok(AddressType::P2wpkh),
             3 => Ok(AddressType::P2wsh),
-            4 => Ok(AddressType::P2tr),
             _ => Err(bincode::error::DecodeError::OtherString("invalid address type".to_string())),
         }
     }
@@ -1014,7 +989,6 @@ impl<V: NetworkValidation> Address<V> {
                             "Address creation invariant violation: invalid program length"
                         ),
                     },
-                    WitnessVersion::V1 if prog.program().len() == 32 => Some(AddressType::P2tr),
                     _ => None,
                 }
             }
@@ -1112,22 +1086,6 @@ impl Address {
         Address::new(network, Payload::p2shwsh(script))
     }
 
-    /// Creates a pay to taproot address from an untweaked key.
-    pub fn p2tr(
-        internal_key: UntweakedPublicKey,
-        merkle_root: Option<TapNodeHash>,
-        network: Network,
-    ) -> Address {
-        Address::new(network, Payload::p2tr(internal_key, merkle_root))
-    }
-
-    /// Creates a pay to taproot address from a pre-tweaked output key.
-    ///
-    /// This method is not recommended for use, [`Address::p2tr()`] should be used where possible.
-    pub fn p2tr_tweaked(output_key: TweakedPublicKey, network: Network) -> Address {
-        Address::new(network, Payload::p2tr_tweaked(output_key))
-    }
-
     /// Gets the address type of the address.
     ///
     /// # Returns
@@ -1214,24 +1172,13 @@ impl Address {
     ///
     /// This is determined by directly comparing the address payload with either the
     /// hash of the given public key or the segwit redeem hash generated from the
-    /// given key. For taproot addresses, the supplied key is assumed to be tweaked
+    /// given key.
     pub fn is_related_to_pubkey(&self, pubkey: &PublicKey) -> bool {
         let pubkey_hash = pubkey.pubkey_hash();
         let payload = self.payload().inner_prog_as_bytes();
-        let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
 
         (*pubkey_hash.as_byte_array() == *payload)
-            || (xonly_pubkey.serialize().0 == *payload)
             || (*segwit_redeem_hash(&pubkey_hash).as_byte_array() == *payload)
-    }
-
-    /// Returns true if the supplied xonly public key can be used to derive the address.
-    ///
-    /// This will only work for Taproot addresses. The Public Key is
-    /// assumed to have already been tweaked.
-    pub fn is_related_to_xonly_pubkey(&self, xonly_pubkey: &XOnlyPublicKey) -> bool {
-        let payload = self.payload().inner_prog_as_bytes();
-        payload == xonly_pubkey.serialize().0
     }
 
     /// Returns true if the address creates a particular script
@@ -1451,7 +1398,6 @@ fn segwit_redeem_hash(pubkey_hash: &PubkeyHash) -> crate::hashes::hash160::Hash 
 mod tests {
     use core::str::FromStr;
 
-    use crate::crypto::key::XOnlyPublicKey;
     use hex_conservative::hex;
 
     use super::*;
@@ -1911,22 +1857,6 @@ mod tests {
         test_addr_type(&segwit_payload, SEGWIT_EQUIVALENCE_CLASSES);
     }
 
-    #[test]
-    fn p2tr_from_untweaked() {
-        //Test case from BIP-086
-        let internal_key = XOnlyPublicKey::from_str(
-            "cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115",
-        )
-        .unwrap();
-        let address = Address::p2tr(internal_key, None, Network::Mainnet);
-        assert_eq!(
-            address.to_string(),
-            "ds1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqq9xzlq"
-        );
-        assert_eq!(address.address_type(), Some(AddressType::P2tr));
-        roundtrips(&address);
-    }
-
     #[ignore]
     #[test]
     fn test_is_related_to_pubkey_p2wpkh() {
@@ -2012,54 +1942,6 @@ mod tests {
         assert!(!address.is_related_to_pubkey(&unused_pubkey))
     }
 
-    #[ignore]
-    #[test]
-    fn test_is_related_to_pubkey_p2tr() {
-        let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
-        let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
-        let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
-        let tweaked_pubkey = TweakedPublicKey::dangerous_assume_tweaked(xonly_pubkey);
-        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Mainnet);
-
-        assert_eq!(
-            address,
-            Address::from_str("bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e")
-                .expect("address")
-                .require_network(Network::Mainnet)
-                .expect("mainnet")
-        );
-
-        let result = address.is_related_to_pubkey(&pubkey);
-        assert!(result);
-
-        let unused_pubkey = PublicKey::from_str(
-            "02ba604e6ad9d3864eda8dc41c62668514ef7d5417d3b6db46e45cc4533bff001c",
-        )
-        .expect("pubkey");
-        assert!(!address.is_related_to_pubkey(&unused_pubkey));
-    }
-
-    #[ignore]
-    #[test]
-    fn test_is_related_to_xonly_pubkey() {
-        let pubkey_string = "0347ff3dacd07a1f43805ec6808e801505a6e18245178609972a68afbc2777ff2b";
-        let pubkey = PublicKey::from_str(pubkey_string).expect("pubkey");
-        let xonly_pubkey = XOnlyPublicKey::from(pubkey.inner);
-        let tweaked_pubkey = TweakedPublicKey::dangerous_assume_tweaked(xonly_pubkey);
-        let address = Address::p2tr_tweaked(tweaked_pubkey, Network::Mainnet);
-
-        assert_eq!(
-            address,
-            Address::from_str("bc1pgllnmtxs0g058qz7c6qgaqq4qknwrqj9z7rqn9e2dzhmcfmhlu4sfadf5e")
-                .expect("address")
-                .require_network(Network::Mainnet)
-                .expect("mainnet")
-        );
-
-        let result = address.is_related_to_xonly_pubkey(&xonly_pubkey);
-        assert!(result);
-    }
-
     #[test]
     fn test_fail_address_from_script() {
         let bad_p2wpkh = ScriptBuf::from_hex("0014dbc5b0a8f9d4353b4b54c3db48846bb15abfec").unwrap();
@@ -2081,8 +1963,8 @@ mod tests {
 
     #[test]
     fn valid_address_parses_correctly() {
-        let addr = AddressType::from_str("p2tr").expect("false negative while parsing address");
-        assert_eq!(addr, AddressType::P2tr);
+        let addr = AddressType::from_str("p2pkh").expect("false negative while parsing address");
+        assert_eq!(addr, AddressType::P2pkh);
     }
 
     #[test]
