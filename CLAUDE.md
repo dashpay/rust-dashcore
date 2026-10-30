@@ -10,7 +10,6 @@ rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol libra
 - Network protocol implementation
 - SPV (Simplified Payment Verification) client
 - HD wallet functionality (BIP32/BIP39/DIP9)
-- FFI bindings for C and Swift integration
 - JSON-RPC client for Dash Core nodes
 
 **IMPORTANT**: This library should NOT be used for consensus code. The exact behavior of the consensus-critical parts of Dash Core cannot be replicated without an exact copy of the C++ code.
@@ -27,7 +26,6 @@ rust-dashcore is a Rust implementation of the Dash cryptocurrency protocol libra
 
 ### Wallet & Keys
 - `key-wallet/` - Comprehensive HD wallet implementation with multi-account support, address pools, and transaction management (see key-wallet/CLAUDE.md for detailed architecture)
-- `key-wallet-ffi/` - C-compatible FFI bindings for wallet functionality
 
 ### RPC & Integration
 - `rpc-client/` - JSON-RPC client for Dash Core nodes
@@ -49,12 +47,6 @@ cargo build --release
 
 # Build specific crate
 cargo build -p dash-spv
-```
-
-### FFI Library Build
-```bash
-# Build iOS libraries for key-wallet-ffi
-cd key-wallet-ffi && ./build-ios.sh
 ```
 
 ### iOS/macOS Targets
@@ -159,7 +151,6 @@ cargo doc --open
 ### Architecture Highlights
 - **Workspace-based**: Multiple crates with clear separation of concerns
 - **Async/Await**: Modern async Rust throughout
-- **FFI Support**: C and Swift bindings for cross-platform usage
 - **Comprehensive Testing**: Unit, integration, and fuzz testing
 - **MSRV**: Rust 1.89 minimum supported version
 
@@ -169,7 +160,6 @@ cargo doc --open
 - **No Hardcoded Values**: Never hardcode network parameters, addresses, or keys
 - **Error Handling**: Use proper error types (thiserror) and propagate errors appropriately
 - **Async Code**: Use tokio runtime for async operations
-- **Memory Safety**: Careful handling in FFI boundaries
 - **Feature Flags**: Use conditional compilation for optional features
 
 ### Testing Requirements
@@ -186,7 +176,6 @@ cargo doc --open
 ## Current Status
 
 The project is actively developing:
-- FFI bindings improvements
 - Support for Dash Core versions 0.18.0 - 0.23.x
 
 ## Security Considerations
@@ -195,7 +184,6 @@ The project is actively developing:
 - Always validate inputs from untrusted sources
 - Use secure random number generation for keys
 - Never log or expose private keys
-- Be careful with FFI memory management
 
 ## API Stability
 
@@ -205,5 +193,4 @@ The API is currently unstable (version 0.x.x). Breaking changes may occur in min
 
 - Cannot replicate exact consensus behavior of Dash Core
 - Not suitable for mining or consensus validation
-- FFI bindings have limited error propagation
 - Some Dash Core RPC methods not yet implemented

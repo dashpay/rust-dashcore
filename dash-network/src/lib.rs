@@ -21,9 +21,6 @@ use core::fmt;
 
 use dash_params::{AddrParams, ChainParams, Network as CoreNetwork};
 
-#[cfg(feature = "ffi")]
-pub mod ffi;
-
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 
