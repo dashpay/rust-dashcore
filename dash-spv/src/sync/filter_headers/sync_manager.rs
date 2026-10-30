@@ -8,6 +8,7 @@ use crate::sync::{
 };
 use crate::SyncError;
 use async_trait::async_trait;
+use dashcore::network::message::NetworkMessage;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -45,6 +46,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
+        if let NetworkMessage::CFHeaders(cfheaders) = &*msg {
+            if let Some((start, stop_hash)) =
+                self.lower_batch.filter(|(_, stop_hash)| *stop_hash == cfheaders.stop_hash)
+            {
+                network.request_answered(RequestKey::CfHeaders(stop_hash)).await;
+                return self.store_lower_batch(start, cfheaders).await;
+            }
+        }
+
         // Match response to get start height
         let Some((start_height, cfheaders)) = self.pipeline.match_response(&msg) else {
             if self.pipeline.is_complete() {
@@ -141,6 +151,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     }
 
     async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
+        self.extend_down(network).await?;
         self.pipeline.send_pending(network).await?;
 
         // Re-read the block-header tip and extend from here if it moved.

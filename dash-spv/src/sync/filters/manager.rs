@@ -122,6 +122,8 @@ pub struct FiltersManager<
     pub(super) tracker: BlockMatchTracker,
     /// Scripts found by processed blocks since the last tick, rescanned together.
     pub(super) pending_new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
+    /// Lowest height a wallet can need, whatever its birth height.
+    sync_floor: u32,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -133,6 +135,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         header_storage: Arc<RwLock<H>>,
         filter_header_storage: Arc<RwLock<FH>>,
         filter_storage: Arc<RwLock<F>>,
+        sync_floor: u32,
     ) -> Self {
         let committed_height = wallet.read().await.synced_height();
         let stored_height = filter_storage.read().await.filter_tip_height().await.unwrap_or(0);
@@ -167,6 +170,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             processing_height: 0,
             tracker: BlockMatchTracker::new(),
             pending_new_scripts: BTreeMap::new(),
+            sync_floor,
         }
     }
 
@@ -262,6 +266,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         let header_start_height =
             self.header_storage.read().await.get_start_height().await.unwrap_or(0);
 
+        // No scan reaches below the stored headers, so wait for them to be backfilled.
+        let floor = wallet_birth_height.max(self.sync_floor);
+        if floor < header_start_height {
+            self.set_state(SyncState::WaitForEvents);
+            return Ok(vec![SyncEvent::HeadersBackfillNeeded {
+                height: floor,
+            }]);
+        }
+
         // Calculate scan start (where we need to start processing)
         // Must be at least header_start_height for checkpoint-based sync
         let scan_start = if wallet_committed_height > 0 {
@@ -322,6 +335,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         } else {
             scan_start
         };
+
+        // And for the filter headers the downloaded filters are verified against.
+        let filter_header_start =
+            self.filter_header_storage.read().await.get_filter_start_height().await;
+        if filter_header_start.is_some_and(|start| start > download_start.saturating_sub(1)) {
+            self.set_state(SyncState::WaitForEvents);
+            return Ok(vec![]);
+        }
 
         // Anchor the scan and store frontiers even when we return early below.
         // A wallet that boots already synced takes the early return, and a
@@ -1244,6 +1265,7 @@ mod tests {
             storage.block_headers(),
             storage.filter_headers(),
             storage.filters(),
+            0,
         )
         .await
     }
@@ -1257,6 +1279,7 @@ mod tests {
             storage.block_headers(),
             storage.filter_headers(),
             storage.filters(),
+            0,
         )
         .await
     }
@@ -1304,17 +1327,17 @@ mod tests {
             }
         }
 
-        // Non-zero, since the segment store reads an all-zero filter header
-        // back as an empty slot.
-        let prev_filter_header = FilterHeader::from_byte_array([1u8; 32]);
+        // From the one below the anchor, as a checkpoint sync stores them. Non-zero,
+        // since the segment store reads an all-zero filter header back as an empty slot.
+        let mut filter_headers = vec![FilterHeader::from_byte_array([1u8; 32])];
+        for _ in anchor..=anchor + span {
+            filter_headers.push(filter.filter_header(filter_headers.last().unwrap()));
+        }
         manager
             .filter_header_storage
             .write()
             .await
-            .store_filter_headers_at_height(
-                &[prev_filter_header, filter.filter_header(&prev_filter_header)],
-                anchor + span,
-            )
+            .store_filter_headers_at_height(&filter_headers, anchor - 1)
             .await
             .unwrap();
     }
@@ -1341,7 +1364,9 @@ mod tests {
     /// Headers and filters both cover `anchor..=anchor + span`. Filter headers
     /// are stored so `handle_new_filter_headers` can drive a real download.
     async fn create_anchored_test_manager(anchor: u32, span: u32) -> TestFiltersManager {
-        let manager = create_test_manager().await;
+        let mut manager = create_test_manager().await;
+        // Floored at the anchor, so a wallet below it needs no backfill.
+        manager.sync_floor = anchor;
         seed_anchored_storage(&manager, anchor, span).await;
         manager
     }
@@ -1467,6 +1492,7 @@ mod tests {
             storage.block_headers(),
             storage.filter_headers(),
             storage.filters(),
+            0,
         )
         .await;
 
@@ -3807,6 +3833,7 @@ mod tests {
         );
 
         let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.sync_floor = 200_000;
         seed_anchored_storage(&manager, 200_000, 10).await;
 
         let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());

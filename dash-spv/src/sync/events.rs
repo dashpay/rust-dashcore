@@ -186,6 +186,16 @@ pub enum SyncEvent {
         fork_height: u32,
     },
 
+    /// A wallet needs blocks below the lowest stored header.
+    ///
+    /// Emitted by: `FiltersManager`
+    /// Consumed by: `BlockHeadersManager`, which fills them in from the
+    /// checkpoint at or below `height`
+    HeadersBackfillNeeded {
+        /// Lowest height a wallet needs
+        height: u32,
+    },
+
     /// Sync has reached the chain tip (all managers idle).
     ///
     /// Emitted on every not-synced to synced transition. Cycle 0 is the
@@ -286,6 +296,9 @@ impl fmt::Display for SyncEvent {
             SyncEvent::ForkDetected {
                 fork_height,
             } => write!(f, "ForkDetected(height={})", fork_height),
+            SyncEvent::HeadersBackfillNeeded {
+                height,
+            } => write!(f, "HeadersBackfillNeeded(height={})", height),
             SyncEvent::SyncComplete {
                 header_tip,
                 cycle,
