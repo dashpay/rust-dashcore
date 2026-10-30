@@ -35,8 +35,8 @@ pub use crate::sml_engine::{FeedError, MasternodeListEngine, WORK_DIFF_DEPTH};
 
 /// Storage types for tests and benches that open the client's storage directly.
 pub use crate::storage::{
-    BlockHeaderStorage, DiskStorageManager, PeerStorage, PersistentBlockHeaderStorage,
-    PersistentPeerStorage, PersistentStorage, StorageManager,
+    BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, PersistentStorage,
+    StorageManager,
 };
 
 /// The client's masternode list engine, for tests that inspect its state.

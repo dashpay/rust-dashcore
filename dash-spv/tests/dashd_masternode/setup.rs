@@ -10,8 +10,7 @@ use dash_spv::test_utils::{MasternodeListEngine, PersistentBlockHeaderStorage};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    sync::{SyncEvent, SyncProgress},
-    LoggingGuard, Network,
+    LoggingGuard, Network, SyncEvent, SyncProgress,
 };
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{WalletEvent, WalletId, WalletManager};
@@ -162,8 +161,7 @@ pub(super) async fn create_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> ClientHandle {
-    let network_manager =
-        PeerNetworkManager::new(config).await.expect("Failed to create network manager");
+    let network_manager = PeerNetworkManager::new(config).await;
 
     let handler = Arc::new(TestEventHandler::new());
     let progress_receiver = handler.subscribe_progress();

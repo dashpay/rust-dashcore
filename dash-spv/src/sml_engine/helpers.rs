@@ -19,38 +19,34 @@ const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
 /// reaches (h-4c, DIP-24), so its base must be at least that old.
 const QRINFO_BASE_CYCLES_BEHIND: u32 = 4;
 
-/// Blocks a quorum of `llmq_type` stays active for.
-fn active_window(llmq_type: LLMQType) -> CoreBlockHeight {
-    let params = llmq_type.params();
-    params.signing_active_quorum_count.saturating_mul(params.dkg_params.interval)
-}
-
 impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// The list the next QRInfo at `tip` diffs from: the newest one at or below
     /// its h-4c cycle. `None` sends it without a base.
     pub fn qr_info_base_list(&self, tip: CoreBlockHeight) -> Option<&MasternodeList> {
-        let interval = self.network.isd_llmq_type().params().dkg_params.interval;
-        if interval == 0 {
-            return None;
-        }
-        let reach = (tip - tip % interval).checked_sub(QRINFO_BASE_CYCLES_BEHIND * interval)?;
+        let isd_type = self.network.isd_llmq_type();
+        let reach = isd_type
+            .get_cycle_base_height(tip)
+            .checked_sub(QRINFO_BASE_CYCLES_BEHIND * isd_type.dkg_interval())?;
         self.masternode_lists.range(..=reach).next_back().map(|(_, list)| list)
     }
 
     /// How far below the newest list the engine still reads a list: the QRInfo
     /// base and quarters, the work block of every active quorum, and Platform's
     /// walk-back.
-    fn retention_window(&self) -> CoreBlockHeight {
-        let rotation_interval = self.network.isd_llmq_type().params().dkg_params.interval;
+    pub(super) fn retention_window(&self) -> CoreBlockHeight {
+        let rotation_interval = self.network.isd_llmq_type().dkg_interval();
         let qr_info = (QRINFO_BASE_CYCLES_BEHIND + 1).saturating_mul(rotation_interval);
-        let platform = active_window(self.network.platform_type())
+        let platform = self
+            .network
+            .platform_type()
+            .active_window()
             .saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS);
         let member_lists = self
             .network
             .enabled_llmq_types()
             .into_iter()
             .filter(|llmq_type| !llmq_type.is_rotating_quorum_type())
-            .map(|llmq_type| active_window(llmq_type).saturating_add(QUORUM_MEMBER_LIST_OFFSET))
+            .map(|llmq_type| llmq_type.active_window().saturating_add(QUORUM_MEMBER_LIST_OFFSET))
             .max()
             .unwrap_or_default();
         qr_info.max(platform).max(member_lists)
@@ -92,13 +88,13 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             self.masternode_lists.split_off(&above);
         }
 
-        let mining_window_end = self.network.isd_llmq_type().params().dkg_params.mining_window_end;
+        let isd_type = self.network.isd_llmq_type();
         let mut dropped = BTreeSet::new();
         for cycle_hash in self.rotated_quorums_per_cycle.keys() {
             let mined_below = self
                 .height_if_known(cycle_hash)
                 .await
-                .is_some_and(|base| base.saturating_add(mining_window_end) <= height);
+                .is_some_and(|base| isd_type.dkg_window_at_cycle(base).mining_end <= height);
             if !mined_below {
                 dropped.insert(*cycle_hash);
             }
@@ -150,7 +146,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         height: CoreBlockHeight,
     ) -> Option<(CoreBlockHeight, &QualifiedQuorumEntry)> {
         let floor = height.saturating_sub(
-            active_window(llmq_type).saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS),
+            llmq_type.active_window().saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS),
         );
 
         self.masternode_lists.range(floor..=height).rev().find_map(|(_, list)| {
@@ -290,10 +286,7 @@ mod tests {
     /// still resolves. This bounds a miss instead of scanning every accumulated list.
     #[test]
     fn does_not_walk_below_active_window_floor() {
-        let params = PLATFORM_TYPE.params();
-        let span = params.signing_active_quorum_count
-            * params.dkg_params.interval
-            * QUORUM_WALK_BACK_ACTIVE_WINDOWS;
+        let span = PLATFORM_TYPE.active_window() * QUORUM_WALK_BACK_ACTIVE_WINDOWS;
         let height = span + 5_000;
         let floor = height - span;
 
@@ -467,7 +460,7 @@ mod prune_tests {
     #[tokio::test]
     async fn truncating_above_a_fork_drops_what_the_dropped_blocks_built() {
         let fork = TIP;
-        let window_end = Network::Mainnet.isd_llmq_type().params().dkg_params.mining_window_end;
+        let window_end = Network::Mainnet.isd_llmq_type().dkg_window_at_cycle(0).mining_end;
         let mut engine = TestEngine::dummy_with_lists(&[fork - 100, fork, fork + 1, fork + 50]);
         let mined_below = fork - window_end;
         let mined_above = mined_below + 1;

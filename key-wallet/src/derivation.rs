@@ -173,13 +173,8 @@ impl DerivationPathBuilder {
     ) -> Result<DerivationPath> {
         // For now, just use BIP44 derivation
         // m/44'/coin_type'/account'/0/0
-        let coin_type = match network {
-            Network::Mainnet => 5,
-            Network::Testnet | Network::Devnet | Network::Regtest => 1,
-        };
-
         self.purpose(44)
-            .coin_type(coin_type)
+            .coin_type(network.addr_params().bip44_idx)
             .account(account_index)
             .change(0)
             .address_index(0)

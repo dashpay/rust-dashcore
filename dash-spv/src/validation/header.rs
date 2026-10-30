@@ -1,8 +1,7 @@
-use rayon::prelude::*;
 use std::time::Instant;
 
 use dashcore::block::Header;
-use dashcore::consensus::Params;
+use dashcore::pow::{bits_meet_required, next_work_required};
 use dashcore::Network;
 
 use crate::error::{ValidationError, ValidationResult};
@@ -12,7 +11,7 @@ use crate::validation::Validator;
 /// Checks a batch of headers for continuity, proof of work and the difficulty Dash Core
 /// requires. Headers without enough history before them are not checked for difficulty.
 pub struct BlockHeaderValidator {
-    params: &'static Params,
+    network: Network,
     /// The stored headers the batch extends, oldest first.
     ancestors: Vec<Header>,
     /// Height of the last of `ancestors`.
@@ -24,7 +23,7 @@ impl BlockHeaderValidator {
     /// `tip_height`.
     pub fn new(network: Network, ancestors: Vec<Header>, tip_height: u32) -> Self {
         Self {
-            params: Params::new(network),
+            network,
             ancestors,
             tip_height,
         }
@@ -43,8 +42,8 @@ impl Validator<&[HashedBlockHeader]> for BlockHeaderValidator {
             .chain(hashed_headers.iter().map(|h| *h.header()))
             .collect();
 
-        // Check continuity of i-1 to i, PoW and difficulty of i in parallel
-        hashed_headers.par_iter().enumerate().try_for_each(|(i, header)| {
+        // Check PoW of i and continuity of i-1 to i
+        hashed_headers.iter().enumerate().try_for_each(|(i, header)| {
             // For the first header, skip chain continuity check since we don't have i-1 here
             if i > 0 && header.header().prev_blockhash != *hashed_headers[i - 1].hash() {
                 return Err(ValidationError::InvalidHeaderChain(format!(
@@ -62,10 +61,11 @@ impl Validator<&[HashedBlockHeader]> for BlockHeaderValidator {
             let height = self.tip_height + 1 + i as u32;
             let window = &chain[..self.ancestors.len() + i];
             let bits = header.header().bits;
-            let required = self.params.next_work_required(window, height - 1, header.header().time);
+            let required =
+                next_work_required(self.network, window, height - 1, header.header().time);
 
-            if let Some(required) =
-                required.filter(|required| !self.params.bits_meet_required(height, bits, *required))
+            if let Some(required) = required
+                .filter(|required| !bits_meet_required(self.network, height, bits, *required))
             {
                 return Err(ValidationError::InvalidDifficulty {
                     height,

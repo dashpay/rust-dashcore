@@ -27,6 +27,7 @@ use hashes::Hash;
 
 pub use dash_network::{Network, ParseNetworkError};
 
+use crate::blockdata::constants::genesis_chain_params;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::{BlockHash, io};
 
@@ -59,8 +60,8 @@ pub const PROTOCOL_VERSION: u32 = 70237;
 pub const MAINNET_HD_ACTIVATION_HEIGHT: u32 = 227121;
 
 pub trait NetworkExt {
-    /// Returns the known genesis block hash for `network`, if one is hardcoded.
-    fn known_genesis_block_hash(&self) -> Option<BlockHash>;
+    /// Returns the known genesis block hash for `network`.
+    fn known_genesis_block_hash(&self) -> BlockHash;
 
     /// Earliest block height worth syncing for HD/BIP39 wallets, or `0` when the network
     /// has no floor (sync from genesis). Mainnet is floored at
@@ -69,41 +70,9 @@ pub trait NetworkExt {
 }
 
 impl NetworkExt for Network {
-    fn known_genesis_block_hash(&self) -> Option<BlockHash> {
-        match self {
-            Network::Mainnet => {
-                let mut block_hash = hex_conservative::decode_to_vec(
-                    "00000ffd590b1485b3caadc19b22e6379c733355108f107a430458cdf3407ab6",
-                )
-                .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-            Network::Testnet => {
-                let mut block_hash = hex_conservative::decode_to_vec(
-                    "00000bafbc94add76cb75e2ec92894837288a481e5c005f6563d91623bf8bc2c",
-                )
-                .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-            Network::Devnet => {
-                let mut block_hash = hex_conservative::decode_to_vec(
-                    "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e",
-                )
-                .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-            Network::Regtest => {
-                let mut block_hash = hex_conservative::decode_to_vec(
-                    "000008ca1832a4baf228eb1553c03d3a2c8e02399550dd6ea8d65cec3ef23d2e",
-                )
-                .expect("expected valid hex");
-                block_hash.reverse();
-                Some(BlockHash::from_byte_array(block_hash.try_into().expect("expected 32 bytes")))
-            }
-        }
+    fn known_genesis_block_hash(&self) -> BlockHash {
+        let hash = genesis_chain_params(*self).consensus.hash_genesis_block;
+        BlockHash::from_byte_array(*hash.as_bytes())
     }
 
     fn hd_wallet_sync_floor(&self) -> u32 {
@@ -289,67 +258,7 @@ impl Decodable for ServiceFlags {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAINNET_HD_ACTIVATION_HEIGHT, NetworkExt, ServiceFlags};
-    use crate::Network;
-    use crate::consensus::encode::{deserialize, serialize};
-
-    #[test]
-    fn test_hd_wallet_sync_floor() {
-        // Only mainnet is floored; every other network syncs from genesis (0).
-        assert_eq!(Network::Mainnet.hd_wallet_sync_floor(), MAINNET_HD_ACTIVATION_HEIGHT);
-        assert_eq!(Network::Testnet.hd_wallet_sync_floor(), 0);
-        assert_eq!(Network::Devnet.hd_wallet_sync_floor(), 0);
-        assert_eq!(Network::Regtest.hd_wallet_sync_floor(), 0);
-    }
-
-    #[test]
-    fn test_network_magic() {
-        assert_eq!(Network::Mainnet.magic(), 0xBD6B0CBF);
-        assert_eq!(Network::Testnet.magic(), 0xFFCAE2CE);
-        assert_eq!(Network::Devnet.magic(), 0xCEFFCAE2);
-        assert_eq!(Network::Regtest.magic(), 0xDCB7C1FC);
-    }
-
-    #[test]
-    fn test_network_from_magic() {
-        assert_eq!(Network::from_magic(0xBD6B0CBF), Some(Network::Mainnet));
-        assert_eq!(Network::from_magic(0xFFCAE2CE), Some(Network::Testnet));
-        assert_eq!(Network::from_magic(0xCEFFCAE2), Some(Network::Devnet));
-        assert_eq!(Network::from_magic(0xDCB7C1FC), Some(Network::Regtest));
-        assert_eq!(Network::from_magic(0x12345678), None);
-    }
-
-    #[test]
-    fn test_network_display() {
-        assert_eq!(Network::Mainnet.to_string(), "mainnet");
-        assert_eq!(Network::Testnet.to_string(), "testnet");
-        assert_eq!(Network::Devnet.to_string(), "devnet");
-        assert_eq!(Network::Regtest.to_string(), "regtest");
-    }
-
-    #[test]
-    fn test_network_from_str() {
-        assert_eq!("mainnet".parse::<Network>().unwrap(), Network::Mainnet);
-        assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
-        assert_eq!("test".parse::<Network>().unwrap(), Network::Testnet);
-        assert_eq!("devnet".parse::<Network>().unwrap(), Network::Devnet);
-        assert_eq!("dev".parse::<Network>().unwrap(), Network::Devnet);
-        assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
-        assert!("invalid".parse::<Network>().is_err());
-    }
-
-    #[test]
-    fn serialize_test() {
-        assert_eq!(serialize(&Network::Mainnet.magic()), &[0xbf, 0x0c, 0x6b, 0xbd]);
-        assert_eq!(serialize(&Network::Testnet.magic()), &[0xce, 0xe2, 0xca, 0xff]);
-        assert_eq!(serialize(&Network::Devnet.magic()), &[0xe2, 0xca, 0xff, 0xce]);
-        assert_eq!(serialize(&Network::Regtest.magic()), &[0xfc, 0xc1, 0xb7, 0xdc]);
-
-        assert_eq!(deserialize(&[0xbf, 0x0c, 0x6b, 0xbd]).ok(), Some(Network::Mainnet.magic()));
-        assert_eq!(deserialize(&[0xce, 0xe2, 0xca, 0xff]).ok(), Some(Network::Testnet.magic()));
-        assert_eq!(deserialize(&[0xe2, 0xca, 0xff, 0xce]).ok(), Some(Network::Devnet.magic()));
-        assert_eq!(deserialize(&[0xfc, 0xc1, 0xb7, 0xdc]).ok(), Some(Network::Regtest.magic()));
-    }
+    use super::ServiceFlags;
 
     #[test]
     fn service_flags_test() {

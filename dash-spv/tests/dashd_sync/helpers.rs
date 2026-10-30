@@ -1,6 +1,6 @@
 use dash_spv::network::NetworkEvent;
-use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncProgress, SyncState};
 use dash_spv::test_utils::DashCoreNode;
+use dash_spv::{ProgressPercentage, SyncEvent, SyncProgress, SyncState};
 use dashcore::address::NetworkUnchecked;
 use dashcore::{Address, Txid};
 use key_wallet::account::ManagedAccountTrait;

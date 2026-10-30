@@ -4,6 +4,7 @@
 //! tokio task for true parallel processing. It tracks aggregate progress and
 //! coordinates graceful shutdown.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::stream::{select_all, StreamExt};
@@ -35,9 +36,8 @@ macro_rules! spawn_manager {
         if let Some(manager) = $manager {
             let identifier = manager.identifier();
             let wanted_message_types = manager.wanted_message_types();
-            let requests = $network.request_sender();
-            let message_receiver = $network.message_receiver(wanted_message_types).await;
-            let network_event_rx = $network.subscribe_network_events();
+            let message_receiver = $network.subscribe(wanted_message_types).await;
+            let network_event_rx = $network.events();
             let (progress_sender, progress_receiver) = watch::channel(manager.progress());
 
             tracing::info!(
@@ -50,7 +50,7 @@ macro_rules! spawn_manager {
                 message_receiver,
                 sync_event_sender: $sync_event_sender.clone(),
                 network_event_receiver: network_event_rx,
-                requests,
+                network: $network.clone(),
                 shutdown: $shutdown.clone(),
                 progress_sender,
             };
@@ -150,7 +150,6 @@ struct SyncRun {
     tasks: JoinSet<SyncResult<ManagerIdentifier>>,
     shutdown: CancellationToken,
     progress_task: tokio::task::JoinHandle<()>,
-    start_time: Instant,
 }
 
 impl SyncCoordinator {
@@ -183,12 +182,12 @@ impl SyncCoordinator {
     /// Each manager receives:
     /// - A message stream filtered by its subscribed types
     /// - An event bus subscription for inter-manager events
-    /// - A request sender for outgoing network messages
+    /// - A handle to the network manager, to declare requests on
     /// - A shutdown token for graceful termination
-    pub async fn start<H, FH, F, B, M, W, N>(
+    pub async fn start<H, FH, F, B, M, W>(
         &mut self,
         managers: Managers<H, FH, F, B, M, W>,
-        network: &mut N,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<()>
     where
         H: BlockHeaderStorage,
@@ -197,7 +196,6 @@ impl SyncCoordinator {
         B: BlockStorage,
         M: MetadataStorage,
         W: WalletInterface + 'static,
-        N: NetworkManager,
     {
         if self.run.is_some() {
             return Err(SyncError::InvalidState("SyncCoordinator already started".to_string()));
@@ -248,7 +246,6 @@ impl SyncCoordinator {
             tasks,
             shutdown,
             progress_task,
-            start_time,
         });
 
         Ok(())
@@ -333,16 +330,6 @@ impl SyncCoordinator {
     /// Get current progress.
     pub fn progress(&self) -> SyncProgress {
         self.progress_sender.borrow().clone()
-    }
-
-    /// Check if all managers are idle (sync complete).
-    pub fn is_synced(&self) -> bool {
-        self.progress_sender.borrow().is_synced()
-    }
-
-    /// Get the duration since sync started.
-    pub fn sync_duration(&self) -> Option<Duration> {
-        self.run.as_ref().map(|run| run.start_time.elapsed())
     }
 }
 

@@ -318,17 +318,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             }
         }
     }
-
-    /// Get the best validated ChainLock.
-    pub fn best_chainlock(&self) -> Option<&ChainLock> {
-        self.best_chainlock.as_ref()
-    }
-
-    /// Check if a block at the given height is chainlocked.
-    /// All blocks at or below the best validated ChainLock height are considered locked.
-    pub fn is_block_chainlocked(&self, height: u32) -> bool {
-        self.best_chainlock.as_ref().map(|cl| height <= cl.block_height).unwrap_or(false)
-    }
 }
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for ChainLockManager<H, M> {
@@ -344,19 +333,19 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for ChainLockMan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, RequestSender};
+    use crate::network::{MessageType, NetworkManager};
     use crate::sml_engine::test_support::TestEngine;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
+    use crate::test_utils::MockNetworkManager;
     use crate::Network;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hashes::Hash;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::BlockHash;
     use test_case::test_case;
-    use tokio::sync::mpsc::unbounded_channel;
 
     type TestChainLockManager =
         ChainLockManager<PersistentBlockHeaderStorage, PersistentMetadataStorage>;
@@ -393,7 +382,7 @@ mod tests {
         let manager = create_test_manager().await;
         assert_eq!(manager.identifier(), ManagerIdentifier::ChainLock);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
-        assert_eq!(manager.wanted_message_types(), vec![MessageType::CLSig, MessageType::Inv]);
+        assert_eq!(manager.wanted_message_types(), [MessageType::ChainLock, MessageType::Inv]);
     }
 
     /// Buffered `MasternodeStateUpdated` events delivered during
@@ -409,8 +398,8 @@ mod tests {
             height: 100,
             qr_info_result: None,
         };
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.handle_sync_event(&event, &RequestSender::new(tx)).await.unwrap();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
@@ -428,7 +417,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(manager.progress.valid(), 0);
         assert_eq!(manager.progress.invalid(), 0);
-        assert!(manager.best_chainlock().is_none());
+        assert!(manager.best_chainlock.as_ref().is_none());
         // But the chainlock must be cached for retry once masternode
         // state arrives, rather than discarded.
         assert!(manager.pending_validation.is_some());
@@ -474,7 +463,10 @@ mod tests {
 
         let rebroadcast = manager.on_masternode_ready().await;
         assert!(rebroadcast.is_none(), "mismatched chainlock must not be re-broadcast");
-        assert!(manager.best_chainlock().is_none(), "mismatched chainlock must not be persisted");
+        assert!(
+            manager.best_chainlock.as_ref().is_none(),
+            "mismatched chainlock must not be persisted"
+        );
         assert!(manager.pending_validation.is_none(), "pending_validation must be consumed");
         assert_eq!(manager.progress.invalid(), 1);
         assert_eq!(manager.progress.valid(), 0);
@@ -492,7 +484,7 @@ mod tests {
         let rebroadcast = manager.on_masternode_ready().await;
         assert!(rebroadcast.is_none());
         assert!(manager.pending_validation.is_none());
-        assert!(manager.best_chainlock().is_none());
+        assert!(manager.best_chainlock.as_ref().is_none());
         assert_eq!(manager.progress.invalid(), 1);
         assert!(manager.masternode_ready);
     }
@@ -530,7 +522,7 @@ mod tests {
                 ..
             }]
         ));
-        assert!(manager.best_chainlock().is_none());
+        assert!(manager.best_chainlock.as_ref().is_none());
         assert_eq!(manager.progress.invalid(), 0);
         assert_eq!(manager.pending_validation.as_ref().map(|cl| cl.block_height), Some(1_000));
     }
@@ -551,9 +543,8 @@ mod tests {
             height: 500,
             qr_info_result: None,
         };
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
-        assert!(manager.handle_sync_event(&event, &requests).await.unwrap().is_empty());
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        assert!(manager.handle_sync_event(&event, &network).await.unwrap().is_empty());
         assert_eq!(manager.progress.invalid(), 0);
         assert!(manager.pending_validation.is_some());
 
@@ -567,10 +558,10 @@ mod tests {
             height: 1_000,
             qr_info_result: None,
         };
-        assert!(manager.handle_sync_event(&event, &requests).await.unwrap().is_empty());
+        assert!(manager.handle_sync_event(&event, &network).await.unwrap().is_empty());
         assert_eq!(manager.progress.invalid(), 1);
         assert!(manager.pending_validation.is_none());
-        assert!(manager.best_chainlock().is_none());
+        assert!(manager.best_chainlock.as_ref().is_none());
     }
 
     #[tokio::test]
@@ -613,7 +604,7 @@ mod tests {
                 ..
             }]
         ));
-        assert!(manager.best_chainlock().is_none());
+        assert!(manager.best_chainlock.as_ref().is_none());
         assert!(manager.pending_validation.is_some());
 
         if forged {
@@ -632,8 +623,8 @@ mod tests {
         let event = SyncEvent::BlockHeadersStored {
             tip_height: chain_lock.block_height,
         };
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.handle_sync_event(&event, &RequestSender::new(tx)).await.unwrap();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(manager.pending_validation.is_none());
         if header_matches {
@@ -644,10 +635,10 @@ mod tests {
                     ..
                 }]
             ));
-            assert_eq!(manager.best_chainlock(), Some(&chain_lock));
+            assert_eq!(manager.best_chainlock.as_ref(), Some(&chain_lock));
         } else {
             assert!(events.is_empty());
-            assert!(manager.best_chainlock().is_none());
+            assert!(manager.best_chainlock.as_ref().is_none());
             assert_eq!(manager.progress.invalid(), 1);
         }
     }
@@ -695,28 +686,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_block_chainlocked() {
-        let mut manager = create_test_manager().await;
-
-        // No ChainLock yet
-        assert!(!manager.is_block_chainlocked(100));
-
-        // Manually set best chainlock for testing
-        manager.best_chainlock = Some(create_test_chainlock(500));
-
-        // All blocks at or below 500 should be chainlocked
-        assert!(manager.is_block_chainlocked(1));
-        assert!(manager.is_block_chainlocked(500));
-        assert!(!manager.is_block_chainlocked(501));
-    }
-
-    #[tokio::test]
     async fn test_load_from_empty_storage_returns_none() {
         let mut manager = create_test_manager().await;
 
         manager.load_best_chainlock().await;
 
-        assert!(manager.best_chainlock().is_none());
+        assert!(manager.best_chainlock.as_ref().is_none());
         assert_eq!(manager.progress.best_validated_height(), 0);
     }
 
@@ -736,7 +711,7 @@ mod tests {
         {
             let manager = create_test_manager_with_storage(&storage).await;
 
-            let restored = manager.best_chainlock().expect("chainlock should be restored");
+            let restored = manager.best_chainlock.as_ref().expect("chainlock should be restored");
             assert_eq!(restored.block_height, 42000);
             assert_eq!(restored.block_hash, chainlock.block_hash);
             assert_eq!(restored.signature, chainlock.signature);
@@ -761,7 +736,7 @@ mod tests {
         let manager = create_test_manager_with_storage(&storage).await;
 
         let restored =
-            manager.best_chainlock().expect("chainlock should be restored after initialize");
+            manager.best_chainlock.as_ref().expect("chainlock should be restored after initialize");
         assert_eq!(restored.block_height, 99999);
         assert_eq!(manager.progress.best_validated_height(), 99999);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
@@ -775,7 +750,7 @@ mod tests {
         // Without masternode ready, chainlocks are not validated and not persisted
         let chainlock = create_test_chainlock(500);
         manager.process_chainlock(&chainlock).await.unwrap();
-        assert!(manager.best_chainlock().is_none());
+        assert!(manager.best_chainlock.as_ref().is_none());
 
         // Verify nothing was persisted
         {
@@ -810,7 +785,7 @@ mod tests {
             let mut manager = create_test_manager_with_storage(&storage).await;
             manager.load_best_chainlock().await;
 
-            let restored = manager.best_chainlock().expect("chainlock should be restored");
+            let restored = manager.best_chainlock.as_ref().expect("chainlock should be restored");
             assert_eq!(restored.block_height, 200);
         }
     }
@@ -839,7 +814,7 @@ mod tests {
             assert_eq!(events.len(), 0);
 
             // Best should still be 200
-            let best = manager.best_chainlock().expect("should have best chainlock");
+            let best = manager.best_chainlock.as_ref().expect("should have best chainlock");
             assert_eq!(best.block_height, 200);
         }
     }

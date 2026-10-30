@@ -3,8 +3,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use dash_spv::sync::{SyncEvent, SyncProgress};
 use dash_spv::EventHandler;
+use dash_spv::{SyncEvent, SyncProgress};
 use tokio::sync::Notify;
 
 use crate::dashboard::Dashboard;

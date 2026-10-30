@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use dash_spv::sync::{MasternodesProgress, SyncEvent, SyncProgress, SyncState};
 use dash_spv::test_utils::{BlockHeaderStorage, MasternodeListEngine};
+use dash_spv::{MasternodesProgress, SyncEvent, SyncProgress, SyncState};
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::Txid;
@@ -55,7 +55,6 @@ pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
     ("filter_headers", "filter headers synced to the tip"),
     ("metadata", "sync checkpoints"),
     ("version.json", "the storage version system"),
-    ("peers", "peer set and reputations"),
     ("masternodes", "the masternode engine snapshot this session stored"),
 ];
 

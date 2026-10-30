@@ -11,11 +11,11 @@ use core::fmt;
 use core::ops::{Add, Sub};
 
 use dash_num::Arith256;
+use dash_params::ConsensusParams;
 use dash_types::Numeric;
 
 use crate::Network;
 use crate::block::Header;
-use crate::consensus::Params;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::BlockHash;
 use crate::io::{self, Read, Write};
@@ -274,22 +274,6 @@ impl Target {
         Target::MAX
     }
 
-    /// `~uint256(0) >> bits`, as Dash Core writes its `powLimit`s.
-    pub(crate) const fn max_shr(bits: u32) -> Target {
-        let mut be = [0xff; 32];
-        let mut i = 0;
-        while i < 32 {
-            let first_bit = i as u32 * 8;
-            if first_bit + 8 <= bits {
-                be[i] = 0;
-            } else if first_bit < bits {
-                be[i] = 0xff >> (bits - first_bit);
-            }
-            i += 1;
-        }
-        Target(Arith256::from_bendian(be))
-    }
-
     /// Computes the [`Target`] value from a compact representation.
     ///
     /// A negative or overflowing compact value yields [`Target::ZERO`].
@@ -421,77 +405,81 @@ impl Decodable for CompactTarget {
 
 pub const DGW_PAST_BLOCKS: usize = 24;
 
-impl Params {
-    pub fn next_work_required(
-        &self,
-        window: &[Header],
-        last_height: u32,
-        time: u32,
-    ) -> Option<CompactTarget> {
-        if self.network == Network::Devnet || last_height.saturating_add(1) < self.pow_dgw_height {
-            return None;
-        }
+/// Last mainnet height whose bits need only be within 50% of DGW's.
+pub const MAINNET_DGW_TOLERANT_HEIGHT: u32 = 68_589;
 
-        if self.no_pow_retargeting {
-            return Some(self.pow_limit.to_compact_lossy());
-        }
-
-        let last = window.last()?;
-        let elapsed = i64::from(time) - i64::from(last.time);
-        let spacing = self.pow_target_spacing as i64;
-
-        if self.allow_min_difficulty_blocks && elapsed > 2 * 60 * 60 {
-            return Some(self.pow_limit.to_compact_lossy());
-        }
-
-        if self.allow_min_difficulty_blocks && elapsed > spacing * 4 {
-            let target = Target(Target::from_compact(last.bits).0 * 10);
-            return Some(target.min(self.pow_limit).to_compact_lossy());
-        }
-
-        let window = &window[window.len().checked_sub(DGW_PAST_BLOCKS)?..];
-
-        Some(self.dark_gravity_wave(window).to_compact_lossy())
+/// The bits Core's `GetNextWorkRequired` requires of the next block.
+///
+/// `None` before DGW and on devnets, which set their rules at runtime.
+pub fn next_work_required(
+    network: Network,
+    window: &[Header],
+    last_height: u32,
+    time: u32,
+) -> Option<CompactTarget> {
+    let consensus = &network.chain_params()?.consensus;
+    if last_height.saturating_add(1) < consensus.pow_dgw_height.to_u32() {
+        return None;
     }
 
-    /// Whether `bits` meets the `required` difficulty at `height`, as Core's
-    /// `ContextualCheckBlockHeader` judges it.
-    pub fn bits_meet_required(
-        &self,
-        height: u32,
-        bits: CompactTarget,
-        required: CompactTarget,
-    ) -> bool {
-        if self.pow_dgw_tolerant_height.is_some_and(|tolerant| height <= tolerant) {
-            let actual = bits_to_difficulty(bits);
-            let required = bits_to_difficulty(required);
-            return (actual - required).abs() <= actual * 0.5;
-        }
-        bits == required
+    let pow_limit = Target(consensus.pow_limit);
+    if consensus.pow_no_retargeting {
+        return Some(pow_limit.to_compact_lossy());
     }
 
-    /// Dash Core's `DarkGravityWave` over exactly [`DGW_PAST_BLOCKS`] headers, oldest first.
-    fn dark_gravity_wave(&self, window: &[Header]) -> Target {
-        // Not quite an average, but the one Core computes, newest first.
-        let mut average = Arith256::ZERO;
-        for (count, header) in (1u32..).zip(window.iter().rev()) {
-            let target = Target::from_compact(header.bits).0;
-            average = if count == 1 {
-                target
-            } else {
-                (average * count + target) / u64::from(count + 1)
-            };
-        }
+    let last = window.last()?;
+    let elapsed = i64::from(time) - i64::from(last.time);
 
-        // Spans one interval fewer than the target timespan, as in Core.
-        let target_timespan = DGW_PAST_BLOCKS as i64 * self.pow_target_spacing as i64;
-        let actual_timespan = (i64::from(window[DGW_PAST_BLOCKS - 1].time)
-            - i64::from(window[0].time))
+    if consensus.pow_allow_min_difficulty_blocks && elapsed > 2 * 60 * 60 {
+        return Some(pow_limit.to_compact_lossy());
+    }
+
+    if consensus.pow_allow_min_difficulty_blocks && elapsed > consensus.pow_target_spacing * 4 {
+        let target = Target(Target::from_compact(last.bits).0 * 10);
+        return Some(target.min(pow_limit).to_compact_lossy());
+    }
+
+    let window = &window[window.len().checked_sub(DGW_PAST_BLOCKS)?..];
+
+    Some(dark_gravity_wave(consensus, window).to_compact_lossy())
+}
+
+/// Whether `bits` meets the `required` difficulty at `height`, as Core's
+/// `ContextualCheckBlockHeader` judges it.
+pub fn bits_meet_required(
+    network: Network,
+    height: u32,
+    bits: CompactTarget,
+    required: CompactTarget,
+) -> bool {
+    if network == Network::Mainnet && height <= MAINNET_DGW_TOLERANT_HEIGHT {
+        let actual = bits_to_difficulty(bits);
+        let required = bits_to_difficulty(required);
+        return (actual - required).abs() <= actual * 0.5;
+    }
+    bits == required
+}
+
+/// Core's `DarkGravityWave` over [`DGW_PAST_BLOCKS`] headers, oldest first.
+fn dark_gravity_wave(consensus: &ConsensusParams, window: &[Header]) -> Target {
+    // Not quite an average, but the one Core computes, newest first.
+    let mut average = Arith256::ZERO;
+    for (count, header) in (1u32..).zip(window.iter().rev()) {
+        let target = Target::from_compact(header.bits).0;
+        average = if count == 1 {
+            target
+        } else {
+            (average * count + target) / u64::from(count + 1)
+        };
+    }
+
+    // Spans one interval fewer than the target timespan, as in Core.
+    let target_timespan = DGW_PAST_BLOCKS as i64 * consensus.pow_target_spacing;
+    let actual_timespan = (i64::from(window[DGW_PAST_BLOCKS - 1].time) - i64::from(window[0].time))
         .clamp(target_timespan / 3, target_timespan * 3);
 
-        let target = Target(average * actual_timespan as u32 / target_timespan as u64);
-        target.min(self.pow_limit)
-    }
+    let target = Target(average * actual_timespan as u32 / target_timespan as u64);
+    target.min(Target(consensus.pow_limit))
 }
 
 /// Dash Core's `ConvertBitsToDouble`.
@@ -573,7 +561,7 @@ mod tests {
         let time = window[DGW_PAST_BLOCKS - 1].time + elapsed;
 
         assert_eq!(
-            Params::new(network).next_work_required(window, last_height, time),
+            next_work_required(network, window, last_height, time),
             required.map(CompactTarget::from_consensus)
         );
     }
@@ -590,11 +578,7 @@ mod tests {
         let required = CompactTarget::from_consensus(0x1c00f987);
 
         assert_eq!(
-            Params::new(network).bits_meet_required(
-                height,
-                CompactTarget::from_consensus(bits),
-                required
-            ),
+            bits_meet_required(network, height, CompactTarget::from_consensus(bits), required),
             meets
         );
     }

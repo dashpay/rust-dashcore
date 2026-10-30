@@ -17,12 +17,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `EcdsaSecretKey::generate` with the `rand` feature
 - `EcdsaSignature::is_low_s`
 - `TryFrom<&[u8]>` for `PublicKey`
+- `Network::chain_params` in `dash-network`, the network's chain parameters
+- `Network::addr_params` in `dash-network`, the network's address and key
+  prefixes
+- `pow::MAINNET_DGW_TOLERANT_HEIGHT`, the last mainnet height whose bits need
+  only be within 50% of Dark Gravity Wave's
+- `LLMQType::dkg_interval`, `LLMQType::active_window` and
+  `LLMQType::dkg_window_at_cycle`
+- `LlmqParams`, re-exported from `dash-params`, and
+  `From<dash_params::LlmqType>` for `LLMQType`
 - `ExtNetInfo::validate_ports_and_duplicates` in `dashcore`, which checks a version-3 address map
   against the port and duplicate-entry rules of Dash Core v24 and names what it breaks in an
   `ExtNetInfoError`, and `NetInfoEntry::port`
 
 ### Changed
 
+- **Breaking:** `LLMQType::params` returns `LlmqParams`, whose DKG fields are
+  flat `u16`s (`dkg_interval`, `dkg_mining_window_start`, …), and
+  `LlmqDevnetParams` takes `u16`s
+- **Breaking:** `next_work_required` and `bits_meet_required` are free
+  functions in `pow` that take a `Network`
+- **Breaking:** `NetworkExt::known_genesis_block_hash` returns a `BlockHash`
+  instead of an `Option`, and `Network::from_magic` is no longer `const`
+- DNS seeds are fully qualified with a trailing dot, regtest queries
+  `dummySeed.invalid.`, and testnet and regtest enable every LLMQ type Dash
+  Core runs on them. As in Dash Core, regtest retires `llmq_test_instantsend`
+  at its `DIP0024QuorumsHeight`
 - **Breaking:** `dashcore_hashes` re-exports the hash primitives (`sha1`,
   `sha256`, `sha256d`, `sha512`, `sha512_256`, `ripemd160`, `hash160`, `hmac`,
   `siphash24`, `cmp`) from `bitcoin_hashes` 0.14. The raw types no longer
@@ -139,9 +159,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   chain
 - `dash-spv` no longer follows a fork that branches off below the newest
   checkpoint its stored chain reaches
+- `dash_spv_ffi_config_add_peer` defaults devnet peers to the devnet port,
+  19799, instead of 29999
 
 ### Removed
 
+- **Breaking:** remove the `dash-spv-ffi` crate, the C bindings for the SPV client
 - **Breaking:** remove BIP38 from `key-wallet` (the `bip38` feature, `Bip38EncryptedKey`,
   `Bip38Mode`, `encrypt_private_key`, `generate_intermediate_code` and the `Wallet` BIP38
   export/import methods) and the unimplemented `bip38_*` functions from `key-wallet-ffi`
@@ -174,6 +197,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `EcdsaRecSignature`s, which carry the key compression, and the
   `sign_message` functions `from_slice`, `from_base64`, `to_base64`,
   `recover_pubkey` and `is_signed_by_address` replace its methods
+- **Breaking:** remove `consensus::Params`, superseded by
+  `Network::chain_params` and the `pow` functions
+- **Breaking:** remove `LLMQParams`, `DKGParams`, the `LLMQ_*` and `DKG_*`
+  constants and `dkg_rotation_params`, superseded by `LLMQType::params`
+- **Breaking:** remove the `PUBKEY_ADDRESS_PREFIX_*` and
+  `SCRIPT_ADDRESS_PREFIX_*` constants, superseded by `Network::addr_params`
+- **Breaking:** remove the unused `LLMQType::get_dkg_windows_in_range`,
+  `NetworkLLMQExt::get_all_dkg_windows`, `NetworkLLMQExt::is_llmq_type`,
+  `DKGWindow::llmq_type` and `From<&LLMQType> for u64`
+- **Breaking:** remove the unused `TARGET_BLOCK_SPACING`,
+  `DIFFCHANGE_INTERVAL`, `DIFFCHANGE_TIMESPAN`, `SUBSIDY_HALVING_INTERVAL` and
+  `MAX_SCRIPTNUM_VALUE` constants
 
 ### Fixed
 

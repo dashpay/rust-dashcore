@@ -17,8 +17,8 @@ use clap::{Parser, ValueEnum};
 use dash_spv::chain::checkpoints::CHECKPOINT_HEADERS;
 use dash_spv::chain::Checkpoint;
 use dash_spv::network::PeerNetworkManager;
-use dash_spv::sync::SyncEvent;
 use dash_spv::validation::{BlockHeaderValidator, Validator};
+use dash_spv::SyncEvent;
 use dash_spv::{
     init_console_logging, ClientConfig, DashSpvClient, EventHandler, LevelFilter, Network,
 };
@@ -93,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // From genesis: checkpoints must not come from the checkpoints they replace.
     config.start_from_height = Some(0);
 
-    let network_manager = PeerNetworkManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await;
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(network)));
     let synced = Arc::new(Notify::new());
     let client = DashSpvClient::new(

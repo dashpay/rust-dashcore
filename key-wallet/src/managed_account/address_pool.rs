@@ -471,6 +471,12 @@ impl AddressPool {
         Ok(new_addresses)
     }
 
+    /// Generate every address up to and including `index`
+    pub fn generate_up_to(&mut self, index: u32, key_source: &KeySource) -> Result<Vec<Address>> {
+        let next = self.highest_generated.map_or(0, |highest| highest + 1);
+        self.generate_addresses((index + 1).saturating_sub(next), key_source, true)
+    }
+
     /// Generate a specific address at an index
     pub(crate) fn generate_address_at_index(
         &mut self,
@@ -1361,6 +1367,27 @@ mod tests {
         assert_eq!(addresses.len(), 10);
         assert_eq!(pool.highest_generated, Some(9));
         assert_eq!(pool.addresses.len(), 10);
+    }
+
+    #[test]
+    fn test_generate_up_to() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let key_source = test_key_source();
+        let mut pool = AddressPool::new(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+            &key_source,
+        )
+        .unwrap();
+
+        assert_eq!(pool.generate_up_to(29, &key_source).unwrap().len(), 25);
+        assert_eq!(pool.highest_generated, Some(29));
+        assert_eq!(pool.addresses.len(), 30);
+
+        assert!(pool.generate_up_to(10, &key_source).unwrap().is_empty());
+        assert_eq!(pool.highest_generated, Some(29));
     }
 
     #[test]

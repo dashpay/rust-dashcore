@@ -68,7 +68,7 @@ repos:
         entry: contrib/verify_ffi.py
         language: python
         pass_filenames: false
-        files: ^(key-wallet-ffi|dash-spv-ffi)/.*\.(rs|toml|py)$
+        files: ^key-wallet-ffi/.*\.(rs|toml|py)$
 
   # ============================================================================
   # SLOW CHECKS - Run on git push only.

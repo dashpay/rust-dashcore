@@ -83,8 +83,6 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
 
     async fn get_start_height(&self) -> Option<u32>;
 
-    async fn get_stored_headers_len(&self) -> u32;
-
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,
@@ -191,24 +189,6 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
 
     async fn get_start_height(&self) -> Option<u32> {
         self.block_headers.read().await.start_height()
-    }
-
-    async fn get_stored_headers_len(&self) -> u32 {
-        let block_headers = self.block_headers.read().await;
-
-        let start_height = if let Some(start_height) = block_headers.start_height() {
-            start_height
-        } else {
-            return 0;
-        };
-
-        let end_height = if let Some(end_height) = block_headers.tip_height() {
-            end_height
-        } else {
-            return 0;
-        };
-
-        end_height - start_height + 1
     }
 
     async fn get_header_height_by_hash(

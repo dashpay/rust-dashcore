@@ -25,13 +25,11 @@ impl MasternodeList {
         known_height: CoreBlockHeight,
         network: Network,
     ) -> Result<Self, SmlError> {
-        if let Some(genesis_block_hash) = network.known_genesis_block_hash() {
-            // Check if the base block is the genesis block
-            if diff.base_block_hash != genesis_block_hash
-                && diff.base_block_hash.as_byte_array() != &[0; 32]
-            {
-                return Err(SmlError::BaseBlockNotGenesis(diff.base_block_hash));
-            }
+        // Check if the base block is the genesis block
+        if diff.base_block_hash != network.known_genesis_block_hash()
+            && diff.base_block_hash.as_byte_array() != &[0; 32]
+        {
+            return Err(SmlError::BaseBlockNotGenesis(diff.base_block_hash));
         }
 
         // Ensure the `MnListDiff` is valid
@@ -95,15 +93,7 @@ impl MasternodeList {
             },
         );
 
-        // Construct `MasternodeList`
-        Ok(MasternodeList {
-            block_hash: diff.block_hash,
-            known_height,
-            masternode_merkle_root: diff.merkle_hashes.first().cloned(),
-            llmq_merkle_root: None, // Adjust based on real data availability
-            masternodes: masternodes.into(),
-            quorums: quorums.into(),
-        })
+        Ok(MasternodeList::build(masternodes, quorums, diff.block_hash, known_height).build())
     }
 }
 

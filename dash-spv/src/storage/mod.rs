@@ -10,7 +10,6 @@ mod lockfile;
 mod masternode;
 mod metadata;
 mod migrator;
-mod peers;
 mod segments;
 
 use crate::error::StorageResult;
@@ -36,7 +35,6 @@ pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHe
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
 pub use crate::storage::masternode::{MasternodeStorage, PersistentMasternodeStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
-pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
 
 #[async_trait]
 pub trait PersistentStorage: Sized {
@@ -242,11 +240,20 @@ impl Drop for DiskStorageManager {
 #[async_trait]
 impl StorageManager for DiskStorageManager {
     async fn truncate_above(&mut self, height: u32) -> StorageResult<()> {
-        BlockHeaderStorage::truncate_above(self, height).await?;
-        FilterHeaderStorage::truncate_above(self, height).await?;
-        FilterStorage::truncate_above(self, height).await?;
-        BlockStorage::truncate_above(self, height).await?;
-        MasternodeStorage::truncate_above(self, height).await
+        let chain = async {
+            BlockHeaderStorage::truncate_above(self, height).await?;
+            FilterHeaderStorage::truncate_above(self, height).await?;
+            FilterStorage::truncate_above(self, height).await?;
+            BlockStorage::truncate_above(self, height).await
+        }
+        .await;
+
+        // The engine goes last, as it looks rotated cycles up in the headers,
+        // and even when the chain fails part way, so it never holds lists
+        // above the stored tip.
+        let masternodes = MasternodeStorage::truncate_above(self, height).await;
+
+        chain.and(masternodes)
     }
 
     async fn clear(&mut self) -> StorageResult<()> {
@@ -359,10 +366,6 @@ impl BlockHeaderStorage for DiskStorageManager {
         self.block_headers.read().await.get_start_height().await
     }
 
-    async fn get_stored_headers_len(&self) -> u32 {
-        self.block_headers.read().await.get_stored_headers_len().await
-    }
-
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,
@@ -377,10 +380,6 @@ impl BlockHeaderStorage for DiskStorageManager {
 
 #[async_trait]
 impl FilterHeaderStorage for DiskStorageManager {
-    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
-        self.filter_headers.write().await.store_filter_headers(headers).await
-    }
-
     async fn store_filter_headers_at_height(
         &mut self,
         headers: &[FilterHeader],
@@ -608,7 +607,8 @@ mod tests {
             storage: &DiskStorageManager,
             headers: &[HashedBlockHeader],
         ) -> StorageResult<()> {
-            assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
+            assert_eq!(storage.get_start_height().await, Some(CHECKPOINT_HEIGHT));
+            assert_eq!(storage.get_tip_height().await, Some(CHECKPOINT_HEIGHT + 99));
 
             let header_at_base = storage.get_header(CHECKPOINT_HEIGHT).await?;
             assert_eq!(header_at_base, Some(headers[0].clone()));

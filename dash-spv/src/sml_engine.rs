@@ -1,5 +1,6 @@
 mod helpers;
 mod rotated_quorum_construction;
+mod snapshot_codec;
 mod validation;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -7,6 +8,7 @@ use std::sync::Arc;
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::BlockHeaderStorage;
+use crate::validation::MasternodeListValidator;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hashes::Hash;
 use dashcore::network::constants::NetworkExt;
@@ -95,21 +97,16 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     rotated_quorums_per_cycle: BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
     network: Network,
+    validator: Option<MasternodeListValidator<H>>,
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
-/// mining window it overlaps, and never more than are active at once. Without
-/// a DKG interval, one per block.
+/// mining window it overlaps, and never more than are active at once.
 fn max_new_quorums(llmq_type: LLMQType, blocks: CoreBlockHeight) -> usize {
-    let params = llmq_type.params();
-    let dkg = params.dkg_params;
-    let window = dkg.mining_window_end.saturating_sub(dkg.mining_window_start);
-    let windows = blocks
-        .saturating_add(window)
-        .saturating_sub(1)
-        .checked_div(dkg.interval)
-        .map_or(blocks, |windows| windows.saturating_add(1));
-    windows.min(params.signing_active_quorum_count) as usize
+    let window = llmq_type.dkg_window_at_cycle(0);
+    let span = blocks.saturating_add(window.mining_end - window.mining_start);
+    let windows = span.saturating_sub(1) / llmq_type.dkg_interval() + 1;
+    windows.min(llmq_type.active_quorum_count()) as usize
 }
 
 /// A cycle's quorums keyed by quorum index. Rejects a missing, out-of-range or
@@ -169,7 +166,7 @@ fn rotated_cycle_base_height(
         return None;
     }
     let cycle_base = quorum_block_height.checked_sub(quorum_index)?;
-    (cycle_base % quorum.llmq_type.params().dkg_params.interval == 0).then_some(cycle_base)
+    (quorum.llmq_type.get_cycle_base_height(cycle_base) == cycle_base).then_some(cycle_base)
 }
 
 /// The rotated quorums a `quorumsCLSigs` group of `diff` signs for.
@@ -184,12 +181,14 @@ fn signed_rotated_quorums<'a>(
         .filter(|quorum| quorum.llmq_type.is_rotating_quorum_type())
 }
 
-/// The quarter work block heights of the cycle based at `B` with DKG interval
-/// `c`, oldest first: `[B-3c-8, B-2c-8, B-c-8, B-8]`. `None` below genesis.
+/// The quarter work block heights of the `llmq_type` cycle based at `B`, whose
+/// DKG interval is `c`, oldest first: `[B-3c-8, B-2c-8, B-c-8, B-8]`. `None`
+/// below genesis.
 fn cycle_quarter_work_heights(
     cycle_base: CoreBlockHeight,
-    interval: u32,
+    llmq_type: LLMQType,
 ) -> [Option<CoreBlockHeight>; 4] {
+    let interval = llmq_type.dkg_interval();
     [3, 2, 1, 0]
         .map(|cycles_back: u32| cycle_base.checked_sub(cycles_back * interval + WORK_DIFF_DEPTH))
 }
@@ -236,20 +235,32 @@ impl<H: BlockHeaderStorage> Drop for QRInfoRollback<'_, H> {
 impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// An empty engine for `network` that looks block heights up in `headers`.
     pub fn new(network: Network, headers: Arc<RwLock<H>>) -> Self {
+        let validator = MasternodeListValidator::new(Arc::clone(&headers));
+        Self::with_validator(network, headers, Some(validator))
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_without_validation(network: Network, headers: Arc<RwLock<H>>) -> Self {
+        Self::with_validator(network, headers, None)
+    }
+
+    fn with_validator(
+        network: Network,
+        headers: Arc<RwLock<H>>,
+        validator: Option<MasternodeListValidator<H>>,
+    ) -> Self {
         Self {
             headers,
             masternode_lists: BTreeMap::new(),
             rotated_quorums_per_cycle: BTreeMap::new(),
             network,
+            validator,
         }
     }
 
     /// The engine's lists and rotated cycles as bytes, see [`Self::from_snapshot`].
     pub fn snapshot(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
-        bincode::serde::encode_to_vec(
-            (&self.masternode_lists, &self.rotated_quorums_per_cycle),
-            bincode::config::standard(),
-        )
+        bincode::encode_to_vec(self, snapshot_codec::config())
     }
 
     /// An engine holding the lists and rotated cycles [`Self::snapshot`] encoded.
@@ -258,19 +269,17 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         headers: Arc<RwLock<H>>,
         bytes: &[u8],
     ) -> Result<Self, bincode::error::DecodeError> {
-        let ((masternode_lists, rotated_quorums_per_cycle), read) =
-            bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        let (engine, read) = bincode::decode_from_slice_with_context(
+            bytes,
+            snapshot_codec::config(),
+            (network, headers),
+        )?;
 
         if read != bytes.len() {
             return Err(bincode::error::DecodeError::Other("trailing bytes after the snapshot"));
         }
 
-        Ok(Self {
-            headers,
-            masternode_lists,
-            rotated_quorums_per_cycle,
-            network,
-        })
+        Ok(engine)
     }
 
     /// The height of `block_hash` in the header chain, `None` when the chain
@@ -282,7 +291,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         block_hash: &BlockHash,
     ) -> StorageResult<Option<CoreBlockHeight>> {
         if *block_hash == BlockHash::all_zeros()
-            || self.network.known_genesis_block_hash() == Some(*block_hash)
+            || self.network.known_genesis_block_hash() == *block_hash
         {
             return Ok(Some(0));
         }
@@ -357,6 +366,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// non-rotating quorum of the newest list still to validate, oldest first.
     /// A retired quorum type is never validated, so it needs none. Fails when
     /// the header storage cannot read a block it looks up.
+    #[cfg(test)]
     pub async fn missing_work_block_list_requests(
         &self,
     ) -> StorageResult<Vec<(BlockHash, BlockHash)>> {
@@ -724,7 +734,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// For a diff ending at a work block, the work block of the newest cycle
     /// whose commitments it can carry: one interval below its end.
     fn diff_newest_work_height(&self, end_height: CoreBlockHeight) -> Option<CoreBlockHeight> {
-        let interval = self.network.isd_llmq_type().params().dkg_params.interval;
+        let interval = self.network.isd_llmq_type().dkg_interval();
         (end_height % interval == interval - WORK_DIFF_DEPTH)
             .then(|| end_height.checked_sub(interval))
             .flatten()
@@ -745,9 +755,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let Some(cycle_base) = self.rotated_quorum_cycle_base(quorum).await? else {
             return Ok(None);
         };
-        let interval = quorum.llmq_type.params().dkg_params.interval;
         let [Some(h3), Some(h2), Some(h1), Some(h0)] =
-            cycle_quarter_work_heights(cycle_base, interval)
+            cycle_quarter_work_heights(cycle_base, quorum.llmq_type)
         else {
             return Ok(None);
         };
@@ -1034,9 +1043,23 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let base_block_hash = masternode_list_diff.base_block_hash;
         let base_height = self.required_height_of(&base_block_hash).await?;
         let diff_end_height = self.required_height_of(&block_hash).await?;
+
+        let coinbase_tx = match &self.validator {
+            Some(validator) => {
+                validator.validate_coinbase_proof(&masternode_list_diff, diff_end_height).await?;
+                Some(masternode_list_diff.coinbase_tx.clone())
+            }
+            None => None,
+        };
+
         if base_height == 0 {
             let masternode_list =
                 MasternodeList::from_diff(masternode_list_diff, diff_end_height, self.network)?;
+
+            if let (Some(validator), Some(coinbase_tx)) = (&self.validator, &coinbase_tx) {
+                validator.validate_coinbase_roots(&masternode_list, coinbase_tx)?;
+            }
+
             self.masternode_lists.insert(diff_end_height, masternode_list);
             return Ok(());
         }
@@ -1046,6 +1069,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         };
         let masternode_list =
             base_masternode_list.apply_diff(masternode_list_diff, diff_end_height, self.network)?;
+
+        if let (Some(validator), Some(coinbase_tx)) = (&self.validator, &coinbase_tx) {
+            validator.validate_coinbase_roots(&masternode_list, coinbase_tx)?;
+        }
+
         // A quorum the diff brings may already have a status in another list.
         let mut changes = Vec::new();
         for (quorum_type, quorums) in masternode_list.quorums.iter() {
@@ -1106,9 +1134,15 @@ pub(crate) mod test_support {
     use super::*;
     use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSPublicKey;
+    use dashcore::consensus::deserialize;
     use dashcore::hash_types::QuorumVVecHash;
+    use dashcore::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
+    use dashcore::ProTxHash;
 
     pub(crate) type TestEngine = MasternodeListEngine<MockHeaderStorage>;
+
+    type MasternodeChange = (ProTxHash, Option<Arc<QualifiedMasternodeListEntry>>);
+    type QuorumChange = (LLMQType, QuorumHash, Option<Arc<QualifiedQuorumEntry>>);
 
     /// The block container the engine kept before it read the header chain,
     /// as `block_container_*.dat` fixtures hold it.
@@ -1175,28 +1209,43 @@ pub(crate) mod test_support {
             network: Network,
             heights: HashMap<BlockHash, CoreBlockHeight>,
         ) -> Self {
-            Self::new(network, Arc::new(RwLock::new(MockHeaderStorage(heights))))
+            Self::new_without_validation(
+                network,
+                Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
+            )
         }
 
         pub(crate) fn headers(&self) -> Arc<RwLock<MockHeaderStorage>> {
             self.headers.clone()
         }
 
+        /// Stands in for the headers a fixture lacks.
+        pub(crate) fn feed_merkle_roots<'a>(
+            &mut self,
+            diffs: impl IntoIterator<Item = &'a MnListDiff>,
+        ) {
+            let mut headers = self.headers.try_write().expect("unlocked");
+            for diff in diffs {
+                let merkle_root = diff.coinbase_merkle_root().expect("proves its coinbase");
+                headers.merkle_roots.insert(diff.block_hash, merkle_root);
+            }
+        }
+
         pub(crate) fn feed_block_height(&mut self, height: CoreBlockHeight, block_hash: BlockHash) {
-            self.headers.try_write().expect("unlocked").0.insert(block_hash, height);
+            self.headers.try_write().expect("unlocked").heights.insert(block_hash, height);
         }
 
         pub(crate) fn forget_block(&mut self, block_hash: &BlockHash) {
-            self.headers.try_write().expect("unlocked").0.remove(block_hash);
+            self.headers.try_write().expect("unlocked").heights.remove(block_hash);
         }
 
         pub(crate) fn block_height(&self, block_hash: &BlockHash) -> Option<CoreBlockHeight> {
-            self.headers.try_read().expect("unlocked").0.get(block_hash).copied()
+            self.headers.try_read().expect("unlocked").heights.get(block_hash).copied()
         }
 
         pub(crate) fn block_hash_at(&self, height: CoreBlockHeight) -> Option<BlockHash> {
             let headers = self.headers.try_read().expect("unlocked");
-            headers.0.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
+            headers.heights.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
         }
 
         /// Verifies `chain_lock` as the ChainLock manager does.
@@ -1237,19 +1286,126 @@ pub(crate) mod test_support {
             }
             engine
         }
+
+        /// A mainnet engine following the tip for `lists` blocks from 2227096,
+        /// holding a list per block. Each block takes its share of the
+        /// masternode and quorum changes between the 2227096 and 2241332
+        /// fixture lists at their average rate per block, and shares the rest
+        /// of the previous list as `MasternodeList::apply_diff` does. New
+        /// quorums arrive verified. `churn` multiplies the rates, replaying the
+        /// changes as fresh entries once they run out.
+        pub(crate) fn mainnet_list_chain(lists: usize, churn: usize) -> Self {
+            const BASE_HEIGHT: CoreBlockHeight = 2_227_096;
+            const END_HEIGHT: CoreBlockHeight = 2_241_332;
+
+            let base_diff: MnListDiff = deserialize(include_bytes!(
+                "../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+            ))
+            .expect("base diff");
+            let diff: MnListDiff = deserialize(include_bytes!(
+                "../../dash/tests/data/test_DML_diffs/mn_list_diff_2227096_2241332.bin"
+            ))
+            .expect("diff");
+            let base =
+                MasternodeList::from_diff(base_diff, BASE_HEIGHT, Network::Mainnet).expect("base");
+            let end = base.apply_diff(diff, END_HEIGHT, Network::Mainnet).expect("end");
+
+            let mut masternode_changes: Vec<MasternodeChange> = base
+                .masternodes
+                .keys()
+                .filter(|key| !end.masternodes.contains_key(*key))
+                .map(|key| (*key, None))
+                .collect();
+            masternode_changes.extend(
+                end.masternodes
+                    .iter()
+                    .filter(|(key, entry)| base.masternodes.get(*key) != Some(*entry))
+                    .map(|(key, entry)| (*key, Some(Arc::clone(entry)))),
+            );
+            let mut quorum_changes: Vec<QuorumChange> = Vec::new();
+            for (llmq_type, quorums) in base.quorums.iter() {
+                for quorum_hash in quorums.keys() {
+                    if end.quorums.get(llmq_type).is_none_or(|end| !end.contains_key(quorum_hash)) {
+                        quorum_changes.push((*llmq_type, *quorum_hash, None));
+                    }
+                }
+            }
+            for (llmq_type, quorums) in end.quorums.iter() {
+                for (quorum_hash, quorum) in quorums {
+                    if base
+                        .quorums
+                        .get(llmq_type)
+                        .is_none_or(|base| !base.contains_key(quorum_hash))
+                    {
+                        let mut quorum = QualifiedQuorumEntry::clone(quorum);
+                        quorum.verified = LLMQEntryVerificationStatus::Verified;
+                        quorum_changes.push((*llmq_type, *quorum_hash, Some(Arc::new(quorum))));
+                    }
+                }
+            }
+
+            let blocks = (END_HEIGHT - BASE_HEIGHT) as usize;
+            let mut engine = Self::empty(Network::Mainnet);
+            let mut list = base;
+            for block in 0..lists {
+                let height = BASE_HEIGHT + block as CoreBlockHeight;
+                let share = |changes: usize| {
+                    (block * changes * churn / blocks)..((block + 1) * changes * churn / blocks)
+                };
+                let masternodes: Vec<_> = share(masternode_changes.len())
+                    .map(|index| &masternode_changes[index % masternode_changes.len()])
+                    .collect();
+                if !masternodes.is_empty() {
+                    let map = Arc::make_mut(&mut list.masternodes);
+                    for (key, entry) in masternodes {
+                        match entry {
+                            Some(entry) => map
+                                .insert(*key, Arc::new(QualifiedMasternodeListEntry::clone(entry))),
+                            None => map.remove(key),
+                        };
+                    }
+                }
+                let quorums: Vec<_> = share(quorum_changes.len())
+                    .map(|index| &quorum_changes[index % quorum_changes.len()])
+                    .collect();
+                if !quorums.is_empty() {
+                    let map = Arc::make_mut(&mut list.quorums);
+                    for (llmq_type, quorum_hash, quorum) in quorums {
+                        match quorum {
+                            Some(quorum) => {
+                                map.entry(*llmq_type).or_default().insert(
+                                    *quorum_hash,
+                                    Arc::new(QualifiedQuorumEntry::clone(quorum)),
+                                );
+                            }
+                            None => {
+                                if let Some(by_hash) = map.get_mut(llmq_type) {
+                                    by_hash.remove(quorum_hash);
+                                }
+                            }
+                        }
+                    }
+                }
+                list.block_hash = BlockHash::dummy(height);
+                list.known_height = height;
+                engine.feed_block_height(height, list.block_hash);
+                engine.masternode_lists.insert(height, list.clone());
+            }
+            engine
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
-    use super::{
-        build_cycle_quorum_map, FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH,
-    };
+    use super::{build_cycle_quorum_map, qr_info_diffs};
+    use super::{FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
+    use crate::validation::MasternodeListValidator;
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -1265,6 +1421,7 @@ mod tests {
     use dashcore::sml::llmq_type::network::NetworkLLMQExt;
     use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
     use dashcore::sml::masternode_list::MasternodeList;
+    use dashcore::sml::masternode_list_entry::MasternodeListEntry;
     use dashcore::sml::quorum_entry::qualified_quorum_entry::{
         QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
     };
@@ -1275,6 +1432,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+    use test_case::test_case;
     use tokio::sync::RwLock;
 
     fn make_qualified_quorum_entry(
@@ -1320,7 +1478,7 @@ mod tests {
     #[tokio::test]
     async fn rotation_cl_sigs_by_work_height_keys_each_cycle_to_its_own_work_block() {
         let isd_type = Network::Mainnet.isd_llmq_type();
-        let interval = isd_type.params().dkg_params.interval;
+        let interval = isd_type.dkg_interval();
         assert_eq!(interval, 288, "the heights below assume the mainnet DKG interval");
 
         let cycle_base = interval * 100;
@@ -1608,15 +1766,17 @@ mod tests {
     /// engine state mirrors production cold start: empty masternode lists
     /// over the captured header heights.
     fn load_qrinfo_2518986_fixture() -> (TestEngine, QRInfo) {
-        let engine = TestEngine::knowing(
+        let heights = fixture_heights(include_bytes!(
+            "../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
+        ));
+        let mut engine = TestEngine::new(
             Network::Mainnet,
-            fixture_heights(include_bytes!(
-                "../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
-            )),
+            Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
         );
         let qr_info: QRInfo = decode_fixture(include_bytes!(
             "../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"
         ));
+        engine.feed_merkle_roots(qr_info_diffs(&qr_info));
         (engine, qr_info)
     }
 
@@ -1676,9 +1836,27 @@ mod tests {
         );
     }
 
+    #[test_case(true; "matching its commitments")]
+    #[test_case(false; "off its masternode list root")]
     #[tokio::test]
-    async fn validate_first_qr_info_on_fresh_engine_with_mixed_cycle_quorums() {
-        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+    async fn validate_first_qr_info_on_fresh_engine_with_mixed_cycle_quorums(committed: bool) {
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        if !committed {
+            let tip = &mut qr_info.mn_list_diff_tip;
+            tip.new_masternodes.push(MasternodeListEntry::dummy(0x11));
+            let tip_hash = tip.block_hash;
+            let result = engine.feed_qr_info(qr_info).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(FeedError::Refused(QuorumValidationError::SMLError(
+                        SmlError::CoinbaseCommitmentMismatch(hash)
+                    ))) if hash == tip_hash
+                ),
+                "got {result:?}"
+            );
+            return;
+        }
 
         // The fixture's active set mixes cycles: quorum index 0 carries the
         // previous cycle's commitment (its DKG failed in the current cycle),
@@ -1730,7 +1908,7 @@ mod tests {
         // height in the captured chain, so its cycle cannot be derived and it
         // settles as skipped. The verified rest of the set must still be
         // stored so IS locks referencing the previous cycle verify.
-        let dkg_interval = engine.network.isd_llmq_type().params().dkg_params.interval;
+        let dkg_interval = engine.network.isd_llmq_type().dkg_interval();
         let previous_cycle_hash = engine
             .block_hash_at(current_cycle_base - dkg_interval)
             .expect("expected previous cycle hash");
@@ -2095,9 +2273,6 @@ mod tests {
         async fn get_start_height(&self) -> Option<u32> {
             self.inner.get_start_height().await
         }
-        async fn get_stored_headers_len(&self) -> u32 {
-            self.inner.get_stored_headers_len().await
-        }
         async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
             self.read(hash, self.inner.get_header_height_by_hash(hash).await).await
         }
@@ -2113,14 +2288,22 @@ mod tests {
         unreadable: BlockHash,
         readable: usize,
     ) -> MasternodeListEngine<FailingFrom> {
+        let inner = {
+            let headers = engine.headers();
+            let headers = headers.try_read().expect("unlocked");
+            MockHeaderStorage {
+                heights: headers.heights.clone(),
+                merkle_roots: headers.merkle_roots.clone(),
+            }
+        };
         let headers = Arc::new(RwLock::new(FailingFrom {
-            inner: MockHeaderStorage(engine.headers().try_read().expect("unlocked").0.clone()),
+            inner,
             unreadable,
             readable,
             reads: AtomicUsize::new(0),
             hangs: false,
         }));
-        let mut failing = MasternodeListEngine::new(engine.network, headers);
+        let mut failing = MasternodeListEngine::new_without_validation(engine.network, headers);
         failing.masternode_lists = engine.masternode_lists.clone();
         failing.rotated_quorums_per_cycle = engine.rotated_quorums_per_cycle.clone();
         failing
@@ -2181,6 +2364,38 @@ mod tests {
         }
     }
 
+    /// Our header storage failing to read a diff's block while its coinbase
+    /// proof is checked fails the feed with `HeaderStorage` rather than
+    /// refusing the QRInfo, for every diff the QRInfo carries.
+    #[tokio::test]
+    async fn a_header_storage_failure_never_refuses_a_validated_qr_info() {
+        let (engine, qr_info) = load_qrinfo_2518986_fixture();
+        let blocks: Vec<BlockHash> =
+            qr_info_diffs(&qr_info).iter().map(|diff| diff.block_hash).collect();
+
+        for unreadable in blocks {
+            let validating = |readable| {
+                let mut failing = with_reads_failing(&engine, unreadable, readable);
+                failing.validator =
+                    Some(MasternodeListValidator::new(Arc::clone(&failing.headers)));
+                failing
+            };
+            let mut fed = validating(usize::MAX);
+            let result = fed.feed_qr_info(qr_info.clone()).await;
+            assert!(result.is_ok(), "the QRInfo feeds while the storage reads, got {result:?}");
+            let reads = fed.headers.read().await.reads.load(Ordering::Relaxed);
+            assert!(reads > 0, "the feed reads {unreadable}");
+            for readable in 0..reads {
+                let result = validating(readable).feed_qr_info(qr_info.clone()).await;
+                assert!(
+                    !matches!(result, Err(FeedError::Refused(_))),
+                    "reading {unreadable} failing from its read {readable} on refused the \
+                     QRInfo: {result:?}"
+                );
+            }
+        }
+    }
+
     /// Stopping the client, as following a fork does, aborts a manager task
     /// still running after a grace period, dropping a QRInfo feed part way.
     /// That leaves the engine as it was, as a refusal does, so a run started
@@ -2220,7 +2435,7 @@ mod tests {
     #[tokio::test]
     async fn a_fork_drops_a_rotated_cycle_whose_base_cannot_be_read() {
         let fork = 1_000_000;
-        let window_end = Network::Mainnet.isd_llmq_type().params().dkg_params.mining_window_end;
+        let window_end = Network::Mainnet.isd_llmq_type().dkg_window_at_cycle(0).mining_end;
         let mut engine = TestEngine::dummy_with_lists(&[fork]);
         let readable = fork - window_end;
         let unreadable = readable - 24;
@@ -2595,7 +2810,7 @@ mod tests {
         let work = |mined: CoreBlockHeight| mined - QUORUM_MEMBER_LIST_OFFSET;
         let tip = 2_000_000;
         let older_list = 1_000_000;
-        let interval = LLMQType::Llmqtype400_60.params().dkg_params.interval;
+        let interval = LLMQType::Llmqtype400_60.dkg_interval();
         let active = LLMQType::Llmqtype400_60.active_quorum_count();
         assert_eq!((interval, active), (288, 4), "the heights below assume mainnet 400_60");
         // One 400_60 quorum per interval, newest first, one more than are active.
@@ -2661,16 +2876,19 @@ mod tests {
     /// window may bring the quorums of both.
     #[test]
     fn max_new_quorums_counts_the_mining_windows_a_run_overlaps() {
-        let params = LLMQType::Llmqtype100_67.params();
-        let dkg = &params.dkg_params;
-        assert_eq!((dkg.interval, dkg.mining_window_start, dkg.mining_window_end), (24, 10, 18));
+        let llmq_type = LLMQType::Llmqtype100_67;
+        let window = llmq_type.dkg_window_at_cycle(0);
+        assert_eq!(
+            (llmq_type.dkg_interval(), window.mining_start, window.mining_end),
+            (24, 10, 18)
+        );
         // After the commitment at 18, the next window starts at 24 + 10.
         assert_eq!(super::max_new_quorums(LLMQType::Llmqtype100_67, 16), 1, "19..=34");
         assert_eq!(super::max_new_quorums(LLMQType::Llmqtype100_67, 17), 2, "18..=34");
         assert_eq!(super::max_new_quorums(LLMQType::Llmqtype100_67, 1), 1);
         assert_eq!(
             super::max_new_quorums(LLMQType::Llmqtype100_67, 100_000),
-            params.signing_active_quorum_count as usize
+            llmq_type.active_quorum_count() as usize
         );
     }
 

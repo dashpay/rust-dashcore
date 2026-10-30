@@ -3,7 +3,6 @@
 mod block_headers;
 mod blocks;
 mod chainlock;
-pub(super) mod download_coordinator;
 mod events;
 mod filter_headers;
 mod filters;
@@ -25,7 +24,6 @@ pub use masternodes::{MasternodesManager, MasternodesProgress};
 pub(crate) use mempool::MempoolManager;
 pub use mempool::{BroadcastConfig, BroadcastHoldout, BroadcastResult, MempoolProgress};
 
-pub use crate::sml_engine::QRInfoFeedResult;
 pub use events::SyncEvent;
 pub use identifier::ManagerIdentifier;
 pub use progress::{ProgressPercentage, SyncProgress, SyncState};

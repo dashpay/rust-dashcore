@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use async_trait::async_trait;
 use dashcore::block::Header as BlockHeader;
-use dashcore::BlockHash;
+use dashcore::{BlockHash, TxMerkleNode};
 
 use crate::error::StorageResult;
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
@@ -11,8 +11,21 @@ use crate::types::HashedBlockHeader;
 
 /// A [`BlockHeaderStorage`] that answers hash and height lookups from a map
 /// and nothing else. A header it returns carries the mapped hash on a dummy
-/// header. Everything else is inert.
-pub struct MockHeaderStorage(pub HashMap<BlockHash, u32>);
+/// header, with its mapped merkle root if any. Everything else is inert.
+#[derive(Default)]
+pub struct MockHeaderStorage {
+    pub heights: HashMap<BlockHash, u32>,
+    pub merkle_roots: HashMap<BlockHash, TxMerkleNode>,
+}
+
+impl MockHeaderStorage {
+    pub fn new(heights: HashMap<BlockHash, u32>) -> Self {
+        Self {
+            heights,
+            merkle_roots: HashMap::new(),
+        }
+    }
+}
 
 #[async_trait]
 impl BlockHeaderStorage for MockHeaderStorage {
@@ -38,19 +51,20 @@ impl BlockHeaderStorage for MockHeaderStorage {
     async fn get_start_height(&self) -> Option<u32> {
         None
     }
-    async fn get_stored_headers_len(&self) -> u32 {
-        0
-    }
     async fn get_header(&self, height: u32) -> StorageResult<Option<HashedBlockHeader>> {
-        Ok(self.0.iter().find(|(_, h)| **h == height).map(|(hash, _)| {
-            HashedBlockHeader::with_trusted_hash(BlockHeader::dummy(height), *hash)
+        Ok(self.heights.iter().find(|(_, h)| **h == height).map(|(hash, _)| {
+            let mut header = BlockHeader::dummy(height);
+            if let Some(merkle_root) = self.merkle_roots.get(hash) {
+                header.merkle_root = *merkle_root;
+            }
+            HashedBlockHeader::with_trusted_hash(header, *hash)
         }))
     }
     async fn get_header_height_by_hash(&self, hash: &BlockHash) -> StorageResult<Option<u32>> {
-        Ok(self.0.get(hash).copied())
+        Ok(self.heights.get(hash).copied())
     }
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
-        self.0.retain(|_, h| *h <= target_height);
+        self.heights.retain(|_, h| *h <= target_height);
         Ok(())
     }
 }
