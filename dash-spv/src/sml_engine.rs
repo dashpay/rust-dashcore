@@ -195,16 +195,17 @@ fn cycle_quarter_work_heights(
         .map(|cycles_back: u32| cycle_base.checked_sub(cycles_back * interval + WORK_DIFF_DEPTH))
 }
 
-/// An engine's lists and rotated cycles.
+/// An engine's lists, rotated cycles and latest coinbase.
 type ListsAndCycles = (
     BTreeMap<CoreBlockHeight, MasternodeList>,
     BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
+    Option<CoinbasePayload>,
 );
 
-/// The lists and rotated cycles of an engine as a QRInfo feed found them, put
-/// back when this drops unless the feed's changes are kept: a feed that fails
-/// or is dropped part way leaves the engine as it was. The copy shares the
-/// lists' maps; the few stored cycles are copied.
+/// The lists, rotated cycles and latest coinbase of an engine as a QRInfo feed
+/// found them, put back when this drops unless the feed's changes are kept: a
+/// feed that fails or is dropped part way leaves the engine as it was. The copy
+/// shares the lists' maps; the few stored cycles are copied.
 struct QRInfoRollback<'a, H: BlockHeaderStorage> {
     engine: &'a mut MasternodeListEngine<H>,
     saved: Option<ListsAndCycles>,
@@ -212,7 +213,11 @@ struct QRInfoRollback<'a, H: BlockHeaderStorage> {
 
 impl<'a, H: BlockHeaderStorage> QRInfoRollback<'a, H> {
     fn new(engine: &'a mut MasternodeListEngine<H>) -> Self {
-        let saved = (engine.masternode_lists.clone(), engine.rotated_quorums_per_cycle.clone());
+        let saved = (
+            engine.masternode_lists.clone(),
+            engine.rotated_quorums_per_cycle.clone(),
+            engine.latest_coinbase.clone(),
+        );
         Self {
             engine,
             saved: Some(saved),
@@ -227,9 +232,12 @@ impl<'a, H: BlockHeaderStorage> QRInfoRollback<'a, H> {
 
 impl<H: BlockHeaderStorage> Drop for QRInfoRollback<'_, H> {
     fn drop(&mut self) {
-        if let Some((masternode_lists, rotated_quorums_per_cycle)) = self.saved.take() {
+        if let Some((masternode_lists, rotated_quorums_per_cycle, latest_coinbase)) =
+            self.saved.take()
+        {
             self.engine.masternode_lists = masternode_lists;
             self.engine.rotated_quorums_per_cycle = rotated_quorums_per_cycle;
+            self.engine.latest_coinbase = latest_coinbase;
         }
     }
 }
