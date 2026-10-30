@@ -17,10 +17,9 @@ use crate::blockdata::script::{
 };
 use crate::consensus::Encodable;
 use crate::hash_types::{ScriptHash, WScriptHash};
-use crate::key::{PublicKey, UntweakedPublicKey};
+use crate::key::PublicKey;
 use crate::policy::DUST_RELAY_TX_FEE;
 use crate::prelude::*;
-use crate::taproot::{LeafVersion, TapLeafHash, TapNodeHash};
 
 /// Bitcoin script slice.
 ///
@@ -137,12 +136,6 @@ impl Script {
         WScriptHash::hash(self.as_bytes())
     }
 
-    /// Computes leaf hash of tapscript.
-    #[inline]
-    pub fn tapscript_leaf_hash(&self) -> TapLeafHash {
-        TapLeafHash::from_script(self, LeafVersion::TapScript)
-    }
-
     /// Returns the length in bytes of the script.
     #[inline]
     pub fn len(&self) -> usize {
@@ -172,15 +165,6 @@ impl Script {
     #[inline]
     pub fn to_v0_p2wsh(&self) -> ScriptBuf {
         ScriptBuf::new_v0_p2wsh(&self.wscript_hash())
-    }
-
-    /// Computes P2TR output with a given internal key and a single script spending path equal to
-    /// the current script, assuming that the script is a Tapscript.
-    #[inline]
-    pub fn to_v1_p2tr(&self, internal_key: UntweakedPublicKey) -> ScriptBuf {
-        let leaf_hash = self.tapscript_leaf_hash();
-        let merkle_root = TapNodeHash::from(leaf_hash);
-        ScriptBuf::new_v1_p2tr(internal_key, Some(merkle_root))
     }
 
     /// Returns witness version of the script, if any, assuming the script is a `scriptPubkey`.
@@ -286,14 +270,6 @@ impl Script {
         self.0.len() == 22
             && self.witness_version() == Some(WitnessVersion::V0)
             && self.0[1] == OP_PUSHBYTES_20.to_u8()
-    }
-
-    /// Checks whether a script pubkey is a P2TR output.
-    #[inline]
-    pub fn is_v1_p2tr(&self) -> bool {
-        self.0.len() == 34
-            && self.witness_version() == Some(WitnessVersion::V1)
-            && self.0[1] == OP_PUSHBYTES_32.to_u8()
     }
 
     /// Check if this is an OP_RETURN output.

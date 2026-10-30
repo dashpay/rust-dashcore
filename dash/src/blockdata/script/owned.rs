@@ -12,9 +12,8 @@ use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
 use crate::blockdata::script::{Builder, Instruction, PushBytes, Script, opcode_to_verify};
 use crate::hash_types::{PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash};
-use crate::key::{PublicKey, TweakedPublicKey, UntweakedPublicKey};
+use crate::key::PublicKey;
 use crate::prelude::*;
-use crate::taproot::{TapNodeHash, TapTweak};
 
 /// An owned, growable script.
 ///
@@ -123,20 +122,6 @@ impl ScriptBuf {
         ScriptBuf::new_witness_program_unchecked(WitnessVersion::V0, script_hash)
     }
 
-    /// Generates P2TR for script spending path using an internal public key and some optional
-    /// script tree merkle root.
-    pub fn new_v1_p2tr(internal_key: UntweakedPublicKey, merkle_root: Option<TapNodeHash>) -> Self {
-        let (output_key, _) = internal_key.tap_tweak(merkle_root);
-        // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
-        ScriptBuf::new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
-    }
-
-    /// Generates P2TR for key spending path for a known [`TweakedPublicKey`].
-    pub fn new_v1_p2tr_tweaked(output_key: TweakedPublicKey) -> Self {
-        // output key is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv1)
-        ScriptBuf::new_witness_program_unchecked(WitnessVersion::V1, output_key.serialize())
-    }
-
     /// Generates P2WSH-type of scriptPubkey with a given [`WitnessProgram`].
     pub fn new_witness_program(witness_program: &WitnessProgram) -> Self {
         Builder::new()
@@ -148,8 +133,7 @@ impl ScriptBuf {
     /// Generates P2WSH-type of scriptPubkey with a given [`WitnessVersion`] and the program bytes.
     /// Does not do any checks on version or program length.
     ///
-    /// Convenience method used by `new_v0_p2wpkh`, `new_v0_p2wsh`, `new_v1_p2tr`, and
-    /// `new_v1_p2tr_tweaked`.
+    /// Convenience method used by `new_v0_p2wpkh` and `new_v0_p2wsh`.
     fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
         version: WitnessVersion,
         program: T,

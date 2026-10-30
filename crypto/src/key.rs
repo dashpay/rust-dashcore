@@ -17,8 +17,7 @@ use std::io;
 #[cfg(feature = "rand")]
 pub use bitcoin_crypto::key::rand;
 pub use bitcoin_crypto::key::{
-    constants, Keypair, Parity, ParseXOnlyPublicKeyError, TweakXOnlyPublicKeyError, TweakedKeypair,
-    TweakedPublicKey, UntweakedKeypair, UntweakedPublicKey, XOnlyPublicKey,
+    constants, Keypair, Parity, ParseXOnlyPublicKeyError, XOnlyPublicKey,
 };
 pub use bitcoin_crypto::secp256k1::Scalar;
 use dash_network::Network;
