@@ -155,6 +155,8 @@ fn an_evo_pro_up_serv_tx_v3_keeps_its_platform_node_id_and_carries_platform_port
         Some(SocketAddr::from(([68, 67, 122, 237], 20001)))
     );
     assert_eq!(net_info.platform_https_port(), Some(1443));
+    // Core confirmed this map, so it meets Core's port and duplicate-entry rules.
+    assert_eq!(net_info.validate_ports_and_duplicates(), Ok(()));
 }
 
 /// The port of every service entry in `net_info` with its purpose, in wire order.

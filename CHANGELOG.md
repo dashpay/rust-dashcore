@@ -26,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `LLMQType::dkg_window_at_cycle`
 - `LlmqParams`, re-exported from `dash-params`, and
   `From<dash_params::LlmqType>` for `LLMQType`
+- `ExtNetInfo::validate_ports_and_duplicates` in `dashcore`, which checks a version-3 address map
+  against the port and duplicate-entry rules of Dash Core v24 and returns Core's status for the
+  first rule it breaks, `ExtNetInfoError::Duplicate` or `ExtNetInfoError::BadPort`
+- `NetInfoEntry::port` in `dashcore`
 
 ### Changed
 
