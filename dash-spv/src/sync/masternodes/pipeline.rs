@@ -3,12 +3,18 @@
 use std::collections::HashMap;
 use std::mem;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::error::SyncResult;
 use crate::network::{NetworkManager, RequestKey, SendRequest};
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_sml::{GetMnListDiff, MnListDiff};
 use dashcore::BlockHash;
+
+/// How long a diff may stay wanted before it is given up. The broker retries a request
+/// forever, so a diff no peer can answer would otherwise block every later tip update and
+/// QRInfo.
+pub(super) const MNLISTDIFF_DEADLINE: Duration = Duration::from_secs(60);
 
 /// What a wanted diff is for, recorded when it is queued.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +29,7 @@ pub(super) enum DiffKind {
 struct WantedDiff {
     base: BlockHash,
     kind: DiffKind,
+    queued_at: Instant,
 }
 
 /// Pipeline for downloading MnListDiff messages for quorum validation.
@@ -50,12 +57,14 @@ impl MnListDiffPipeline {
         requests: Vec<(BlockHash, BlockHash)>,
         network: &Arc<dyn NetworkManager>,
     ) {
+        let queued_at = Instant::now();
         for (base, target) in requests {
             let replaced = self.wanted.insert(
                 target,
                 WantedDiff {
                     base,
                     kind,
+                    queued_at,
                 },
             );
             if replaced.is_some_and(|replaced| replaced.base != base) {
@@ -113,6 +122,17 @@ impl MnListDiffPipeline {
         network.release_request(RequestKey::MnListDiff(target)).await;
         tracing::debug!("Settled MnListDiff for {} ({} remaining)", target, self.wanted.len());
         Some(wanted.kind)
+    }
+
+    /// The targets wanted for longer than [`MNLISTDIFF_DEADLINE`] at `now`.
+    pub(super) fn expired(&self, now: Instant) -> Vec<BlockHash> {
+        self.wanted
+            .iter()
+            .filter(|(_, wanted)| {
+                now.saturating_duration_since(wanted.queued_at) > MNLISTDIFF_DEADLINE
+            })
+            .map(|(target, _)| *target)
+            .collect()
     }
 
     /// Check if pipeline has no pending work.

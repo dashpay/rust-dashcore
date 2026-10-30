@@ -1,5 +1,5 @@
 use super::manager::{DiffOutcome, PipelineMode};
-use super::pipeline::DiffKind;
+use super::pipeline::{DiffKind, MNLISTDIFF_DEADLINE};
 use crate::error::SyncResult;
 use crate::network::{InboundMessage, MessageType, NetworkManager};
 use crate::storage::BlockHeaderStorage;
@@ -78,6 +78,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         // reject a response for a tip whose earlier attempt died with the old peer.
         self.sync_state.qrinfo_retry_count = 0;
         self.sync_state.last_processed_qrinfo_tip = None;
+        self.sync_state.given_up_tip = None;
     }
 
     async fn handle_message(
@@ -386,8 +387,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 }
 
 impl<H: BlockHeaderStorage> MasternodesManager<H> {
-    /// `tick` with the current time injected, so tests can drive its clocks
-    /// with a chosen instant. The trait `tick` passes `Instant::now()`.
+    /// `tick` at a given time, so tests can pass a future instant to reach the diff deadline.
+    /// The trait `tick` passes `Instant::now()`.
     pub(super) async fn tick_at(
         &mut self,
         now: Instant,
@@ -396,6 +397,14 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         // Handle ticks for both Syncing (initial) and Synced (incremental updates)
         if !matches!(self.state(), SyncState::Syncing | SyncState::Synced) {
             return Ok(vec![]);
+        }
+
+        if self
+            .sync_state
+            .given_up_tip
+            .is_some_and(|(_, at)| now.saturating_duration_since(at) > MNLISTDIFF_DEADLINE)
+        {
+            self.sync_state.given_up_tip = None;
         }
 
         // If Synced with no pending requests, check whether new headers arrived
@@ -463,15 +472,12 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             return Ok(vec![]);
         }
 
-        // Re-declare outstanding MnListDiff work; the broker owns pacing and retry.
+        // Re-declare outstanding MnListDiff work. The broker paces and retries it but never
+        // gives a request up, so diffs past their deadline are given up here first.
         if !self.sync_state.mnlistdiff_pipeline.is_complete() {
+            let events = self.give_up_expired_diffs(now, network).await?;
             self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
-
-            // Check if complete after handling timeouts
-            if self.sync_state.mnlistdiff_pipeline.is_complete() {
-                tracing::info!("MnListDiff pipeline complete");
-                return self.complete_pipeline(network).await;
-            }
+            return Ok(events);
         }
 
         // Stall watchdog. `Syncing` with no QRInfo in flight and an empty diff
@@ -517,7 +523,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 #[cfg(test)]
 mod tests {
     use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
-    use super::super::pipeline::DiffKind;
+    use super::super::pipeline::{DiffKind, MNLISTDIFF_DEADLINE};
     use super::{
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
@@ -932,7 +938,49 @@ mod tests {
         assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target)]);
         assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
         assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+        assert_eq!(manager.sync_state.given_up_tip.map(|(tip, _)| tip), Some(target));
         assert!(diff_requests(&mock).await.is_empty(), "a refused tip update asks for nothing");
+    }
+
+    /// A tip update the engine cannot apply, here for a base list it no longer
+    /// holds, is given up. It is not asked for again on every tick, only once
+    /// the header tip moves.
+    #[tokio::test]
+    async fn a_tip_update_given_up_is_not_asked_again_until_the_tip_moves() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let (mut manager, engine, network, mock, hashes) =
+            manager_after_a_tip_update_request(&storage, |hashes| {
+                vec![
+                    MasternodeList::empty(hashes[OLDER as usize], OLDER),
+                    MasternodeList::empty(hashes[TIP as usize], TIP),
+                ]
+            })
+            .await;
+        engine.write().await.masternode_lists.remove(&TIP);
+        let tip_update = MnListDiff {
+            base_block_hash: hashes[TIP as usize],
+            block_hash: hashes[TIP as usize + 1],
+            ..MnListDiff::dummy_between(0, 0)
+        };
+
+        let events = deliver(&mut manager, &network, tip_update).await;
+
+        assert!(events.is_empty(), "a given-up tip update publishes nothing, got {events:?}");
+        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+        assert_eq!(
+            mock.released_keys().await,
+            vec![RequestKey::MnListDiff(hashes[TIP as usize + 1])]
+        );
+
+        manager.tick(&network).await.unwrap();
+        assert!(diff_requests(&mock).await.is_empty(), "the given-up tip is not asked again");
+
+        let next = announce_tip(&mut manager, &network, TIP + 2).await;
+        assert_eq!(
+            diff_requests(&mock).await,
+            vec![(hashes[OLDER as usize], next)],
+            "a new tip is asked for from the newest list left"
+        );
     }
 
     /// A work-block list that fails to apply leaves the tip update it was
@@ -973,6 +1021,91 @@ mod tests {
             ),
             "a failed work-block list must not hold back the tip update, got {events:?}"
         );
+    }
+
+    /// A diff no peer answers is given up at its deadline and released from the broker, which
+    /// would otherwise retry it forever. A given-up work-block list lets its tip update
+    /// complete. A given-up tip update publishes nothing.
+    #[tokio::test]
+    async fn an_unanswered_diff_is_given_up_at_its_deadline() {
+        let (mut manager, _engine, network, mock, tip_update, _hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let before_queued = Instant::now();
+        deliver(&mut manager, &network, tip_update).await;
+        let after_queued = Instant::now();
+        let (_, work_target) =
+            *diff_requests(&mock).await.first().expect("the work-block list is asked for");
+
+        let events = manager.tick_at(before_queued + MNLISTDIFF_DEADLINE, &network).await.unwrap();
+        assert!(events.is_empty(), "not given up before its deadline, got {events:?}");
+        assert!(!manager.sync_state.mnlistdiff_pipeline.is_complete());
+
+        let events = manager
+            .tick_at(after_queued + MNLISTDIFF_DEADLINE + Duration::from_secs(1), &network)
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated { height, .. }] if *height == TIP + 1
+            ),
+            "the tip update completes once its work-block list is given up, got {events:?}"
+        );
+        assert!(mock.released_keys().await.contains(&RequestKey::MnListDiff(work_target)));
+        assert_eq!(manager.progress.diffs_processed(), 1, "a silent minute is not progress");
+
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let (mut manager, _engine, network, mock, hashes) =
+            manager_after_a_tip_update_request(&storage, |hashes| {
+                vec![MasternodeList::empty(hashes[TIP as usize], TIP)]
+            })
+            .await;
+        let after_queued = Instant::now();
+        let target = hashes[TIP as usize + 1];
+
+        let events = manager
+            .tick_at(after_queued + MNLISTDIFF_DEADLINE + Duration::from_secs(1), &network)
+            .await
+            .unwrap();
+        assert!(events.is_empty(), "a given-up tip update publishes nothing, got {events:?}");
+        assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target)]);
+
+        // The header tip stays put, like on a chain with no new blocks, so the given-up tip
+        // update is asked for again only after its own deadline passes.
+        manager.tick(&network).await.unwrap();
+        assert!(diff_requests(&mock).await.is_empty(), "not asked for again at once");
+        manager
+            .tick_at(Instant::now() + MNLISTDIFF_DEADLINE + Duration::from_secs(1), &network)
+            .await
+            .unwrap();
+        assert_eq!(diff_requests(&mock).await, vec![(hashes[TIP as usize], target)]);
+    }
+
+    /// Stores the header at `height` and tells the manager it is the new
+    /// tip. Returns its hash.
+    async fn announce_tip(
+        manager: &mut MasternodesManager<PersistentBlockHeaderStorage>,
+        network: &Arc<dyn NetworkManager>,
+        height: u32,
+    ) -> BlockHash {
+        let header = Header::dummy(height);
+        manager
+            .header_storage
+            .write()
+            .await
+            .store_headers(&[HashedBlockHeader::from(&header)])
+            .await
+            .unwrap();
+        manager
+            .handle_sync_event(
+                &SyncEvent::BlockHeadersStored {
+                    tip_height: height,
+                },
+                network,
+            )
+            .await
+            .unwrap();
+        header.block_hash()
     }
 
     /// A QRInfo the engine rejects must not release the request slot.

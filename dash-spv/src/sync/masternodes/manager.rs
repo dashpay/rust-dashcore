@@ -11,7 +11,7 @@ use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
-use super::pipeline::{DiffKind, MnListDiffPipeline};
+use super::pipeline::{DiffKind, MnListDiffPipeline, MNLISTDIFF_DEADLINE};
 use crate::error::{SyncError, SyncResult};
 use crate::network::{NetworkManager, SendRequest};
 use crate::storage::{BlockHeaderStorage, PersistentMasternodeStorage};
@@ -133,6 +133,10 @@ pub(super) struct MasternodeSyncState {
     /// without sending (no stored tip, tip at genesis) cannot turn it into a
     /// per-tick retry loop.
     pub(super) last_qrinfo_dispatch: Option<Instant>,
+    /// The last tip update given up, and when. It is not asked for again until the header tip
+    /// moves or [`MNLISTDIFF_DEADLINE`] passes. Without the wait, `tick` would re-ask it on every
+    /// pass. Without the deadline, a chain with no new blocks would never retry it.
+    pub(super) given_up_tip: Option<(BlockHash, Instant)>,
 }
 
 impl MasternodeSyncState {
@@ -426,7 +430,9 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             return Ok(vec![]);
         };
 
-        if base_hash == new_tip_hash {
+        if base_hash == new_tip_hash
+            || self.sync_state.given_up_tip.is_some_and(|(tip, _)| tip == new_tip_hash)
+        {
             return Ok(vec![]);
         }
 
@@ -439,12 +445,12 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         Ok(vec![])
     }
 
-    /// Settle a wanted diff that was applied or given up, then complete the
-    /// pipeline once nothing is left in it.
+    /// Settles a wanted diff that was applied or given up, and completes the pipeline once it
+    /// is empty.
     ///
-    /// A tip update given up leaves the engine unchanged, so it publishes
-    /// nothing. A work-block list given up leaves the tip it was fetched for
-    /// applied, so that pipeline still completes.
+    /// A given-up tip update changed nothing, so it publishes nothing and waits before it is
+    /// asked for again, see [`MasternodeSyncState::given_up_tip`]. A given-up work-block list
+    /// still lets the tip update it was fetched for complete.
     pub(super) async fn settle_diff(
         &mut self,
         target: BlockHash,
@@ -456,7 +462,10 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         };
         match (outcome, kind) {
             (DiffOutcome::Applied, _) => self.progress.add_diffs_processed(1),
-            (DiffOutcome::GivenUp, DiffKind::TipUpdate) => return Ok(vec![]),
+            (DiffOutcome::GivenUp, DiffKind::TipUpdate) => {
+                self.sync_state.given_up_tip = Some((target, Instant::now()));
+                return Ok(vec![]);
+            }
             (DiffOutcome::GivenUp, DiffKind::WorkBlockList) => {}
         }
         if !self.sync_state.mnlistdiff_pipeline.is_complete() {
@@ -464,6 +473,24 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
         tracing::info!("All MnListDiff responses received");
         self.complete_pipeline(network).await
+    }
+
+    /// Give up every diff wanted past [`MNLISTDIFF_DEADLINE`] at `now`.
+    pub(super) async fn give_up_expired_diffs(
+        &mut self,
+        now: Instant,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let mut events = Vec::new();
+        for target in self.sync_state.mnlistdiff_pipeline.expired(now) {
+            tracing::warn!(
+                "No usable MnListDiff for {} within {}s, giving it up",
+                target,
+                MNLISTDIFF_DEADLINE.as_secs()
+            );
+            events.extend(self.settle_diff(target, DiffOutcome::GivenUp, network).await?);
+        }
+        Ok(events)
     }
 
     /// Dispatch pipeline completion based on the current `PipelineMode`.
