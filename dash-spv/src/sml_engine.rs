@@ -274,12 +274,14 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.latest_coinbase.as_ref()
     }
 
-    /// The engine's lists and rotated cycles as bytes, see [`Self::from_snapshot`].
+    /// The engine's lists, rotated cycles and latest coinbase as bytes, see
+    /// [`Self::from_snapshot`].
     pub fn snapshot(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
         bincode::encode_to_vec(self, snapshot_codec::config())
     }
 
-    /// An engine holding the lists and rotated cycles [`Self::snapshot`] encoded.
+    /// An engine holding the lists, rotated cycles and latest coinbase
+    /// [`Self::snapshot`] encoded.
     pub fn from_snapshot(
         network: Network,
         headers: Arc<RwLock<H>>,
