@@ -17,6 +17,7 @@ use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::{MasternodeList, MasternodeMap, QuorumMap};
 use dashcore::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::{BlockHash, Network, ProTxHash, QuorumHash};
 use tokio::sync::RwLock;
 
@@ -24,7 +25,7 @@ use super::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
 
 const MAGIC: [u8; 4] = *b"DMLE";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 
 /// Bounds what a corrupt length prefix can make the decoder allocate up front:
 /// bincode claims `len * size_of::<T>()` against it before preallocating.
@@ -264,7 +265,8 @@ impl<H: BlockHeaderStorage> Encode for MasternodeListEngine<H> {
         masternodes.values.encode(encoder)?;
         quorums.values.encode(encoder)?;
         records.encode(encoder)?;
-        self.rotated_quorums_per_cycle.encode(encoder)
+        self.rotated_quorums_per_cycle.encode(encoder)?;
+        self.latest_coinbase.encode(encoder)
     }
 }
 
@@ -273,6 +275,7 @@ type Decoded = (
     Vec<QualifiedQuorumEntry>,
     Vec<ListRecord>,
     BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
+    Option<CoinbasePayload>,
 );
 
 fn entry<T>(entries: &[Arc<T>], index: u32) -> Result<Arc<T>, DecodeError> {
@@ -337,8 +340,13 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
         if Network::decode(decoder)? != network {
             return Err(DecodeError::Other("snapshot of another network"));
         }
-        let (masternode_entries, quorum_entries, records, rotated_quorums_per_cycle) =
-            Decoded::decode(decoder)?;
+        let (
+            masternode_entries,
+            quorum_entries,
+            records,
+            rotated_quorums_per_cycle,
+            latest_coinbase,
+        ) = Decoded::decode(decoder)?;
 
         let masternode_entries: Vec<_> = masternode_entries.into_iter().map(Arc::new).collect();
         let quorum_entries: Vec<_> = quorum_entries.into_iter().map(Arc::new).collect();
@@ -377,6 +385,7 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
         Ok(Self {
             masternode_lists,
             rotated_quorums_per_cycle,
+            latest_coinbase,
             ..Self::new(network, headers)
         })
     }
