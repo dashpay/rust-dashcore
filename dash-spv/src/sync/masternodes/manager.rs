@@ -11,7 +11,7 @@ use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
-use super::pipeline::MnListDiffPipeline;
+use super::pipeline::{DiffKind, MnListDiffPipeline};
 use crate::error::{SyncError, SyncResult};
 use crate::network::{NetworkManager, SendRequest};
 use crate::storage::{BlockHeaderStorage, PersistentMasternodeStorage};
@@ -56,6 +56,13 @@ impl Default for PipelineMode {
             qr_info_result: None,
         }
     }
+}
+
+/// How a wanted diff was settled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DiffOutcome {
+    Applied,
+    GivenUp,
 }
 
 /// In-flight QRInfo request: tip hash that was requested and when the request fired.
@@ -137,8 +144,8 @@ impl MasternodeSyncState {
         !self.mnlistdiff_pipeline.is_complete() || self.qrinfo_in_flight.is_some()
     }
 
-    pub(super) fn clear_pending(&mut self) {
-        self.mnlistdiff_pipeline.clear();
+    pub(super) async fn clear_pending(&mut self, network: &Arc<dyn NetworkManager>) {
+        self.mnlistdiff_pipeline.clear(network).await;
         self.qrinfo_in_flight = None;
         self.pipeline_mode = PipelineMode::default();
     }
@@ -424,14 +431,42 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
 
         self.sync_state.pipeline_mode = PipelineMode::Incremental;
-        self.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base_hash, new_tip_hash)]);
+        self.sync_state
+            .mnlistdiff_pipeline
+            .queue_requests(DiffKind::TipUpdate, vec![(base_hash, new_tip_hash)], network)
+            .await;
         self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
         Ok(vec![])
     }
 
-    /// Dispatch pipeline completion based on the current `PipelineMode`. Called when
-    /// the mnlistdiff pipeline drains, from either the message handler or the tick
-    /// handler's timeout-cleanup path.
+    /// Settle a wanted diff that was applied or given up, then complete the
+    /// pipeline once nothing is left in it.
+    ///
+    /// A tip update given up leaves the engine unchanged, so it publishes
+    /// nothing. A work-block list given up leaves the tip it was fetched for
+    /// applied, so that pipeline still completes.
+    pub(super) async fn settle_diff(
+        &mut self,
+        target: BlockHash,
+        outcome: DiffOutcome,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let Some(kind) = self.sync_state.mnlistdiff_pipeline.release(target, network).await else {
+            return Ok(vec![]);
+        };
+        match (outcome, kind) {
+            (DiffOutcome::Applied, _) => self.progress.add_diffs_processed(1),
+            (DiffOutcome::GivenUp, DiffKind::TipUpdate) => return Ok(vec![]),
+            (DiffOutcome::GivenUp, DiffKind::WorkBlockList) => {}
+        }
+        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
+            return Ok(vec![]);
+        }
+        tracing::info!("All MnListDiff responses received");
+        self.complete_pipeline(network).await
+    }
+
+    /// Dispatch pipeline completion based on the current `PipelineMode`.
     ///
     /// After an `Incremental` pipeline finishes, re-evaluate `next_pipeline_mode` at
     /// the now-advanced tip and fire a catch-up QRInfo if the cycle gate now picks
@@ -467,7 +502,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                             "Incremental complete, cycle gate now picks QRInfo, firing catch-up"
                         );
                         self.sync_state.qrinfo_retry_count = 0;
-                        self.sync_state.clear_pending();
+                        self.sync_state.clear_pending(network).await;
                         match self.send_qrinfo_for_tip(network).await {
                             Ok(extra) => events.extend(extra),
                             Err(e) => tracing::warn!(

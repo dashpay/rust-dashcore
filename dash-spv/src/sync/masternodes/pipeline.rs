@@ -1,37 +1,70 @@
 //! MnListDiff pipeline implementation.
 
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 
 use crate::error::SyncResult;
-use crate::network::{NetworkManager, SendRequest};
+use crate::network::{NetworkManager, RequestKey, SendRequest};
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_sml::{GetMnListDiff, MnListDiff};
 use dashcore::BlockHash;
 
+/// What a wanted diff is for, recorded when it is queued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DiffKind {
+    /// Moves the newest list to the header tip.
+    TipUpdate,
+    /// Fetches the list at a quorum's work block, needed to validate that quorum.
+    WorkBlockList,
+}
+
+#[derive(Debug)]
+struct WantedDiff {
+    base: BlockHash,
+    kind: DiffKind,
+}
+
 /// Pipeline for downloading MnListDiff messages for quorum validation.
 #[derive(Debug, Default)]
 pub(super) struct MnListDiffPipeline {
-    /// Wanted requests: target_hash -> base_hash.
-    base_hashes: HashMap<BlockHash, BlockHash>,
+    /// Keyed by target, which is also the request's key at the broker.
+    wanted: HashMap<BlockHash, WantedDiff>,
 }
 
 impl MnListDiffPipeline {
-    /// Clear all state.
-    pub(super) fn clear(&mut self) {
-        self.base_hashes.clear();
+    /// Drops every wanted diff and releases it from the broker. Otherwise the broker keeps
+    /// retrying it, and kicks peers as stalled when we ignore their answers.
+    pub(super) async fn clear(&mut self, network: &Arc<dyn NetworkManager>) {
+        for target in mem::take(&mut self.wanted).into_keys() {
+            network.release_request(RequestKey::MnListDiff(target)).await;
+        }
     }
 
-    /// Queue MnListDiff requests.
-    ///
-    /// Each request is a (base_hash, target_hash) pair.
-    pub(super) fn queue_requests(&mut self, requests: Vec<(BlockHash, BlockHash)>) {
-        for (base_hash, target_hash) in requests {
-            self.base_hashes.insert(target_hash, base_hash);
+    /// Queues `(base, target)` requests of one kind. A target already wanted from a different
+    /// base is released from the broker. The broker keys requests by target only, so it would
+    /// keep sending the old request, whose answers no longer match.
+    pub(super) async fn queue_requests(
+        &mut self,
+        kind: DiffKind,
+        requests: Vec<(BlockHash, BlockHash)>,
+        network: &Arc<dyn NetworkManager>,
+    ) {
+        for (base, target) in requests {
+            let replaced = self.wanted.insert(
+                target,
+                WantedDiff {
+                    base,
+                    kind,
+                },
+            );
+            if replaced.is_some_and(|replaced| replaced.base != base) {
+                network.release_request(RequestKey::MnListDiff(target)).await;
+            }
         }
 
-        if !self.base_hashes.is_empty() {
-            tracing::info!("Queued {} MnListDiff requests", self.base_hashes.len());
+        if !self.wanted.is_empty() {
+            tracing::info!("Queued {} MnListDiff requests", self.wanted.len());
         }
     }
 
@@ -40,12 +73,8 @@ impl MnListDiffPipeline {
         &mut self,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<()> {
-        if self.base_hashes.is_empty() {
-            return Ok(());
-        }
-
         let requests: Vec<(BlockHash, BlockHash)> =
-            self.base_hashes.iter().map(|(target, base)| (*base, *target)).collect();
+            self.wanted.iter().map(|(target, wanted)| (wanted.base, *target)).collect();
 
         for (base_block_hash, block_hash) in requests {
             network
@@ -64,33 +93,31 @@ impl MnListDiffPipeline {
         Ok(())
     }
 
-    /// Check if response matches a wanted request.
-    pub(super) fn match_response(&self, diff: &MnListDiff) -> bool {
-        self.base_hashes.contains_key(&diff.block_hash)
+    /// Returns the kind of the wanted request that `diff` answers, if any. Core echoes the
+    /// requested base, so a diff with a different base answers nothing.
+    pub(super) fn match_response(&self, diff: &MnListDiff) -> Option<DiffKind> {
+        self.wanted
+            .get(&diff.block_hash)
+            .filter(|wanted| wanted.base == diff.base_block_hash)
+            .map(|wanted| wanted.kind)
     }
 
-    /// Receive a MnListDiff response.
-    ///
-    /// Returns true if the diff was expected, false if unexpected.
-    pub(super) fn receive(&mut self, diff: &MnListDiff) -> bool {
-        let target_hash = diff.block_hash;
-
-        if self.base_hashes.remove(&target_hash).is_none() {
-            return false;
-        }
-
-        tracing::debug!(
-            "Received MnListDiff for {} ({} remaining)",
-            target_hash,
-            self.base_hashes.len()
-        );
-
-        true
+    /// Stop wanting `target` and release it from the broker. Returns its kind,
+    /// or `None` when it was not wanted.
+    pub(super) async fn release(
+        &mut self,
+        target: BlockHash,
+        network: &Arc<dyn NetworkManager>,
+    ) -> Option<DiffKind> {
+        let wanted = self.wanted.remove(&target)?;
+        network.release_request(RequestKey::MnListDiff(target)).await;
+        tracing::debug!("Settled MnListDiff for {} ({} remaining)", target, self.wanted.len());
+        Some(wanted.kind)
     }
 
     /// Check if pipeline has no pending work.
     pub(super) fn is_complete(&self) -> bool {
-        self.base_hashes.is_empty()
+        self.wanted.is_empty()
     }
 }
 
@@ -101,6 +128,7 @@ mod tests {
     use dashcore_hashes::Hash;
 
     use super::*;
+    use crate::test_utils::MockNetworkManager;
 
     /// Create a minimal MnListDiff for testing.
     fn create_test_diff(base_hash: BlockHash, target_hash: BlockHash) -> MnListDiff {
@@ -137,100 +165,129 @@ mod tests {
         }
     }
 
+    fn test_network() -> (Arc<dyn NetworkManager>, Arc<MockNetworkManager>) {
+        let mock = Arc::new(MockNetworkManager::new());
+        (mock.clone(), mock)
+    }
+
     #[test]
     fn test_pipeline_new() {
         let pipeline = MnListDiffPipeline::default();
         assert!(pipeline.is_complete());
     }
 
-    #[test]
-    fn test_queue_requests() {
+    #[tokio::test]
+    async fn test_queue_requests() {
         let mut pipeline = MnListDiffPipeline::default();
+        let (network, mock) = test_network();
 
         let base1 = BlockHash::from_byte_array([0x01; 32]);
         let target1 = BlockHash::from_byte_array([0x02; 32]);
         let base2 = BlockHash::from_byte_array([0x03; 32]);
         let target2 = BlockHash::from_byte_array([0x04; 32]);
 
-        pipeline.queue_requests(vec![(base1, target1), (base2, target2)]);
+        pipeline
+            .queue_requests(
+                DiffKind::WorkBlockList,
+                vec![(base1, target1), (base2, target2)],
+                &network,
+            )
+            .await;
 
         assert!(!pipeline.is_complete());
-        assert_eq!(pipeline.base_hashes.len(), 2);
-        assert_eq!(pipeline.base_hashes.get(&target1), Some(&base1));
-        assert_eq!(pipeline.base_hashes.get(&target2), Some(&base2));
+        assert_eq!(pipeline.wanted.len(), 2);
+        assert_eq!(pipeline.wanted[&target1].base, base1);
+        assert_eq!(pipeline.wanted[&target2].base, base2);
+
+        // Re-queued from the same base, a target stays at the broker. From a different base
+        // it is released, so the new request goes out.
+        pipeline.send_pending(&network).await.unwrap();
+        mock.clear_sent().await;
+        pipeline.queue_requests(DiffKind::WorkBlockList, vec![(base1, target1)], &network).await;
+        pipeline.queue_requests(DiffKind::WorkBlockList, vec![(base1, target2)], &network).await;
+        assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target2)]);
+        pipeline.send_pending(&network).await.unwrap();
+        let sent: Vec<_> = mock
+            .sent_messages()
+            .await
+            .into_iter()
+            .filter_map(|msg| match msg {
+                NetworkMessage::GetMnListD(get) => Some((get.base_block_hash, get.block_hash)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent, vec![(base1, target2)]);
     }
 
-    #[test]
-    fn test_match_response() {
+    #[tokio::test]
+    async fn test_match_response() {
         let mut pipeline = MnListDiffPipeline::default();
+        let (network, _mock) = test_network();
 
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
+        let work_target = BlockHash::from_byte_array([0x03; 32]);
 
-        pipeline.queue_requests(vec![(base, target)]);
+        pipeline.queue_requests(DiffKind::TipUpdate, vec![(base, target)], &network).await;
+        pipeline.queue_requests(DiffKind::WorkBlockList, vec![(base, work_target)], &network).await;
 
-        let diff = create_test_diff(base, target);
-        assert!(pipeline.match_response(&diff));
+        assert_eq!(
+            pipeline.match_response(&create_test_diff(base, target)),
+            Some(DiffKind::TipUpdate)
+        );
+        assert_eq!(
+            pipeline.match_response(&create_test_diff(base, work_target)),
+            Some(DiffKind::WorkBlockList)
+        );
 
         // Unknown hash should not match
         let unknown_diff = create_test_diff(base, BlockHash::from_byte_array([0xFF; 32]));
-        assert!(!pipeline.match_response(&unknown_diff));
+        assert_eq!(pipeline.match_response(&unknown_diff), None);
+
+        // A wanted target with a different base does not match either, since it would build
+        // a different list.
+        let other_base = create_test_diff(BlockHash::from_byte_array([0xEE; 32]), target);
+        assert_eq!(pipeline.match_response(&other_base), None);
     }
 
-    #[test]
-    fn test_receive() {
+    #[tokio::test]
+    async fn test_release() {
         let mut pipeline = MnListDiffPipeline::default();
+        let (network, mock) = test_network();
 
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
 
-        pipeline.queue_requests(vec![(base, target)]);
+        pipeline.queue_requests(DiffKind::TipUpdate, vec![(base, target)], &network).await;
+        pipeline.send_pending(&network).await.unwrap();
 
-        let diff = create_test_diff(base, target);
-        assert!(pipeline.receive(&diff));
+        assert_eq!(pipeline.release(target, &network).await, Some(DiffKind::TipUpdate));
         assert!(pipeline.is_complete());
-        assert!(pipeline.base_hashes.is_empty());
+        assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target)]);
+
+        // Releasing it again, or one never wanted, releases nothing.
+        assert_eq!(pipeline.release(target, &network).await, None);
+        assert_eq!(pipeline.release(base, &network).await, None);
+        assert_eq!(mock.released_keys().await.len(), 1);
     }
 
-    #[test]
-    fn test_receive_unexpected() {
+    #[tokio::test]
+    async fn test_clear() {
         let mut pipeline = MnListDiffPipeline::default();
+        let (network, mock) = test_network();
 
-        let diff = create_test_diff(
-            BlockHash::from_byte_array([0x01; 32]),
-            BlockHash::from_byte_array([0x02; 32]),
+        let base = BlockHash::from_byte_array([0x01; 32]);
+        let target = BlockHash::from_byte_array([0x02; 32]);
+
+        pipeline.queue_requests(DiffKind::WorkBlockList, vec![(base, target)], &network).await;
+        pipeline.send_pending(&network).await.unwrap();
+        pipeline.clear(&network).await;
+
+        assert!(pipeline.is_complete());
+        assert_eq!(
+            mock.released_keys().await,
+            vec![RequestKey::MnListDiff(target)],
+            "a dropped request must be released, or the broker retries it forever"
         );
-
-        // Receiving unexpected diff should return false
-        assert!(!pipeline.receive(&diff));
-    }
-
-    #[test]
-    fn test_receive_duplicate() {
-        let mut pipeline = MnListDiffPipeline::default();
-
-        let base = BlockHash::from_byte_array([0x01; 32]);
-        let target = BlockHash::from_byte_array([0x02; 32]);
-
-        pipeline.queue_requests(vec![(base, target)]);
-        let diff = create_test_diff(base, target);
-
-        assert!(pipeline.receive(&diff));
-        assert!(!pipeline.receive(&diff));
-        assert!(pipeline.is_complete());
-    }
-
-    #[test]
-    fn test_clear() {
-        let mut pipeline = MnListDiffPipeline::default();
-
-        let base = BlockHash::from_byte_array([0x01; 32]);
-        let target = BlockHash::from_byte_array([0x02; 32]);
-
-        pipeline.queue_requests(vec![(base, target)]);
-        pipeline.clear();
-
-        assert!(pipeline.is_complete());
-        assert!(pipeline.base_hashes.is_empty());
     }
 }

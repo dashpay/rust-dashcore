@@ -1,6 +1,7 @@
-use super::manager::PipelineMode;
+use super::manager::{DiffOutcome, PipelineMode};
+use super::pipeline::DiffKind;
 use crate::error::SyncResult;
-use crate::network::{InboundMessage, MessageType, NetworkManager, RequestKey};
+use crate::network::{InboundMessage, MessageType, NetworkManager};
 use crate::storage::BlockHeaderStorage;
 use crate::sync::{
     ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -156,7 +157,10 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 self.sync_state.last_processed_qrinfo_tip =
                     Some(qr_info.mn_list_diff_tip.block_hash);
                 self.sync_state.qrinfo_received();
-                self.sync_state.mnlistdiff_pipeline.queue_requests(request_pairs);
+                self.sync_state
+                    .mnlistdiff_pipeline
+                    .queue_requests(DiffKind::WorkBlockList, request_pairs, network)
+                    .await;
                 self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
 
                 self.progress.bump_last_activity();
@@ -168,42 +172,22 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             }
 
             NetworkMessage::MnListDiff(diff) => {
-                // Check if this diff matches an in-flight request
-                if !self.sync_state.mnlistdiff_pipeline.match_response(diff) {
+                let Some(kind) = self.sync_state.mnlistdiff_pipeline.match_response(diff) else {
                     tracing::debug!("Received unexpected MnListDiff for {}", diff.block_hash);
                     return Ok(vec![]);
-                }
+                };
 
                 tracing::debug!("Processing MnListDiff message for {}", diff.block_hash);
 
                 let mut engine = self.engine.write().await;
-                let Some(target_height) = engine.height_if_known(&diff.block_hash).await else {
-                    drop(engine);
-                    tracing::warn!(
-                        "Height not found for MnListDiff block {}, leaving wanted for retry",
-                        diff.block_hash
-                    );
-                    // Not answered, so the broker's timeout/retry re-sends it.
-                    self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
-                    return Ok(vec![]);
-                };
-                // Only a tip update builds on the newest list. The work-block
-                // lists it may ask for below build on older ones.
-                let extends_tip = engine
-                    .latest_masternode_list()
-                    .is_some_and(|list| list.block_hash == diff.base_block_hash);
-                let apply_ok = match engine.apply_diff((**diff).clone()).await {
-                    Ok(_) => {
-                        tracing::debug!("Applied MnListDiff at height {}", target_height);
-                        true
+                let outcome = match engine.apply_diff((**diff).clone()).await {
+                    Ok(()) => {
+                        tracing::debug!("Applied MnListDiff for {}", diff.block_hash);
+                        DiffOutcome::Applied
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "Failed to apply MnListDiff at height {}: {}",
-                            target_height,
-                            e
-                        );
-                        false
+                        tracing::warn!("Giving up MnListDiff for {}: {}", diff.block_hash, e);
+                        DiffOutcome::GivenUp
                     }
                 };
                 // A tip update can bring a quorum whose work block lies below
@@ -211,39 +195,24 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // first quorum after a start does. Fetch those lists now, as
                 // the QRInfo path does, instead of leaving the quorum
                 // `Skipped(MissedList)` until the next QRInfo, a rotation cycle
-                // later. The pipeline completes only once they are applied.
-                let work_block_lists = if apply_ok && extends_tip {
-                    engine.missing_work_block_list_requests_for(diff).await
-                } else {
-                    Vec::new()
-                };
+                // later. The pipeline completes only once they are applied or
+                // given up.
+                let work_block_lists =
+                    if outcome == DiffOutcome::Applied && kind == DiffKind::TipUpdate {
+                        engine.missing_work_block_list_requests_for(diff).await
+                    } else {
+                        Vec::new()
+                    };
                 drop(engine);
 
-                self.progress.add_diffs_processed(1);
-                self.sync_state.mnlistdiff_pipeline.receive(diff);
-                network.release_request(RequestKey::MnListDiff(diff.block_hash)).await;
                 if !work_block_lists.is_empty() {
-                    self.sync_state.mnlistdiff_pipeline.queue_requests(work_block_lists);
+                    self.sync_state
+                        .mnlistdiff_pipeline
+                        .queue_requests(DiffKind::WorkBlockList, work_block_lists, network)
+                        .await;
                     self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
                 }
-
-                // Check if all responses received
-                if self.sync_state.mnlistdiff_pipeline.is_complete() {
-                    // In `Incremental` mode, a failed tip update means the engine
-                    // state is unchanged. Skip completion to avoid emitting a
-                    // spurious `MasternodeStateUpdated` for stale state. The next
-                    // `BlockHeadersStored` event will re-drive an incremental update.
-                    // A failed work-block list leaves the tip it was fetched for
-                    // applied, so that pipeline still completes.
-                    if !apply_ok
-                        && extends_tip
-                        && matches!(self.sync_state.pipeline_mode, PipelineMode::Incremental)
-                    {
-                        return Ok(vec![]);
-                    }
-                    tracing::info!("All MnListDiff responses received");
-                    return self.complete_pipeline(network).await;
-                }
+                return self.settle_diff(diff.block_hash, outcome, network).await;
             }
 
             _ => {}
@@ -304,7 +273,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                             self.progress.current_height()
                         );
                         self.sync_state.qrinfo_retry_count = 0;
-                        self.sync_state.clear_pending();
+                        self.sync_state.clear_pending(network).await;
                         return self.send_qrinfo_for_tip(network).await;
                     }
                     PipelineMode::Incremental => {
@@ -386,7 +355,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                                 return Ok(vec![]);
                             }
                             self.sync_state.qrinfo_retry_count = 0;
-                            self.sync_state.clear_pending();
+                            self.sync_state.clear_pending(network).await;
                             return self.send_qrinfo_for_tip(network).await;
                         }
                         PipelineMode::Incremental => {
@@ -399,7 +368,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     self.progress.block_header_tip_height()
                 );
                 self.sync_state.qrinfo_retry_count = 0;
-                self.sync_state.clear_pending();
+                self.sync_state.clear_pending(network).await;
                 return self.send_qrinfo_for_tip(network).await;
             }
         }
@@ -443,7 +412,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                     } => {
                         if self.sync_state.qrinfo_in_flight.is_none() {
                             self.sync_state.qrinfo_retry_count = 0;
-                            self.sync_state.clear_pending();
+                            self.sync_state.clear_pending(network).await;
                             return self.send_qrinfo_for_tip(network).await;
                         }
                     }
@@ -479,7 +448,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                         );
                     }
                     self.sync_state.qrinfo_retry_count += 1;
-                    self.sync_state.clear_pending();
+                    self.sync_state.clear_pending(network).await;
                     return self.send_qrinfo_for_tip(network).await;
                 } else {
                     tracing::warn!(
@@ -487,7 +456,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                         last_attempt_rejected = in_flight.rejected,
                         "QRInfo failed on every attempt, skipping masternode sync"
                     );
-                    self.sync_state.clear_pending();
+                    self.sync_state.clear_pending(network).await;
                     return self.complete_pipeline(network).await;
                 }
             }
@@ -537,7 +506,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             // another full interval instead of retrying on every 100ms tick.
             self.sync_state.last_qrinfo_dispatch = Some(now);
             self.sync_state.qrinfo_retry_count = 0;
-            self.sync_state.clear_pending();
+            self.sync_state.clear_pending(network).await;
             return self.send_qrinfo_for_tip(network).await;
         }
 
@@ -548,10 +517,11 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
 #[cfg(test)]
 mod tests {
     use super::super::manager::{MasternodeSyncState, QRInfoInFlight};
+    use super::super::pipeline::DiffKind;
     use super::{
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
-    use crate::network::{InboundMessage, NetworkManager};
+    use crate::network::{InboundMessage, NetworkManager, RequestKey};
     use crate::sml_engine::test_support::quorum_entry;
     use crate::sml_engine::MasternodeListEngine;
     use crate::storage::{
@@ -943,38 +913,54 @@ mod tests {
         assert!(diff_requests(&mock).await.is_empty(), "nothing more to fetch");
     }
 
-    /// A tip update the engine rejects leaves the state unchanged, so it
+    /// A tip update the engine refuses leaves the state unchanged, so it
     /// publishes nothing and asks for no work-block list.
     #[tokio::test]
-    async fn a_failed_tip_update_publishes_nothing() {
-        let (mut manager, engine, network, mock, tip_update, _hashes) =
+    async fn a_refused_tip_update_is_given_up() {
+        let (mut manager, engine, network, mock, tip_update, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
-        let rejected = MnListDiff {
+        let target = hashes[TIP as usize + 1];
+        let refused = MnListDiff {
             // A new quorum needs a ChainLock signature to be applied.
             quorums_chainlock_signatures: Vec::new(),
             ..tip_update
         };
 
-        let events = deliver(&mut manager, &network, rejected).await;
+        let events = deliver(&mut manager, &network, refused).await;
 
+        assert!(events.is_empty(), "a given-up tip update publishes nothing, got {events:?}");
+        assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target)]);
         assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
-        assert!(events.is_empty(), "a rejected tip update must not complete, got {events:?}");
-        assert!(diff_requests(&mock).await.is_empty(), "a rejected tip update asks for nothing");
+        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+        assert!(diff_requests(&mock).await.is_empty(), "a refused tip update asks for nothing");
     }
 
     /// A work-block list that fails to apply leaves the tip update it was
     /// fetched for applied, so the update still completes.
     #[tokio::test]
     async fn a_tip_update_completes_when_its_work_block_list_fails() {
-        let (mut manager, _engine, network, mock, tip_update, hashes) =
+        let (mut manager, engine, network, mock, tip_update, hashes) =
             manager_awaiting_a_tip_update_with_a_new_quorum().await;
         deliver(&mut manager, &network, tip_update).await;
-        let (_, block_hash) =
+        let (base_block_hash, block_hash) =
             *diff_requests(&mock).await.first().expect("the work-block list is asked for");
 
-        let unusable = MnListDiff {
-            // No list at this base, so the engine cannot apply it.
+        let from_another_base = MnListDiff {
             base_block_hash: hashes[1],
+            block_hash,
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let events = deliver(&mut manager, &network, from_another_base).await;
+        assert!(events.is_empty(), "a diff from another base answers nothing, got {events:?}");
+        assert!(
+            !manager.sync_state.mnlistdiff_pipeline.is_complete(),
+            "the work-block list is still wanted"
+        );
+
+        // Remove the base list so the engine cannot apply the work-block list.
+        engine.write().await.masternode_lists.remove(&OLDER);
+        let unusable = MnListDiff {
+            base_block_hash,
             block_hash,
             ..MnListDiff::dummy_between(0, 0)
         };
@@ -1084,7 +1070,7 @@ mod tests {
         let (mut manager, network, mock, _) = syncing_manager_awaiting_qrinfo(200).await;
 
         // Strand the manager the way a dispatch failure would.
-        manager.sync_state.clear_pending();
+        manager.sync_state.clear_pending(&network).await;
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(manager.sync_state.qrinfo_in_flight.is_none());
         assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
@@ -1120,11 +1106,15 @@ mod tests {
     /// `pipeline_mode`, forcing a full QRInfo re-run on every reconnect.
     #[tokio::test]
     async fn test_on_disconnect_requeues_instead_of_clearing() {
-        let (mut manager, network, _mock, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
+        let (mut manager, network, mock, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
 
         let base = BlockHash::from_slice(&[0x11; 32]).unwrap();
         let target = BlockHash::from_slice(&[0x22; 32]).unwrap();
-        manager.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base, target)]);
+        manager
+            .sync_state
+            .mnlistdiff_pipeline
+            .queue_requests(DiffKind::WorkBlockList, vec![(base, target)], &network)
+            .await;
         manager.sync_state.mnlistdiff_pipeline.send_pending(&network).await.expect("send succeeds");
 
         manager.on_disconnect();
@@ -1146,6 +1136,22 @@ mod tests {
             manager.sync_state.last_processed_qrinfo_tip, None,
             "the dedup guard must not reject the reconnect's response"
         );
+
+        // A reconnect restarts the sync from a fresh QRInfo and drops the diff. It must be
+        // released too, or the broker keeps retrying it and kicks every peer whose answer we
+        // ignore.
+        manager.stop_sync();
+        manager
+            .handle_sync_event(
+                &SyncEvent::BlockHeaderSyncComplete {
+                    tip_height: 200,
+                },
+                &network,
+            )
+            .await
+            .expect("the restart succeeds");
+        assert!(manager.sync_state.mnlistdiff_pipeline.is_complete());
+        assert_eq!(mock.requests_in_play().await, 0, "the dropped diff must be released");
     }
 
     /// `tick` must reissue MnListDiff requests that a disconnect moved back to
@@ -1158,7 +1164,11 @@ mod tests {
 
         let base = BlockHash::from_slice(&[0x11; 32]).unwrap();
         let target = BlockHash::from_slice(&[0x22; 32]).unwrap();
-        manager.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base, target)]);
+        manager
+            .sync_state
+            .mnlistdiff_pipeline
+            .queue_requests(DiffKind::WorkBlockList, vec![(base, target)], &network)
+            .await;
         manager.sync_state.mnlistdiff_pipeline.send_pending(&network).await.expect("send succeeds");
         mock.clear_sent().await;
 
