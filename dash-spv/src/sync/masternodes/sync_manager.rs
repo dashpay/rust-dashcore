@@ -79,6 +79,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         self.sync_state.qrinfo_retry_count = 0;
         self.sync_state.last_processed_qrinfo_tip = None;
         self.sync_state.given_up_tip = None;
+        self.sync_state.forget_given_up_work_lists();
     }
 
     async fn handle_message(
@@ -158,6 +159,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 self.sync_state.last_processed_qrinfo_tip =
                     Some(qr_info.mn_list_diff_tip.block_hash);
                 self.sync_state.qrinfo_received();
+                self.sync_state.forget_given_up_work_lists();
                 self.sync_state
                     .mnlistdiff_pipeline
                     .queue_requests(DiffKind::WorkBlockList, request_pairs, network)
@@ -212,7 +214,9 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // given up.
                 let work_block_lists =
                     if outcome == DiffOutcome::Applied && kind == DiffKind::TipUpdate {
-                        engine.missing_work_block_list_requests_for(diff).await
+                        let mut lists = engine.missing_work_block_list_requests_for(diff).await;
+                        lists.extend(self.sync_state.retry_given_up_work_lists(&engine).await);
+                        lists
                     } else {
                         Vec::new()
                     };
@@ -1172,6 +1176,68 @@ mod tests {
             .await
             .unwrap();
         header.block_hash()
+    }
+
+    /// Stores the header at `height`, lets the manager request the tip update to it, and
+    /// delivers an empty one. Returns the diffs requested after it applies, and its events.
+    async fn apply_an_empty_tip_update_to(
+        manager: &mut MasternodesManager<PersistentBlockHeaderStorage>,
+        network: &Arc<dyn NetworkManager>,
+        mock: &MockNetworkManager,
+        height: u32,
+    ) -> (Vec<(BlockHash, BlockHash)>, Vec<SyncEvent>) {
+        let tip = announce_tip(manager, network, height).await;
+        let [(base_block_hash, block_hash)] = diff_requests(mock).await[..] else {
+            panic!("the tip update to {height} must be asked for alone");
+        };
+        assert_eq!(block_hash, tip);
+        let tip_update = MnListDiff {
+            base_block_hash,
+            block_hash,
+            ..MnListDiff::dummy_between(0, 0)
+        };
+        let events = deliver(manager, network, tip_update).await;
+        (diff_requests(mock).await, events)
+    }
+
+    /// A given-up work-block list leaves its quorum unverified, and a tip update only fetches
+    /// lists for the quorums it brings. So the next applied tip update retries the given-up list,
+    /// but not lists that were never asked for. A list is retried once. Given up a second time,
+    /// it waits for the next QRInfo.
+    #[tokio::test]
+    async fn a_given_up_work_block_list_is_retried_once() {
+        let (mut manager, _engine, network, mock, tip_update, hashes) =
+            manager_awaiting_a_tip_update_with_a_new_quorum().await;
+        let work_list =
+            (hashes[OLDER as usize], hashes[(MINED - QUORUM_MEMBER_LIST_OFFSET) as usize]);
+        deliver(&mut manager, &network, tip_update).await;
+        assert_eq!(diff_requests(&mock).await, vec![work_list]);
+        let events = manager
+            .tick_at(Instant::now() + MNLISTDIFF_DEADLINE + Duration::from_secs(1), &network)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1, "the tip update completes once its list is given up");
+
+        let (requests, events) =
+            apply_an_empty_tip_update_to(&mut manager, &network, &mock, TIP + 2).await;
+        assert_eq!(requests, vec![work_list], "the given-up list is retried");
+        assert!(events.is_empty(), "the tip update waits for the list, got {events:?}");
+        let events = manager
+            .tick_at(Instant::now() + MNLISTDIFF_DEADLINE + Duration::from_secs(1), &network)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1, "the tip update completes once its list is given up");
+
+        let (requests, events) =
+            apply_an_empty_tip_update_to(&mut manager, &network, &mock, TIP + 3).await;
+        assert!(requests.is_empty(), "a list is retried once only, got {requests:?}");
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::MasternodeStateUpdated { height, .. }] if *height == TIP + 3
+            ),
+            "got {events:?}"
+        );
     }
 
     /// A QRInfo the engine rejects must not release the request slot.

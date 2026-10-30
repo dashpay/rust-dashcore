@@ -19,7 +19,7 @@ use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_qrinfo::{GetQRInfo, QRInfo};
 use dashcore::BlockHash;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 /// Single enum that serves two roles in the masternode-sync flow:
 ///
@@ -63,6 +63,15 @@ impl Default for PipelineMode {
 pub(super) enum DiffOutcome {
     Applied,
     GivenUp,
+}
+
+/// Whether the one retry of a given-up work-block list has gone out yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WorkListRetry {
+    /// Retried with the next applied tip update, if a quorum still needs the list.
+    Pending,
+    /// Already retried. From here on only the next QRInfo fetches the list.
+    Sent,
 }
 
 /// In-flight QRInfo request: tip hash that was requested and when the request fired.
@@ -137,6 +146,8 @@ pub(super) struct MasternodeSyncState {
     /// moves or [`MNLISTDIFF_DEADLINE`] passes. Without the wait, `tick` would re-ask it on every
     /// pass. Without the deadline, a chain with no new blocks would never retry it.
     pub(super) given_up_tip: Option<(BlockHash, Instant)>,
+    /// Targets of the work-block lists given up since the last QRInfo.
+    pub(super) given_up_work_lists: HashMap<BlockHash, WorkListRetry>,
 }
 
 impl MasternodeSyncState {
@@ -152,6 +163,35 @@ impl MasternodeSyncState {
         self.mnlistdiff_pipeline.clear(network).await;
         self.qrinfo_in_flight = None;
         self.pipeline_mode = PipelineMode::default();
+    }
+
+    /// Returns the `(base, target)` requests to retry for given-up work-block lists that a quorum
+    /// in the newest list still needs, and marks each as retried. Each base is the nearest lower
+    /// list. A list is retried once.
+    pub(super) async fn retry_given_up_work_lists<H: BlockHeaderStorage>(
+        &mut self,
+        engine: &MasternodeListEngine<H>,
+    ) -> Vec<(BlockHash, BlockHash)> {
+        if !self.given_up_work_lists.values().any(|retry| *retry == WorkListRetry::Pending) {
+            return Vec::new();
+        }
+        let requests: Vec<_> = engine
+            .readable_missing_work_block_list_requests()
+            .await
+            .into_iter()
+            .filter(|(_, target)| {
+                self.given_up_work_lists.get(target) == Some(&WorkListRetry::Pending)
+            })
+            .collect();
+        self.given_up_work_lists.retain(|_, retry| *retry == WorkListRetry::Sent);
+        for (_, target) in &requests {
+            self.given_up_work_lists.insert(*target, WorkListRetry::Sent);
+        }
+        requests
+    }
+
+    pub(super) fn forget_given_up_work_lists(&mut self) {
+        self.given_up_work_lists.clear();
     }
 
     /// Record that a QRInfo request was actually fired for `tip_height`. Bumps
@@ -466,7 +506,9 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 self.sync_state.given_up_tip = Some((target, Instant::now()));
                 return Ok(vec![]);
             }
-            (DiffOutcome::GivenUp, DiffKind::WorkBlockList) => {}
+            (DiffOutcome::GivenUp, DiffKind::WorkBlockList) => {
+                self.sync_state.given_up_work_lists.entry(target).or_insert(WorkListRetry::Pending);
+            }
         }
         if !self.sync_state.mnlistdiff_pipeline.is_complete() {
             return Ok(vec![]);
