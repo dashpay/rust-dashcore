@@ -10,7 +10,7 @@ use dashcore::Transaction;
 
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
 use crate::gap_limit::DIP17_GAP_LIMIT;
-use crate::managed_account::address_pool::AddressPoolType;
+use crate::managed_account::address_pool::{AddressInfo, AddressPoolType};
 use crate::managed_account::managed_account_ref::{
     ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount,
 };
@@ -1000,6 +1000,71 @@ impl ManagedAccountCollection {
             .extend(self.dashpay_external_accounts.values_mut().map(ManagedAccountRefMut::Funds));
 
         accounts
+    }
+
+    /// Probe-widen the gap window of every funds-bearing account's address
+    /// pools to `probe_gap`, returning the freshly derived [`AddressInfo`]
+    /// entries across all visited accounts and pools.
+    ///
+    /// This is the wallet-level seam for adaptive gap-probe escalation (see
+    /// [`AddressPool::probe_gap_limit`]): each pool derives the window a gap
+    /// limit of `probe_gap` would require and then restores its steady-state
+    /// gap limit, so the ongoing derivation policy is unchanged while the
+    /// probed tail stays derived and monitored (pools only grow).
+    ///
+    /// Visits [`Self::all_funding_accounts_mut`] — Standard BIP44/32,
+    /// CoinJoin, and DashPay receival accounts. Sequential funds discovery is
+    /// where long unused-index runs occur in practice (dust storms, batched
+    /// payouts) and where a stall silently severs the rest of the wallet's
+    /// history; keys-only pools (identity, asset-lock, provider) have tiny,
+    /// wallet-driven usage, and probing every one of them to the maximum gap
+    /// would multiply the probe's derivation and filter-matching cost for no
+    /// observed failure mode. Broaden the visited set here if that ever
+    /// changes.
+    ///
+    /// `key_source_for` maps an account's [`AccountType`] to the [`KeySource`]
+    /// able to derive for it — the same lookup the wallet checker uses for
+    /// gap-limit maintenance (typically `Wallet::key_source_for_account`).
+    /// Accounts whose lookup yields
+    /// [`KeySource::NoKeySource`] are skipped. Accounts that derived anything
+    /// get their monitor revision bumped.
+    ///
+    /// [`AddressPool::probe_gap_limit`]: crate::managed_account::address_pool::AddressPool::probe_gap_limit
+    pub fn probe_extend_gap_with<F>(
+        &mut self,
+        probe_gap: u32,
+        key_source_for: F,
+    ) -> Vec<AddressInfo>
+    where
+        F: Fn(AccountType) -> KeySource,
+    {
+        let mut derived = Vec::new();
+        for account in self.all_funding_accounts_mut() {
+            let account_type = account.managed_account_type().to_account_type();
+            let key_source = key_source_for(account_type);
+            if matches!(key_source, KeySource::NoKeySource) {
+                continue;
+            }
+            let derived_before = derived.len();
+            for pool in account.managed_account_type_mut().address_pools_mut() {
+                let pool_type = pool.pool_type;
+                match pool.probe_gap_limit(probe_gap, &key_source) {
+                    Ok(infos) => derived.extend(infos),
+                    Err(e) => {
+                        tracing::error!(
+                            account_type = ?account_type,
+                            pool_type = ?pool_type,
+                            error = %e,
+                            "Failed to probe-widen gap limit for address pool"
+                        );
+                    }
+                }
+            }
+            if derived.len() > derived_before {
+                account.bump_monitor_revision();
+            }
+        }
+        derived
     }
 
     /// Get the accounts whose funds belong to **this** wallet (Standard

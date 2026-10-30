@@ -176,6 +176,7 @@ impl<
                 height,
                 wallets,
                 new_scripts,
+                confirmed_txids,
                 ..
             } => {
                 // Record per-wallet processing so a future scan can give a
@@ -192,6 +193,38 @@ impl<
                         .or_default()
                         .extend(scripts.iter().cloned());
                 }
+
+                // Progress re-arms the gap-probe ladder: a wallet whose usage
+                // frontier may have moved gets its next stall treated as a
+                // new stall, restarting escalation from the lowest rung.
+                // Derivations alone are NOT a faithful movement signal here —
+                // usage discovered deep inside an already-derived probe tail
+                // advances the frontier without deriving anything (the
+                // steady-state window is already covered by the tail), so a
+                // confirmed relevant transaction must also reset the level or
+                // discovery would stay probe-terminal while the frontier
+                // walks through the tail.
+                //
+                // The confirmed-tx reset is deliberately coarse: the event
+                // does not attribute `confirmed_txids` per wallet, so every
+                // wallet the block was processed for is reset. Over-resetting
+                // only re-arms probing that would otherwise have stayed
+                // terminal — safe, at worst a few extra probe rungs — while
+                // under-resetting could permanently stall discovery.
+                for (wallet_id, scripts) in new_scripts {
+                    if !scripts.is_empty() {
+                        self.probe_levels.remove(wallet_id);
+                    }
+                }
+                if !confirmed_txids.is_empty() {
+                    for wallet_id in wallets {
+                        self.probe_levels.remove(wallet_id);
+                    }
+                    // Activity for the probe ladder, which runs at the commit of
+                    // the batch covering this height.
+                    self.wallet_activity.entry(*height).or_default().extend(wallets);
+                }
+
                 let mut events = Vec::new();
 
                 // Check if this block is part of our tracked blocks
