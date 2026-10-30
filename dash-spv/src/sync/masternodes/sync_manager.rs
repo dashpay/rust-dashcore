@@ -408,6 +408,22 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
     }
 
     async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
+        self.tick_at(Instant::now(), network).await
+    }
+
+    fn progress(&self) -> SyncManagerProgress {
+        SyncManagerProgress::Masternodes(self.progress.clone())
+    }
+}
+
+impl<H: BlockHeaderStorage> MasternodesManager<H> {
+    /// `tick` with the current time injected, so tests can drive its clocks
+    /// with a chosen instant. The trait `tick` passes `Instant::now()`.
+    pub(super) async fn tick_at(
+        &mut self,
+        now: Instant,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         // Handle ticks for both Syncing (initial) and Synced (incremental updates)
         if !matches!(self.state(), SyncState::Syncing | SyncState::Synced) {
             return Ok(vec![]);
@@ -447,7 +463,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         // remaining timeout - that peer has already had its turn.
         if let Some(in_flight) = self.sync_state.qrinfo_in_flight {
             let timeout = qrinfo_timeout_for(self.sync_state.qrinfo_retry_count);
-            let timed_out = in_flight.wait_start.elapsed() > timeout;
+            let timed_out = now.saturating_duration_since(in_flight.wait_start) > timeout;
             if timed_out || in_flight.rejected {
                 if self.sync_state.qrinfo_retry_count < MAX_RETRY_ATTEMPTS - 1 {
                     if in_flight.rejected {
@@ -504,33 +520,28 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         if self.state() == SyncState::Syncing
             && self.sync_state.qrinfo_in_flight.is_none()
             && self.sync_state.mnlistdiff_pipeline.is_complete()
-            && self
-                .sync_state
-                .last_qrinfo_dispatch
-                .is_some_and(|dispatched| dispatched.elapsed() > QRINFO_STALL_WATCHDOG)
+            && self.sync_state.last_qrinfo_dispatch.is_some_and(|dispatched| {
+                now.saturating_duration_since(dispatched) > QRINFO_STALL_WATCHDOG
+            })
         {
             tracing::warn!(
                 stalled_for_secs = self
                     .sync_state
                     .last_qrinfo_dispatch
-                    .map(|d| d.elapsed().as_secs())
+                    .map(|d| now.saturating_duration_since(d).as_secs())
                     .unwrap_or_default(),
                 "Masternode sync stalled in Syncing with nothing in flight, re-dispatching QRInfo"
             );
             // Re-stamp before dispatching so a dispatch that returns without
             // sending (no stored tip, tip at genesis) re-arms the watchdog for
             // another full interval instead of retrying on every 100ms tick.
-            self.sync_state.last_qrinfo_dispatch = Some(Instant::now());
+            self.sync_state.last_qrinfo_dispatch = Some(now);
             self.sync_state.qrinfo_retry_count = 0;
             self.sync_state.clear_pending();
             return self.send_qrinfo_for_tip(network).await;
         }
 
         Ok(vec![])
-    }
-
-    fn progress(&self) -> SyncManagerProgress {
-        SyncManagerProgress::Masternodes(self.progress.clone())
     }
 }
 
