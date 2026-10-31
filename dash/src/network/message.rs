@@ -1073,7 +1073,7 @@ mod test {
                 version_msg.services,
                 ServiceFlags::NETWORK
                     | ServiceFlags::BLOOM
-                    | ServiceFlags::WITNESS
+                    | ServiceFlags::from(1 << 3)
                     | ServiceFlags::NETWORK_LIMITED
             );
             assert_eq!(version_msg.timestamp, 1548554224);
@@ -1118,7 +1118,7 @@ mod test {
                 version_msg.services,
                 ServiceFlags::NETWORK
                     | ServiceFlags::BLOOM
-                    | ServiceFlags::WITNESS
+                    | ServiceFlags::from(1 << 3)
                     | ServiceFlags::NETWORK_LIMITED
             );
             assert_eq!(version_msg.timestamp, 1548554224);
