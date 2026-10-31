@@ -115,7 +115,8 @@ pub trait NetworkManager: Send + Sync + 'static {
     /// Inject a message into the local pump as if received from a peer.
     async fn dispatch_local(&self, msg: NetworkMessage);
 
-    /// Stops timeout/retry tracking of `key`.
+    /// Stops tracking `key` once it is answered or no longer wanted. A request not yet
+    /// sent is dropped.
     async fn release_request(&self, key: RequestKey);
 
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound>;

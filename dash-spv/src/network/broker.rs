@@ -110,9 +110,25 @@ impl Broker {
         self.queue.push(height, msg).await;
     }
 
+    /// Unregisters `key`. If its request was on the wire, wakes the router to send more.
+    /// If it was still queued, drops it unless another of its keys is still registered,
+    /// since sent later it would go out untracked or under a new request for the same key.
     pub async fn release(&self, key: &RequestKey) {
-        if matches!(self.requests.lock().await.remove(key), Some(ReqState::OnWire(_))) {
-            self.wake();
+        let mut reqs = self.requests.lock().await;
+        match reqs.remove(key) {
+            Some(ReqState::OnWire(_)) => {
+                drop(reqs);
+                self.wake();
+            }
+            Some(ReqState::Queued(_)) => {
+                self.queue
+                    .remove(|msg| {
+                        let keys = request_keys(msg);
+                        keys.contains(key) && !keys.iter().any(|k| reqs.contains_key(k))
+                    })
+                    .await;
+            }
+            None => {}
         }
     }
 
@@ -494,6 +510,17 @@ impl MsgQueue {
         out
     }
 
+    async fn remove(&self, matches: impl Fn(&NetworkMessage) -> bool) {
+        let mut removed = 0;
+        for class in DRAIN_PRIORITY {
+            let mut q = self.queue(class).lock().await;
+            let before = q.len();
+            q.retain(|_, msg| !matches(msg));
+            removed += before - q.len();
+        }
+        self.len.fetch_sub(removed, Ordering::SeqCst);
+    }
+
     async fn push(&self, height: u32, msg: NetworkMessage) {
         let key = (height, self.back_seq.fetch_add(1, Ordering::SeqCst));
         self.queue(classify(&msg)).lock().await.insert(key, msg);
@@ -549,6 +576,14 @@ mod tests {
         })
     }
 
+    /// Requests the diff from block `base` to block 4.
+    fn get_mnlistdiff(base: u32) -> NetworkMessage {
+        NetworkMessage::GetMnListD(GetMnListDiff {
+            base_block_hash: BlockHash::dummy(base),
+            block_hash: BlockHash::dummy(4),
+        })
+    }
+
     fn block(n: u32) -> Inventory {
         Inventory::Block(BlockHash::dummy(n))
     }
@@ -573,10 +608,7 @@ mod tests {
     #[test_case(get_headers(1) => vec![RequestKey::Headers(BlockHash::dummy(1))]; "getheaders")]
     #[test_case(get_cfheaders(2) => vec![RequestKey::CfHeaders(BlockHash::dummy(2))]; "getcfheaders")]
     #[test_case(get_cfilters(100) => vec![RequestKey::CFilters(100)]; "getcfilters")]
-    #[test_case(NetworkMessage::GetMnListD(GetMnListDiff {
-        base_block_hash: BlockHash::dummy(3),
-        block_hash: BlockHash::dummy(4),
-    }) => vec![RequestKey::MnListDiff(BlockHash::dummy(4))]; "getmnlistd")]
+    #[test_case(get_mnlistdiff(3) => vec![RequestKey::MnListDiff(BlockHash::dummy(4))]; "getmnlistd")]
     #[test_case(NetworkMessage::GetData(vec![block(1), tx(7), block(2)])
         => vec![RequestKey::Block(BlockHash::dummy(1)), RequestKey::Block(BlockHash::dummy(2))];
         "getdata splits per block and ignores other inventory")]
@@ -629,6 +661,37 @@ mod tests {
         assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, None);
         broker.enqueue(0, get_cfilters(0)).await;
         assert_eq!(broker.len(), 1);
+    }
+
+    #[test_case(get_mnlistdiff(3), vec![RequestKey::MnListDiff(BlockHash::dummy(4))], 0; "its only key")]
+    #[test_case(NetworkMessage::GetData(vec![block(1), block(2)]), vec![RequestKey::Block(BlockHash::dummy(1))], 1; "one of its keys")]
+    #[test_case(NetworkMessage::GetData(vec![block(1), block(2)]), vec![RequestKey::Block(BlockHash::dummy(1)), RequestKey::Block(BlockHash::dummy(2))], 0; "all of its keys")]
+    #[tokio::test]
+    async fn a_released_request_is_dropped_once_none_of_its_keys_is_in_play(
+        msg: NetworkMessage,
+        released: Vec<RequestKey>,
+        queued: usize,
+    ) {
+        let broker = Broker::new();
+        broker.enqueue(0, msg).await;
+        broker.enqueue(0, get_cfilters(0)).await;
+        for key in &released {
+            broker.release(key).await;
+        }
+        assert_eq!(broker.len(), queued + 1, "the other request stays queued");
+        assert_eq!(broker.queue.pop_n(broker.len()).await.len(), queued + 1);
+    }
+
+    #[tokio::test]
+    async fn a_request_released_and_declared_from_another_base_replaces_the_queued_one() {
+        let broker = Broker::new();
+        broker.enqueue(0, get_mnlistdiff(3)).await;
+        broker.release(&RequestKey::MnListDiff(BlockHash::dummy(4))).await;
+        broker.enqueue(0, get_mnlistdiff(5)).await;
+
+        let queued: Vec<NetworkMessage> =
+            broker.queue.pop_n(broker.len()).await.into_iter().map(|(_, msg)| msg).collect();
+        assert_eq!(queued, vec![get_mnlistdiff(5)]);
     }
 
     #[test_case(vec![get_cfilters(0), get_cfilters(0), get_cfilters(1000)], 2, 2; "a request in play is dropped")]
