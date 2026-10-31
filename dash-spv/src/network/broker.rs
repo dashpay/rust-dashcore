@@ -70,7 +70,7 @@ struct OnWire {
 }
 
 /// The request queue plus the registry of every keyed request in play, queued or on
-/// the wire. A key stays registered until answered, so re-declaring it is a no-op.
+/// the wire. A key stays registered until released, so re-declaring it is a no-op.
 pub struct Broker {
     queue: MsgQueue,
     requests: Mutex<HashMap<RequestKey, ReqState>>,
@@ -110,7 +110,7 @@ impl Broker {
         self.queue.push(height, msg).await;
     }
 
-    pub async fn answered(&self, key: &RequestKey) {
+    pub async fn release(&self, key: &RequestKey) {
         if matches!(self.requests.lock().await.remove(key), Some(ReqState::OnWire(_))) {
             self.wake();
         }
@@ -625,7 +625,7 @@ mod tests {
         broker.enqueue(0, get_cfilters(0)).await;
         assert_eq!(broker.len(), 0);
 
-        broker.answered(&RequestKey::CFilters(0)).await;
+        broker.release(&RequestKey::CFilters(0)).await;
         assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, None);
         broker.enqueue(0, get_cfilters(0)).await;
         assert_eq!(broker.len(), 1);

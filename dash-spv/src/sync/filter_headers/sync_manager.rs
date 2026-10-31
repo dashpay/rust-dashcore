@@ -55,7 +55,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             return Ok(vec![]);
         };
 
-        network.request_answered(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
+        network.release_request(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
 
         let mut events = Vec::new();
 

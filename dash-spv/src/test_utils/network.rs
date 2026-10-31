@@ -28,7 +28,7 @@ pub struct MockNetworkManager {
     sent: Mutex<Vec<NetworkMessage>>,
     sent_to: Mutex<Vec<(SocketAddr, NetworkMessage)>>,
     broadcasts: Mutex<Vec<NetworkMessage>>,
-    answered: Mutex<Vec<RequestKey>>,
+    released: Mutex<Vec<RequestKey>>,
     /// Mirrors the broker's de-duplication, so a manager that re-declares a request
     /// it never correlated fails here instead of hanging against a real broker.
     in_play: Mutex<HashSet<RequestKey>>,
@@ -51,7 +51,7 @@ impl MockNetworkManager {
             sent: Mutex::new(Vec::new()),
             sent_to: Mutex::new(Vec::new()),
             broadcasts: Mutex::new(Vec::new()),
-            answered: Mutex::new(Vec::new()),
+            released: Mutex::new(Vec::new()),
             in_play: Mutex::new(HashSet::new()),
             subscribers: Mutex::new(Vec::new()),
             events_tx: RwLock::new(events_tx),
@@ -78,12 +78,12 @@ impl MockNetworkManager {
         self.broadcasts.lock().await.clone()
     }
 
-    pub async fn answered_keys(&self) -> Vec<RequestKey> {
-        self.answered.lock().await.clone()
+    pub async fn released_keys(&self) -> Vec<RequestKey> {
+        self.released.lock().await.clone()
     }
 
     /// Clears the recorders but not the in-play requests, which stay de-duplicated
-    /// until answered or [`Self::release_requests_in_play`].
+    /// until released or [`Self::release_requests_in_play`].
     pub async fn clear_sent(&self) {
         self.sent.lock().await.clear();
         self.sent_to.lock().await.clear();
@@ -136,7 +136,7 @@ impl NetworkManager for MockNetworkManager {
     async fn stop(&self) {}
 
     async fn enqueue(&self, _height: u32, msg: NetworkMessage) {
-        // Same as the broker: a keyed request in play is dropped until answered;
+        // Same as the broker: a keyed request in play is dropped until released, and
         // keyless traffic is never de-duplicated.
         let keys = request_keys(&msg);
         if !keys.is_empty() {
@@ -166,9 +166,9 @@ impl NetworkManager for MockNetworkManager {
         self.inject(test_socket_address(0), msg).await;
     }
 
-    async fn request_answered(&self, key: RequestKey) {
+    async fn release_request(&self, key: RequestKey) {
         self.in_play.lock().await.remove(&key);
-        self.answered.lock().await.push(key);
+        self.released.lock().await.push(key);
     }
 
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound> {
@@ -235,7 +235,7 @@ mod tests {
         mock.send(get_cfilters(0)).await;
         assert_eq!(mock.sent_messages().await.len(), 1);
 
-        mock.request_answered(RequestKey::CFilters(0)).await;
+        mock.release_request(RequestKey::CFilters(0)).await;
         assert_eq!(mock.requests_in_play().await, 0);
 
         mock.send(get_cfilters(0)).await;
