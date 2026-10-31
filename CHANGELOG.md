@@ -141,6 +141,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `key-wallet` attributes a provider transaction to the wallet when it pays one of the wallet's
+  scripts through a version 3 (DIP-0026) payout, a shared collateral's refund or reward script, or a
+  ProUpShareTx reward script; only the legacy `script_payout` was checked
 - Treat `SIGHASH_SINGLE` flags with `ANYONECANPAY` set, such as `0x83`, as
   single when checking for the legacy `SIGHASH_SINGLE` bug
 - `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
