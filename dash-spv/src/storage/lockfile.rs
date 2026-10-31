@@ -2,7 +2,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::{StorageError, StorageResult};
 
@@ -12,27 +12,74 @@ pub(super) struct LockFile {
     _file: File,
 }
 
+/// Opens tried before [`LockFile::new`] gives up on a lock file that keeps being replaced.
+const OPEN_ATTEMPTS: usize = 8;
+
 impl LockFile {
     pub(super) fn new(path: PathBuf) -> StorageResult<Self> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)
-            .map_err(|e| StorageError::WriteFailed(format!("Failed to create lock file: {}", e)))?;
-
-        if classify_lock_result(file.try_lock(), &path)? {
-            if let Err(e) = writeln!(file, "{}", std::process::id()) {
-                tracing::warn!("Failed to write PID to lock file: {}", e);
+        for _ in 0..OPEN_ATTEMPTS {
+            if let Some(file) = hold(&path, open(&path)?)? {
+                return Ok(Self {
+                    path,
+                    _file: file,
+                });
             }
         }
-
-        Ok(Self {
-            path,
-            _file: file,
-        })
+        Err(StorageError::DirectoryLocked(format!(
+            "lock file '{}' was replaced on each of {OPEN_ATTEMPTS} opens",
+            path.display()
+        )))
     }
+}
+
+/// Opens the lock file without truncating it: a refused open must leave the holder's PID.
+fn open(path: &Path) -> StorageResult<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| StorageError::WriteFailed(format!("Failed to create lock file: {}", e)))
+}
+
+/// Locks `file`, opened at `path`, and writes this process's PID into it. `None` when the file
+/// was unlinked from `path` before the lock was taken: a holder's `Drop` unlinks it before it
+/// unlocks, so an opener that opened it earlier would hold a lock no later opener sees (they
+/// create a new file at `path`), and must open again.
+fn hold(path: &Path, mut file: File) -> StorageResult<Option<File>> {
+    let locked = classify_lock_result(file.try_lock(), path)?;
+    if locked && !is_at(&file, path)? {
+        return Ok(None);
+    }
+    file.set_len(0)
+        .map_err(|e| StorageError::WriteFailed(format!("Failed to truncate lock file: {e}")))?;
+    if locked {
+        if let Err(e) = writeln!(file, "{}", std::process::id()) {
+            tracing::warn!("Failed to write PID to lock file: {}", e);
+        }
+    }
+    Ok(Some(file))
+}
+
+/// Whether `file` is the file at `path` (the same device and inode).
+#[cfg(unix)]
+fn is_at(file: &File, path: &Path) -> StorageResult<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let failed = |e: std::io::Error| StorageError::WriteFailed(format!("lock file: {e}"));
+    let held = file.metadata().map_err(failed)?;
+    match std::fs::metadata(path) {
+        Ok(at) => Ok((held.dev(), held.ino()) == (at.dev(), at.ino())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(failed(e)),
+    }
+}
+
+/// Elsewhere std has no file identity to compare, so the check is skipped and the lock behaves as
+/// it did before the check was added.
+#[cfg(not(unix))]
+fn is_at(_: &File, _: &Path) -> StorageResult<bool> {
+    Ok(true)
 }
 
 /// Interprets the result of [`File::try_lock`] for an advisory data-directory lock.
@@ -72,6 +119,8 @@ fn classify_lock_result(
 }
 
 impl Drop for LockFile {
+    /// Unlinks the file while the lock is still held (the file closes after this body), the
+    /// order [`hold`]'s check relies on.
     fn drop(&mut self) {
         if let Err(e) = std::fs::remove_file(&self.path) {
             tracing::warn!("Failed to remove lock file: {}", e);
@@ -135,6 +184,46 @@ mod tests {
             }
             other => panic!("Expected DirectoryLocked error, got: {:?}", other),
         }
+    }
+
+    /// A new holder replaces a stale lock file's contents with its PID.
+    #[test]
+    fn a_stale_lock_file_holds_only_the_new_pid() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let lock_path = temp_dir.path().join(".lock");
+
+        std::fs::write(&lock_path, "stale contents longer than any PID\n").unwrap();
+        let mut lock = LockFile::new(lock_path.clone()).unwrap();
+        assert_eq!(lock.read_pid().unwrap(), std::process::id());
+    }
+
+    /// A refused lock leaves the holder's file as it was: its PID is not truncated away.
+    #[test]
+    fn a_refused_lock_leaves_the_holders_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let lock_path = temp_dir.path().join(".lock");
+
+        // Read through the holder's handle: Windows refuses reads of a locked file through others.
+        let mut held = LockFile::new(lock_path.clone()).unwrap();
+        assert_eq!(held.read_pid().unwrap(), std::process::id());
+        assert!(LockFile::new(lock_path.clone()).is_err());
+        assert_eq!(held.read_pid().unwrap(), std::process::id());
+    }
+
+    /// An opener that opened the file before its holder dropped it, and locks it after, holds
+    /// an unlinked file while a later opener holds the one at the path: it must open again.
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_on_an_unlinked_file_is_not_held() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let lock_path = temp_dir.path().join(".lock");
+
+        let first = LockFile::new(lock_path.clone()).unwrap();
+        let early = open(&lock_path).unwrap();
+        drop(first);
+        let _later = LockFile::new(lock_path.clone()).unwrap();
+        assert!(hold(&lock_path, early).unwrap().is_none());
+        assert!(LockFile::new(lock_path.clone()).is_err(), "the later opener holds it");
     }
 
     #[test]
