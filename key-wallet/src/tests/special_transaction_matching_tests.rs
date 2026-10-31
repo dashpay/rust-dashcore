@@ -31,15 +31,19 @@ use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::outpoint::OutPoint;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::provider_registration::{
-    ProviderMasternodeType, ProviderRegistrationPayload,
+    CollateralShare, MasternodePayoutShare, ProviderMasternodeType, ProviderRegistrationPayload,
+    SharedCollateral,
 };
 use dashcore::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
+use dashcore::blockdata::transaction::special_transaction::provider_update_share::ProviderUpdateSharePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::txin::TxIn;
 use dashcore::blockdata::transaction::txout::TxOut;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::blockdata::witness::Witness;
+use dashcore::crypto::ecdsa::EcdsaRecSignature;
 use dashcore::hashes::Hash;
+use dashcore::sml::masternode_list_entry::net_info::ExtNetInfo;
 use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{BlockHash, Txid};
 
@@ -734,4 +738,154 @@ async fn keys_account_record_is_thin_marker_internal_with_no_details() {
         stored.output_details.is_empty(),
         "keys-account record should not carry per-output classification — those live on the funding account's record",
     );
+}
+
+// ---------------------------------------------------------------------------
+// Version 3 (DIP-0026) and shared-collateral reward scripts → funds accounts
+// ---------------------------------------------------------------------------
+
+fn next_bip44_receive_script(wallet: &Wallet, info: &mut ManagedWalletInfo) -> ScriptBuf {
+    let xpub = wallet.accounts.standard_bip44_accounts.get(&0).expect("bip44 account").account_xpub;
+    info.first_bip44_managed_account_mut()
+        .expect("bip44 managed")
+        .next_receive_address(Some(&xpub), true)
+        .expect("derive receive address")
+        .script_pubkey()
+}
+
+fn with_payload(payload: TransactionPayload) -> Transaction {
+    Transaction {
+        special_transaction_payload: Some(payload),
+        ..asset_lock_to(ScriptBuf::new(), 0)
+    }
+}
+
+fn payout(script_payout: ScriptBuf, reward: u16) -> MasternodePayoutShare {
+    MasternodePayoutShare {
+        script_payout,
+        reward,
+    }
+}
+
+#[tokio::test]
+async fn provider_registration_v3_payout_to_bip44_address_matches() {
+    let (mut wallet, mut info) = make_wallet();
+    let script = next_bip44_receive_script(&wallet, &mut info);
+
+    let mut tx = prov_reg_tx(
+        ProviderMasternodeType::Regular,
+        dashcore::PubkeyHash::from_byte_array([2u8; 20]),
+        dashcore::PubkeyHash::from_byte_array([3u8; 20]),
+        dashcore::bls_sig_utils::BLSPublicKey::from([4u8; 48]),
+        ScriptBuf::new(),
+        None,
+    );
+    let Some(TransactionPayload::ProviderRegistrationPayloadType(reg)) =
+        &mut tx.special_transaction_payload
+    else {
+        unreachable!()
+    };
+    reg.version = 3;
+    reg.service_address = MasternodeNetInfo::Extended(ExtNetInfo {
+        version: 1,
+        purposes: Vec::new(),
+    });
+    // The wallet's script is the second DIP-0026 payout; `script_payout` is empty from version 3.
+    reg.payouts = Some(vec![payout(ScriptBuf::from_bytes(vec![0x51]), 4000), payout(script, 6000)]);
+    reg.shared_collateral = Some(SharedCollateral::default());
+
+    let result =
+        info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
+
+    assert_matched_account_type(&result, AccountTypeToCheck::StandardBIP44);
+}
+
+#[tokio::test]
+async fn provider_registration_share_refund_to_bip44_address_matches() {
+    let (mut wallet, mut info) = make_wallet();
+    let script = next_bip44_receive_script(&wallet, &mut info);
+
+    let mut tx = prov_reg_tx(
+        ProviderMasternodeType::Regular,
+        dashcore::PubkeyHash::from_byte_array([2u8; 20]),
+        dashcore::PubkeyHash::from_byte_array([3u8; 20]),
+        dashcore::bls_sig_utils::BLSPublicKey::from([4u8; 48]),
+        ScriptBuf::new(),
+        None,
+    );
+    let Some(TransactionPayload::ProviderRegistrationPayloadType(reg)) =
+        &mut tx.special_transaction_payload
+    else {
+        unreachable!()
+    };
+    reg.version = 3;
+    reg.service_address = MasternodeNetInfo::Extended(ExtNetInfo {
+        version: 1,
+        purposes: Vec::new(),
+    });
+    // A shared registration: no owner payouts, two shares, the wallet's script refunds one.
+    reg.payouts = Some(vec![]);
+    let share = |script_refund| CollateralShare {
+        amount: 50_000_000_000,
+        script_refund,
+        script_reward: ScriptBuf::new(),
+        owner_key_hash: dashcore::PubkeyHash::from_byte_array([5u8; 20]),
+    };
+    reg.shared_collateral = Some(SharedCollateral {
+        shares: vec![share(ScriptBuf::from_bytes(vec![0x51])), share(script)],
+        join_sigs: vec![EcdsaRecSignature::from([7u8; 65]); 2],
+        ..SharedCollateral::default()
+    });
+
+    let result =
+        info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
+
+    assert_matched_account_type(&result, AccountTypeToCheck::StandardBIP44);
+}
+
+#[tokio::test]
+async fn provider_update_registrar_v3_payout_to_bip44_address_matches() {
+    let (mut wallet, mut info) = make_wallet();
+    let script = next_bip44_receive_script(&wallet, &mut info);
+
+    let mut payload = ProviderUpdateRegistrarPayload::new(
+        Txid::from_byte_array([2u8; 32]),
+        0,
+        dashcore::bls_sig_utils::BLSPublicKey::from([3u8; 48]),
+        dashcore::PubkeyHash::from_byte_array([4u8; 20]),
+        ScriptBuf::new(),
+        dashcore::hash_types::InputsHash::from_byte_array([5u8; 32]),
+        vec![6u8; 65],
+    );
+    payload.version = 3;
+    payload.payouts =
+        Some(vec![payout(ScriptBuf::from_bytes(vec![0x51]), 4000), payout(script, 6000)]);
+    let tx = with_payload(TransactionPayload::ProviderUpdateRegistrarPayloadType(payload));
+
+    let result =
+        info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
+
+    assert_matched_account_type(&result, AccountTypeToCheck::StandardBIP44);
+}
+
+#[tokio::test]
+async fn provider_update_share_reward_to_bip44_address_matches() {
+    let (mut wallet, mut info) = make_wallet();
+    let script = next_bip44_receive_script(&wallet, &mut info);
+
+    let tx = with_payload(TransactionPayload::ProviderUpdateSharePayloadType(
+        ProviderUpdateSharePayload {
+            version: 1,
+            pro_tx_hash: Txid::from_byte_array([2u8; 32]),
+            share_index: 0,
+            script_reward: script,
+            inputs_hash: dashcore::hash_types::InputsHash::from_byte_array([5u8; 32]),
+            payload_sig: vec![6u8; 65],
+        },
+    ));
+
+    let result =
+        info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
+
+    assert_matched_account_type(&result, AccountTypeToCheck::StandardBIP44);
 }

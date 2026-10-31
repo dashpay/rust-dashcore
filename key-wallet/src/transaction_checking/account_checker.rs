@@ -573,6 +573,41 @@ impl ManagedAccountCollection {
     }
 }
 
+/// The reward scripts a provider special transaction sets, each listed once: the owner payout
+/// (`script_payout` before version 3, the DIP-0026 `payouts` from version 3), the refund and
+/// reward scripts of a shared collateral's shares, the operator payout of a ProUpServTx and the
+/// reward script of a ProUpShareTx.
+fn provider_payout_scripts(tx: &Transaction) -> Vec<&ScriptBuf> {
+    let mut scripts = Vec::new();
+    match &tx.special_transaction_payload {
+        Some(TransactionPayload::ProviderRegistrationPayloadType(reg)) => {
+            scripts.push(&reg.script_payout);
+            scripts.extend(reg.payouts.iter().flatten().map(|payout| &payout.script_payout));
+            for share in reg.shared_collateral.iter().flat_map(|shared| &shared.shares) {
+                scripts.push(&share.script_refund);
+                scripts.push(&share.script_reward);
+            }
+        }
+        Some(TransactionPayload::ProviderUpdateRegistrarPayloadType(update)) => {
+            scripts.push(&update.script_payout);
+            scripts.extend(update.payouts.iter().flatten().map(|payout| &payout.script_payout));
+        }
+        Some(TransactionPayload::ProviderUpdateServicePayloadType(update)) => {
+            scripts.push(&update.script_payout);
+        }
+        Some(TransactionPayload::ProviderUpdateSharePayloadType(update)) => {
+            scripts.push(&update.script_reward);
+        }
+        _ => {}
+    }
+    // Version 3 leaves `script_payout` empty, and an empty share reward script means the
+    // refund script.
+    scripts.retain(|script| !script.is_empty());
+    scripts.sort();
+    scripts.dedup();
+    scripts
+}
+
 impl ManagedCoreFundsAccount {
     /// Classify an address within this account
     pub fn classify_address(&self, address: &Address) -> AddressClassification {
@@ -629,37 +664,21 @@ impl ManagedCoreFundsAccount {
         let mut provider_payout_involved = false;
 
         // Check provider payouts in special transactions
-        if let Some(payload) = &tx.special_transaction_payload {
-            let script_payout = match payload {
-                TransactionPayload::ProviderRegistrationPayloadType(reg) => {
-                    Some(&reg.script_payout)
-                }
-                TransactionPayload::ProviderUpdateRegistrarPayloadType(update) => {
-                    Some(&update.script_payout)
-                }
-                TransactionPayload::ProviderUpdateServicePayloadType(update) => {
-                    Some(&update.script_payout)
-                }
-                _ => None,
-            };
-
+        for payout_script in provider_payout_scripts(tx) {
             // Check if the provider payout script belongs to this account
-            if let Some(payout_script) = script_payout {
-                if let Some(payout_info) = self.check_provider_payout(payout_script) {
-                    provider_payout_involved = true;
-                    // Classify the payout address
-                    if let Ok(payout_address) = Address::from_script(payout_script, self.network())
-                    {
-                        match self.classify_address(&payout_address) {
-                            AddressClassification::External => {
-                                involved_receive_addresses.push(payout_info);
-                            }
-                            AddressClassification::Internal => {
-                                involved_change_addresses.push(payout_info);
-                            }
-                            AddressClassification::Other => {
-                                involved_other_addresses.push(payout_info);
-                            }
+            if let Some(payout_info) = self.check_provider_payout(payout_script) {
+                provider_payout_involved = true;
+                // Classify the payout address
+                if let Ok(payout_address) = Address::from_script(payout_script, self.network()) {
+                    match self.classify_address(&payout_address) {
+                        AddressClassification::External => {
+                            involved_receive_addresses.push(payout_info);
+                        }
+                        AddressClassification::Internal => {
+                            involved_change_addresses.push(payout_info);
+                        }
+                        AddressClassification::Other => {
+                            involved_other_addresses.push(payout_info);
                         }
                     }
                 }
@@ -1219,26 +1238,11 @@ impl crate::managed_account::ManagedCoreKeysAccount {
         let mut provider_payout_involved = false;
 
         // Provider payouts in special transactions
-        if let Some(payload) = &tx.special_transaction_payload {
-            let script_payout = match payload {
-                TransactionPayload::ProviderRegistrationPayloadType(reg) => {
-                    Some(&reg.script_payout)
-                }
-                TransactionPayload::ProviderUpdateRegistrarPayloadType(update) => {
-                    Some(&update.script_payout)
-                }
-                TransactionPayload::ProviderUpdateServicePayloadType(update) => {
-                    Some(&update.script_payout)
-                }
-                _ => None,
-            };
-
-            if let Some(payout_script) = script_payout {
-                if let Some(payout_info) = self.check_provider_payout(payout_script) {
-                    provider_payout_involved = true;
-                    if Address::from_script(payout_script, self.network()).is_ok() {
-                        involved_other_addresses.push(payout_info);
-                    }
+        for payout_script in provider_payout_scripts(tx) {
+            if let Some(payout_info) = self.check_provider_payout(payout_script) {
+                provider_payout_involved = true;
+                if Address::from_script(payout_script, self.network()).is_ok() {
+                    involved_other_addresses.push(payout_info);
                 }
             }
         }
@@ -1607,5 +1611,69 @@ mod tests {
         };
 
         assert_eq!(bip32_match.account_index(), Some(1));
+    }
+
+    #[test]
+    fn provider_payout_scripts_lists_each_script_once() {
+        use dashcore::blockdata::transaction::special_transaction::provider_registration::{
+            CollateralShare, ProviderMasternodeType, ProviderRegistrationPayload, SharedCollateral,
+        };
+        use dashcore::hash_types::InputsHash;
+        use dashcore::sml::masternode_list_entry::net_info::ExtNetInfo;
+        use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
+
+        let owner = ScriptBuf::from_bytes(vec![0x51]);
+        let reward = ScriptBuf::from_bytes(vec![0x52]);
+        let reg = ProviderRegistrationPayload {
+            version: 3,
+            masternode_type: ProviderMasternodeType::Regular,
+            masternode_mode: 0,
+            collateral_outpoint: OutPoint::null(),
+            service_address: MasternodeNetInfo::Extended(ExtNetInfo {
+                version: 1,
+                purposes: Vec::new(),
+            }),
+            owner_key_hash: dashcore::PubkeyHash::all_zeros(),
+            operator_public_key: dashcore::bls_sig_utils::BLSPublicKey::from([0; 48]),
+            voting_key_hash: dashcore::PubkeyHash::all_zeros(),
+            operator_reward: 0,
+            script_payout: ScriptBuf::new(),
+            inputs_hash: InputsHash::all_zeros(),
+            signature: vec![],
+            platform_node_id: None,
+            platform_p2p_port: None,
+            platform_http_port: None,
+            // A shared registration has no owner payouts; one share pays its rewards to the
+            // other's refund script, the other to its own refund script (empty reward script).
+            payouts: Some(vec![]),
+            shared_collateral: Some(SharedCollateral {
+                shares: vec![
+                    CollateralShare {
+                        amount: 1,
+                        script_refund: owner.clone(),
+                        script_reward: ScriptBuf::new(),
+                        owner_key_hash: dashcore::PubkeyHash::all_zeros(),
+                    },
+                    CollateralShare {
+                        amount: 1,
+                        script_refund: reward.clone(),
+                        script_reward: owner.clone(),
+                        owner_key_hash: dashcore::PubkeyHash::all_zeros(),
+                    },
+                ],
+                ..SharedCollateral::default()
+            }),
+        };
+        let tx = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: Some(TransactionPayload::ProviderRegistrationPayloadType(
+                reg,
+            )),
+        };
+
+        assert_eq!(provider_payout_scripts(&tx), vec![&owner, &reward]);
     }
 }
