@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `ServiceFlags::P2P_V2` in `dashcore`, Dash Core's `NODE_P2P_V2` (bit 12) for the BIP324 transport
 - Restore externally persisted spent-output claims with `ManagedWalletInfo::restore_spent_outpoints` in `key-wallet`.
   Claims are held once per wallet and guard every account that holds funds, including one added later.
   It returns the restored outpoints the wallet still holds as UTXOs, which stay credited.
@@ -141,6 +142,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Breaking:** `Inventory::CompactBlock` is inventory type 20, Dash Core's `MSG_CMPCT_BLOCK`;
+  it was encoded and decoded as Bitcoin's 4, which Dash Core doesn't define
 - Treat `SIGHASH_SINGLE` flags with `ANYONECANPAY` set, such as `0x83`, as
   single when checking for the legacy `SIGHASH_SINGLE` bug
 - `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
@@ -165,6 +168,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **Breaking:** remove the Bitcoin-only `Inventory::WTx`, `Inventory::WitnessTransaction` and
+  `Inventory::WitnessBlock` (types 4, 5, `0x40000001` and `0x40000002` now decode as
+  `Inventory::Unknown`) and `ServiceFlags::GETUTXO` and `ServiceFlags::WITNESS`, none of which
+  Dash Core defines
 - **Breaking:** remove the `dash-spv-ffi` crate, the C bindings for the SPV client
 - **Breaking:** remove BIP38 from `key-wallet` (the `bip38` feature, `Bip38EncryptedKey`,
   `Bip38Mode`, `encrypt_private_key`, `generate_intermediate_code` and the `Wallet` BIP38

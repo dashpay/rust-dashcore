@@ -368,12 +368,12 @@ mod test {
             format!(
                 "The address is: {:?}",
                 Address {
-                    services: flags.add(ServiceFlags::WITNESS),
+                    services: flags.add(ServiceFlags::BLOOM),
                     address: [0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001],
                     port: 8333
                 }
             ),
-            "The address is: Address {services: ServiceFlags(NETWORK|WITNESS), address: 10.0.0.1, port: 8333}"
+            "The address is: Address {services: ServiceFlags(NETWORK|BLOOM), address: 10.0.0.1, port: 8333}"
         );
 
         assert_eq!(
@@ -411,7 +411,7 @@ mod test {
     #[test]
     fn test_socket_addr() {
         let s4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(111, 222, 123, 4)), 5555);
-        let a4 = Address::new(&s4, ServiceFlags::NETWORK | ServiceFlags::WITNESS);
+        let a4 = Address::new(&s4, ServiceFlags::NETWORK | ServiceFlags::BLOOM);
         assert_eq!(a4.socket_addr().unwrap(), s4);
         let s6 = SocketAddr::new(
             IpAddr::V6(Ipv6Addr::new(
@@ -419,7 +419,7 @@ mod test {
             )),
             9999,
         );
-        let a6 = Address::new(&s6, ServiceFlags::NETWORK | ServiceFlags::WITNESS);
+        let a6 = Address::new(&s6, ServiceFlags::NETWORK | ServiceFlags::BLOOM);
         assert_eq!(a6.socket_addr().unwrap(), s6);
     }
 
@@ -593,7 +593,7 @@ mod test {
                 },
                 AddrV2Message {
                     services: ServiceFlags::NETWORK_LIMITED
-                        | ServiceFlags::WITNESS
+                        | ServiceFlags::from(1 << 3)
                         | ServiceFlags::COMPACT_FILTERS,
                     time: 0x83766279,
                     port: 8333,
