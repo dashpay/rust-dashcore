@@ -35,12 +35,14 @@ use dashcore::blockdata::transaction::special_transaction::provider_registration
     SharedCollateral,
 };
 use dashcore::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
+use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use dashcore::blockdata::transaction::special_transaction::provider_update_share::ProviderUpdateSharePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::txin::TxIn;
 use dashcore::blockdata::transaction::txout::TxOut;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::blockdata::witness::Witness;
+use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::crypto::ecdsa::EcdsaRecSignature;
 use dashcore::hashes::Hash;
 use dashcore::sml::masternode_list_entry::net_info::ExtNetInfo;
@@ -882,6 +884,37 @@ async fn provider_update_share_reward_to_bip44_address_matches() {
             inputs_hash: dashcore::hash_types::InputsHash::from_byte_array([5u8; 32]),
             payload_sig: vec![6u8; 65],
         },
+    ));
+
+    let result =
+        info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
+
+    assert_matched_account_type(&result, AccountTypeToCheck::StandardBIP44);
+}
+
+#[tokio::test]
+async fn provider_update_service_payout_to_bip44_change_address_matches() {
+    let (mut wallet, mut info) = make_wallet();
+    let xpub = wallet.accounts.standard_bip44_accounts.get(&0).expect("bip44 account").account_xpub;
+    let script = info
+        .first_bip44_managed_account_mut()
+        .expect("bip44 managed")
+        .next_change_address(Some(&xpub), true)
+        .expect("derive change address")
+        .script_pubkey();
+
+    let tx = with_payload(TransactionPayload::ProviderUpdateServicePayloadType(
+        ProviderUpdateServicePayload::new(
+            None,
+            Txid::from_byte_array([2u8; 32]),
+            "127.0.0.1:19999".parse().expect("service address"),
+            script,
+            dashcore::hash_types::InputsHash::from_byte_array([5u8; 32]),
+            None,
+            None,
+            None,
+            BLSSignature::from([6u8; 96]),
+        ),
     ));
 
     let result =
