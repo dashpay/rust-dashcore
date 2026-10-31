@@ -95,19 +95,10 @@ impl ServiceFlags {
     /// clients.
     pub const NETWORK: ServiceFlags = ServiceFlags(1 << 0);
 
-    /// GETUTXO means the node is capable of responding to the getutxo protocol request.  Dash
-    /// Core does not support this but a patch set called Dash XT does.
-    /// See BIP 64 for details on how this is implemented.
-    pub const GETUTXO: ServiceFlags = ServiceFlags(1 << 1);
-
     /// BLOOM means the node is capable and willing to handle bloom-filtered connections.  Dash
     /// Core nodes used to support this by default, without advertising this bit, but no longer do
     /// as of protocol version 70011 (= NO_BLOOM_VERSION)
     pub const BLOOM: ServiceFlags = ServiceFlags(1 << 2);
-
-    /// WITNESS indicates that a node can be asked for blocks and transactions including witness
-    /// data.
-    pub const WITNESS: ServiceFlags = ServiceFlags(1 << 3);
 
     /// COMPACT_FILTERS means the node will service basic block filter requests.
     /// See BIP157 and BIP158 for details on how this is implemented.
@@ -122,6 +113,9 @@ impl ServiceFlags {
     /// This allows for more efficient header synchronization by compressing headers from 80 bytes
     /// to as low as 37 bytes using stateful compression techniques.
     pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags(1 << 11);
+
+    /// P2P_V2 means the node supports the BIP324 v2 transport.
+    pub const P2P_V2: ServiceFlags = ServiceFlags(1 << 12);
 
     // NOTE: When adding new flags, remember to update the Display impl accordingly.
 
@@ -185,12 +179,11 @@ impl fmt::Display for ServiceFlags {
         }
         write!(f, "ServiceFlags(")?;
         write_flag!(NETWORK);
-        write_flag!(GETUTXO);
         write_flag!(BLOOM);
-        write_flag!(WITNESS);
         write_flag!(COMPACT_FILTERS);
         write_flag!(NETWORK_LIMITED);
         write_flag!(NODE_HEADERS_COMPRESSED);
+        write_flag!(P2P_V2);
         // If there are unknown flags left, we append them in hex.
         if flags != ServiceFlags::NONE {
             if !first {
@@ -264,12 +257,11 @@ mod tests {
     fn service_flags_test() {
         let all = [
             ServiceFlags::NETWORK,
-            ServiceFlags::GETUTXO,
             ServiceFlags::BLOOM,
-            ServiceFlags::WITNESS,
             ServiceFlags::COMPACT_FILTERS,
             ServiceFlags::NETWORK_LIMITED,
             ServiceFlags::NODE_HEADERS_COMPRESSED,
+            ServiceFlags::P2P_V2,
         ];
 
         let mut flags = ServiceFlags::NONE;
@@ -277,27 +269,35 @@ mod tests {
             assert!(!flags.has(*f));
         }
 
-        flags |= ServiceFlags::WITNESS;
-        assert_eq!(flags, ServiceFlags::WITNESS);
+        flags |= ServiceFlags::BLOOM;
+        assert_eq!(flags, ServiceFlags::BLOOM);
 
-        let mut flags2 = flags | ServiceFlags::GETUTXO;
+        let mut flags2 = flags | ServiceFlags::P2P_V2;
         for f in all.iter() {
-            assert_eq!(flags2.has(*f), *f == ServiceFlags::WITNESS || *f == ServiceFlags::GETUTXO);
+            assert_eq!(flags2.has(*f), *f == ServiceFlags::BLOOM || *f == ServiceFlags::P2P_V2);
         }
 
-        flags2 ^= ServiceFlags::WITNESS;
-        assert_eq!(flags2, ServiceFlags::GETUTXO);
+        flags2 ^= ServiceFlags::BLOOM;
+        assert_eq!(flags2, ServiceFlags::P2P_V2);
 
         flags2 |= ServiceFlags::COMPACT_FILTERS;
-        flags2 ^= ServiceFlags::GETUTXO;
+        flags2 ^= ServiceFlags::P2P_V2;
         assert_eq!(flags2, ServiceFlags::COMPACT_FILTERS);
 
         // Test formatting.
         assert_eq!("ServiceFlags(NONE)", ServiceFlags::NONE.to_string());
-        assert_eq!("ServiceFlags(WITNESS)", ServiceFlags::WITNESS.to_string());
-        let flag = ServiceFlags::WITNESS | ServiceFlags::BLOOM | ServiceFlags::NETWORK;
-        assert_eq!("ServiceFlags(NETWORK|BLOOM|WITNESS)", flag.to_string());
-        let flag = ServiceFlags::WITNESS | 0xf0.into();
-        assert_eq!("ServiceFlags(WITNESS|COMPACT_FILTERS|0xb0)", flag.to_string());
+        assert_eq!("ServiceFlags(BLOOM)", ServiceFlags::BLOOM.to_string());
+        let flag = ServiceFlags::P2P_V2 | ServiceFlags::BLOOM | ServiceFlags::NETWORK;
+        assert_eq!("ServiceFlags(NETWORK|BLOOM|P2P_V2)", flag.to_string());
+        let flag = ServiceFlags::NETWORK | 0xf0.into();
+        assert_eq!("ServiceFlags(NETWORK|COMPACT_FILTERS|0xb0)", flag.to_string());
+    }
+
+    /// The flags of Dash Core's `ServiceFlags` (`src/protocol.h`): bit 12 is `NODE_P2P_V2`, and
+    /// Bitcoin's `NODE_GETUTXO` (bit 1) and `NODE_WITNESS` (bit 3) are not Dash flags.
+    #[test]
+    fn service_flags_are_dash_cores() {
+        assert_eq!(ServiceFlags::from(1 << 12).to_string(), "ServiceFlags(P2P_V2)");
+        assert_eq!(ServiceFlags::from(0b1010).to_string(), "ServiceFlags(0xa)");
     }
 }

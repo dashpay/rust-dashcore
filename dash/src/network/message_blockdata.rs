@@ -26,7 +26,7 @@ use std::io;
 use hashes::sha256d;
 
 use crate::consensus::encode::{self, Decodable, Encodable};
-use crate::hash_types::{BlockHash, ChainLockHash, InstantSendLockHash, Txid, Wtxid};
+use crate::hash_types::{BlockHash, ChainLockHash, InstantSendLockHash, Txid};
 use crate::hashes::Hash;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::constants;
@@ -43,14 +43,8 @@ pub enum Inventory {
     Block(BlockHash),
     /// Filtered Block (merkle block)
     FilteredBlock(BlockHash),
-    /// Compact Block
+    /// Compact Block (`MSG_CMPCT_BLOCK`, BIP152)
     CompactBlock(BlockHash),
-    /// Witness Transaction by Wtxid
-    WTx(Wtxid),
-    /// Witness Transaction
-    WitnessTransaction(Txid),
-    /// Witness Block
-    WitnessBlock(BlockHash),
 
     ChainLock(ChainLockHash),
     InstantSendLock(InstantSendLockHash),
@@ -82,10 +76,7 @@ impl Encodable for Inventory {
             Inventory::Transaction(ref t) => encode_inv!(1, t),
             Inventory::Block(ref b) => encode_inv!(2, b),
             Inventory::FilteredBlock(ref b) => encode_inv!(3, b),
-            Inventory::CompactBlock(ref b) => encode_inv!(4, b),
-            Inventory::WTx(w) => encode_inv!(5, w),
-            Inventory::WitnessTransaction(ref t) => encode_inv!(0x40000001, t),
-            Inventory::WitnessBlock(ref b) => encode_inv!(0x40000002, b),
+            Inventory::CompactBlock(ref b) => encode_inv!(20, b),
 
             Inventory::ChainLock(ref b) => encode_inv!(29, b),
             Inventory::InstantSendLock(ref b) => encode_inv!(31, b),
@@ -108,13 +99,10 @@ impl Decodable for Inventory {
             1 => Inventory::Transaction(Decodable::consensus_decode(r)?),
             2 => Inventory::Block(Decodable::consensus_decode(r)?),
             3 => Inventory::FilteredBlock(Decodable::consensus_decode(r)?),
-            4 => Inventory::CompactBlock(Decodable::consensus_decode(r)?),
-            5 => Inventory::WTx(Decodable::consensus_decode(r)?),
+            20 => Inventory::CompactBlock(Decodable::consensus_decode(r)?),
             29 => Inventory::ChainLock(Decodable::consensus_decode(r)?),
             31 => Inventory::InstantSendLock(Decodable::consensus_decode(r)?),
             34 => Inventory::AssetUnlock(Decodable::consensus_decode(r)?),
-            0x40000001 => Inventory::WitnessTransaction(Decodable::consensus_decode(r)?),
-            0x40000002 => Inventory::WitnessBlock(Decodable::consensus_decode(r)?),
             tp => Inventory::Unknown {
                 inv_type: tp,
                 hash: Decodable::consensus_decode(r)?,
@@ -182,9 +170,43 @@ mod tests {
     use hashes::Hash;
 
     use super::{GetBlocksMessage, GetHeadersMessage, Inventory, Vec};
-    use crate::Txid;
     use crate::consensus::encode::{deserialize, serialize};
     use crate::internal_macros::hex;
+    use crate::{BlockHash, Txid};
+
+    fn inv_bytes(inv_type: u32, hash: [u8; 32]) -> Vec<u8> {
+        let mut bytes = inv_type.to_le_bytes().to_vec();
+        bytes.extend(hash);
+        bytes
+    }
+
+    /// Dash Core's `MSG_CMPCT_BLOCK` is 20; Bitcoin's 4 is Dash Core's retired `MSG_LEGACY_TXLOCK_REQUEST`.
+    #[test]
+    fn compact_block_inventory_is_type_20() {
+        let inv = Inventory::CompactBlock(BlockHash::from_byte_array([0xcd; 32]));
+        let bytes = inv_bytes(20, [0xcd; 32]);
+        assert_eq!(serialize(&inv), bytes);
+        assert_eq!(deserialize::<Inventory>(&bytes).unwrap(), inv);
+    }
+
+    /// Numbers Dash Core's `GetDataMsg` doesn't define, among them Bitcoin's compact block (4),
+    /// wtxid (5) and witness (BIP144 `0x40000000` flag) types, decode as unknown and re-encode
+    /// unchanged.
+    #[test]
+    fn non_dash_inventory_types_are_unknown() {
+        for inv_type in [4u32, 5, 0x4000_0001, 0x4000_0002] {
+            let bytes = inv_bytes(inv_type, [0x11; 32]);
+            let inv: Inventory = deserialize(&bytes).unwrap();
+            assert_eq!(
+                inv,
+                Inventory::Unknown {
+                    inv_type,
+                    hash: [0x11; 32]
+                }
+            );
+            assert_eq!(serialize(&inv), bytes);
+        }
+    }
 
     #[test]
     fn asset_unlock_inventory_round_trips() {
