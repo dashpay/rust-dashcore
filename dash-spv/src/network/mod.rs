@@ -116,7 +116,7 @@ pub trait NetworkManager: Send + Sync + 'static {
     async fn dispatch_local(&self, msg: NetworkMessage);
 
     /// Stops timeout/retry tracking of `key`.
-    async fn request_answered(&self, key: RequestKey);
+    async fn release_request(&self, key: RequestKey);
 
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound>;
 

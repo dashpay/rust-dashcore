@@ -221,7 +221,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
 
                 self.progress.add_diffs_processed(1);
                 self.sync_state.mnlistdiff_pipeline.receive(diff);
-                network.request_answered(RequestKey::MnListDiff(diff.block_hash)).await;
+                network.release_request(RequestKey::MnListDiff(diff.block_hash)).await;
                 if !work_block_lists.is_empty() {
                     self.sync_state.mnlistdiff_pipeline.queue_requests(work_block_lists);
                     self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;

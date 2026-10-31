@@ -86,7 +86,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
             return Ok(vec![]);
         }
 
-        network.request_answered(RequestKey::Block(*hashed_block.hash())).await;
+        network.release_request(RequestKey::Block(*hashed_block.hash())).await;
 
         // Look up height for storage
         let height = self
