@@ -9,5 +9,6 @@ mod tests_disconnect;
 mod tests_fork;
 mod tests_mempool;
 mod tests_multi_wallet;
+mod tests_node_start;
 mod tests_restart;
 mod tests_transaction;
