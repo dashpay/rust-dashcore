@@ -1545,9 +1545,10 @@ mod tests {
         QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
     };
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
+    use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::transaction::special_transaction::TransactionPayload;
-    use dashcore::{BlockHash, Network, QuorumHash};
+    use dashcore::{BlockHash, Network, QuorumHash, Transaction};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1921,6 +1922,8 @@ mod tests {
             "diff h must bring quorums for their signatures to be required"
         );
         qr_info.mn_list_diff_h.quorums_chainlock_signatures.clear();
+        let coinbase = CoinbasePayload::dummy(1);
+        engine.latest_coinbase = Some(coinbase.clone());
         let lists = engine.masternode_lists.clone();
         let cycles = engine.rotated_quorums_per_cycle.clone();
         let chain_locks = engine.coinbase_chain_locks.clone();
@@ -1942,6 +1945,30 @@ mod tests {
         );
         assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
         assert_eq!(engine.coinbase_chain_locks, chain_locks, "and the coinbase ChainLocks");
+        assert_eq!(engine.latest_coinbase, Some(coinbase), "and the coinbase");
+    }
+
+    #[test]
+    fn a_lower_diff_leaves_the_newer_coinbase() {
+        let mut engine = TestEngine::empty(Network::Mainnet);
+        let coinbase = |height| {
+            Some(Transaction {
+                version: 3,
+                lock_time: 0,
+                input: Vec::new(),
+                output: Vec::new(),
+                special_transaction_payload: Some(TransactionPayload::CoinbasePayloadType(
+                    CoinbasePayload::dummy(height),
+                )),
+            })
+        };
+
+        engine.observe_coinbase_if_higher(coinbase(20));
+        engine.observe_coinbase_if_higher(coinbase(10));
+        assert_eq!(engine.latest_coinbase, Some(CoinbasePayload::dummy(20)));
+
+        engine.observe_coinbase_if_higher(coinbase(30));
+        assert_eq!(engine.latest_coinbase, Some(CoinbasePayload::dummy(30)));
     }
 
     /// Core sends a snapshot for every diff of `mn_list_diff_list`. A diff
