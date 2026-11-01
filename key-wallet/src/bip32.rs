@@ -95,7 +95,7 @@ impl fmt::Display for ChainCode {
 
 impl fmt::Debug for ChainCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ChainCode({}))", self)
+        write!(f, "ChainCode({})", self)
     }
 }
 
@@ -241,7 +241,7 @@ impl fmt::Display for Fingerprint {
 
 impl fmt::Debug for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Fingerprint({}))", self)
+        write!(f, "Fingerprint({})", self)
     }
 }
 
@@ -1846,6 +1846,15 @@ mod tests {
     use test_case::{test_case, test_matrix};
 
     const INDEX_256: &str = "00000000000000000000000000000000000000000000000000000000000000ab";
+
+    #[test]
+    fn chain_code_and_fingerprint_debug() {
+        assert_eq!(
+            format!("{:?}", ChainCode::from([0xab; 32])),
+            format!("ChainCode({})", "ab".repeat(32))
+        );
+        assert_eq!(format!("{:?}", Fingerprint::from([1, 2, 3, 4])), "Fingerprint(01020304)");
+    }
 
     #[test_matrix(["0x", "0X"], [INDEX_256.to_owned(), INDEX_256.to_uppercase()], ["", "'"])]
     fn child_number_256_round_trips(prefix: &str, digits: String, suffix: &str) {

@@ -215,11 +215,20 @@ impl FromOnNetwork<RootExtendedPrivKey> for ExtendedPrivKey {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RootExtendedPubKey {
     pub root_public_key: EcdsaPublicKey,
     pub root_chain_code: ChainCode,
+}
+
+/// Shows the public key but not the chain code, in line with [`RootExtendedPrivKey`]'s `Debug`.
+impl core::fmt::Debug for RootExtendedPubKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RootExtendedPubKey")
+            .field("root_public_key", &self.root_public_key)
+            .finish_non_exhaustive()
+    }
 }
 
 impl zeroize::Zeroize for RootExtendedPubKey {
@@ -413,6 +422,18 @@ mod tests {
     const PK_UNCOMPRESSED_HEX: &str = "0439a36013301597daef41fbe593a02cc513d0b55527ec2df1050e2e8ff49c85c2\
                                        3cbe7ded0e7ce6a594896b8f62888fdbc5c8821305e2ea42bf01e37300116281";
     const CHAIN_CODE_HEX: &str = "873dff81c02f525623fd1fe5167eac3a55a049de3d314bb42ee227ffed37d508";
+
+    #[test]
+    fn root_extended_pub_key_debug_hides_the_chain_code() {
+        let pk =
+            RootExtendedPrivKey::new_master(&SEED).expect("master key").to_root_extended_pub_key();
+        let chain_code = pk.root_chain_code.to_bytes();
+        for output in [format!("{pk:?}"), format!("{pk:#?}")] {
+            assert!(!output.contains(CHAIN_CODE_HEX), "{output}");
+            assert!(!output.contains(&format!("{chain_code:?}")), "{output}");
+            assert!(output.contains("root_public_key"), "{output}");
+        }
+    }
 
     /// Both root keys serialize as hex in human-readable formats and as bare
     /// fixed-size tuples otherwise. The public key is in compressed form.

@@ -112,8 +112,7 @@ impl fmt::Debug for Seed {
 
 impl fmt::Display for Seed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Show first and last 4 bytes in hex
-        write!(f, "Seed({:x}...{:x})", self.0[..4].as_hex(), self.0[60..].as_hex())
+        fmt::Debug::fmt(self, f)
     }
 }
 
@@ -245,7 +244,7 @@ mod tests {
 
         let seed = Seed::new(bytes);
         let display = format!("{}", seed);
-        assert_eq!(display, "Seed(deadbeef...cafebabe)");
+        assert_eq!(display, "Seed(***)");
 
         let debug = format!("{:?}", seed);
         assert_eq!(debug, "Seed(***)");
