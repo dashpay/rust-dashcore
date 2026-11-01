@@ -49,8 +49,10 @@ impl MnListDiffPipeline {
     }
 
     /// Queues `(base, target)` requests of one kind, wanted from `now`. A target already wanted
-    /// from a different base is released from the broker. The broker keys requests by target
-    /// only, so it would keep sending the old request, whose answers no longer match.
+    /// from the same base keeps its entry, so queuing it again does not push back its deadline.
+    /// A target already wanted from a different base is released from the broker. The broker
+    /// keys requests by target only, so it would keep sending the old request, whose answers no
+    /// longer match.
     pub(super) async fn queue_requests(
         &mut self,
         kind: DiffKind,
@@ -59,6 +61,9 @@ impl MnListDiffPipeline {
         network: &Arc<dyn NetworkManager>,
     ) {
         for (base, target) in requests {
+            if self.wanted.get(&target).is_some_and(|wanted| wanted.base == base) {
+                continue;
+            }
             let replaced = self.wanted.insert(
                 target,
                 WantedDiff {
@@ -67,7 +72,7 @@ impl MnListDiffPipeline {
                     queued_at: now,
                 },
             );
-            if replaced.is_some_and(|replaced| replaced.base != base) {
+            if replaced.is_some() {
                 network.release_request(RequestKey::MnListDiff(target)).await;
             }
         }
@@ -206,11 +211,12 @@ mod tests {
         let base2 = BlockHash::from_byte_array([0x03; 32]);
         let target2 = BlockHash::from_byte_array([0x04; 32]);
 
+        let queued_at = Instant::now();
         pipeline
             .queue_requests(
                 DiffKind::WorkBlockList,
                 vec![(base1, target1), (base2, target2)],
-                Instant::now(),
+                queued_at,
                 &network,
             )
             .await;
@@ -220,27 +226,25 @@ mod tests {
         assert_eq!(pipeline.wanted[&target1].base, base1);
         assert_eq!(pipeline.wanted[&target2].base, base2);
 
-        // Re-queued from the same base, a target stays at the broker. From a different base
-        // it is released, so the new request goes out.
+        // A target queued again from the same base stays at the broker and keeps its deadline.
+        // A target queued again from a different base is released, so the new request goes out
+        // with a new deadline.
         pipeline.send_pending(&network).await.unwrap();
         mock.clear_sent().await;
+        let queued_again_at = queued_at + MNLISTDIFF_DEADLINE / 2;
         pipeline
             .queue_requests(
                 DiffKind::WorkBlockList,
-                vec![(base1, target1)],
-                Instant::now(),
-                &network,
-            )
-            .await;
-        pipeline
-            .queue_requests(
-                DiffKind::WorkBlockList,
-                vec![(base1, target2)],
-                Instant::now(),
+                vec![(base1, target1), (base1, target2)],
+                queued_again_at,
                 &network,
             )
             .await;
         assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target2)]);
+        assert_eq!(
+            pipeline.expired(queued_at + MNLISTDIFF_DEADLINE + Duration::from_secs(1)),
+            vec![target1]
+        );
         pipeline.send_pending(&network).await.unwrap();
         let sent: Vec<_> = mock
             .sent_messages()
