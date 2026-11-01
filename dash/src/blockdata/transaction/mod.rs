@@ -733,7 +733,8 @@ impl Decodable for Transaction {
         } else {
             // Below version 3 transactions are logically Classic, but at least one mainnet
             // tx put non-zero bytes in the type slot. Preserve the raw u16 so
-            // consensus_encode/txid keep matching the on-chain bytes.
+            // consensus_encode/txid keep matching the on-chain bytes. A negative version is
+            // the exception: `consensus_encode_version_and_type` writes `0xffff` as Core does.
             TransactionType::ClassicalWithNonStandardVersionTypeBytes(special_transaction_type_u16)
         };
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
@@ -1175,7 +1176,7 @@ mod tests {
             TransactionPayload, TransactionType,
         };
 
-        // Same tx as `test_transaction_version`'s second case, but with the on-wire
+        // Same tx as the "version 0" case of `test_transaction_version`, but with the on-wire
         // `nTxType` slot set to a non-zero u16 (0x2A in little-endian => 0x002A).
         // Below version 3 these bytes are ignored by consensus but still part of the
         // serialized transaction and therefore part of the txid pre-image. Bytes 2..4
