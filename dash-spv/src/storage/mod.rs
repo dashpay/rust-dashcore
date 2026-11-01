@@ -734,9 +734,12 @@ mod tests {
         let storage2 = DiskStorageManager::new(&config).await;
         assert!(storage2.is_err(), "Second storage manager should fail");
 
-        // Lock file removed when storage drops
+        // Lock file removed when storage drops (on Unix: elsewhere it stays, see `LockFile`)
         drop(storage1);
+        #[cfg(unix)]
         assert!(!lock_path.exists(), "Lock file should be removed after storage drops");
+        #[cfg(not(unix))]
+        assert!(lock_path.exists(), "Lock file should stay after storage drops");
 
         // Can reopen storage after previous one dropped
         let storage3 = DiskStorageManager::new(&config).await;
