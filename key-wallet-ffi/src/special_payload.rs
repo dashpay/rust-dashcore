@@ -2,10 +2,11 @@
 //!
 //! [`FFISpecialTransactionPayload`] is a tagged representation of
 //! `dashcore`'s `TransactionPayload`: `payload_type` carries the on-wire
-//! DIP-2 transaction type (`1` = ProRegTx … `9` = AssetUnlockTx), and for
-//! the four masternode provider payload kinds a matching typed struct
-//! pointer is non-null. Other payload kinds (coinbase, quorum commitment,
-//! asset lock/unlock, …) currently expose only the discriminant; typed
+//! DIP-2 transaction type (`1` = ProRegTx … `12` = ProUpSharedRegTx), and for
+//! five masternode provider payload kinds (ProRegTx, ProUpServTx, ProUpRegTx,
+//! ProUpRevTx, ProUpShareTx) a matching typed struct pointer is non-null.
+//! Other payload kinds (coinbase, quorum commitment, asset lock/unlock,
+//! ProDisTx, ProUpSharedRegTx, …) currently expose only the discriminant; typed
 //! structs for them can be added later without breaking the layout
 //! contract (consumers must key off `payload_type`).
 //!
@@ -17,39 +18,54 @@
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::os::raw::c_char;
 
-use dashcore::blockdata::transaction::special_transaction::provider_registration::ProviderRegistrationPayload;
+use dashcore::blockdata::transaction::special_transaction::provider_registration::{
+    CollateralShare, MasternodePayoutShare, ProviderRegistrationPayload,
+};
 use dashcore::blockdata::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
 use dashcore::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
+use dashcore::blockdata::transaction::special_transaction::provider_update_share::ProviderUpdateSharePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::BLSPublicKey;
 use dashcore::hashes::Hash;
 use dashcore::ScriptBuf;
 
-/// Box `script`'s bytes into a raw `(ptr, len)` pair; `(null, 0)` for an
-/// empty script.
-fn script_to_raw(script: &ScriptBuf) -> (*mut u8, usize) {
-    let bytes = script.as_bytes().to_vec().into_boxed_slice();
-    let len = bytes.len();
+/// Box `items` into a raw `(ptr, len)` pair; `(null, 0)` when empty.
+fn vec_to_raw<T>(items: Vec<T>) -> (*mut T, usize) {
+    let items = items.into_boxed_slice();
+    let len = items.len();
     if len == 0 {
         (std::ptr::null_mut(), 0)
     } else {
-        (Box::into_raw(bytes) as *mut u8, len)
+        (Box::into_raw(items) as *mut T, len)
     }
 }
 
-/// Free a `(ptr, len)` pair produced by [`script_to_raw`].
+/// Free (and drop the items of) a `(ptr, len)` pair produced by [`vec_to_raw`].
 ///
 /// # Safety
 ///
-/// `ptr`/`len` must come from `script_to_raw` and not have been freed yet.
-unsafe fn free_raw_script(ptr: &mut *mut u8, len: &mut usize) {
+/// `ptr`/`len` must come from `vec_to_raw` and not have been freed yet.
+unsafe fn free_raw<T>(ptr: &mut *mut T, len: &mut usize) {
     if !ptr.is_null() && *len > 0 {
         let slice_ptr = std::ptr::slice_from_raw_parts_mut(*ptr, *len);
         let _ = Box::from_raw(slice_ptr);
     }
     *ptr = std::ptr::null_mut();
     *len = 0;
+}
+
+/// Box `script`'s bytes into a raw `(ptr, len)` pair; `(null, 0)` for an
+/// empty script.
+fn script_to_raw(script: &ScriptBuf) -> (*mut u8, usize) {
+    vec_to_raw(script.to_bytes())
+}
+
+/// Box version 3 (DIP-0026) owner payouts; `(null, 0)` when there are none.
+fn payouts_to_raw(
+    payouts: Option<&Vec<MasternodePayoutShare>>,
+) -> (*mut FFIMasternodePayoutShare, usize) {
+    vec_to_raw(payouts.into_iter().flatten().map(FFIMasternodePayoutShare::from).collect())
 }
 
 /// Render `addr` as its canonical display string (`ip:port`), boxed as a
@@ -70,6 +86,77 @@ fn socket_addr_to_ipv6_octets(addr: &SocketAddr) -> [u8; 16] {
 /// Copy a BLS public key's 48 raw bytes.
 fn bls_public_key_bytes(key: &BLSPublicKey) -> [u8; 48] {
     *AsRef::<[u8; 48]>::as_ref(key)
+}
+
+/// One version 3 (DIP-0026) owner payout: a script and its share of the
+/// owner reward.
+#[repr(C)]
+pub struct FFIMasternodePayoutShare {
+    /// Payout script bytes (owned by this struct, null when empty).
+    pub script_payout: *mut u8,
+    /// Length of `script_payout`.
+    pub script_payout_len: usize,
+    /// Share of the owner reward in basis points.
+    pub reward: u16,
+}
+
+impl From<&MasternodePayoutShare> for FFIMasternodePayoutShare {
+    fn from(p: &MasternodePayoutShare) -> Self {
+        let (script_payout, script_payout_len) = script_to_raw(&p.script_payout);
+        FFIMasternodePayoutShare {
+            script_payout,
+            script_payout_len,
+            reward: p.reward,
+        }
+    }
+}
+
+impl Drop for FFIMasternodePayoutShare {
+    fn drop(&mut self) {
+        unsafe { free_raw(&mut self.script_payout, &mut self.script_payout_len) };
+    }
+}
+
+/// One share of a version 3 shared-collateral registration.
+#[repr(C)]
+pub struct FFICollateralShare {
+    /// Contributed amount in duffs.
+    pub amount: i64,
+    /// Refund script bytes (owned by this struct, null when empty).
+    pub script_refund: *mut u8,
+    /// Length of `script_refund`.
+    pub script_refund_len: usize,
+    /// Reward script bytes (owned by this struct). Null when empty: the
+    /// share's rewards are then paid to `script_refund`.
+    pub script_reward: *mut u8,
+    /// Length of `script_reward`.
+    pub script_reward_len: usize,
+    /// Share owner key hash160 (20 bytes).
+    pub owner_key_hash: [u8; 20],
+}
+
+impl From<&CollateralShare> for FFICollateralShare {
+    fn from(s: &CollateralShare) -> Self {
+        let (script_refund, script_refund_len) = script_to_raw(&s.script_refund);
+        let (script_reward, script_reward_len) = script_to_raw(&s.script_reward);
+        FFICollateralShare {
+            amount: s.amount,
+            script_refund,
+            script_refund_len,
+            script_reward,
+            script_reward_len,
+            owner_key_hash: s.owner_key_hash.to_byte_array(),
+        }
+    }
+}
+
+impl Drop for FFICollateralShare {
+    fn drop(&mut self) {
+        unsafe {
+            free_raw(&mut self.script_refund, &mut self.script_refund_len);
+            free_raw(&mut self.script_reward, &mut self.script_reward_len);
+        }
+    }
 }
 
 /// Typed view of a DIP-3 `ProRegTx` (provider registration) payload.
@@ -108,7 +195,8 @@ pub struct FFIProviderRegistrationPayload {
     pub operator_public_key: [u8; 48],
     /// Operator reward in basis points (0–10000).
     pub operator_reward: u16,
-    /// Payout script bytes (owned by this struct, null when empty).
+    /// Payout script bytes (owned by this struct, null when empty). Empty
+    /// from version 3, whose owner payouts are in `payouts`.
     pub script_payout: *mut u8,
     /// Length of `script_payout`.
     pub script_payout_len: usize,
@@ -121,6 +209,23 @@ pub struct FFIProviderRegistrationPayload {
     pub platform_p2p_port: i32,
     /// Platform HTTP port, `-1` when absent.
     pub platform_http_port: i32,
+    /// Version 3 (DIP-0026) owner payouts (owned by this struct, null when
+    /// there are none).
+    pub payouts: *mut FFIMasternodePayoutShare,
+    /// Number of entries in `payouts`.
+    pub payouts_count: usize,
+    /// `true` for a shared-collateral registration (version 3 with at least
+    /// one share; Dash Core's `IsShared`). The four fields below are only
+    /// meaningful in that case.
+    pub has_shared_collateral: bool,
+    /// The collateral shares (owned by this struct, null when there are none).
+    pub shares: *mut FFICollateralShare,
+    /// Number of entries in `shares`.
+    pub shares_count: usize,
+    /// Blocks after registration within which a leaving share pays `early_penalty`.
+    pub early_period_blocks: u32,
+    /// Penalty in duffs for leaving within `early_period_blocks`.
+    pub early_penalty: i64,
 }
 
 impl From<&ProviderRegistrationPayload> for FFIProviderRegistrationPayload {
@@ -130,6 +235,11 @@ impl From<&ProviderRegistrationPayload> for FFIProviderRegistrationPayload {
             .primary_service_address()
             .unwrap_or_else(|| SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0));
         let (script_payout, script_payout_len) = script_to_raw(&p.script_payout);
+        let (payouts, payouts_count) = payouts_to_raw(p.payouts.as_ref());
+        let shared = p.shared_collateral.as_ref();
+        let (shares, shares_count) = vec_to_raw(
+            shared.into_iter().flat_map(|s| &s.shares).map(FFICollateralShare::from).collect(),
+        );
         FFIProviderRegistrationPayload {
             version: p.version,
             masternode_type: p.masternode_type as u16,
@@ -149,6 +259,13 @@ impl From<&ProviderRegistrationPayload> for FFIProviderRegistrationPayload {
             platform_node_id: p.platform_node_id.map(|id| id.to_byte_array()).unwrap_or([0; 20]),
             platform_p2p_port: p.platform_p2p_port.map_or(-1, i32::from),
             platform_http_port: p.platform_http_port.map_or(-1, i32::from),
+            payouts,
+            payouts_count,
+            has_shared_collateral: shared.is_some_and(|s| !s.shares.is_empty()),
+            shares,
+            shares_count,
+            early_period_blocks: shared.map_or(0, |s| s.early_period_blocks),
+            early_penalty: shared.map_or(0, |s| s.early_penalty),
         }
     }
 }
@@ -159,7 +276,11 @@ impl Drop for FFIProviderRegistrationPayload {
             let _ = unsafe { std::ffi::CString::from_raw(self.service_address) };
             self.service_address = std::ptr::null_mut();
         }
-        unsafe { free_raw_script(&mut self.script_payout, &mut self.script_payout_len) };
+        unsafe {
+            free_raw(&mut self.script_payout, &mut self.script_payout_len);
+            free_raw(&mut self.payouts, &mut self.payouts_count);
+            free_raw(&mut self.shares, &mut self.shares_count);
+        }
     }
 }
 
@@ -229,7 +350,7 @@ impl Drop for FFIProviderUpdateServicePayload {
             let _ = unsafe { std::ffi::CString::from_raw(self.service_address) };
             self.service_address = std::ptr::null_mut();
         }
-        unsafe { free_raw_script(&mut self.script_payout, &mut self.script_payout_len) };
+        unsafe { free_raw(&mut self.script_payout, &mut self.script_payout_len) };
     }
 }
 
@@ -248,14 +369,21 @@ pub struct FFIProviderUpdateRegistrarPayload {
     /// New voting key hash160 (20 bytes).
     pub voting_key_hash: [u8; 20],
     /// New payout script bytes (owned by this struct, null when empty).
+    /// Empty from version 3, whose owner payouts are in `payouts`.
     pub script_payout: *mut u8,
     /// Length of `script_payout`.
     pub script_payout_len: usize,
+    /// New version 3 (DIP-0026) owner payouts (owned by this struct, null
+    /// when there are none).
+    pub payouts: *mut FFIMasternodePayoutShare,
+    /// Number of entries in `payouts`.
+    pub payouts_count: usize,
 }
 
 impl From<&ProviderUpdateRegistrarPayload> for FFIProviderUpdateRegistrarPayload {
     fn from(p: &ProviderUpdateRegistrarPayload) -> Self {
         let (script_payout, script_payout_len) = script_to_raw(&p.script_payout);
+        let (payouts, payouts_count) = payouts_to_raw(p.payouts.as_ref());
         FFIProviderUpdateRegistrarPayload {
             version: p.version,
             pro_tx_hash: p.pro_tx_hash.to_byte_array(),
@@ -264,13 +392,18 @@ impl From<&ProviderUpdateRegistrarPayload> for FFIProviderUpdateRegistrarPayload
             voting_key_hash: p.voting_key_hash.to_byte_array(),
             script_payout,
             script_payout_len,
+            payouts,
+            payouts_count,
         }
     }
 }
 
 impl Drop for FFIProviderUpdateRegistrarPayload {
     fn drop(&mut self) {
-        unsafe { free_raw_script(&mut self.script_payout, &mut self.script_payout_len) };
+        unsafe {
+            free_raw(&mut self.script_payout, &mut self.script_payout_len);
+            free_raw(&mut self.payouts, &mut self.payouts_count);
+        }
     }
 }
 
@@ -297,13 +430,50 @@ impl From<&ProviderUpdateRevocationPayload> for FFIProviderUpdateRevocationPaylo
     }
 }
 
+/// Typed view of a `ProUpShareTx` (provider update share) payload.
+#[repr(C)]
+pub struct FFIProviderUpdateSharePayload {
+    /// ProUpShareTx payload version.
+    pub version: u16,
+    /// ProRegTx hash of the shared masternode (32 bytes, `to_byte_array` order).
+    pub pro_tx_hash: [u8; 32],
+    /// Index of the updated share in the registration's shares.
+    pub share_index: u16,
+    /// New reward script bytes (owned by this struct, null when empty, which
+    /// Dash Core rejects). Setting it to the share's refund script resets
+    /// the rewards to it.
+    pub script_reward: *mut u8,
+    /// Length of `script_reward`.
+    pub script_reward_len: usize,
+}
+
+impl From<&ProviderUpdateSharePayload> for FFIProviderUpdateSharePayload {
+    fn from(p: &ProviderUpdateSharePayload) -> Self {
+        let (script_reward, script_reward_len) = script_to_raw(&p.script_reward);
+        FFIProviderUpdateSharePayload {
+            version: p.version,
+            pro_tx_hash: p.pro_tx_hash.to_byte_array(),
+            share_index: p.share_index,
+            script_reward,
+            script_reward_len,
+        }
+    }
+}
+
+impl Drop for FFIProviderUpdateSharePayload {
+    fn drop(&mut self) {
+        unsafe { free_raw(&mut self.script_reward, &mut self.script_reward_len) };
+    }
+}
+
 /// Tagged FFI view of a transaction's DIP-2 special payload.
 ///
 /// `payload_type` is the on-wire DIP-2 transaction type (`1` ProRegTx,
 /// `2` ProUpServTx, `3` ProUpRegTx, `4` ProUpRevTx, `5` CbTx, `6` QcTx,
-/// `7` MnHfTx, `8` AssetLockTx, `9` AssetUnlockTx; pre-DIP-0002
-/// transactions with non-standard type bytes surface their raw value).
-/// For the four provider payload kinds the matching struct pointer is
+/// `7` MnHfTx, `8` AssetLockTx, `9` AssetUnlockTx, `10` ProDisTx, `11`
+/// ProUpShareTx, `12` ProUpSharedRegTx; pre-DIP-0002 transactions with
+/// non-standard type bytes surface their raw value). For the five typed
+/// provider payload kinds (types 1–4 and 11) the matching struct pointer is
 /// non-null, unless the payload was kept raw because its layout is unknown;
 /// at most one pointer is ever non-null. All pointers are owned by this
 /// struct and freed with it.
@@ -319,6 +489,8 @@ pub struct FFISpecialTransactionPayload {
     pub provider_update_registrar: *mut FFIProviderUpdateRegistrarPayload,
     /// Non-null only if `payload_type == 4` (ProUpRevTx) and the payload decoded.
     pub provider_update_revocation: *mut FFIProviderUpdateRevocationPayload,
+    /// Non-null only if `payload_type == 11` (ProUpShareTx) and the payload decoded.
+    pub provider_update_share: *mut FFIProviderUpdateSharePayload,
 }
 
 impl From<&TransactionPayload> for FFISpecialTransactionPayload {
@@ -329,6 +501,7 @@ impl From<&TransactionPayload> for FFISpecialTransactionPayload {
             provider_update_service: std::ptr::null_mut(),
             provider_update_registrar: std::ptr::null_mut(),
             provider_update_revocation: std::ptr::null_mut(),
+            provider_update_share: std::ptr::null_mut(),
         };
         match payload {
             TransactionPayload::ProviderRegistrationPayloadType(p) => {
@@ -342,6 +515,9 @@ impl From<&TransactionPayload> for FFISpecialTransactionPayload {
             }
             TransactionPayload::ProviderUpdateRevocationPayloadType(p) => {
                 ffi.provider_update_revocation = Box::into_raw(Box::new(p.into()));
+            }
+            TransactionPayload::ProviderUpdateSharePayloadType(p) => {
+                ffi.provider_update_share = Box::into_raw(Box::new(p.into()));
             }
             // Only the discriminant is exposed for the remaining payload
             // kinds; typed structs can be added later.
@@ -368,6 +544,10 @@ impl Drop for FFISpecialTransactionPayload {
         if !self.provider_update_revocation.is_null() {
             let _ = unsafe { Box::from_raw(self.provider_update_revocation) };
             self.provider_update_revocation = std::ptr::null_mut();
+        }
+        if !self.provider_update_share.is_null() {
+            let _ = unsafe { Box::from_raw(self.provider_update_share) };
+            self.provider_update_share = std::ptr::null_mut();
         }
     }
 }
@@ -417,11 +597,29 @@ pub(crate) fn mainnet_shape_proreg_payload() -> ProviderRegistrationPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dashcore::blockdata::transaction::special_transaction::provider_registration::SharedCollateral;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::InputsHash;
     use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use dashcore::Txid;
     use std::ffi::CStr;
+
+    /// The bytes of an owned `(ptr, len)` script; empty for `(null, 0)`.
+    fn script_bytes<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
+        if ptr.is_null() {
+            assert_eq!(len, 0);
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(ptr, len) }
+        }
+    }
+
+    fn payout(script: &[u8], reward: u16) -> MasternodePayoutShare {
+        MasternodePayoutShare {
+            script_payout: ScriptBuf::from_bytes(script.to_vec()),
+            reward,
+        }
+    }
 
     #[test]
     fn proreg_payload_exposes_service_and_keys() {
@@ -455,6 +653,11 @@ mod tests {
         assert_eq!(reg.collateral_vout, 1);
         assert!(!reg.has_platform_fields);
         assert_eq!(reg.platform_p2p_port, -1);
+        assert!(reg.payouts.is_null());
+        assert_eq!(reg.payouts_count, 0);
+        assert!(!reg.has_shared_collateral);
+        assert!(reg.shares.is_null());
+        assert_eq!(reg.shares_count, 0);
 
         let script =
             unsafe { std::slice::from_raw_parts(reg.script_payout, reg.script_payout_len) };
@@ -546,5 +749,137 @@ mod tests {
         assert!(ffi.provider_update_service.is_null());
         assert!(ffi.provider_update_registrar.is_null());
         assert!(ffi.provider_update_revocation.is_null());
+        assert!(ffi.provider_update_share.is_null());
+    }
+
+    #[test]
+    fn proreg_v3_payload_exposes_payouts_and_shares() {
+        let mut reg = mainnet_shape_proreg_payload();
+        reg.version = 3;
+        reg.script_payout = ScriptBuf::new();
+        reg.payouts = Some(vec![payout(&[0xa1; 25], 4000), payout(&[0xa2; 23], 6000)]);
+        let share = |refund: u8, reward: &[u8], owner: u8| CollateralShare {
+            amount: 50_000_000_000 + i64::from(owner),
+            script_refund: ScriptBuf::from_bytes(vec![refund; 25]),
+            script_reward: ScriptBuf::from_bytes(reward.to_vec()),
+            owner_key_hash: dashcore::PubkeyHash::from_byte_array([owner; 20]),
+        };
+        reg.shared_collateral = Some(SharedCollateral {
+            shares: vec![share(0xb1, &[], 1), share(0xb2, &[0xc2; 25], 2)],
+            join_sigs: Vec::new(),
+            early_period_blocks: 16_616,
+            early_penalty: 1_000_000,
+        });
+        let ffi = FFISpecialTransactionPayload::from(
+            &TransactionPayload::ProviderRegistrationPayloadType(reg),
+        );
+
+        let reg = unsafe { &*ffi.provider_registration };
+        assert!(reg.script_payout.is_null());
+        assert_eq!(reg.payouts_count, 2);
+        let payouts = unsafe { std::slice::from_raw_parts(reg.payouts, reg.payouts_count) };
+        assert_eq!(
+            script_bytes(payouts[0].script_payout, payouts[0].script_payout_len),
+            [0xa1; 25]
+        );
+        assert_eq!(payouts[0].reward, 4000);
+        assert_eq!(
+            script_bytes(payouts[1].script_payout, payouts[1].script_payout_len),
+            [0xa2; 23]
+        );
+        assert_eq!(payouts[1].reward, 6000);
+
+        assert!(reg.has_shared_collateral);
+        assert_eq!(reg.early_period_blocks, 16_616);
+        assert_eq!(reg.early_penalty, 1_000_000);
+        assert_eq!(reg.shares_count, 2);
+        let shares = unsafe { std::slice::from_raw_parts(reg.shares, reg.shares_count) };
+        assert_eq!(shares[0].amount, 50_000_000_001);
+        assert_eq!(script_bytes(shares[0].script_refund, shares[0].script_refund_len), [0xb1; 25]);
+        assert!(shares[0].script_reward.is_null(), "an empty reward script must be null");
+        assert_eq!(shares[0].owner_key_hash, [1; 20]);
+        assert_eq!(script_bytes(shares[1].script_refund, shares[1].script_refund_len), [0xb2; 25]);
+        assert_eq!(script_bytes(shares[1].script_reward, shares[1].script_reward_len), [0xc2; 25]);
+        assert_eq!(shares[1].owner_key_hash, [2; 20]);
+    }
+
+    #[test]
+    fn decoded_single_owner_v3_proreg_is_not_shared() {
+        use dashcore::consensus::{deserialize, serialize};
+        use dashcore::sml::masternode_list_entry::net_info::ExtNetInfo;
+
+        let mut reg = mainnet_shape_proreg_payload();
+        reg.version = 3;
+        reg.service_address = MasternodeNetInfo::Extended(ExtNetInfo {
+            version: 1,
+            purposes: Vec::new(),
+        });
+        reg.script_payout = ScriptBuf::new();
+        reg.payouts = Some(vec![payout(&[0xa1; 25], 10_000)]);
+        reg.shared_collateral = Some(SharedCollateral::default());
+        // Decoding gives every version 3 payload a (here empty) shared collateral.
+        let decoded: ProviderRegistrationPayload = deserialize(&serialize(&reg)).expect("decode");
+        assert!(decoded.shared_collateral.is_some());
+        let ffi = FFISpecialTransactionPayload::from(
+            &TransactionPayload::ProviderRegistrationPayloadType(decoded),
+        );
+
+        let reg = unsafe { &*ffi.provider_registration };
+        assert!(!reg.has_shared_collateral);
+        assert!(reg.shares.is_null());
+        assert_eq!(reg.shares_count, 0);
+        assert_eq!(reg.payouts_count, 1);
+    }
+
+    #[test]
+    fn proupreg_v3_payload_exposes_payouts() {
+        let mut payload = ProviderUpdateRegistrarPayload::new(
+            Txid::from_slice(&[0x44; 32]).expect("txid"),
+            0,
+            BLSPublicKey::from([0x11; 48]),
+            dashcore::PubkeyHash::from_byte_array([0x22; 20]),
+            ScriptBuf::new(),
+            InputsHash::from_slice(&[0x55; 32]).expect("inputs hash"),
+            vec![0x66; 65],
+        );
+        payload.version = 3;
+        payload.payouts = Some(vec![payout(&[0xa1; 25], 10_000)]);
+        let ffi = FFISpecialTransactionPayload::from(
+            &TransactionPayload::ProviderUpdateRegistrarPayloadType(payload),
+        );
+
+        assert_eq!(ffi.payload_type, 3);
+        let upreg = unsafe { &*ffi.provider_update_registrar };
+        assert!(upreg.script_payout.is_null());
+        assert_eq!(upreg.payouts_count, 1);
+        let payouts = unsafe { std::slice::from_raw_parts(upreg.payouts, upreg.payouts_count) };
+        assert_eq!(
+            script_bytes(payouts[0].script_payout, payouts[0].script_payout_len),
+            [0xa1; 25]
+        );
+        assert_eq!(payouts[0].reward, 10_000);
+    }
+
+    #[test]
+    fn proupshare_payload_exposes_reward_script() {
+        let payload =
+            TransactionPayload::ProviderUpdateSharePayloadType(ProviderUpdateSharePayload {
+                version: 1,
+                pro_tx_hash: Txid::from_slice(&[0x77; 32]).expect("txid"),
+                share_index: 3,
+                script_reward: ScriptBuf::from_bytes(vec![0xc3; 25]),
+                inputs_hash: InputsHash::from_slice(&[0x88; 32]).expect("inputs hash"),
+                payload_sig: vec![0x99; 65],
+            });
+        let ffi = FFISpecialTransactionPayload::from(&payload);
+
+        assert_eq!(ffi.payload_type, 11);
+        assert!(ffi.provider_registration.is_null());
+        assert!(ffi.provider_update_registrar.is_null());
+        let upshare = unsafe { &*ffi.provider_update_share };
+        assert_eq!(upshare.version, 1);
+        assert_eq!(upshare.pro_tx_hash, [0x77; 32]);
+        assert_eq!(upshare.share_index, 3);
+        assert_eq!(script_bytes(upshare.script_reward, upshare.script_reward_len), [0xc3; 25]);
     }
 }
