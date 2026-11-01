@@ -23,10 +23,11 @@ pub use dashcore_crypto::sighash::{
     TapSighashType,
 };
 
-use crate::blockdata::transaction::txin::TxIn;
+use crate::blockdata::opcodes::all::OP_CODESEPARATOR;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::transaction::{EncodeSigningDataResult, Transaction};
 use crate::blockdata::witness::Witness;
+use crate::consensus::encode::VarInt;
 use crate::consensus::{Encodable, encode};
 use crate::io;
 use crate::prelude::*;
@@ -606,9 +607,9 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
     ///
     /// # Warning
     ///
-    /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    ///   have the information to determine.
+    /// - `script_pubkey` is the script code. As in Dash Core, every OP_CODESEPARATOR opcode in it
+    ///   is left out of the signing data. Passing only the part of the script after the last
+    ///   executed OP_CODESEPARATOR is up to the caller, since choosing it needs script evaluation.
     /// - Does NOT handle the sighash single bug (see "Return type" section)
     ///
     /// # Returns
@@ -652,67 +653,55 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
             let (sighash, anyone_can_pay) =
                 EcdsaSighashType::from_consensus(sighash_type).split_anyonecanpay_flag();
 
-            // Build tx to sign
-            let mut tx = Transaction {
-                version: self_.version,
-                lock_time: self_.lock_time,
-                input: vec![],
-                output: vec![],
-                special_transaction_payload: self_.special_transaction_payload.clone(),
-            };
-            // Add all inputs necessary..
-            if anyone_can_pay {
-                tx.input = vec![TxIn {
-                    previous_output: self_.input[input_index].previous_output,
-                    script_sig: script_pubkey.to_owned(),
-                    sequence: self_.input[input_index].sequence,
-                    witness: Witness::default(),
-                }];
+            // Serialize like Dash Core's `CTransactionSignatureSerializer`
+            // (src/script/interpreter.cpp).
+            let single_or_none =
+                sighash == EcdsaSighashType::Single || sighash == EcdsaSighashType::None;
+            self_.version.consensus_encode(&mut writer)?;
+            self_.tx_type().to_u16().consensus_encode(&mut writer)?;
+            // Only the input being signed with ANYONECANPAY, else all of them; the signed one
+            // carries the script code and the others an empty script.
+            let inputs = if anyone_can_pay {
+                input_index..input_index + 1
             } else {
-                tx.input = Vec::with_capacity(self_.input.len());
-                for (n, input) in self_.input.iter().enumerate() {
-                    tx.input.push(TxIn {
-                        previous_output: input.previous_output,
-                        script_sig: if n == input_index {
-                            script_pubkey.to_owned()
-                        } else {
-                            ScriptBuf::new()
-                        },
-                        sequence: if n != input_index
-                            && (sighash == EcdsaSighashType::Single
-                                || sighash == EcdsaSighashType::None)
-                        {
-                            0
-                        } else {
-                            input.sequence
-                        },
-                        witness: Witness::default(),
-                    });
+                0..self_.input.len()
+            };
+            VarInt(inputs.len() as u64).consensus_encode(&mut writer)?;
+            for n in inputs {
+                let input = &self_.input[n];
+                input.previous_output.consensus_encode(&mut writer)?;
+                if n == input_index {
+                    encode_script_code(&mut writer, script_pubkey.as_bytes())?;
+                } else {
+                    ScriptBuf::new().consensus_encode(&mut writer)?;
                 }
+                let sequence = if n != input_index && single_or_none {
+                    0
+                } else {
+                    input.sequence
+                };
+                sequence.consensus_encode(&mut writer)?;
             }
-            // ..then all outputs
-            tx.output = match sighash {
-                EcdsaSighashType::All => self_.output.clone(),
+            // SINGLE signs the outputs up to and including this one, with the others blanked
+            match sighash {
+                EcdsaSighashType::All => self_.output.consensus_encode(&mut writer)?,
                 EcdsaSighashType::Single => {
-                    let output_iter = self_
-                        .output
-                        .iter()
-                        .take(input_index + 1) // sign all outputs up to and including this one, but erase
-                        .enumerate() // all of them except for this one
-                        .map(|(n, out)| {
-                            if n == input_index {
-                                out.clone()
-                            } else {
-                                TxOut::default()
-                            }
-                        });
-                    output_iter.collect()
+                    VarInt((input_index + 1) as u64).consensus_encode(&mut writer)?;
+                    // `input_index < output.len()` here: the SIGHASH_SINGLE bug case returned above
+                    for (n, out) in self_.output[..=input_index].iter().enumerate() {
+                        if n == input_index {
+                            out.consensus_encode(&mut writer)?;
+                        } else {
+                            TxOut::default().consensus_encode(&mut writer)?;
+                        }
+                    }
+                    0
                 }
-                EcdsaSighashType::None => vec![],
+                EcdsaSighashType::None => VarInt(0).consensus_encode(&mut writer)?,
                 _ => unreachable!(),
             };
-            // hash the result
-            tx.consensus_encode(&mut writer)?;
+            self_.lock_time.consensus_encode(&mut writer)?;
+            self_.encode_special_payload(&mut writer)?;
             sighash_type.to_le_bytes().consensus_encode(&mut writer)?;
             Ok(())
         }
@@ -745,9 +734,9 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
     ///
     /// # Warning
     ///
-    /// Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    /// `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    /// have the information to determine.
+    /// `script_pubkey` is the script code. As in Dash Core, every OP_CODESEPARATOR opcode in it is
+    /// left out of the signing data. Passing only the part of the script after the last executed
+    /// OP_CODESEPARATOR is up to the caller, since choosing it needs script evaluation.
     pub fn legacy_signature_hash(
         &self,
         input_index: usize,
@@ -881,6 +870,59 @@ impl<'a> Encodable for Annex<'a> {
     }
 }
 
+/// Writes `script_code` the way Dash Core's `CTransactionSignatureSerializer::SerializeScriptCode`
+/// (src/script/interpreter.cpp) does: every `OP_CODESEPARATOR` opcode is left out, and the length
+/// prefix is the script's length minus those opcodes. Like Core, the opcodes are read with
+/// `GetScriptOp` (src/script/script.cpp), so a `0xab` byte inside push data is kept. When a push
+/// runs past the end of the script, its opcode is written, and so is its length field when that
+/// field is complete; everything after that is dropped. This matches `GetScriptOp` advancing past
+/// them before it fails, and `SerializeScriptCode` writing up to that point. The length prefix still
+/// counts the whole script minus the separators.
+fn encode_script_code<W: io::Write + ?Sized>(writer: &mut W, script_code: &[u8]) -> io::Result<()> {
+    let mut separators = Vec::new();
+    let mut pc = 0;
+    let parsed_end = loop {
+        let Some(&opcode) = script_code.get(pc) else {
+            break pc;
+        };
+        pc += 1;
+        // Push opcodes are 0x00..=0x4b (push that many bytes) and OP_PUSHDATA1/2/4 (0x4c..=0x4e,
+        // followed by a 1, 2 or 4 byte little-endian length)
+        let push_len = match opcode {
+            0x00..=0x4b => usize::from(opcode),
+            0x4c..=0x4e => {
+                let width = match opcode {
+                    0x4c => 1,
+                    0x4d => 2,
+                    _ => 4,
+                };
+                let Some(bytes) = script_code.get(pc..pc + width) else {
+                    break pc;
+                };
+                pc += width;
+                bytes.iter().rev().fold(0usize, |len, &b| len << 8 | usize::from(b))
+            }
+            _ => {
+                if opcode == OP_CODESEPARATOR.to_u8() {
+                    separators.push(pc - 1);
+                }
+                0
+            }
+        };
+        if script_code.len() - pc < push_len {
+            break pc;
+        }
+        pc += push_len;
+    };
+    VarInt((script_code.len() - separators.len()) as u64).consensus_encode(writer)?;
+    let mut start = 0;
+    for separator in separators {
+        writer.write_all(&script_code[start..separator])?;
+        start = separator + 1;
+    }
+    writer.write_all(&script_code[start..parsed_end])
+}
+
 fn is_invalid_use_of_sighash_single(sighash: u32, input_index: usize, output_len: usize) -> bool {
     // Core checks `(nHashType & 0x1f) == SIGHASH_SINGLE`, so ANYONECANPAY
     // counts as well.
@@ -892,10 +934,12 @@ mod tests {
     use std::str::FromStr;
 
     use hashes::HashEngine;
+    use serde_json::Value;
 
     use super::*;
     use crate::Network;
     use crate::address::Address;
+    use crate::blockdata::transaction::txin::TxIn;
     use crate::consensus::deserialize;
     use crate::crypto::key::PublicKey;
     use crate::crypto::sighash::{LegacySighash, TapSighash};
@@ -930,8 +974,6 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn legacy_sighash() {
-        use serde_json::Value;
-
         use crate::sighash::SighashCache;
 
         fn run_test_sighash(
@@ -967,6 +1009,52 @@ mod tests {
             let hash_type = t.get(3).unwrap().as_i64().unwrap();
             let expected_sighash = t.get(4).unwrap().as_str().unwrap();
             run_test_sighash(tx, script, input_index as usize, hash_type, expected_sighash);
+        }
+    }
+
+    #[test]
+    fn script_code_leaves_out_code_separators() {
+        fn encoded(script_code: &[u8]) -> Vec<u8> {
+            let mut out = Vec::new();
+            encode_script_code(&mut out, script_code).unwrap();
+            out
+        }
+        // OP_1 OP_CODESEPARATOR OP_2 OP_CODESEPARATOR
+        assert_eq!(encoded(&[0x51, 0xab, 0x52, 0xab]), [0x02, 0x51, 0x52]);
+        // A pushed 0xab byte is data, not an opcode
+        assert_eq!(encoded(&[0x01, 0xab, 0xab]), [0x02, 0x01, 0xab]);
+        // A push that runs past the end: its opcode and its complete length field are written,
+        // the data after them is dropped, and the length prefix still counts the whole script
+        // minus the separator before it
+        assert_eq!(encoded(&[0xab, 0x51, 0x4c, 0x05, 0x00]), [0x04, 0x51, 0x4c, 0x05]);
+        // A direct push that runs past the end: only its opcode is written
+        assert_eq!(encoded(&[0x51, 0x05, 0x00]), [0x03, 0x51, 0x05]);
+        // OP_PUSHDATA2 with an incomplete length field: only the opcode is written
+        assert_eq!(encoded(&[0x51, 0x4d, 0x01]), [0x03, 0x51, 0x4d]);
+        // No separators: written as is
+        assert_eq!(encoded(&[0x76, 0xa9]), [0x02, 0x76, 0xa9]);
+    }
+
+    /// Dash Core's `src/test/data/sighash.json` (MIT), all 500 vectors; 169 of them have
+    /// OP_CODESEPARATOR in the script code.
+    #[test]
+    fn legacy_sighash_dash_core_vectors() {
+        let data = include_str!("../../tests/data/legacy_sighash_dash_core.json");
+        let vectors = serde_json::from_str::<Value>(data).unwrap();
+        let vectors = vectors.as_array().unwrap();
+        assert_eq!(vectors.len(), 501);
+        for (i, t) in vectors.iter().skip(1).enumerate() {
+            let tx: Transaction =
+                deserialize(&hex!(t[0].as_str().unwrap())).expect("Dash Core vector tx");
+            let script = ScriptBuf::from(hex!(t[1].as_str().unwrap()));
+            let input_index = t[2].as_u64().unwrap() as usize;
+            let hash_type = t[3].as_i64().unwrap() as u32;
+            let mut expected = hex!(t[4].as_str().unwrap());
+            expected.reverse();
+            let got = SighashCache::new(&tx)
+                .legacy_signature_hash(input_index, &script, hash_type)
+                .unwrap();
+            assert_eq!(got, LegacySighash::from_slice(&expected).unwrap(), "vector {i}");
         }
     }
 

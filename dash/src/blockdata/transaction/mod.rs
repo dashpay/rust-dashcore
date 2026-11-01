@@ -322,9 +322,9 @@ impl Transaction {
     ///
     /// # Warning
     ///
-    /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    ///   have the information to determine.
+    /// - `script_pubkey` is the script code. As in Dash Core, every OP_CODESEPARATOR opcode in it
+    ///   is left out of the signing data. Passing only the part of the script after the last
+    ///   executed OP_CODESEPARATOR is up to the caller, since choosing it needs script evaluation.
     /// - Does NOT handle the sighash single bug, you should either handle that manually or use
     ///   `Self::signature_hash()` instead.
     ///
@@ -344,9 +344,9 @@ impl Transaction {
     ///
     /// # Warning
     ///
-    /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    ///   have the information to determine.
+    /// - `script_pubkey` is the script code. As in Dash Core, every OP_CODESEPARATOR opcode in it
+    ///   is left out of the signing data. Passing only the part of the script after the last
+    ///   executed OP_CODESEPARATOR is up to the caller, since choosing it needs script evaluation.
     /// - Does NOT handle the sighash single bug (see "Returns" section)
     ///
     /// # Returns
@@ -680,6 +680,19 @@ impl Encodable for Transaction {
             }
         }
         len += self.lock_time.consensus_encode(w)?;
+        len += self.encode_special_payload(w)?;
+        Ok(len)
+    }
+}
+
+impl Transaction {
+    /// Writes the special transaction payload section that follows `lock_time`: the payload
+    /// with its length prefix, or nothing when the transaction has no payload section.
+    pub(crate) fn encode_special_payload<W: io::Write + ?Sized>(
+        &self,
+        w: &mut W,
+    ) -> Result<usize, io::Error> {
+        let mut len = 0;
         if let Some(payload) = self.payload_section() {
             let mut buf = Vec::new();
             payload.consensus_encode(&mut buf)?;
