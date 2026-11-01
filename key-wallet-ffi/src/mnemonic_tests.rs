@@ -716,7 +716,7 @@ mod tests {
 
         for lang in Language::ALL {
             let phrase = Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, lang).unwrap().phrase();
-            let c_phrase = CString::new(phrase).unwrap();
+            let c_phrase = CString::new(phrase.as_str()).unwrap();
 
             let mut error = FFIError::default();
             let error = &mut error as *mut FFIError;

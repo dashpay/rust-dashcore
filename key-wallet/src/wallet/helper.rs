@@ -9,6 +9,7 @@ use crate::error::Result;
 use crate::Error;
 use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSecretKey};
 use hex_conservative::DisplayHex;
+use zeroize::Zeroizing;
 
 impl Wallet {
     /// Get a bip44 account and index
@@ -102,13 +103,13 @@ impl Wallet {
         matches!(self.wallet_type, WalletType::Seed { .. } | WalletType::Mnemonic { .. })
     }
 
-    /// Get the wallet's 64-byte seed, if it has one.
+    /// Get the wallet's 64-byte seed, if it has one, wiped when dropped.
     ///
     /// For mnemonic wallets this is the BIP39 seed (empty passphrase — the
     /// same convention wallet construction uses to derive the root key).
     /// Wallets created from an extended private key, watch-only wallets and
     /// external-signable wallets have no seed and return `None`.
-    pub fn wallet_seed_bytes(&self) -> Option<[u8; 64]> {
+    pub fn wallet_seed_bytes(&self) -> Option<Zeroizing<[u8; 64]>> {
         match &self.wallet_type {
             WalletType::Mnemonic {
                 mnemonic,
@@ -117,7 +118,7 @@ impl Wallet {
             WalletType::Seed {
                 seed,
                 ..
-            } => Some(*seed.as_bytes()),
+            } => Some(Zeroizing::new(*seed.as_bytes())),
             WalletType::ExtendedPrivKey(_)
             | WalletType::ExternalSignable
             | WalletType::WatchOnly => None,

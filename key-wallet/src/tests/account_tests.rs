@@ -18,7 +18,7 @@ fn create_test_mnemonic() -> Mnemonic {
 fn create_test_extended_priv_key(network: Network) -> ExtendedPrivKey {
     let mnemonic = create_test_mnemonic();
     let seed = mnemonic.to_seed("");
-    ExtendedPrivKey::new_master(network, &seed).unwrap()
+    ExtendedPrivKey::new_master(network, &seed[..]).unwrap()
 }
 
 #[test]

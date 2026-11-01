@@ -55,7 +55,7 @@ impl PerformanceMetrics {
 fn test_key_derivation_performance() {
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     let iterations = 1000;
     let mut times = Vec::new();
@@ -190,7 +190,7 @@ fn test_concurrent_derivation_performance() {
 
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
-    let master = Arc::new(ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap());
+    let master = Arc::new(ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap());
 
     let num_threads = 4;
     let iterations_per_thread = 250;
@@ -267,7 +267,7 @@ fn test_gap_limit_scan_performance() {
 
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     let account_path = DerivationPath::from(vec![
         ChildNumber::from_hardened_idx(44).unwrap(),
@@ -305,7 +305,7 @@ fn test_worst_case_derivation_path() {
     // Test performance with maximum depth derivation path
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     // Build a very deep path
     let mut path = DerivationPath::master();

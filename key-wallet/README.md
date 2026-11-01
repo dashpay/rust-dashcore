@@ -80,7 +80,7 @@ use hex_conservative::DisplayHex;
 
 // Generate a new mnemonic
 let mnemonic = Mnemonic::generate(24, Language::English)?;
-println!("Mnemonic: {}", mnemonic.phrase());
+println!("Mnemonic: {}", mnemonic.phrase().as_str());
 
 // Create wallet from mnemonic
 let wallet = Wallet::from_mnemonic(mnemonic.clone(), None, Network::Mainnet)?;

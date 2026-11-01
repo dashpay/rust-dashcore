@@ -92,7 +92,7 @@ fn test_reserve_receive_on_non_standard_account_errors() {
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(network, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(network, &seed[..]).unwrap();
 
     let account_type = AccountType::CoinJoin {
         index: 0,

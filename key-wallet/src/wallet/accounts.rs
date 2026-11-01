@@ -113,7 +113,7 @@ impl Wallet {
                 account_type,
                 required_key: "wallet seed (e.g. 64-byte BIP39 seed)",
             })?;
-            BLSAccount::from_seed(Some(wallet_id.to_vec()), account_type, &seed, self.network)?
+            BLSAccount::from_seed(Some(wallet_id.to_vec()), account_type, &seed[..], self.network)?
         };
 
         // Check if account already exists
@@ -177,7 +177,12 @@ impl Wallet {
                 account_type,
                 required_key: "wallet seed (e.g. 64-byte BIP39 seed)",
             })?;
-            EdDSAAccount::from_seed(Some(wallet_id.to_vec()), account_type, &seed, self.network)?
+            EdDSAAccount::from_seed(
+                Some(wallet_id.to_vec()),
+                account_type,
+                &seed[..],
+                self.network,
+            )?
         };
 
         // Check if account already exists

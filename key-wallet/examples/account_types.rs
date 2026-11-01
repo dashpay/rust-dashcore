@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let seed = mnemonic.to_seed("");
 
     // Create master key
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed)?;
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..])?;
 
     // 1. Standard ECDSA Account (traditional HD wallet)
     println!("=== ECDSA Account (Standard HD Wallet) ===");

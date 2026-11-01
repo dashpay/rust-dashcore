@@ -12,7 +12,7 @@ use bip39 as bip39_crate;
 use serde::{Deserialize, Serialize};
 use unicode_normalization::char::is_combining_mark;
 use unicode_normalization::UnicodeNormalization;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// Language for mnemonic generation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,9 +253,21 @@ impl Mnemonic {
         self.inner.language().into()
     }
 
-    /// Get the mnemonic phrase as a string
-    pub fn phrase(&self) -> String {
-        self.inner.words().collect::<Vec<_>>().join(" ")
+    /// The phrase (words joined by single spaces), wiped when dropped.
+    ///
+    /// The buffer is allocated with its exact final capacity up front, so it
+    /// never reallocates and leaves no partial copy of the phrase behind.
+    pub fn phrase(&self) -> Zeroizing<String> {
+        let capacity = self.inner.words().map(str::len).sum::<usize>()
+            + self.inner.word_count().saturating_sub(1);
+        let mut phrase = Zeroizing::new(String::with_capacity(capacity));
+        for (i, word) in self.inner.words().enumerate() {
+            if i > 0 {
+                phrase.push(' ');
+            }
+            phrase.push_str(word);
+        }
+        phrase
     }
 
     /// Get the word count
@@ -273,11 +285,9 @@ impl Mnemonic {
         })
     }
 
-    /// Convert to seed with optional passphrase
-    pub fn to_seed(&self, passphrase: &str) -> [u8; 64] {
-        let mut seed = [0u8; 64];
-        seed.copy_from_slice(&self.inner.to_seed(passphrase));
-        seed
+    /// The BIP39 seed for `passphrase`, wiped when dropped.
+    pub fn to_seed(&self, passphrase: &str) -> Zeroizing<[u8; 64]> {
+        Zeroizing::new(self.inner.to_seed(passphrase))
     }
 
     /// Derive extended private key from this mnemonic
@@ -287,7 +297,7 @@ impl Mnemonic {
         network: crate::Network,
     ) -> Result<ExtendedPrivKey> {
         let seed = self.to_seed(passphrase);
-        ExtendedPrivKey::new_master(network, &seed).map_err(Into::into)
+        ExtendedPrivKey::new_master(network, &seed[..]).map_err(Into::into)
     }
 
     /// Validate a mnemonic phrase against every supported wordlist.
@@ -442,7 +452,7 @@ impl FromStr for Mnemonic {
 
 impl fmt::Display for Mnemonic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.phrase())
+        f.write_str(&self.phrase())
     }
 }
 
@@ -545,7 +555,7 @@ mod tests {
         let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04";
@@ -556,7 +566,7 @@ mod tests {
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "legal winner thank year wave sausage worth useful legal winner thank yellow";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "2e8905819b8723fe2c1d161860e5ee1830318dbf49a83bd451cfb8440c28bd6fa457fe1296106559a3c80937a1c1069be3a3a5bd381ee6260e8d9739fce1f607";
@@ -567,7 +577,7 @@ mod tests {
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "d71de856f81a8acc65e6fc851a38d4d7ec216fd0796d0a6827a3ad6ed5511a30fa280f12eb2e47ed2ac03b5c462a0358d18d69fe4f985ec81778c1b370b652a8";
@@ -577,7 +587,7 @@ mod tests {
         let entropy = hex_conservative::decode_to_vec("ffffffffffffffffffffffffffffffff").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "ac27495480225222079d7be181583751e86f571027b0497b5b5d11218e0a8a13332572917f0f8e5a589620c6f15b11c61dee327651a14c34e18231052e48c069";
@@ -593,7 +603,7 @@ mod tests {
                 .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon agent";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
         assert_eq!(mnemonic.word_count(), 18);
 
         let seed = mnemonic.to_seed("TREZOR");
@@ -611,7 +621,7 @@ mod tests {
         .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
         assert_eq!(mnemonic.word_count(), 24);
 
         let seed = mnemonic.to_seed("TREZOR");
@@ -627,7 +637,7 @@ mod tests {
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "b5b6d0127db1a9d2226af0c3346031d77af31e918dba64287a1b44b8ebf63cdd52676f672a290aae502472cf2d602c051f3e6f18055e84e4c43897fc4e51a6ff";
@@ -639,7 +649,7 @@ mod tests {
                 .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "renew stay biology evidence goat welcome casual join adapt armor shuffle fault little machine walk stumble urge swap";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "9248d83e06f4cd98debf5b6f010542760df925ce46cf38a1bdb4e4de7d21f5c39366941c69e1bdbf2966e0f6e6dbece898a0e2f0a4c2b3e640953dfe8b7bbdc5";
@@ -730,7 +740,7 @@ mod tests {
         // Portuguese phrase for all zeros entropy
         // Note: bip39 library uses "abater" as the 12th word for Portuguese
         let expected_phrase_pt = "abacate abacate abacate abacate abacate abacate abacate abacate abacate abacate abacate abater";
-        assert_eq!(mnemonic_pt.phrase(), expected_phrase_pt);
+        assert_eq!(mnemonic_pt.phrase().as_str(), expected_phrase_pt);
 
         // Test seed generation with Portuguese mnemonic
         let seed = mnemonic_pt.to_seed("TREZOR");
@@ -778,7 +788,7 @@ mod tests {
     fn test_from_str() {
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let mnemonic: Mnemonic = phrase.parse().unwrap();
-        assert_eq!(mnemonic.phrase(), phrase);
+        assert_eq!(mnemonic.phrase().as_str(), phrase);
     }
 
     // ✓ Test display implementation
@@ -1213,7 +1223,7 @@ mod tests {
         let nfkd_phrase = mnemonic.phrase();
         let nfc_phrase: String = nfkd_phrase.nfc().collect();
         assert_ne!(
-            nfc_phrase, nfkd_phrase,
+            nfc_phrase, *nfkd_phrase,
             "fixture must contain decomposable accents to cover NFC input"
         );
         let parsed = Mnemonic::from_phrase(&nfc_phrase).unwrap();
@@ -1255,6 +1265,16 @@ mod tests {
         for lang in Language::ALL {
             let m = Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, lang).unwrap();
             assert_eq!(m.language(), lang);
+        }
+    }
+
+    #[test]
+    fn test_phrase_is_exact_size_in_every_language() {
+        for language in Language::ALL {
+            let mnemonic = Mnemonic::from_entropy(&[0x5a; 32], language).unwrap();
+            let phrase = mnemonic.phrase();
+            assert_eq!(phrase.capacity(), phrase.len(), "{language:?}");
+            assert_eq!(phrase.split(' ').count(), 24, "{language:?}");
         }
     }
 

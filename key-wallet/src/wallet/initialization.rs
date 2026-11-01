@@ -106,7 +106,7 @@ impl Wallet {
     ) -> Result<Self> {
         let mnemonic = Mnemonic::generate(12, Language::English)?;
         let seed = mnemonic.to_seed("");
-        let root_extended_private_key = RootExtendedPrivKey::new_master(&seed)?;
+        let root_extended_private_key = RootExtendedPrivKey::new_master(&seed[..])?;
 
         let mut wallet = Self::from_wallet_type(
             network,
@@ -223,7 +223,7 @@ impl Wallet {
         account_creation_options: WalletAccountCreationOptions,
     ) -> Result<Self> {
         let seed = mnemonic.to_seed("");
-        let root_extended_private_key = RootExtendedPrivKey::new_master(&seed)?;
+        let root_extended_private_key = RootExtendedPrivKey::new_master(&seed[..])?;
 
         let mut wallet = Self::from_wallet_type(
             network,

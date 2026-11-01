@@ -20,7 +20,7 @@ fn test_mnemonic_from_phrase() {
     let mnemonic = Mnemonic::from_phrase(phrase).unwrap();
 
     assert_eq!(mnemonic.word_count(), 12);
-    assert_eq!(mnemonic.phrase(), phrase);
+    assert_eq!(mnemonic.phrase().as_str(), phrase);
 }
 
 #[test]

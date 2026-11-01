@@ -207,7 +207,7 @@ pub unsafe extern "C" fn mnemonic_to_seed(
 
     let m = unwrap_or_return!(Mnemonic::from_phrase(mnemonic_str), error);
     let seed = m.to_seed(passphrase_str);
-    let seed_bytes: &[u8] = seed.as_ref();
+    let seed_bytes: &[u8] = &seed[..];
 
     unsafe {
         *seed_len = seed_bytes.len();

@@ -12,7 +12,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 1. Create a mnemonic
     println!("1. Creating mnemonic...");
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")?;
-    println!("   Mnemonic: {}", mnemonic.phrase());
+    println!("   Mnemonic: {}", mnemonic.phrase().as_str());
     println!("   Word count: {}", mnemonic.word_count());
 
     // 2. Generate seed
@@ -22,7 +22,7 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
 
     // 3. Create master key
     println!("\n3. Creating master key...");
-    let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed)?;
+    let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed[..])?;
     let master_pub = ExtendedPubKey::from_priv(&master);
     println!("   Master public key: {}", master_pub);
 

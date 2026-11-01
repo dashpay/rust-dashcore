@@ -2546,7 +2546,7 @@ mod tests {
         let ascending: [u8; 32] = core::array::from_fn(|i| i as u8);
         let descending: [u8; 32] = core::array::from_fn(|i| 0xff - i as u8);
         let public_key_hex = |path: DerivationPath, network| {
-            path.derive_pub_ecdsa_for_master_seed(&seed, network)
+            path.derive_pub_ecdsa_for_master_seed(&seed[..], network)
                 .unwrap()
                 .public_key
                 .to_compressed()
@@ -2762,7 +2762,7 @@ mod tests {
         let seed = [0x42u8; 32];
         let network = Network::Testnet;
 
-        let ext_priv = ExtendedPrivKey::new_master(network, &seed).unwrap();
+        let ext_priv = ExtendedPrivKey::new_master(network, &seed[..]).unwrap();
 
         // Test to_priv() method
         let priv_key = ext_priv.to_priv();
