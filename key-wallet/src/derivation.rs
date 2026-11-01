@@ -279,7 +279,7 @@ mod tests {
         let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // Create master key
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed[..]).unwrap();
 
         // Test m/0'/1/2' path (from DashSync test)
         let path = DerivationPath::from(vec![
@@ -335,7 +335,7 @@ mod tests {
         let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // Test master key serialization (m)
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed[..]).unwrap();
         let master_xprv = master_key.to_string();
         let master_xpub = ExtendedPubKey::from_priv(&master_key).to_string();
 
@@ -399,7 +399,7 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow").unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed[..]).unwrap();
 
         // Test identity authentication derivation (purpose 9' for Dash Platform)
         // m/9'/5'/1'/0 (DIP-9: Identity Authentication)
@@ -509,7 +509,7 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Test builder for BIP44 path
         let bip44_path = DerivationPathBuilder::new()
@@ -552,7 +552,7 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Derive a key for signing
         let path = DerivationPath::from(vec![ChildNumber::Hardened {
@@ -583,7 +583,7 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Derive a key for signing
         let path = DerivationPath::from(vec![ChildNumber::Normal {
@@ -620,7 +620,7 @@ mod tests {
         .unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Test DashPay contact derivation path: m/9'/5'/15'/0'
         // This is used for master identity contacts in DashPay

@@ -44,7 +44,7 @@ mod wallet_tests {
         ];
         for lang in [Language::French, Language::Spanish] {
             let phrase = Mnemonic::from_entropy(&entropy, lang).unwrap().phrase();
-            let c_phrase = CString::new(phrase).unwrap();
+            let c_phrase = CString::new(phrase.as_str()).unwrap();
 
             let mut error = FFIError::default();
             let error = &mut error as *mut FFIError;

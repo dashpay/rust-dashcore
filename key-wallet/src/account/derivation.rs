@@ -207,7 +207,7 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType, PrivKeyType> 
     ) -> Result<EPrivKeyType, Error> {
         let m = Mnemonic::from_phrase(mnemonic)?;
         let seed = m.to_seed(passphrase.unwrap_or(""));
-        self.derive_from_seed_extended_xpriv_at(&seed, index)
+        self.derive_from_seed_extended_xpriv_at(&seed[..], index)
     }
 
     /// Derive a private key from a BIP39 mnemonic and optional passphrase at the given index.
@@ -220,6 +220,6 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType, PrivKeyType> 
     ) -> Result<PrivKeyType, Error> {
         let m = Mnemonic::from_phrase(mnemonic)?;
         let seed = m.to_seed(passphrase.unwrap_or(""));
-        self.derive_from_seed_private_key_at(&seed, index)
+        self.derive_from_seed_private_key_at(&seed[..], index)
     }
 }

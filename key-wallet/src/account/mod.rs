@@ -391,7 +391,7 @@ mod tests {
     pub(crate) fn test_account() -> Account {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let seed = mnemonic.to_seed("");
-        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
         // Derive account key (m/44'/1'/0')
         let path = DerivationPath::from(vec![

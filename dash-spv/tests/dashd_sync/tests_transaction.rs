@@ -261,7 +261,7 @@ const MEMPOOL_TIMEOUT: Duration = Duration::from_secs(30);
 fn derive_external_addresses(mnemonic: &str, count: u32) -> Vec<Address> {
     let mnemonic = Mnemonic::from_phrase(mnemonic).expect("mnemonic");
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Regtest, &seed).expect("master key");
+    let master = ExtendedPrivKey::new_master(Network::Regtest, &seed[..]).expect("master key");
     let chain = [
         ChildNumber::from_hardened_idx(44).expect("purpose"),
         ChildNumber::from_hardened_idx(1).expect("coin type"),

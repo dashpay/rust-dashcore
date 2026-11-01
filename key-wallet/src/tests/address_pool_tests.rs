@@ -12,7 +12,7 @@ fn test_key_source() -> (KeySource, ExtendedPubKey) {
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     let path = DerivationPath::from(vec![
         ChildNumber::from_hardened_idx(44).unwrap(),

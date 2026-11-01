@@ -36,7 +36,7 @@ fn test_dip17_platform_payment_vector1_mainnet() {
     .unwrap();
 
     let seed = mnemonic.to_seed("");
-    let master_key = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
+    let master_key = ExtendedPrivKey::new_master(Network::Mainnet, &seed[..]).unwrap();
 
     // Derive Platform Payment key: m/9'/5'/17'/0'/0'/0
     let path = DerivationPath::from_str("m/9'/5'/17'/0'/0'/0").unwrap();
@@ -79,7 +79,7 @@ fn test_dip17_platform_payment_vector1_testnet() {
     .unwrap();
 
     let seed = mnemonic.to_seed("");
-    let master_key = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master_key = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     // Derive Platform Payment key: m/9'/1'/17'/0'/0'/0 (testnet uses coin_type 1')
     let path = DerivationPath::from_str("m/9'/1'/17'/0'/0'/0").unwrap();
@@ -110,7 +110,7 @@ fn test_dip17_platform_payment_vector2() {
 
     // Test mainnet
     let seed = mnemonic.to_seed("");
-    let master_mainnet = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
+    let master_mainnet = ExtendedPrivKey::new_master(Network::Mainnet, &seed[..]).unwrap();
     let path_mainnet = DerivationPath::from_str("m/9'/5'/17'/0'/0'/1").unwrap();
     let xprv_mainnet = master_mainnet.derive_priv(&path_mainnet).unwrap();
 
@@ -140,7 +140,7 @@ fn test_dip17_platform_payment_vector2() {
     );
 
     // Test testnet derivation
-    let master_testnet = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master_testnet = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
     let path_testnet = DerivationPath::from_str("m/9'/1'/17'/0'/0'/1").unwrap();
     let xprv_testnet = master_testnet.derive_priv(&path_testnet).unwrap();
     let xpub_testnet = ExtendedPubKey::from_priv(&xprv_testnet);
@@ -168,7 +168,7 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
 
     // Test mainnet with key_class' = 1'
     let seed = mnemonic.to_seed("");
-    let master_mainnet = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
+    let master_mainnet = ExtendedPrivKey::new_master(Network::Mainnet, &seed[..]).unwrap();
     let path_mainnet = DerivationPath::from_str("m/9'/5'/17'/0'/1'/0").unwrap();
     let xprv_mainnet = master_mainnet.derive_priv(&path_mainnet).unwrap();
 
@@ -198,7 +198,7 @@ fn test_dip17_platform_payment_vector3_non_default_key_class() {
     );
 
     // Test testnet with key_class' = 1'
-    let master_testnet = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master_testnet = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
     let path_testnet = DerivationPath::from_str("m/9'/1'/17'/0'/1'/0").unwrap();
     let xprv_testnet = master_testnet.derive_priv(&path_testnet).unwrap();
     let xpub_testnet = ExtendedPubKey::from_priv(&xprv_testnet);
