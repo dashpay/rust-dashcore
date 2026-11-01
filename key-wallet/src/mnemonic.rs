@@ -98,6 +98,20 @@ impl Language {
 /// [`Mnemonic::cleanup_phrase`].
 const IDEO_SP: &str = "\u{3000}";
 
+/// `phrase` in NFKD form, in a buffer that is wiped when dropped, or `None` when it already
+/// is NFKD. The buffer is allocated at its final size, so it never reallocates and leaves
+/// no partial copy behind.
+fn nfkd_zeroizing(phrase: &str) -> Option<Zeroizing<String>> {
+    use unicode_normalization::{is_nfkd_quick, IsNormalized};
+    if is_nfkd_quick(phrase.chars()) == IsNormalized::Yes {
+        return None;
+    }
+    let len = phrase.nfkd().map(char::len_utf8).sum();
+    let mut normalized = Zeroizing::new(String::with_capacity(len));
+    normalized.extend(phrase.nfkd());
+    Some(normalized)
+}
+
 /// `true` if `word` is a member of *any* supported language's wordlist.
 /// Exact membership; caller pre-normalizes.
 fn word_in_any_list(word: &str) -> bool {
@@ -226,17 +240,23 @@ impl Mnemonic {
     /// it carries the most useful diagnostics (unknown-word index, bad
     /// checksum) for the most common case.
     pub fn from_phrase(phrase: &str) -> Result<Self> {
-        let english_error =
-            match bip39_crate::Mnemonic::parse_in(bip39_crate::Language::English, phrase) {
-                Ok(inner) => {
-                    return Ok(Self {
-                        inner,
-                    })
-                }
-                Err(error) => error,
-            };
+        // `bip39`'s `parse_in` normalizes to NFKD for every language it is given, into a
+        // string that is not wiped. Normalize once here instead, then parse the result.
+        let normalized = nfkd_zeroizing(phrase);
+        let phrase = normalized.as_deref().map_or(phrase, String::as_str);
+        let english_error = match bip39_crate::Mnemonic::parse_in_normalized(
+            bip39_crate::Language::English,
+            phrase,
+        ) {
+            Ok(inner) => {
+                return Ok(Self {
+                    inner,
+                })
+            }
+            Err(error) => error,
+        };
         for &language in &Language::ALL[1..] {
-            if let Ok(inner) = bip39_crate::Mnemonic::parse_in(language.into(), phrase) {
+            if let Ok(inner) = bip39_crate::Mnemonic::parse_in_normalized(language.into(), phrase) {
                 return Ok(Self {
                     inner,
                 });
@@ -1212,6 +1232,20 @@ mod tests {
             let direct = Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, lang).unwrap();
             assert_eq!(parsed.to_seed(""), direct.to_seed(""), "{lang:?} seed must match");
         }
+    }
+
+    #[test]
+    fn test_nfkd_zeroizing_normalizes_into_an_exact_size_buffer() {
+        use unicode_normalization::UnicodeNormalization;
+        let nfkd_phrase =
+            Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, Language::French).unwrap().phrase();
+        assert!(nfkd_zeroizing(&nfkd_phrase).is_none(), "NFKD input is used as it is");
+
+        let nfc_phrase: String = nfkd_phrase.nfc().collect();
+        assert_ne!(nfc_phrase, *nfkd_phrase);
+        let normalized = nfkd_zeroizing(&nfc_phrase).expect("NFC input is normalized");
+        assert_eq!(*normalized, *nfkd_phrase);
+        assert_eq!(normalized.capacity(), normalized.len());
     }
 
     #[test]
