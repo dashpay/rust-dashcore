@@ -15,11 +15,18 @@ use hex_conservative::hex;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RootExtendedPrivKey {
     pub root_private_key: EcdsaSecretKey,
     pub root_chain_code: ChainCode,
+}
+
+/// Shows neither the private key nor the chain code.
+impl core::fmt::Debug for RootExtendedPrivKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("RootExtendedPrivKey { .. }")
+    }
 }
 
 impl Zeroize for RootExtendedPrivKey {

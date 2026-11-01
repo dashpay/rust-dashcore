@@ -145,6 +145,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `Debug` output of `ExtendedPrivKey`, `ExtendedBLSPrivKey` and `ExtendedEd25519PrivKey` in
+  `key-wallet` no longer prints the chain code, and `Mnemonic` and `RootExtendedPrivKey` have a
+  `Debug` that prints no words, chain code or key; a logged `{:?}` of them exposed the chain code
+  (and, for `Mnemonic` built with bip39 2.2.0, which the version requirement still allows, the
+  word indices)
 - The `dash-spv` data-directory lock is exclusive: a refused open no longer truncates the holder's
   lock file (its PID), and on Unix an opener that locks a lock file its holder has just unlinked
   opens it again instead of holding a lock no later opener sees
