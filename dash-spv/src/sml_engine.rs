@@ -57,37 +57,27 @@ impl QRInfoFeedResult {
     }
 }
 
-/// Why the engine did not take a diff or a QRInfo.
 #[derive(Debug, thiserror::Error)]
-pub enum FeedError<E> {
-    /// The header chain could not be read, so the message was not judged.
-    /// The fault is ours: the message may well be taken once it reads again.
+pub enum DiffFeedError {
     #[error("Could not read the header chain: {0}")]
-    HeaderStorage(StorageError),
-    /// The engine refused the message for the reason given. A reason can be
-    /// a gap of ours rather than a fault of the message: a block our header
-    /// chain does not hold, or a base list the engine lacks.
+    HeaderStorage(#[from] StorageError),
     #[error(transparent)]
-    Refused(#[from] E),
+    Refused(#[from] SmlError),
 }
 
-impl From<StorageError> for FeedError<SmlError> {
-    fn from(error: StorageError) -> Self {
-        FeedError::HeaderStorage(error)
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum QRInfoFeedError {
+    #[error("Could not read the header chain: {0}")]
+    HeaderStorage(#[from] StorageError),
+    #[error(transparent)]
+    Refused(#[from] QuorumValidationError),
 }
 
-impl From<StorageError> for FeedError<QuorumValidationError> {
-    fn from(error: StorageError) -> Self {
-        FeedError::HeaderStorage(error)
-    }
-}
-
-impl From<FeedError<SmlError>> for FeedError<QuorumValidationError> {
-    fn from(error: FeedError<SmlError>) -> Self {
+impl From<DiffFeedError> for QRInfoFeedError {
+    fn from(error: DiffFeedError) -> Self {
         match error {
-            FeedError::HeaderStorage(e) => FeedError::HeaderStorage(e),
-            FeedError::Refused(e) => FeedError::Refused(e.into()),
+            DiffFeedError::HeaderStorage(e) => QRInfoFeedError::HeaderStorage(e),
+            DiffFeedError::Refused(e) => QRInfoFeedError::Refused(e.into()),
         }
     }
 }
@@ -310,16 +300,16 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// [`Self::height_of`] for a block a diff names and cannot be applied
     /// without: refuses the diff when the header chain does not hold the
-    /// block, and fails with [`FeedError::HeaderStorage`] when the chain
+    /// block, and fails with [`DiffFeedError::HeaderStorage`] when the chain
     /// cannot be read.
     async fn required_height_of(
         &self,
         block_hash: &BlockHash,
-    ) -> Result<CoreBlockHeight, FeedError<SmlError>> {
+    ) -> Result<CoreBlockHeight, DiffFeedError> {
         self.height_of(block_hash)
             .await
             .inspect_err(|e| tracing::warn!("Could not look up the height of {block_hash}: {e}"))?
-            .ok_or(FeedError::Refused(SmlError::BlockHashLookupFailed(*block_hash)))
+            .ok_or(DiffFeedError::Refused(SmlError::BlockHashLookupFailed(*block_hash)))
     }
 
     /// The hash of the block at `height` in the header chain, `None` when the
@@ -594,8 +584,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             self.set_quorum_status(isd_type, entry.quorum_entry.quorum_hash, &entry.verified);
         }
         match self.store_cycle_if_fully_verified(cycle_hash, entries, isd_type).await {
-            Err(FeedError::HeaderStorage(e)) => return Err(e),
-            Err(FeedError::Refused(e)) => {
+            Err(QRInfoFeedError::HeaderStorage(e)) => return Err(e),
+            Err(QRInfoFeedError::Refused(e)) => {
                 tracing::warn!("Previous cycle {cycle_hash} could not be stored: {e}")
             }
             Ok(_) => {}
@@ -621,7 +611,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         cycle_key: BlockHash,
         qualified_last_commitment_per_index: Vec<QualifiedQuorumEntry>,
         rotation_quorum_type: LLMQType,
-    ) -> Result<Option<CoreBlockHeight>, FeedError<QuorumValidationError>> {
+    ) -> Result<Option<CoreBlockHeight>, QRInfoFeedError> {
         let all_entries_verified = qualified_last_commitment_per_index
             .iter()
             .all(|q| q.verified == LLMQEntryVerificationStatus::Verified);
@@ -863,7 +853,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     pub async fn feed_qr_info(
         &mut self,
         qr_info: QRInfo,
-    ) -> Result<QRInfoFeedResult, FeedError<QuorumValidationError>> {
+    ) -> Result<QRInfoFeedResult, QRInfoFeedError> {
         let rollback = QRInfoRollback::new(self);
         let result = rollback.engine.apply_qr_info(qr_info).await;
         if result.is_ok() {
@@ -875,7 +865,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn apply_qr_info(
         &mut self,
         qr_info: QRInfo,
-    ) -> Result<QRInfoFeedResult, FeedError<QuorumValidationError>> {
+    ) -> Result<QRInfoFeedResult, QRInfoFeedError> {
         let (rotation_sigs_by_work_height, inferred_work_heights) =
             self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info)).await?;
 
@@ -1012,7 +1002,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     pub async fn apply_diff(
         &mut self,
         masternode_list_diff: MnListDiff,
-    ) -> Result<(), FeedError<SmlError>> {
+    ) -> Result<(), DiffFeedError> {
         self.apply_and_prune(masternode_list_diff).await?;
         self.verify_newest_quorums().await;
         Ok(())
@@ -1023,7 +1013,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn apply_and_prune(
         &mut self,
         masternode_list_diff: MnListDiff,
-    ) -> Result<(), FeedError<SmlError>> {
+    ) -> Result<(), DiffFeedError> {
         let extended_tip = self
             .latest_masternode_list()
             .filter(|list| list.block_hash == masternode_list_diff.base_block_hash)
@@ -1038,7 +1028,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn apply_diff_to_base(
         &mut self,
         masternode_list_diff: MnListDiff,
-    ) -> Result<(), FeedError<SmlError>> {
+    ) -> Result<(), DiffFeedError> {
         let block_hash = masternode_list_diff.block_hash;
         let base_block_hash = masternode_list_diff.base_block_hash;
         let base_height = self.required_height_of(&base_block_hash).await?;
@@ -1400,7 +1390,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
     use super::{build_cycle_quorum_map, qr_info_diffs};
-    use super::{FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH};
+    use super::{MasternodeListEngine, QRInfoFeedError, QRInfoFeedResult, WORK_DIFF_DEPTH};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
@@ -1799,7 +1789,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(FeedError::Refused(QuorumValidationError::SMLError(
+                Err(QRInfoFeedError::Refused(QuorumValidationError::SMLError(
                     SmlError::IncompleteSignatureSet
                 )))
             ),
@@ -1829,7 +1819,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(FeedError::Refused(QuorumValidationError::RequiredSnapshotNotPresent(block_hash)))
+                Err(QRInfoFeedError::Refused(QuorumValidationError::RequiredSnapshotNotPresent(block_hash)))
                     if block_hash == BlockHash::dummy(1)
             ),
             "got {result:?}"
@@ -1849,7 +1839,7 @@ mod tests {
             assert!(
                 matches!(
                     result,
-                    Err(FeedError::Refused(QuorumValidationError::SMLError(
+                    Err(QRInfoFeedError::Refused(QuorumValidationError::SMLError(
                         SmlError::CoinbaseCommitmentMismatch(hash)
                     ))) if hash == tip_hash
                 ),
@@ -2111,7 +2101,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                FeedError::Refused(
+                QRInfoFeedError::Refused(
                     QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(_)
                 )
             ),
@@ -2142,7 +2132,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(FeedError::Refused(
+                Err(QRInfoFeedError::Refused(
                     QuorumValidationError::AllCommitmentAggregatedSignatureNotValid(_)
                 ))
             ),
@@ -2316,7 +2306,7 @@ mod tests {
         qr_info: &QRInfo,
         unreadable: BlockHash,
         readable: usize,
-    ) -> (Result<QRInfoFeedResult, FeedError<QuorumValidationError>>, usize) {
+    ) -> (Result<QRInfoFeedResult, QRInfoFeedError>, usize) {
         let mut failing = with_reads_failing(engine, unreadable, readable);
         let result = failing.feed_qr_info(qr_info.clone()).await;
         let reads = failing.headers.read().await.reads.load(Ordering::Relaxed);
@@ -2356,7 +2346,7 @@ mod tests {
                 let (result, _) =
                     feed_with_reads_failing(&engine, &qr_info, unreadable, readable).await;
                 assert!(
-                    !matches!(result, Err(FeedError::Refused(_))),
+                    !matches!(result, Err(QRInfoFeedError::Refused(_))),
                     "reading {unreadable} failing from its read {readable} on refused the \
                      QRInfo: {result:?}"
                 );
@@ -2388,7 +2378,7 @@ mod tests {
             for readable in 0..reads {
                 let result = validating(readable).feed_qr_info(qr_info.clone()).await;
                 assert!(
-                    !matches!(result, Err(FeedError::Refused(_))),
+                    !matches!(result, Err(QRInfoFeedError::Refused(_))),
                     "reading {unreadable} failing from its read {readable} on refused the \
                      QRInfo: {result:?}"
                 );

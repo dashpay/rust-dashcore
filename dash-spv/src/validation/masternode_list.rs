@@ -7,7 +7,7 @@ use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::Transaction;
 use tokio::sync::RwLock;
 
-use crate::sml_engine::FeedError;
+use crate::sml_engine::DiffFeedError;
 use crate::storage::BlockHeaderStorage;
 
 /// Validates a masternode list diff against its block: its merkle proof must
@@ -31,14 +31,13 @@ impl<H: BlockHeaderStorage> MasternodeListValidator<H> {
         &self,
         diff: &MnListDiff,
         height: CoreBlockHeight,
-    ) -> Result<(), FeedError<SmlError>> {
+    ) -> Result<(), DiffFeedError> {
         let header = self
             .headers
             .read()
             .await
             .get_header(height)
-            .await
-            .map_err(FeedError::HeaderStorage)?
+            .await?
             .filter(|header| *header.hash() == diff.block_hash)
             .ok_or(SmlError::BlockHashLookupFailed(diff.block_hash))?;
 
