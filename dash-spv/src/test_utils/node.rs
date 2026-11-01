@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write as _;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -152,6 +153,8 @@ impl DashCoreConfig {
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often startup checks whether dashd is ready or has exited.
 const READY_CHECK_INTERVAL: Duration = Duration::from_millis(500);
+/// How long dashd gets to shut down after RPC `stop` before it is killed.
+const STOP_TIMEOUT: Duration = Duration::from_secs(15);
 /// Launches a node's first start may take when dashd can't bind one of its ports.
 const MAX_START_ATTEMPTS: usize = 3;
 /// Lines of debug.log quoted when dashd fails to start.
@@ -225,6 +228,9 @@ impl DashCoreNode {
     /// fresh pair of ports, up to [`MAX_START_ATTEMPTS`] launches in all. Any other
     /// failure panics at once with the end of dashd's `debug.log`, after copying the datadir to
     /// `DASHD_TEST_RETAIN_DIR` when that is set.
+    ///
+    /// On Windows, dashd's `SO_REUSEADDR` lets it bind its P2P port over another socket, so a
+    /// taken P2P port gives no bind error there and is not retried.
     pub async fn start(&mut self) -> SocketAddr {
         let max_attempts = if self.started {
             1
@@ -242,7 +248,13 @@ impl DashCoreNode {
             let Some(bind_failure) = BindFailure::from_log(&log, self.config.p2p_port) else {
                 match outcome {
                     Ok(addr) => return addr,
-                    Err(failure) => self.fail_start(failure, attempt, &log),
+                    Err(failure) => {
+                        // A dashd that timed out still runs; stop it so the retained datadir is
+                        // complete. The tail stays the one from before the stop, so shutdown
+                        // lines don't push out what led to the failure.
+                        self.stop_launch().await;
+                        self.fail_start(failure, attempt, &log)
+                    }
                 }
             };
             // A failed P2P bind can leave dashd running without a P2P listener.
@@ -251,7 +263,10 @@ impl DashCoreNode {
                 BindFailure::P2p => self.config.p2p_port,
                 BindFailure::Rpc => self.config.rpc_port,
             };
-            eprintln!(
+            // Written to the stderr handle itself: libtest captures `eprintln!`, and this should
+            // reach the CI log even when a retry saves the test.
+            let _ = writeln!(
+                std::io::stderr(),
                 "dashd could not bind its {} port {} (launch {} of {}). lsof -iTCP:{}:\n{}",
                 bind_failure.name(),
                 port,
@@ -270,12 +285,19 @@ impl DashCoreNode {
         }
     }
 
-    /// Kills the launched dashd, if it still runs, and waits for it to exit.
+    /// Stops the launched dashd, if it still runs, and waits for it to exit: through RPC `stop`
+    /// when dashd answers it within [`STOP_TIMEOUT`], otherwise by killing it.
     async fn stop_launch(&mut self) {
-        if let Some(mut process) = self.process.take() {
-            if let Err(e) = process.kill().await {
-                tracing::warn!("Failed to kill dashd process: {}", e);
-            }
+        let Some(mut process) = self.process.take() else {
+            return;
+        };
+        if self.try_rpc_call("stop", &[]).is_some()
+            && matches!(timeout(STOP_TIMEOUT, process.wait()).await, Ok(Ok(_)))
+        {
+            return;
+        }
+        if let Err(e) = process.kill().await {
+            tracing::warn!("Failed to kill dashd process: {}", e);
         }
     }
 
@@ -786,7 +808,7 @@ mod tests {
     }
 
     /// A node on its own copy of the 200-block chain. The node is declared first, so dropping
-    /// it stops dashd before the datadir is removed.
+    /// it signals dashd to stop before the datadir is removed.
     struct MinimalNode {
         node: DashCoreNode,
         _datadir: TempDir,
@@ -831,6 +853,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(
+        windows,
+        ignore = "dashd sets SO_REUSEADDR, which on Windows lets it bind over the held listener"
+    )]
     async fn start_moves_to_fresh_ports_when_its_p2p_port_is_taken() {
         let Some(mut t) = minimal_node() else {
             return;
@@ -880,5 +906,20 @@ mod tests {
         assert!(message.starts_with("dashd exited during startup"), "{}", message);
         assert!(message.contains(&format!("(launch 1, P2P port {},", p2p_port)), "{}", message);
         assert!(started.elapsed() < READY_TIMEOUT, "took {:?}", started.elapsed());
+
+        // The failed start retained its datadir. Check that, then remove the copy so a passing
+        // run leaves nothing in the uploaded test logs.
+        if let Ok(retain_dir) = std::env::var("DASHD_TEST_RETAIN_DIR") {
+            let test_name = std::thread::current().name().unwrap_or("unknown").replace(':', "_");
+            let test_dir = Path::new(&retain_dir).join(test_name);
+            let retained = test_dir.join(format!("dashd-{}", p2p_port));
+            assert!(
+                retained.join("regtest").is_dir(),
+                "nothing retained at {}",
+                retained.display()
+            );
+            fs::remove_dir_all(&retained).expect("failed to remove the retained datadir");
+            let _ = fs::remove_dir(&test_dir);
+        }
     }
 }
