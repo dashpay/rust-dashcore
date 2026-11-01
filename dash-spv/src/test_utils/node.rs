@@ -11,10 +11,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 use tokio::process::Child;
 use tokio::time::{sleep, timeout};
+
+use super::fs_helpers::copy_to_retain_dir;
 
 /// Base of the port range used by tests. Sits above the standard Dash regtest
 /// ports (19898/19899) and below the Linux ephemeral range (32768+).
@@ -58,6 +61,16 @@ pub(super) fn find_available_port() -> u16 {
         }
     }
     panic!("failed to find an available port after {} attempts", MAX_PORT_ATTEMPTS);
+}
+
+/// What `lsof` reports holding TCP `port`, for a failed bind. Best effort: empty when `lsof` is
+/// missing or fails.
+fn port_holders(port: u16) -> String {
+    std::process::Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{}", port)])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .unwrap_or_default()
 }
 
 /// Selects which pre-built regtest blockchain to use for integration tests.
@@ -135,10 +148,62 @@ impl DashCoreConfig {
     }
 }
 
+/// How long a launched dashd has to open its P2P port and answer RPC.
+const READY_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often startup checks whether dashd is ready or has exited.
+const READY_CHECK_INTERVAL: Duration = Duration::from_millis(500);
+/// Launches a node's first start may take when dashd can't bind one of its ports.
+const MAX_START_ATTEMPTS: usize = 3;
+/// Lines of debug.log quoted when dashd fails to start.
+const LOG_TAIL_LINES: usize = 40;
+
+/// A node port that dashd's startup log says it could not bind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindFailure {
+    P2p,
+    Rpc,
+}
+
+impl BindFailure {
+    /// Finds dashd's error for a failed bind of the P2P port `p2p_port` or of the RPC port in
+    /// the log of one launch.
+    ///
+    /// dashd also binds its default onion target port (`src/init.cpp:2613-2617`) and exits only
+    /// when every bind fails, so a failed P2P bind can leave it running with no P2P listener.
+    /// The P2P error is therefore matched by port, and other ports' errors are ignored.
+    fn from_log(log: &str, p2p_port: u16) -> Option<Self> {
+        if log.contains(&format!("Unable to bind to 127.0.0.1:{} ", p2p_port)) {
+            Some(Self::P2p)
+        } else if log.contains("Unable to bind any endpoint for RPC server") {
+            Some(Self::Rpc)
+        } else {
+            None
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::P2p => "P2P",
+            Self::Rpc => "RPC",
+        }
+    }
+}
+
+/// Why one launch of dashd did not become ready.
+#[derive(Debug)]
+enum StartFailure {
+    Exited(ExitStatus),
+    TimedOut,
+    /// dashd answered RPC, but its log shows it could not bind this port.
+    BindFailed(BindFailure),
+}
+
 /// Test infrastructure for managing a Dash Core node.
 pub struct DashCoreNode {
     config: DashCoreConfig,
     process: Option<Child>,
+    /// Set by the first [`DashCoreNode::start`]; later starts keep their ports.
+    started: bool,
 }
 
 impl DashCoreNode {
@@ -147,18 +212,80 @@ impl DashCoreNode {
         Self {
             config,
             process: None,
+            started: false,
         }
     }
 
-    /// Start the Dash Core node
+    /// Start the Dash Core node.
+    ///
+    /// [`find_available_port`] checks that a port is free and then releases it, and dashd binds
+    /// its ports only late in its startup, so another socket can take one in between. When
+    /// dashd's log shows that the node's first start could not bind its P2P or RPC port, whether
+    /// dashd exited or kept running without a P2P listener, it is stopped and launched again on a
+    /// fresh pair of ports, up to [`MAX_START_ATTEMPTS`] launches in all. Any other
+    /// failure panics at once with the end of dashd's `debug.log`, after copying the datadir to
+    /// `DASHD_TEST_RETAIN_DIR` when that is set.
     pub async fn start(&mut self) -> SocketAddr {
+        let max_attempts = if self.started {
+            1
+        } else {
+            MAX_START_ATTEMPTS
+        };
+        self.started = true;
+        fs::create_dir_all(&self.config.datadir).expect("failed to create datadir");
+
+        let mut attempt = 1;
+        loop {
+            let log_start = self.debug_log_len();
+            let outcome = self.launch().await;
+            let log = self.debug_log_since(log_start);
+            let Some(bind_failure) = BindFailure::from_log(&log, self.config.p2p_port) else {
+                match outcome {
+                    Ok(addr) => return addr,
+                    Err(failure) => self.fail_start(failure, attempt, &log),
+                }
+            };
+            // A failed P2P bind can leave dashd running without a P2P listener.
+            self.stop_launch().await;
+            let port = match bind_failure {
+                BindFailure::P2p => self.config.p2p_port,
+                BindFailure::Rpc => self.config.rpc_port,
+            };
+            eprintln!(
+                "dashd could not bind its {} port {} (launch {} of {}). lsof -iTCP:{}:\n{}",
+                bind_failure.name(),
+                port,
+                attempt,
+                max_attempts,
+                port,
+                port_holders(port)
+            );
+            if attempt == max_attempts {
+                let failure = outcome.err().unwrap_or(StartFailure::BindFailed(bind_failure));
+                self.fail_start(failure, attempt, &log);
+            }
+            attempt += 1;
+            self.config.p2p_port = find_available_port();
+            self.config.rpc_port = find_available_port();
+        }
+    }
+
+    /// Kills the launched dashd, if it still runs, and waits for it to exit.
+    async fn stop_launch(&mut self) {
+        if let Some(mut process) = self.process.take() {
+            if let Err(e) = process.kill().await {
+                tracing::warn!("Failed to kill dashd process: {}", e);
+            }
+        }
+    }
+
+    /// Launches dashd once and waits until it is ready.
+    async fn launch(&mut self) -> Result<SocketAddr, StartFailure> {
         tracing::info!("Starting dashd...");
         tracing::info!("  Binary: {:?}", self.config.dashd_path);
         tracing::info!("  Datadir: {:?}", self.config.datadir);
         tracing::info!("  P2P port: {}", self.config.p2p_port);
         tracing::info!("  RPC port: {}", self.config.rpc_port);
-
-        fs::create_dir_all(&self.config.datadir).expect("failed to create datadir");
 
         let mut args_vec = vec![
             "-regtest".to_string(),
@@ -197,63 +324,97 @@ impl DashCoreNode {
         self.process = Some(child);
 
         tracing::info!("Waiting for dashd to be ready...");
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        if let Some(ref mut proc) = self.process {
-            if let Ok(Some(status)) = proc.try_wait() {
-                panic!("dashd exited immediately with status: {}", status);
-            }
-        }
-
-        let ready = self.wait_for_ready().await;
-        if !ready {
-            if let Some(ref mut proc) = self.process {
-                if let Ok(Some(status)) = proc.try_wait() {
-                    panic!("dashd exited with status: {}", status);
-                }
-            }
-            panic!("dashd failed to start within timeout");
-        }
+        self.wait_for_ready().await?;
 
         let addr = SocketAddr::from(([127, 0, 0, 1], self.config.p2p_port));
         tracing::info!("dashd started and ready at {}", addr);
 
-        addr
+        Ok(addr)
     }
 
-    async fn wait_for_ready(&self) -> bool {
-        let max_wait = Duration::from_secs(30);
-        let check_interval = Duration::from_millis(500);
-
-        let result = timeout(max_wait, async {
-            // Wait for the P2P port to accept connections
+    /// Waits for the P2P port to accept connections and RPC to answer, and notices within one
+    /// check interval if dashd exits first.
+    async fn wait_for_ready(&mut self) -> Result<(), StartFailure> {
+        let p2p_addr = SocketAddr::from(([127, 0, 0, 1], self.config.p2p_port));
+        let result = timeout(READY_TIMEOUT, async {
+            let mut p2p_open = false;
             loop {
-                let addr = SocketAddr::from(([127, 0, 0, 1], self.config.p2p_port));
-                if tokio::net::TcpStream::connect(addr).await.is_ok() {
-                    break;
+                if let Some(status) = self.exit_status() {
+                    return Err(StartFailure::Exited(status));
                 }
-                sleep(check_interval).await;
-            }
-
-            // Wait for RPC to be fully responsive (not just "warming up")
-            loop {
-                let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
-                let cookie_path = self.config.datadir.join("regtest/.cookie");
-                if cookie_path.exists() {
-                    if let Ok(client) = Client::new(&url, Auth::CookieFile(cookie_path)) {
-                        match client.get_blockchain_info() {
-                            Ok(_) => return true,
-                            Err(e) => {
-                                tracing::debug!("RPC not ready yet: {}", e);
-                            }
-                        }
-                    }
+                if !p2p_open {
+                    p2p_open = tokio::net::TcpStream::connect(p2p_addr).await.is_ok();
                 }
-                sleep(check_interval).await;
+                // Wait for RPC to be fully responsive (not just "warming up")
+                if p2p_open && self.rpc_ready() {
+                    return Ok(());
+                }
+                sleep(READY_CHECK_INTERVAL).await;
             }
         })
         .await;
 
-        result.unwrap_or(false)
+        result.unwrap_or(Err(StartFailure::TimedOut))
+    }
+
+    /// Returns dashd's exit status once it has exited, and forgets the process.
+    fn exit_status(&mut self) -> Option<ExitStatus> {
+        let status = self.process.as_mut()?.try_wait().ok().flatten()?;
+        self.process = None;
+        Some(status)
+    }
+
+    fn rpc_ready(&self) -> bool {
+        let cookie_path = self.config.datadir.join("regtest/.cookie");
+        if !cookie_path.exists() {
+            return false;
+        }
+        let url = format!("http://127.0.0.1:{}", self.config.rpc_port);
+        let Ok(client) = Client::new(&url, Auth::CookieFile(cookie_path)) else {
+            return false;
+        };
+        match client.get_blockchain_info() {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::debug!("RPC not ready yet: {}", e);
+                false
+            }
+        }
+    }
+
+    fn debug_log_path(&self) -> PathBuf {
+        self.config.datadir.join("regtest/debug.log")
+    }
+
+    fn debug_log_len(&self) -> u64 {
+        fs::metadata(self.debug_log_path()).map(|m| m.len()).unwrap_or(0)
+    }
+
+    /// The part of `debug.log` written after it was `start` bytes long.
+    fn debug_log_since(&self, start: u64) -> String {
+        let bytes = fs::read(self.debug_log_path()).unwrap_or_default();
+        let start = usize::try_from(start).unwrap_or(usize::MAX).min(bytes.len());
+        String::from_utf8_lossy(&bytes[start..]).into_owned()
+    }
+
+    fn fail_start(&self, failure: StartFailure, attempt: usize, log: &str) -> ! {
+        copy_to_retain_dir(&self.config.datadir, &format!("dashd-{}", self.config.p2p_port));
+        let what = match failure {
+            StartFailure::Exited(status) => format!("dashd exited during startup with {}", status),
+            StartFailure::TimedOut => format!("dashd failed to start within {:?}", READY_TIMEOUT),
+            StartFailure::BindFailed(port) => {
+                format!("dashd could not bind its {} port", port.name())
+            }
+        };
+        let lines: Vec<&str> = log.lines().collect();
+        let tail = match lines.len() {
+            0 => "(nothing)".to_string(),
+            len => lines[len.saturating_sub(LOG_TAIL_LINES)..].join("\n"),
+        };
+        panic!(
+            "{} (launch {}, P2P port {}, RPC port {}). debug.log from this launch ends with:\n{}",
+            what, attempt, self.config.p2p_port, self.config.rpc_port, tail
+        );
     }
 
     /// Get block count via RPC.
@@ -600,5 +761,124 @@ impl WalletFile {
 
         let contents = fs::read_to_string(&wallet_path).expect("Failed to read wallet file");
         serde_json::from_str(&contents).expect("Failed to deserialize wallet file")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::fs_helpers::copy_dir;
+    use tempfile::TempDir;
+
+    /// dashd 23.1.0's log lines for a taken P2P port, a taken onion target port and a taken RPC
+    /// port.
+    const P2P_BIND_ERROR: &str = "2026-11-01T11:27:02Z [net:error] Unable to bind to 127.0.0.1:23411 on this computer. Dash Core is probably already running.\n";
+    const ONION_BIND_ERROR: &str = "2026-11-01T11:27:02Z [net:error] Unable to bind to 127.0.0.1:19896 on this computer. Dash Core is probably already running.\n";
+    const RPC_BIND_ERROR: &str = "2026-11-01T11:29:02Z Binding RPC on address 127.0.0.1 port 23414 failed.\n2026-11-01T11:29:02Z Unable to bind any endpoint for RPC server\n";
+
+    #[test]
+    fn bind_failures_are_read_for_the_node_s_own_ports() {
+        assert_eq!(BindFailure::from_log(P2P_BIND_ERROR, 23411), Some(BindFailure::P2p));
+        assert_eq!(BindFailure::from_log(P2P_BIND_ERROR, 2341), None);
+        assert_eq!(BindFailure::from_log(ONION_BIND_ERROR, 23411), None);
+        assert_eq!(BindFailure::from_log(RPC_BIND_ERROR, 23411), Some(BindFailure::Rpc));
+        assert_eq!(BindFailure::from_log("Done loading\n", 23411), None);
+    }
+
+    /// A node on its own copy of the 200-block chain. The node is declared first, so dropping
+    /// it stops dashd before the datadir is removed.
+    struct MinimalNode {
+        node: DashCoreNode,
+        _datadir: TempDir,
+    }
+
+    fn minimal_node() -> Option<MinimalNode> {
+        if std::env::var("SKIP_DASHD_TESTS").is_ok() {
+            eprintln!("Skipping dashd integration test (SKIP_DASHD_TESTS is set)");
+            return None;
+        }
+        let mut config = DashCoreConfig::from_env(TestChain::Minimal)
+            .expect("DASHD_TEST_DATA/regtest-200 not found");
+        let datadir = TempDir::new().expect("failed to create temp dir");
+        copy_dir(&config.datadir, datadir.path()).expect("failed to copy datadir");
+        config.datadir = datadir.path().to_path_buf();
+        config.wallet = String::new();
+        Some(MinimalNode {
+            node: DashCoreNode::with_config(config),
+            _datadir: datadir,
+        })
+    }
+
+    /// Asserts that dashd itself accepts connections on its P2P port: a connection to that port
+    /// shows up in its `getpeerinfo` as an inbound peer bound to it.
+    async fn assert_listens_on_p2p_port(node: &DashCoreNode) {
+        let bind = format!("127.0.0.1:{}", node.p2p_port());
+        let stream = tokio::net::TcpStream::connect(&bind).await.expect("connect to the P2P port");
+        let local = stream.local_addr().expect("local address").to_string();
+        for _ in 0..40 {
+            let peers = node.try_rpc_call("getpeerinfo", &[]).expect("getpeerinfo");
+            let listed = peers.as_array().expect("peer array").iter().any(|peer| {
+                peer["inbound"] == true
+                    && peer["addr"] == local.as_str()
+                    && peer["addrbind"] == bind.as_str()
+            });
+            if listed {
+                return;
+            }
+            sleep(Duration::from_millis(250)).await;
+        }
+        panic!("dashd lists no inbound peer from {} on {}", local, bind);
+    }
+
+    #[tokio::test]
+    async fn start_moves_to_fresh_ports_when_its_p2p_port_is_taken() {
+        let Some(mut t) = minimal_node() else {
+            return;
+        };
+        let taken = t.node.p2p_port();
+        let _holder = std::net::TcpListener::bind(("127.0.0.1", taken)).expect("hold the P2P port");
+
+        let addr = t.node.start().await;
+
+        assert_ne!(addr.port(), taken);
+        assert_eq!(addr.port(), t.node.p2p_port());
+        assert_listens_on_p2p_port(&t.node).await;
+    }
+
+    #[tokio::test]
+    async fn start_moves_to_fresh_ports_when_its_rpc_port_is_taken() {
+        let Some(mut t) = minimal_node() else {
+            return;
+        };
+        let taken = t.node.rpc_port();
+        let _holder = std::net::TcpListener::bind(("127.0.0.1", taken)).expect("hold the RPC port");
+
+        t.node.start().await;
+
+        assert_ne!(t.node.rpc_port(), taken);
+        assert_eq!(t.node.get_block_count(), 200);
+        assert_listens_on_p2p_port(&t.node).await;
+    }
+
+    #[tokio::test]
+    async fn start_fails_at_once_when_dashd_exits_for_another_reason() {
+        let Some(mut t) = minimal_node() else {
+            return;
+        };
+        t.node.config.extra_args.push("-nosuchoption".to_string());
+        let p2p_port = t.node.p2p_port();
+        let started = std::time::Instant::now();
+
+        let panic = tokio::spawn(async move {
+            t.node.start().await;
+        })
+        .await
+        .expect_err("start must fail")
+        .into_panic();
+
+        let message = panic.downcast_ref::<String>().expect("panic message");
+        assert!(message.starts_with("dashd exited during startup"), "{}", message);
+        assert!(message.contains(&format!("(launch 1, P2P port {},", p2p_port)), "{}", message);
+        assert!(started.elapsed() < READY_TIMEOUT, "took {:?}", started.elapsed());
     }
 }
