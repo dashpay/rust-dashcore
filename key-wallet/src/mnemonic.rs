@@ -147,8 +147,19 @@ impl<C> bincode::Decode<C> for Mnemonic {
     fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        // The decoded phrase is wiped when dropped
-        let phrase = Zeroizing::new(<String as bincode::Decode<C>>::decode(decoder)?);
+        // Read like a `String` (bincode decodes it as `Vec<u8>` plus a UTF-8 check),
+        // but the decoded bytes are wiped when dropped, also on invalid UTF-8.
+        let bytes = <Vec<u8> as bincode::Decode<C>>::decode(decoder)?;
+        let phrase = match String::from_utf8(bytes) {
+            Ok(phrase) => Zeroizing::new(phrase),
+            Err(e) => {
+                let inner = e.utf8_error();
+                drop(Zeroizing::new(e.into_bytes()));
+                return Err(bincode::error::DecodeError::Utf8 {
+                    inner,
+                });
+            }
+        };
         // Same deterministic per-language walk as `from_phrase`
         // (bip39's autodetect can fail with AmbiguousLanguages on shared words).
         Mnemonic::from_phrase(&phrase)
@@ -161,10 +172,9 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for Mnemonic {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        let phrase =
-            Zeroizing::new(<String as bincode::BorrowDecode<'de, C>>::borrow_decode(decoder)?);
-        Mnemonic::from_phrase(&phrase)
-            .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))
+        // `String`'s `BorrowDecode` is its `Decode`, so this reads the same bytes and
+        // wipes them the same way.
+        bincode::Decode::decode(decoder)
     }
 }
 
@@ -1304,5 +1314,19 @@ mod tests {
             bincode::borrow_decode_from_slice(&bytes, bincode::config::standard()).unwrap();
         assert_eq!(borrowed.phrase(), original.phrase());
         assert_eq!(borrowed.to_seed(""), original.to_seed(""));
+    }
+
+    #[test]
+    #[cfg(feature = "bincode")]
+    fn test_bincode_decode_rejects_invalid_utf8_phrase() {
+        // Encoded the way a `String` is: a length, then the bytes.
+        let bytes =
+            bincode::encode_to_vec(vec![0x61u8, 0xff, 0x62], bincode::config::standard()).unwrap();
+        let decoded: core::result::Result<(Mnemonic, usize), _> =
+            bincode::decode_from_slice(&bytes, bincode::config::standard());
+        assert!(matches!(decoded, Err(bincode::error::DecodeError::Utf8 { .. })));
+        let borrowed: core::result::Result<(Mnemonic, usize), _> =
+            bincode::borrow_decode_from_slice(&bytes, bincode::config::standard());
+        assert!(matches!(borrowed, Err(bincode::error::DecodeError::Utf8 { .. })));
     }
 }
