@@ -220,7 +220,7 @@ impl DashCoreNode {
     }
 
     /// A node, not yet started, on a copy of `chain`'s datadir made in `datadir`, with ports
-    /// from [`find_available_port`] and no wallet.
+    /// from `find_available_port` and no wallet.
     ///
     /// Returns `None` if the chain variant is not under `DASHD_TEST_DATA`. Panics if the dashd
     /// environment variables are missing or the copy fails.
@@ -234,11 +234,11 @@ impl DashCoreNode {
 
     /// Start the Dash Core node.
     ///
-    /// [`find_available_port`] checks that a port is free and then releases it, and dashd binds
+    /// `find_available_port` checks that a port is free and then releases it, and dashd binds
     /// its ports only late in its startup, so another socket can take one in between. When
     /// dashd's log shows that the node's first start could not bind its P2P or RPC port, whether
     /// dashd exited or kept running without a P2P listener, it is stopped and launched again on a
-    /// fresh pair of ports, up to [`MAX_START_ATTEMPTS`] launches in all. Any other
+    /// fresh pair of ports, up to `MAX_START_ATTEMPTS` launches in all. Any other
     /// failure panics at once with the end of dashd's `debug.log`, after copying the datadir to
     /// `DASHD_TEST_RETAIN_DIR` when that is set.
     ///
