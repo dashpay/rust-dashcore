@@ -12,7 +12,7 @@ use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
 use super::pipeline::MnListDiffPipeline;
-use crate::error::{SyncError, SyncResult};
+use crate::error::SyncResult;
 use crate::network::{NetworkManager, SendRequest};
 use crate::storage::{BlockHeaderStorage, PersistentMasternodeStorage};
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
@@ -171,7 +171,7 @@ impl MasternodeSyncState {
     /// Must not be called until every fallible step of the handler has succeeded:
     /// the slot is the only thing arming `tick`'s retry ladder, so releasing it
     /// before a step that can fail leaves the manager `Syncing` with nothing in
-    /// flight, which no `tick` branch can recover from.
+    /// flight, which only the stall watchdog recovers from, a minute later.
     pub(super) fn qrinfo_received(&mut self) {
         self.qrinfo_in_flight = None;
     }
@@ -579,9 +579,12 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 qr_info_result,
             });
         } else if is_initial_sync {
-            drop(engine);
-            self.set_state(SyncState::Error);
-            return Err(SyncError::MasternodeSyncFailed("No masternode lists available".into()));
+            // Nothing leaves `Error`, so the manager stays `Syncing` with
+            // nothing in flight, the state the stall watchdog restarts from.
+            tracing::warn!(
+                "No masternode list after every QRInfo attempt failed, the stall watchdog retries"
+            );
+            return Ok(events);
         }
 
         drop(engine);

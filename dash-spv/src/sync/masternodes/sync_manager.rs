@@ -99,16 +99,13 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         tracing::error!("QRInfo feed into engine failed: {}", e);
                         drop(engine);
                         // The response is unusable, but the request slot has to stay
-                        // occupied. It is the only thing arming `tick`'s retry
-                        // ladder, so releasing it here - as this handler used to,
-                        // before the fallible steps - leaves the manager `Syncing`
-                        // with no QRInfo in flight and an empty diff pipeline, a
-                        // combination `tick` has no branch for. Masternode sync then
-                        // never resumes for the life of the process, taking
-                        // InstantSend verification and every other masternode-list
-                        // consumer with it. Flag the attempt instead: `tick` rotates
-                        // to the next peer, and the existing budget still gives up on
-                        // a deterministically-bad response after MAX_RETRY_ATTEMPTS.
+                        // occupied. It arms `tick`'s retry ladder, so releasing it
+                        // here, before the fallible steps, leaves the manager
+                        // `Syncing` with no QRInfo in flight and an empty diff
+                        // pipeline, which only the stall watchdog recovers from, a
+                        // minute later. Flag the attempt instead: `tick` rotates to
+                        // the next peer, and the existing budget still gives up on a
+                        // deterministically-bad response after MAX_RETRY_ATTEMPTS.
                         self.sync_state.qrinfo_rejected();
                         return Err(SyncError::MasternodeSyncFailed(e.to_string()));
                     }
@@ -469,7 +466,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     tracing::warn!(
                         attempts = MAX_RETRY_ATTEMPTS,
                         last_attempt_rejected = in_flight.rejected,
-                        "QRInfo failed on every attempt, skipping masternode sync"
+                        "QRInfo failed on every attempt, giving up this round"
                     );
                     self.sync_state.clear_pending();
                     return self.complete_pipeline(network).await;
@@ -492,15 +489,16 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         // Stall watchdog. `Syncing` with no QRInfo in flight and an empty diff
         // pipeline is a dead state: nothing outstanding will ever call back, and
         // every branch above is gated on one of those two, so no code path can move
-        // this manager again. The known routes in are `send_qrinfo_for_tip`'s early
-        // returns - no stored tip, or a tip at genesis - which return `Ok` without
-        // dispatching after the caller has already cleared the slot. (A peerless
-        // send is not such a route: `request_qr_info` pushes onto an unbounded
-        // channel and only errors once the channel is closed, so it fails later in
-        // the network task with the slot still armed for the timeout ladder.) The
-        // watchdog also covers any future path that drops the slot without
-        // dispatching. It cannot race the retry ladder above, which only runs
-        // while the slot is occupied.
+        // this manager again. The known routes in are a QRInfo budget spent on an
+        // empty engine, which stays `Syncing` rather than enter `Error`, and
+        // `send_qrinfo_for_tip`'s early returns (no stored tip, or a tip at
+        // genesis), which return `Ok` without dispatching after the caller has
+        // already cleared the slot. (A peerless send is not such a route:
+        // `request_qr_info` pushes onto an unbounded channel and only errors once
+        // the channel is closed, so it fails later in the network task with the
+        // slot still armed for the timeout ladder.) The watchdog also covers any
+        // future path that drops the slot without dispatching. It cannot race the
+        // retry ladder above, which only runs while the slot is occupied.
         if self.state() == SyncState::Syncing
             && self.sync_state.qrinfo_in_flight.is_none()
             && self.sync_state.mnlistdiff_pipeline.is_complete()
@@ -547,7 +545,7 @@ mod tests {
         BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, StorageManager,
     };
     use crate::sync::{MasternodesManager, SyncEvent, SyncManager, SyncState};
-    use crate::test_utils::MockNetworkManager;
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
     use crate::types::HashedBlockHeader;
     use crate::SyncError;
     use dashcore::block::Header;
@@ -997,7 +995,7 @@ mod tests {
     #[tokio::test]
     async fn test_rejected_qrinfo_retries_against_another_peer_then_gives_up() {
         let (mut manager, network, mock, tip_hash) = syncing_manager_awaiting_qrinfo(200).await;
-        let peer = "127.0.0.1:19999".parse().unwrap();
+        let peer = test_socket_address(1);
         let bad_response = || {
             InboundMessage::new(NetworkMessage::QRInfo(Box::new(qrinfo_with_tip_hash(tip_hash))))
         };
@@ -1040,12 +1038,13 @@ mod tests {
         }
 
         // Budget spent. The last rejection must terminate rather than dispatch
-        // again, and must not park the manager in `Syncing` forever.
+        // again. On an empty engine it leaves the manager `Syncing` with nothing
+        // in flight, since nothing leaves `Error`.
         manager
             .handle_message(peer, bad_response(), &network)
             .await
             .expect_err("the engine must reject this filler QRInfo");
-        let _ = manager.tick(&network).await;
+        manager.tick(&network).await.expect("giving up is not a tick error");
         assert!(
             !mock.sent_messages().await.iter().any(|m| matches!(m, NetworkMessage::GetQRInfo(_))),
             "the retry budget must stop dispatching after MAX_RETRY_ATTEMPTS"
@@ -1055,10 +1054,12 @@ mod tests {
             MAX_RETRY_ATTEMPTS as u32,
             "exactly MAX_RETRY_ATTEMPTS dispatches: the initial one plus its retries"
         );
-        assert_ne!(
-            manager.state(),
-            SyncState::Syncing,
-            "giving up must resolve the state, not leave it silently Syncing"
+        assert!(manager.engine.read().await.masternode_lists.is_empty());
+        assert_eq!(manager.state(), SyncState::Syncing, "giving up must not end in Error");
+        assert!(manager.sync_state.qrinfo_in_flight.is_none());
+        assert!(
+            manager.sync_state.mnlistdiff_pipeline.is_complete(),
+            "nothing is left in flight, the state the stall watchdog restarts from"
         );
     }
 
