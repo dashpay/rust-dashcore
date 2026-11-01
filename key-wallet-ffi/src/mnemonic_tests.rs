@@ -777,4 +777,28 @@ mod tests {
         assert_eq!(seed_len, 64);
         assert_eq!(seed.to_lower_hex_string(), FRENCH_REFERENCE_SEED_HEX);
     }
+
+    /// The C string holds exactly the phrase plus its terminator, in every language.
+    #[test]
+    fn phrase_c_string_holds_the_phrase() {
+        for language in key_wallet::mnemonic::Language::ALL {
+            let m = key_wallet::Mnemonic::from_entropy(&[0x5a; 32], language).unwrap();
+            let c = mnemonic::phrase_c_string(&m).unwrap();
+            assert_eq!(c.to_str().unwrap(), m.phrase().as_str(), "{language:?}");
+        }
+    }
+
+    /// A generated phrase round-trips through the C string and is freed (and wiped) by
+    /// `mnemonic_free`.
+    #[test]
+    fn generated_phrase_is_valid_and_freed() {
+        let mut error = FFIError::default();
+        let error = &mut error as *mut FFIError;
+        for language in [mnemonic::FFILanguage::English, mnemonic::FFILanguage::Japanese] {
+            let phrase = unsafe { mnemonic::mnemonic_generate_with_language(24, language, error) };
+            assert!(!phrase.is_null());
+            assert!(unsafe { mnemonic::mnemonic_validate(phrase, error) });
+            unsafe { mnemonic::mnemonic_free(phrase) };
+        }
+    }
 }

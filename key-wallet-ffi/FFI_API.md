@@ -319,7 +319,7 @@ Functions: 6
 
 | Function | Description | Module |
 |----------|-------------|--------|
-| `mnemonic_free` | Free a mnemonic string  # Safety  - `mnemonic` must be a valid pointer... | mnemonic |
+| `mnemonic_free` | Free a mnemonic string, wiping it first  # Safety  - `mnemonic` must be null... | mnemonic |
 | `mnemonic_generate` | Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)  #... | mnemonic |
 | `mnemonic_generate_with_language` | Generate a new mnemonic with specified language and word count  # Safety ... | mnemonic |
 | `mnemonic_to_seed` | Convert mnemonic to seed with optional passphrase  The mnemonic may be in... | mnemonic |
@@ -4030,10 +4030,10 @@ mnemonic_free(mnemonic: *mut c_char) -> ()
 ```
 
 **Description:**
-Free a mnemonic string  # Safety  - `mnemonic` must be a valid pointer created by mnemonic generation functions or null - After calling this function, the pointer becomes invalid
+Free a mnemonic string, wiping it first  # Safety  - `mnemonic` must be null or a pointer returned by a mnemonic generation function, with the string unmodified - After calling this function, the pointer becomes invalid
 
 **Safety:**
-- `mnemonic` must be a valid pointer created by mnemonic generation functions or null - After calling this function, the pointer becomes invalid
+- `mnemonic` must be null or a pointer returned by a mnemonic generation function, with the string unmodified - After calling this function, the pointer becomes invalid
 
 **Module:** `mnemonic`
 

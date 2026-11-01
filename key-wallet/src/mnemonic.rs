@@ -147,7 +147,8 @@ impl<C> bincode::Decode<C> for Mnemonic {
     fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        let phrase: String = bincode::Decode::decode(decoder)?;
+        // The decoded phrase is wiped when dropped
+        let phrase = Zeroizing::new(<String as bincode::Decode<C>>::decode(decoder)?);
         // Same deterministic per-language walk as `from_phrase`
         // (bip39's autodetect can fail with AmbiguousLanguages on shared words).
         Mnemonic::from_phrase(&phrase)
@@ -160,7 +161,8 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for Mnemonic {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        let phrase: String = bincode::BorrowDecode::borrow_decode(decoder)?;
+        let phrase =
+            Zeroizing::new(<String as bincode::BorrowDecode<'de, C>>::borrow_decode(decoder)?);
         Mnemonic::from_phrase(&phrase)
             .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))
     }
@@ -1297,5 +1299,10 @@ mod tests {
             bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
         assert_eq!(decoded.phrase(), original.phrase());
         assert_eq!(decoded.to_seed(""), original.to_seed(""));
+
+        let (borrowed, _): (Mnemonic, usize) =
+            bincode::borrow_decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(borrowed.phrase(), original.phrase());
+        assert_eq!(borrowed.to_seed(""), original.to_seed(""));
     }
 }
