@@ -284,18 +284,11 @@ impl Transaction {
         self.input.consensus_encode(w)?;
         self.output.consensus_encode(w)?;
         self.lock_time.consensus_encode(w)?;
-        if let Some(payload) = &self.special_transaction_payload {
-            // Pre-DIP-0002 transactions have no payload section on the wire — keep
-            // the txid bit-identical to the on-chain bytes by skipping the section.
-            if !matches!(
-                payload,
-                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)
-            ) {
-                let mut buf = Vec::new();
-                payload.consensus_encode(&mut buf)?;
-                // this is so we get the size of the payload
-                buf.consensus_encode(w)?;
-            }
+        if let Some(payload) = self.payload_section() {
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf)?;
+            // this is so we get the size of the payload
+            buf.consensus_encode(w)?;
         }
         Ok(())
     }
@@ -530,14 +523,27 @@ impl Transaction {
     /// Returns the serialized length of the special transaction payload section, length
     /// prefix included, or 0 when there is none.
     pub fn special_transaction_len(&self) -> usize {
-        match self.special_transaction_payload.as_ref() {
-            // Pre-DIP-0002 transactions have no payload section on the wire.
-            None
-            | Some(TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)) => 0,
+        match self.payload_section() {
+            None => 0,
             Some(payload) => {
                 let size = payload.size();
                 VarInt(size as u64).len() + size
             }
+        }
+    }
+
+    /// The payload written after `lock_time`, if any.
+    ///
+    /// As in Dash Core, only transactions from version 3 have a payload section, the
+    /// condition the decoder uses too. Pre-DIP-0002 transactions have none on the wire,
+    /// not even a length prefix.
+    fn payload_section(&self) -> Option<&TransactionPayload> {
+        match &self.special_transaction_payload {
+            Some(TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)) => {
+                None
+            }
+            Some(payload) if self.version as i16 >= 3 => Some(payload),
+            _ => None,
         }
     }
 
@@ -674,19 +680,11 @@ impl Encodable for Transaction {
             }
         }
         len += self.lock_time.consensus_encode(w)?;
-        if let Some(payload) = &self.special_transaction_payload {
-            // Pre-DIP-0002 transactions have no payload section on the wire (not even
-            // a length prefix). Skip the encoding block entirely so re-serialization
-            // matches the on-chain bytes verbatim.
-            if !matches!(
-                payload,
-                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)
-            ) {
-                let mut buf = Vec::new();
-                payload.consensus_encode(&mut buf)?;
-                // this is so we get the size of the payload
-                len += buf.consensus_encode(w)?;
-            }
+        if let Some(payload) = self.payload_section() {
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf)?;
+            // this is so we get the size of the payload
+            len += buf.consensus_encode(w)?;
         }
         Ok(len)
     }
@@ -1372,6 +1370,48 @@ mod tests {
         assert_eq!(decoded, tx);
         assert_eq!(decoded.tx_type().to_u16(), tx_type);
         assert_eq!(decoded.size(), bytes.len());
+    }
+
+    #[test]
+    fn payload_is_written_only_from_version_3() {
+        let payload =
+            TransactionPayload::ProviderUpdateSharePayloadType(ProviderUpdateSharePayload {
+                version: 1,
+                pro_tx_hash: Txid::all_zeros(),
+                share_index: 0,
+                script_reward: ScriptBuf::new(),
+                inputs_hash: InputsHash::all_zeros(),
+                payload_sig: vec![1; 65],
+            });
+        let v3 = Transaction {
+            special_transaction_payload: Some(payload),
+            ..unknown_special_tx(vec![TxIn::default()])
+        };
+        let v2 = Transaction {
+            version: 2,
+            ..v3.clone()
+        };
+        let without_payload = Transaction {
+            version: 2,
+            special_transaction_payload: None,
+            ..v3.clone()
+        };
+
+        // Below version 3 the bytes end at `lock_time`, as Dash Core writes them. Only
+        // the type field, which is part of the version, differs from no payload at all.
+        let mut expected = serialize(&without_payload);
+        expected[2..4].copy_from_slice(&v2.tx_type().to_u16().to_le_bytes());
+        let bytes = serialize(&v2);
+        assert_eq!(bytes, expected);
+        assert_eq!(v2.size(), bytes.len());
+        assert_eq!(v2.special_transaction_len(), 0);
+        assert_eq!(v2.txid(), Txid::hash(&bytes));
+
+        // From version 3 the payload follows with its length prefix.
+        let bytes = serialize(&v3);
+        assert_eq!(bytes.len(), expected.len() + v3.special_transaction_len());
+        assert_eq!(v3.size(), bytes.len());
+        assert_eq!(v3.txid(), Txid::hash(&bytes));
     }
 
     #[test]
