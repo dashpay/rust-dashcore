@@ -159,7 +159,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 self.sync_state.forget_given_up_work_lists();
                 self.sync_state
                     .mnlistdiff_pipeline
-                    .queue_requests(DiffKind::WorkBlockList, request_pairs, network)
+                    .queue_requests(DiffKind::WorkBlockList, request_pairs, Instant::now(), network)
                     .await;
                 self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
 
@@ -219,14 +219,15 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     };
                 drop(engine);
 
+                let now = Instant::now();
                 if !work_block_lists.is_empty() {
                     self.sync_state
                         .mnlistdiff_pipeline
-                        .queue_requests(DiffKind::WorkBlockList, work_block_lists, network)
+                        .queue_requests(DiffKind::WorkBlockList, work_block_lists, now, network)
                         .await;
                     self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
                 }
-                return self.settle_diff(diff.block_hash, outcome, network).await;
+                return self.settle_diff(diff.block_hash, outcome, now, network).await;
             }
 
             _ => {}
@@ -296,7 +297,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                             tip_height,
                             self.progress.current_height()
                         );
-                        return self.send_tip_mnlistdiff_update(network).await;
+                        return self.send_tip_mnlistdiff_update(Instant::now(), network).await;
                     }
                 }
             }
@@ -373,7 +374,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                             return self.send_qrinfo_for_tip(network).await;
                         }
                         PipelineMode::Incremental => {
-                            return self.send_tip_mnlistdiff_update(network).await;
+                            return self.send_tip_mnlistdiff_update(Instant::now(), network).await;
                         }
                     }
                 }
@@ -439,7 +440,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                         }
                     }
                     PipelineMode::Incremental => {
-                        return self.send_tip_mnlistdiff_update(network).await;
+                        return self.send_tip_mnlistdiff_update(now, network).await;
                     }
                 }
             }
@@ -773,7 +774,7 @@ mod tests {
         manager.progress.update_block_header_tip_height(TIP + 1);
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
-        manager.send_tip_mnlistdiff_update(&network).await.unwrap();
+        manager.send_tip_mnlistdiff_update(Instant::now(), &network).await.unwrap();
         assert_eq!(diff_requests(&mock).await.len(), 1, "the tip update is sent");
         (manager, engine, network, mock, hashes)
     }
@@ -1128,13 +1129,10 @@ mod tests {
                 vec![MasternodeList::empty(hashes[TIP as usize], TIP)]
             })
             .await;
-        let after_queued = Instant::now();
+        let given_up_at = Instant::now() + MNLISTDIFF_DEADLINE + Duration::from_secs(1);
         let target = hashes[TIP as usize + 1];
 
-        let events = manager
-            .tick_at(after_queued + MNLISTDIFF_DEADLINE + Duration::from_secs(1), &network)
-            .await
-            .unwrap();
+        let events = manager.tick_at(given_up_at, &network).await.unwrap();
         assert!(events.is_empty(), "a given-up tip update publishes nothing, got {events:?}");
         assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target)]);
 
@@ -1143,7 +1141,7 @@ mod tests {
         manager.tick(&network).await.unwrap();
         assert!(diff_requests(&mock).await.is_empty(), "not asked for again at once");
         manager
-            .tick_at(Instant::now() + MNLISTDIFF_DEADLINE + Duration::from_secs(1), &network)
+            .tick_at(given_up_at + MNLISTDIFF_DEADLINE + Duration::from_secs(1), &network)
             .await
             .unwrap();
         assert_eq!(diff_requests(&mock).await, vec![(hashes[TIP as usize], target)]);
@@ -1379,7 +1377,7 @@ mod tests {
         manager
             .sync_state
             .mnlistdiff_pipeline
-            .queue_requests(DiffKind::WorkBlockList, vec![(base, target)], &network)
+            .queue_requests(DiffKind::WorkBlockList, vec![(base, target)], Instant::now(), &network)
             .await;
         manager.sync_state.mnlistdiff_pipeline.send_pending(&network).await.expect("send succeeds");
 
@@ -1433,7 +1431,7 @@ mod tests {
         manager
             .sync_state
             .mnlistdiff_pipeline
-            .queue_requests(DiffKind::WorkBlockList, vec![(base, target)], &network)
+            .queue_requests(DiffKind::WorkBlockList, vec![(base, target)], Instant::now(), &network)
             .await;
         manager.sync_state.mnlistdiff_pipeline.send_pending(&network).await.expect("send succeeds");
         mock.clear_sent().await;

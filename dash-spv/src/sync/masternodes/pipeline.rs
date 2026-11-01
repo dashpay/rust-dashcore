@@ -48,23 +48,23 @@ impl MnListDiffPipeline {
         }
     }
 
-    /// Queues `(base, target)` requests of one kind. A target already wanted from a different
-    /// base is released from the broker. The broker keys requests by target only, so it would
-    /// keep sending the old request, whose answers no longer match.
+    /// Queues `(base, target)` requests of one kind, wanted from `now`. A target already wanted
+    /// from a different base is released from the broker. The broker keys requests by target
+    /// only, so it would keep sending the old request, whose answers no longer match.
     pub(super) async fn queue_requests(
         &mut self,
         kind: DiffKind,
         requests: Vec<(BlockHash, BlockHash)>,
+        now: Instant,
         network: &Arc<dyn NetworkManager>,
     ) {
-        let queued_at = Instant::now();
         for (base, target) in requests {
             let replaced = self.wanted.insert(
                 target,
                 WantedDiff {
                     base,
                     kind,
-                    queued_at,
+                    queued_at: now,
                 },
             );
             if replaced.is_some_and(|replaced| replaced.base != base) {
@@ -210,6 +210,7 @@ mod tests {
             .queue_requests(
                 DiffKind::WorkBlockList,
                 vec![(base1, target1), (base2, target2)],
+                Instant::now(),
                 &network,
             )
             .await;
@@ -223,8 +224,22 @@ mod tests {
         // it is released, so the new request goes out.
         pipeline.send_pending(&network).await.unwrap();
         mock.clear_sent().await;
-        pipeline.queue_requests(DiffKind::WorkBlockList, vec![(base1, target1)], &network).await;
-        pipeline.queue_requests(DiffKind::WorkBlockList, vec![(base1, target2)], &network).await;
+        pipeline
+            .queue_requests(
+                DiffKind::WorkBlockList,
+                vec![(base1, target1)],
+                Instant::now(),
+                &network,
+            )
+            .await;
+        pipeline
+            .queue_requests(
+                DiffKind::WorkBlockList,
+                vec![(base1, target2)],
+                Instant::now(),
+                &network,
+            )
+            .await;
         assert_eq!(mock.released_keys().await, vec![RequestKey::MnListDiff(target2)]);
         pipeline.send_pending(&network).await.unwrap();
         let sent: Vec<_> = mock
@@ -248,8 +263,17 @@ mod tests {
         let target = BlockHash::from_byte_array([0x02; 32]);
         let work_target = BlockHash::from_byte_array([0x03; 32]);
 
-        pipeline.queue_requests(DiffKind::TipUpdate, vec![(base, target)], &network).await;
-        pipeline.queue_requests(DiffKind::WorkBlockList, vec![(base, work_target)], &network).await;
+        pipeline
+            .queue_requests(DiffKind::TipUpdate, vec![(base, target)], Instant::now(), &network)
+            .await;
+        pipeline
+            .queue_requests(
+                DiffKind::WorkBlockList,
+                vec![(base, work_target)],
+                Instant::now(),
+                &network,
+            )
+            .await;
 
         assert_eq!(
             pipeline.match_response(&create_test_diff(base, target)),
@@ -278,7 +302,9 @@ mod tests {
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
 
-        pipeline.queue_requests(DiffKind::TipUpdate, vec![(base, target)], &network).await;
+        pipeline
+            .queue_requests(DiffKind::TipUpdate, vec![(base, target)], Instant::now(), &network)
+            .await;
         pipeline.send_pending(&network).await.unwrap();
 
         assert_eq!(pipeline.release(target, &network).await, Some(DiffKind::TipUpdate));
@@ -299,7 +325,9 @@ mod tests {
         let base = BlockHash::from_byte_array([0x01; 32]);
         let target = BlockHash::from_byte_array([0x02; 32]);
 
-        pipeline.queue_requests(DiffKind::WorkBlockList, vec![(base, target)], &network).await;
+        pipeline
+            .queue_requests(DiffKind::WorkBlockList, vec![(base, target)], Instant::now(), &network)
+            .await;
         pipeline.send_pending(&network).await.unwrap();
         pipeline.clear(&network).await;
 

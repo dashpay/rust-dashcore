@@ -452,6 +452,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// lightweight completion path when the response drains the pipeline.
     pub(super) async fn send_tip_mnlistdiff_update(
         &mut self,
+        now: Instant,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         let new_tip_hash = {
@@ -479,7 +480,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         self.sync_state.pipeline_mode = PipelineMode::Incremental;
         self.sync_state
             .mnlistdiff_pipeline
-            .queue_requests(DiffKind::TipUpdate, vec![(base_hash, new_tip_hash)], network)
+            .queue_requests(DiffKind::TipUpdate, vec![(base_hash, new_tip_hash)], now, network)
             .await;
         self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
         Ok(vec![])
@@ -495,6 +496,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         &mut self,
         target: BlockHash,
         outcome: DiffOutcome,
+        now: Instant,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         let Some(kind) = self.sync_state.mnlistdiff_pipeline.release(target, network).await else {
@@ -503,7 +505,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         match (outcome, kind) {
             (DiffOutcome::Applied, _) => self.progress.add_diffs_processed(1),
             (DiffOutcome::GivenUp, DiffKind::TipUpdate) => {
-                self.sync_state.given_up_tip = Some((target, Instant::now()));
+                self.sync_state.given_up_tip = Some((target, now));
                 return Ok(vec![]);
             }
             (DiffOutcome::GivenUp, DiffKind::WorkBlockList) => {
@@ -530,7 +532,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                 target,
                 MNLISTDIFF_DEADLINE.as_secs()
             );
-            events.extend(self.settle_diff(target, DiffOutcome::GivenUp, network).await?);
+            events.extend(self.settle_diff(target, DiffOutcome::GivenUp, now, network).await?);
         }
         Ok(events)
     }
