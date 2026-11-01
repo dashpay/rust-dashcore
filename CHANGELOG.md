@@ -145,6 +145,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- In `key-wallet`, `Seed`'s `Display` no longer prints the seed's first and last 4 bytes (it now
+  matches its `Debug`, `Seed(***)`), `RootExtendedPubKey`'s `Debug` no longer prints the chain code,
+  and the `Debug` of `ChainCode` and `Fingerprint` no longer ends with a stray `)`
 - `Debug` output of `ExtendedPrivKey`, `ExtendedBLSPrivKey` and `ExtendedEd25519PrivKey` in
   `key-wallet` no longer prints the chain code, and `Mnemonic` and `RootExtendedPrivKey` have a
   `Debug` that prints no words, chain code or key; a logged `{:?}` of them exposed the chain code
