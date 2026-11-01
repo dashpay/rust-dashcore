@@ -1313,7 +1313,7 @@ mod tests {
         assert_eq!(payload.get_type(), TransactionType::Unknown(0));
     }
 
-    #[cfg(feature = "bincode")]
+    #[cfg(all(feature = "serde", feature = "bincode"))]
     const CONFIG: bincode::config::Configuration = bincode::config::standard();
 
     /// A raw payload persisted by an earlier version decodes typed once its layout is known.

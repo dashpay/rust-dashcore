@@ -358,6 +358,7 @@ mod tests {
     use dashcore_crypto::eddsa::EddsaPkBytes;
     use hashes::{sha256, sha256d};
 
+    #[cfg(feature = "serde")]
     use serde_derive::{Deserialize, Serialize};
 
     #[test]
