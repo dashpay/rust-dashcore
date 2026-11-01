@@ -16,7 +16,7 @@ use crate::blockdata::script::{
     Builder, Instruction, InstructionIndices, Instructions, ScriptBuf, bytes_to_asm_fmt,
 };
 use crate::consensus::Encodable;
-use crate::hash_types::{ScriptHash, WScriptHash};
+use crate::hash_types::ScriptHash;
 use crate::key::PublicKey;
 use crate::policy::DUST_RELAY_TX_FEE;
 use crate::prelude::*;
@@ -130,12 +130,6 @@ impl Script {
         ScriptHash::hash(self.as_bytes())
     }
 
-    /// Returns 256-bit hash of the script for P2WSH outputs.
-    #[inline]
-    pub fn wscript_hash(&self) -> WScriptHash {
-        WScriptHash::hash(self.as_bytes())
-    }
-
     /// Returns the length in bytes of the script.
     #[inline]
     pub fn len(&self) -> usize {
@@ -158,19 +152,6 @@ impl Script {
     #[inline]
     pub fn bytes(&self) -> Bytes<'_> {
         Bytes(self.as_bytes().iter().copied())
-    }
-
-    /// Computes the P2WSH output corresponding to this witnessScript (aka the "witness redeem
-    /// script").
-    #[inline]
-    pub fn to_v0_p2wsh(&self) -> ScriptBuf {
-        ScriptBuf::new_v0_p2wsh(&self.wscript_hash())
-    }
-
-    /// Returns witness version of the script, if any, assuming the script is a `scriptPubkey`.
-    #[inline]
-    pub fn witness_version(&self) -> Option<WitnessVersion> {
-        self.0.first().and_then(|opcode| WitnessVersion::try_from(opcodes::All::from(*opcode)).ok())
     }
 
     /// Checks whether a script pubkey is a P2SH output.
@@ -237,6 +218,8 @@ impl Script {
     }
 
     /// Checks whether a script pubkey is a Segregated Witness (segwit) program.
+    // TODO: remove witness programs. Dash has no SegWit; this is kept only so that addresses
+    // already persisted as witness programs keep decoding.
     #[inline]
     pub fn is_witness_program(&self) -> bool {
         // A scriptPubKey (or redeemScript as defined in BIP16/P2SH) that consists of a 1-byte
@@ -254,22 +237,6 @@ impl Script {
             && push_opbyte <= OP_PUSHBYTES_40.to_u8()
             // Check that the rest of the script has the correct size
             && script_len - 2 == push_opbyte as usize
-    }
-
-    /// Checks whether a script pubkey is a P2WSH output.
-    #[inline]
-    pub fn is_v0_p2wsh(&self) -> bool {
-        self.0.len() == 34
-            && self.witness_version() == Some(WitnessVersion::V0)
-            && self.0[1] == OP_PUSHBYTES_32.to_u8()
-    }
-
-    /// Checks whether a script pubkey is a P2WPKH output.
-    #[inline]
-    pub fn is_v0_p2wpkh(&self) -> bool {
-        self.0.len() == 22
-            && self.witness_version() == Some(WitnessVersion::V0)
-            && self.0[1] == OP_PUSHBYTES_20.to_u8()
     }
 
     /// Check if this is an OP_RETURN output.
@@ -305,10 +272,6 @@ impl Script {
         let sats = DUST_RELAY_TX_FEE as u64 / 1000 * // The default dust relay fee is 3000 satoshi/kB (i.e. 3 sat/vByte)
         if self.is_op_return() {
             0
-        } else if self.is_witness_program() {
-            32 + 4 + 1 + (107 / 4) + 4 + // The spend cost copied from Core
-            8 + // The serialized size of the TxOut's amount field
-            self.consensus_encode(&mut sink()).expect("sinks don't error") as u64 // The serialized size of this script_pubkey
         } else {
             32 + 4 + 1 + 107 + 4 + // The spend cost copied from Core
             8 + // The serialized size of the TxOut's amount field

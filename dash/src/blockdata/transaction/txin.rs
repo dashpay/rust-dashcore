@@ -48,6 +48,10 @@ pub struct TxIn {
     /// Encodable/Decodable, as it is (de)serialized at the end of the full
     /// Transaction. It *is* (de)serialized with the rest of the TxIn in other
     /// (de)serialization routines.
+    ///
+    /// Dash has no SegWit. This field is kept only so the BIP144 form of asset locks that Dash
+    /// Platform has accepted keeps decoding; see [`crate::blockdata::witness`].
+    // TODO: remove witnesses once Dash Platform no longer needs the BIP144 asset lock form.
     pub witness: Witness,
 }
 

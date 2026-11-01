@@ -12,7 +12,7 @@
 use core::fmt;
 use std::collections::HashSet;
 
-use hashes::{Hash, HashEngine};
+use hashes::Hash;
 
 use super::Weight;
 use crate::blockdata::script;
@@ -20,7 +20,7 @@ use crate::blockdata::transaction::Transaction;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::error::Error::{self, BlockBadProofOfWork, BlockBadTarget};
 pub use crate::hash_types::BlockHash;
-use crate::hash_types::{TxMerkleNode, WitnessCommitment, WitnessMerkleNode, Wtxid};
+use crate::hash_types::TxMerkleNode;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::pow::{CompactTarget, Target, Work};
 use crate::prelude::*;
@@ -233,74 +233,9 @@ impl Block {
             == Some(self.header.merkle_root)
     }
 
-    /// Checks if witness commitment in coinbase matches the transaction list.
-    pub fn check_witness_commitment(&self) -> bool {
-        const MAGIC: [u8; 6] = [0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
-        // Witness commitment is optional if there are no transactions using SegWit in the block.
-        if self.txdata.iter().all(|t| t.input.iter().all(|i| i.witness.is_empty())) {
-            return true;
-        }
-
-        if self.txdata.is_empty() {
-            return false;
-        }
-
-        let coinbase = &self.txdata[0];
-        if !coinbase.is_coin_base() {
-            return false;
-        }
-
-        // Commitment is in the last output that starts with magic bytes.
-        if let Some(pos) = coinbase
-            .output
-            .iter()
-            .rposition(|o| o.script_pubkey.len() >= 38 && o.script_pubkey.as_bytes()[0..6] == MAGIC)
-        {
-            let commitment = WitnessCommitment::from_slice(
-                &coinbase.output[pos].script_pubkey.as_bytes()[6..38],
-            )
-            .unwrap();
-            // Witness reserved value is in coinbase input witness.
-            let witness_vec: Vec<_> = coinbase.input[0].witness.iter().collect();
-            if witness_vec.len() == 1
-                && witness_vec[0].len() == 32
-                && let Some(witness_root) = self.witness_root()
-            {
-                return commitment
-                    == Self::compute_witness_commitment(&witness_root, witness_vec[0]);
-            }
-        }
-
-        false
-    }
-
     /// Computes the transaction merkle root.
     pub fn compute_merkle_root(&self) -> Option<TxMerkleNode> {
         let hashes = self.txdata.iter().map(|obj| obj.txid().to_raw_hash());
-        merkle_tree::calculate_root(hashes).map(|h| h.into())
-    }
-
-    /// Computes the witness commitment for the block's transaction list.
-    pub fn compute_witness_commitment(
-        witness_root: &WitnessMerkleNode,
-        witness_reserved_value: &[u8],
-    ) -> WitnessCommitment {
-        let mut encoder = WitnessCommitment::engine();
-        witness_root.consensus_encode(&mut encoder).expect("engines don't error");
-        encoder.input(witness_reserved_value);
-        WitnessCommitment::from_engine(encoder)
-    }
-
-    /// Computes the merkle root of transactions hashed for witness.
-    pub fn witness_root(&self) -> Option<WitnessMerkleNode> {
-        let hashes = self.txdata.iter().enumerate().map(|(i, t)| {
-            if i == 0 {
-                // Replace the first hash with zeroes.
-                Wtxid::all_zeros().to_raw_hash()
-            } else {
-                t.wtxid().to_raw_hash()
-            }
-        });
         merkle_tree::calculate_root(hashes).map(|h| h.into())
     }
 
@@ -505,9 +440,6 @@ mod tests {
             Weight::from_non_witness_data_size(some_block.len() as u64)
         );
 
-        // should be also ok for a non-witness block as commitment is optional in that case
-        assert!(real_decode.check_witness_commitment());
-
         assert_eq!(serialize(&real_decode), some_block);
     }
 
@@ -556,9 +488,6 @@ mod tests {
             Weight::from_non_witness_data_size(some_block.len() as u64)
         );
 
-        // should be also ok for a non-witness block as commitment is optional in that case
-        assert!(real_decode.check_witness_commitment());
-
         assert_eq!(serialize(&real_decode), some_block);
     }
 
@@ -595,8 +524,6 @@ mod tests {
         assert_eq!(real_decode.size(), segwit_block.len());
         assert_eq!(real_decode.strippedsize(), 4283);
         assert_eq!(real_decode.weight(), Weight::from_wu(17168));
-
-        assert!(real_decode.check_witness_commitment());
 
         assert_eq!(serialize(&real_decode), segwit_block);
     }

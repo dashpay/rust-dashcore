@@ -1630,8 +1630,11 @@ mod tests {
 
     #[test]
     fn test_change_to_first_input_sizes_larger_routing_script() {
-        let routed_address =
-            Address::p2wsh(&Builder::new().push_int(1).into_script(), Network::Testnet);
+        let routed_address = Address::from_script(
+            &Builder::new().push_int(0).push_slice([0x11; 32]).into_script(),
+            Network::Testnet,
+        )
+        .expect("P2WSH script");
         let mut routed_input = Utxo::dummy(0x01, 100_000, 100, false, true);
         routed_input.address = routed_address.clone();
         routed_input.txout.script_pubkey = routed_address.script_pubkey();

@@ -195,6 +195,8 @@ pub enum AddressType {
     P2pkh,
     /// Pay to script hash.
     P2sh,
+    // TODO: remove witness programs. Dash has no SegWit; kept only so that addresses already
+    // persisted (serde, bincode, strings) as witness programs keep decoding.
     /// Pay to witness pubkey hash.
     P2wpkh,
     /// Pay to witness script hash.
@@ -232,6 +234,8 @@ impl FromStr for AddressType {
 ///
 /// First byte of `scriptPubkey` in transaction output for transactions starting with opcodes
 /// ranging from 0 to 16 (inclusive).
+// TODO: remove witness programs. Dash has no SegWit; kept only so that addresses already
+// persisted (serde, bincode, strings) as witness programs keep decoding.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(u8)]
 pub enum WitnessVersion {
@@ -435,6 +439,8 @@ pub enum Payload {
     PubkeyHash(PubkeyHash),
     /// P2SH address.
     ScriptHash(ScriptHash),
+    // TODO: remove witness programs. Dash has no SegWit; kept only so that addresses already
+    // persisted (serde, bincode, strings) as witness programs keep decoding.
     /// Segwit address.
     WitnessProgram(WitnessProgram),
 }
@@ -448,6 +454,8 @@ impl Payload {
     }
 }
 
+// TODO: remove witness programs. Dash has no SegWit; kept only so that addresses already
+// persisted (serde, bincode, strings) as witness programs keep decoding.
 /// Witness program as defined in BIP141.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WitnessProgram {
@@ -555,38 +563,6 @@ impl Payload {
         Ok(Payload::ScriptHash(script.script_hash()))
     }
 
-    /// Create a witness pay to public key payload from a public key
-    pub fn p2wpkh(pk: &PublicKey) -> Result<Payload, Error> {
-        let prog = WitnessProgram::new(
-            WitnessVersion::V0,
-            pk.wpubkey_hash().ok_or(Error::UncompressedPubkey)?,
-        )?;
-        Ok(Payload::WitnessProgram(prog))
-    }
-
-    /// Create a pay to script payload that embeds a witness pay to public key
-    pub fn p2shwpkh(pk: &PublicKey) -> Result<Payload, Error> {
-        let builder = script::Builder::new()
-            .push_int(0)
-            .push_slice(pk.wpubkey_hash().ok_or(Error::UncompressedPubkey)?);
-
-        Ok(Payload::ScriptHash(builder.into_script().script_hash()))
-    }
-
-    /// Create a witness pay to script hash payload.
-    pub fn p2wsh(script: &Script) -> Payload {
-        let prog = WitnessProgram::new(WitnessVersion::V0, script.wscript_hash())
-            .expect("wscript_hash has len 32 compatible with segwitv0");
-        Payload::WitnessProgram(prog)
-    }
-
-    /// Create a pay to script payload that embeds a witness pay to script hash address
-    pub fn p2shwsh(script: &Script) -> Payload {
-        let ws = script::Builder::new().push_int(0).push_slice(script.wscript_hash()).into_script();
-
-        Payload::ScriptHash(ws.script_hash())
-    }
-
     fn is_legacy(&self) -> bool {
         matches!(self, Payload::PubkeyHash(_) | Payload::ScriptHash(_))
     }
@@ -631,6 +607,8 @@ impl<'a> fmt::Display for AddressEncoding<'a> {
                 prefixed[1..].copy_from_slice(&hash[..]);
                 fmt.write_str(base58::Base58CkString::encode_unbounded(&prefixed[..]).as_str())
             }
+            // TODO: remove witness programs. Dash has no SegWit; kept only so that addresses already
+            // persisted (serde, bincode, strings) as witness programs keep decoding.
             Payload::WitnessProgram(witness_prog) => {
                 let (version, prog) = (witness_prog.version(), witness_prog.program());
                 let mut upper_writer;
@@ -685,6 +663,8 @@ enum AddressPrefix {
     Mainnet,
     /// Testnet, devnet, and legacy (base58) regtest — base58 `y`/`8`, or bech32 `tb
     Testnet,
+    // TODO: remove witness programs. Dash has no SegWit; kept only so that addresses already
+    // persisted (serde, bincode, strings) as witness programs keep decoding.
     /// Regtest witness programs — bech32 `dsrt` only.
     RegtestBech32,
 }
@@ -1054,38 +1034,6 @@ impl Address {
         Ok(Address::new(network, Payload::p2sh(script)?))
     }
 
-    /// Creates a witness pay to public key address from a public key.
-    ///
-    /// This is the native segwit address type for an output redeemable with a single signature.
-    ///
-    /// # Errors
-    /// Will only return an error if an uncompressed public key is provided.
-    pub fn p2wpkh(pk: &PublicKey, network: Network) -> Result<Address, Error> {
-        Ok(Address::new(network, Payload::p2wpkh(pk)?))
-    }
-
-    /// Creates a pay to script address that embeds a witness pay to public key.
-    ///
-    /// This is a segwit address type that looks familiar (as p2sh) to legacy clients.
-    ///
-    /// # Errors
-    /// Will only return an Error if an uncompressed public key is provided.
-    pub fn p2shwpkh(pk: &PublicKey, network: Network) -> Result<Address, Error> {
-        Ok(Address::new(network, Payload::p2shwpkh(pk)?))
-    }
-
-    /// Creates a witness pay to script hash address.
-    pub fn p2wsh(script: &Script, network: Network) -> Address {
-        Address::new(network, Payload::p2wsh(script))
-    }
-
-    /// Creates a pay to script address that embeds a witness pay to script hash address.
-    ///
-    /// This is a segwit address type that looks familiar (as p2sh) to legacy clients.
-    pub fn p2shwsh(script: &Script, network: Network) -> Address {
-        Address::new(network, Payload::p2shwsh(script))
-    }
-
     /// Gets the address type of the address.
     ///
     /// # Returns
@@ -1297,6 +1245,8 @@ impl FromStr for Address<NetworkUnchecked> {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Address<NetworkUnchecked>, Error> {
+        // TODO: remove witness programs. Dash has no SegWit; kept only so that addresses already
+        // persisted (serde, bincode, strings) as witness programs keep decoding.
         // try bech32
         let bech32_network = match find_bech32_prefix(s) {
             // note that upper or lowercase is allowed but NOT mixed case
@@ -1492,63 +1442,6 @@ mod tests {
     fn test_p2sh_parse_for_large_script() {
         let script = ScriptBuf::from_hex("552103a765fc35b3f210b95223846b36ef62a4e53e34e2925270c2c7906b92c9f718eb2103c327511374246759ec8d0b89fa6c6b23b33e11f92c5bc155409d86de0c79180121038cae7406af1f12f4786d820a1466eec7bc5785a1b5e4a387eca6d797753ef6db2103252bfb9dcaab0cd00353f2ac328954d791270203d66c2be8b430f115f451b8a12103e79412d42372c55dd336f2eb6eb639ef9d74a22041ba79382c74da2338fe58ad21035049459a4ebc00e876a9eef02e72a3e70202d3d1f591fc0dd542f93f642021f82102016f682920d9723c61b27f562eb530c926c00106004798b6471e8c52c60ee02057ae12123122313123123ac1231231231231313123131231231231313212313213123123552103a765fc35b3f210b95223846b36ef62a4e53e34e2925270c2c7906b92c9f718eb2103c327511374246759ec8d0b89fa6c6b23b33e11f92c5bc155409d86de0c79180121038cae7406af1f12f4786d820a1466eec7bc5785a1b5e4a387eca6d797753ef6db2103252bfb9dcaab0cd00353f2ac328954d791270203d66c2be8b430f115f451b8a12103e79412d42372c55dd336f2eb6eb639ef9d74a22041ba79382c74da2338fe58ad21035049459a4ebc00e876a9eef02e72a3e70202d3d1f591fc0dd542f93f642021f82102016f682920d9723c61b27f562eb530c926c00106004798b6471e8c52c60ee02057ae12123122313123123ac1231231231231313123131231231231313212313213123123552103a765fc35b3f210b95223846b36ef62a4e53e34e2925270c2c7906b92c9f718eb2103c327511374246759ec8d0b89fa6c6b23b33e11f92c5bc155409d86de0c79180121038cae7406af1f12f4786d820a1466eec7bc5785a1b5e4a387eca6d797753ef6db2103252bfb9dcaab0cd00353f2ac328954d791270203d66c2be8b430f115f451b8a12103e79412d42372c55dd336f2eb6eb639ef9d74a22041ba79382c74da2338fe58ad21035049459a4ebc00e876a9eef02e72a3e70202d3d1f591fc0dd542f93f642021f82102016f682920d9723c61b27f562eb530c926c00106004798b6471e8c52c60ee02057ae12123122313123123ac1231231231231313123131231231231313212313213123123").unwrap();
         assert_eq!(Address::p2sh(&script, Testnet), Err(Error::ExcessiveScriptSize));
-    }
-
-    #[ignore]
-    #[test]
-    fn test_p2wpkh() {
-        // stolen from Dash transaction: b3c8c2b6cfc335abbcb2c7823a8453f55d64b2b5125a9a61e8737230cdb8ce20
-        let mut key = "033bc8c83c52df5712229a2f72206d90192366c36428cb0c12b6af98324d97bfbc"
-            .parse::<PublicKey>()
-            .unwrap();
-        let addr = Address::p2wpkh(&key, Mainnet).unwrap();
-        assert_eq!(&addr.to_string(), "bc1qvzvkjn4q3nszqxrv3nraga2r822xjty3ykvkuw");
-        assert_eq!(addr.address_type(), Some(AddressType::P2wpkh));
-        roundtrips(&addr);
-
-        // Test uncompressed pubkey
-        key.compressed = false;
-        assert_eq!(Address::p2wpkh(&key, Mainnet), Err(Error::UncompressedPubkey));
-    }
-
-    #[ignore]
-    #[test]
-    fn test_p2wsh() {
-        // stolen from Dash transaction 5df912fda4becb1c29e928bec8d64d93e9ba8efa9b5b405bd683c86fd2c65667
-        let script = ScriptBuf::from_hex("52210375e00eb72e29da82b89367947f29ef34afb75e8654f6ea368e0acdfd92976b7c2103a1b26313f430c4b15bb1fdce663207659d8cac749a0e53d70eff01874496feff2103c96d495bfdd5ba4145e3e046fee45e84a8a48ad05bd8dbb395c011a32cf9f88053ae").unwrap();
-        let addr = Address::p2wsh(&script, Mainnet);
-        assert_eq!(
-            &addr.to_string(),
-            "bc1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej"
-        );
-        assert_eq!(addr.address_type(), Some(AddressType::P2wsh));
-        roundtrips(&addr);
-    }
-
-    #[test]
-    fn test_p2shwpkh() {
-        // stolen from Dash transaction: ad3fd9c6b52e752ba21425435ff3dd361d6ac271531fc1d2144843a9f550ad01
-        let mut key = "026c468be64d22761c30cd2f12cbc7de255d592d7904b1bab07236897cc4c2e766"
-            .parse::<PublicKey>()
-            .unwrap();
-        let addr = Address::p2shwpkh(&key, Mainnet).unwrap();
-        assert_eq!(&addr.to_string(), "7pu4bhf1eANQdvBoPH2FcDtDpMu4c7ZNuN");
-        assert_eq!(addr.address_type(), Some(AddressType::P2sh));
-        roundtrips(&addr);
-
-        // Test uncompressed pubkey
-        key.compressed = false;
-        assert_eq!(Address::p2wpkh(&key, Mainnet), Err(Error::UncompressedPubkey));
-    }
-
-    #[test]
-    fn test_p2shwsh() {
-        // stolen from Dash transaction f9ee2be4df05041d0e0a35d7caa3157495ca4f93b233234c9967b6901dacf7a9
-        let script = ScriptBuf::from_hex("522103e5529d8eaa3d559903adb2e881eb06c86ac2574ffa503c45f4e942e2a693b33e2102e5f10fcdcdbab211e0af6a481f5532536ec61a5fdbf7183770cf8680fe729d8152ae").unwrap();
-        let addr = Address::p2shwsh(&script, Mainnet);
-        assert_eq!(&addr.to_string(), "7WxUWa53KVEhSdBWwoB7LYMr2VedMZqoqt");
-        assert_eq!(addr.address_type(), Some(AddressType::P2sh));
-        roundtrips(&addr);
     }
 
     #[test]

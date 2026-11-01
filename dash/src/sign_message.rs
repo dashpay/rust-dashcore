@@ -147,14 +147,9 @@ mod tests {
 
         let p2pkh = Address::p2pkh(&pubkey, Network::Mainnet);
         assert_eq!(is_signed_by_address(&signature2, &p2pkh, msg_hash), Ok(true));
-        let p2wpkh = Address::p2wpkh(&pubkey, Network::Mainnet).unwrap();
+        let p2sh = Address::p2sh(&p2pkh.script_pubkey(), Network::Mainnet).unwrap();
         assert_eq!(
-            is_signed_by_address(&signature2, &p2wpkh, msg_hash),
-            Err(MessageSignatureError::UnsupportedAddressType(AddressType::P2wpkh))
-        );
-        let p2shwpkh = Address::p2shwpkh(&pubkey, Network::Mainnet).unwrap();
-        assert_eq!(
-            is_signed_by_address(&signature2, &p2shwpkh, msg_hash),
+            is_signed_by_address(&signature2, &p2sh, msg_hash),
             Err(MessageSignatureError::UnsupportedAddressType(AddressType::P2sh))
         );
     }

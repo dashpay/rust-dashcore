@@ -167,7 +167,7 @@ impl_consensus_encoding!(HeaderAndShortIds, header, nonce, short_ids, prefilled_
 impl HeaderAndShortIds {
     /// Create a new [HeaderAndShortIds] from a full block.
     ///
-    /// The version number must be either 1 or 2.
+    /// The version number must be 1.
     ///
     /// The `prefill` slice indicates which transactions should be prefilled in
     /// the block. It should contain the indexes in the block of the txs to
@@ -181,7 +181,7 @@ impl HeaderAndShortIds {
         version: u32,
         mut prefill: &[usize],
     ) -> Result<HeaderAndShortIds, Error> {
-        if version != 1 && version != 2 {
+        if version != 1 {
             return Err(Error::UnknownVersion);
         }
 
@@ -204,31 +204,15 @@ impl HeaderAndShortIds {
                 last_prefill = idx + 1;
                 prefilled.push(PrefilledTransaction {
                     idx: diff_idx as u16,
-                    tx: match version {
-                        // >  As encoded in "tx" messages sent in response to getdata MSG_TX
-                        1 => {
-                            // strip witness for version 1
-                            let mut no_witness = tx.clone();
-                            no_witness.input.iter_mut().for_each(|i| i.witness.clear());
-                            no_witness
-                        }
-                        // > Transactions inside cmpctblock messages (both those used as direct
-                        // > announcement and those in response to getdata) and in blocktxn should
-                        // > include witness data, using the same format as responses to getdata
-                        // > MSG_WITNESS_TX, specified in BIP144.
-                        2 => tx.clone(),
-                        _ => unreachable!(),
+                    // As encoded in "tx" messages sent in response to getdata MSG_TX.
+                    tx: {
+                        let mut no_witness = tx.clone();
+                        no_witness.input.iter_mut().for_each(|i| i.witness.clear());
+                        no_witness
                     },
                 });
             } else {
-                short_ids.push(ShortId::with_siphash_keys(
-                    &match version {
-                        1 => tx.txid().to_raw_hash(),
-                        2 => tx.wtxid().to_raw_hash(),
-                        _ => unreachable!(),
-                    },
-                    siphash_keys,
-                ));
+                short_ids.push(ShortId::with_siphash_keys(&tx.txid().to_raw_hash(), siphash_keys));
             }
         }
 
@@ -422,34 +406,20 @@ mod test {
     fn test_header_and_short_ids_from_block() {
         let block = dummy_block();
 
-        let compact = HeaderAndShortIds::from_block(&block, 42, 2, &[]).unwrap();
+        let compact = HeaderAndShortIds::from_block(&block, 42, 1, &[]).unwrap();
         assert_eq!(compact.nonce, 42);
         assert_eq!(compact.short_ids.len(), 2);
         assert_eq!(compact.prefilled_txs.len(), 1);
         assert_eq!(compact.prefilled_txs[0].idx, 0);
         assert_eq!(&compact.prefilled_txs[0].tx, &block.txdata[0]);
 
-        let compact = HeaderAndShortIds::from_block(&block, 42, 2, &[0, 1, 2]).unwrap();
+        let compact = HeaderAndShortIds::from_block(&block, 42, 1, &[0, 1, 2]).unwrap();
         let idxs = compact.prefilled_txs.iter().map(|t| t.idx).collect::<Vec<_>>();
         assert_eq!(idxs, vec![0, 0, 0]);
 
-        let compact = HeaderAndShortIds::from_block(&block, 42, 2, &[2]).unwrap();
+        let compact = HeaderAndShortIds::from_block(&block, 42, 1, &[2]).unwrap();
         let idxs = compact.prefilled_txs.iter().map(|t| t.idx).collect::<Vec<_>>();
         assert_eq!(idxs, vec![0, 1]);
-    }
-
-    #[test]
-    fn test_compact_block_vector() {
-        // Tested with Elements implementation of compact blocks.
-        let raw_block = hex_conservative::decode_to_vec("000000206c750a364035aefd5f81508a08769975116d9195312ee4520dceac39e1fdc62c4dc67473b8e354358c1e610afeaff7410858bd45df43e2940f8a62bd3d5e3ac943c2975cffff7f200000000002020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff04016b0101ffffffff020006062a0100000001510000000000000000266a24aa21a9ed4a3d9f3343dafcc0d6f6d4310f2ee5ce273ed34edca6c75db3a73e7f368734200120000000000000000000000000000000000000000000000000000000000000000000000000020000000001021fc20ba2bd745507b8e00679e3b362558f9457db374ca28ffa5243f4c23a4d5f00000000171600147c9dea14ffbcaec4b575e03f05ceb7a81cd3fcbffdffffff915d689be87b43337f42e26033df59807b768223368f189a023d0242d837768900000000171600147c9dea14ffbcaec4b575e03f05ceb7a81cd3fcbffdffffff0200cdf5050000000017a9146803c72d9154a6a20f404bed6d3dcee07986235a8700e1f5050000000017a9144e6a4c7cb5b5562904843bdf816342f4db9f5797870247304402205e9bf6e70eb0e4b495bf483fd8e6e02da64900f290ef8aaa64bb32600d973c450220670896f5d0e5f33473e5f399ab680cc1d25c2d2afd15abd722f04978f28be887012103e4e4d9312b2261af508b367d8ba9be4f01b61d6d6e78bec499845b4f410bcf2702473044022045ac80596a6ac9c8c572f94708709adaf106677221122e08daf8b9741a04f66a022003ccd52a3b78f8fd08058fc04fc0cffa5f4c196c84eae9e37e2a85babe731b57012103e4e4d9312b2261af508b367d8ba9be4f01b61d6d6e78bec499845b4f410bcf276a000000").unwrap();
-        let raw_compact = hex_conservative::decode_to_vec("000000206c750a364035aefd5f81508a08769975116d9195312ee4520dceac39e1fdc62c4dc67473b8e354358c1e610afeaff7410858bd45df43e2940f8a62bd3d5e3ac943c2975cffff7f2000000000a4df3c3744da89fa010a6979e971450100020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff04016b0101ffffffff020006062a0100000001510000000000000000266a24aa21a9ed4a3d9f3343dafcc0d6f6d4310f2ee5ce273ed34edca6c75db3a73e7f368734200120000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
-
-        let block: Block = deserialize(&raw_block).unwrap();
-        let nonce = 18053200567810711460;
-        let compact = HeaderAndShortIds::from_block(&block, nonce, 2, &[]).unwrap();
-        let compact_expected: HeaderAndShortIds = deserialize(&raw_compact).unwrap();
-
-        assert_eq!(compact, compact_expected);
     }
 
     #[test]

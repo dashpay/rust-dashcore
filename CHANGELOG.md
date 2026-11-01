@@ -165,6 +165,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **Breaking:** remove SegWit support from `dashcore`, which Dash doesn't have: building witness
+  addresses and scripts (`p2wpkh`, `p2shwpkh`, `p2wsh`, `p2shwsh`, `new_v0_p2wpkh`, `new_v0_p2wsh`,
+  `to_v0_p2wsh`, `wscript_hash`), `WPubkeyHash`, `WScriptHash`, `WitnessMerkleNode`,
+  `WitnessCommitment`, `SegwitV0Sighash`, the BIP143 sighash, the block witness commitment
+  methods, `InputWeightPrediction::P2WPKH_MAX` and `ground_p2wpkh`, `ServiceFlags::WITNESS`,
+  `NetworkMessage::WtxidRelay`, `Inventory::WTx`, `Inventory::WitnessTransaction`,
+  `Inventory::WitnessBlock` and version 2 compact blocks. `Witness`, the BIP144 transaction form
+  and `WitnessProgram` stay so accepted asset locks and persisted addresses keep decoding
 - **Breaking:** remove the `dash-spv-ffi` crate, the C bindings for the SPV client
 - **Breaking:** remove BIP38 from `key-wallet` (the `bip38` feature, `Bip38EncryptedKey`,
   `Bip38Mode`, `encrypt_private_key`, `generate_intermediate_code` and the `Wallet` BIP38

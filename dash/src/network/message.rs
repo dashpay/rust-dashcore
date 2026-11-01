@@ -253,8 +253,6 @@ pub enum NetworkMessage {
     Reject(message_network::Reject),
     /// `feefilter`
     FeeFilter(i64),
-    /// `wtxidrelay`
-    WtxidRelay,
     /// `addrv2`
     AddrV2(Vec<AddrV2Message>),
     /// `sendaddrv2`
@@ -326,7 +324,6 @@ impl NetworkMessage {
             NetworkMessage::Alert(_) => "alert",
             NetworkMessage::Reject(_) => "reject",
             NetworkMessage::FeeFilter(_) => "feefilter",
-            NetworkMessage::WtxidRelay => "wtxidrelay",
             NetworkMessage::AddrV2(_) => "addrv2",
             NetworkMessage::SendAddrV2 => "sendaddrv2",
             NetworkMessage::GetMnListD(_) => "getmnlistd",
@@ -427,7 +424,6 @@ impl Encodable for RawNetworkMessage {
             | NetworkMessage::SendHeaders2
             | NetworkMessage::MemPool
             | NetworkMessage::GetAddr
-            | NetworkMessage::WtxidRelay
             | NetworkMessage::FilterClear
             | NetworkMessage::SendAddrV2 => vec![],
             NetworkMessage::Unknown {
@@ -630,7 +626,6 @@ impl Decodable for RawNetworkMessage {
             "blocktxn" => NetworkMessage::BlockTxn(Decodable::consensus_decode_from_finite_reader(
                 &mut mem_d,
             )?),
-            "wtxidrelay" => NetworkMessage::WtxidRelay,
             "addrv2" => {
                 NetworkMessage::AddrV2(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
             }
@@ -933,7 +928,6 @@ mod test {
                 hash: hash_x11([255u8; 32]),
             }),
             NetworkMessage::FeeFilter(1000),
-            NetworkMessage::WtxidRelay,
             NetworkMessage::AddrV2(vec![AddrV2Message {
                 addr: AddrV2::Ipv4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: 0,
@@ -1073,7 +1067,7 @@ mod test {
                 version_msg.services,
                 ServiceFlags::NETWORK
                     | ServiceFlags::BLOOM
-                    | ServiceFlags::WITNESS
+                    | ServiceFlags::from(1 << 3)
                     | ServiceFlags::NETWORK_LIMITED
             );
             assert_eq!(version_msg.timestamp, 1548554224);
@@ -1118,7 +1112,7 @@ mod test {
                 version_msg.services,
                 ServiceFlags::NETWORK
                     | ServiceFlags::BLOOM
-                    | ServiceFlags::WITNESS
+                    | ServiceFlags::from(1 << 3)
                     | ServiceFlags::NETWORK_LIMITED
             );
             assert_eq!(version_msg.timestamp, 1548554224);

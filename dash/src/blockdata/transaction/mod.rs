@@ -713,7 +713,8 @@ impl Decodable for Transaction {
             TransactionType::ClassicalWithNonStandardVersionTypeBytes(special_transaction_type_u16)
         };
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
-        // segwit
+        // TODO: remove the BIP144 form. Dash has no SegWit; it is still read (and written back)
+        // only because Dash Platform has accepted asset locks in it; see `crate::blockdata::witness`.
         let mut segwit = input.is_empty();
         // Forcing segwit to false for special transaction types that legitimately have no inputs.
         // Dash Core doesn't support BIP141 SegWit.
@@ -782,50 +783,6 @@ pub struct InputWeightPrediction {
 }
 
 impl InputWeightPrediction {
-    /// Input weight prediction corresponding to spending of P2WPKH output with the largest possible
-    /// DER-encoded signature.
-    ///
-    /// If the input in your transaction uses P2WPKH you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    ///
-    /// This is useful when you **do not** use [signature grinding] and want to ensure you are not
-    /// under-paying. See [`ground_p2wpkh`](Self::ground_p2wpkh) if you do use signature grinding.
-    ///
-    /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
-    pub const P2WPKH_MAX: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 73 + 1 + 33,
-    };
-
-    /// Input weight prediction corresponding to spending of P2WPKH output using [signature
-    /// grinding].
-    ///
-    /// If the input in your transaction uses P2WPKH and you use signature grinding you can use this
-    /// instead of [`InputWeightPrediction::new`]. See [`P2WPKH_MAX`](Self::P2WPKH_MAX) if you don't
-    /// use signature grinding.
-    ///
-    /// Note: `bytes_to_grind` is usually `1` because of exponential cost of higher values.
-    ///
-    /// # Panics
-    ///
-    /// The function panics in const context and debug builds if `bytes_to_grind` is higher than 62.
-    ///
-    /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
-    pub const fn ground_p2wpkh(bytes_to_grind: usize) -> Self {
-        // Written to trigger const/debug panic for unreasonably high values.
-        let der_signature_size = 10 + (62 - bytes_to_grind);
-        let witness_size = 1 // length of element count varint
-            + 1 // length of element size varint (max signature length is 73B)
-            + der_signature_size
-            + 1 // sighash flag
-            + 1 // length of element size varint
-            + 33; // length of (always-compressed) public key
-        InputWeightPrediction {
-            script_size: 0,
-            witness_size,
-        }
-    }
-
     /// Computes the prediction for a single input.
     pub fn new<T>(input_script_len: usize, witness_element_lengths: T) -> Self
     where

@@ -7,11 +7,11 @@ use core::ops::Deref;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 
-use crate::address::{WitnessProgram, WitnessVersion};
+use crate::address::WitnessProgram;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
 use crate::blockdata::script::{Builder, Instruction, PushBytes, Script, opcode_to_verify};
-use crate::hash_types::{PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash};
+use crate::hash_types::{PubkeyHash, ScriptHash};
 use crate::key::PublicKey;
 use crate::prelude::*;
 
@@ -110,39 +110,14 @@ impl ScriptBuf {
             .into_script()
     }
 
-    /// Generates P2WPKH-type of scriptPubkey.
-    pub fn new_v0_p2wpkh(pubkey_hash: &WPubkeyHash) -> Self {
-        // pubkey hash is 20 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv0)
-        ScriptBuf::new_witness_program_unchecked(WitnessVersion::V0, pubkey_hash)
-    }
-
-    /// Generates P2WSH-type of scriptPubkey with a given hash of the redeem script.
-    pub fn new_v0_p2wsh(script_hash: &WScriptHash) -> Self {
-        // script hash is 32 bytes long, so it's safe to use `new_witness_program_unchecked` (Segwitv0)
-        ScriptBuf::new_witness_program_unchecked(WitnessVersion::V0, script_hash)
-    }
-
     /// Generates P2WSH-type of scriptPubkey with a given [`WitnessProgram`].
+    // TODO: remove witness programs. Dash has no SegWit; this is kept only so that addresses
+    // already persisted as witness programs keep decoding.
     pub fn new_witness_program(witness_program: &WitnessProgram) -> Self {
         Builder::new()
             .push_opcode(witness_program.version().into())
             .push_slice(witness_program.program())
             .into_script()
-    }
-
-    /// Generates P2WSH-type of scriptPubkey with a given [`WitnessVersion`] and the program bytes.
-    /// Does not do any checks on version or program length.
-    ///
-    /// Convenience method used by `new_v0_p2wpkh` and `new_v0_p2wsh`.
-    fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
-        version: WitnessVersion,
-        program: T,
-    ) -> Self {
-        let program = program.as_ref();
-        debug_assert!(program.len() >= 2 && program.len() <= 40);
-        // In segwit v0, the program must be 20 or 32 bytes long.
-        debug_assert!(version != WitnessVersion::V0 || program.len() == 20 || program.len() == 32);
-        Builder::new().push_opcode(version.into()).push_slice(program).into_script()
     }
 
     /// Generates OP_RETURN-type of scriptPubkey for the given data.

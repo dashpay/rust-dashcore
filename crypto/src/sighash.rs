@@ -12,10 +12,6 @@ hash_newtype! {
     /// Hash of a transaction according to the legacy signature algorithm.
     #[hash_newtype(forward)]
     pub struct LegacySighash(sha256d::Hash);
-
-    /// Hash of a transaction according to the segwit version 0 signature algorithm.
-    #[hash_newtype(forward)]
-    pub struct SegwitV0Sighash(sha256d::Hash);
 }
 
 pub use bitcoin_crypto::sighash::{

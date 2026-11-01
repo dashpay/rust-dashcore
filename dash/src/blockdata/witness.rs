@@ -2,8 +2,14 @@
 
 //! Witness
 //!
-//! This module contains the [`Witness`] struct and related methods to operate on it
+//! This module contains the [`Witness`] struct and related methods to operate on it.
 //!
+//! Dash has no SegWit, and the rest of the SegWit machinery (witness addresses, the BIP143
+//! sighash, witness commitments, wtxid relay) has been removed. [`Witness`] and the BIP144
+//! transaction form stay only because Dash Platform has accepted asset locks in that form, and
+//! [`Transaction::deserialize_with_legacy_asset_lock_framing`] must keep decoding them as before.
+//!
+//! [`Transaction::deserialize_with_legacy_asset_lock_framing`]: crate::Transaction::deserialize_with_legacy_asset_lock_framing
 
 use core::convert::TryInto;
 use core::ops::Index;
@@ -27,6 +33,8 @@ use crate::prelude::*;
 /// saving some allocations.
 ///
 /// [segwit upgrade]: <https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki>
+// TODO: remove witnesses. Dash has no SegWit; kept only for the BIP144 asset locks Dash Platform
+// has accepted (see the module docs).
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct Witness {

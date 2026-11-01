@@ -133,7 +133,7 @@ pub use crate::ephemerealdata::instant_lock::InstantLock;
 pub use crate::error::Error;
 pub use crate::hash_types::{
     BlockHash, FilterHash, ProTxHash, PubkeyHash, QuorumHash, QuorumSigningRequestId, ScriptHash,
-    TxMerkleNode, Txid, WPubkeyHash, WScriptHash, Wtxid,
+    TxMerkleNode, Txid, Wtxid,
 };
 pub use crate::merkle_tree::MerkleBlock;
 pub use crate::network::constants::{Network, ParseNetworkError};

@@ -140,18 +140,11 @@ impl PublicKey {
     pub fn pubkey_hash(&self) -> PubkeyHash {
         self.with_serialized(PubkeyHash::hash)
     }
-
-    /// Returns dash 160-bit hash of the public key for witness program
-    pub fn wpubkey_hash(&self) -> Option<WPubkeyHash> {
-        self.compressed.then(|| WPubkeyHash::hash(&self.inner.to_compressed()))
-    }
 }
 
 hash_newtype! {
     /// A hash of a public key.
     pub struct PubkeyHash(hash160::Hash);
-    /// SegWit version of a public key hash.
-    pub struct WPubkeyHash(hash160::Hash);
 }
 
 impl From<PublicKey> for PubkeyHash {

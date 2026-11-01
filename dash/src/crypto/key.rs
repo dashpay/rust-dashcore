@@ -110,20 +110,6 @@ mod tests {
         assert_eq!(upk.pubkey_hash().to_string(), "ac2e7daf42d2c97418fd9f78af2de552bb9c6a7a");
     }
 
-    #[test]
-    fn test_wpubkey_hash() {
-        let pk = PublicKey::from_str(
-            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
-        )
-        .unwrap();
-        let upk = PublicKey::from_str("042e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af191923a2964c177f5b5923ae500fca49e99492d534aa3759d6b25a8bc971b133").unwrap();
-        assert_eq!(
-            pk.wpubkey_hash().unwrap().to_string(),
-            "9511aa27ef39bbfa4e4f3dd15f4d66ea57f475b4"
-        );
-        assert_eq!(upk.wpubkey_hash(), None);
-    }
-
     #[cfg(feature = "serde")]
     #[test]
     fn test_key_serde() {
