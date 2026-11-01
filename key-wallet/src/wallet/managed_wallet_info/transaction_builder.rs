@@ -1745,7 +1745,7 @@ mod tests {
             546,
             "P2PKH change must keep the historical 546-duff threshold"
         );
-        // A 43-byte output (e.g. P2WSH) costs the same 148-byte input to spend, so its threshold
+        // A 43-byte output costs the same 148-byte input to spend, so its threshold
         // is 3 * (43 + 148). A 550-duff change output clears 546 but is dust at this size.
         assert_eq!(TransactionBuilder::dust_threshold(43), 573);
         assert!(550 > TransactionBuilder::dust_threshold(CHANGE_OUTPUT_SIZE));

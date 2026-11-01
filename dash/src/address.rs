@@ -45,7 +45,6 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
 
-use bech32;
 use hashes::Hash;
 use internals::write_err;
 #[cfg(feature = "serde")]
@@ -69,19 +68,6 @@ pub enum Error {
     InvalidAddressVersion(u8),
     /// The base58 decoded correctly but the payload was the wrong length.
     InvalidBase58PayloadLength(usize),
-    /// Bech32 encoding error.
-    Bech32(bech32::Error),
-    /// The bech32 payload was empty.
-    EmptyBech32Payload,
-    /// The wrong checksum algorithm was used.
-    InvalidBech32Variant {
-        /// Expected Bech32 variant.
-        expected: bech32::Variant,
-        /// The actual Bech32 variant encoded in the address representation.
-        found: bech32::Variant,
-    },
-    /// An uncompressed pubkey was used where it is not allowed.
-    UncompressedPubkey,
     /// Address size more than 520 bytes is not allowed.
     ExcessiveScriptSize,
     /// Script is not a p2pkh or p2sh.
@@ -106,19 +92,6 @@ impl fmt::Display for Error {
             }
             Error::InvalidBase58PayloadLength(ref l) => {
                 write!(f, "length {} invalid for this base58 type", l)
-            }
-            Error::Bech32(ref e) => write_err!(f, "bech32 address encoding error"; e),
-            Error::EmptyBech32Payload => write!(f, "the bech32 payload was empty"),
-            Error::InvalidBech32Variant {
-                expected,
-                found,
-            } => write!(
-                f,
-                "invalid bech32 checksum variant found {:?} when {:?} was expected",
-                found, expected
-            ),
-            Error::UncompressedPubkey => {
-                write!(f, "an uncompressed pubkey was used where it is not allowed")
             }
             Error::ExcessiveScriptSize => write!(f, "script size exceed 520 bytes"),
             Error::UnrecognizedScript => write!(f, "script is not a p2pkh or p2sh"),
@@ -145,14 +118,8 @@ impl std::error::Error for Error {
 
         match self {
             Base58(e) => Some(e),
-            Bech32(e) => Some(e),
             InvalidAddressVersion(_)
             | InvalidBase58PayloadLength(_)
-            | EmptyBech32Payload
-            | InvalidBech32Variant {
-                ..
-            }
-            | UncompressedPubkey
             | ExcessiveScriptSize
             | UnrecognizedScript
             | UnknownAddressType(_)
@@ -167,13 +134,6 @@ impl std::error::Error for Error {
 impl From<base58::DecodeCheckError> for Error {
     fn from(e: base58::DecodeCheckError) -> Error {
         Error::Base58(e)
-    }
-}
-
-#[doc(hidden)]
-impl From<bech32::Error> for Error {
-    fn from(e: bech32::Error) -> Error {
-        Error::Bech32(e)
     }
 }
 
@@ -296,11 +256,8 @@ pub struct AddressEncoding<'a> {
     pub p2pkh_prefix: u8,
     /// base58 version byte for p2sh payloads (e.g. 0x05 for "3..." addresses).
     pub p2sh_prefix: u8,
-    /// hrp used in bech32 address (e.g. "bc" for "bc1..." addresses).
-    pub bech32_hrp: &'a str,
 }
 
-/// Formats bech32 as upper case if alternate formatting is chosen (`{:#}`).
 impl<'a> fmt::Display for AddressEncoding<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self.payload {
@@ -641,15 +598,10 @@ impl<V: NetworkValidation> Address<V> {
             _ => Network::Testnet,
         }
         .addr_params();
-        let bech32_hrp = match self.0.prefix {
-            AddressPrefix::Mainnet => "ds",
-            AddressPrefix::Testnet => "tb",
-        };
         let encoding = AddressEncoding {
             payload: self.payload(),
             p2pkh_prefix: addr_params.pubkey_addr,
             p2sh_prefix: addr_params.script_addr,
-            bech32_hrp,
         };
 
         use fmt::Display;
@@ -733,8 +685,7 @@ impl Address {
 
     /// Creates a URI string *dashcore:address* optimized to be encoded in QR codes.
     ///
-    /// If the address is bech32, both the schema and the address become uppercase.
-    /// If the address is base58, the schema is lowercase and the address is left mixed case.
+    /// The schema is lowercase and the address is left mixed case.
     ///
     /// Quoting BIP 173 "inside QR codes uppercase SHOULD be used, as those permit the use of
     /// alphanumeric mode, which is 45% more compact than the normal byte mode."
@@ -788,9 +739,9 @@ impl Address<NetworkUnchecked> {
     }
     /// Parsed addresses do not always have *one* network. The problem is that legacy testnet,
     /// regtest and devnet addresses use the same prefix instead of multiple different ones. When
-    /// parsing, such addresses are always assumed to be testnet addresses (the same is true for
-    /// bech32 devnet addresses). So if one wants to check if an address belongs to a certain
-    /// network a simple comparison is not enough anymore. Instead this function can be used.
+    /// parsing, such addresses are always assumed to be testnet addresses. So if one wants to
+    /// check if an address belongs to a certain network a simple comparison is not enough
+    /// anymore. Instead this function can be used.
     ///
     /// ```rust
     /// use dashcore::{Address, Network};
@@ -863,8 +814,6 @@ impl From<Address> for ScriptBuf {
     }
 }
 
-// Alternate formatting `{:#}` is used to return uppercase version of bech32 addresses which should
-// be used in QR codes, see [`Address::to_qr_uri`].
 impl fmt::Display for Address {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_internal(fmt)
@@ -1098,53 +1047,6 @@ mod tests {
             into.script_pubkey(),
             ScriptBuf::from_hex("a914162c5ea71c0b23f5b9022ef047c4a86470a5b07087").unwrap()
         );
-
-        let addr: Address<NetworkUnchecked> =
-            Address::from_str("tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7")
-                .unwrap();
-        let json = serde_json::to_value(addr).unwrap();
-        assert_eq!(
-            json,
-            serde_json::Value::String(
-                "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7".to_owned()
-            )
-        );
-
-        let addr =
-            Address::from_str("tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7")
-                .unwrap()
-                .assume_checked();
-        let json = serde_json::to_value(&addr).unwrap();
-        assert_eq!(
-            json,
-            serde_json::Value::String(
-                "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7".to_owned()
-            )
-        );
-        let into: Address = serde_json::from_value::<Address<_>>(json).unwrap().assume_checked();
-        assert_eq!(addr.to_string(), into.to_string());
-        assert_eq!(
-            into.script_pubkey(),
-            ScriptBuf::from_hex(
-                "00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262"
-            )
-            .unwrap()
-        );
-
-        let addr = Address::from_str("bcrt1q2nfxmhd4n3c8834pj72xagvyr9gl57n5r94fsl")
-            .unwrap()
-            .assume_checked();
-        let json = serde_json::to_value(&addr).unwrap();
-        assert_eq!(
-            json,
-            serde_json::Value::String("bcrt1q2nfxmhd4n3c8834pj72xagvyr9gl57n5r94fsl".to_owned())
-        );
-        let into: Address = serde_json::from_value::<Address<_>>(json).unwrap().assume_checked();
-        assert_eq!(addr.to_string(), into.to_string());
-        assert_eq!(
-            into.script_pubkey(),
-            ScriptBuf::from_hex("001454d26dddb59c7073c6a197946ea1841951fa7a74").unwrap()
-        );
     }
 
     #[test]
@@ -1155,11 +1057,6 @@ mod tests {
             let addr = Address::from_str(el).unwrap().require_network(Mainnet).expect("mainnet");
             assert_eq!(addr.to_qr_uri(), format!("dash:{}", el));
         }
-
-        // for el in ["dsrt1q2nfxmhd4n3c8834pj72xagvyr9gl57n5r94fsl", "ds1qwqdg6squsna38e46795at95yu9atm8azzmyvckulcc7kytlcckxswvvzej"].iter() {
-        //     let addr = Address::from_str(el).unwrap().assume_checked();
-        //     assert_eq!(addr.to_qr_uri(), format!("DASH:{}", el.to_ascii_uppercase()));
-        // }
     }
 
     #[test]

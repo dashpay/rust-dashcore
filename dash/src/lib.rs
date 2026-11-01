@@ -61,7 +61,6 @@ extern crate alloc;
 
 #[cfg(feature = "base64")]
 pub extern crate base64;
-pub extern crate bech32;
 #[cfg(feature = "bitcoinconsensus")]
 pub extern crate bitcoinconsensus;
 pub extern crate dashcore_hashes as hashes;
