@@ -2,6 +2,10 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+
+// tokio's `Instant`, so tests can pause and advance the clock.
+use tokio::time::Instant;
 
 use crate::error::SyncResult;
 use crate::network::{NetworkManager, SendRequest};
@@ -14,12 +18,15 @@ use dashcore::BlockHash;
 pub(super) struct MnListDiffPipeline {
     /// Wanted requests: target_hash -> base_hash.
     base_hashes: HashMap<BlockHash, BlockHash>,
+    /// Wanted targets that are work-block list requests, and when each was first queued.
+    work_block_queued: HashMap<BlockHash, Instant>,
 }
 
 impl MnListDiffPipeline {
     /// Clear all state.
     pub(super) fn clear(&mut self) {
         self.base_hashes.clear();
+        self.work_block_queued.clear();
     }
 
     /// Queue MnListDiff requests.
@@ -33,6 +40,28 @@ impl MnListDiffPipeline {
         if !self.base_hashes.is_empty() {
             tracing::info!("Queued {} MnListDiff requests", self.base_hashes.len());
         }
+    }
+
+    /// Like [`Self::queue_requests`], but the targets expire in [`Self::expire_work_block_requests`].
+    pub(super) fn queue_work_block_requests(&mut self, requests: Vec<(BlockHash, BlockHash)>) {
+        let now = Instant::now();
+        for (_, target_hash) in &requests {
+            self.work_block_queued.entry(*target_hash).or_insert(now);
+        }
+        self.queue_requests(requests);
+    }
+
+    /// Drop the work-block requests queued longer than `deadline` ago and return their targets.
+    pub(super) fn expire_work_block_requests(&mut self, deadline: Duration) -> Vec<BlockHash> {
+        let expired: Vec<BlockHash> = self
+            .work_block_queued
+            .extract_if(|_, queued| queued.elapsed() > deadline)
+            .map(|(target, _)| target)
+            .collect();
+        for target in &expired {
+            self.base_hashes.remove(target);
+        }
+        expired
     }
 
     /// Declare every wanted MnListDiff; the broker de-duplicates, so re-declaring is safe.
@@ -78,6 +107,7 @@ impl MnListDiffPipeline {
         if self.base_hashes.remove(&target_hash).is_none() {
             return false;
         }
+        self.work_block_queued.remove(&target_hash);
 
         tracing::debug!(
             "Received MnListDiff for {} ({} remaining)",
@@ -232,5 +262,27 @@ mod tests {
 
         assert!(pipeline.is_complete());
         assert!(pipeline.base_hashes.is_empty());
+    }
+
+    /// Only work-block requests expire; a tip-update request queued at the same time stays wanted.
+    #[tokio::test]
+    async fn only_work_block_requests_expire() {
+        tokio::time::pause();
+        let base = BlockHash::from_byte_array([1; 32]);
+        let tip = BlockHash::from_byte_array([2; 32]);
+        let work_block = BlockHash::from_byte_array([3; 32]);
+        let mut pipeline = MnListDiffPipeline::default();
+        pipeline.queue_requests(vec![(base, tip)]);
+        pipeline.queue_work_block_requests(vec![(base, work_block)]);
+
+        let deadline = Duration::from_secs(100);
+        tokio::time::advance(deadline).await;
+        assert!(pipeline.expire_work_block_requests(deadline).is_empty());
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(pipeline.expire_work_block_requests(deadline), vec![work_block]);
+        assert!(!pipeline.is_complete());
+        assert!(pipeline.receive(&create_test_diff(base, tip)));
+        assert!(pipeline.is_complete());
     }
 }
