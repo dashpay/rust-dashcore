@@ -594,6 +594,176 @@ impl NetworkMessage {
         };
         Ok(message)
     }
+
+    /// Encode the message as BIP324 V2 packet contents: its short ID and payload, or
+    /// `0x00`, the 12-byte command and the payload if it has no short ID.
+    ///
+    /// The BIP324 cipher prepends its own header byte, so this is everything after it.
+    ///
+    /// Unlike Dash Core, this doesn't check the peer's protocol version before using a
+    /// short ID added after the V2 baseline (`platformban`, from 70240), so don't send
+    /// those messages to older peers.
+    pub fn consensus_encode_v2(&self) -> Vec<u8> {
+        let command = self.command();
+        let payload = self.consensus_encode_payload();
+        let mut contents = Vec::with_capacity(1 + V2_COMMAND_LEN + payload.len());
+        match v2_short_id(command.as_ref()) {
+            Some(id) => contents.push(id),
+            None => {
+                contents.push(V2_EXTENDED_ID);
+                command.consensus_encode(&mut contents).expect("in-memory writers don't error");
+            }
+        }
+        contents.extend_from_slice(&payload);
+        contents
+    }
+
+    /// Decode BIP324 V2 packet contents, as produced by [`Self::consensus_encode_v2`].
+    ///
+    /// Returns `Ok(None)` for contents Dash Core drops without disconnecting: an
+    /// unassigned short ID (a newer peer may use IDs we don't know yet) or a malformed
+    /// command. A known command whose payload doesn't decode is an error.
+    pub fn consensus_decode_v2(contents: &[u8]) -> Result<Option<Self>, encode::Error> {
+        let Some((&id, rest)) = contents.split_first() else {
+            return Ok(None);
+        };
+        let decoded = if id == V2_EXTENDED_ID {
+            rest.split_first_chunk::<V2_COMMAND_LEN>()
+                .and_then(|(field, payload)| Some((v2_extended_command(field)?, payload)))
+        } else {
+            v2_command(id).map(|command| (command, rest))
+        };
+        match decoded {
+            Some((command, payload)) => Self::consensus_decode_payload(command, payload).map(Some),
+            None => Ok(None),
+        }
+    }
+}
+
+/// BIP324 short ID marking contents whose 12-byte command follows, as in V1.
+const V2_EXTENDED_ID: u8 = 0;
+
+/// Length of the command in extended-format V2 contents.
+const V2_COMMAND_LEN: usize = 12;
+
+/// BIP324's short message IDs from 0, in order, as in Dash Core's `V2_BITCOIN_IDS`
+/// (`net.cpp`). Empty slots are assigned in BIP324 but not implemented by Dash, so
+/// those messages, `feefilter` (5) among them, use the extended format.
+const V2_BITCOIN_IDS: [&str; 33] = [
+    "", // V2_EXTENDED_ID
+    "addr",
+    "block",
+    "blocktxn",
+    "cmpctblock",
+    "", // feefilter
+    "filteradd",
+    "filterclear",
+    "filterload",
+    "getblocks",
+    "getblocktxn",
+    "getdata",
+    "getheaders",
+    "headers",
+    "inv",
+    "mempool",
+    "merkleblock",
+    "notfound",
+    "ping",
+    "pong",
+    "sendcmpct",
+    "tx",
+    "getcfilters",
+    "cfilter",
+    "getcfheaders",
+    "cfheaders",
+    "getcfcheckpt",
+    "cfcheckpt",
+    "addrv2",
+    // Assigned in BIP324, unimplemented
+    "",
+    "",
+    "",
+    "",
+];
+
+/// First short ID of Dash's reserved half of the namespace.
+const V2_DASH_IDS_START: u8 = 128;
+
+/// Dash's short message IDs from [`V2_DASH_IDS_START`], in order, as in Dash Core's
+/// `V2_DASH_IDS` (`net.cpp`).
+const V2_DASH_IDS: [&str; 41] = [
+    "spork",
+    "getsporks",
+    "senddsq",
+    "dsa",
+    "dsi",
+    "dsf",
+    "dss",
+    "dsc",
+    "dssu",
+    "dstx",
+    "dsq",
+    "ssc",
+    "govsync",
+    "govobj",
+    "govobjvote",
+    "getmnlistd",
+    "mnlistdiff",
+    "qsendrecsigs",
+    "qfcommit",
+    "qcontrib",
+    "qcomplaint",
+    "qjustify",
+    "qpcommit",
+    "qwatch",
+    "qsigsesann",
+    "qsigsinv",
+    "qgetsigs",
+    "qbsigs",
+    "qsigrec",
+    "qsigshare",
+    "qgetdata",
+    "qdata",
+    "clsig",
+    "isdlock",
+    "mnauth",
+    "getheaders2",
+    "sendheaders2",
+    "headers2",
+    "getqrinfo",
+    "qrinfo",
+    "platformban",
+];
+
+/// The short ID Dash Core assigns `command`, if any.
+fn v2_short_id(command: &str) -> Option<u8> {
+    if command.is_empty() {
+        return None;
+    }
+    let position = |ids: &[&str]| ids.iter().position(|&id| id == command);
+    position(&V2_BITCOIN_IDS)
+        .map(|i| i as u8)
+        .or_else(|| position(&V2_DASH_IDS).map(|i| V2_DASH_IDS_START + i as u8))
+}
+
+/// The command for short ID `id`, or `None` if it's unassigned or unimplemented.
+fn v2_command(id: u8) -> Option<&'static str> {
+    let command = match id.checked_sub(V2_DASH_IDS_START) {
+        Some(i) => V2_DASH_IDS.get(usize::from(i)),
+        None => V2_BITCOIN_IDS.get(usize::from(id)),
+    }?;
+    (!command.is_empty()).then_some(*command)
+}
+
+/// Read the command of extended-format V2 contents, following Dash Core: printable
+/// ASCII up to the first NUL, and only NULs after it.
+fn v2_extended_command(field: &[u8; V2_COMMAND_LEN]) -> Option<&str> {
+    let len = field.iter().position(|&b| b == 0).unwrap_or(field.len());
+    let (command, padding) = field.split_at(len);
+    if command.iter().any(|&b| !(b' '..=0x7f).contains(&b)) || padding.iter().any(|&b| b != 0) {
+        return None;
+    }
+    core::str::from_utf8(command).ok()
 }
 
 impl RawNetworkMessage {
@@ -848,6 +1018,7 @@ mod test {
 
     use super::message_network::{Reject, RejectReason, VersionMessage};
     use super::{CommandString, NetworkMessage, RawNetworkMessage, *};
+    use crate::BlockHash;
     use crate::bip152::BlockTransactionsRequest;
     use crate::blockdata::block::{self, Block};
     use crate::blockdata::script::ScriptBuf;
@@ -859,11 +1030,18 @@ mod test {
     use crate::network::message_blockdata::{GetBlocksMessage, GetHeadersMessage, Inventory};
     use crate::network::message_bloom::{BloomFlags, FilterAdd, FilterLoad};
     use crate::network::message_compact_blocks::{GetBlockTxn, SendCmpct};
+    use crate::network::message_sml::GetMnListDiff;
     use test_case::test_case;
 
+    #[cfg(feature = "core-block-hash-use-x11")]
+    use crate::bls_sig_utils::BLSSignature;
+    #[cfg(feature = "core-block-hash-use-x11")]
+    use crate::hash_types::CycleHash;
     use crate::network::message_filter::{
         CFCheckpt, CFHeaders, CFilter, GetCFCheckpt, GetCFHeaders, GetCFilters,
     };
+    #[cfg(feature = "core-block-hash-use-x11")]
+    use crate::pow::CompactTarget;
 
     fn hash(slice: [u8; 32]) -> Hash {
         Hash::from_slice(&slice).unwrap()
@@ -1320,11 +1498,6 @@ mod test {
     #[test]
     #[cfg(feature = "core-block-hash-use-x11")]
     fn test_encode_decode_dash_specific_messages() {
-        use crate::bls_sig_utils::BLSSignature;
-        use crate::hash_types::CycleHash;
-        use crate::network::message_sml::GetMnListDiff;
-        use crate::{ChainLock, InstantLock};
-
         let messages: Vec<NetworkMessage> = vec![
             NetworkMessage::SendDsq(true),
             NetworkMessage::SendDsq(false),
@@ -1395,7 +1568,7 @@ mod test {
             prev_blockhash: hash_x11([1u8; 32]).into(),
             merkle_root: hash([2u8; 32]).into(),
             time: 1234567890,
-            bits: crate::pow::CompactTarget::from_consensus(0x1d00ffff),
+            bits: CompactTarget::from_consensus(0x1d00ffff),
             nonce: 42,
         };
 
@@ -1445,5 +1618,131 @@ mod test {
             .expect("Failed to decode unknown message");
 
         assert_eq!(unknown_msg, decoded, "Round-trip failed for unknown message");
+    }
+
+    #[test]
+    fn test_v2_short_ids_match_dash_core() {
+        let pinned = [
+            ("addr", 1),
+            ("cmpctblock", 4),
+            ("filteradd", 6),
+            ("ping", 18),
+            ("pong", 19),
+            ("addrv2", 28),
+            ("spork", 128),
+            ("senddsq", 130),
+            ("getmnlistd", 143),
+            ("clsig", 160),
+            ("isdlock", 161),
+            ("sendheaders2", 164),
+            ("headers2", 165),
+            ("qrinfo", 167),
+            ("platformban", 168),
+        ];
+        for (command, id) in pinned {
+            assert_eq!(v2_short_id(command), Some(id), "{}", command);
+            assert_eq!(v2_command(id), Some(command), "{}", id);
+        }
+        for id in [0, 5].into_iter().chain(29..128).chain(169..=u8::MAX) {
+            assert_eq!(v2_command(id), None, "short ID {} must be unassigned", id);
+        }
+        assert_eq!(v2_short_id("feefilter"), None);
+        assert_eq!(v2_short_id("version"), None);
+        assert_eq!(v2_short_id(""), None);
+        for id in 1..=u8::MAX {
+            if let Some(command) = v2_command(id) {
+                assert_eq!(v2_short_id(command), Some(id), "{} is listed twice", command);
+            }
+        }
+    }
+
+    #[test]
+    fn test_v2_short_format_round_trip() {
+        let messages = [
+            NetworkMessage::Ping(0x1234567890abcdef),
+            NetworkMessage::Pong(0xfedcba0987654321),
+            NetworkMessage::Inv(vec![]),
+            NetworkMessage::GetData(vec![]),
+            NetworkMessage::NotFound(vec![]),
+            NetworkMessage::MemPool,
+            NetworkMessage::FilterClear,
+            NetworkMessage::SendHeaders2,
+            NetworkMessage::SendDsq(true),
+            NetworkMessage::GetMnListD(GetMnListDiff {
+                base_block_hash: BlockHash::all_zeros(),
+                block_hash: BlockHash::from_byte_array([7u8; 32]),
+            }),
+        ];
+        for message in messages {
+            let encoded = message.consensus_encode_v2();
+            assert_eq!(Some(encoded[0]), v2_short_id(message.cmd()), "{}", message.cmd());
+            assert_eq!(&encoded[1..], message.consensus_encode_payload());
+            let decoded = NetworkMessage::consensus_decode_v2(&encoded).unwrap();
+            assert_eq!(decoded.as_ref(), Some(&message), "{}", message.cmd());
+        }
+    }
+
+    #[test]
+    fn test_v2_extended_format_round_trip() {
+        let addr = Address::new(&(Ipv4Addr::LOCALHOST, 9999).into(), ServiceFlags::NONE);
+        let version = NetworkMessage::Version(VersionMessage {
+            version: 70015,
+            services: ServiceFlags::NONE,
+            timestamp: 0,
+            receiver: addr.clone(),
+            sender: addr,
+            nonce: 0,
+            user_agent: "/test/".to_string(),
+            start_height: 0,
+            relay: false,
+            mn_auth_challenge: [0u8; 32],
+            masternode_connection: false,
+        });
+        // An unknown command must go out under its real name, not `cmd()`'s "unknown".
+        let unknown = NetworkMessage::Unknown {
+            command: CommandString::try_from_static("custom").unwrap(),
+            payload: vec![0xaa, 0xbb, 0xcc, 0xdd],
+        };
+        let messages = [
+            (version, b"version\0\0\0\0\0"),
+            (unknown, b"custom\0\0\0\0\0\0"),
+            // feefilter's short ID slot is empty in Dash.
+            (NetworkMessage::FeeFilter(1000), b"feefilter\0\0\0"),
+        ];
+        for (message, command) in messages {
+            let encoded = message.consensus_encode_v2();
+            assert_eq!(encoded[0], V2_EXTENDED_ID);
+            assert_eq!(&encoded[1..1 + V2_COMMAND_LEN], &command[..]);
+            assert_eq!(&encoded[1 + V2_COMMAND_LEN..], message.consensus_encode_payload());
+            let decoded = NetworkMessage::consensus_decode_v2(&encoded).unwrap();
+            assert_eq!(decoded, Some(message));
+        }
+    }
+
+    #[test]
+    fn test_v2_decode_drops_what_dash_core_drops() {
+        // No message ID
+        assert_eq!(NetworkMessage::consensus_decode_v2(&[]).unwrap(), None);
+        // Extended marker without a full 12-byte command
+        assert_eq!(NetworkMessage::consensus_decode_v2(&[0, b'v', b'e', b'r']).unwrap(), None);
+        // Unassigned short IDs, including feefilter's
+        for id in [5u8, 29, 127, 169, 255] {
+            assert_eq!(NetworkMessage::consensus_decode_v2(&[id, 1, 2]).unwrap(), None);
+        }
+        // Non-printable command, and a non-NUL byte after the padding starts
+        let mut bad = [0u8; 1 + V2_COMMAND_LEN];
+        bad[1] = 0x01;
+        assert_eq!(NetworkMessage::consensus_decode_v2(&bad).unwrap(), None);
+        let mut bad = [0u8; 1 + V2_COMMAND_LEN];
+        bad[1..4].copy_from_slice(b"inv");
+        bad[5] = b'x';
+        assert_eq!(NetworkMessage::consensus_decode_v2(&bad).unwrap(), None);
+    }
+
+    #[test]
+    fn test_v2_decode_rejects_malformed_payload() {
+        // A ping nonce is 8 bytes.
+        let ping = v2_short_id("ping").unwrap();
+        assert!(NetworkMessage::consensus_decode_v2(&[ping, 1, 2, 3]).is_err());
     }
 }
