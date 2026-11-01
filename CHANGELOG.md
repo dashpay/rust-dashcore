@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Restore externally persisted spent-output claims with `ManagedWalletInfo::restore_spent_outpoints` in `key-wallet`.
   Claims are held once per wallet and guard every account that holds funds, including one added later.
   It returns the restored outpoints the wallet still holds as UTXOs, which stay credited.
+- `key-wallet-ffi` transaction records expose the version 3 (DIP-0026) owner payouts of a ProRegTx
+  and ProUpRegTx (`payouts`), a shared registration's collateral shares and terms, and ProUpShareTx
+  payloads (`provider_update_share`); a version 3 payload's `script_payout` is empty
 - Make `PublicKey::with_serialized` public
 - `EcdsaPublicKey`, `EcdsaSecretKey`, `EcdsaSignature`, `EcdsaRecSignature`,
   `EcdsaError` and the `ECDSA_*_LEN` constants in `dashcore::ecdsa`
