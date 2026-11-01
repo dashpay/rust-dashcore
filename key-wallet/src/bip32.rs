@@ -438,6 +438,7 @@ impl<'de> serde::Deserialize<'de> for ExtendedPrivKey {
     }
 }
 
+/// Shows the position of the key, never the private key or the chain code.
 impl fmt::Debug for ExtendedPrivKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ExtendedPrivKey")
@@ -445,7 +446,6 @@ impl fmt::Debug for ExtendedPrivKey {
             .field("depth", &self.depth)
             .field("parent_fingerprint", &self.parent_fingerprint)
             .field("child_number", &self.child_number)
-            .field("chain_code", &self.chain_code)
             .finish_non_exhaustive()
     }
 }

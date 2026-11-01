@@ -114,10 +114,20 @@ fn phrase_is_valid_any(normalized: &str) -> bool {
 }
 
 /// BIP39 Mnemonic phrase
-#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mnemonic {
     inner: bip39_crate::Mnemonic,
+}
+
+/// Shows the language and the word count, never the words.
+impl fmt::Debug for Mnemonic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Mnemonic")
+            .field("language", &self.language())
+            .field("word_count", &self.word_count())
+            .finish()
+    }
 }
 
 #[cfg(feature = "bincode")]

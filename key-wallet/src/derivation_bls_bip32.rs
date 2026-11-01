@@ -538,6 +538,7 @@ impl ExtendedBLSPubKey {
     }
 }
 
+/// Shows the position of the key, never the private key or the chain code.
 impl fmt::Debug for ExtendedBLSPrivKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ExtendedBLSPrivKey")
@@ -545,9 +546,7 @@ impl fmt::Debug for ExtendedBLSPrivKey {
             .field("depth", &self.depth)
             .field("parent_fingerprint", &self.parent_fingerprint)
             .field("child_number", &self.child_number)
-            .field("chain_code", &self.chain_code)
-            .field("private_key", &"[REDACTED]")
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
