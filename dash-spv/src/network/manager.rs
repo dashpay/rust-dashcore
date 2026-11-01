@@ -330,8 +330,8 @@ impl NetworkManager for PeerNetworkManager {
         }
     }
 
-    async fn request_answered(&self, key: RequestKey) {
-        self.state.broker.answered(&key).await;
+    async fn release_request(&self, key: RequestKey) {
+        self.state.broker.release(&key).await;
     }
 
     /// Broadcast a message to all connected peers
@@ -1227,7 +1227,7 @@ fn spawn_pump(
                     }
 
                     let mt = MessageType::from_cmd(msg.cmd());
-                    // Early router wake on inbound traffic (`request_answered` notifies again for the
+                    // Early router wake on inbound traffic (`release_request` notifies again for the
                     // real capacity). `cfilter` is skipped: only the last of ~1000 frees anything.
                     if mt != Some(MessageType::CFilter) {
                         broker.wake();

@@ -11,7 +11,7 @@ use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
-use super::pipeline::MnListDiffPipeline;
+use super::pipeline::{DiffKind, MnListDiffPipeline, MNLISTDIFF_DEADLINE};
 use crate::error::SyncResult;
 use crate::network::{NetworkManager, SendRequest};
 use crate::storage::{BlockHeaderStorage, PersistentMasternodeStorage};
@@ -19,7 +19,7 @@ use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_qrinfo::{GetQRInfo, QRInfo};
 use dashcore::BlockHash;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 /// Single enum that serves two roles in the masternode-sync flow:
 ///
@@ -56,6 +56,22 @@ impl Default for PipelineMode {
             qr_info_result: None,
         }
     }
+}
+
+/// How a wanted diff was settled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DiffOutcome {
+    Applied,
+    GivenUp,
+}
+
+/// Whether the one retry of a given-up work-block list has gone out yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WorkListRetry {
+    /// Retried with the next applied tip update, if a quorum still needs the list.
+    Pending,
+    /// Already retried. From here on only the next QRInfo fetches the list.
+    Sent,
 }
 
 /// In-flight QRInfo request: tip hash that was requested and when the request fired.
@@ -126,6 +142,12 @@ pub(super) struct MasternodeSyncState {
     /// without sending (no stored tip, tip at genesis) cannot turn it into a
     /// per-tick retry loop.
     pub(super) last_qrinfo_dispatch: Option<Instant>,
+    /// The last tip update given up, and when. It is not asked for again until the header tip
+    /// moves or [`MNLISTDIFF_DEADLINE`] passes. Without the wait, `tick` would re-ask it on every
+    /// pass. Without the deadline, a chain with no new blocks would never retry it.
+    pub(super) given_up_tip: Option<(BlockHash, Instant)>,
+    /// Targets of the work-block lists given up since the last QRInfo.
+    pub(super) given_up_work_lists: HashMap<BlockHash, WorkListRetry>,
 }
 
 impl MasternodeSyncState {
@@ -137,10 +159,39 @@ impl MasternodeSyncState {
         !self.mnlistdiff_pipeline.is_complete() || self.qrinfo_in_flight.is_some()
     }
 
-    pub(super) fn clear_pending(&mut self) {
-        self.mnlistdiff_pipeline.clear();
+    pub(super) async fn clear_pending(&mut self, network: &Arc<dyn NetworkManager>) {
+        self.mnlistdiff_pipeline.clear(network).await;
         self.qrinfo_in_flight = None;
         self.pipeline_mode = PipelineMode::default();
+    }
+
+    /// Returns the `(base, target)` requests to retry for given-up work-block lists that a quorum
+    /// in the newest list still needs, and marks each as retried. Each base is the nearest lower
+    /// list. A list is retried once.
+    pub(super) async fn retry_given_up_work_lists<H: BlockHeaderStorage>(
+        &mut self,
+        engine: &MasternodeListEngine<H>,
+    ) -> Vec<(BlockHash, BlockHash)> {
+        if !self.given_up_work_lists.values().any(|retry| *retry == WorkListRetry::Pending) {
+            return Vec::new();
+        }
+        let requests: Vec<_> = engine
+            .readable_missing_work_block_list_requests()
+            .await
+            .into_iter()
+            .filter(|(_, target)| {
+                self.given_up_work_lists.get(target) == Some(&WorkListRetry::Pending)
+            })
+            .collect();
+        self.given_up_work_lists.retain(|_, retry| *retry == WorkListRetry::Sent);
+        for (_, target) in &requests {
+            self.given_up_work_lists.insert(*target, WorkListRetry::Sent);
+        }
+        requests
+    }
+
+    pub(super) fn forget_given_up_work_lists(&mut self) {
+        self.given_up_work_lists.clear();
     }
 
     /// Record that a QRInfo request was actually fired for `tip_height`. Bumps
@@ -401,6 +452,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     /// lightweight completion path when the response drains the pipeline.
     pub(super) async fn send_tip_mnlistdiff_update(
         &mut self,
+        now: Instant,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         let new_tip_hash = {
@@ -419,19 +471,73 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             return Ok(vec![]);
         };
 
-        if base_hash == new_tip_hash {
+        if base_hash == new_tip_hash
+            || self.sync_state.given_up_tip.is_some_and(|(tip, _)| tip == new_tip_hash)
+        {
             return Ok(vec![]);
         }
 
         self.sync_state.pipeline_mode = PipelineMode::Incremental;
-        self.sync_state.mnlistdiff_pipeline.queue_requests(vec![(base_hash, new_tip_hash)]);
+        self.sync_state
+            .mnlistdiff_pipeline
+            .queue_requests(DiffKind::TipUpdate, vec![(base_hash, new_tip_hash)], now, network)
+            .await;
         self.sync_state.mnlistdiff_pipeline.send_pending(network).await?;
         Ok(vec![])
     }
 
-    /// Dispatch pipeline completion based on the current `PipelineMode`. Called when
-    /// the mnlistdiff pipeline drains, from either the message handler or the tick
-    /// handler's timeout-cleanup path.
+    /// Settles a wanted diff that was applied or given up, and completes the pipeline once it
+    /// is empty.
+    ///
+    /// A given-up tip update changed nothing, so it publishes nothing and waits before it is
+    /// asked for again, see [`MasternodeSyncState::given_up_tip`]. A given-up work-block list
+    /// still lets the tip update it was fetched for complete.
+    pub(super) async fn settle_diff(
+        &mut self,
+        target: BlockHash,
+        outcome: DiffOutcome,
+        now: Instant,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let Some(kind) = self.sync_state.mnlistdiff_pipeline.release(target, network).await else {
+            return Ok(vec![]);
+        };
+        match (outcome, kind) {
+            (DiffOutcome::Applied, _) => self.progress.add_diffs_processed(1),
+            (DiffOutcome::GivenUp, DiffKind::TipUpdate) => {
+                self.sync_state.given_up_tip = Some((target, now));
+                return Ok(vec![]);
+            }
+            (DiffOutcome::GivenUp, DiffKind::WorkBlockList) => {
+                self.sync_state.given_up_work_lists.entry(target).or_insert(WorkListRetry::Pending);
+            }
+        }
+        if !self.sync_state.mnlistdiff_pipeline.is_complete() {
+            return Ok(vec![]);
+        }
+        tracing::info!("All MnListDiff responses received");
+        self.complete_pipeline(network).await
+    }
+
+    /// Give up every diff wanted past [`MNLISTDIFF_DEADLINE`] at `now`.
+    pub(super) async fn give_up_expired_diffs(
+        &mut self,
+        now: Instant,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let mut events = Vec::new();
+        for target in self.sync_state.mnlistdiff_pipeline.expired(now) {
+            tracing::warn!(
+                "No usable MnListDiff for {} within {}s, giving it up",
+                target,
+                MNLISTDIFF_DEADLINE.as_secs()
+            );
+            events.extend(self.settle_diff(target, DiffOutcome::GivenUp, now, network).await?);
+        }
+        Ok(events)
+    }
+
+    /// Dispatch pipeline completion based on the current `PipelineMode`.
     ///
     /// After an `Incremental` pipeline finishes, re-evaluate `next_pipeline_mode` at
     /// the now-advanced tip and fire a catch-up QRInfo if the cycle gate now picks
@@ -467,7 +573,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
                             "Incremental complete, cycle gate now picks QRInfo, firing catch-up"
                         );
                         self.sync_state.qrinfo_retry_count = 0;
-                        self.sync_state.clear_pending();
+                        self.sync_state.clear_pending(network).await;
                         match self.send_qrinfo_for_tip(network).await {
                             Ok(extra) => events.extend(extra),
                             Err(e) => tracing::warn!(

@@ -181,7 +181,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 
         if matched.is_some() {
             if let Some(locator) = answered_locator {
-                network.request_answered(RequestKey::Headers(locator)).await;
+                network.release_request(RequestKey::Headers(locator)).await;
             }
         } else if !headers.is_empty() {
             if let Some(fork_height) = self.fork_height(headers).await? {
