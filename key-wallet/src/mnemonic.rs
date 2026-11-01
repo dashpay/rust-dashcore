@@ -106,10 +106,35 @@ fn nfkd_zeroizing(phrase: &str) -> Option<Zeroizing<String>> {
     if is_nfkd_quick(phrase.chars()) == IsNormalized::Yes {
         return None;
     }
-    let len = phrase.nfkd().map(char::len_utf8).sum();
-    let mut normalized = Zeroizing::new(String::with_capacity(len));
-    normalized.extend(phrase.nfkd());
-    Some(normalized)
+    Some(collect_zeroizing(phrase.nfkd()))
+}
+
+/// `chars` collected into a buffer that is wiped when dropped. The buffer is allocated at its
+/// final size, so it never reallocates and leaves no partial copy behind.
+fn collect_zeroizing<I>(chars: I) -> Zeroizing<String>
+where
+    I: Iterator<Item = char> + Clone,
+{
+    let len = chars.clone().map(char::len_utf8).sum();
+    let mut collected = Zeroizing::new(String::with_capacity(len));
+    collected.extend(chars);
+    collected
+}
+
+/// `s` with every `from` replaced by `to`, as [`str::replace`] does, in a buffer that is wiped
+/// when dropped and allocated at its final size.
+fn replace_zeroizing(s: &str, from: &str, to: &str) -> Zeroizing<String> {
+    let count = s.matches(from).count();
+    let len = s.len() - count * from.len() + count * to.len();
+    let mut replaced = Zeroizing::new(String::with_capacity(len));
+    let mut rest = 0;
+    for (start, _) in s.match_indices(from) {
+        replaced.push_str(&s[rest..start]);
+        replaced.push_str(to);
+        rest = start + from.len();
+    }
+    replaced.push_str(&s[rest..]);
+    replaced
 }
 
 /// `true` if `word` is a member of *any* supported language's wordlist.
@@ -345,14 +370,25 @@ impl Mnemonic {
     /// space (ends trimmed). This is **input tolerance** for user-typed
     /// phrases, NOT BIP39 seed normalization — [`Self::to_seed`] performs the
     /// BIP39 (NFKD-only) normalization required for seed derivation.
+    ///
+    /// The intermediate copies are wiped when dropped, and the returned string is allocated at
+    /// its final size. The lowercase copy comes from [`str::to_lowercase`], which can reallocate,
+    /// leaving an earlier buffer unwiped, when a lowercase form is longer than its character.
     pub fn normalize_phrase(input: &str) -> String {
-        input
-            .nfkd()
-            .collect::<String>()
-            .to_lowercase()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
+        let nfkd = nfkd_zeroizing(input);
+        let nfkd = nfkd.as_deref().map_or(input, String::as_str);
+        let lower = Zeroizing::new(nfkd.to_lowercase());
+        let words: Vec<&str> = lower.split_whitespace().collect();
+        let len =
+            words.iter().map(|word| word.len()).sum::<usize>() + words.len().saturating_sub(1);
+        let mut normalized = String::with_capacity(len);
+        for (i, word) in words.iter().enumerate() {
+            if i > 0 {
+                normalized.push(' ');
+            }
+            normalized.push_str(word);
+        }
+        normalized
     }
 
     /// Minimal cleanup of user-typed recover input for display/editing, plus
@@ -383,10 +419,15 @@ impl Mnemonic {
         //     inverted. We mirror M* via `is_combining_mark` so NFKD-decomposed
         //     input keeps its combining marks (e.g. Japanese voiced kana か+゙,
         //     Latin diacritics) instead of being corrupted.
-        let mut s: String = phrase
-            .chars()
-            .filter(|&c| c.is_alphabetic() || is_combining_mark(c) || c.is_whitespace())
-            .collect();
+        //
+        //     Every intermediate copy below is a `Zeroizing` buffer, wiped when replaced or
+        //     dropped, and allocated at its final size so it never reallocates. Only
+        //     `normalize_phrase`'s `to_lowercase` can reallocate.
+        let s = collect_zeroizing(
+            phrase
+                .chars()
+                .filter(|&c| c.is_alphabetic() || is_combining_mark(c) || c.is_whitespace()),
+        );
 
         // (2) canonicalize every Unicode whitespace to an ASCII space — not
         //     just '\n'. Step (1) keeps all whitespace, and the valid-phrase
@@ -394,30 +435,27 @@ impl Mnemonic {
         //     CRLF/tab-delimited phrase would otherwise come back with '\r' /
         //     '\t' still in it. (Seed-equivalent: BIP-39 NFKD maps U+3000 and
         //     friends to U+0020 anyway.)
-        s = s
-            .chars()
-            .map(|c| {
-                if c.is_whitespace() {
-                    ' '
-                } else {
-                    c
-                }
-            })
-            .collect();
+        let mut s = collect_zeroizing(s.chars().map(|c| {
+            if c.is_whitespace() {
+                ' '
+            } else {
+                c
+            }
+        }));
 
         // (3) collapse "  " -> " "
         while s.contains("  ") {
-            s = s.replace("  ", " ");
+            s = replace_zeroizing(&s, "  ", " ");
         }
 
         // (4) trim leading whitespace only (DashSync deletes index-0 ws in a loop)
-        let mut s = s.trim_start().to_string();
+        let mut s = Zeroizing::new(s.trim_start().to_string());
 
         // (5) normalize + validity check; if valid, return the cleaned (pre-
         //     normalize) string verbatim — DashSync `return s;`
-        let normalized = Self::normalize_phrase(&s);
+        let normalized = Zeroizing::new(Self::normalize_phrase(&s));
         if phrase_is_valid_any(&normalized) {
-            return s;
+            return core::mem::take(&mut *s);
         }
 
         // (6) CJK auto-split: walk the words of the *normalized* phrase; for
@@ -434,11 +472,12 @@ impl Mnemonic {
         //     form (the wordlist + `to_seed` use it), so emitting it from the
         //     split path is correct. (DSBIP39Mnemonic has the same
         //     original-vs-NFKD mismatch; this fixes it.)
-        s = s.nfkd().collect::<String>();
+        s = collect_zeroizing(s.nfkd());
 
         let dbl_ideo = format!("{IDEO_SP}{IDEO_SP}");
         for word in normalized.split(' ') {
-            let wchars: Vec<char> = word.chars().collect();
+            let mut wchars = Zeroizing::new(Vec::with_capacity(word.chars().count()));
+            wchars.extend(word.chars());
             if wchars.is_empty() {
                 continue;
             }
@@ -451,16 +490,18 @@ impl Mnemonic {
             while i < wlen {
                 let mut j = core::cmp::min(8, wlen - i);
                 while j >= 1 {
-                    let candidate: String = wchars[i..i + j].iter().collect();
+                    let candidate = collect_zeroizing(wchars[i..i + j].iter().copied());
                     if word_in_any_list(&candidate) {
-                        let wrapped = format!("{IDEO_SP}{candidate}{IDEO_SP}");
-                        s = s.replace(&candidate, &wrapped);
+                        let wrapped = collect_zeroizing(
+                            IDEO_SP.chars().chain(candidate.chars()).chain(IDEO_SP.chars()),
+                        );
+                        s = replace_zeroizing(&s, &candidate, &wrapped);
                         while s.contains(&dbl_ideo) {
-                            s = s.replace(&dbl_ideo, IDEO_SP);
+                            s = replace_zeroizing(&s, &dbl_ideo, IDEO_SP);
                         }
                         // CFStringTrimWhitespace strips leading/trailing ws,
                         // incl. U+3000 (which `str::trim` also treats as ws).
-                        s = s.trim().to_string();
+                        s = Zeroizing::new(s.trim().to_string());
                         i += j - 1; // outer `i += 1` advances past the match
                         break;
                     }
@@ -470,7 +511,7 @@ impl Mnemonic {
             }
         }
 
-        s
+        core::mem::take(&mut *s)
     }
 }
 
@@ -965,6 +1006,43 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_phrase_allocates_its_final_size() {
+        // U+023A's lowercase form is longer than it is.
+        for input in
+            ["  ABANDON\tabout \n legal  ", "", "   ", "\u{00c1}baco  \u{00e1}baco", "\u{023a}bc"]
+        {
+            let normalized = Mnemonic::normalize_phrase(input);
+            assert_eq!(normalized.capacity(), normalized.len(), "{:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_collect_zeroizing_allocates_its_final_size() {
+        let text = "abandon\u{3000}\u{304d}\u{3087}\u{3046}";
+        let collected = collect_zeroizing(text.chars());
+        assert_eq!(collected.as_str(), text);
+        assert_eq!(collected.capacity(), collected.len());
+    }
+
+    #[test]
+    fn test_replace_zeroizing_matches_str_replace_at_its_final_size() {
+        let cases = [
+            ("a  b   c    d", "  ", " "),
+            ("", "  ", " "),
+            ("abc", "x", "yy"),
+            ("ab", "", "x"),
+            ("aaaa", "aa", "a"),
+            ("\u{304d}\u{3087}\u{3046}", "\u{3087}", "\u{3000}\u{3087}\u{3000}"),
+            ("\u{3000}\u{3000}x\u{3000}\u{3000}", "\u{3000}\u{3000}", "\u{3000}"),
+        ];
+        for (text, from, to) in cases {
+            let replaced = replace_zeroizing(text, from, to);
+            assert_eq!(replaced.as_str(), text.replace(from, to), "{:?}", (text, from, to));
+            assert_eq!(replaced.capacity(), replaced.len(), "{:?}", (text, from, to));
+        }
+    }
+
+    #[test]
     fn test_normalize_phrase_unicode_forms_converge() {
         use unicode_normalization::UnicodeNormalization;
         // NFC and NFD of the same accented text both normalize (NFKD) identically.
@@ -1122,6 +1200,28 @@ mod tests {
             Mnemonic::cleanup_phrase(&nospace).contains(IDEO_SP),
             "no-space Chinese phrase should get ideographic spaces"
         );
+    }
+
+    /// Exact outputs, pinned to what `cleanup_phrase` returned before its intermediate copies
+    /// were made wiping.
+    #[test]
+    fn cleanup_phrase_exact_outputs() {
+        // Not a valid phrase: punctuation is dropped, whitespace collapsed, and only the start
+        // trimmed.
+        assert_eq!(Mnemonic::cleanup_phrase("  foo,,  bar\t\tbaz "), "foo bar baz ");
+        // Not a valid phrase: the result comes back in NFKD form.
+        assert_eq!(Mnemonic::cleanup_phrase("caf\u{e9} x"), "cafe\u{301} x");
+        // Simplified-Chinese words are single ideographs, so a no-space phrase comes back with
+        // an ideographic space between every two words.
+        let entropy = [
+            0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6, 0x07, 0x18, 0x29, 0x3a, 0x4b, 0x5c, 0x6d, 0x7e,
+            0x8f, 0x90,
+        ];
+        let phrase =
+            Mnemonic::from_entropy(&entropy, Language::ChineseSimplified).unwrap().phrase();
+        let nospace: String = phrase.split(' ').collect();
+        let expected = phrase.split(' ').collect::<Vec<_>>().join(IDEO_SP);
+        assert_eq!(Mnemonic::cleanup_phrase(&nospace), expected);
     }
 
     #[test]
