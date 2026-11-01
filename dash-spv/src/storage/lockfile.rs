@@ -7,7 +7,15 @@ use std::path::{Path, PathBuf};
 use crate::error::{StorageError, StorageResult};
 
 /// Lock file that prevents concurrent access from multiple processes.
+///
+/// On Unix the file is unlinked on drop (see `Drop`). Elsewhere it stays. On Windows, deleting a
+/// file that is still open either frees the name at once (POSIX semantics) or leaves the file
+/// delete-pending until its last handle closes. With the first, std exposes no file identity on
+/// stable Rust to check, so an earlier opener could lock the deleted file while a later one locks
+/// a new file at the path; with the second, a later opener fails to open the path. The next holder
+/// truncates the kept file once locked.
 pub(super) struct LockFile {
+    #[cfg(unix)]
     path: PathBuf,
     _file: File,
 }
@@ -20,6 +28,7 @@ impl LockFile {
         for _ in 0..OPEN_ATTEMPTS {
             if let Some(file) = hold(&path, open(&path)?)? {
                 return Ok(Self {
+                    #[cfg(unix)]
                     path,
                     _file: file,
                 });
@@ -44,9 +53,9 @@ fn open(path: &Path) -> StorageResult<File> {
 }
 
 /// Locks `file`, opened at `path`, and writes this process's PID into it. `None` when the file
-/// was unlinked from `path` before the lock was taken: a holder's `Drop` unlinks it before it
-/// unlocks, so an opener that opened it earlier would hold a lock no later opener sees (they
-/// create a new file at `path`), and must open again.
+/// was unlinked from `path` before the lock was taken: a holder's `Drop` unlinks it (on Unix)
+/// before it unlocks, so an opener that opened it earlier would hold a lock no later opener sees
+/// (they create a new file at `path`), and must open again.
 fn hold(path: &Path, mut file: File) -> StorageResult<Option<File>> {
     let locked = classify_lock_result(file.try_lock(), path)?;
     if locked && !is_at(&file, path)? {
@@ -75,8 +84,8 @@ fn is_at(file: &File, path: &Path) -> StorageResult<bool> {
     }
 }
 
-/// Elsewhere std has no file identity to compare, so the check is skipped and the lock behaves as
-/// it did before the check was added.
+/// Elsewhere a holder never unlinks the lock file (see [`LockFile`]): unless something else
+/// deletes or replaces it, the file at `path` is the one opened.
 #[cfg(not(unix))]
 fn is_at(_: &File, _: &Path) -> StorageResult<bool> {
     Ok(true)
@@ -118,9 +127,10 @@ fn classify_lock_result(
     }
 }
 
+#[cfg(unix)]
 impl Drop for LockFile {
-    /// Unlinks the file while the lock is still held (the file closes after this body), the
-    /// order [`hold`]'s check relies on.
+    /// Unlinks the file while the lock is still held (the file closes after this body), the order
+    /// [`hold`]'s check relies on.
     fn drop(&mut self) {
         if let Err(e) = std::fs::remove_file(&self.path) {
             tracing::warn!("Failed to remove lock file: {}", e);
@@ -292,6 +302,9 @@ mod tests {
             assert!(lock_path.exists(), "Lock file should exist while held");
         } // lock dropped here
 
+        #[cfg(unix)]
         assert!(!lock_path.exists(), "Lock file should be removed after drop");
+        #[cfg(not(unix))]
+        assert!(lock_path.exists(), "Lock file should stay after drop");
     }
 }

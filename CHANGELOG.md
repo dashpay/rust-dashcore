@@ -145,6 +145,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Off Unix (Windows), `dash-spv` no longer deletes its data-directory lock file when the lock is
+  dropped: when Windows deletes with POSIX semantics, an opener holding the deleted file and a
+  later opener of a new file at the path could both hold the lock, and otherwise a later opener
+  failed to open the path until every handle to the deleted file closed
 - In `key-wallet`, `Seed`'s `Display` no longer prints the seed's first and last 4 bytes (it now
   matches its `Debug`, `Seed(***)`), `RootExtendedPubKey`'s `Debug` no longer prints the chain code,
   and the `Debug` of `ChainCode` and `Fingerprint` no longer ends with a stray `)`
