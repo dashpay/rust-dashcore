@@ -89,6 +89,19 @@ pub enum QuorumValidationError {
     CorruptedCodeExecution(String),
     #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]
     ExpectedOnlyRotatedQuorums(QuorumHash, LLMQType),
+
+    /// A commitment served as part of a QRInfo's active rotation set is not
+    /// held, with the same entry hash, by the list at `block_hash`, the block
+    /// the set was asked for.
+    ///
+    /// Kept last: persisted statuses encode this enum by variant index.
+    #[error(
+        "Commitment for quorum {quorum_hash} is not in the masternode list at block {block_hash}"
+    )]
+    CommitmentNotInList {
+        quorum_hash: QuorumHash,
+        block_hash: BlockHash,
+    },
 }
 
 impl From<SmlError> for QuorumValidationError {
