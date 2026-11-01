@@ -131,9 +131,7 @@ impl<'a> Iterator for Instructions<'a> {
     fn next(&mut self) -> Option<Result<Instruction<'a>, Error>> {
         let &byte = self.data.next()?;
 
-        // classify parameter does not really matter here since we are only using
-        // it for pushes and nums
-        match opcodes::All::from(byte).classify(opcodes::ClassifyContext::Legacy) {
+        match opcodes::All::from(byte).classify() {
             opcodes::Class::PushBytes(n) => {
                 // make sure safety argument holds across refactorings
                 let n: u32 = n;

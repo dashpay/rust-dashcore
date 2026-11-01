@@ -376,7 +376,6 @@ where
                     | NetworkMessage::SendHeaders2
                     | NetworkMessage::SendCmpct(_)
                     | NetworkMessage::SendAddrV2
-                    | NetworkMessage::WtxidRelay
                     | NetworkMessage::FeeFilter(_)
                     | NetworkMessage::SendDsq(_) => { /* ignore */ }
                     _ => {}

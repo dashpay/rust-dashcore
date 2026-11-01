@@ -42,9 +42,7 @@ pub mod misc {
                     break;
                 }
             } else {
-                i += match opcodes::All::from((*haystack)[i])
-                    .classify(opcodes::ClassifyContext::Legacy)
-                {
+                i += match opcodes::All::from((*haystack)[i]).classify() {
                     opcodes::Class::PushBytes(n) => n as usize + 1,
                     opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA1) => 2,
                     opcodes::Class::Ordinary(opcodes::Ordinary::OP_PUSHDATA2) => 3,

@@ -49,7 +49,7 @@ use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
 use crate::consensus::encode::VarInt;
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::hash_types::{InputsHash, Txid, Wtxid};
+use crate::hash_types::{InputsHash, Txid};
 use crate::prelude::*;
 pub use crate::transaction::outpoint::*;
 use crate::{ScriptBuf, Weight, io};
@@ -235,15 +235,11 @@ impl Transaction {
         cloned_tx.txid().into()
     }
 
-    /// Computes the txid. For non-segwit transactions this will be identical
-    /// to the output of `wtxid()`, but for segwit transactions,
-    /// this will give the correct txid (not including witnesses) while `wtxid`
-    /// will also hash witnesses.
+    /// Computes the txid. Witnesses are not hashed.
     ///
     /// For an asset unlock with payload version 2 or higher the quorum signing info is zeroed
     /// before hashing, as Core does, so every re-signed instance of one withdrawal shares one
-    /// txid. [`Self::instance_hash`] tells those instances apart, and so does `wtxid()`, which
-    /// hashes them in full.
+    /// txid. [`Self::instance_hash`] tells those instances apart.
     pub fn txid(&self) -> Txid {
         if !self.has_stable_txid() {
             return self.instance_hash();
@@ -311,16 +307,6 @@ impl Transaction {
     /// Otherwise it is gotten by association from the payload type.
     pub fn tx_type(&self) -> TransactionType {
         TransactionType::from_optional_payload(&self.special_transaction_payload)
-    }
-
-    /// Computes SegWit-version of the transaction id (wtxid). For transaction with the witness
-    /// data this hash includes witness, for pre-witness transaction it is equal to `txid()`,
-    /// except for asset unlocks with payload version 2 or higher, where it equals
-    /// [`Self::instance_hash`].
-    pub fn wtxid(&self) -> Wtxid {
-        let mut enc = Wtxid::engine();
-        self.consensus_encode(&mut enc).expect("engines don't error");
-        Wtxid::from_engine(enc)
     }
 
     /// Encodes the signing data from which a signature hash for a given input index with a given
@@ -807,70 +793,6 @@ pub struct InputWeightPrediction {
 }
 
 impl InputWeightPrediction {
-    /// Input weight prediction corresponding to spending of P2WPKH output with the largest possible
-    /// DER-encoded signature.
-    ///
-    /// If the input in your transaction uses P2WPKH you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    ///
-    /// This is useful when you **do not** use [signature grinding] and want to ensure you are not
-    /// under-paying. See [`ground_p2wpkh`](Self::ground_p2wpkh) if you do use signature grinding.
-    ///
-    /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
-    pub const P2WPKH_MAX: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 73 + 1 + 33,
-    };
-
-    /// Input weight prediction corresponding to spending of taproot output using the key and
-    /// default sighash.
-    ///
-    /// If the input in your transaction uses Taproot key spend you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    pub const P2TR_KEY_DEFAULT_SIGHASH: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 64,
-    };
-
-    /// Input weight prediction corresponding to spending of taproot output using the key and
-    /// **non**-default sighash.
-    ///
-    /// If the input in your transaction uses Taproot key spend you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    pub const P2TR_KEY_NON_DEFAULT_SIGHASH: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 65,
-    };
-
-    /// Input weight prediction corresponding to spending of P2WPKH output using [signature
-    /// grinding].
-    ///
-    /// If the input in your transaction uses P2WPKH and you use signature grinding you can use this
-    /// instead of [`InputWeightPrediction::new`]. See [`P2WPKH_MAX`](Self::P2WPKH_MAX) if you don't
-    /// use signature grinding.
-    ///
-    /// Note: `bytes_to_grind` is usually `1` because of exponential cost of higher values.
-    ///
-    /// # Panics
-    ///
-    /// The function panics in const context and debug builds if `bytes_to_grind` is higher than 62.
-    ///
-    /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
-    pub const fn ground_p2wpkh(bytes_to_grind: usize) -> Self {
-        // Written to trigger const/debug panic for unreasonably high values.
-        let der_signature_size = 10 + (62 - bytes_to_grind);
-        let witness_size = 1 // length of element count varint
-            + 1 // length of element size varint (max signature length is 73B)
-            + der_signature_size
-            + 1 // sighash flag
-            + 1 // length of element size varint
-            + 33; // length of (always-compressed) public key
-        InputWeightPrediction {
-            script_size: 0,
-            witness_size,
-        }
-    }
-
     /// Computes the prediction for a single input.
     pub fn new<T>(input_script_len: usize, witness_element_lengths: T) -> Self
     where
@@ -1078,10 +1000,6 @@ mod tests {
             format!("{:x}", realtx.txid()),
             "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string()
         );
-        assert_eq!(
-            format!("{:x}", realtx.wtxid()),
-            "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string()
-        );
         assert_eq!(realtx.check_weight().to_wu() as usize, tx_bytes.len() * WITNESS_SCALE_FACTOR);
         assert_eq!(realtx.size(), tx_bytes.len());
         assert_eq!(realtx.vsize(), tx_bytes.len());
@@ -1117,10 +1035,6 @@ mod tests {
         assert_eq!(
             format!("{:x}", realtx.txid()),
             "f5864806e3565c34d1b41e716f72609d00b55ea5eac5b924c9719a842ef42206".to_string()
-        );
-        assert_eq!(
-            format!("{:x}", realtx.wtxid()),
-            "80b7d8a82d5d5bf92905b06f2014dd699e03837ca172e3a59d51426ebbe3e7f5".to_string()
         );
         const EXPECTED_WEIGHT: Weight = Weight::from_wu(442);
         assert_eq!(realtx.check_weight(), EXPECTED_WEIGHT);
@@ -1162,7 +1076,6 @@ mod tests {
 
         assert_eq!(serialize(&tx), hex!(&format!("{core_prefix}{body}")));
         assert_eq!(tx.txid(), core_txid.parse::<Txid>().unwrap());
-        assert_eq!(tx.wtxid().to_byte_array(), tx.txid().to_byte_array());
     }
 
     #[test_case(0, "660b9a1c39fe564be27f61ef3693eb42a98ff6b431bd58e621ae6a0e45222c59"; "version 0")]
@@ -1516,10 +1429,6 @@ mod tests {
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
         assert_eq!(
-            format!("{:x}", tx.wtxid()),
-            "d6ac4a5e61657c4c604dcde855a1db74ec6b3e54f32695d72c5e11c7761ea1b4"
-        );
-        assert_eq!(
             format!("{:x}", tx.txid()),
             "9652aa62b0e748caeec40c4cb7bc17c6792435cc3dfe447dd1ca24f912a1c6ec"
         );
@@ -1536,10 +1445,6 @@ mod tests {
         );
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
-        assert_eq!(
-            format!("{:x}", tx.wtxid()),
-            "971ed48a62c143bbd9c87f4bafa2ef213cfa106c6e140f111931d0be307468dd"
-        );
         assert_eq!(
             format!("{:x}", tx.txid()),
             "971ed48a62c143bbd9c87f4bafa2ef213cfa106c6e140f111931d0be307468dd"

@@ -253,8 +253,6 @@ pub enum NetworkMessage {
     Reject(message_network::Reject),
     /// `feefilter`
     FeeFilter(i64),
-    /// `wtxidrelay`
-    WtxidRelay,
     /// `addrv2`
     AddrV2(Vec<AddrV2Message>),
     /// `sendaddrv2`
@@ -326,7 +324,6 @@ impl NetworkMessage {
             NetworkMessage::Alert(_) => "alert",
             NetworkMessage::Reject(_) => "reject",
             NetworkMessage::FeeFilter(_) => "feefilter",
-            NetworkMessage::WtxidRelay => "wtxidrelay",
             NetworkMessage::AddrV2(_) => "addrv2",
             NetworkMessage::SendAddrV2 => "sendaddrv2",
             NetworkMessage::GetMnListD(_) => "getmnlistd",
@@ -427,7 +424,6 @@ impl Encodable for RawNetworkMessage {
             | NetworkMessage::SendHeaders2
             | NetworkMessage::MemPool
             | NetworkMessage::GetAddr
-            | NetworkMessage::WtxidRelay
             | NetworkMessage::FilterClear
             | NetworkMessage::SendAddrV2 => vec![],
             NetworkMessage::Unknown {
@@ -630,7 +626,6 @@ impl Decodable for RawNetworkMessage {
             "blocktxn" => NetworkMessage::BlockTxn(Decodable::consensus_decode_from_finite_reader(
                 &mut mem_d,
             )?),
-            "wtxidrelay" => NetworkMessage::WtxidRelay,
             "addrv2" => {
                 NetworkMessage::AddrV2(Decodable::consensus_decode_from_finite_reader(&mut mem_d)?)
             }
@@ -847,7 +842,7 @@ mod test {
         // TODO: Impl Rand traits here to easily generate random values.
         let version_msg: VersionMessage = deserialize(&hex!("721101000100000000000000e6e0845300000000010000000000000000000000000000000000ffff0000000000000100000000000000fd87d87eeb4364f22cf54dca59412db7208d47d920cffce83ee8102f5361746f7368693a302e392e39392f2c9f040001")).unwrap();
         let tx: Transaction = deserialize(&hex!("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000")).unwrap();
-        let block: Block = deserialize(&include_bytes!("../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw")[..]).unwrap();
+        let block: Block = deserialize(&include_bytes!("../../tests/data/testnet_block_000000008650f09124958e7352f844f9c15705171ac38ee6668534c5c238b916.raw")[..]).unwrap();
         let header: block::Header = deserialize(&hex!("010000004ddccd549d28f385ab457e98d1b11ce80bfea2c5ab93015ade4973e400000000bf4473e53794beae34e64fccc471dace6ae544180816f89591894e0f417a914cd74d6e49ffff001d323b3a7b")).unwrap();
         let script: ScriptBuf =
             deserialize(&hex!("1976a91431a420903c05a0a7de2de40c9f02ebedbacdc17288ac")).unwrap();
@@ -933,7 +928,6 @@ mod test {
                 hash: hash_x11([255u8; 32]),
             }),
             NetworkMessage::FeeFilter(1000),
-            NetworkMessage::WtxidRelay,
             NetworkMessage::AddrV2(vec![AddrV2Message {
                 addr: AddrV2::Ipv4(Ipv4Addr::new(127, 0, 0, 1)),
                 port: 0,

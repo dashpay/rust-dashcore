@@ -15,6 +15,3 @@ pub mod ecdsa {
 }
 pub mod key;
 pub mod sighash;
-pub mod taproot {
-    pub use dashcore_crypto::taproot::{Error, Signature};
-}

@@ -132,22 +132,19 @@ mod tests {
 
     #[test]
     fn both_merkle_root_functions_return_the_same_result() {
-        // testnet block 000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b
-        let segwit_block = include_bytes!(
-            "../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw"
+        // Dash testnet block 000000230d699c59cacfeeb978940f1352f188b2f778f0168df45c5fa4e93dd2
+        let block_data = include_bytes!(
+            "../../tests/data/testnet_block_000000230d699c59cacfeeb978940f1352f188b2f778f0168df45c5fa4e93dd2.raw"
         );
-        let block: Block = deserialize(&segwit_block[..]).expect("Failed to deserialize block");
+        let block: Block = deserialize(&block_data[..]).expect("Failed to deserialize block");
         assert!(block.check_merkle_root()); // Sanity check.
 
         let hashes_iter = block.txdata.iter().map(|obj| obj.txid().to_raw_hash());
 
-        let mut hashes_array: [sha256d::Hash; 15] = [Hash::all_zeros(); 15];
-        for (i, hash) in hashes_iter.clone().enumerate() {
-            hashes_array[i] = hash;
-        }
+        let mut hashes_vec: Vec<sha256d::Hash> = hashes_iter.clone().collect();
 
         let from_iter = calculate_root(hashes_iter);
-        let from_array = calculate_root_inline(&mut hashes_array);
+        let from_array = calculate_root_inline(&mut hashes_vec);
         assert_eq!(from_iter, from_array);
     }
 }
