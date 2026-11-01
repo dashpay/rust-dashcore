@@ -397,7 +397,10 @@ mod tests {
     use std::sync::Arc;
 
     use bincode::error::DecodeError;
+    use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::consensus::deserialize;
+    use dashcore::hash_types::MerkleRootAssetUnlocks;
+    use dashcore::hashes::Hash;
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::prelude::CoreBlockHeight;
@@ -409,6 +412,7 @@ mod tests {
     };
     use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
+    use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
     use dashcore::Network;
     use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 
@@ -559,13 +563,26 @@ mod tests {
 
     #[tokio::test]
     async fn a_snapshot_restores_the_lists_cycles_and_their_sharing() {
-        for engine in [TestEngine::mainnet_fixture(), chain_engine(), qr_info_engine().await] {
+        let mut with_coinbase = chain_engine();
+        with_coinbase.latest_coinbase = Some(CoinbasePayload {
+            version: 4,
+            best_cl_height: Some(99),
+            best_cl_signature: Some(BLSSignature::from([1; 96])),
+            asset_locked_amount: Some(5),
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::all_zeros()),
+            ..CoinbasePayload::dummy(100)
+        });
+
+        for engine in
+            [TestEngine::mainnet_fixture(), chain_engine(), qr_info_engine().await, with_coinbase]
+        {
             let bytes = engine.snapshot().expect("encodes");
             let restored = TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes)
                 .expect("decodes");
 
             assert_eq!(restored.masternode_lists, engine.masternode_lists);
             assert_eq!(restored.rotated_quorums_per_cycle, engine.rotated_quorums_per_cycle);
+            assert_eq!(restored.latest_coinbase, engine.latest_coinbase);
             assert!(shares_at_least(&engine.masternode_lists, &restored.masternode_lists));
             assert!(distinct(&restored.masternode_lists) <= distinct(&engine.masternode_lists));
             assert!(entries_deduplicated(&restored.masternode_lists));
