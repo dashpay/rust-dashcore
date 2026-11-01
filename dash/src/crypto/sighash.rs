@@ -873,9 +873,11 @@ impl<'a> Encodable for Annex<'a> {
 /// Writes `script_code` the way Dash Core's `CTransactionSignatureSerializer::SerializeScriptCode`
 /// (src/script/interpreter.cpp) does: every `OP_CODESEPARATOR` opcode is left out, and the length
 /// prefix is the script's length minus those opcodes. Like Core, the opcodes are read with
-/// `GetScriptOp` (src/script/script.cpp), so a `0xab` byte inside push data is kept, and when a push
-/// runs past the end of the script, nothing from that push on is written, while the length prefix
-/// still counts the whole script.
+/// `GetScriptOp` (src/script/script.cpp), so a `0xab` byte inside push data is kept. When a push
+/// runs past the end of the script, its opcode is written, and so is its length field when that
+/// field is complete; everything after that is dropped. This matches `GetScriptOp` advancing past
+/// them before it fails, and `SerializeScriptCode` writing up to that point. The length prefix still
+/// counts the whole script minus the separators.
 fn encode_script_code<W: io::Write + ?Sized>(writer: &mut W, script_code: &[u8]) -> io::Result<()> {
     let mut separators = Vec::new();
     let mut pc = 0;
@@ -932,6 +934,7 @@ mod tests {
     use std::str::FromStr;
 
     use hashes::HashEngine;
+    use serde_json::Value;
 
     use super::*;
     use crate::Network;
@@ -971,8 +974,6 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn legacy_sighash() {
-        use serde_json::Value;
-
         use crate::sighash::SighashCache;
 
         fn run_test_sighash(
@@ -1022,10 +1023,13 @@ mod tests {
         assert_eq!(encoded(&[0x51, 0xab, 0x52, 0xab]), [0x02, 0x51, 0x52]);
         // A pushed 0xab byte is data, not an opcode
         assert_eq!(encoded(&[0x01, 0xab, 0xab]), [0x02, 0x01, 0xab]);
-        // A push that runs past the end: nothing from it on is written, and the length prefix
-        // still counts the whole script minus the separator before it
+        // A push that runs past the end: its opcode and its complete length field are written,
+        // the data after them is dropped, and the length prefix still counts the whole script
+        // minus the separator before it
         assert_eq!(encoded(&[0xab, 0x51, 0x4c, 0x05, 0x00]), [0x04, 0x51, 0x4c, 0x05]);
-        // OP_PUSHDATA2 without its length bytes
+        // A direct push that runs past the end: only its opcode is written
+        assert_eq!(encoded(&[0x51, 0x05, 0x00]), [0x03, 0x51, 0x05]);
+        // OP_PUSHDATA2 with an incomplete length field: only the opcode is written
         assert_eq!(encoded(&[0x51, 0x4d, 0x01]), [0x03, 0x51, 0x4d]);
         // No separators: written as is
         assert_eq!(encoded(&[0x76, 0xa9]), [0x02, 0x76, 0xa9]);
@@ -1034,10 +1038,7 @@ mod tests {
     /// Dash Core's `src/test/data/sighash.json` (MIT), all 500 vectors; 169 of them have
     /// OP_CODESEPARATOR in the script code.
     #[test]
-    #[cfg(feature = "serde")]
     fn legacy_sighash_dash_core_vectors() {
-        use serde_json::Value;
-
         let data = include_str!("../../tests/data/legacy_sighash_dash_core.json");
         let vectors = serde_json::from_str::<Value>(data).unwrap();
         let vectors = vectors.as_array().unwrap();
