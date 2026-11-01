@@ -36,7 +36,6 @@ key-wallet-manager = { path = "../key-wallet-manager" }
 dashcore = { path = "../dash" }
 dash-network = { path = "../dash-network", features = ["ffi"] }
 tokio = { version = "1.32", features = ["rt-multi-thread", "sync"] }
-libc = "0.2"
 hex-conservative = { workspace = true }
 zeroize = { workspace = true }
 

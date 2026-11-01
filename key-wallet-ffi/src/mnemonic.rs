@@ -82,45 +82,6 @@ pub(crate) fn phrase_c_string(mnemonic: &Mnemonic) -> Result<CString, &'static s
     })
 }
 
-/// Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)
-///
-/// # Safety
-///
-/// `error` must be a valid pointer to an `FFIError`. The returned string must be
-/// freed with `mnemonic_free`.
-#[no_mangle]
-pub unsafe extern "C" fn mnemonic_generate(
-    word_count: c_uint,
-    error: *mut FFIError,
-) -> *mut c_char {
-    let entropy_bits = match word_count {
-        12 => 128,
-        15 => 160,
-        18 => 192,
-        21 => 224,
-        24 => 256,
-        _ => {
-            (*error).set(
-                FFIErrorCode::InvalidInput,
-                &format!("Invalid word count: {}. Must be 12, 15, 18, 21, or 24", word_count),
-            );
-            return ptr::null_mut();
-        }
-    };
-
-    use key_wallet::mnemonic::Language;
-    let word_count = match entropy_bits {
-        128 => 12,
-        160 => 15,
-        192 => 18,
-        224 => 21,
-        256 => 24,
-        _ => 12,
-    };
-    let mnemonic = unwrap_or_return!(Mnemonic::generate(word_count, Language::English), error);
-    unwrap_or_return!(phrase_c_string(&mnemonic), error).into_raw()
-}
-
 /// Generate a new mnemonic with specified language and word count
 ///
 /// # Safety

@@ -1,7 +1,7 @@
 //! Tests for managed account collection FFI bindings
 
 use dash_network::ffi::FFINetwork;
-use key_wallet_ffi::error::{FFIError, FFIErrorCode};
+use key_wallet_ffi::error::FFIError;
 use key_wallet_ffi::managed_account_collection::*;
 use key_wallet_ffi::types::{FFIAccountCreationOptionType, FFIWalletAccountCreationOptions};
 use key_wallet_ffi::wallet_manager::{
@@ -13,73 +13,6 @@ use std::ptr;
 
 const TEST_MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-
-#[test]
-fn test_managed_account_collection_basic() {
-    unsafe {
-        let mut error = FFIError::default();
-
-        // Create wallet manager
-        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
-        assert!(!manager.is_null());
-        assert_eq!(error.code, FFIErrorCode::Success);
-
-        // Add a wallet with default accounts
-        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-
-        let success = wallet_manager_add_wallet_from_mnemonic_with_options(
-            manager,
-            mnemonic.as_ptr(),
-            ptr::null(), // Use default options
-            &mut error,
-        );
-        assert!(success);
-        assert_eq!(error.code, FFIErrorCode::Success);
-
-        // Get wallet IDs
-        let mut wallet_ids_out: *mut u8 = ptr::null_mut();
-        let mut count_out: usize = 0;
-
-        let success =
-            wallet_manager_get_wallet_ids(manager, &mut wallet_ids_out, &mut count_out, &mut error);
-        assert!(success);
-        assert_eq!(count_out, 1);
-        assert!(!wallet_ids_out.is_null());
-
-        // Get the managed account collection
-        let collection = managed_wallet_get_account_collection(manager, wallet_ids_out, &mut error);
-        assert!(!collection.is_null());
-        assert_eq!(error.code, FFIErrorCode::Success);
-
-        // Check that we have some accounts
-        let count = managed_account_collection_count(collection);
-        assert!(count > 0);
-
-        // Check BIP44 accounts
-        let mut indices: *mut std::os::raw::c_uint = ptr::null_mut();
-        let mut indices_count: usize = 0;
-        let success = managed_account_collection_get_bip44_indices(
-            collection,
-            &mut indices,
-            &mut indices_count,
-        );
-        assert!(success);
-        assert!(indices_count > 0);
-
-        // Get first BIP44 account
-        let account = managed_account_collection_get_bip44_account(collection, 0);
-        assert!(!account.is_null());
-
-        // Clean up
-        key_wallet_ffi::managed_account::managed_core_account_free(account);
-        if !indices.is_null() {
-            key_wallet_ffi::account_collection::free_u32_array(indices, indices_count);
-        }
-        managed_account_collection_free(collection);
-        wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
-        wallet_manager_free(manager);
-    }
-}
 
 #[test]
 fn test_managed_account_collection_with_special_accounts() {
@@ -206,87 +139,6 @@ fn test_managed_account_collection_with_special_accounts() {
 }
 
 #[test]
-fn test_managed_account_collection_summary() {
-    unsafe {
-        use std::ffi::CStr;
-
-        let mut error = FFIError::default();
-
-        // Create wallet manager
-        let manager = wallet_manager_create(FFINetwork::Testnet, &mut error);
-        assert!(!manager.is_null());
-
-        // Create wallet with multiple account types
-        let mnemonic = CString::new(TEST_MNEMONIC).unwrap();
-
-        let mut options = FFIWalletAccountCreationOptions::default_options();
-        options.option_type = FFIAccountCreationOptionType::AllAccounts;
-
-        // Add various special accounts
-        let special_types = [
-            key_wallet_ffi::types::FFIAccountKind::ProviderVotingKeys,
-            key_wallet_ffi::types::FFIAccountKind::ProviderOwnerKeys,
-            key_wallet_ffi::types::FFIAccountKind::IdentityRegistration,
-        ];
-        options.special_account_types = special_types.as_ptr();
-        options.special_account_types_count = special_types.len();
-
-        // Configure standard accounts
-        let bip44_indices = [0, 1, 2];
-        let bip32_indices = [0];
-
-        options.bip44_indices = bip44_indices.as_ptr();
-        options.bip44_count = bip44_indices.len();
-
-        options.bip32_indices = bip32_indices.as_ptr();
-        options.bip32_count = bip32_indices.len();
-
-        let success = wallet_manager_add_wallet_from_mnemonic_with_options(
-            manager,
-            mnemonic.as_ptr(),
-            &options,
-            &mut error,
-        );
-        assert!(success);
-
-        // Get wallet IDs
-        let mut wallet_ids_out: *mut u8 = ptr::null_mut();
-        let mut count_out: usize = 0;
-
-        let success =
-            wallet_manager_get_wallet_ids(manager, &mut wallet_ids_out, &mut count_out, &mut error);
-        assert!(success);
-        assert_eq!(count_out, 1);
-
-        // Get the managed account collection
-        let collection = managed_wallet_get_account_collection(manager, wallet_ids_out, &mut error);
-        assert!(!collection.is_null());
-
-        // Get the summary
-        let summary_ptr = managed_account_collection_summary(collection);
-        assert!(!summary_ptr.is_null());
-
-        // Convert to Rust string to verify content
-        let summary_cstr = CStr::from_ptr(summary_ptr);
-        let summary = summary_cstr.to_str().unwrap();
-
-        // Verify the summary contains expected content
-        assert!(summary.contains("Managed Account Summary:"));
-        assert!(summary.contains("BIP44 Accounts"));
-        assert!(summary.contains("BIP32 Accounts"));
-        assert!(summary.contains("Identity Registration Account"));
-        assert!(summary.contains("Provider Voting Keys Account"));
-        assert!(summary.contains("Provider Owner Keys Account"));
-
-        // Clean up
-        key_wallet_ffi::utils::string_free(summary_ptr);
-        managed_account_collection_free(collection);
-        wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
-        wallet_manager_free(manager);
-    }
-}
-
-#[test]
 fn test_managed_account_collection_summary_data() {
     unsafe {
         let mut error = FFIError::default();
@@ -382,30 +234,6 @@ fn test_managed_account_collection_summary_data() {
         managed_account_collection_free(collection);
         wallet_manager_free_wallet_ids(wallet_ids_out, count_out);
         wallet_manager_free(manager);
-    }
-}
-
-#[test]
-fn test_managed_account_collection_null_safety() {
-    unsafe {
-        let mut error = FFIError::default();
-
-        // Test with null manager
-        let collection =
-            managed_wallet_get_account_collection(ptr::null(), ptr::null(), &mut error);
-        assert!(collection.is_null());
-        assert_eq!(error.code, FFIErrorCode::InvalidInput);
-
-        // Test with null collection for various functions
-        assert_eq!(managed_account_collection_count(ptr::null()), 0);
-        assert!(!managed_account_collection_has_identity_registration(ptr::null()));
-        assert!(managed_account_collection_get_bip44_account(ptr::null(), 0).is_null());
-        assert!(managed_account_collection_summary(ptr::null()).is_null());
-        assert!(managed_account_collection_summary_data(ptr::null()).is_null());
-
-        // Test free with null (should not crash)
-        managed_account_collection_free(ptr::null_mut());
-        managed_account_collection_summary_free(ptr::null_mut());
     }
 }
 

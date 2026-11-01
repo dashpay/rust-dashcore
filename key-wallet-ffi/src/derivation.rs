@@ -5,36 +5,11 @@ use crate::keys::FFIExtendedPrivKey;
 use crate::keys::FFIExtendedPubKey;
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
 use dash_network::ffi::FFINetwork;
-use dashcore::ecdsa::EcdsaSecretKey;
-use dashcore::Network;
 use key_wallet::{ExtendedPrivKey, ExtendedPubKey};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_uint};
 use std::ptr;
 use std::slice;
-
-/// Derivation path type for DIP9
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub enum FFIDerivationPathType {
-    PathUnknown = 0,
-    PathBIP32 = 1,
-    PathBIP44 = 2,
-    PathBlockchainIdentities = 3,
-    PathProviderFunds = 4,
-    PathProviderVotingKeys = 5,
-    PathProviderOperatorKeys = 6,
-    PathProviderOwnerKeys = 7,
-    PathContactBasedFunds = 8,
-    PathContactBasedFundsRoot = 9,
-    PathContactBasedFundsExternal = 10,
-    PathBlockchainIdentityCreditRegistrationFunding = 11,
-    PathBlockchainIdentityCreditTopupFunding = 12,
-    PathBlockchainIdentityCreditInvitationFunding = 13,
-    PathProviderPlatformNodeKeys = 14,
-    PathCoinJoin = 15,
-    PathRoot = 255,
-}
 
 /// Create a new master extended private key from seed
 ///
@@ -311,45 +286,13 @@ pub unsafe extern "C" fn derivation_identity_authentication_path(
     true
 }
 
-/// Derive private key for a specific path from seed
-///
-/// # Safety
-///
-/// - `seed` must be a valid pointer to a byte array of `seed_len` length
-/// - `path` must be a valid pointer to a null-terminated C string
-/// - `error` must be a valid pointer to an FFIError structure
-/// - The caller must ensure all pointers remain valid for the duration of this call
-#[no_mangle]
-pub unsafe extern "C" fn derivation_derive_private_key_from_seed(
-    seed: *const u8,
-    seed_len: usize,
-    path: *const c_char,
-    network: FFINetwork,
-    error: *mut FFIError,
-) -> *mut FFIExtendedPrivKey {
-    use key_wallet::bip32::{DerivationPath, ExtendedPrivKey};
-    use std::str::FromStr;
-
-    check_ptr!(seed, error);
-    let path = deref_ptr!(path, error);
-
-    let seed_slice = slice::from_raw_parts(seed, seed_len);
-    let network_rust: Network = network.into();
-    let path_str = unwrap_or_return!(CStr::from_ptr(path).to_str(), error);
-    let derivation_path = unwrap_or_return!(DerivationPath::from_str(path_str), error);
-
-    let master = unwrap_or_return!(ExtendedPrivKey::new_master(network_rust, seed_slice), error);
-    let xpriv = unwrap_or_return!(master.derive_priv(&derivation_path), error);
-    Box::into_raw(Box::new(FFIExtendedPrivKey::from_inner(xpriv)))
-}
-
 /// Derive public key from extended private key
 ///
 /// # Safety
 ///
 /// - `xpriv` must be a valid pointer to an FFIExtendedPrivKey
 /// - `error` must be a valid pointer to an FFIError
-/// - The returned pointer must be freed with `extended_public_key_free`
+/// - The returned pointer must be freed with `derivation_xpub_free`
 #[no_mangle]
 pub unsafe extern "C" fn derivation_xpriv_to_xpub(
     xpriv: *const FFIExtendedPrivKey,
@@ -458,50 +401,6 @@ pub unsafe extern "C" fn derivation_string_free(s: *mut c_char) {
 
 // MARK: - Simplified Derivation Functions
 
-/// Derive an address from a private key
-///
-/// # Safety
-/// - `private_key` must be a valid pointer to 32 bytes
-/// - `network` is the network for the address
-///
-/// # Returns
-/// - Pointer to C string with address (caller must free)
-/// - NULL on error
-#[no_mangle]
-pub unsafe extern "C" fn key_wallet_derive_address_from_key(
-    private_key: *const u8,
-    network: FFINetwork,
-) -> *mut c_char {
-    if private_key.is_null() {
-        return ptr::null_mut();
-    }
-
-    let Ok(key_bytes) = <[u8; 32]>::try_from(slice::from_raw_parts(private_key, 32)) else {
-        return ptr::null_mut();
-    };
-
-    // Create a secp256k1 private key
-    let secret_key = match EcdsaSecretKey::from_bytes(&key_bytes) {
-        Ok(sk) => sk,
-        Err(_) => return ptr::null_mut(),
-    };
-
-    // Get public key
-    let public_key = secret_key.public_key();
-
-    // Convert to dashcore PublicKey
-    let dash_pubkey = dashcore::PublicKey::new(public_key);
-
-    // Convert to Dash address
-    let dash_network: key_wallet::Network = network.into();
-    let address = key_wallet::Address::p2pkh(&dash_pubkey, dash_network);
-
-    match CString::new(address.to_string()) {
-        Ok(c_str) => c_str.into_raw(),
-        Err(_) => ptr::null_mut(),
-    }
-}
-
 /// Derive an address from a seed at a specific derivation path
 ///
 /// # Safety
@@ -562,59 +461,6 @@ pub unsafe extern "C" fn key_wallet_derive_address_from_seed(
         Ok(c_str) => c_str.into_raw(),
         Err(_) => ptr::null_mut(),
     }
-}
-
-/// Derive a private key from a seed at a specific derivation path
-///
-/// # Safety
-/// - `seed` must be a valid pointer to 64 bytes
-/// - `path` must be a valid null-terminated C string (e.g., "m/44'/5'/0'/0/0")
-/// - `key_out` must be a valid pointer to a buffer of at least 32 bytes
-///
-/// # Returns
-/// - 0 on success
-/// - -1 on error
-#[no_mangle]
-pub unsafe extern "C" fn key_wallet_derive_private_key_from_seed(
-    seed: *const u8,
-    path: *const c_char,
-    key_out: *mut u8,
-) -> i32 {
-    if seed.is_null() || path.is_null() || key_out.is_null() {
-        return -1;
-    }
-
-    let seed_slice = slice::from_raw_parts(seed, 64);
-
-    // Parse derivation path
-    let path_str = match CStr::from_ptr(path).to_str() {
-        Ok(s) => s,
-        Err(_) => return -1,
-    };
-
-    use std::str::FromStr;
-    let derivation_path = match key_wallet::DerivationPath::from_str(path_str) {
-        Ok(dp) => dp,
-        Err(_) => return -1,
-    };
-
-    // Create master key from seed (use testnet as default, doesn't affect key derivation)
-    let master_key = match ExtendedPrivKey::new_master(key_wallet::Network::Testnet, seed_slice) {
-        Ok(xprv) => xprv,
-        Err(_) => return -1,
-    };
-
-    // Derive at path
-    let derived_key = match master_key.derive_priv(&derivation_path) {
-        Ok(xprv) => xprv,
-        Err(_) => return -1,
-    };
-
-    // Copy private key bytes
-    let key_bytes = derived_key.private_key.to_bytes();
-    ptr::copy_nonoverlapping(key_bytes.as_ptr(), key_out, 32);
-
-    0
 }
 
 #[cfg(test)]

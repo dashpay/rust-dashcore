@@ -1,11 +1,10 @@
 //! C-ABI transaction decoding — consensus-decode raw Dash transaction bytes
 //! into per-input/per-output structures with derived addresses, in one call.
 //!
-//! `transaction_deserialize` returns an opaque [`crate::transaction::FFITransaction`]
-//! handle with no read accessors, so an FFI consumer that needs to match
-//! arbitrary transactions against external addresses (e.g. the CrowdNode
-//! on-chain API: "did a tx pay amount X to address Y?") needs per-output
-//! `(address, amount)` reconstructed from the raw bytes. This entry point
+//! An FFI consumer that needs to match arbitrary transactions against external
+//! addresses (e.g. the CrowdNode on-chain API: "did a tx pay amount X to
+//! address Y?") needs per-output `(address, amount)` reconstructed from the
+//! raw bytes. This entry point
 //! decodes straight into [`Transaction`] and marshals that into the C
 //! structures below — no intermediate representation.
 //!

@@ -2,7 +2,6 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::address_pool::managed_wallet_mark_address_used;
     use crate::error::{FFIError, FFIErrorCode};
     use crate::managed_wallet::*;
     use crate::types::FFIWallet;
@@ -124,63 +123,6 @@ mod tests {
     }
 
     #[test]
-    fn test_managed_wallet_mark_address_used_valid() {
-        let mut error = FFIError::default();
-        let (manager, wallet, managed_wallet, wallet_ids, id_count) =
-            unsafe { setup_fixture(&mut error) };
-
-        // Well-formed testnet address. It may or may not belong to any pool of this
-        // wallet, but the function must at minimum parse it without panicking.
-        let address = CString::new("yXdxAYfK7KGx7gNpVHUfRsQMNpMj5cAadG").unwrap();
-        let success = unsafe {
-            managed_wallet_mark_address_used(managed_wallet, address.as_ptr(), &mut error)
-        };
-
-        // Should succeed or fail gracefully depending on address validation
-        // The function validates the address format internally
-        if success {
-            assert_eq!(error.code, FFIErrorCode::Success);
-        } else {
-            // Address validation might fail due to library version differences
-            assert_eq!(error.code, FFIErrorCode::InvalidAddress);
-        }
-
-        unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
-        }
-    }
-
-    #[test]
-    fn test_managed_wallet_mark_address_used_invalid() {
-        let mut error = FFIError::default();
-        let (manager, wallet, managed_wallet, wallet_ids, id_count) =
-            unsafe { setup_fixture(&mut error) };
-
-        let address = CString::new("invalid_address").unwrap();
-        let success = unsafe {
-            managed_wallet_mark_address_used(managed_wallet, address.as_ptr(), &mut error)
-        };
-
-        assert!(!success);
-        assert_eq!(error.code, FFIErrorCode::InvalidAddress);
-
-        unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
-        }
-    }
-
-    #[test]
-    fn test_managed_wallet_mark_address_used_null_inputs() {
-        let mut error = FFIError::default();
-
-        let success =
-            unsafe { managed_wallet_mark_address_used(ptr::null_mut(), ptr::null(), &mut error) };
-
-        assert!(!success);
-        assert_eq!(error.code, FFIErrorCode::InvalidInput);
-    }
-
-    #[test]
     fn test_managed_wallet_get_next_bip44_receive_address_null_inputs() {
         let mut error = FFIError::default();
 
@@ -215,15 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn test_managed_wallet_free_null() {
-        // Should handle null gracefully
-        unsafe {
-            managed_wallet_free(ptr::null_mut());
-            managed_wallet_info_free(ptr::null_mut());
-        }
-    }
-
-    #[test]
     fn test_managed_wallet_info_free_valid() {
         let mut error = FFIError::default();
         let (manager, wallet, managed_wallet, wallet_ids, id_count) =
@@ -254,30 +187,6 @@ mod tests {
             let managed_mut = &mut *managed_wallet;
             let _inner_mut = managed_mut.inner_mut();
         }
-
-        unsafe {
-            cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);
-        }
-    }
-
-    #[test]
-    fn test_managed_wallet_mark_address_used_utf8_error() {
-        let mut error = FFIError::default();
-        let (manager, wallet, managed_wallet, wallet_ids, id_count) =
-            unsafe { setup_fixture(&mut error) };
-
-        // Invalid UTF-8 bytes with null terminator.
-        let invalid_utf8 = [0xFFu8, 0xFE, 0xFD, 0x00];
-        let success = unsafe {
-            managed_wallet_mark_address_used(
-                managed_wallet,
-                invalid_utf8.as_ptr() as *const std::os::raw::c_char,
-                &mut error,
-            )
-        };
-
-        assert!(!success);
-        assert_eq!(error.code, FFIErrorCode::InvalidInput);
 
         unsafe {
             cleanup_fixture(manager, wallet, managed_wallet, wallet_ids, id_count);

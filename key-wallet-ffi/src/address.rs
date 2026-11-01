@@ -25,30 +25,6 @@ pub unsafe extern "C" fn address_free(address: *mut c_char) {
     }
 }
 
-/// Free address array
-///
-/// # Safety
-///
-/// - `addresses` must be a valid pointer to an array of address strings or null
-/// - Each address in the array must be a valid C string pointer
-/// - `count` must be the correct number of addresses in the array
-/// - After calling this function, all pointers become invalid
-#[no_mangle]
-pub unsafe extern "C" fn address_array_free(addresses: *mut *mut c_char, count: usize) {
-    if !addresses.is_null() {
-        unsafe {
-            let slice = std::slice::from_raw_parts_mut(addresses, count);
-            for addr in slice {
-                if !addr.is_null() {
-                    let _ = CString::from_raw(*addr);
-                }
-            }
-            // Free the array itself
-            let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(addresses, count));
-        }
-    }
-}
-
 /// Validate an address
 ///
 /// # Safety

@@ -348,41 +348,6 @@ mod wallet_tests {
     }
 
     #[test]
-    fn test_wallet_xpub_operations() {
-        let mut error = FFIError::default();
-        let error = &mut error as *mut FFIError;
-
-        let wallet = unsafe { wallet::wallet_create_random(FFINetwork::Testnet, error) };
-        assert!(!wallet.is_null());
-
-        // Get xpub for account 0
-        let xpub = unsafe { wallet::wallet_get_xpub(wallet, 0, error) };
-        assert!(!xpub.is_null());
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::Success);
-
-        // Verify xpub string format
-        let xpub_str = unsafe { std::ffi::CStr::from_ptr(xpub).to_str().unwrap() };
-        assert!(xpub_str.starts_with("tpub")); // Testnet public key
-
-        // Clean up
-        unsafe {
-            let _ = CString::from_raw(xpub);
-            wallet::wallet_free(wallet);
-        }
-    }
-
-    #[test]
-    fn test_wallet_xpub_null_wallet() {
-        let mut error = FFIError::default();
-        let error = &mut error as *mut FFIError;
-
-        // Test with null wallet
-        let xpub = unsafe { wallet::wallet_get_xpub(ptr::null(), 0, error) };
-        assert!(xpub.is_null());
-        assert_eq!(unsafe { (*error).code }, FFIErrorCode::InvalidInput);
-    }
-
-    #[test]
     fn test_wallet_free_null() {
         // Should handle null gracefully
         unsafe {

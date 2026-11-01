@@ -184,14 +184,6 @@ pub use crate::account::FFIBLSAccount;
 #[cfg(feature = "eddsa")]
 pub use crate::account::FFIEdDSAAccount;
 
-/// Standard account subtype
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub enum FFIStandardAccountType {
-    BIP44 = 0,
-    BIP32 = 1,
-}
-
 /// Account type enumeration matching all key_wallet AccountType variants
 ///
 /// This enum provides a complete FFI representation of all account types

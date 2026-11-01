@@ -64,3 +64,8 @@ crates = []
 all_features = false
 default_features = true
 features = []
+
+[export]
+# TODO: remove these types once the swift-sdk drops its dead conversions
+# (KeyWalletTypes.swift, Transaction.swift, TxOutput.swift). No extern fn uses them.
+include = ["FFITxOutput", "FFIUTXO", "FFIAddressPoolInfo"]

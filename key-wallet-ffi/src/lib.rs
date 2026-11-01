@@ -6,7 +6,6 @@
 // Module declarations
 pub mod account;
 pub mod account_collection;
-pub mod account_derivation;
 pub mod address;
 pub mod address_pool;
 pub mod derivation;
@@ -33,10 +32,9 @@ pub use error::{FFIError, FFIErrorCode};
 pub use types::{FFIBalance, FFIWallet};
 pub use utxo::FFIUTXO;
 pub use wallet_manager::{
-    wallet_manager_create, wallet_manager_describe, wallet_manager_free,
-    wallet_manager_free_string, wallet_manager_free_wallet_ids, wallet_manager_get_wallet,
-    wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids, wallet_manager_wallet_count,
-    FFIWalletManager,
+    wallet_manager_create, wallet_manager_free, wallet_manager_free_wallet_ids,
+    wallet_manager_get_wallet, wallet_manager_get_wallet_balance, wallet_manager_get_wallet_ids,
+    wallet_manager_wallet_count, FFIWalletManager,
 };
 
 // ============================================================================

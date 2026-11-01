@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod address_tests {
-    use crate::address::{address_array_free, address_free, address_get_type, address_validate};
+    use crate::address::{address_free, address_get_type, address_validate};
     use crate::error::{FFIError, FFIErrorCode};
     use dash_network::ffi::FFINetwork;
     use std::ffi::CString;
@@ -128,33 +128,6 @@ mod address_tests {
         // Should handle null gracefully
         unsafe {
             address_free(ptr::null_mut());
-        }
-    }
-
-    #[test]
-    fn test_address_array_free() {
-        // Create some test addresses
-        let mut addresses = Vec::new();
-        for i in 0..3 {
-            let addr = CString::new(format!("yAddress{}", i)).unwrap();
-            addresses.push(addr.into_raw());
-        }
-
-        let addrs_ptr = addresses.as_mut_ptr();
-        let count = addresses.len();
-        std::mem::forget(addresses);
-
-        // Free the addresses
-        unsafe {
-            address_array_free(addrs_ptr, count);
-        }
-    }
-
-    #[test]
-    fn test_address_array_free_null() {
-        // Should handle null gracefully
-        unsafe {
-            address_array_free(ptr::null_mut(), 0);
         }
     }
 
