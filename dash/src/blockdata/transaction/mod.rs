@@ -278,9 +278,23 @@ impl Transaction {
             && bytes[0] >= AssetUnlockPayload::STABLE_TXID_VERSION
     }
 
+    /// Encodes the version and the transaction type as one 32-bit field, as Core does.
+    pub(crate) fn consensus_encode_version_and_type<W: io::Write + ?Sized>(
+        &self,
+        w: &mut W,
+    ) -> Result<usize, io::Error> {
+        // Core writes `nVersion | (nType << 16)` with a signed 16-bit `nVersion`, so a negative
+        // version sign-extends and overwrites the type with `0xffff`.
+        let tx_type = if (self.version as i16) < 0 {
+            u16::MAX
+        } else {
+            self.tx_type().to_u16()
+        };
+        Ok(self.version.consensus_encode(w)? + tx_type.consensus_encode(w)?)
+    }
+
     fn encode_txid_data<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
-        self.version.consensus_encode(w)?;
-        self.tx_type().to_u16().consensus_encode(w)?;
+        self.consensus_encode_version_and_type(w)?;
         self.input.consensus_encode(w)?;
         self.output.consensus_encode(w)?;
         self.lock_time.consensus_encode(w)?;
@@ -639,8 +653,7 @@ impl Transaction {
 impl Encodable for Transaction {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.version.consensus_encode(w)?;
-        len += self.tx_type().to_u16().consensus_encode(w)?;
+        len += self.consensus_encode_version_and_type(w)?;
         // To avoid serialization ambiguity, no inputs means we use BIP141 serialization (see
         // `Transaction` docs for full explanation).
         let mut have_witness = self.input.is_empty();
@@ -1132,26 +1145,32 @@ mod tests {
         assert_eq!(tx_without_witness.strippedsize(), expected_strippedsize);
     }
 
-    #[test]
-    fn test_transaction_version() {
-        let tx_bytes = hex_conservative::decode_to_vec("ffff00000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
-        let tx: Result<Transaction, _> = deserialize(&tx_bytes);
-        assert!(tx.is_ok());
-        let realtx = tx.unwrap();
-        assert_eq!(realtx.version, 65535);
+    // Txids come from Dash Core's `decoderawtransaction`. Each is the hash of `core_prefix`
+    // followed by the body, which is how Core re-serializes the transaction.
+    #[test_case("00000000", "00000000", "9b7c56736423e75d639f682da7c9c4bf361ac2ff8f8d2f8910d9b2bd235aa0a4"; "version 0")]
+    #[test_case("ffff0000", "ffffffff", "189a3513dfd68d0690f9df57ea75becb4f11cf131bc52062937c71e607cce320"; "version 0xffff")]
+    #[test_case("ffff2a00", "ffffffff", "189a3513dfd68d0690f9df57ea75becb4f11cf131bc52062937c71e607cce320"; "version 0xffff with type bytes")]
+    #[test_case("feff0000", "feffffff", "54b620358ea89d4462b43f35b17390fde53f1e42a018b6d8ea44862236cf8faa"; "version 0xfffe")]
+    #[test_case("00803412", "0080ffff", "d880b6c7fb308681f4635fd3dd702b385702143c12c815407d9ef13ec368405d"; "version 0x8000 with type bytes")]
+    #[test_case("0180ffff", "0180ffff", "5ee78961752d2cbce4baf0d97d18b377502a09647b5dc3bbdf63b75949b18f00"; "version 0x8001 with type 0xffff")]
+    fn test_transaction_version(wire_prefix: &str, core_prefix: &str, core_txid: &str) {
+        let body = "0100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
+        let wire = hex!(&format!("{wire_prefix}{body}"));
+        let tx: Transaction = deserialize(&wire).unwrap();
+        assert_eq!(tx.version, u16::from_le_bytes([wire[0], wire[1]]));
 
-        let tx2_bytes = hex_conservative::decode_to_vec("000000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
-        let tx2: Result<Transaction, _> = deserialize(&tx2_bytes);
-        assert!(tx2.is_ok());
-        let realtx2 = tx2.unwrap();
-        assert_eq!(realtx2.version, 0);
+        assert_eq!(serialize(&tx), hex!(&format!("{core_prefix}{body}")));
+        assert_eq!(tx.txid(), core_txid.parse::<Txid>().unwrap());
+        assert_eq!(tx.wtxid().to_byte_array(), tx.txid().to_byte_array());
     }
 
-    #[test_case(0; "version 0")]
-    #[test_case(1; "version 1")]
-    #[test_case(2; "version 2")]
-    #[test_case(0xffff; "negative version")]
-    fn test_pre_dip2_classical_with_non_standard_version_type_bytes_roundtrip(version: u16) {
+    #[test_case(0, "660b9a1c39fe564be27f61ef3693eb42a98ff6b431bd58e621ae6a0e45222c59"; "version 0")]
+    #[test_case(1, "1f5b3653e1e04b624b7930ab5706a7a6bf8329c2728f90226e129b2b38442ce5"; "version 1")]
+    #[test_case(2, "f5989d547a24559a3c0592a3fbc832f50c4db9782676dc722b121286043de90a"; "version 2")]
+    fn test_pre_dip2_classical_with_non_standard_version_type_bytes_roundtrip(
+        version: u16,
+        core_txid: &str,
+    ) {
         use crate::blockdata::transaction::special_transaction::{
             TransactionPayload, TransactionType,
         };
@@ -1184,6 +1203,7 @@ mod tests {
         // (double-SHA256 of the serialized transaction). Since the encoder now
         // reproduces the input bytes exactly, the txid is the hash of those bytes.
         assert_eq!(tx.txid(), Txid::hash(&tx_bytes), "txid must hash the original bytes");
+        assert_eq!(tx.txid(), core_txid.parse::<Txid>().unwrap());
 
         // The txid must differ from the same transaction with type bytes zeroed —
         // proves we no longer collapse different on-chain transactions to one id.
