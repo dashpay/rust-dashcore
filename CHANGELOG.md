@@ -141,6 +141,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The `dash-spv` data-directory lock is exclusive: a refused open no longer truncates the holder's
+  lock file (its PID), and on Unix an opener that locks a lock file its holder has just unlinked
+  opens it again instead of holding a lock no later opener sees
 - Treat `SIGHASH_SINGLE` flags with `ANYONECANPAY` set, such as `0x83`, as
   single when checking for the legacy `SIGHASH_SINGLE` bug
 - `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
