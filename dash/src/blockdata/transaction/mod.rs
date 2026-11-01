@@ -724,7 +724,7 @@ impl Decodable for Transaction {
             TransactionType::ClassicalWithNonStandardVersionTypeBytes(special_transaction_type_u16)
         };
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
-        // segwit
+        // BIP144 form, still read for the asset locks Dash Platform has accepted (see `Witness`).
         let mut segwit = input.is_empty();
         // Forcing segwit to false for special transaction types that legitimately have no inputs.
         // Dash Core doesn't support BIP141 SegWit.

@@ -2,8 +2,13 @@
 
 //! Witness
 //!
-//! This module contains the [`Witness`] struct and related methods to operate on it
+//! This module contains the [`Witness`] struct and related methods to operate on it.
 //!
+//! Dash has no SegWit. [`Witness`] and the BIP144 transaction form are kept because Dash
+//! Platform has accepted asset locks in that form, and
+//! [`Transaction::deserialize_with_legacy_asset_lock_framing`] must keep decoding them.
+//!
+//! [`Transaction::deserialize_with_legacy_asset_lock_framing`]: crate::Transaction::deserialize_with_legacy_asset_lock_framing
 
 use core::convert::TryInto;
 use core::ops::Index;
