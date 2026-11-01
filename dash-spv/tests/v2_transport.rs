@@ -1,18 +1,16 @@
 //! Loopback tests for the BIP324 V2 transport.
 //!
 //! A `PeerNetworkManager` with a given [`TransportPreference`] connects to a mock
-//! peer on a local socket. The mock speaks V2 through the same transport module, or
-//! V1 through dashcore's codec, so the real handshake and cipher run on both ends
-//! without a Dash Core node.
+//! peer on a local socket. The mock answers V2 as the responder of
+//! `bip324::futures::handshake`, independent of dash-spv's transport, or V1 through
+//! dashcore's codec, so no Dash Core node is needed.
 
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use bip324::{OutboundCipher, PacketType};
+use bip324::futures::{handshake as bip324_handshake, ProtocolSessionReader};
+use bip324::{InboundCipher, OutboundCipher, PacketType, Role, NUM_HEADER_BYTES, NUM_LENGTH_BYTES};
 use dash_spv::client::ClientConfig;
-use dash_spv::network::transport::{
-    encrypt_message, V2Decoder, V2HandshakeManager, V2HandshakeResult, V2Session,
-};
 use dash_spv::network::{MessageType, NetworkManager, PeerNetworkManager, TransportPreference};
 use dashcore::consensus::encode::serialize;
 use dashcore::network::address::Address;
@@ -27,10 +25,11 @@ use dashcore_hashes::Hash;
 use futures::StreamExt;
 use tempfile::TempDir;
 use test_case::test_case;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{copy, AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
+use tokio::task::yield_now;
 use tokio::time::{sleep, timeout};
 use tokio_util::codec::FramedRead;
 
@@ -67,7 +66,28 @@ fn v1_frame(network: Network, payload: NetworkMessage) -> Vec<u8> {
 
 enum Reader {
     V1(FramedRead<OwnedReadHalf, RawNetworkMessageCodec>),
-    V2(FramedRead<OwnedReadHalf, V2Decoder>),
+    V2 {
+        reader: ProtocolSessionReader<OwnedReadHalf>,
+        cipher: InboundCipher,
+    },
+}
+
+/// Next genuine V2 packet's contents (short ID or `0x00`, then the rest), or `None`
+/// once the client closes.
+async fn read_v2_contents(
+    reader: &mut ProtocolSessionReader<OwnedReadHalf>,
+    cipher: &mut InboundCipher,
+) -> Option<Vec<u8>> {
+    loop {
+        let mut len = [0u8; NUM_LENGTH_BYTES];
+        reader.read_exact(&mut len).await.ok()?;
+        let mut packet = vec![0u8; cipher.decrypt_packet_len(len)];
+        reader.read_exact(&mut packet).await.ok()?;
+        let (packet_type, mut plaintext) = cipher.decrypt_to_vec(&packet, None).ok()?;
+        if packet_type == PacketType::Genuine {
+            return Some(plaintext.split_off(NUM_HEADER_BYTES));
+        }
+    }
 }
 
 enum Framing {
@@ -81,6 +101,8 @@ struct MockPeer {
     reader: Reader,
     writer: OwnedWriteHalf,
     framing: Framing,
+    /// First contents byte of the last V2 message received: its short ID, or `0x00`.
+    last_v2_id: Option<u8>,
 }
 
 impl MockPeer {
@@ -91,6 +113,7 @@ impl MockPeer {
             reader: Reader::V1(FramedRead::new(read_half, RawNetworkMessageCodec)),
             writer,
             framing: Framing::V1(network),
+            last_v2_id: None,
         }
     }
 
@@ -102,27 +125,21 @@ impl MockPeer {
     /// Accept one connection and complete the BIP324 handshake as the responder.
     async fn accept_v2(listener: &TcpListener, network: Network) -> Self {
         let (stream, client) = listener.accept().await.unwrap();
-        let handshake =
-            V2HandshakeManager::new_responder(network, client).perform_handshake(stream);
-        let V2HandshakeResult::Success(session) = handshake.await.expect("responder handshake")
-        else {
-            panic!("responder unexpectedly saw V1 magic");
-        };
-        let V2Session {
-            stream,
-            cipher,
-            pending,
-            ..
-        } = *session;
-        let (inbound, outbound) = cipher.into_split();
-        let (read_half, writer) = stream.into_split();
-        let mut reader = FramedRead::new(read_half, V2Decoder::new(network.magic(), inbound));
-        reader.read_buffer_mut().extend_from_slice(&pending);
+        let (read_half, mut writer) = stream.into_split();
+        let magic = network.magic().to_le_bytes();
+        let (inbound, outbound, reader) =
+            bip324_handshake(magic, Role::Responder, None, None, read_half, &mut writer)
+                .await
+                .expect("responder handshake");
         MockPeer {
             client,
-            reader: Reader::V2(reader),
+            reader: Reader::V2 {
+                reader,
+                cipher: inbound,
+            },
             writer,
             framing: Framing::V2(outbound),
+            last_v2_id: None,
         }
     }
 
@@ -136,7 +153,9 @@ impl MockPeer {
     fn frame(&mut self, message: NetworkMessage) -> Vec<u8> {
         match &mut self.framing {
             Framing::V1(network) => v1_frame(*network, message),
-            Framing::V2(cipher) => encrypt_message(cipher, &message),
+            Framing::V2(cipher) => {
+                cipher.encrypt_to_vec(&message.consensus_encode_v2(), PacketType::Genuine, None)
+            }
         }
     }
 
@@ -152,10 +171,16 @@ impl MockPeer {
     /// Next message from the client, answering pings; `None` once it closes.
     async fn recv(&mut self) -> Option<NetworkMessage> {
         let message = match &mut self.reader {
-            Reader::V1(reader) => reader.next().await?.ok()?,
-            Reader::V2(reader) => reader.next().await?.ok()?.0,
-        }
-        .payload;
+            Reader::V1(reader) => reader.next().await?.ok()?.payload,
+            Reader::V2 {
+                reader,
+                cipher,
+            } => {
+                let contents = read_v2_contents(reader, cipher).await?;
+                self.last_v2_id = contents.first().copied();
+                NetworkMessage::consensus_decode_v2(&contents).ok()??
+            }
+        };
         if let NetworkMessage::Ping(nonce) = message {
             self.send(NetworkMessage::Pong(nonce)).await;
         }
@@ -237,9 +262,11 @@ async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages(networ
         // A Dash-specific short ID (128+ range).
         let mn = peer.expect(|m| matches!(m, NetworkMessage::GetMnListD(_))).await;
         assert_eq!(mn, NetworkMessage::GetMnListD(expected.0));
+        assert_eq!(peer.last_v2_id, Some(143), "Dash Core's short ID for getmnlistd");
         // An unknown command must arrive with its real name, not "unknown".
         let custom = peer.expect(|m| matches!(m, NetworkMessage::Unknown { .. })).await;
         assert_eq!(custom, expected.1);
+        assert_eq!(peer.last_v2_id, Some(0), "unknown commands use the extended format");
 
         // A decoy and an unassigned short ID are skipped without disconnecting.
         let decoy = peer.cipher().encrypt_to_vec(&[0u8; 8], PacketType::Decoy, None);
@@ -250,7 +277,7 @@ async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages(networ
         let inv = peer.frame(NetworkMessage::Inv(vec![]));
         for byte in inv {
             peer.write(&[byte]).await;
-            tokio::task::yield_now().await;
+            yield_now().await;
         }
 
         let _ = close_rx.await;
@@ -324,11 +351,14 @@ async fn v2_preferred_falls_back_when_peer_replies_with_v1_magic(network: Networ
     let (close_tx, close_rx) = oneshot::channel::<()>();
 
     let server = tokio::spawn(async move {
-        // First connection: a V1-only node answers our ElligatorSwift key with a V1
-        // message. The client should notice the network magic and give up on V2.
-        let (mut first, _) = listener.accept().await.unwrap();
-        first.write_all(&v1_frame(network, NetworkMessage::Verack)).await.unwrap();
-        // Hold it open until the client has reconnected, so its peek sees the magic.
+        // First connection: a V1 node answers our ElligatorSwift key with a V1 message
+        // longer than a key. The client should notice the network magic where the
+        // peer's key would be and give up on V2.
+        let (mut first, client) = listener.accept().await.unwrap();
+        let version = NetworkMessage::Version(version_message(client));
+        first.write_all(&v1_frame(network, version)).await.unwrap();
+        // Hold it open until the client has reconnected, so only the magic can
+        // trigger the fallback, not a hang-up.
         let mut peer = MockPeer::accept_v1(&listener, network).await;
         drop(first);
         peer.handshake().await;
@@ -389,7 +419,7 @@ async fn v2_only_fails_against_v1_only_peer(network: Network) {
     let server = tokio::spawn(async move {
         let (stream, client) = listener.accept().await.unwrap();
         let mut peer = MockPeer::v1(stream, client, network);
-        peer.send(NetworkMessage::Verack).await;
+        peer.send(NetworkMessage::Version(version_message(client))).await;
         // The client must hang up on seeing the magic rather than speak V1.
         peer.until_closed().await;
     });
@@ -416,7 +446,7 @@ async fn v1_only_never_sends_v2_key(network: Network) {
         let (stream, client) = listener.accept().await.unwrap();
         let mut magic = [0u8; 4];
         while stream.peek(&mut magic).await.unwrap() < magic.len() {
-            tokio::task::yield_now().await;
+            yield_now().await;
         }
         assert_eq!(magic, network.magic().to_le_bytes());
         let mut peer = MockPeer::v1(stream, client, network);
@@ -446,7 +476,7 @@ async fn coalescing_proxy(
     let server = TcpStream::connect(upstream).await.unwrap();
     let (mut client_rx, mut client_tx) = client.into_split();
     let (mut server_rx, mut server_tx) = server.into_split();
-    tokio::spawn(async move { tokio::io::copy(&mut client_rx, &mut server_tx).await });
+    tokio::spawn(async move { copy(&mut client_rx, &mut server_tx).await });
 
     let mut key = [0u8; 64];
     server_rx.read_exact(&mut key).await.unwrap();
@@ -478,7 +508,7 @@ async fn coalescing_proxy(
         }
     }
     client_tx.write_all(&held).await.unwrap();
-    let _ = tokio::io::copy(&mut server_rx, &mut client_tx).await;
+    let _ = copy(&mut server_rx, &mut client_tx).await;
 }
 
 #[tokio::test]

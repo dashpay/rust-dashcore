@@ -67,8 +67,8 @@ const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::bans::{Ban, Bans};
 use crate::network::broker::{Broker, RequestKey};
-use crate::network::transport::TransportPreference;
 use crate::network::NetworkManager;
+use crate::network::TransportPreference;
 use crate::{
     network::{
         costs::ResponseCosts,

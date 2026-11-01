@@ -9,7 +9,7 @@ use dashcore::Network;
 // Serialization removed due to complex Address types
 
 use crate::client::devnet::DevnetConfig;
-use crate::network::transport::TransportPreference;
+use crate::network::TransportPreference;
 use crate::sync::BroadcastHoldout;
 use crate::types::ValidationMode;
 

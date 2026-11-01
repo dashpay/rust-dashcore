@@ -1,14 +1,11 @@
 //! BIP324 V2 encrypted transport for Dash P2P connections.
 //!
-//! V1 framing is dashcore's `RawNetworkMessageCodec`; this module adds the V2
-//! handshake and packet codec that peers use when both sides support it.
+//! V1 framing is dashcore's `RawNetworkMessageCodec`; the V2 handshake is
+//! `bip324::futures::handshake`. This module adds the V2 packet codec.
 
-pub mod message_ids;
-pub mod v2;
-pub mod v2_handshake;
+mod v2;
 
 pub use v2::{encrypt_message, V2Decoder};
-pub use v2_handshake::{V2HandshakeManager, V2HandshakeResult, V2Session};
 
 /// Transport preference for peer connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

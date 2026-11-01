@@ -1,4 +1,6 @@
-use bip324::OutboundCipher;
+use bip324::futures::{handshake as v2_handshake, ProtocolSessionReader};
+use bip324::io::{ProtocolError, ProtocolFailureSuggestion};
+use bip324::{Error as Bip324Error, OutboundCipher, Role};
 use dashcore::{
     consensus::encode,
     network::{
@@ -11,13 +13,12 @@ use dashcore::{
     Network,
 };
 use futures::lock::Mutex;
-use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt, Chain, ReadBuf},
+    io::{AsyncRead, AsyncWriteExt, ReadBuf},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
@@ -26,15 +27,13 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::bytes::BytesMut;
 use tokio_util::codec::{Decoder, FramedRead};
+use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 
 use crate::network::bans::Ban;
 use crate::network::costs::Ledger;
 use crate::network::manager::{InboundMessage, NetworkState};
-use crate::network::transport::{
-    encrypt_message, TransportPreference, V2Decoder, V2HandshakeManager, V2HandshakeResult,
-    V2Session,
-};
+use crate::network::transport::{encrypt_message, TransportPreference, V2Decoder};
 use crate::{error::NetworkResult, NetworkError};
 
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
@@ -77,6 +76,8 @@ impl std::fmt::Display for PeerId {
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// For the whole BIP324 handshake, from sending our key to the peer's version packet.
+const V2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const PING_INTERVAL: Duration = Duration::from_secs(120);
 /// A new peer's in-flight byte cap until the controller has measured it.
@@ -159,27 +160,49 @@ impl PeerWriter {
     }
 }
 
+/// The socket's read half. Over V2 it first replays the bytes the handshake read past
+/// the peer's version packet.
+type LinkReader = Either<ProtocolSessionReader<OwnedReadHalf>, OwnedReadHalf>;
+
+type PeerReader = FramedRead<CountingReader<LinkReader>, SizedCodec>;
+
 /// A TCP connection with its transport negotiated, ready for the version handshake.
-enum Link {
-    V1(TcpStream),
-    V2(Box<V2Session>),
+struct Link {
+    reader: LinkReader,
+    codec: SizedCodec,
+    writer: PeerWriter,
+}
+
+impl Link {
+    fn v1(stream: TcpStream, magic: u32) -> Self {
+        let (reader, half) = stream.into_split();
+        Link {
+            reader: Either::Right(reader),
+            codec: SizedCodec::V1,
+            writer: PeerWriter {
+                half,
+                framing: Framing::V1 {
+                    magic,
+                },
+            },
+        }
+    }
 }
 
 /// Whether a failed V2 handshake should be retried over V1.
 ///
-/// A V1-only peer closes the connection (or replies with V1 magic) once it sees our
-/// 64-byte key, which surfaces as a failed or unsupported handshake. Timeouts and
-/// connect errors are propagated instead, so an unreachable or stalled peer is not
-/// dialled a second time. (Dash Core reconnects over V1 on any disconnect before the
-/// peer sent anything, timeouts included.)
-fn should_fall_back_to_v1(error: &NetworkError) -> bool {
-    matches!(error, NetworkError::V2HandshakeFailed(_) | NetworkError::V2NotSupported)
+/// A V1-only Dash Core node drops the connection once our 64-byte key fails its
+/// magic check, which surfaces as a reset or EOF. A peer that answers with V1 magic
+/// speaks V1 too. Other errors, and timeouts, are propagated instead, so a stalled
+/// peer is not dialled a second time. (Dash Core reconnects over V1 on any disconnect
+/// before the peer sent anything, timeouts included.)
+fn should_fall_back_to_v1(error: &ProtocolError) -> bool {
+    matches!(
+        error,
+        ProtocolError::Io(_, ProtocolFailureSuggestion::RetryV1)
+            | ProtocolError::Internal(Bip324Error::V1Protocol)
+    )
 }
-
-/// Reads the bytes the V2 handshake took off the socket past its version packet
-/// first. Seeding them into `FramedRead`'s buffer instead would leave them undecoded
-/// until the socket next became readable.
-type PeerReader = FramedRead<CountingReader<Chain<Cursor<Vec<u8>>, OwnedReadHalf>>, SizedCodec>;
 
 // Boxing every message would penalise the common small ones.
 #[allow(clippy::large_enum_variant)]
@@ -352,20 +375,31 @@ impl DisconnectedPeer {
     /// Connect and negotiate the transport: BIP324 V2 unless `preference` is
     /// `V1Only`, reconnecting over V1 if `V2Preferred` and the peer doesn't speak V2.
     async fn open_link(&self, preference: TransportPreference) -> NetworkResult<Link> {
+        let magic = self.network.magic();
         if preference == TransportPreference::V1Only {
-            return Ok(Link::V1(self.open().await?));
+            return Ok(Link::v1(self.open().await?, magic));
         }
 
         let stream = self.open().await?;
         stream.set_nodelay(true).map_err(|e| {
             NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
         })?;
+        let (read_half, mut half) = stream.into_split();
         let handshake =
-            V2HandshakeManager::new_initiator(self.network, self.addr).perform_handshake(stream);
-        let error = match handshake.await {
-            Ok(V2HandshakeResult::Success(session)) => return Ok(Link::V2(session)),
-            Ok(V2HandshakeResult::FallbackToV1) => NetworkError::V2NotSupported,
-            Err(e) => e,
+            v2_handshake(magic.to_le_bytes(), Role::Initiator, None, None, read_half, &mut half);
+        let error = match tokio::time::timeout(V2_HANDSHAKE_TIMEOUT, handshake).await {
+            Ok(Ok((inbound, outbound, reader))) => {
+                return Ok(Link {
+                    reader: Either::Left(reader),
+                    codec: SizedCodec::V2(V2Decoder::new(magic, inbound)),
+                    writer: PeerWriter {
+                        half,
+                        framing: Framing::V2(outbound),
+                    },
+                });
+            }
+            Ok(Err(e)) => e,
+            Err(_) => return Err(NetworkError::Timeout),
         };
 
         if preference == TransportPreference::V2Preferred && should_fall_back_to_v1(&error) {
@@ -375,10 +409,11 @@ impl DisconnectedPeer {
                 self.addr, error
             );
             // The peer has already consumed our V2 key bytes, so the original stream
-            // cannot be reused.
-            return Ok(Link::V1(self.open().await?));
+            // cannot be reused. Close it before dialling again.
+            drop(half);
+            return Ok(Link::v1(self.open().await?, magic));
         }
-        Err(error)
+        Err(NetworkError::V2HandshakeFailed(error.to_string()))
     }
 
     pub async fn connect(
@@ -387,41 +422,21 @@ impl DisconnectedPeer {
         shutdown: CancellationToken,
     ) -> NetworkResult<ConnectedPeer> {
         let magic = self.network.magic();
-        let (stream, codec, framing, pending) =
-            match self.open_link(state.transport_preference).await? {
-                Link::V1(stream) => {
-                    let framing = Framing::V1 {
-                        magic,
-                    };
-                    (stream, SizedCodec::V1, framing, Vec::new())
-                }
-                Link::V2(session) => {
-                    let V2Session {
-                        stream,
-                        cipher,
-                        pending,
-                        ..
-                    } = *session;
-                    let (inbound, outbound) = cipher.into_split();
-                    let codec = SizedCodec::V2(V2Decoder::new(magic, inbound));
-                    (stream, codec, Framing::V2(outbound), pending)
-                }
-            };
+        let Link {
+            reader,
+            codec,
+            mut writer,
+        } = self.open_link(state.transport_preference).await?;
 
-        let transport_version = if matches!(framing, Framing::V2(_)) {
+        let transport_version = if matches!(writer.framing, Framing::V2(_)) {
             2
         } else {
             1
         };
         let peer_bytes = Arc::new(AtomicU64::new(0));
-        let (read_half, half) = stream.into_split();
-        let mut writer = PeerWriter {
-            half,
-            framing,
-        };
         let mut reader = FramedRead::new(
             CountingReader {
-                inner: Cursor::new(pending).chain(read_half),
+                inner: reader,
                 state: state.clone(),
                 peer_bytes: peer_bytes.clone(),
             },
@@ -675,17 +690,23 @@ async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> Net
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Error as IoError, ErrorKind};
+
     use super::*;
+
+    fn io_error(kind: ErrorKind) -> ProtocolError {
+        IoError::from(kind).into()
+    }
 
     #[test]
     fn v1_fallback_only_on_v2_protocol_failures() {
         // A V1-only peer hangs up or answers with V1 magic: retry over V1.
-        assert!(should_fall_back_to_v1(&NetworkError::V2HandshakeFailed("eof".into())));
-        assert!(should_fall_back_to_v1(&NetworkError::V2NotSupported));
+        assert!(should_fall_back_to_v1(&ProtocolError::eof()));
+        assert!(should_fall_back_to_v1(&io_error(ErrorKind::ConnectionReset)));
+        assert!(should_fall_back_to_v1(&Bip324Error::V1Protocol.into()));
 
-        // Connectivity problems are surfaced rather than masked by a V1 retry.
-        assert!(!should_fall_back_to_v1(&NetworkError::Timeout));
-        assert!(!should_fall_back_to_v1(&NetworkError::ConnectionFailed("refused".into())));
-        assert!(!should_fall_back_to_v1(&NetworkError::PeerDisconnected));
+        // Other failures are surfaced rather than masked by a V1 retry.
+        assert!(!should_fall_back_to_v1(&io_error(ErrorKind::BrokenPipe)));
+        assert!(!should_fall_back_to_v1(&Bip324Error::PacketTooBig.into()));
     }
 }
