@@ -67,9 +67,6 @@ pub enum Error {
         /// Number of transaction outputs.
         outputs_size: usize,
     },
-
-    /// Invalid Sighash type.
-    InvalidSighashType(InvalidSighashTypeError),
 }
 
 impl fmt::Display for Error {
@@ -94,9 +91,6 @@ impl fmt::Display for Error {
                 "SIGHASH_SINGLE for input ({}) haven't a corresponding output (#outputs:{})",
                 index, outputs_size
             ),
-            InvalidSighashType(e) => {
-                write!(f, "Invalid signature hash type: {}", e)
-            }
         }
     }
 }
@@ -112,15 +106,8 @@ impl std::error::Error for Error {
             }
             | SingleWithoutCorrespondingOutput {
                 ..
-            }
-            | InvalidSighashType(_) => None,
+            } => None,
         }
-    }
-}
-
-impl From<InvalidSighashTypeError> for Error {
-    fn from(e: InvalidSighashTypeError) -> Self {
-        Error::InvalidSighashType(e)
     }
 }
 
