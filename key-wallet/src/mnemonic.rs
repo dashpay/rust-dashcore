@@ -1210,7 +1210,7 @@ mod tests {
         // trimmed.
         assert_eq!(Mnemonic::cleanup_phrase("  foo,,  bar\t\tbaz "), "foo bar baz ");
         // Not a valid phrase: the result comes back in NFKD form.
-        assert_eq!(Mnemonic::cleanup_phrase("caf\u{e9} x"), "cafe\u{301} x");
+        assert_eq!(Mnemonic::cleanup_phrase("\u{e9}t\u{e9} x"), "e\u{301}te\u{301} x");
         // Simplified-Chinese words are single ideographs, so a no-space phrase comes back with
         // an ideographic space between every two words.
         let entropy = [
