@@ -12,6 +12,7 @@ on:
       - "Pre-commit Checks"
       - "Sanitizer"
       - "Ready for Review Trigger"
+      - "Changelog Guard"
     types: [completed]
 
 concurrency:
