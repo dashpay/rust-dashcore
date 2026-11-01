@@ -182,6 +182,7 @@ cargo doc --open
 - Default branch: `dev` (active development, target for new PRs)
 - Stable branch: `main` (tracks latest tagged release)
 - Release branches: `chore/release-vX.Y.Z` (short-lived, cut from `dev` per release)
+- `CHANGELOG.md` is written when a release is cut. Do not edit it in feature PRs. CI fails a PR that touches it unless it carries the `release` label.
 
 ## Current Status
 

@@ -1,0 +1,20 @@
+name: Changelog Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - '**/CHANGELOG.md'
+
+permissions: {}
+
+jobs:
+  changelog-guard:
+    # Every feature PR appending to the same changelog section conflicts with every other open PR.
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'release') }}
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Reject changelog edits outside release PRs
+        run: |
+          echo "::error file=CHANGELOG.md::CHANGELOG.md is written when a release is cut. Revert the changelog edit, or add the 'release' label if this is a release PR."
+          exit 1
