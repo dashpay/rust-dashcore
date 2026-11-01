@@ -9,6 +9,7 @@ use std::os::raw::{c_char, c_uint};
 use std::ptr;
 
 use key_wallet::Mnemonic;
+use zeroize::Zeroize;
 
 use crate::error::{FFIError, FFIErrorCode};
 use crate::{check_ptr, deref_ptr, unwrap_or_return};
@@ -69,6 +70,18 @@ impl From<key_wallet::mnemonic::Language> for FFILanguage {
     }
 }
 
+/// The phrase of `mnemonic` as a C string. The bytes go straight from the wiped phrase buffer into
+/// one allocation sized for the terminator, which `CString::new` keeps, so no unwiped copy is left.
+pub(crate) fn phrase_c_string(mnemonic: &Mnemonic) -> Result<CString, &'static str> {
+    let phrase = mnemonic.phrase();
+    let mut bytes = Vec::with_capacity(phrase.len() + 1);
+    bytes.extend_from_slice(phrase.as_bytes());
+    CString::new(bytes).map_err(|e| {
+        e.into_vec().zeroize();
+        "mnemonic phrase contains a NUL byte"
+    })
+}
+
 /// Generate a new mnemonic with specified word count (12, 15, 18, 21, or 24)
 ///
 /// # Safety
@@ -105,7 +118,7 @@ pub unsafe extern "C" fn mnemonic_generate(
         _ => 12,
     };
     let mnemonic = unwrap_or_return!(Mnemonic::generate(word_count, Language::English), error);
-    unwrap_or_return!(CString::new(mnemonic.to_string()), error).into_raw()
+    unwrap_or_return!(phrase_c_string(&mnemonic), error).into_raw()
 }
 
 /// Generate a new mnemonic with specified language and word count
@@ -146,7 +159,7 @@ pub unsafe extern "C" fn mnemonic_generate_with_language(
         _ => 12,
     };
     let mnemonic = unwrap_or_return!(Mnemonic::generate(word_count, lang), error);
-    unwrap_or_return!(CString::new(mnemonic.to_string()), error).into_raw()
+    unwrap_or_return!(phrase_c_string(&mnemonic), error).into_raw()
 }
 
 /// Validate a mnemonic phrase in any supported BIP-39 language.
@@ -236,17 +249,18 @@ pub unsafe extern "C" fn mnemonic_word_count(
     mnemonic_str.split_whitespace().count() as c_uint
 }
 
-/// Free a mnemonic string
+/// Free a mnemonic string, wiping it first
 ///
 /// # Safety
 ///
-/// - `mnemonic` must be a valid pointer created by mnemonic generation functions or null
+/// - `mnemonic` must be null or a pointer returned by a mnemonic generation function, with the
+///   string unmodified
 /// - After calling this function, the pointer becomes invalid
 #[no_mangle]
 pub unsafe extern "C" fn mnemonic_free(mnemonic: *mut c_char) {
     if !mnemonic.is_null() {
         unsafe {
-            let _ = CString::from_raw(mnemonic);
+            CString::from_raw(mnemonic).into_bytes_with_nul().zeroize();
         }
     }
 }
