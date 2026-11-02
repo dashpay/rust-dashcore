@@ -9,9 +9,9 @@ use std::net::SocketAddr;
 use tempfile::TempDir;
 use tracing::info;
 
-use super::fs_helpers::{copy_dir, retain_test_dir};
+use super::fs_helpers::retain_test_dir;
 use super::node::TestChain;
-use super::{DashCoreConfig, DashCoreNode, WalletFile};
+use super::{DashCoreNode, WalletFile};
 
 /// Shared test infrastructure for dashd integration tests.
 ///
@@ -44,17 +44,10 @@ impl DashdTestContext {
             return None;
         }
 
-        let config = DashCoreConfig::from_env(chain)
-            .unwrap_or_else(|| panic!("DASHD_TEST_DATA/{} not found", chain.variant_dir()));
-        Some(Self::create(config).await)
-    }
-
-    /// Shared initialization: copies the datadir, starts dashd, loads wallets.
-    async fn create(mut config: DashCoreConfig) -> Self {
         let datadir = TempDir::new().expect("failed to create temp dir");
-        copy_dir(&config.datadir, datadir.path()).expect("failed to copy datadir");
-        config.datadir = datadir.path().to_path_buf();
-        config.wallet = "wallet".to_string();
+        let mut node = DashCoreNode::on_chain_copy(chain, datadir.path())
+            .unwrap_or_else(|| panic!("DASHD_TEST_DATA/{} not found", chain.variant_dir()))
+            .with_wallet("wallet");
 
         let wallet = WalletFile::from_json(datadir.path(), "wallet");
         info!(
@@ -62,7 +55,6 @@ impl DashdTestContext {
             wallet.wallet_name, wallet.transaction_count, wallet.utxo_count, wallet.balance
         );
 
-        let mut node = DashCoreNode::with_config(config);
         let addr = node.start().await;
         info!("DashCoreNode started at {}", addr);
 
@@ -80,14 +72,14 @@ impl DashdTestContext {
             info!("RPC miner not available (tests requiring block generation will be skipped)");
         }
 
-        DashdTestContext {
+        Some(DashdTestContext {
             node,
             addr,
             initial_height,
             wallet,
             supports_mining,
             datadir,
-        }
+        })
     }
 }
 

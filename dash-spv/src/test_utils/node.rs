@@ -232,6 +232,13 @@ impl DashCoreNode {
         Some(Self::with_config(config))
     }
 
+    /// Has dashd load the datadir's wallet `name` when it starts, and makes it the wallet the
+    /// node's RPC helpers use.
+    pub(crate) fn with_wallet(mut self, name: &str) -> Self {
+        self.config.wallet = name.to_string();
+        self
+    }
+
     /// Start the Dash Core node.
     ///
     /// `find_available_port` checks that a port is free and then releases it, and dashd binds
