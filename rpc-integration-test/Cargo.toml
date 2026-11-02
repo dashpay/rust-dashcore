@@ -10,7 +10,6 @@ version.workspace = true
 
 [dependencies]
 dashcore-rpc = { workspace = true }
-lazy_static = "1.4.0"
 hex-conservative = { workspace = true }
 dotenvy = "0.15.7"
 tracing = { workspace = true }
