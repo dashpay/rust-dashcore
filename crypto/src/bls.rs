@@ -403,6 +403,16 @@ impl BlsSignature {
         }
     }
 
+    /// Dash Core's `CBLSSignature::IsValid()` for these bytes under this
+    /// scheme: false for all-zero bytes, bytes that do not decode to a
+    /// signature, and the identity element (`src/bls/bls.h:90-122`).
+    pub fn is_valid(self) -> bool {
+        match self.scheme {
+            BlsScheme::Legacy => self.point::<BlsScChia>().is_ok(),
+            BlsScheme::Modern => self.point::<BlsScIetf>().is_ok(),
+        }
+    }
+
     fn point<S: PkcScheme>(self) -> Result<PkcSignature<S>, BlsError> {
         PkcSignature::<S>::from_bytes(self.bytes.as_bytes())
             .map_err(|_| BlsError::InvalidSignature(self.bytes.as_bytes().to_lower_hex_string()))
@@ -543,6 +553,22 @@ mod tests {
                     .verify(&CHAINLOCK_BLOCK_HASH, &BlsSigBytes::from_bytes(CHAINLOCK_SIG));
                 println!("{:?} verification: {:?}", scheme, verified.is_ok());
             }
+        }
+
+        /// Dash Core's `CBLSSignature::IsValid()` (`src/bls/bls.h:90-122`).
+        #[test_case::test_case(CHAINLOCK_SIG, true; "a real signature")]
+        #[test_case::test_case([0; BLS_SIG_LEN], false; "all zero")]
+        #[test_case::test_case(
+            { let mut bytes = CHAINLOCK_SIG; bytes[0] &= 0x7f; bytes }, false;
+            "bytes the parser refuses"
+        )]
+        #[test_case::test_case(
+            { let mut bytes = [0; BLS_SIG_LEN]; bytes[0] = 0xc0; bytes }, false;
+            "the identity element"
+        )]
+        fn is_valid_follows_dash_core_is_valid(bytes: [u8; BLS_SIG_LEN], valid: bool) {
+            let signature = BlsSigBytes::from_bytes(bytes).as_scheme(BlsScheme::Modern);
+            assert_eq!(signature.is_valid(), valid);
         }
 
         #[test]

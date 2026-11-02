@@ -204,6 +204,22 @@ impl CoinbasePayload {
         }
     }
 
+    /// The ChainLock signature this coinbase carries for member selection at
+    /// `block_height`, as Dash Core's `GetNonNullCoinbaseChainlock` reads it
+    /// (`src/evo/cbtx.cpp:200-211`) short of `IsValid()`, which the caller
+    /// checks: `Some` when the payload is version 3 or later, its height is
+    /// `block_height`, its signature is not all zeros and its
+    /// `bestCLHeightDiff` is below `block_height`.
+    pub fn chain_lock_candidate(&self, block_height: u32) -> Option<BLSSignature> {
+        if self.version < 3
+            || self.height != block_height
+            || !self.best_cl_height.is_some_and(|diff| diff < block_height)
+        {
+            return None;
+        }
+        self.best_cl_signature.filter(|signature| !signature.is_zeroed())
+    }
+
     /// The size of the payload in bytes.
     /// version(2) + height(4) + merkle_root_masternode_list(32) + merkle_root_quorums(32)
     /// in addition to the above, if version >= 3: asset_locked_amount(8) + best_cl_height(compact_size) +
@@ -371,6 +387,43 @@ mod tests {
     use crate::consensus::{Decodable, Encodable};
     use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
     use crate::transaction::special_transaction::coinbase::CoinbasePayload;
+    use test_case::test_case;
+
+    /// The coinbase payload of the mainnet block 2227096 (after v20).
+    fn mainnet_v20_payload() -> CoinbasePayload {
+        use crate::network::message_sml::MnListDiff;
+        use crate::transaction::special_transaction::TransactionPayload;
+
+        let diff: MnListDiff = crate::consensus::deserialize(include_bytes!(
+            "../../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("the fixture decodes");
+        match diff.coinbase_tx.special_transaction_payload {
+            Some(TransactionPayload::CoinbasePayloadType(payload)) => payload,
+            other => panic!("the fixture's coinbase carries a coinbase payload, got {other:?}"),
+        }
+    }
+
+    /// One case per clause of Dash Core's `GetNonNullCoinbaseChainlock`
+    /// (`src/evo/cbtx.cpp:206-207`), with `IsValid()` short of the parser.
+    #[test_case(|_| {}, 0, true; "accepted")]
+    #[test_case(|p| p.version = 2, 0, false; "nVersion below CLSIG_AND_BALANCE")]
+    #[test_case(|_| {}, 1, false; "nHeight not the block height")]
+    #[test_case(|p| p.best_cl_signature = Some(BLSSignature::from([0; 96])), 0, false;
+        "bestCLSignature all zero")]
+    #[test_case(|p| p.best_cl_height = Some(p.height), 0, false; "bestCLHeightDiff not below height")]
+    fn chain_lock_candidate_follows_get_non_null_coinbase_chainlock(
+        edit: fn(&mut CoinbasePayload),
+        height_offset: u32,
+        accepted: bool,
+    ) {
+        let mut payload = mainnet_v20_payload();
+        let signature = payload.best_cl_signature.filter(|signature| !signature.is_zeroed());
+        assert!(signature.is_some(), "the fixture block carries a ChainLock");
+        let block_height = payload.height + height_offset;
+        edit(&mut payload);
+        assert_eq!(payload.chain_lock_candidate(block_height), signature.filter(|_| accepted));
+    }
 
     #[test]
     fn size() {
