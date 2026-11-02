@@ -6,11 +6,13 @@ workflows:
     '.github/workflows/build-and-test.yml':
         - 'actions/cache@v5'
         - 'actions/checkout@v6'
+        - 'actions/setup-python@v6'
         - 'actions/upload-artifact@v7'
         - 'codecov/codecov-action@v6'
         - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2'
         - 'taiki-e/install-action@cargo-llvm-cov'
+        - 'taiki-e/install-action@just'
     '.github/workflows/changelog-guard.yml': []
     '.github/workflows/conflict-check.yml':
         - 'eps1lon/actions-label-merge-conflict@v3'
@@ -40,6 +42,7 @@ workflows:
     '.github/workflows/sanitizer.yml':
         - 'actions/checkout@v6'
         - 'dtolnay/rust-toolchain@nightly'
+        - 'taiki-e/install-action@just'
     '.github/workflows/update-masternode-seeds.yml':
         - 'actions/checkout@v6'
         - 'dtolnay/rust-toolchain@stable'

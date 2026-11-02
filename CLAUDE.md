@@ -83,20 +83,23 @@ cargo test test_name
 cargo test -p dash-spv
 
 # Run comprehensive test suite
-./contrib/test.sh
+just test
 ```
 
-### Environment Variables for Testing
+### Just Recipes
 ```bash
-# Enable coverage
-DO_COV=true ./contrib/test.sh
+# List every recipe, crates' `<crate>::<recipe>` ones included
+just
 
-# Enable linting
-DO_LINT=true ./contrib/test.sh
+# Run the lints and checks
+just lint check doc msrv deny
 
-# Enable formatting check
-DO_FMT=true ./contrib/test.sh
+# Run test groups under cargo-llvm-cov and print a summary
+just coverage core wallet
 ```
+
+Recipes need just 1.47 or newer, the first with the `[env]` attribute.
+`test`, `coverage` and `gha::verify-groups` also need PyYAML.
 
 ### Integration Tests (dashd)
 
