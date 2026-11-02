@@ -64,6 +64,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let floor = tip.saturating_sub(self.retention_window()).min(base).min(qr_info_base);
         let before = self.masternode_lists.len();
         self.masternode_lists.retain(|height, _| *height >= floor);
+        let lists = &self.masternode_lists;
+        self.coinbase_chain_locks.retain(|height, _| lists.contains_key(height));
         if self.masternode_lists.len() == before {
             return;
         }
@@ -86,6 +88,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     pub(crate) async fn truncate_above(&mut self, height: CoreBlockHeight) {
         if let Some(above) = height.checked_add(1) {
             self.masternode_lists.split_off(&above);
+            self.coinbase_chain_locks.split_off(&above);
         }
 
         let isd_type = self.network.isd_llmq_type();
