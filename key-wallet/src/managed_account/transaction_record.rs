@@ -476,6 +476,12 @@ mod tests {
             (OutputRole::Sent, None, true),
             (OutputRole::Unspendable, None, true),
             (OutputRole::Sent, Some(witness), false),
+            (OutputRole::Sent, Some("ds1qw508d6qejxtdg4y5r3zarvary0c5xw7kdmvh9f"), false),
+            (
+                OutputRole::Sent,
+                Some("dsrt1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqwl4t5d"),
+                false,
+            ),
             (OutputRole::Unspendable, Some(witness), false),
             (OutputRole::Received, Some(witness), false),
             (OutputRole::Change, Some(witness), false),

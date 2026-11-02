@@ -360,9 +360,8 @@ impl TransactionBuilder {
     ///
     /// The flat 546 this replaces is exactly this formula for a 34-byte P2PKH output, so nothing
     /// moves for the ordinary path. It matters for `change_to_first_input`, where change is
-    /// routed to whatever script VIN0 uses: a 43-byte output has a 573-duff threshold, so a
-    /// 550-duff change output would have passed a flat 546 check and then been rejected as dust
-    /// by the network.
+    /// routed to whatever script VIN0 uses, such as a 32-byte P2SH output with a 540-duff
+    /// threshold.
     fn dust_threshold(output_size: usize) -> u64 {
         3 * (output_size as u64 + 148)
     }
@@ -1629,9 +1628,9 @@ mod tests {
     }
 
     #[test]
-    fn test_change_to_first_input_sizes_larger_routing_script() {
+    fn test_change_to_first_input_sizes_p2sh_routing_script() {
         let routed_address =
-            Address::p2wsh(&Builder::new().push_int(1).into_script(), Network::Testnet);
+            Address::p2sh(&Builder::new().push_int(1).into_script(), Network::Testnet).unwrap();
         let mut routed_input = Utxo::dummy(0x01, 100_000, 100, false, true);
         routed_input.address = routed_address.clone();
         routed_input.txout.script_pubkey = routed_address.script_pubkey();
@@ -1646,11 +1645,11 @@ mod tests {
             .change_to_first_input();
 
         let routed_output_size = serialized_script_output_size(&routed_address.script_pubkey());
-        assert!(routed_output_size > CHANGE_OUTPUT_SIZE);
+        assert!(routed_output_size < CHANGE_OUTPUT_SIZE);
         assert_eq!(builder.estimated_change_output_size(), routed_output_size);
 
         let (tx, fee, _reservation) =
-            builder.build_unsigned_reserved().expect("witness-routed change transaction");
+            builder.build_unsigned_reserved().expect("P2SH-routed change transaction");
         assert_eq!(tx.output.len(), 2);
         assert!(tx
             .output
@@ -1664,7 +1663,7 @@ mod tests {
             as u64;
         assert!(
             fee >= signed_size,
-            "fee {fee} must cover the larger routed output at signed size {signed_size}"
+            "fee {fee} must cover the routed output at signed size {signed_size}"
         );
     }
 
@@ -1746,7 +1745,7 @@ mod tests {
             546,
             "P2PKH change must keep the historical 546-duff threshold"
         );
-        // A 43-byte output (e.g. P2WSH) costs the same 148-byte input to spend, so its threshold
+        // A 43-byte output costs the same 148-byte input to spend, so its threshold
         // is 3 * (43 + 148). A 550-duff change output clears 546 but is dust at this size.
         assert_eq!(TransactionBuilder::dust_threshold(43), 573);
         assert!(550 > TransactionBuilder::dust_threshold(CHANGE_OUTPUT_SIZE));

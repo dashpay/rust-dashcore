@@ -61,7 +61,7 @@ use serde;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::hash_types::{ScriptHash, WScriptHash};
+use crate::hash_types::ScriptHash;
 use crate::prelude::*;
 use crate::{OutPoint, io};
 
@@ -341,24 +341,6 @@ impl From<&ScriptBuf> for ScriptHash {
 impl From<&Script> for ScriptHash {
     fn from(script: &Script) -> ScriptHash {
         script.script_hash()
-    }
-}
-
-impl From<ScriptBuf> for WScriptHash {
-    fn from(script: ScriptBuf) -> WScriptHash {
-        script.wscript_hash()
-    }
-}
-
-impl From<&ScriptBuf> for WScriptHash {
-    fn from(script: &ScriptBuf) -> WScriptHash {
-        script.wscript_hash()
-    }
-}
-
-impl From<&Script> for WScriptHash {
-    fn from(script: &Script) -> WScriptHash {
-        script.wscript_hash()
     }
 }
 
@@ -688,9 +670,7 @@ pub fn bytes_to_asm_fmt(script: &[u8], f: &mut dyn fmt::Write) -> fmt::Result {
     while let Some(byte) = iter.next() {
         let opcode = opcodes::All::from(*byte);
 
-        let data_len = if let opcodes::Class::PushBytes(n) =
-            opcode.classify(opcodes::ClassifyContext::Legacy)
-        {
+        let data_len = if let opcodes::Class::PushBytes(n) = opcode.classify() {
             n as usize
         } else {
             match opcode {

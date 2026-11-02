@@ -39,7 +39,6 @@ pub const NODE_HEADERS_COMPRESSED: ServiceFlags = ServiceFlags::NODE_HEADERS_COM
 /// Increasing it implies that your software also supports every feature prior to this version.
 /// Doing so without support may lead to you incorrectly banning other peers or other peers banning you.
 /// These are the features required for each version:
-/// 70016 - Support receiving `wtxidrelay` message between `version` and `verack` message
 /// 70015 - Support receiving invalid compact blocks from a peer without banning them
 /// 70014 - Support compact block messages `sendcmpct`, `cmpctblock`, `getblocktxn` and `blocktxn`
 /// 70013 - Support `feefilter` message

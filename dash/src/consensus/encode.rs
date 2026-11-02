@@ -54,7 +54,6 @@ use crate::network::{
 };
 use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeListEntry;
-use crate::taproot::TapLeafHash;
 use crate::transaction::special_transaction::TransactionType;
 use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 use crate::transaction::txin::TxIn;
@@ -738,7 +737,6 @@ impl_vec!(u16);
 impl_vec!(u32);
 impl_vec!(i32);
 impl_vec!(u64);
-impl_vec!(TapLeafHash);
 impl_vec!(VarInt);
 impl_vec!(ShortId);
 impl_vec!(OutPoint);
@@ -990,18 +988,6 @@ impl Encodable for sha256::Hash {
 }
 
 impl Decodable for sha256::Hash {
-    fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
-        Ok(Self::from_byte_array(<<Self as Hash>::Bytes>::consensus_decode(r)?))
-    }
-}
-
-impl Encodable for TapLeafHash {
-    fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        self.as_byte_array().consensus_encode(w)
-    }
-}
-
-impl Decodable for TapLeafHash {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
         Ok(Self::from_byte_array(<<Self as Hash>::Bytes>::consensus_decode(r)?))
     }

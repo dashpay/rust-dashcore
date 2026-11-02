@@ -33,7 +33,7 @@ use dashcore_rpc::{
 use dashcore_rpc::dashcore::address::NetworkUnchecked;
 use dashcore_rpc::dashcore::{BlockHash, ProTxHash, QuorumHash, ScriptBuf};
 use dashcore_rpc::dashcore_rpc_json::{
-    GetBlockTemplateModes, GetBlockTemplateRules, ProTxInfo, ProTxRevokeReason, ScanTxOutRequest,
+    GetBlockTemplateModes, ProTxInfo, ProTxRevokeReason, ScanTxOutRequest,
 };
 use dashcore_rpc::json::ProTxListType;
 use dashcore_rpc::json::QuorumType::LlmqTest;
@@ -1298,8 +1298,7 @@ fn test_getblocktemplate(cl: &Client) {
     cl.send_to_address(&RANDOM_ADDRESS, btc(1), None, None, None, None, None, None, None, None)
         .unwrap();
 
-    cl.get_block_template(GetBlockTemplateModes::Template, &[GetBlockTemplateRules::SegWit], &[])
-        .unwrap();
+    cl.get_block_template(GetBlockTemplateModes::Template, &[], &[]).unwrap();
 
     // let pop: &Address = &RANDOM_ADDRESS;
 

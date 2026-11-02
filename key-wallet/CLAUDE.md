@@ -420,10 +420,9 @@ println!("Checking accounts: {:?}", relevant_accounts);
 ## Future Considerations
 
 ### Planned Improvements
-1. **Schnorr/Taproot Support**: Preparation for future Dash upgrades
-2. **Descriptor Wallets**: Support for output script descriptors
-3. **Multi-signature**: Native multisig account types
-4. **Lightning Network**: Payment channel key management
+1. **Descriptor Wallets**: Support for output script descriptors
+2. **Multi-signature**: Native multisig account types
+3. **Lightning Network**: Payment channel key management
 
 ### Maintenance Guidelines
 1. Keep test vectors updated with Dash Core

@@ -39,7 +39,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
-bech32 = { version = "0.9.1" }
 dashcore_hashes = { path = "../hashes" }
 dashcore-crypto = { path = "../crypto" }
 dash-network = { path = "../dash-network" }

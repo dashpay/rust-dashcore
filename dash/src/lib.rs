@@ -61,7 +61,6 @@ extern crate alloc;
 
 #[cfg(feature = "base64")]
 pub extern crate base64;
-pub extern crate bech32;
 #[cfg(feature = "bitcoinconsensus")]
 pub extern crate bitcoinconsensus;
 pub extern crate dashcore_hashes as hashes;
@@ -109,7 +108,6 @@ pub mod sign_message;
 pub mod signer;
 pub mod sml;
 pub mod string;
-pub mod taproot;
 pub mod util;
 
 #[cfg(feature = "serde")]
@@ -134,7 +132,7 @@ pub use crate::ephemerealdata::instant_lock::InstantLock;
 pub use crate::error::Error;
 pub use crate::hash_types::{
     BlockHash, FilterHash, ProTxHash, PubkeyHash, QuorumHash, QuorumSigningRequestId, ScriptHash,
-    TxMerkleNode, Txid, WPubkeyHash, WScriptHash, Wtxid,
+    TxMerkleNode, Txid,
 };
 pub use crate::merkle_tree::MerkleBlock;
 pub use crate::network::constants::{Network, ParseNetworkError};
