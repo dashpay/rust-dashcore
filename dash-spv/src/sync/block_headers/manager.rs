@@ -726,6 +726,50 @@ mod tests {
         assert_eq!(manager.tip().await.unwrap().height(), tip.height() + 2);
     }
 
+    /// Syncs down one checkpoint at a time: an adjacent one needs no download,
+    /// a distant one does, and it stops once it reaches the floor, not genesis.
+    #[tokio::test]
+    async fn test_extend_down_descends_checkpoints_to_the_floor() {
+        let chain: Vec<HashedBlockHeader> = Header::dummy_chain(130, BlockHash::dummy(1))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let headers = storage.block_headers();
+        headers.write().await.store_headers_at_height(&chain[100..], 100).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            headers.clone(),
+            storage.metadata(),
+            Box::leak(Box::new(CheckpointManager::dummy(&chain))),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        manager.pipeline.init(129, *chain[129].hash(), 129);
+        manager.floor = Some(30);
+
+        manager.extend_down().await.unwrap();
+        assert!(!manager.pipeline.is_syncing_below());
+        assert_eq!(headers.read().await.get_start_height().await, Some(75));
+
+        manager.extend_down().await.unwrap();
+        assert!(manager.pipeline.is_syncing_below());
+        manager.pipeline.receive_headers(&chain[50..75]).unwrap();
+        manager.store_ready_batches(Vec::new()).await.unwrap();
+        assert!(!manager.pipeline.is_syncing_below());
+        assert_eq!(headers.read().await.get_start_height().await, Some(25));
+
+        manager.extend_down().await.unwrap();
+        assert_eq!(manager.floor, None);
+        assert!(!manager.pipeline.is_syncing_below());
+        assert_eq!(headers.read().await.get_start_height().await, Some(25));
+        for height in 25..=129u32 {
+            let stored = headers.read().await.get_header(height).await.unwrap();
+            assert_eq!(stored.map(|header| *header.hash()), Some(*chain[height as usize].hash()));
+        }
+    }
+
     #[tokio::test]
     async fn test_block_headers_manager_new() {
         let manager = create_test_manager().await;

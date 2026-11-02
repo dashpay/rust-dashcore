@@ -388,6 +388,7 @@ mod tests {
     use dashcore::network::message::NetworkMessage;
     use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
     use dashcore_hashes::Hash;
+    use test_case::test_case;
 
     type TestFilterHeadersManager =
         FilterHeadersManager<PersistentBlockHeaderStorage, PersistentFilterHeaderStorage>;
@@ -718,6 +719,41 @@ mod tests {
 
     async fn filter_tip(storage: &DiskStorageManager) -> Option<u32> {
         storage.filter_headers().read().await.get_filter_tip_height().await.unwrap()
+    }
+
+    /// A batch below the stored filter headers that doesn't end at them stores nothing.
+    #[test_case(0, b"prev" ; "empty")]
+    #[test_case(1999, b"prev" ; "wrong end")]
+    #[test_case(2000, b"other" ; "last header mismatch")]
+    #[tokio::test]
+    async fn test_lower_batch_not_ending_at_stored_filter_headers_is_rejected(
+        count: u32,
+        previous: &[u8],
+    ) {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let hashes = store_block_headers(&storage, 0, 2001).await;
+        let stop_hash = hashes[2000];
+        let stored =
+            compute_filter_headers(&cfheaders(FilterHeader::hash(b"prev"), stop_hash, 2000));
+        let filter_headers = storage.filter_headers();
+        filter_headers
+            .write()
+            .await
+            .store_filter_headers_at_height(&stored[1999..], 2000)
+            .await
+            .unwrap();
+        let mut manager =
+            FilterHeadersManager::new(storage.block_headers(), filter_headers.clone())
+                .await
+                .unwrap();
+        manager.lower_batch = Some((1, stop_hash));
+
+        let batch = cfheaders(FilterHeader::hash(previous), stop_hash, count);
+        let events = manager.store_lower_batch(1, &batch).await.unwrap();
+
+        assert!(events.is_empty());
+        assert_eq!(manager.lower_batch, None);
+        assert_eq!(filter_headers.read().await.get_filter_start_height().await, Some(2000));
     }
 
     #[tokio::test]
