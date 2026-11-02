@@ -122,7 +122,8 @@ pub struct FiltersManager<
     pub(super) tracker: BlockMatchTracker,
     /// Scripts found by processed blocks since the last tick, rescanned together.
     pub(super) pending_new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
-    /// Lowest height a wallet can need, whatever its birth height.
+    /// Lowest height to sync down to, whatever a wallet's birth height: the
+    /// explicit start height, or else the network's HD sync floor.
     sync_floor: u32,
 }
 

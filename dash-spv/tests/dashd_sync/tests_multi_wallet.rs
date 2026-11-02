@@ -692,3 +692,34 @@ async fn test_wallet_added_below_synced_wallet(restart: bool, mine: bool) {
     assert_eq!(count_wallet_transactions(&wallet, &tip_id).await, 0);
     handle.stop().await;
 }
+
+/// An explicit `start_from_height` limits how far down the client syncs, even
+/// for a wallet born below it.
+#[tokio::test]
+async fn test_explicit_start_height_limits_backfill() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let height = ctx.dashd.initial_height;
+    let anchor = height / 2;
+    anchor_at_checkpoint(&ctx.client_config, &ctx.dashd.node, anchor).await;
+    let mut config = ctx.client_config.clone();
+    config.start_from_height = Some(anchor);
+
+    let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(Network::Regtest)));
+    let wallet_id = wallet
+        .write()
+        .await
+        .create_wallet_from_mnemonic(&ctx.dashd.wallet.mnemonic, 0, default_test_account_options())
+        .unwrap();
+    let mut handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    wait_for_sync(&mut handle.progress_receiver, height).await;
+    wait_for_wallet_synced(&wallet, &wallet_id, height).await;
+    handle.stop().await;
+    drop(handle);
+
+    let mut storage = DiskStorageManager::new(&config).await.unwrap();
+    let start = storage.get_start_height().await;
+    storage.stop().await;
+    assert_eq!(start, Some(anchor + 1 - CHECKPOINT_HEADERS as u32));
+}
