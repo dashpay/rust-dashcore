@@ -15,3 +15,6 @@ dotenvy = "0.15.7"
 tracing = { workspace = true }
 tracing-log = "0.2"
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[lints]
+workspace = true

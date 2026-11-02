@@ -32,3 +32,6 @@ test-case = { workspace = true }
 
 [build-dependencies]
 cbindgen = { workspace = true, optional = true }
+
+[lints]
+workspace = true

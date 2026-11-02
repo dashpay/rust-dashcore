@@ -52,8 +52,5 @@ criterion = { workspace = true }
 name = "filter_scan"
 harness = false
 
-[lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = [
-    'cfg(bench)',
-    'cfg(fuzzing)',
-] }
+[lints]
+workspace = true

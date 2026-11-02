@@ -48,3 +48,6 @@ dashcore = { workspace = true, features = ["test-utils"] }
 key-wallet = { workspace = true, features = ["test-utils"] }
 key-wallet-manager = { workspace = true, features = ["test-utils"] }
 test-case = { workspace = true }
+
+[lints]
+workspace = true

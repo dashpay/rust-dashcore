@@ -29,3 +29,6 @@ key-wallet = { workspace = true, features = ["serde", "getrandom"] }
 dashcore = { workspace = true, features = ["rand-std", "signer", "serde"] }
 
 bincode = { workspace = true, features = ["serde"] }
+
+[lints]
+workspace = true

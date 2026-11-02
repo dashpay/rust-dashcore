@@ -7,10 +7,6 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
-
 [package.metadata]
 cargo-fuzz = true
 
@@ -89,3 +85,6 @@ path = "fuzz_targets/hashes/ripemd160.rs"
 [[bin]]
 name = "hashes_sha512_256"
 path = "fuzz_targets/hashes/sha512_256.rs"
+
+[lints]
+workspace = true

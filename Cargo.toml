@@ -73,6 +73,13 @@ bitcoin-crypto = { git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "
 bitcoin-units = { git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "7ba35c7c1dd63892bfb9c9395bbd80e2ab5df516", default-features = false }
 hex-conservative = { version = "1.3.0" }
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "deny", check-cfg = [
+    'cfg(bench)',
+    'cfg(fuzzing)',
+    'cfg(kani)',
+] }
+
 [workspace.package]
 authors = ["The rust-dashcore Developers"]
 edition = "2024"
