@@ -2,8 +2,9 @@
 """Cross-platform setup script for dashd and test blockchain data.
 
 Downloads the Dash Core binary and regtest test data for integration tests.
-Outputs DASHD_PATH and DASHD_TEST_DATA lines suitable for appending to GITHUB_ENV
-or evaluating in a shell.
+
+Prints DASHD_PATH, DASHD_TEST_DATA and DASHD_MN_DATADIR for GITHUB_ENV or a
+shell `eval`, or with `-- <command>...`, runs the command with them set.
 
 Environment variables:
     DASHVERSION        - Dash Core version (default: 23.1.0)
@@ -14,6 +15,7 @@ Environment variables:
 
 import os
 import platform
+import subprocess
 import sys
 import tarfile
 import time
@@ -153,7 +155,8 @@ def setup_test_data(cache_dir, variant, marker_relpath):
     return test_data_dir
 
 
-def main():
+def setup():
+    """Fetch dashd and the test data if missing, returning their env vars."""
     cache_dir = get_cache_dir()
     os.makedirs(cache_dir, exist_ok=True)
 
@@ -163,13 +166,27 @@ def main():
         for variant, marker in VARIANTS.items()
     }
 
-    datadir = os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}")
+    return {
+        "DASHD_PATH": dashd_path,
+        "DASHD_TEST_DATA": os.path.join(cache_dir, f"regtest-blockchain-{TEST_DATA_VERSION}"),
+        "DASHD_MN_DATADIR": variant_dirs["regtest-mn"],
+    }
+
+
+def main():
+    if len(sys.argv) > 1:
+        if sys.argv[1] != "--" or len(sys.argv) < 3:
+            sys.exit(f"usage: {sys.argv[0]} [-- <command>...]")
+        env = {**os.environ, **setup()}
+        # exec passes the exit status and signals through; Windows can't exec
+        if os.name == "posix":
+            os.execvpe(sys.argv[2], sys.argv[2:], env)
+        sys.exit(subprocess.run(sys.argv[2:], env=env).returncode)
 
     # GITHUB_ENV expects bare NAME=value; shell `eval` needs `export NAME=value`.
     prefix = "" if os.environ.get("GITHUB_ACTIONS") == "true" else "export "
-    print(f"{prefix}DASHD_PATH={dashd_path}")
-    print(f"{prefix}DASHD_TEST_DATA={datadir}")
-    print(f"{prefix}DASHD_MN_DATADIR={variant_dirs['regtest-mn']}")
+    for name, value in setup().items():
+        print(f"{prefix}{name}={value}")
 
 
 if __name__ == "__main__":
