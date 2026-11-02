@@ -657,8 +657,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
             // (src/script/interpreter.cpp).
             let single_or_none =
                 sighash == EcdsaSighashType::Single || sighash == EcdsaSighashType::None;
-            self_.version.consensus_encode(&mut writer)?;
-            self_.tx_type().to_u16().consensus_encode(&mut writer)?;
+            self_.consensus_encode_version_and_type(&mut writer)?;
             // Only the input being signed with ANYONECANPAY, else all of them; the signed one
             // carries the script code and the others an empty script.
             let inputs = if anyone_can_pay {
@@ -935,12 +934,15 @@ mod tests {
 
     use hashes::HashEngine;
     use serde_json::Value;
+    use test_case::test_case;
 
     use super::*;
     use crate::Network;
     use crate::address::Address;
+    use crate::blockdata::script::Instruction;
     use crate::blockdata::transaction::txin::TxIn;
     use crate::consensus::deserialize;
+    use crate::crypto::ecdsa::{EcdsaPublicKey, EcdsaSignature};
     use crate::crypto::key::PublicKey;
     use crate::crypto::sighash::{LegacySighash, TapSighash};
     use crate::internal_macros::hex;
@@ -970,46 +972,32 @@ mod tests {
         assert_ne!(got, one);
     }
 
-    #[ignore]
-    #[test]
-    #[cfg(feature = "serde")]
-    fn legacy_sighash() {
-        use crate::sighash::SighashCache;
+    // Dash Core signed both spends with `signrawtransactionwithkey`. Core returns the negative
+    // version one with `0080ffff` in place of the wire bytes `00803412` restored here.
+    #[test_case("00803412011111111111111111111111111111111111111111111111111111111111111111000000006a47304402203000e9aee375bc3acc126f0619679f822e46ad6c22f86b08ea56a4d05049f30102206931600834541a32024eab87425f66fea7acb042ad93505c4fc735378275a541012103badbb484572c23cc321f6346b3e455d7fcf3052b27003e579be971e2fc1ef609ffffffff01e8030000000000001976a914d6f4120a643b5acea9e8cf6dae4ef1341f66552b88ac00000000"; "version 0x8000 with type bytes")]
+    #[test_case("01002a00011111111111111111111111111111111111111111111111111111111111111111000000006a473044022058115bbc7dc1ec8a2ab489234ace74bd9f7e1f97bd64730a6bfc9fa995debcc40220646a89d37ba477a3346ab2ff0d5a5175d660bf1be3b76e7714c44d2796e3425f012103badbb484572c23cc321f6346b3e455d7fcf3052b27003e579be971e2fc1ef609ffffffff01e8030000000000001976a914d6f4120a643b5acea9e8cf6dae4ef1341f66552b88ac00000000"; "version 1 with type bytes")]
+    fn legacy_sighash_matches_core_signature(tx_hex: &str) {
+        let tx: Transaction = deserialize(&hex!(tx_hex)).unwrap();
+        let script_pubkey =
+            ScriptBuf::from(hex!("76a914d6f4120a643b5acea9e8cf6dae4ef1341f66552b88ac"));
+        let pushes: Vec<&[u8]> = tx.input[0]
+            .script_sig
+            .instructions()
+            .map(|ins| match ins.unwrap() {
+                Instruction::PushBytes(bytes) => bytes.as_bytes(),
+                Instruction::Op(op) => panic!("unexpected {op} in the scriptSig"),
+            })
+            .collect();
+        let (der, sighash_type) = pushes[0].split_at(pushes[0].len() - 1);
 
-        fn run_test_sighash(
-            tx: &str,
-            script: &str,
-            input_index: usize,
-            hash_type: i64,
-            expected_result: &str,
-        ) {
-            let tx_bytes = hex!(tx);
-            let tx: Transaction = deserialize(tx_bytes.as_slice()).unwrap();
-            let script = ScriptBuf::from(hex!(script));
-            let mut raw_expected = hex!(expected_result);
-            raw_expected.reverse();
-            let want = LegacySighash::from_slice(&raw_expected[..]).unwrap();
-
-            let cache = SighashCache::new(&tx);
-            let got = cache.legacy_signature_hash(input_index, &script, hash_type as u32).unwrap();
-
-            assert_eq!(got, want);
-        }
-
-        // These test vectors were stolen from libbtc, which is Copyright 2014 Jonas Schnelli MIT
-        // They were transformed by replacing {...} with run_test_sighash(...), then the ones containing
-        // OP_CODESEPARATOR in their pubkeys were removed
-        let data = include_str!("../../tests/data/legacy_sighash.json");
-
-        let testdata = serde_json::from_str::<Value>(data).unwrap().as_array().unwrap().clone();
-        for t in testdata.iter().skip(1) {
-            let tx = t.get(0).unwrap().as_str().unwrap();
-            let script = t.get(1).unwrap().as_str().unwrap_or("");
-            let input_index = t.get(2).unwrap().as_u64().unwrap();
-            let hash_type = t.get(3).unwrap().as_i64().unwrap();
-            let expected_sighash = t.get(4).unwrap().as_str().unwrap();
-            run_test_sighash(tx, script, input_index as usize, hash_type, expected_sighash);
-        }
+        let sighash = SighashCache::new(&tx)
+            .legacy_signature_hash(0, &script_pubkey, u32::from(sighash_type[0]))
+            .unwrap();
+        let signature = EcdsaSignature::from_der(der).unwrap();
+        EcdsaPublicKey::from_bytes(pushes[1])
+            .unwrap()
+            .verify(&sighash.to_byte_array(), signature)
+            .expect("Core's signature must verify against our legacy sighash");
     }
 
     #[test]

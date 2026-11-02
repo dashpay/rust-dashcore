@@ -7,7 +7,12 @@ fn do_test(data: &[u8]) {
         Err(_) => {}
         Ok(mut tx) => {
             let ser = dashcore::consensus::encode::serialize(&tx);
-            assert_eq!(&ser[..], data);
+            // Core sign-extends a negative version over the type, which re-encodes as `ffff`.
+            let mut expected = data.to_vec();
+            if expected[1] & 0x80 != 0 {
+                expected[2..4].copy_from_slice(&[0xff, 0xff]);
+            }
+            assert_eq!(ser, expected);
             let len = ser.len();
             let calculated_weight = tx.weight().to_wu() as usize;
             for input in &mut tx.input {

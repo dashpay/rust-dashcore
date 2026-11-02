@@ -104,7 +104,9 @@ pub enum TransactionPayload {
     /// A pseudo-payload that carries the raw `nTxType` u16 read from a pre-DIP-0002
     /// transaction (`version == 0`). Older transactions on the chain were free to put
     /// arbitrary bytes in the type slot; we keep the original value here so that
-    /// `consensus_encode` and `txid` continue to round-trip the on-wire bytes faithfully.
+    /// `consensus_encode` and `txid` round-trip the on-wire bytes for a non-negative version.
+    /// A negative version writes `0xffff` instead, as Core does
+    /// (see `Transaction::consensus_encode_version_and_type`).
     /// This variant has no payload section on the wire.
     ClassicalWithNonStandardVersionTypeBytesPayloadType(u16),
     /// The raw payload of a special transaction this crate can't decode, together with its
@@ -377,8 +379,10 @@ pub enum TransactionType {
     /// the operator and voting keys
     ProviderUpdateSharedRegistrar,
     /// A pre-DIP-0002 Classic transaction (`version == 0`) whose on-wire `nTxType`
-    /// bytes were non-zero. The wrapped value is the original u16 read from the wire,
-    /// which must be re-emitted verbatim during serialization to preserve the txid.
+    /// bytes were non-zero. The wrapped value is the original u16 read from the wire.
+    /// Serialization re-emits it verbatim for a non-negative version. A negative version
+    /// writes `0xffff` instead, as Core does
+    /// (see `Transaction::consensus_encode_version_and_type`).
     ClassicalWithNonStandardVersionTypeBytes(u16),
     /// A special transaction type this crate does not know. The wrapped value is the
     /// on-wire `nTxType`; the payload is kept as raw bytes.
