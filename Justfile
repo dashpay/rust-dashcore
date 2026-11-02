@@ -9,6 +9,8 @@ mod dash-spv-bench
 mod key-wallet-ffi
 mod masternode-seeds-fetcher
 
+rust_version := replace_regex(read(root / "Cargo.toml"), '(?s).*\nrust-version = "(\d+\.\d+)[^"]*".*', '$1')
+
 # List every recipe
 default:
     @{{ just_executable() }} --list --list-submodules
@@ -30,9 +32,10 @@ check:
 doc:
     cargo doc --workspace --all-features --no-deps
 
+# `rust-toolchain.toml` overrides rustup's default, so name the toolchain
 # Check that the workspace compiles on the MSRV
 msrv:
-    cargo check --workspace --all-features
+    cargo +{{ rust_version }} check --workspace --all-features
 
 # Audit dependencies with cargo-deny
 deny:
