@@ -73,7 +73,8 @@ impl TxIn {
     /// and yield `None`.
     ///
     /// Nothing checks the signature against the spent output, so the result is
-    /// only the sender the spender claims, never proof of it.
+    /// only the sender the spender claims, never proof of it. The scriptSig alone
+    /// also cannot rule out a P2SH input whose redeem script is a valid public key.
     pub fn claimed_p2pkh_address(&self, network: Network) -> Option<Address> {
         if self.previous_output.is_null() {
             return None;
@@ -174,7 +175,7 @@ mod tests {
         assert_eq!(coinbase.claimed_p2pkh_address(Network::Mainnet), None);
 
         for script_sig in [
-            // Three pushes ending in a valid key, the P2SH redeem-script shape.
+            // Three pushes ending in a valid key, as in a multi-push P2SH spend.
             Builder::new()
                 .push_slice([0x30u8; 71])
                 .push_slice([0x01u8; 20])
