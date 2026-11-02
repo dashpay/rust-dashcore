@@ -11,6 +11,24 @@ rayon = "1.11"
 serde = { version = "1.0.219", default-features = false }
 zeroize = { version = "1.8", features = ["derive"] }
 
+# Packages shared across crates that don't need a pin
+anyhow = "1.0"
+async-trait = "0.1"
+cbindgen = "0.29"
+chrono = { version = "0.4.20", default-features = false }
+clap = { version = "4.0", features = ["derive", "env"] }
+criterion = "0.8.1"
+rand = "0.9"
+serde_json = "1.0.140"
+serde_test = "1.0.177"
+tempfile = "3.0"
+test-case = "3.4"
+thiserror = "2"
+tokio = "1.32"
+tokio-util = { version = "0.7", default-features = false }
+tracing = "0.1"
+tracing-subscriber = "0.3.20"
+
 # Packages from `dashpay/base-sdk`, MUST share same version ACROSS crates
 dash-num = { git = "https://github.com/dashpay/base-sdk", rev = "89828032b6be3341cafda0ce433c010a23217b39", default-features = false }
 dash-params = { git = "https://github.com/dashpay/base-sdk", rev = "89828032b6be3341cafda0ce433c010a23217b39", default-features = false }

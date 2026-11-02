@@ -17,15 +17,15 @@ path = "src/main.rs"
 dashcore = { path = "../dash", features = ["core-block-hash-use-x11", "tokio"] }
 dash-network-seeds = { path = "../dash-network-seeds" }
 
-tokio = { version = "1.0", features = ["full"] }
-tokio-util = "0.7"
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
 
-clap = { version = "4.0", features = ["derive", "env"] }
-anyhow = "1.0"
-chrono = { version = "0.4.20", default-features = false, features = ["clock"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
-rand = "0.9"
+clap = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+rand = { workspace = true }
 futures = { workspace = true }
 
 # TLS probing for the Dash Platform HTTP port (Evo nodes).

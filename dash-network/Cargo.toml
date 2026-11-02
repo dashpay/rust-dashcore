@@ -28,7 +28,7 @@ bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
 
 [dev-dependencies]
-test-case = "3.4"
+test-case = { workspace = true }
 
 [build-dependencies]
-cbindgen = "0.29"
+cbindgen = { workspace = true }

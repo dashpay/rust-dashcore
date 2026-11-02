@@ -31,8 +31,8 @@ dashcore_hashes = { path = "../hashes" }
 hex-conservative = { workspace = true }
 internals = { path = "../internals", package = "dashcore-private" }
 serde = { workspace = true, features = ["derive", "alloc"], optional = true }
-thiserror = "2"
-tracing = { version = "0.1", optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, optional = true }
 zeroize = { workspace = true }
 
 [lints.rust]
@@ -40,5 +40,5 @@ unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', '
 
 [dev-dependencies]
 bincode = { workspace = true, features = ["serde"] }
-serde_json = { version = "1.0" }
-test-case = "3.4"
+serde_json = { workspace = true }
+test-case = { workspace = true }

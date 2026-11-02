@@ -28,30 +28,30 @@ git-state = { path = "../git-state" }
 bip324 = { workspace = true, features = ["tokio"] }
 
 # CLI
-clap = { version = "4.0", features = ["derive", "env"], optional = true }
+clap = { workspace = true, optional = true }
 
 # Async runtime
-tokio = { version = "1.0", features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
-tokio-util = "0.7"
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
+tokio-util = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
-async-trait = "0.1"
+async-trait = { workspace = true }
 futures = { workspace = true }
 
 # Error handling
-thiserror = "1.0"
+thiserror = { workspace = true }
 
 # Serialization
 serde = { workspace = true, features = ["std", "derive"] }
-serde_json = "1.0"
+serde_json = { workspace = true }
 
 # Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"], optional = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"], optional = true }
 tracing-appender = { version = "0.2", optional = true }
-chrono = { version = "0.4.20", optional = true }
+chrono = { workspace = true, features = ["default"], optional = true }
 
 # Utilities
-rand = "0.9"
+rand = { workspace = true }
 hex-conservative = { workspace = true }
 
 # Parallelization
@@ -60,12 +60,12 @@ hex-conservative = { workspace = true }
 bincode = { workspace = true }
 
 # Test utilities (optional)
-tempfile = { version = "3.0", optional = true }
+tempfile = { workspace = true, optional = true }
 dashcore-rpc = { path = "../rpc-client", optional = true }
 
 [build-dependencies]
 serde = { workspace = true, features = ["std", "derive"] }
-serde_json = "1.0"
+serde_json = { workspace = true }
 
 [dev-dependencies]
 dash-spv = { path = ".", features = ["test-utils"] }
@@ -74,11 +74,11 @@ key-wallet = { path = "../key-wallet", features = ["test-utils"] }
 key-wallet-manager = { path = "../key-wallet-manager", features = [
     "test-utils",
 ] }
-criterion = { version = "0.8.1", features = ["async_tokio"] }
-tempfile = "3.0"
-tokio = { version = "1.0", features = ["full"] }
+criterion = { workspace = true, features = ["async_tokio"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 tokio-test = "0.4"
-test-case = "3.4"
+test-case = { workspace = true }
 
 [[bench]]
 name = "storage"

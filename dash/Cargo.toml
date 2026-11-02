@@ -50,27 +50,27 @@ serde = { workspace = true, features = ["derive", "alloc", "rc"], optional = tru
 
 base64 = { version = "0.22", optional = true }
 bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
-anyhow = { version= "1.0" }
+anyhow = { workspace = true }
 hex-conservative = { workspace = true }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
-tokio-util = { version = "0.7", default-features = false, features = ["codec"], optional = true }
+tokio-util = { workspace = true, features = ["codec"], optional = true }
 bytes = { version = "1", optional = true }
 blake3 = "1.8.1"
-thiserror = "2"
+thiserror = { workspace = true }
 bitvec = "1.0"
-tracing = "0.1"
+tracing = { workspace = true }
 
 [dev-dependencies]
-serde_json = "1.0.140"
-serde_test = "1.0.177"
+serde_json = { workspace = true }
+serde_test = { workspace = true }
 serde_derive = "1.0.219"
 dashcore-crypto = { path = "../crypto", features = ["rand"] }
 bincode = { workspace = true, features = ["serde"] }
 assert_matches = "1.5.0"
-test-case = "3.4"
+test-case = { workspace = true }
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
-criterion = "0.5"
+criterion = { workspace = true }
 
 [[example]]
 name = "handshake"

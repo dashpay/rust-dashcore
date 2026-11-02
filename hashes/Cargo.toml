@@ -44,9 +44,9 @@ dash-pow = { workspace = true, optional = true, features = ["portable"] }
 dash-pow = { workspace = true, optional = true, features = ["portable"] }
 
 [dev-dependencies]
-serde_test = "1.0"
-criterion = "0.5"
-test-case = "3.4"
+serde_test = { workspace = true }
+criterion = { workspace = true }
+test-case = { workspace = true }
 
 [target.wasm32-unknown-unknown.dev-dependencies]
 wasm-bindgen-test = "0.3"

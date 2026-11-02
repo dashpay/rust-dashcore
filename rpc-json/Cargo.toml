@@ -20,7 +20,7 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true, features = ["std", "derive"] }
-serde_json = { version="1.0", features=["preserve_order"] }
+serde_json = { workspace = true, features=["preserve_order"] }
 serde_with = "2.1.0"
 serde_repr = "0.1"
 hex-conservative = { workspace = true }

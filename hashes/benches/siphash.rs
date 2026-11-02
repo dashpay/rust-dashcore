@@ -1,5 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use dashcore_hashes::siphash24::{siphash, siphash_batch};
+use std::hint::black_box;
 
 const K0: u64 = 0x0706050403020100;
 const K1: u64 = 0x0f0e0d0c0b0a0908;

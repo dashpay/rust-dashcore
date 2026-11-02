@@ -13,6 +13,6 @@ dashcore-rpc = { path = "../rpc-client" }
 lazy_static = "1.4.0"
 hex-conservative = { workspace = true }
 dotenvy = "0.15.7"
-tracing = "0.1"
+tracing = { workspace = true }
 tracing-log = "0.2"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }

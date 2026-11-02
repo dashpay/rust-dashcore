@@ -23,11 +23,11 @@ dashcore-rpc-json = { path = "../rpc-json" }
 hex-conservative = { workspace = true }
 
 jsonrpc = "0.18.0"
-tracing = "0.1"
+tracing = { workspace = true }
 
 # Used for deserialization of JSON.
 serde = { workspace = true, features = ["std", "derive"] }
-serde_json = { version="1.0", features=["preserve_order"] }
+serde_json = { workspace = true, features=["preserve_order"] }
 
 [dev-dependencies]
-test-case = "3.4"
+test-case = { workspace = true }
