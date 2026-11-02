@@ -1443,7 +1443,6 @@ mod test {
             NetworkMessage::SendHeaders2,
             NetworkMessage::MemPool,
             NetworkMessage::GetAddr,
-            NetworkMessage::WtxidRelay,
             NetworkMessage::FilterClear,
             NetworkMessage::SendAddrV2,
         ];
