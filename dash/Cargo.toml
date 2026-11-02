@@ -67,7 +67,7 @@ serde_derive = "1.0.219"
 dashcore-crypto = { path = "../crypto", features = ["rand"] }
 bincode = { workspace = true, features = ["serde"] }
 assert_matches = "1.5.0"
-test-case = "3.3"
+test-case = "3.4"
 dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
 criterion = "0.5"
 

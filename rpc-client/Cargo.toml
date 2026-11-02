@@ -30,4 +30,4 @@ serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { version="1.0", features=["preserve_order"] }
 
 [dev-dependencies]
-test-case = "3.3"
+test-case = "3.4"
