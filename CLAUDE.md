@@ -105,20 +105,21 @@ Recipes need just 1.47 or newer, the first with the `[env]` attribute.
 
 The `dash-spv` crate includes integration tests that run against a real `dashd` regtest node. These tests cover SPV sync, wallet operations, restarts, disconnections, and transactions.
 
-**Setup:** `contrib/setup-dashd.py` downloads the dashd binary and regtest blockchain test data, caching them in `~/.rust-dashcore-test/`. It outputs the required environment variables. Always run this before testing `dash-spv` — integration tests catch critical bugs (restart, resync, disconnection) that unit tests miss.
+**Setup:** `contrib/setup-dashd.py` downloads the dashd binary and regtest blockchain test data, caching them in `~/.rust-dashcore-test/`. `just dash-spv::test` runs it for you; before running `cargo test` directly, load the environment variables it outputs — integration tests catch critical bugs (restart, resync, disconnection) that unit tests miss.
 
 ```bash
-eval $(python3 contrib/setup-dashd.py)
+eval $(just dash-spv::dashd)
 ```
 
-**Running:** Always run with integration tests enabled after setting up dashd. Do not use `SKIP_DASHD_TESTS=1`. Use `DASHD_TEST_RETAIN_DIR` so test logs are available for debugging failures.
+**Running:** Always run with integration tests enabled after setting up dashd. Do not use `SKIP_DASHD_TESTS=1`. The recipes keep failed tests' logs in `target/dashd-test-logs` unless `DASHD_TEST_RETAIN_DIR` says otherwise.
 ```bash
-DASHD_TEST_RETAIN_DIR=/tmp/dashd-test-logs cargo test -p dash-spv
+just dash-spv::test
 ```
 
 **Debugging:** When tests fail, check the retained logs at the path specified by `DASHD_TEST_RETAIN_DIR`. Each test creates a subdirectory with SPV logs (`spv/logs/run.log`) and dashd data.
 - `DASHD_TEST_LOG=1` — enable per-test console logging (use with `--nocapture`)
 - `DASHD_TEST_RETAIN_ALWAYS=1` — retain even on success
+- `just dash-spv::test-log` sets both, `just dash-spv::logs` lists the SPV logs
 
 **Key files:**
 - `dash-spv/tests/dashd_sync/` — test modules (basic, restart, disconnect, transaction)

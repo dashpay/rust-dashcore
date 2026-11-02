@@ -3,6 +3,7 @@
 import "mod.just"
 
 mod gha ".github/mod.just"
+mod dash-spv
 
 # List every recipe
 default:
