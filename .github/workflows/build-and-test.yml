@@ -30,6 +30,7 @@ jobs:
         group: ["core", "spv", "wallet", "ffi", "rpc"]
     env:
       RUST_BACKTRACE: 1
+      CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -54,13 +55,6 @@ jobs:
         with:
           path: .rust-dashcore-test
           key: rust-dashcore-test-${{ inputs.os }}-${{ env.DASHVERSION }}-${{ env.TEST_DATA_REPO }}-${{ env.TEST_DATA_VERSION }}
-
-      - name: Setup dashd for integration tests
-        if: matrix.group == 'spv'
-        env:
-          CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
-        shell: bash
-        run: python contrib/setup-dashd.py >> "$GITHUB_ENV"
 
       - name: Run tests
         id: tests
