@@ -55,7 +55,7 @@ criterion = "0.8.1"
 dashcore = { path="../dash", features = ["test-utils"] }
 key-wallet = { path = ".", features = ["test-utils", "serde", "bincode", "eddsa", "bls"] }
 rand = { version = "0.9", features = ["std", "std_rng", "thread_rng"] }
-test-case = "3.3"
+test-case = "3.4"
 tokio = { version = "1", features = ["macros", "rt"] }
 
 [[bench]]
