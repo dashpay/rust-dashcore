@@ -26,10 +26,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "fuzz -> target"
+      - uses: taiki-e/install-action@just
       - name: Run all fuzz targets
         env:
           HFUZZ_FAIL_ON_CRASH: 1
-        run: cd fuzz && ./fuzz.sh
+        run: just dash-fuzz::run
       - name: Create issue on failure
         if: failure() && github.event_name == 'schedule'
         env:

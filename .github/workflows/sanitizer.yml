@@ -20,6 +20,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/sanitizer.yml'
+      - 'Justfile'
+      - 'mod.just'
 
 permissions:
   contents: read
@@ -38,21 +40,10 @@ jobs:
         with:
           components: rust-src
 
-      - name: Run tests with ASAN
-        env:
-          RUST_BACKTRACE: 1
-          RUSTFLAGS: "-Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes"
-          ASAN_OPTIONS: "symbolize=1:allow_addr2line=1"
-          LSAN_OPTIONS: "fast_unwind_on_malloc=0"
-          SKIP_DASHD_TESTS: 1
-        run: |
-          # FFI crates (C interop)
-          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
-            -p key-wallet-ffi --lib --tests
+      - uses: taiki-e/install-action@just
 
-          # Core crypto crates (unsafe optimizations)
-          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
-            -p dashcore -p dashcore_hashes --lib --tests
+      - name: Run tests with ASAN
+        run: just asan
 
   tsan:
     name: Thread Sanitizer
@@ -63,13 +54,7 @@ jobs:
         with:
           components: rust-src
 
+      - uses: taiki-e/install-action@just
+
       - name: Run tests with TSAN
-        env:
-          RUST_BACKTRACE: 1
-          RUSTFLAGS: "-Zsanitizer=thread -Cdebuginfo=2"
-          TSAN_OPTIONS: "second_deadlock_stack=1"
-          SKIP_DASHD_TESTS: 1
-        run: |
-          # Async crate with concurrent code
-          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
-            -p dash-spv --lib --tests
+        run: just tsan

@@ -15,8 +15,8 @@ A GitHub Action automatically verifies that the FFI documentation is up-to-date 
 To update the FFI documentation after making changes to FFI functions:
 
 ```bash
-# Using Make
-make update-docs
+# Using just
+just key-wallet-ffi::update-docs
 
 # Or directly with Python
 cd key-wallet-ffi
@@ -69,7 +69,7 @@ When adding new FFI functions:
 1. Add the function with `#[no_mangle]` and `extern "C"` attributes
 2. Include doc comments with `///`
 3. Add safety documentation if the function is `unsafe`
-4. Run `make update-docs` to regenerate documentation
+4. Run `just key-wallet-ffi::update-docs` to regenerate documentation
 5. Commit both the code changes and updated `FFI_API.md`
 
 ## Example FFI Function

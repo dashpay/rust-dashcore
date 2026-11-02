@@ -7,11 +7,12 @@
 
 ## Build, Test, and Development Commands
 - MSRV: 1.89. Build all: `cargo build --workspace --all-features`
-- Test all: `cargo test --workspace --all-features` or `./contrib/test.sh` (set `DO_COV=true`, `DO_LINT=true`, `DO_FMT=true` as needed)
+- Test all: `cargo test --workspace --all-features`; `just test [group...]` runs the groups in `.github/ci-groups.yml`
 - Targeted tests: `cargo test -p dash-spv --all-features`
-- FFI iOS builds: `cd key-wallet-ffi && ./build-ios.sh`
+- FFI iOS builds: `just key-wallet-ffi::build-ios`
 - Lint/format: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all`
 - Docs: `cargo doc --workspace` (add `--open` locally)
+- Recipes: `just` lists them; needs just 1.47+, the first with `[env]`, and PyYAML for `test`, `coverage` and `gha::verify-groups`
 
 ## Coding Style & Naming Conventions
 - Mixed editions (2021/2024); follow crate idioms. Prefer async via `tokio` where applicable.
