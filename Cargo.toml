@@ -18,7 +18,7 @@ members = [
     "masternode-seeds-fetcher",
     "dash-spv-bench",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.dependencies]
 # Crates of this workspace
