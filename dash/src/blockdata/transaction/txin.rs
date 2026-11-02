@@ -68,6 +68,10 @@ impl TxIn {
     ///
     /// A P2PKH spend is a DER-shaped signature push (`0x30` tag, at most 73 bytes
     /// with the sighash byte) followed by a public key push, and nothing else.
+    /// The key must be compressed or uncompressed SEC1 (prefix `0x02`, `0x03` or
+    /// `0x04`). Hybrid keys (`0x06`/`0x07`) are consensus-valid but non-standard,
+    /// and yield `None`.
+    ///
     /// Nothing checks the signature against the spent output, so the result is
     /// only the sender the spender claims, never proof of it.
     pub fn claimed_p2pkh_address(&self, network: Network) -> Option<Address> {
@@ -148,6 +152,8 @@ mod tests {
             ..Default::default()
         };
         let p2pkh = Builder::new().push_slice([0x30u8; 71]).push_key(&key).into_script();
+        let mut hybrid = key.inner.to_uncompressed();
+        hybrid[0] = 0x06 | (hybrid[64] & 1);
 
         // A real mainnet P2PKH input signed by `key` claims the address of `key`.
         let txin: TxIn = deserialize(&hex_conservative::decode_to_vec("a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff").unwrap()).unwrap();
@@ -181,6 +187,8 @@ mod tests {
                 .push_slice(PushBytesBuf::try_from(vec![0x30u8; 74]).unwrap())
                 .push_key(&key)
                 .into_script(),
+            // A hybrid encoding of `key`.
+            Builder::new().push_slice([0x30u8; 71]).push_slice(hybrid).into_script(),
             // Only the signature.
             Builder::new().push_slice([0x30u8; 71]).into_script(),
             // A lock script: opcodes, not pushes.
