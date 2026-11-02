@@ -22,7 +22,7 @@ default = ["bincode"]
 base64 = [ "dep:base64" ]
 rand-std = ["rand"]
 rand = ["dashcore-crypto/rand"]
-serde = ["dep:serde", "dashcore-crypto/serde", "dashcore_hashes/serde", "dash-network/serde", "dash-types/serde"]
+serde = ["dep:serde", "bitcoin-units/serde", "dashcore-crypto/serde", "dashcore_hashes/serde", "dash-network/serde", "dash-types/serde"]
 signer = ["rand", "base64"]
 core-block-hash-use-x11 = ["dashcore_hashes/x11"]
 bls = ["dashcore-crypto/bls"]
@@ -39,6 +39,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 internals = { path = "../internals", package = "dashcore-private" }
+bitcoin-units = { workspace = true, features = ["std"] }
 dashcore_hashes = { path = "../hashes" }
 dashcore-crypto = { path = "../crypto" }
 dash-network = { path = "../dash-network" }

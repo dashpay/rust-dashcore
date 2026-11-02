@@ -25,6 +25,7 @@ use std::error;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
+use bitcoin_units::parse_int::int_from_str;
 use hashes::{self, Hash};
 
 use crate::consensus::{Decodable, Encodable, deserialize, encode};
@@ -219,7 +220,7 @@ fn parse_vout(s: &str) -> Result<u32, ParseOutPointError> {
             return Err(ParseOutPointError::VoutNotCanonical);
         }
     }
-    crate::parse::int(s).map_err(ParseOutPointError::Vout)
+    int_from_str(s).map_err(ParseOutPointError::Vout)
 }
 
 #[cfg(test)]
@@ -279,7 +280,7 @@ mod tests {
             OutPoint::from_str(
                 "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:lol"
             ),
-            Err(ParseOutPointError::Vout(crate::parse::int::<u32, _>("lol").unwrap_err()))
+            Err(ParseOutPointError::Vout(int_from_str::<u32>("lol").unwrap_err()))
         );
 
         assert_eq!(

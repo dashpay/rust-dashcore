@@ -260,7 +260,7 @@ impl Block {
 
     /// Returns the weight of the block.
     pub fn weight(&self) -> Weight {
-        let base_weight = Weight::from_non_witness_data_size(self.base_size() as u64);
+        let base_weight = Weight::from_vb_unchecked(self.base_size() as u64);
         let txs_weight: Weight = self.txdata.iter().map(Transaction::weight).sum();
         base_weight + txs_weight
     }
@@ -435,10 +435,7 @@ mod tests {
 
         assert_eq!(real_decode.size(), some_block.len());
         assert_eq!(real_decode.strippedsize(), some_block.len());
-        assert_eq!(
-            real_decode.weight(),
-            Weight::from_non_witness_data_size(some_block.len() as u64)
-        );
+        assert_eq!(real_decode.weight(), Weight::from_vb_unchecked(some_block.len() as u64));
 
         assert_eq!(serialize(&real_decode), some_block);
     }
@@ -483,10 +480,7 @@ mod tests {
 
         assert_eq!(real_decode.size(), some_block.len());
         assert_eq!(real_decode.strippedsize(), some_block.len());
-        assert_eq!(
-            real_decode.weight(),
-            Weight::from_non_witness_data_size(some_block.len() as u64)
-        );
+        assert_eq!(real_decode.weight(), Weight::from_vb_unchecked(some_block.len() as u64));
 
         assert_eq!(serialize(&real_decode), some_block);
     }

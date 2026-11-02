@@ -10,6 +10,7 @@
 use core::fmt;
 use core::ops::{Add, Sub};
 
+use bitcoin_units::parse_int::hex_u32;
 use dash_num::Arith256;
 use dash_params::ConsensusParams;
 use dash_types::Numeric;
@@ -17,6 +18,7 @@ use dash_types::Numeric;
 use crate::Network;
 use crate::block::Header;
 use crate::consensus::encode::{self, Decodable, Encodable};
+use crate::error::ParseIntError;
 use crate::hash_types::BlockHash;
 use crate::io::{self, Read, Write};
 use crate::prelude::String;
@@ -381,10 +383,10 @@ impl From<CompactTarget> for Target {
 }
 
 impl FromHexStr for CompactTarget {
-    type Error = crate::parse::ParseIntError;
+    type Error = ParseIntError;
 
     fn from_hex_str_no_prefix<S: AsRef<str> + Into<String>>(s: S) -> Result<Self, Self::Error> {
-        let compact_target = crate::parse::hex_u32(s)?;
+        let compact_target = hex_u32(s.as_ref())?;
         Ok(Self::from_consensus(compact_target))
     }
 }

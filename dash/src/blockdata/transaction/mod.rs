@@ -444,7 +444,7 @@ impl Transaction {
     #[inline]
     pub fn vsize(&self) -> usize {
         // No overflow because it's computed from data in memory
-        self.weight().to_vbytes_ceil() as usize
+        self.weight().to_vb_ceil() as usize
     }
 
     /// Returns the size of this transaction excluding the witness data.
