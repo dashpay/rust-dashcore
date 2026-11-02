@@ -36,14 +36,14 @@ The project follows a layered, trait-based architecture with clear separation of
 cargo build
 
 # Run the SPV client binary
-cargo run --bin dash-spv -- --network mainnet --data-dir ./spv-data
+cargo run --features cli --bin dash-spv -- --network mainnet --data-dir ./spv-data
 
 # Run with custom peer
-cargo run --bin dash-spv -- --peer 192.168.1.100:9999
+cargo run --features cli --bin dash-spv -- --peer 192.168.1.100:9999
 
 # Run examples
-cargo run --example simple_sync
-cargo run --example filter_sync
+cargo run --features logging --example simple_sync
+cargo run --features logging --example filter_sync
 ```
 
 ### Testing

@@ -1,6 +1,5 @@
 //! Configuration management for the Dash SPV client.
 
-use clap::ValueEnum;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,7 +13,8 @@ use crate::sync::BroadcastHoldout;
 use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum MempoolStrategy {
     /// Fetch all announced transactions (high bandwidth, sees all transactions).
     FetchAll,

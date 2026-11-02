@@ -32,7 +32,6 @@ test-utils = ["dashcore/test-utils"]
 keep-finalized-transactions = []
 
 [dependencies]
-internals = { path = "../internals", package = "dashcore-private" }
 dashcore_hashes = { path = "../hashes" }
 dashcore = { path="../dash" }
 bip39 = { version = "2.2.0", default-features = false, features = ["std", "chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }

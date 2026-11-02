@@ -28,10 +28,10 @@ git-state = { path = "../git-state" }
 bip324 = { workspace = true, features = ["tokio"] }
 
 # CLI
-clap = { version = "4.0", features = ["derive", "env"] }
+clap = { version = "4.0", features = ["derive", "env"], optional = true }
 
 # Async runtime
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-util = "0.7"
 tokio-stream = { version = "0.1", features = ["sync"] }
 async-trait = "0.1"
@@ -46,9 +46,9 @@ serde_json = "1.0"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
-tracing-appender = "0.2"
-chrono = "0.4.20"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"], optional = true }
+tracing-appender = { version = "0.2", optional = true }
+chrono = { version = "0.4.20", optional = true }
 
 # Utilities
 rand = "0.9"
@@ -76,6 +76,7 @@ key-wallet-manager = { path = "../key-wallet-manager", features = [
 ] }
 criterion = { version = "0.8.1", features = ["async_tokio"] }
 tempfile = "3.0"
+tokio = { version = "1.0", features = ["full"] }
 tokio-test = "0.4"
 test-case = "3.4"
 
@@ -86,17 +87,35 @@ harness = false
 [[bin]]
 name = "dash-spv"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "generate-checkpoints"
 path = "src/bin/generate_checkpoints.rs"
+required-features = ["cli"]
+
+[[example]]
+name = "simple_sync"
+required-features = ["logging"]
+
+[[example]]
+name = "filter_sync"
+required-features = ["logging"]
+
+[[example]]
+name = "spv_with_wallet"
+required-features = ["logging"]
 
 [lib]
 name = "dash_spv"
 path = "src/lib.rs"
 
 [features]
+cli = ["logging", "dep:clap", "tokio/rt-multi-thread", "tokio/signal"]
+logging = ["dep:chrono", "dep:tracing-appender", "dep:tracing-subscriber"]
 test-utils = [
+    "logging",
+    "tokio/process",
     "dashcore/test-utils",
     "key-wallet-manager/test-utils",
     "dep:tempfile",
