@@ -56,7 +56,7 @@ jobs:
 
   test-ubuntu:
     name: Ubuntu
-    uses: ./.github/workflows/build-and-test.yml
+    uses: $/.github/workflows/build-and-test.yml
     with:
       os: ubuntu-latest
       coverage: true
@@ -64,19 +64,19 @@ jobs:
 
   test-ubuntu-arm:
     name: Ubuntu ARM
-    uses: ./.github/workflows/build-and-test.yml
+    uses: $/.github/workflows/build-and-test.yml
     with:
       os: ubuntu-22.04-arm
 
   test-macos:
     name: macOS
-    uses: ./.github/workflows/build-and-test.yml
+    uses: $/.github/workflows/build-and-test.yml
     with:
       os: macos-latest
 
   test-windows:
     name: Windows
-    uses: ./.github/workflows/build-and-test.yml
+    uses: $/.github/workflows/build-and-test.yml
     with:
       os: windows-latest
 
