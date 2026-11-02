@@ -68,6 +68,7 @@ use crate::error::{NetworkError, NetworkResult};
 use crate::network::bans::{Ban, Bans};
 use crate::network::broker::{Broker, RequestKey};
 use crate::network::NetworkManager;
+use crate::network::TransportPreference;
 use crate::{
     network::{
         costs::ResponseCosts,
@@ -206,6 +207,7 @@ pub struct NetworkState {
     pub max_peers: usize,
     pub required_services: ServiceFlags,
     pub user_agent: String,
+    pub transport_preference: TransportPreference,
 }
 
 pub struct PeerNetworkManager {
@@ -256,6 +258,7 @@ impl PeerNetworkManager {
             max_peers,
             required_services,
             user_agent: config.user_agent.clone(),
+            transport_preference: config.transport_preference,
         });
         let shutdown = CancellationToken::new();
 

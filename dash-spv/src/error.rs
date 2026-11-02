@@ -65,6 +65,9 @@ pub enum NetworkError {
 
     #[error("Address parse error: {0}")]
     AddressParse(String),
+
+    #[error("V2 handshake failed: {0}")]
+    V2HandshakeFailed(String),
 }
 
 /// Storage-related errors.
