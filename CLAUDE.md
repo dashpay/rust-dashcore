@@ -54,7 +54,7 @@ cargo build -p dash-spv
 ### FFI Library Build
 ```bash
 # Build iOS libraries for key-wallet-ffi
-cd key-wallet-ffi && ./build-ios.sh
+just key-wallet-ffi::build-ios
 ```
 
 ### iOS/macOS Targets

@@ -4,6 +4,7 @@ import "mod.just"
 
 mod gha ".github/mod.just"
 mod dash-spv
+mod key-wallet-ffi
 
 # List every recipe
 default:

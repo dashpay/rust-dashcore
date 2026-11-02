@@ -9,7 +9,7 @@
 - MSRV: 1.89. Build all: `cargo build --workspace --all-features`
 - Test all: `cargo test --workspace --all-features`; `just test [group...]` runs the groups in `.github/ci-groups.yml`
 - Targeted tests: `cargo test -p dash-spv --all-features`
-- FFI iOS builds: `cd key-wallet-ffi && ./build-ios.sh`
+- FFI iOS builds: `just key-wallet-ffi::build-ios`
 - Lint/format: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all`
 - Docs: `cargo doc --workspace` (add `--open` locally)
 - Recipes: `just` lists them; needs just 1.47+, the first with `[env]`, and PyYAML for `test`, `coverage` and `gha::verify-groups`
