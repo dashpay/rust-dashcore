@@ -5,6 +5,7 @@ import "mod.just"
 mod gha ".github/mod.just"
 mod dash-fuzz "fuzz/mod.just"
 mod dash-spv
+mod dash-spv-bench
 mod key-wallet-ffi
 
 # List every recipe
