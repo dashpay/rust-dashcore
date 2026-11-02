@@ -49,6 +49,7 @@ workflows:
         - 'dtolnay/rust-toolchain@stable'
         - 'peter-evans/create-pull-request@v7'
         - 'swatinem/rust-cache@v2'
+        - 'taiki-e/install-action@just'
 dependencies:
     'actions/cache@v4':
         ref: 'v4'

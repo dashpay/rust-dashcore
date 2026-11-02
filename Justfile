@@ -7,6 +7,7 @@ mod dash-fuzz "fuzz/mod.just"
 mod dash-spv
 mod dash-spv-bench
 mod key-wallet-ffi
+mod masternode-seeds-fetcher
 
 # List every recipe
 default:
