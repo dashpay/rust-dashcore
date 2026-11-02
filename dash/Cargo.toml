@@ -3,11 +3,11 @@ name = "dashcore"
 authors = [
     "Samuel Westrich <sam@dash.org>",
     "Anton Suprunchuk <anton@dash.org>",
-    "Dmitrii Golubev <dmitrii.golubev@dash.org>"
+    "Dmitrii Golubev <dmitrii.golubev@dash.org>",
 ]
 description = "General purpose library for using and interoperating with Dash Core payment chain."
 categories = ["cryptography::cryptocurrencies"]
-keywords = [ "crypto", "dash" ]
+keywords = ["crypto", "dash"]
 readme = "../README.md"
 exclude = ["tests", "contrib"]
 edition.workspace = true
@@ -19,17 +19,30 @@ version.workspace = true
 # Please don't forget to add relevant features to docs.rs below
 [features]
 default = ["bincode"]
-base64 = [ "dep:base64" ]
+base64 = ["dep:base64"]
 rand-std = ["rand"]
 rand = ["dashcore-crypto/rand"]
-serde = ["dep:serde", "bitcoin-units/serde", "dashcore-crypto/serde", "dashcore_hashes/serde", "dash-network/serde", "dash-types/serde"]
+serde = [
+    "dep:serde",
+    "bitcoin-units/serde",
+    "dashcore-crypto/serde",
+    "dashcore_hashes/serde",
+    "dash-network/serde",
+    "dash-types/serde",
+]
 signer = ["rand", "base64"]
 core-block-hash-use-x11 = ["dashcore_hashes/x11"]
 bls = ["dashcore-crypto/bls"]
 eddsa = ["dashcore-crypto/eddsa"]
 quorum_validation = ["bls"]
 message_verification = ["bls"]
-bincode = [ "dep:bincode", "dep:bincode_derive", "dashcore-crypto/bincode", "dashcore_hashes/bincode", "dash-network/bincode" ]
+bincode = [
+    "dep:bincode",
+    "dep:bincode_derive",
+    "dashcore-crypto/bincode",
+    "dashcore_hashes/bincode",
+    "dash-network/bincode",
+]
 test-utils = []
 tokio = ["dep:tokio-util", "dep:bytes"]
 
@@ -38,15 +51,19 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-internals = { path = "../internals", package = "dashcore-private" }
+internals = { workspace = true }
 bitcoin-units = { workspace = true, features = ["std"] }
-dashcore_hashes = { path = "../hashes" }
-dashcore-crypto = { path = "../crypto" }
-dash-network = { path = "../dash-network" }
+dashcore_hashes = { workspace = true }
+dashcore-crypto = { workspace = true }
+dash-network = { workspace = true }
 dash-num = { workspace = true }
 dash-params = { workspace = true }
 dash-types = { workspace = true }
-serde = { workspace = true, features = ["derive", "alloc", "rc"], optional = true }
+serde = { workspace = true, features = [
+    "derive",
+    "alloc",
+    "rc",
+], optional = true }
 
 base64 = { version = "0.22", optional = true }
 bitcoinconsensus = { version = "0.20.2-0.5.0", default-features = false, optional = true }
@@ -65,11 +82,16 @@ tracing = { workspace = true }
 serde_json = { workspace = true }
 serde_test = { workspace = true }
 serde_derive = "1.0.219"
-dashcore-crypto = { path = "../crypto", features = ["rand"] }
+dashcore-crypto = { workspace = true, features = ["rand"] }
 bincode = { workspace = true, features = ["serde"] }
 assert_matches = "1.5.0"
 test-case = { workspace = true }
-dashcore = { path = ".", features = ["core-block-hash-use-x11", "message_verification", "quorum_validation", "signer"] }
+dashcore = { workspace = true, features = [
+    "core-block-hash-use-x11",
+    "message_verification",
+    "quorum_validation",
+    "signer",
+] }
 criterion = { workspace = true }
 
 [[example]]
@@ -80,4 +102,8 @@ name = "transaction"
 harness = false
 
 [lints.rust]
-unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', 'cfg(kani)'] }
+unexpected_cfgs = { level = "deny", check-cfg = [
+    'cfg(bench)',
+    'cfg(fuzzing)',
+    'cfg(kani)',
+] }

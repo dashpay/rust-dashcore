@@ -3,10 +3,10 @@ name = "dashcore-rpc-json"
 authors = [
     "Steven Roose <steven@stevenroose.org>",
     "Jean Pierre Dudey <jeandudey@hotmail.com>",
-    "Dawid Ciężarkiewicz <dpc@dpc.pw>"
+    "Dawid Ciężarkiewicz <dpc@dpc.pw>",
 ]
 description = "JSON-enabled type structs for dashcore-rpc crate."
-keywords = [ "crypto", "dash", "dashcore", "rpc" ]
+keywords = ["crypto", "dash", "dashcore", "rpc"]
 readme = "README.md"
 edition.workspace = true
 license.workspace = true
@@ -20,12 +20,12 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true, features = ["std", "derive"] }
-serde_json = { workspace = true, features=["preserve_order"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
 serde_with = "2.1.0"
 serde_repr = "0.1"
 hex-conservative = { workspace = true }
 
-key-wallet = { path = "../key-wallet", default-features = false, features=["serde", "getrandom"] }
-dashcore = { path = "../dash", features=["rand-std", "signer", "serde"] }
+key-wallet = { workspace = true, features = ["serde", "getrandom"] }
+dashcore = { workspace = true, features = ["rand-std", "signer", "serde"] }
 
 bincode = { workspace = true, features = ["serde"] }

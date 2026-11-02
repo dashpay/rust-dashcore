@@ -1,8 +1,40 @@
 [workspace]
-members = ["dash", "crypto", "dash-network", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test", "key-wallet", "key-wallet-manager", "key-wallet-ffi", "dash-spv", "git-state", "dash-network-seeds", "masternode-seeds-fetcher", "dash-spv-bench"]
+members = [
+    "dash",
+    "crypto",
+    "dash-network",
+    "hashes",
+    "internals",
+    "fuzz",
+    "rpc-client",
+    "rpc-json",
+    "rpc-integration-test",
+    "key-wallet",
+    "key-wallet-manager",
+    "key-wallet-ffi",
+    "dash-spv",
+    "git-state",
+    "dash-network-seeds",
+    "masternode-seeds-fetcher",
+    "dash-spv-bench",
+]
 resolver = "2"
 
 [workspace.dependencies]
+# Crates of this workspace
+dash-network = { path = "dash-network" }
+dash-network-seeds = { path = "dash-network-seeds" }
+dash-spv = { path = "dash-spv" }
+dashcore = { path = "dash" }
+dashcore-crypto = { path = "crypto" }
+dashcore-rpc = { path = "rpc-client" }
+dashcore-rpc-json = { path = "rpc-json" }
+dashcore_hashes = { path = "hashes" }
+git-state = { path = "git-state" }
+internals = { path = "internals", package = "dashcore-private" }
+key-wallet = { path = "key-wallet" }
+key-wallet-manager = { path = "key-wallet-manager" }
+
 # Packages shared across crates
 bincode = { package = "grovedb-bincode", version = "=2.1.0" }
 bincode_derive = { package = "grovedb-bincode-derive", version = "=2.1.0" }
@@ -10,8 +42,6 @@ futures = "0.3"
 rayon = "1.11"
 serde = { version = "1.0.219", default-features = false }
 zeroize = { version = "1.8", features = ["derive"] }
-
-# Packages shared across crates that don't need a pin
 anyhow = "1.0"
 async-trait = "0.1"
 cbindgen = "0.29"

@@ -10,7 +10,7 @@ version.workspace = true
 
 [dependencies]
 # Core Dash libraries
-dashcore = { path = "../dash", features = [
+dashcore = { workspace = true, features = [
     "serde",
     "core-block-hash-use-x11",
     "message_verification",
@@ -18,11 +18,11 @@ dashcore = { path = "../dash", features = [
     "quorum_validation",
     "tokio",
 ] }
-dashcore_hashes = { path = "../hashes" }
-dash-network-seeds = { path = "../dash-network-seeds" }
-key-wallet = { path = "../key-wallet" }
-key-wallet-manager = { path = "../key-wallet-manager" }
-git-state = { path = "../git-state" }
+dashcore_hashes = { workspace = true }
+dash-network-seeds = { workspace = true }
+key-wallet = { workspace = true }
+key-wallet-manager = { workspace = true }
+git-state = { workspace = true }
 
 # BIP324 v2 P2P encrypted transport
 bip324 = { workspace = true, features = ["tokio"] }
@@ -31,7 +31,15 @@ bip324 = { workspace = true, features = ["tokio"] }
 clap = { workspace = true, optional = true }
 
 # Async runtime
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = [
+    "fs",
+    "io-util",
+    "macros",
+    "net",
+    "rt",
+    "sync",
+    "time",
+] }
 tokio-util = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 async-trait = { workspace = true }
@@ -46,7 +54,9 @@ serde_json = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"], optional = true }
+tracing-subscriber = { workspace = true, features = [
+    "env-filter",
+], optional = true }
 tracing-appender = { version = "0.2", optional = true }
 chrono = { workspace = true, features = ["default"], optional = true }
 
@@ -61,19 +71,17 @@ bincode = { workspace = true }
 
 # Test utilities (optional)
 tempfile = { workspace = true, optional = true }
-dashcore-rpc = { path = "../rpc-client", optional = true }
+dashcore-rpc = { workspace = true, optional = true }
 
 [build-dependencies]
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-dash-spv = { path = ".", features = ["test-utils"] }
-dashcore = { path = "../dash", features = ["test-utils"] }
-key-wallet = { path = "../key-wallet", features = ["test-utils"] }
-key-wallet-manager = { path = "../key-wallet-manager", features = [
-    "test-utils",
-] }
+dash-spv = { workspace = true, features = ["test-utils"] }
+dashcore = { workspace = true, features = ["test-utils"] }
+key-wallet = { workspace = true, features = ["test-utils"] }
+key-wallet-manager = { workspace = true, features = ["test-utils"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

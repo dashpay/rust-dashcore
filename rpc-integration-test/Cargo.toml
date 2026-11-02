@@ -9,7 +9,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-dashcore-rpc = { path = "../rpc-client" }
+dashcore-rpc = { workspace = true }
 lazy_static = "1.4.0"
 hex-conservative = { workspace = true }
 dotenvy = "0.15.7"

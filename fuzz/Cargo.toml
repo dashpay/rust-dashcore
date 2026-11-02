@@ -16,7 +16,7 @@ cargo-fuzz = true
 
 [dependencies]
 honggfuzz = { version = "0.5", default-features = false }
-dashcore = { path = "../dash", features = [ "serde" ] }
+dashcore = { workspace = true, features = ["serde"] }
 
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true }

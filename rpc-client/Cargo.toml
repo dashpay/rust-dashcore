@@ -19,7 +19,7 @@ name = "dashcore_rpc"
 path = "src/lib.rs"
 
 [dependencies]
-dashcore-rpc-json = { path = "../rpc-json" }
+dashcore-rpc-json = { workspace = true }
 hex-conservative = { workspace = true }
 
 jsonrpc = "0.18.0"
@@ -27,7 +27,7 @@ tracing = { workspace = true }
 
 # Used for deserialization of JSON.
 serde = { workspace = true, features = ["std", "derive"] }
-serde_json = { workspace = true, features=["preserve_order"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]
 test-case = { workspace = true }

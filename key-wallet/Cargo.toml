@@ -12,8 +12,19 @@ version.workspace = true
 
 [features]
 default = ["getrandom"]
-serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "dashcore/serde"]
-bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
+serde = [
+    "dep:serde",
+    "dep:serde_json",
+    "dashcore_hashes/serde",
+    "dashcore/serde",
+]
+bincode = [
+    "serde",
+    "dep:bincode",
+    "dep:bincode_derive",
+    "dashcore_hashes/bincode",
+    "dashcore/bincode",
+]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
 test-utils = ["dashcore/test-utils"]
@@ -32,9 +43,21 @@ test-utils = ["dashcore/test-utils"]
 keep-finalized-transactions = []
 
 [dependencies]
-dashcore_hashes = { path = "../hashes" }
-dashcore = { path="../dash" }
-bip39 = { version = "2.2.0", default-features = false, features = ["std", "chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
+dashcore_hashes = { workspace = true }
+dashcore = { workspace = true }
+bip39 = { version = "2.2.0", default-features = false, features = [
+    "std",
+    "chinese-simplified",
+    "chinese-traditional",
+    "czech",
+    "french",
+    "italian",
+    "japanese",
+    "korean",
+    "portuguese",
+    "spanish",
+    "zeroize",
+] }
 unicode-normalization = "0.1"
 serde = { workspace = true, features = ["derive"], optional = true }
 bitflags = { version = "2.6", default-features = false }
@@ -51,8 +74,14 @@ async-trait = { workspace = true }
 [dev-dependencies]
 bincode = { workspace = true, features = ["serde"] }
 criterion = { workspace = true }
-dashcore = { path="../dash", features = ["test-utils"] }
-key-wallet = { path = ".", features = ["test-utils", "serde", "bincode", "eddsa", "bls"] }
+dashcore = { workspace = true, features = ["test-utils"] }
+key-wallet = { workspace = true, features = [
+    "test-utils",
+    "serde",
+    "bincode",
+    "eddsa",
+    "bls",
+] }
 rand = { workspace = true, features = ["std", "std_rng", "thread_rng"] }
 test-case = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -31,10 +31,10 @@ keep-finalized-transactions = [
 ]
 
 [dependencies]
-key-wallet = { path = "../key-wallet" }
-key-wallet-manager = { path = "../key-wallet-manager" }
-dashcore = { path = "../dash" }
-dash-network = { path = "../dash-network", features = ["ffi"] }
+key-wallet = { workspace = true }
+key-wallet-manager = { workspace = true }
+dashcore = { workspace = true }
+dash-network = { workspace = true, features = ["ffi"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
 libc = "0.2"
 hex-conservative = { workspace = true }
@@ -44,7 +44,7 @@ zeroize = { workspace = true }
 cbindgen = { workspace = true }
 
 [dev-dependencies]
-dashcore = { path = "../dash", features = ["test-utils"] }
-key-wallet = { path = "../key-wallet", features = ["test-utils"] }
-key-wallet-manager = { path = "../key-wallet-manager", features = ["test-utils"] }
+dashcore = { workspace = true, features = ["test-utils"] }
+key-wallet = { workspace = true, features = ["test-utils"] }
+key-wallet-manager = { workspace = true, features = ["test-utils"] }
 test-case = { workspace = true }
