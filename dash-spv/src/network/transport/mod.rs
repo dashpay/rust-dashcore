@@ -5,7 +5,7 @@
 
 mod v2;
 
-pub use v2::{encrypt_message, V2Decoder};
+pub(crate) use v2::{encrypt_message, V2Decoder};
 
 /// Transport preference for peer connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

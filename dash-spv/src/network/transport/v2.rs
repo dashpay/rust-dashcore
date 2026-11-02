@@ -26,7 +26,7 @@ const TAG_LEN: usize = 16;
 const MAX_PACKET_LEN: usize = NUM_HEADER_BYTES + 1 + COMMAND_LEN + MAX_MSG_SIZE + TAG_LEN;
 
 /// Encrypt `message` into one complete V2 packet.
-pub fn encrypt_message(cipher: &mut OutboundCipher, message: &NetworkMessage) -> Vec<u8> {
+pub(crate) fn encrypt_message(cipher: &mut OutboundCipher, message: &NetworkMessage) -> Vec<u8> {
     cipher.encrypt_to_vec(&message.consensus_encode_v2(), PacketType::Genuine, None)
 }
 
@@ -36,7 +36,7 @@ pub fn encrypt_message(cipher: &mut OutboundCipher, message: &NetworkMessage) ->
 /// Decoy packets are skipped, as are messages Dash Core drops: unassigned short IDs
 /// and malformed commands. Any error leaves the inbound cipher unusable, so the
 /// connection must be closed.
-pub struct V2Decoder {
+pub(crate) struct V2Decoder {
     magic: u32,
     cipher: InboundCipher,
     /// Decrypted length of the packet being buffered. `decrypt_packet_len` advances
@@ -46,7 +46,7 @@ pub struct V2Decoder {
 
 impl V2Decoder {
     /// `magic` is stamped on the decoded messages so they look like V1 frames to callers.
-    pub fn new(magic: u32, cipher: InboundCipher) -> Self {
+    pub(crate) fn new(magic: u32, cipher: InboundCipher) -> Self {
         Self {
             magic,
             cipher,

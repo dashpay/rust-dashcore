@@ -128,7 +128,6 @@ impl Default for ClientConfig {
             start_from_height: None,
             reservation_sweep_ttl_secs: Some(3600),
             devnet: None,
-            // Transport preference (BIP324 v2 encrypted by default with v1 fallback)
             transport_preference: TransportPreference::default(),
         }
     }

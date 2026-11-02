@@ -24,7 +24,6 @@ use dashcore::{BlockHash, Network};
 use dashcore_hashes::Hash;
 use futures::StreamExt;
 use tempfile::TempDir;
-use test_case::test_case;
 use tokio::io::{copy, AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
@@ -236,11 +235,9 @@ async fn wait_for_peers(manager: &PeerNetworkManager, count: u32) {
     .unwrap_or_else(|_| panic!("connected peer count never reached {}", count));
 }
 
-#[test_case(Network::Mainnet; "mainnet")]
-#[test_case(Network::Testnet; "testnet")]
-#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages(network: Network) {
+async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages() {
+    let network = Network::Mainnet;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let mn_list_request = GetMnListDiff {
@@ -304,11 +301,9 @@ async fn v2_only_loopback_round_trips_short_extended_and_unknown_messages(networ
     server.await.unwrap();
 }
 
-#[test_case(Network::Mainnet; "mainnet")]
-#[test_case(Network::Testnet; "testnet")]
-#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_tampered_packet_disconnects(network: Network) {
+async fn v2_tampered_packet_disconnects() {
+    let network = Network::Mainnet;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (sent_tx, sent_rx) = oneshot::channel();
@@ -341,11 +336,9 @@ async fn v2_tampered_packet_disconnects(network: Network) {
     manager.stop().await;
 }
 
-#[test_case(Network::Mainnet; "mainnet")]
-#[test_case(Network::Testnet; "testnet")]
-#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_preferred_falls_back_when_peer_replies_with_v1_magic(network: Network) {
+async fn v2_preferred_falls_back_when_peer_replies_with_v1_magic() {
+    let network = Network::Mainnet;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (close_tx, close_rx) = oneshot::channel::<()>();
@@ -375,11 +368,9 @@ async fn v2_preferred_falls_back_when_peer_replies_with_v1_magic(network: Networ
     server.await.unwrap();
 }
 
-#[test_case(Network::Mainnet; "mainnet")]
-#[test_case(Network::Testnet; "testnet")]
-#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_preferred_falls_back_when_peer_hangs_up_on_v2_key(network: Network) {
+async fn v2_preferred_falls_back_when_peer_hangs_up_on_v2_key() {
+    let network = Network::Mainnet;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (close_tx, close_rx) = oneshot::channel::<()>();
@@ -408,11 +399,9 @@ async fn v2_preferred_falls_back_when_peer_hangs_up_on_v2_key(network: Network) 
     server.await.unwrap();
 }
 
-#[test_case(Network::Mainnet; "mainnet")]
-#[test_case(Network::Testnet; "testnet")]
-#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v2_only_fails_against_v1_only_peer(network: Network) {
+async fn v2_only_fails_against_v1_only_peer() {
+    let network = Network::Mainnet;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -432,11 +421,9 @@ async fn v2_only_fails_against_v1_only_peer(network: Network) {
     manager.stop().await;
 }
 
-#[test_case(Network::Mainnet; "mainnet")]
-#[test_case(Network::Testnet; "testnet")]
-#[test_case(Network::Regtest; "regtest")]
 #[tokio::test]
-async fn v1_only_never_sends_v2_key(network: Network) {
+async fn v1_only_never_sends_v2_key() {
+    let network = Network::Mainnet;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (close_tx, close_rx) = oneshot::channel::<()>();

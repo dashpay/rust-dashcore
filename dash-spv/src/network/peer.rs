@@ -13,6 +13,7 @@ use dashcore::{
     Network,
 };
 use futures::lock::Mutex;
+use rand::Rng;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -189,6 +190,18 @@ impl Link {
     }
 }
 
+/// Most garbage BIP324 allows before the garbage terminator.
+const MAX_V2_GARBAGE_LEN: usize = 4095;
+
+/// Random garbage to send after our key, as Dash Core's `GenerateRandomGarbage` does,
+/// so the first flight of a V2 connection doesn't have a fixed length.
+fn random_garbage() -> Vec<u8> {
+    let mut rng = rand::rng();
+    let mut garbage = vec![0u8; rng.random_range(0..=MAX_V2_GARBAGE_LEN)];
+    rng.fill(&mut garbage[..]);
+    garbage
+}
+
 /// Whether a failed V2 handshake should be retried over V1.
 ///
 /// A V1-only Dash Core node drops the connection once our 64-byte key fails its
@@ -358,7 +371,7 @@ impl DisconnectedPeer {
     }
 
     async fn open(&self) -> NetworkResult<TcpStream> {
-        tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
+        let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&self.addr))
             .await
             .map_err(|_| {
                 NetworkError::ConnectionFailed(format!(
@@ -369,7 +382,13 @@ impl DisconnectedPeer {
             })?
             .map_err(|e| {
                 NetworkError::ConnectionFailed(format!("Failed to connect to {}: {}", self.addr, e))
-            })
+            })?;
+        // The latency ping follows other small writes, so Nagle would skew `lag_ms`.
+        // Set it on every transport so V1 and V2 peers are measured alike.
+        stream.set_nodelay(true).map_err(|e| {
+            NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
+        })?;
+        Ok(stream)
     }
 
     /// Connect and negotiate the transport: BIP324 V2 unless `preference` is
@@ -380,13 +399,10 @@ impl DisconnectedPeer {
             return Ok(Link::v1(self.open().await?, magic));
         }
 
-        let stream = self.open().await?;
-        stream.set_nodelay(true).map_err(|e| {
-            NetworkError::ConnectionFailed(format!("Failed to set TCP_NODELAY: {}", e))
-        })?;
-        let (read_half, mut half) = stream.into_split();
+        let (read_half, mut half) = self.open().await?.into_split();
+        let garbage = Some(random_garbage());
         let handshake =
-            v2_handshake(magic.to_le_bytes(), Role::Initiator, None, None, read_half, &mut half);
+            v2_handshake(magic.to_le_bytes(), Role::Initiator, garbage, None, read_half, &mut half);
         let error = match tokio::time::timeout(V2_HANDSHAKE_TIMEOUT, handshake).await {
             Ok(Ok((inbound, outbound, reader))) => {
                 return Ok(Link {
