@@ -41,3 +41,4 @@ unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', '
 [dev-dependencies]
 bincode = { workspace = true, features = ["serde"] }
 serde_json = { version = "1.0" }
+test-case = "3.4"

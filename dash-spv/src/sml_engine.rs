@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::error::{StorageError, StorageResult};
 use crate::storage::BlockHeaderStorage;
 use crate::validation::MasternodeListValidator;
-use dashcore::bls_sig_utils::BLSSignature;
+use dashcore::bls_sig_utils::{BLSSignature, BlsScheme};
 use dashcore::hashes::Hash;
 use dashcore::network::constants::NetworkExt;
 use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot};
@@ -26,8 +26,9 @@ use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
 use dashcore::sml::quorum_validation_error::QuorumValidationError;
 use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use dashcore::Network;
+use dashcore::transaction::special_transaction::TransactionPayload;
 use dashcore::{BlockHash, QuorumHash};
+use dashcore::{Network, Transaction};
 use tokio::sync::RwLock;
 
 /// Blocks between a rotation cycle's base and its work block (Dash Core's `WORK_DIFF_DEPTH`).
@@ -124,6 +125,10 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
     headers: Arc<RwLock<H>>,
     pub masternode_lists: BTreeMap<CoreBlockHeight, MasternodeList>,
     rotated_quorums_per_cycle: BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
+    /// Each list's block hash and the ChainLock its coinbase carries for
+    /// member selection (`None` for none), recorded when the list is taken
+    /// from a diff and dropped with the list. Not in the snapshot.
+    coinbase_chain_locks: BTreeMap<CoreBlockHeight, (BlockHash, Option<BLSSignature>)>,
     network: Network,
     validator: Option<MasternodeListValidator<H>>,
 }
@@ -164,6 +169,22 @@ fn build_cycle_quorum_map(
         map.insert(key, quorum);
     }
     Ok(map)
+}
+
+/// The ChainLock `coinbase_tx`, the coinbase of the block at `height`, carries
+/// for member selection, as Dash Core's `GetNonNullCoinbaseChainlock` reads it
+/// (`src/evo/cbtx.cpp:200-211`).
+fn valid_coinbase_chain_lock(
+    coinbase_tx: &Transaction,
+    height: CoreBlockHeight,
+) -> Option<BLSSignature> {
+    let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+        &coinbase_tx.special_transaction_payload
+    else {
+        return None;
+    };
+    let signature = payload.chain_lock_candidate(height)?;
+    signature.as_scheme(BlsScheme::Modern).is_valid().then_some(signature)
 }
 
 /// Every masternode list diff a QRInfo carries.
@@ -221,16 +242,17 @@ fn cycle_quarter_work_heights(
         .map(|cycles_back: u32| cycle_base.checked_sub(cycles_back * interval + WORK_DIFF_DEPTH))
 }
 
-/// An engine's lists and rotated cycles.
+/// An engine's lists, rotated cycles and coinbase ChainLocks.
 type ListsAndCycles = (
     BTreeMap<CoreBlockHeight, MasternodeList>,
     BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
+    BTreeMap<CoreBlockHeight, (BlockHash, Option<BLSSignature>)>,
 );
 
-/// The lists and rotated cycles of an engine as a QRInfo feed found them, put
-/// back when this drops unless the feed's changes are kept: a feed that fails
-/// or is dropped part way leaves the engine as it was. The copy shares the
-/// lists' maps; the few stored cycles are copied.
+/// The lists, rotated cycles and coinbase ChainLocks of an engine as a QRInfo
+/// feed found them, put back when this drops unless the feed's changes are
+/// kept: a feed that fails or is dropped part way leaves the engine as it was.
+/// The copy shares the lists' maps; the few stored cycles are copied.
 struct QRInfoRollback<'a, H: BlockHeaderStorage> {
     engine: &'a mut MasternodeListEngine<H>,
     saved: Option<ListsAndCycles>,
@@ -238,7 +260,11 @@ struct QRInfoRollback<'a, H: BlockHeaderStorage> {
 
 impl<'a, H: BlockHeaderStorage> QRInfoRollback<'a, H> {
     fn new(engine: &'a mut MasternodeListEngine<H>) -> Self {
-        let saved = (engine.masternode_lists.clone(), engine.rotated_quorums_per_cycle.clone());
+        let saved = (
+            engine.masternode_lists.clone(),
+            engine.rotated_quorums_per_cycle.clone(),
+            engine.coinbase_chain_locks.clone(),
+        );
         Self {
             engine,
             saved: Some(saved),
@@ -253,9 +279,12 @@ impl<'a, H: BlockHeaderStorage> QRInfoRollback<'a, H> {
 
 impl<H: BlockHeaderStorage> Drop for QRInfoRollback<'_, H> {
     fn drop(&mut self) {
-        if let Some((masternode_lists, rotated_quorums_per_cycle)) = self.saved.take() {
+        if let Some((masternode_lists, rotated_quorums_per_cycle, coinbase_chain_locks)) =
+            self.saved.take()
+        {
             self.engine.masternode_lists = masternode_lists;
             self.engine.rotated_quorums_per_cycle = rotated_quorums_per_cycle;
+            self.engine.coinbase_chain_locks = coinbase_chain_locks;
         }
     }
 }
@@ -281,6 +310,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             headers,
             masternode_lists: BTreeMap::new(),
             rotated_quorums_per_cycle: BTreeMap::new(),
+            coinbase_chain_locks: BTreeMap::new(),
             network,
             validator,
         }
@@ -520,7 +550,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// The `(base, target)` diffs that bring the lists at
     /// `work_heights` the engine lacks, each from the nearest lower list it
     /// holds, and the first header storage failure met. A work height whose
-    /// block cannot be read is left out.
+    /// block cannot be read is left out. A list held without its coinbase
+    /// ChainLock, as after a restart, is asked for from its own block, which
+    /// Dash Core serves (`src/evo/smldiff.cpp:181-183`).
     async fn work_block_list_requests(
         &self,
         work_heights: impl IntoIterator<Item = CoreBlockHeight>,
@@ -528,7 +560,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let mut requests = Vec::new();
         let mut unread = None;
         for height in work_heights {
-            if self.masternode_lists.contains_key(&height) {
+            if let Some(list) = self.masternode_lists.get(&height) {
+                if self.coinbase_chain_lock(height, &list.block_hash).is_none() {
+                    requests.push((list.block_hash, list.block_hash));
+                }
                 continue;
             }
             let target = match self.hash_at(height).await {
@@ -551,6 +586,20 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             requests.push((base, target));
         }
         (requests, unread)
+    }
+
+    /// The coinbase ChainLock recorded for the block `block_hash` at `height`:
+    /// `None` when none is recorded for that block, `Some(None)` when its
+    /// coinbase carries none.
+    fn coinbase_chain_lock(
+        &self,
+        height: CoreBlockHeight,
+        block_hash: &BlockHash,
+    ) -> Option<Option<BLSSignature>> {
+        self.coinbase_chain_locks
+            .get(&height)
+            .filter(|(recorded, _)| recorded == block_hash)
+            .map(|(_, chain_lock)| *chain_lock)
     }
 
     /// The stored rotated quorum `quorum_entry` commits to, if any.
@@ -1071,6 +1120,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let base_block_hash = masternode_list_diff.base_block_hash;
         let base_height = self.required_height_of(&base_block_hash).await?;
         let diff_end_height = self.required_height_of(&block_hash).await?;
+        // Recorded only with the list, so once its coinbase is proven.
+        let chain_lock = (
+            block_hash,
+            valid_coinbase_chain_lock(&masternode_list_diff.coinbase_tx, diff_end_height),
+        );
 
         let coinbase_tx = match &self.validator {
             Some(validator) => {
@@ -1089,6 +1143,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             }
 
             self.masternode_lists.insert(diff_end_height, masternode_list);
+            self.coinbase_chain_locks.insert(diff_end_height, chain_lock);
             return Ok(());
         }
 
@@ -1119,6 +1174,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             }
         }
         self.masternode_lists.insert(diff_end_height, masternode_list);
+        self.coinbase_chain_locks.insert(diff_end_height, chain_lock);
         for (quorum_type, quorum_hash, status) in changes {
             self.set_quorum_status(quorum_type, quorum_hash, &status);
         }
@@ -1455,6 +1511,7 @@ mod tests {
     };
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
+    use dashcore::transaction::special_transaction::TransactionPayload;
     use dashcore::{BlockHash, Network, QuorumHash};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1755,6 +1812,18 @@ mod tests {
     }
 
     async fn load_qrinfo_2240504_fixture() -> (TestEngine, QRInfo) {
+        load_qrinfo_2240504_fixture_with(|_| {}).await
+    }
+
+    /// The 2240504 fixture's diffs before the loader applies them, by base and
+    /// end height.
+    type FixtureDiffs = BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff>;
+
+    /// [`load_qrinfo_2240504_fixture`] with `edit` applied to the diffs it
+    /// loads before they are applied, and so before their quorums verify.
+    async fn load_qrinfo_2240504_fixture_with(
+        edit: impl FnOnce(&mut FixtureDiffs),
+    ) -> (TestEngine, QRInfo) {
         let mut engine = TestEngine::knowing(
             Network::Mainnet,
             fixture_heights(include_bytes!(
@@ -1770,13 +1839,11 @@ mod tests {
             MasternodeList::from_diff(diff, 2227096, Network::Mainnet).expect("first list"),
         );
 
-        let mn_list_diffs: BTreeMap<(CoreBlockHeight, CoreBlockHeight), MnListDiff> =
-            decode_fixture(include_bytes!(
-                "../../dash/tests/data/test_DML_diffs/mnlistdiffs_2240504.dat"
-            ));
+        let mut mn_list_diffs = fixture_diffs();
         let qr_info: QRInfo = decode_fixture(include_bytes!(
             "../../dash/tests/data/test_DML_diffs/qrinfo_2240504.dat"
         ));
+        edit(&mut mn_list_diffs);
 
         for ((base_height, height), diff) in mn_list_diffs {
             engine.feed_block_height(base_height, diff.base_block_hash);
@@ -1821,6 +1888,7 @@ mod tests {
         qr_info.mn_list_diff_h.quorums_chainlock_signatures.clear();
         let lists = engine.masternode_lists.clone();
         let cycles = engine.rotated_quorums_per_cycle.clone();
+        let chain_locks = engine.coinbase_chain_locks.clone();
 
         let result = engine.feed_qr_info(qr_info).await;
 
@@ -1838,6 +1906,7 @@ mod tests {
             "a refused QRInfo must leave the lists as they were"
         );
         assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
+        assert_eq!(engine.coinbase_chain_locks, chain_locks, "and the coinbase ChainLocks");
     }
 
     /// Core sends a snapshot for every diff of `mn_list_diff_list`. A diff
@@ -2164,6 +2233,7 @@ mod tests {
             foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
         let lists = engine.masternode_lists.clone();
         let cycles = engine.rotated_quorums_per_cycle.clone();
+        let chain_locks = engine.coinbase_chain_locks.clone();
 
         let result = engine.feed_qr_info(qr_info).await;
 
@@ -2181,6 +2251,7 @@ mod tests {
             "a refused QRInfo must leave the lists as they were"
         );
         assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
+        assert_eq!(engine.coinbase_chain_locks, chain_locks, "and the coinbase ChainLocks");
     }
 
     /// A quarter signature keyed by elimination can belong to another cycle,
@@ -2645,7 +2716,8 @@ mod tests {
 
     /// The non-rotating quorums of the newest list still to validate ask for
     /// the list at their work block, oldest first, each from the nearest lower
-    /// list the engine holds.
+    /// list the engine holds. A list held without its coinbase ChainLock is
+    /// asked for from its own block.
     #[tokio::test]
     async fn missing_work_block_list_requests_target_unverified_non_rotating_quorums() {
         use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
@@ -2738,9 +2810,21 @@ mod tests {
             engine.missing_work_block_list_requests().await.expect("the headers read"),
             vec![
                 (BlockHash::all_zeros(), BlockHash::dummy(work(first))),
+                (BlockHash::dummy(work(held)), BlockHash::dummy(work(held))),
                 (BlockHash::dummy(work(held)), BlockHash::dummy(work(second))),
             ],
-            "a work block below every list starts from the empty list"
+            "a work block below every list starts from the empty list, and a list held without \
+             its coinbase ChainLock is asked for from its own block"
+        );
+
+        engine.coinbase_chain_locks.insert(work(held), (BlockHash::dummy(work(held)), None));
+        assert_eq!(
+            engine.missing_work_block_list_requests().await.expect("the headers read"),
+            vec![
+                (BlockHash::all_zeros(), BlockHash::dummy(work(first))),
+                (BlockHash::dummy(work(held)), BlockHash::dummy(work(second))),
+            ],
+            "a list held with its coinbase ChainLock is not asked for"
         );
     }
 
@@ -2876,6 +2960,7 @@ mod tests {
              no list"
         );
         engine.masternode_lists.insert(held, MasternodeList::empty(BlockHash::dummy(held), held));
+        engine.coinbase_chain_locks.insert(held, (BlockHash::dummy(held), None));
         assert_eq!(
             engine
                 .missing_work_block_list_requests_for(&tip_update(two_intervals, tip, &added))
@@ -3009,5 +3094,259 @@ mod tests {
         error: FeedError<SmlError>,
     ) -> bool {
         error.blames_peer()
+    }
+
+    /// A `Llmqtype100_67` quorum of the 2240504 fixture, mined at 2240448.
+    /// Its work block 2240440 is the end of the fixture diff from 2240416, a
+    /// block whose coinbase carries a ChainLock.
+    const COINBASE_QUORUM: &str =
+        "000000000000002404a1bb45859b9d641d6579829648b675cc0b0bbaa55a4b89";
+    const COINBASE_QUORUM_WORK_DIFF: (CoreBlockHeight, CoreBlockHeight) = (2240416, 2240440);
+    /// A fixture diff ending at another block whose coinbase carries a ChainLock.
+    const OTHER_CHAIN_LOCK_DIFF: (CoreBlockHeight, CoreBlockHeight) = (2240440, 2240464);
+
+    fn coinbase_quorum() -> QuorumHash {
+        COINBASE_QUORUM.parse().expect("a quorum hash")
+    }
+
+    /// The coinbase quorum's status on the newest list.
+    fn coinbase_quorum_status(engine: &TestEngine) -> LLMQEntryVerificationStatus {
+        engine.latest_masternode_list().expect("a newest list").quorums[&LLMQType::Llmqtype100_67]
+            [&coinbase_quorum()]
+            .verified
+            .clone()
+    }
+
+    /// The 2240504 fixture's diffs, by base and end height.
+    fn fixture_diffs() -> FixtureDiffs {
+        decode_fixture(include_bytes!(
+            "../../dash/tests/data/test_DML_diffs/mnlistdiffs_2240504.dat"
+        ))
+    }
+
+    /// The ChainLock signature `diff`'s coinbase carries.
+    fn coinbase_signature(diff: &mut MnListDiff) -> &mut BLSSignature {
+        match &mut diff.coinbase_tx.special_transaction_payload {
+            Some(TransactionPayload::CoinbasePayloadType(payload)) => {
+                payload.best_cl_signature.as_mut().expect("a version 3 coinbase")
+            }
+            other => panic!("a coinbase payload, got {other:?}"),
+        }
+    }
+
+    /// The ChainLock in the coinbase of the fixture diff `key`.
+    fn chain_lock_of(
+        diffs: &FixtureDiffs,
+        key: (CoreBlockHeight, CoreBlockHeight),
+    ) -> BLSSignature {
+        *coinbase_signature(&mut diffs[&key].clone())
+    }
+
+    /// Serves `signature` in `quorumsCLSigs` for the coinbase quorum alone, in
+    /// every diff that brings it.
+    fn serve_signature(diffs: &mut FixtureDiffs, signature: BLSSignature) {
+        let quorum_hash = coinbase_quorum();
+        let mut served_in = 0;
+        for diff in diffs.values_mut() {
+            let Some(slot) = diff.new_quorums.iter().position(|q| q.quorum_hash == quorum_hash)
+            else {
+                continue;
+            };
+            let slot = slot as u16;
+            for group in &mut diff.quorums_chainlock_signatures {
+                assert!(!group.index_set.contains(&slot) || group.signature != signature);
+                group.index_set.retain(|index| *index != slot);
+            }
+            diff.quorums_chainlock_signatures.retain(|group| !group.index_set.is_empty());
+            diff.quorums_chainlock_signatures.push(QuorumCLSigObject {
+                signature,
+                index_set: vec![slot],
+            });
+            served_in += 1;
+        }
+        assert!(served_in >= 2, "the quorum comes with more than one fixture diff");
+    }
+
+    /// The diff from `diff`'s block to itself, as Dash Core serves it: the
+    /// coinbase and its proof, and no changes.
+    fn self_diff(diff: &MnListDiff) -> MnListDiff {
+        MnListDiff {
+            version: diff.version,
+            base_block_hash: diff.block_hash,
+            block_hash: diff.block_hash,
+            total_transactions: diff.total_transactions,
+            merkle_hashes: diff.merkle_hashes.clone(),
+            merkle_flags: diff.merkle_flags.clone(),
+            coinbase_tx: diff.coinbase_tx.clone(),
+            deleted_masternodes: Vec::new(),
+            new_masternodes: Vec::new(),
+            deleted_quorums: Vec::new(),
+            new_quorums: Vec::new(),
+            quorums_chainlock_signatures: Vec::new(),
+        }
+    }
+
+    /// Dash Core selects a non-rotating quorum's members with the ChainLock in
+    /// its work block's coinbase (`src/llmq/utils.cpp:87-97`), whatever a diff
+    /// serves in `quorumsCLSigs`.
+    #[test_case(
+        |diffs| serve_signature(diffs, BLSSignature::from([0; 96])), true;
+        "zero quorumsCLSigs signature"
+    )]
+    #[test_case(
+        |diffs| serve_signature(diffs, chain_lock_of(diffs, OTHER_CHAIN_LOCK_DIFF)), true;
+        "another block's ChainLock in quorumsCLSigs"
+    )]
+    #[test_case(
+        |diffs| {
+            let other = chain_lock_of(diffs, OTHER_CHAIN_LOCK_DIFF);
+            *coinbase_signature(diffs.get_mut(&COINBASE_QUORUM_WORK_DIFF).unwrap()) = other;
+        }, false;
+        "another ChainLock in the work block's coinbase"
+    )]
+    #[tokio::test]
+    async fn non_rotating_members_follow_the_work_block_coinbase_not_quorums_cl_sigs(
+        edit: fn(&mut FixtureDiffs),
+        verified: bool,
+    ) {
+        let (engine, _) = load_qrinfo_2240504_fixture_with(edit).await;
+        let status = coinbase_quorum_status(&engine);
+        if verified {
+            assert_eq!(status, LLMQEntryVerificationStatus::Verified);
+        } else {
+            assert!(matches!(status, LLMQEntryVerificationStatus::Invalid(_)), "got {status}");
+        }
+    }
+
+    /// After a restart the coinbase ChainLocks are gone. The coinbase quorum,
+    /// persisted as `status` with the ChainLock of the fixture diff `served`
+    /// as its `quorumsCLSigs` value, is skipped and its work-block list asked
+    /// for from its own block. Once that diff applies, it verifies.
+    #[test_case(LLMQEntryVerificationStatus::Unknown, COINBASE_QUORUM_WORK_DIFF; "unknown, served right")]
+    #[test_case(
+        LLMQEntryVerificationStatus::Invalid(QuorumValidationError::InvalidQuorumSignature),
+        OTHER_CHAIN_LOCK_DIFF;
+        "invalid, served wrong"
+    )]
+    #[tokio::test]
+    async fn a_restored_quorum_waits_for_its_work_block_coinbase(
+        status: LLMQEntryVerificationStatus,
+        served: (CoreBlockHeight, CoreBlockHeight),
+    ) {
+        let quorum_hash = coinbase_quorum();
+        let diffs = fixture_diffs();
+        let served = chain_lock_of(&diffs, served);
+        let (mut engine, _) = load_qrinfo_2240504_fixture().await;
+        for list in engine.masternode_lists.values_mut() {
+            if let Some(quorum) = Arc::make_mut(&mut list.quorums)
+                .get_mut(&LLMQType::Llmqtype100_67)
+                .and_then(|quorums| quorums.get_mut(&quorum_hash))
+            {
+                Arc::make_mut(quorum).verifying_chain_lock_signature =
+                    Some(VerifyingChainLockSignaturesType::NonRotating(served));
+            }
+        }
+        engine.set_quorum_status(LLMQType::Llmqtype100_67, quorum_hash, &status);
+        let bytes = engine.snapshot().expect("encodes");
+        let mut engine =
+            TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes).expect("decodes");
+        assert!(engine.coinbase_chain_locks.is_empty(), "the snapshot carries no ChainLocks");
+        // Like the fixture engine, check no coinbases: the capture's
+        // masternodes do not hash to its coinbases' masternode list roots.
+        engine.validator = None;
+
+        let work_diff = &diffs[&COINBASE_QUORUM_WORK_DIFF];
+        engine.verify_newest_quorums().await;
+        assert_eq!(
+            coinbase_quorum_status(&engine),
+            LLMQEntryVerificationStatus::Skipped(
+                LLMQEntryVerificationSkipStatus::MissingChainLock(
+                    COINBASE_QUORUM_WORK_DIFF.1,
+                    work_diff.block_hash
+                )
+            )
+        );
+        let requests = engine.missing_work_block_list_requests().await.expect("the headers read");
+        assert!(
+            requests.contains(&(work_diff.block_hash, work_diff.block_hash)),
+            "the held work-block list is asked for from its own block, got {requests:?}"
+        );
+
+        engine.apply_diff(self_diff(work_diff)).await.expect("the diff from its own block applies");
+        assert_eq!(coinbase_quorum_status(&engine), LLMQEntryVerificationStatus::Verified);
+    }
+
+    /// The coinbase ChainLocks live exactly as long as their lists: pruned
+    /// with them, cut with them above a fork, and read only for the block
+    /// they were recorded for.
+    #[tokio::test]
+    async fn coinbase_chain_locks_go_with_their_lists() {
+        let heights = [1_000, 2_000, 1_000_000, 1_000_001];
+        let mut engine = TestEngine::dummy_with_lists(&heights);
+        for height in heights {
+            engine.coinbase_chain_locks.insert(height, (BlockHash::dummy(height), None));
+        }
+
+        engine.prune_after_extending(1_000_000).await;
+        assert!(!engine.masternode_lists.contains_key(&1_000), "below the window");
+        assert!(
+            engine.coinbase_chain_locks.keys().eq(engine.masternode_lists.keys()),
+            "pruned with their lists"
+        );
+
+        engine.truncate_above(2_000).await;
+        assert_eq!(engine.coinbase_chain_locks.keys().copied().collect::<Vec<_>>(), vec![2_000]);
+
+        assert_eq!(engine.coinbase_chain_lock(2_000, &BlockHash::dummy(2_000)), Some(None));
+        engine.coinbase_chain_locks.insert(2_000, (BlockHash::dummy(1), None));
+        assert_eq!(
+            engine.coinbase_chain_lock(2_000, &BlockHash::dummy(2_000)),
+            None,
+            "an entry for another block at the height reads as missing"
+        );
+    }
+
+    /// On an engine that checks coinbases, a restarted engine records the
+    /// newest list's coinbase ChainLock from the diff from that block to
+    /// itself, and records nothing from one whose coinbase proof or roots fail.
+    #[test_case(
+        |diff| diff.coinbase_tx.lock_time ^= 1,
+        |error| matches!(error, SmlError::InvalidCoinbaseProof(_));
+        "off its proof"
+    )]
+    #[test_case(
+        |diff| diff.new_masternodes.push(MasternodeListEntry::dummy(0x11)),
+        |error| matches!(error, SmlError::CoinbaseCommitmentMismatch(_));
+        "off its roots"
+    )]
+    #[tokio::test]
+    async fn a_self_diff_records_its_coinbase_chain_lock_only_once_proven(
+        tamper: fn(&mut MnListDiff),
+        expected: fn(&SmlError) -> bool,
+    ) {
+        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+        let tip = self_diff(&qr_info.mn_list_diff_tip);
+        engine.feed_qr_info(qr_info).await.expect("the fixture feeds");
+        let tip_height = engine.block_height(&tip.block_hash).expect("the tip is known");
+        let bytes = engine.snapshot().expect("encodes");
+        let mut restored =
+            TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes).expect("decodes");
+        assert!(restored.validator.is_some(), "the restored engine checks coinbases");
+        assert!(restored.coinbase_chain_locks.is_empty());
+
+        let mut tampered = tip.clone();
+        tamper(&mut tampered);
+        match restored.apply_diff(tampered).await {
+            Err(FeedError::Refused(error)) if expected(&error) => {}
+            other => panic!("the tampered diff is refused, got {other:?}"),
+        }
+        assert!(restored.coinbase_chain_locks.is_empty(), "a refused diff records nothing");
+
+        restored.apply_diff(tip.clone()).await.expect("the self-diff applies");
+        assert!(
+            matches!(restored.coinbase_chain_lock(tip_height, &tip.block_hash), Some(Some(_))),
+            "the tip's coinbase ChainLock is recorded, got {:?}",
+            restored.coinbase_chain_locks.get(&tip_height)
+        );
     }
 }

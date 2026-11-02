@@ -2,21 +2,21 @@ use std::collections::BTreeMap;
 
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
-use dashcore::bls_sig_utils::BlsScheme;
+use dashcore::bls_sig_utils::{BLSSignature, BlsScheme};
 use dashcore::network::message_qrinfo::QuorumSnapshot;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
 use dashcore::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
-use dashcore::sml::quorum_entry::qualified_quorum_entry::{
-    QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
-};
+use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use dashcore::sml::quorum_validation_error::QuorumValidationError;
 use dashcore::{BlockHash, QuorumHash};
 
 impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// Validates a non-rotating quorum against the members the list at its
-    /// work block selects (DIP-6).
+    /// work block selects (DIP-6), under that block's coinbase ChainLock as
+    /// Dash Core reads it (`GetHashModifierFromWorkBlock`,
+    /// `src/llmq/utils.cpp:87-97`), not the `quorumsCLSigs` value of a diff.
     pub(super) async fn validate_quorum(
         &self,
         quorum: &QualifiedQuorumEntry,
@@ -31,19 +31,21 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .masternode_lists
             .get(&work_height)
             .ok_or(QuorumValidationError::RequiredMasternodeListNotPresent(work_height))?;
-        let Some(VerifyingChainLockSignaturesType::NonRotating(chain_lock_sig)) =
-            quorum.verifying_chain_lock_signature
+        let Some(chain_lock) = self.coinbase_chain_lock(work_height, &masternode_list.block_hash)
         else {
             return Err(QuorumValidationError::RequiredChainLockNotPresent(
                 work_height,
                 masternode_list.block_hash,
             ));
         };
+        // A coinbase carries a ChainLock only from version 3, which Dash Core
+        // accepts only once v20 is active at its block (`src/evo/cbtx.cpp:40-43`),
+        // so the v20 height check below always passes for one.
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(
             quorum.quorum_entry.llmq_type,
             masternode_list.block_hash,
             work_height,
-            chain_lock_sig,
+            chain_lock.unwrap_or(BLSSignature::from([0; 96])),
             self.network,
         )?;
         let members: Vec<_> = masternode_list.valid_masternodes_for_quorum(
