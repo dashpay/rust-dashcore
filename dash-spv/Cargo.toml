@@ -84,8 +84,7 @@ key-wallet = { workspace = true, features = ["test-utils"] }
 key-wallet-manager = { workspace = true, features = ["test-utils"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
-tokio-test = "0.4"
+tokio = { workspace = true, features = ["full", "test-util"] }
 test-case = { workspace = true }
 
 [[bench]]
