@@ -20,6 +20,7 @@ workflows:
         - 'actions/checkout@v6'
         - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2'
+        - 'taiki-e/install-action@just'
     '.github/workflows/pr-review-policy.yml': []
     '.github/workflows/pr-title.yml':
         - 'amannn/action-semantic-pull-request@v6'
