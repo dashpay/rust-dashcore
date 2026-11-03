@@ -159,7 +159,10 @@ mod tests {
     use hashes::Hash;
     use test_case::test_case;
 
-    use crate::consensus::deserialize;
+    use hashes::sha256d;
+
+    use super::merkle_root_from_hashes;
+    use crate::consensus::{deserialize, serialize};
     use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
     use crate::network::message_sml::MnListDiff;
     use crate::sml::error::SmlError;
@@ -209,5 +212,58 @@ mod tests {
         let result = list.verify_coinbase_roots(&coinbase);
 
         assert_eq!(result, error.map_or(Ok(()), |error| Err(error(list.block_hash))));
+    }
+
+    /// Offset of the quorum type byte in a serialized commitment, after its
+    /// `u16` version.
+    const COMMITMENT_TYPE_OFFSET: usize = 2;
+
+    /// A commitment of a type this crate does not know is hashed into the
+    /// coinbase's quorum root as Dash Core serialized it, with its type byte,
+    /// two new types at once included. The byte counts: the same commitment
+    /// served under another unknown type is not the one committed to.
+    #[test_case(201, true; "as committed")]
+    #[test_case(202, false; "under another unknown type than committed")]
+    fn verify_coinbase_roots_of_quorums_of_unknown_types(served: u8, matches: bool) {
+        let mut diff: MnListDiff = deserialize(include_bytes!(
+            "../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("expected to deserialize");
+        assert_ne!(diff.new_quorums[0].quorum_hash, diff.new_quorums[1].quorum_hash);
+        // Dash Core's bytes of the commitments, two of them of types 200 and
+        // 201, which no type of this crate stands for.
+        let mut wire: Vec<Vec<u8>> = diff.new_quorums.iter().map(serialize).collect();
+        wire[0][COMMITMENT_TYPE_OFFSET] = 200;
+        wire[1][COMMITMENT_TYPE_OFFSET] = 201;
+        let mut core_hashes: Vec<sha256d::Hash> =
+            wire.iter().map(|bytes| sha256d::Hash::hash(bytes)).collect();
+        core_hashes.sort();
+        let committed = MerkleRootQuorums::from_raw_hash(
+            merkle_root_from_hashes(core_hashes).expect("quorums"),
+        );
+        wire[1][COMMITMENT_TYPE_OFFSET] = served;
+        diff.new_quorums = wire
+            .iter()
+            .map(|bytes| deserialize(bytes).expect("a commitment of any type decodes"))
+            .collect();
+        let mut coinbase = diff.coinbase_tx.clone();
+        let list = MasternodeList::from_diff(diff, 2_227_096, Network::Mainnet).expect("builds");
+        let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+            &mut coinbase.special_transaction_payload
+        else {
+            panic!("coinbase payload");
+        };
+        // The capture's masternodes do not hash to its coinbase's root.
+        payload.merkle_root_masternode_list = list.masternode_merkle_root.expect("masternodes");
+        payload.merkle_root_quorums = committed;
+
+        let result = list.verify_coinbase_roots(&coinbase);
+
+        let expected = if matches {
+            Ok(())
+        } else {
+            Err(SmlError::CoinbaseCommitmentMismatch(list.block_hash))
+        };
+        assert_eq!(result, expected);
     }
 }

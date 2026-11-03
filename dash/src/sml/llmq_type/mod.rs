@@ -392,7 +392,19 @@ impl LLMQType {
 mod tests {
     use super::*;
     use crate::Network;
+    use crate::consensus::{deserialize, serialize};
     use crate::sml::llmq_type::network::NetworkLLMQExt;
+
+    /// A commitment hashes into its coinbase's quorum root as Dash Core
+    /// serialized it, so a type byte has to encode back to itself, a byte no
+    /// type of this crate stands for included.
+    #[test]
+    fn every_type_byte_encodes_back_to_itself() {
+        for byte in 0..=u8::MAX {
+            let llmq_type: LLMQType = deserialize(&[byte]).expect("any byte decodes");
+            assert_eq!(serialize(&llmq_type), [byte], "type byte {byte}");
+        }
+    }
 
     #[test]
     fn test_get_cycle_base_height() {
