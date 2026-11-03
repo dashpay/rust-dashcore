@@ -78,6 +78,7 @@ serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+dash-pkc = { workspace = true, features = ["bls", "portable"] }
 dash-spv = { workspace = true, features = ["test-utils"] }
 dashcore = { workspace = true, features = ["test-utils"] }
 key-wallet = { workspace = true, features = ["test-utils"] }

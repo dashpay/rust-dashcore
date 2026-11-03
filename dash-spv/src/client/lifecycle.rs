@@ -279,14 +279,23 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Drops what the wallets, the stored chain and the masternode engine hold
     /// above `height`.
     ///
-    /// The wallets go first: a wallet refusing the fork leaves storage as it
-    /// is, and storage failing after them keeps the fork unstored, so it is
-    /// detected and retried. The storage truncates the engine it shares with
-    /// the client.
+    /// Nothing is dropped below the ChainLock anchor whose block the stored
+    /// chain holds: a ChainLock accepted after the fork was detected may have
+    /// raised it since. An anchor whose block is not stored yet does not stop
+    /// the fork, since header sync still refuses another block at its height. The wallets go
+    /// first: a wallet refusing the fork leaves storage as it is, and storage
+    /// failing after them keeps the fork unstored, so it is detected and
+    /// retried. The storage truncates the engine it shares with the client.
     async fn truncate_chain_above(
         &self,
         height: u32,
     ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(engine) = &self.masternode_engine {
+            let anchor = engine.read().await.usable_anchor().await.map(|anchor| anchor.height);
+            if let Some(anchor) = anchor.filter(|anchor| height < *anchor) {
+                return Err(format!("it is below the ChainLock anchor at {anchor}").into());
+            }
+        }
         self.wallet.write().await.truncate_above(height)?;
         StorageManager::truncate_above(&mut *self.storage.lock().await, height).await?;
         Ok(())
@@ -426,6 +435,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sml_engine::{AnchorRoot, ChainLockAnchor};
     use crate::test_utils::MockNetworkManager;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::BlockHash;
@@ -457,5 +467,64 @@ mod tests {
 
         let heights: Vec<_> = engine.read().await.masternode_lists.keys().copied().collect();
         assert_eq!(heights, vec![fork - 1, fork]);
+    }
+
+    /// A ChainLock accepted after a fork was detected can raise the anchor
+    /// above it. Blocks at or below the anchor are final, so the fork is not
+    /// followed and nothing is dropped.
+    #[tokio::test]
+    async fn a_fork_below_the_chain_lock_anchor_is_not_followed() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config =
+            ClientConfig::mainnet().without_filters().with_storage_path(temp_dir.path());
+        config.start_from_height = Some(2_500_000);
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let client = DashSpvClient::new(config, MockNetworkManager::new(), wallet, vec![])
+            .await
+            .expect("client construction must succeed");
+        let tip = client.tip_header().await.expect("anchored at the checkpoint");
+        let engine = client.masternode_list_engine().expect("masternodes are enabled");
+        {
+            let mut engine = engine.write().await;
+            let list = MasternodeList::empty(*tip.hash(), tip.height());
+            engine.masternode_lists.insert(tip.height(), list);
+            engine.set_root_anchor(ChainLockAnchor {
+                height: tip.height(),
+                block_hash: *tip.hash(),
+                root: AnchorRoot::Checkpoint(tip.height()),
+            });
+        }
+
+        assert!(client.truncate_chain_above(tip.height() - 1).await.is_err());
+
+        assert_eq!(client.tip_header().await.map(|tip| tip.height()), Some(tip.height()));
+        let heights: Vec<_> = engine.read().await.masternode_lists.keys().copied().collect();
+        assert_eq!(heights, vec![tip.height()]);
+        assert!(client.truncate_chain_above(tip.height()).await.is_ok(), "a fork at the anchor");
+    }
+
+    /// After a crash the stored tip can lie below an anchor whose header never
+    /// reached the disk, on a branch a peer extended. Following a fork back
+    /// below it is how the chain reaches the anchored block again, which header
+    /// sync still requires at the anchor's height.
+    #[tokio::test]
+    async fn a_fork_below_an_anchor_whose_block_is_not_stored_is_followed() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut config =
+            ClientConfig::mainnet().without_filters().with_storage_path(temp_dir.path());
+        config.start_from_height = Some(2_500_000);
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let client = DashSpvClient::new(config, MockNetworkManager::new(), wallet, vec![])
+            .await
+            .expect("client construction must succeed");
+        let tip = client.tip_header().await.expect("anchored at the checkpoint").height();
+        let engine = client.masternode_list_engine().expect("masternodes are enabled");
+        engine.write().await.set_root_anchor(ChainLockAnchor {
+            height: tip + 2,
+            block_hash: BlockHash::dummy(tip + 2),
+            root: AnchorRoot::Checkpoint(tip + 2),
+        });
+
+        assert!(client.truncate_chain_above(tip - 1).await.is_ok());
     }
 }

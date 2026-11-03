@@ -1,3 +1,4 @@
+pub(crate) mod anchor;
 mod helpers;
 mod rotated_quorum_construction;
 mod snapshot_codec;
@@ -30,6 +31,10 @@ use dashcore::transaction::special_transaction::TransactionPayload;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore::{Network, Transaction};
 use tokio::sync::RwLock;
+
+pub(crate) use anchor::{
+    may_root_at_checkpoint, trusts_first_chain_lock, AnchorRoot, ChainLockAnchor, ChainLockVerdict,
+};
 
 /// Blocks between a rotation cycle's base and its work block (Dash Core's `WORK_DIFF_DEPTH`).
 pub const WORK_DIFF_DEPTH: u32 = 8;
@@ -131,6 +136,10 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
     coinbase_chain_locks: BTreeMap<CoreBlockHeight, (BlockHash, Option<BLSSignature>)>,
     network: Network,
     validator: Option<MasternodeListValidator<H>>,
+    /// The checkpoint trust starts from, on a network that has checkpoints.
+    root_anchor: Option<ChainLockAnchor>,
+    /// The best ChainLock an anchored quorum signed.
+    chain_lock_anchor: Option<ChainLockAnchor>,
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
@@ -313,6 +322,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             coinbase_chain_locks: BTreeMap::new(),
             network,
             validator,
+            root_anchor: None,
+            chain_lock_anchor: None,
         }
     }
 
@@ -1332,7 +1343,8 @@ pub(crate) mod test_support {
             headers.heights.iter().find(|(_, h)| **h == height).map(|(block_hash, _)| *block_hash)
         }
 
-        /// Verifies `chain_lock` as the ChainLock manager does.
+        /// Verifies `chain_lock` with `ChainLockValidator`, which does not check
+        /// that the quorum is anchored.
         pub(crate) fn verify_chain_lock(
             &self,
             chain_lock: &dashcore::ChainLock,

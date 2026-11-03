@@ -143,12 +143,17 @@ pub enum SyncEvent {
 
     /// ChainLock received and processed.
     ///
-    /// Emitted by: `ChainLockManager`
-    /// Consumed by: External listeners, wallet state updates
+    /// Emitted by: `ChainLockManager` for ChainLocks from peers, and
+    /// `MasternodesManager` for the coinbase ChainLocks that raise the
+    /// ChainLock anchor while it walks up to the tip, which can be well below
+    /// the tip.
+    /// Consumed by: External listeners, wallet state updates and
+    /// `ChainLockManager` (to persist the anchor)
     ChainLockReceived {
         /// The complete ChainLock data
         chain_lock: ChainLock,
-        /// Whether the BLS signature was validated
+        /// Whether a quorum the ChainLock anchor vouches for signed it and its
+        /// block is stored, so the block is final
         validated: bool,
     },
 

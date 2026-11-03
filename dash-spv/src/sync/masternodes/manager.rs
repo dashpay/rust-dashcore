@@ -11,6 +11,7 @@ use crate::sml_engine::{MasternodeListEngine, QRInfoFeedResult};
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
+use super::catch_up::CatchUp;
 use super::pipeline::{DiffKind, MnListDiffPipeline, MNLISTDIFF_DEADLINE};
 use crate::error::SyncResult;
 use crate::network::{NetworkManager, SendRequest};
@@ -148,6 +149,8 @@ pub(super) struct MasternodeSyncState {
     pub(super) given_up_tip: Option<(BlockHash, Instant)>,
     /// Targets of the work-block lists given up since the last QRInfo.
     pub(super) given_up_work_lists: HashMap<BlockHash, WorkListRetry>,
+    /// The walk raising the ChainLock anchor towards the tip.
+    pub(super) catch_up: CatchUp,
 }
 
 impl MasternodeSyncState {
@@ -215,6 +218,7 @@ impl MasternodeSyncState {
             rejected: false,
         });
         self.last_qrinfo_dispatch = Some(now);
+        self.catch_up.qrinfo_sent();
     }
 
     /// Release the QRInfo slot for a response that has been fully processed.
@@ -676,8 +680,15 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         let is_initial_sync = self.state() == SyncState::Syncing;
 
         let engine = self.engine.read().await;
+        // The lists the ChainLock catch-up walk built lie far below the tip,
+        // so they alone do not end an initial sync.
+        let synced = !is_initial_sync
+            || engine
+                .masternode_lists
+                .keys()
+                .any(|height| !self.sync_state.catch_up.built(*height));
 
-        if let Some(&height) = engine.masternode_lists.keys().next_back() {
+        if let Some(&height) = engine.masternode_lists.keys().next_back().filter(|_| synced) {
             self.progress.update_current_height(height);
 
             events.push(SyncEvent::MasternodeStateUpdated {

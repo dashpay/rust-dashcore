@@ -53,7 +53,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     }
 
     /// Once a diff on `base` moved the tip, drops the lists below the retention
-    /// window, keeping `base` and the next QRInfo's base, and their cycles.
+    /// window, keeping `base` and the next QRInfo's base, and their cycles. It
+    /// also keeps the newest list the ChainLock anchor covers and those up to a
+    /// ChainLock quorum's lifetime above it, from which trust walks up, however
+    /// far below the tip the anchor stays.
     pub(super) async fn prune_after_extending(&mut self, base: CoreBlockHeight) {
         let Some(tip) =
             self.latest_masternode_list().map(|list| list.known_height).filter(|tip| *tip > base)
@@ -62,8 +65,18 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         };
         let qr_info_base = self.qr_info_base_list(tip).map_or(tip, |list| list.known_height);
         let floor = tip.saturating_sub(self.retention_window()).min(base).min(qr_info_base);
+        let walk_reach = self.network.chain_locks_type().active_window();
+        let anchored = [self.chain_lock_anchor, self.root_anchor]
+            .into_iter()
+            .flatten()
+            .map(|anchor| anchor.height)
+            .max()
+            .and_then(|anchor| self.masternode_lists.range(..=anchor).next_back())
+            .map(|(height, _)| *height..=height.saturating_add(walk_reach));
         let before = self.masternode_lists.len();
-        self.masternode_lists.retain(|height, _| *height >= floor);
+        self.masternode_lists.retain(|height, _| {
+            *height >= floor || anchored.as_ref().is_some_and(|anchored| anchored.contains(height))
+        });
         let lists = &self.masternode_lists;
         self.coinbase_chain_locks.retain(|height, _| lists.contains_key(height));
         if self.masternode_lists.len() == before {

@@ -1,3 +1,4 @@
+mod catch_up;
 mod manager;
 mod pipeline;
 mod progress;

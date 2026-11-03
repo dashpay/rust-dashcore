@@ -15,7 +15,7 @@ use dash_spv::SyncState;
 use dashcore::Amount;
 
 use super::helpers::{
-    mine_dkg_cycle_and_wait, wait_for_chainlock_height_at_least, wait_for_masternode_sync,
+    mine_dkg_cycle_and_wait, mine_until_chain_locked_at_least, wait_for_masternode_sync,
     wait_for_wallet_tx_chainlocked,
 };
 use super::setup::{
@@ -78,12 +78,9 @@ async fn test_chainlock_promotes_in_block_tx() {
         .expect("ChainLock should be produced after DKG cycle completion");
 
     // SPV catches up to the chainlock height.
-    let cl_sync_height = wait_for_chainlock_height_at_least(
-        &mut client_handle.progress_receiver,
-        cl_height,
-        SYNC_TIMEOUT,
-    )
-    .await;
+    let cl_sync_height =
+        mine_until_chain_locked_at_least(&mut ctx, &mut client_handle.progress_receiver, cl_height)
+            .await;
     assert!(cl_sync_height >= cl_height);
 
     // Wallet event must surface chainlock-driven finality for our txid.

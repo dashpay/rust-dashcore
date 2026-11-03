@@ -570,42 +570,51 @@ pub(super) async fn wait_for_instantsend_valid_at_least(
     }
 }
 
-/// Wait for validated ChainLock progress to reach at least `min_height`.
-pub(super) async fn wait_for_chainlock_height_at_least(
+/// Blocks the client's ChainLock anchor is given to reach a height in
+/// [`mine_until_chain_locked_at_least`].
+const MAX_BLOCKS_TO_ANCHOR: u32 = 12;
+
+/// Mines blocks one at a time, each ChainLocked by dashd, until the client's
+/// validated ChainLock height, its ChainLock anchor, reaches `min_height`, and
+/// returns it.
+///
+/// A ChainLock raises the anchor only once a quorum the anchor vouches for
+/// signed it. Right after a DKG cycle about half of them are signed by the new
+/// ChainLock quorum, which no ChainLock covers yet, so the next ChainLock an
+/// older quorum signs has to come first.
+pub(super) async fn mine_until_chain_locked_at_least(
+    ctx: &mut TestContext,
     progress_receiver: &mut watch::Receiver<SyncProgress>,
     min_height: u32,
-    timeout_secs: u64,
 ) -> u32 {
-    {
-        let progress = progress_receiver.borrow();
-        if let Ok(chainlock_progress) = progress.chainlocks() {
-            let height = chainlock_progress.best_validated_height();
-            if height >= min_height {
-                return height;
-            }
+    let reached = |progress_receiver: &mut watch::Receiver<SyncProgress>| {
+        let progress = progress_receiver.borrow_and_update();
+        progress
+            .chainlocks()
+            .ok()
+            .map(|chainlocks| chainlocks.best_validated_height())
+            .filter(|height| *height >= min_height)
+    };
+    for _ in 0..MAX_BLOCKS_TO_ANCHOR {
+        if let Some(height) = reached(progress_receiver) {
+            return height;
         }
-    }
-
-    let timeout = time::sleep(Duration::from_secs(timeout_secs));
-    tokio::pin!(timeout);
-
-    loop {
-        tokio::select! {
-            _ = &mut timeout => {
-                panic!("Timeout waiting for ChainLock height >= {}", min_height);
-            }
-            result = progress_receiver.changed() => {
-                if result.is_err() {
-                    panic!("Progress channel closed");
-                }
-                let progress = progress_receiver.borrow_and_update().clone();
-                if let Ok(chainlock_progress) = progress.chainlocks() {
-                    let height = chainlock_progress.best_validated_height();
-                    if height >= min_height {
+        ctx.mn_ctx.mine_blocks_and_wait_for_chainlock(1, 60);
+        let wait = time::sleep(Duration::from_secs(10));
+        tokio::pin!(wait);
+        loop {
+            tokio::select! {
+                _ = &mut wait => break,
+                result = progress_receiver.changed() => {
+                    if result.is_err() {
+                        panic!("Progress channel closed");
+                    }
+                    if let Some(height) = reached(progress_receiver) {
                         return height;
                     }
                 }
             }
         }
     }
+    panic!("ChainLock anchor below {min_height} after {MAX_BLOCKS_TO_ANCHOR} ChainLocked blocks");
 }

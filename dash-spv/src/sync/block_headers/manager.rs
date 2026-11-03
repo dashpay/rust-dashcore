@@ -16,9 +16,10 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::{NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip, MetadataStorage};
 use crate::sync::block_headers::HeadersPipeline;
+use crate::sync::chainlock::PersistedChainLockAnchor;
 use crate::sync::{
     BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState,
-    BEST_CHAINLOCK_METADATA_STORAGE_KEY,
+    BEST_CHAINLOCK_METADATA_STORAGE_KEY, CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY,
 };
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
@@ -48,6 +49,9 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     pub(super) pipeline: HeadersPipeline,
     /// Compiled-in checkpoints, which no fork may branch off below.
     checkpoint_manager: &'static CheckpointManager,
+    /// The ChainLock anchor persisted when the manager started. A crash can
+    /// leave it above the stored headers, which must then come back to it.
+    persisted_anchor: Option<ChainLock>,
     /// Pending block announcements waiting for headers message (post-sync).
     pub(super) pending_announcements: HashMap<BlockHash, Instant>,
     /// Peers we've sent a GetHeaders to after sync, so Dash Core knows our tip
@@ -92,12 +96,28 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 
         tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
 
+        let persisted_anchor = match metadata_storage
+            .read()
+            .await
+            .load_metadata::<PersistedChainLockAnchor>(CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY)
+            .await
+        {
+            Ok(persisted) => persisted
+                .filter(|persisted| persisted.root.starts_trust_on(network))
+                .map(|persisted| persisted.chain_lock),
+            Err(e) => {
+                tracing::warn!("Failed to load the persisted ChainLock anchor: {}", e);
+                None
+            }
+        };
+
         Ok(Self {
             progress: initial_progress,
             header_storage,
             metadata_storage,
             pipeline: HeadersPipeline::new(checkpoint_manager),
             checkpoint_manager,
+            persisted_anchor,
             pending_announcements: HashMap::new(),
             announced_peers: HashSet::new(),
             network,
@@ -134,6 +154,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let ancestors = ancestors.iter().map(|header| *header.header()).collect();
 
         BlockHeaderValidator::new(self.network, ancestors, tip.height()).validate(headers)?;
+        self.check_against_persisted_anchor(tip.height(), headers)?;
 
         // Store headers
         self.header_storage.write().await.store_headers(headers).await?;
@@ -145,6 +166,35 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         self.progress.add_processed(headers.len() as u32);
 
         Ok(tip)
+    }
+
+    /// Refuses a batch holding another block than the persisted ChainLock
+    /// anchor at its height. Headers flush to disk later than the anchor, so a
+    /// crash can leave the anchor above the stored tip, and the chain must
+    /// come back through it, as through a checkpoint.
+    fn check_against_persisted_anchor(
+        &self,
+        tip_height: u32,
+        headers: &[HashedBlockHeader],
+    ) -> SyncResult<()> {
+        let Some(anchor) = &self.persisted_anchor else {
+            return Ok(());
+        };
+        let start = tip_height + 1;
+        let Some(offset) = anchor.block_height.checked_sub(start) else {
+            return Ok(());
+        };
+        match headers.get(offset as usize) {
+            Some(header) if *header.hash() != anchor.block_hash => {
+                Err(SyncError::Validation(format!(
+                    "Header {} at {} conflicts with the ChainLock anchor {}",
+                    header.hash(),
+                    anchor.block_height,
+                    anchor.block_hash
+                )))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Handle incoming headers message (used for both initial sync and post-sync).
@@ -229,6 +279,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
     /// Height where `headers` branch off the stored chain below its tip, if they
     /// do. A branch off below the best ChainLock, or below the newest checkpoint
     /// the stored chain reaches, is not followed: the blocks they fix are final.
+    /// Without a ChainLock anchor, the best ChainLock stored under the legacy
+    /// key, accepted without an anchored signer, stands in for it.
     async fn fork_height(&self, headers: &[HashedBlockHeader]) -> SyncResult<Option<u32>> {
         let storage = self.header_storage.read().await;
 
@@ -257,17 +309,38 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 return Ok(None);
             }
 
-            let chain_lock = self
-                .metadata_storage
-                .read()
-                .await
-                .load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY)
-                .await?;
-            if let Some(chain_lock) = chain_lock.filter(|cl| fork_height < cl.block_height) {
+            let (anchored, legacy) = {
+                let metadata = self.metadata_storage.read().await;
+                (
+                    metadata
+                        .load_metadata::<PersistedChainLockAnchor>(
+                            CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY,
+                        )
+                        .await?
+                        .filter(|persisted| persisted.root.starts_trust_on(self.network))
+                        .map(|persisted| persisted.chain_lock),
+                    metadata
+                        .load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY)
+                        .await?
+                        .map(|chain_lock| chain_lock.block_height),
+                )
+            };
+            // An anchor is a floor once the stored chain holds its block. Until
+            // then the stored tip may lie on a branch a crash left below it,
+            // which the chain through its block must be free to replace.
+            let floor = match anchored {
+                Some(anchor) => storage
+                    .get_header(anchor.block_height)
+                    .await?
+                    .filter(|header| *header.hash() == anchor.block_hash)
+                    .map(|_| anchor.block_height),
+                None => legacy,
+            };
+            if let Some(locked) = floor.filter(|&locked| fork_height < locked) {
                 tracing::warn!(
                     "Ignoring a fork at height {}, below the ChainLock at {}",
                     fork_height,
-                    chain_lock.block_height
+                    locked
                 );
                 return Ok(None);
             }
@@ -405,6 +478,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 mod tests {
     use super::*;
     use crate::network::{MessageType, NetworkEvent};
+    use crate::sml_engine::AnchorRoot;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
@@ -413,6 +487,7 @@ mod tests {
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
     use crate::test_utils::{test_socket_address, MockNetworkManager};
     use dashcore::network::message::NetworkMessage;
+    use dashcore_hashes::Hash;
     use test_case::test_case;
 
     type TestBlockHeadersManager =
@@ -517,6 +592,99 @@ mod tests {
             manager.fork_height(&[HashedBlockHeader::from(&branch)]).await.unwrap(),
             expected
         );
+    }
+
+    /// The anchor counts as a fork floor like the best ChainLock does, once
+    /// the stored chain holds its block. After a crash the stored tip can lie
+    /// below an anchor whose header never reached the disk, on a branch a peer
+    /// extended: the chain back to the anchored block must be free to replace
+    /// it, and header sync still refuses another block at the anchor's height.
+    #[test_case(5, 6, None; "below the anchor")]
+    #[test_case(6, 6, Some(6); "at the anchor")]
+    #[test_case(5, 12, Some(5); "below an anchor whose block is not stored")]
+    #[tokio::test]
+    async fn a_branch_off_below_the_chain_lock_anchor_is_no_fork(
+        branch_off: u32,
+        anchor: u32,
+        expected: Option<u32>,
+    ) {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let stored = Header::dummy_batch(0..10);
+        storage
+            .store_headers(&stored.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        let persisted = PersistedChainLockAnchor {
+            chain_lock: ChainLock {
+                block_height: anchor,
+                block_hash: Header::dummy(anchor).block_hash(),
+                ..ChainLock::dummy(anchor)
+            },
+            root: AnchorRoot::FirstChainLock,
+        };
+        let bytes = serde_json::to_vec(&persisted).unwrap();
+        storage.store_metadata(CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY, &bytes).await.unwrap();
+        let manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+
+        let branch = Header {
+            prev_blockhash: stored[branch_off as usize].block_hash(),
+            ..Header::dummy(1_000)
+        };
+
+        assert_eq!(
+            manager.fork_height(&[HashedBlockHeader::from(&branch)]).await.unwrap(),
+            expected
+        );
+    }
+
+    /// Headers flush to disk later than the ChainLock anchor, so after a crash
+    /// the anchor can sit above the stored tip. The chain must come back
+    /// through the anchored block, as through a checkpoint, or a peer could
+    /// extend the stored chain with blocks of its own up to the anchor height.
+    #[test_case(true; "through the anchored block")]
+    #[test_case(false; "through another block")]
+    #[tokio::test]
+    async fn headers_back_to_a_persisted_anchor_must_hold_its_block(anchored: bool) {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let genesis: Vec<_> =
+            Header::dummy_batch(0..1).iter().map(HashedBlockHeader::from).collect();
+        storage.store_headers(&genesis).await.unwrap();
+        let chain: Vec<_> = Header::dummy_chain(5, *genesis[0].hash())
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        let block_hash = if anchored {
+            *chain[2].hash()
+        } else {
+            BlockHash::from_byte_array([0xab; 32])
+        };
+        let persisted = PersistedChainLockAnchor {
+            chain_lock: ChainLock {
+                block_height: 3,
+                block_hash,
+                ..ChainLock::dummy(3)
+            },
+            root: AnchorRoot::FirstChainLock,
+        };
+        let bytes = serde_json::to_vec(&persisted).unwrap();
+        storage.store_metadata(CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY, &bytes).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(manager.store_headers(&chain).await.is_ok(), anchored);
     }
 
     /// Create a manager in synced state with an initialized pipeline.

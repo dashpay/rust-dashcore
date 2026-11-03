@@ -83,6 +83,17 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
         event: &SyncEvent,
         _network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
+        // A ChainLock the engine accepted elsewhere, from a coinbase on the
+        // way up from a checkpoint, becomes the best one here and is
+        // persisted, whatever the state.
+        if let SyncEvent::ChainLockReceived {
+            chain_lock,
+            validated: true,
+        } = event
+        {
+            self.on_chain_lock_accepted(chain_lock).await;
+        }
+
         // `MasternodeStateUpdated` fires on every MnListDiff / QRInfo
         // update. Once ready, each one only retries a deferred chainlock;
         // the rest below is one-shot startup work. Also drop buffered
@@ -94,12 +105,17 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
             return Ok(vec![]);
         }
 
-        // A chainlock waiting for its header is retried as headers are stored.
+        // A chainlock waiting for its header is retried as headers are stored,
+        // and one waiting for an anchored signer as the anchor moves up.
         let retry = match event {
             SyncEvent::MasternodeStateUpdated {
                 ..
             } => true,
             SyncEvent::BlockHeadersStored {
+                ..
+            }
+            | SyncEvent::ChainLockReceived {
+                validated: true,
                 ..
             } => self.masternode_ready,
             _ => false,

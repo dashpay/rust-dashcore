@@ -1,30 +1,38 @@
 //! ChainLock manager for parallel sync.
 //!
-//! Handles ChainLock messages (clsig) from the network. Validates ChainLocks
-//! only after masternode data is available. Since ChainLocks are cumulative
-//! (all blocks below the best ChainLock are implicitly locked), we only track
-//! the best validated ChainLock.
+//! Handles ChainLock messages (clsig) from the network. A ChainLock is accepted
+//! once a quorum the masternode engine holds as anchored signed it, and then
+//! raises the engine's anchor: the block every list and quorum below it is
+//! trusted from. Since ChainLocks are cumulative (all blocks below the best
+//! ChainLock are implicitly locked), only the best accepted ChainLock is kept.
 
 use std::sync::Arc;
 
-use crate::sml_engine::MasternodeListEngine;
+use crate::sml_engine::{AnchorRoot, ChainLockAnchor, ChainLockVerdict, MasternodeListEngine};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::hash_types::ChainLockHash;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tokio::sync::RwLock;
 
-use crate::error::{SyncResult, ValidationResult};
+use crate::error::SyncResult;
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
-use crate::sync::{ChainLockProgress, SyncEvent, BEST_CHAINLOCK_METADATA_STORAGE_KEY};
-use crate::validation::{ChainLockValidator, Validator};
-use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+use crate::sync::{ChainLockProgress, SyncEvent, CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY};
+
+/// The best accepted ChainLock as persisted, with the root its trust descends
+/// from, so a restart only trusts it where that root is trusted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PersistedChainLockAnchor {
+    pub(crate) chain_lock: ChainLock,
+    pub(crate) root: AnchorRoot,
+}
 
 /// ChainLock manager for the parallel sync coordinator.
 ///
 /// This manager:
 /// - Subscribes to CLSig messages from the network
 /// - Validates ChainLocks only after masternode sync is complete
-/// - Tracks only the best (highest) validated ChainLock
+/// - Tracks only the best (highest) accepted ChainLock
 /// - Emits ChainLockReceived events
 pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     /// Current progress of the manager.
@@ -33,19 +41,20 @@ pub struct ChainLockManager<H: BlockHeaderStorage, M: MetadataStorage> {
     header_storage: Arc<RwLock<H>>,
     /// Metadata storage for persisting the best chainlock.
     metadata_storage: Arc<RwLock<M>>,
-    /// Masternode engine for BLS signature validation.
+    /// Masternode engine, which verifies ChainLocks and holds the anchor.
     masternode_engine: Arc<RwLock<MasternodeListEngine<H>>>,
-    /// The best (highest height) validated ChainLock.
+    /// The best (highest height) accepted ChainLock.
     best_chainlock: Option<ChainLock>,
     /// ChainLock hashes that have been requested (to avoid duplicate requests).
     pub(super) requested_chainlocks: HashSet<ChainLockHash>,
     /// Whether masternode sync is complete and we can validate signatures.
     pub(super) masternode_ready: bool,
-    /// Chainlock that could not be validated yet: one that arrived before
-    /// `masternode_ready`, one that failed while the engine's newest
-    /// masternode list was still below its height, or one whose header has
-    /// not been stored yet. Re-validated on every masternode state update and
-    /// every header batch (see [`Self::revalidate_pending`]).
+    /// Chainlock that could not be decided yet: one that arrived before
+    /// `masternode_ready`, one the engine could not check yet because the
+    /// lists around its signing height or an anchored signer are missing, or
+    /// one whose header has not been stored yet. Re-validated on every
+    /// masternode state update, every accepted ChainLock and every header
+    /// batch (see [`Self::revalidate_pending`]).
     pending_validation: Option<ChainLock>,
     /// Whether the signature of `pending_validation` verified.
     pending_verified: bool,
@@ -111,8 +120,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
 
     /// Re-validates the chainlock cached in `pending_validation` against the
     /// current masternode state and stored headers. Returns it if it validated
-    /// and became the best chainlock. It stays cached while the engine still
-    /// lags it or its header is missing.
+    /// and became the best chainlock. It stays cached while it cannot be
+    /// decided yet.
     pub(super) async fn revalidate_pending(&mut self) -> Option<ChainLock> {
         let pending = self.pending_validation.take()?;
         if self
@@ -123,31 +132,30 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
             return None;
         }
 
-        let header = self.match_header(&pending).await;
-        if header == HeaderMatch::Mismatch {
+        if self.match_header(&pending).await == HeaderMatch::Mismatch {
             self.progress.add_invalid(1);
             return None;
         }
 
-        let validated = self.verify_signature(&pending).await.is_ok();
-        if validated && header == HeaderMatch::Unknown {
-            self.defer(&pending, true);
-            return None;
+        let verdict = self.masternode_engine.write().await.accept_chain_lock(&pending).await;
+        match verdict {
+            ChainLockVerdict::Accepted => {
+                self.adopt(&pending).await;
+                Some(pending)
+            }
+            ChainLockVerdict::AwaitingHeader => {
+                self.defer(&pending, true);
+                None
+            }
+            ChainLockVerdict::Deferred(_) => {
+                self.defer(&pending, false);
+                None
+            }
+            ChainLockVerdict::Rejected(_) => {
+                self.progress.add_invalid(1);
+                None
+            }
         }
-        if validated {
-            self.progress.add_valid(1);
-            self.progress.update_best_validated_height(pending.block_height);
-            self.best_chainlock = Some(pending.clone());
-            self.save_best_chainlock().await;
-            return Some(pending);
-        }
-
-        if self.masternode_lists_lag(&pending).await {
-            self.defer(&pending, false);
-        } else {
-            self.progress.add_invalid(1);
-        }
-        None
     }
 
     /// Caches `chainlock` for a later retry in place of a lower one. One whose signature
@@ -165,23 +173,35 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         }
     }
 
-    /// Verifies the signature of `chainlock` against the masternode lists around its height.
-    async fn verify_signature(&self, chainlock: &ChainLock) -> ValidationResult<()> {
-        let engine = self.masternode_engine.read().await;
-        let (before, after) = engine.masternode_lists_around_height(chainlock.signing_height());
-        ChainLockValidator::new(engine.network().chain_locks_type(), before, after)
-            .validate(chainlock)
+    /// Makes `chainlock`, which the engine accepted, the best one and persists
+    /// it with the root of its trust.
+    async fn adopt(&mut self, chainlock: &ChainLock) {
+        self.progress.add_valid(1);
+        self.progress.update_best_validated_height(chainlock.block_height);
+        self.best_chainlock = Some(chainlock.clone());
+        self.save_best_chainlock().await;
     }
 
-    /// Whether the engine's newest masternode list is below the chainlock's
-    /// height, so a failed validation may only mean the lists covering its
-    /// signing quorum have not arrived yet.
-    async fn masternode_lists_lag(&self, chainlock: &ChainLock) -> bool {
-        let engine = self.masternode_engine.read().await;
-        engine
-            .masternode_lists
-            .last_key_value()
-            .is_some_and(|(&newest, _)| newest < chainlock.block_height)
+    /// Adopts a ChainLock another manager had the engine accept, such as one
+    /// from a coinbase on the way up from a checkpoint, if it is the best yet.
+    /// The engine's anchor may already be above it, raised by the next one.
+    pub(super) async fn on_chain_lock_accepted(&mut self, chainlock: &ChainLock) {
+        if self
+            .best_chainlock
+            .as_ref()
+            .is_some_and(|best| best.block_height >= chainlock.block_height)
+        {
+            return;
+        }
+        let covered = self
+            .masternode_engine
+            .read()
+            .await
+            .chain_lock_anchor()
+            .is_some_and(|anchor| anchor.height >= chainlock.block_height);
+        if covered && self.match_header(chainlock).await == HeaderMatch::Matches {
+            self.adopt(chainlock).await;
+        }
     }
 
     /// Process an incoming ChainLock message.
@@ -207,53 +227,49 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         }
 
         // Verify block hash matches our chain (if we have the header)
-        let header = self.match_header(chainlock).await;
-        if header == HeaderMatch::Mismatch {
+        if self.match_header(chainlock).await == HeaderMatch::Mismatch {
             tracing::warn!("ChainLock hash mismatch at height {}, rejecting", height);
             return Ok(vec![]);
         }
 
         // Only validate once masternode sync is complete; until then the
         // chainlock is cached for the retry `on_masternode_ready` makes.
-        let validated = self.masternode_ready
-            && match self.verify_signature(chainlock).await {
-                Ok(()) => {
-                    tracing::info!("ChainLock signature verified for height {}", height);
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("{}", e);
-                    false
-                }
-            };
-        let accepted = validated && header == HeaderMatch::Matches;
-
-        if accepted {
-            self.progress.add_valid(1);
-            self.progress.update_best_validated_height(height);
-
-            // Update best ChainLock and persist to storage
-            self.best_chainlock = Some(chainlock.clone());
-            self.save_best_chainlock().await;
-        } else if validated {
-            // A genuine signature does not make it ours: keep it pending until
-            // the header arrives and its hash can be checked.
-            tracing::debug!("Deferring ChainLock at height {} until its header is stored", height);
-            self.defer(chainlock, true);
-        } else if !self.masternode_ready {
+        if !self.masternode_ready {
             tracing::debug!(
                 "Caching ChainLock at height {} for validation once masternode sync completes",
                 height
             );
             self.defer(chainlock, false);
-        } else if self.masternode_lists_lag(chainlock).await {
-            tracing::debug!(
-                "Deferring ChainLock at height {} until masternode lists reach it",
-                height
-            );
-            self.defer(chainlock, false);
-        } else {
-            self.progress.add_invalid(1);
+            return Ok(vec![SyncEvent::ChainLockReceived {
+                chain_lock: chainlock.clone(),
+                validated: false,
+            }]);
+        }
+
+        let verdict = self.masternode_engine.write().await.accept_chain_lock(chainlock).await;
+        let accepted = verdict == ChainLockVerdict::Accepted;
+        match verdict {
+            ChainLockVerdict::Accepted => {
+                tracing::info!("ChainLock accepted for height {}", height);
+                self.adopt(chainlock).await;
+            }
+            ChainLockVerdict::AwaitingHeader => {
+                // A genuine signature does not make it ours: keep it pending until
+                // the header arrives and its hash can be checked.
+                tracing::debug!(
+                    "Deferring ChainLock at height {} until its header is stored",
+                    height
+                );
+                self.defer(chainlock, true);
+            }
+            ChainLockVerdict::Deferred(reason) => {
+                tracing::debug!("Deferring ChainLock at height {}: {}", height, reason);
+                self.defer(chainlock, false);
+            }
+            ChainLockVerdict::Rejected(reason) => {
+                tracing::warn!("Rejecting ChainLock at height {}: {}", height, reason);
+                self.progress.add_invalid(1);
+            }
         }
 
         Ok(vec![SyncEvent::ChainLockReceived {
@@ -262,16 +278,24 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         }])
     }
 
-    /// Persist the best chainlock to metadata storage.
+    /// Persist the best chainlock to metadata storage, with the root the
+    /// engine's anchor descends from.
     async fn save_best_chainlock(&self) {
         let Some(chainlock) = &self.best_chainlock else {
             return;
         };
-        match serde_json::to_vec(chainlock) {
+        let Some(anchor) = self.masternode_engine.read().await.chain_lock_anchor() else {
+            return;
+        };
+        let persisted = PersistedChainLockAnchor {
+            chain_lock: chainlock.clone(),
+            root: anchor.root,
+        };
+        match serde_json::to_vec(&persisted) {
             Ok(bytes) => {
                 let mut storage = self.metadata_storage.write().await;
                 if let Err(e) =
-                    storage.store_metadata(BEST_CHAINLOCK_METADATA_STORAGE_KEY, &bytes).await
+                    storage.store_metadata(CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY, &bytes).await
                 {
                     tracing::warn!("Failed to persist best chainlock: {}", e);
                 }
@@ -282,22 +306,40 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         }
     }
 
-    /// Load the best chainlock from metadata storage and restore progress.
+    /// Load the best chainlock from metadata storage into the engine's anchor
+    /// and restore progress. One the engine does not take as its anchor, such
+    /// as one rooted in a first ChainLock on a network with checkpoints, is
+    /// not restored.
     pub(super) async fn load_best_chainlock(&mut self) {
-        let storage = self.metadata_storage.read().await;
-        match storage.load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY).await {
-            Ok(Some(chainlock)) => {
-                let height = chainlock.block_height;
-                tracing::info!("Restored persisted ChainLock at height {}", height);
-                self.progress.update_best_validated_height(height);
-                self.best_chainlock = Some(chainlock);
-            }
+        let loaded = {
+            let storage = self.metadata_storage.read().await;
+            storage
+                .load_metadata::<PersistedChainLockAnchor>(CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY)
+                .await
+        };
+        let persisted = match loaded {
+            Ok(Some(persisted)) => persisted,
             Ok(None) => {
                 tracing::debug!("No persisted chainlock found (fresh start)");
+                return;
             }
             Err(e) => {
                 tracing::warn!("Failed to load persisted chainlock: {}", e);
+                return;
             }
+        };
+        let chain_lock = persisted.chain_lock;
+        let anchor = ChainLockAnchor {
+            height: chain_lock.block_height,
+            block_hash: chain_lock.block_hash,
+            root: persisted.root,
+        };
+        let mut engine = self.masternode_engine.write().await;
+        engine.restore_chain_lock_anchor(anchor);
+        if engine.chain_lock_anchor() == Some(anchor) {
+            tracing::info!("Restored persisted ChainLock at height {}", anchor.height);
+            self.progress.update_best_validated_height(anchor.height);
+            self.best_chainlock = Some(chain_lock);
         }
     }
 
@@ -334,11 +376,16 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for ChainLockMan
 mod tests {
     use super::*;
     use crate::network::{MessageType, NetworkManager};
+    use crate::sml_engine::anchor::test_support::{
+        anchor_at_newest_list, checkpoint_root, forge_chain_lock_above_the_newest_list,
+    };
     use crate::sml_engine::test_support::TestEngine;
+    use crate::sml_engine::{AnchorRoot, ChainLockAnchor, ChainLockVerdict};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
+    use crate::sync::{BEST_CHAINLOCK_METADATA_STORAGE_KEY, CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY};
     use crate::test_utils::MockNetworkManager;
     use crate::Network;
     use dashcore::bls_sig_utils::BLSSignature;
@@ -589,7 +636,8 @@ mod tests {
     #[tokio::test]
     async fn test_genuine_chainlock_waits_for_its_header(header_matches: bool, forged: bool) {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-        let engine = TestEngine::mainnet_fixture();
+        let mut engine = TestEngine::mainnet_fixture();
+        anchor_at_newest_list(&mut engine);
         let headers = engine.headers();
         let engine = Arc::new(RwLock::new(engine));
         let mut manager = ChainLockManager::new(headers, storage.metadata(), engine.clone()).await;
@@ -641,6 +689,83 @@ mod tests {
             assert!(manager.best_chainlock.as_ref().is_none());
             assert_eq!(manager.progress.invalid(), 1);
         }
+    }
+
+    /// A peer serving headers no ChainLock covers can put a ChainLock quorum of
+    /// its own in a list on them, keyed by a secret it holds, with a hash ground
+    /// so DIP-8 selection picks it. Its DIP-6 status vouches only for members
+    /// taken from that same list, so even `Verified` it must not lock a block.
+    #[tokio::test]
+    async fn a_chain_lock_signed_by_a_quorum_minted_above_the_anchor_is_not_accepted() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut engine = TestEngine::mainnet_fixture();
+        anchor_at_newest_list(&mut engine);
+        let forged = forge_chain_lock_above_the_newest_list(&mut engine);
+        let headers = engine.headers();
+        let engine = Arc::new(RwLock::new(engine));
+        let mut manager = ChainLockManager::new(headers, storage.metadata(), engine).await;
+        let _ = manager.on_masternode_ready().await;
+
+        let events = manager.process_chainlock(&forged).await.unwrap();
+
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::ChainLockReceived {
+                    validated: false,
+                    ..
+                }]
+            ),
+            "{events:?}"
+        );
+        assert!(manager.best_chainlock.as_ref().is_none());
+        // Its quorum is not anchored yet, which only a ChainLock it did not
+        // sign can change, so it waits rather than counting as invalid.
+        assert_eq!(manager.pending_validation, Some(forged));
+        assert_eq!(manager.progress.invalid(), 0);
+    }
+
+    /// The catch-up walk has the engine accept coinbase ChainLocks and
+    /// announces them. The ChainLock manager makes such a ChainLock its best,
+    /// persists it, so a restart does not walk again, and retries the
+    /// ChainLock it holds pending, whose signer the walk may have anchored.
+    #[tokio::test]
+    async fn a_chain_lock_the_walk_accepted_is_adopted_persisted_and_unblocks_pending() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut engine = TestEngine::mainnet_fixture();
+        let [first, second] = ChainLock::mainnet_fixture_pair();
+        for chain_lock in [&first, &second] {
+            engine.feed_block_height(chain_lock.block_height, chain_lock.block_hash);
+        }
+        anchor_at_newest_list(&mut engine);
+        let headers = engine.headers();
+        let engine = Arc::new(RwLock::new(engine));
+        let mut manager =
+            ChainLockManager::new(headers.clone(), storage.metadata(), engine.clone()).await;
+        let _ = manager.on_masternode_ready().await;
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+
+        assert_eq!(
+            engine.write().await.accept_chain_lock(&first).await,
+            ChainLockVerdict::Accepted
+        );
+        let accepted = SyncEvent::ChainLockReceived {
+            chain_lock: first.clone(),
+            validated: true,
+        };
+        assert!(manager.handle_sync_event(&accepted, &network).await.unwrap().is_empty());
+        assert_eq!(manager.best_chainlock.as_ref(), Some(&first));
+        let restarted =
+            ChainLockManager::new(headers.clone(), storage.metadata(), engine.clone()).await;
+        assert_eq!(restarted.best_chainlock.as_ref(), Some(&first), "persisted");
+
+        manager.defer(&second, false);
+        let events = manager.handle_sync_event(&accepted, &network).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::ChainLockReceived { chain_lock, validated: true }] if *chain_lock == second
+        ));
+        assert_eq!(manager.best_chainlock.as_ref(), Some(&second));
     }
 
     #[tokio::test]
@@ -695,6 +820,21 @@ mod tests {
         assert_eq!(manager.progress.best_validated_height(), 0);
     }
 
+    /// Makes `chainlock` the best one, as accepted under a checkpoint root.
+    async fn set_best(manager: &mut TestChainLockManager, chainlock: &ChainLock) {
+        manager.masternode_engine.write().await.restore_chain_lock_anchor(ChainLockAnchor {
+            height: chainlock.block_height,
+            block_hash: chainlock.block_hash,
+            root: checkpoint_root(Network::Testnet),
+        });
+        manager.best_chainlock = Some(chainlock.clone());
+    }
+
+    async fn persist(storage: &DiskStorageManager, key: &str, value: &impl serde::Serialize) {
+        let bytes = serde_json::to_vec(value).unwrap();
+        storage.metadata().write().await.store_metadata(key, &bytes).await.unwrap();
+    }
+
     #[tokio::test]
     async fn test_save_and_load_chainlock_round_trip() {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
@@ -703,7 +843,7 @@ mod tests {
         // Save a chainlock via the first manager
         {
             let mut manager = create_test_manager_with_storage(&storage).await;
-            manager.best_chainlock = Some(chainlock.clone());
+            set_best(&mut manager, &chainlock).await;
             manager.save_best_chainlock().await;
         }
 
@@ -716,6 +856,8 @@ mod tests {
             assert_eq!(restored.block_hash, chainlock.block_hash);
             assert_eq!(restored.signature, chainlock.signature);
             assert_eq!(manager.progress.best_validated_height(), 42000);
+            let anchor = manager.masternode_engine.read().await.chain_lock_anchor();
+            assert_eq!(anchor.map(|anchor| anchor.root), Some(checkpoint_root(Network::Testnet)));
         }
     }
 
@@ -723,14 +865,11 @@ mod tests {
     async fn test_initialize_restores_persisted_chainlock() {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let chainlock = create_test_chainlock(99999);
-
-        // Persist a chainlock directly via metadata storage
-        {
-            let bytes = serde_json::to_vec(&chainlock).unwrap();
-            let meta_storage = storage.metadata();
-            let mut meta = meta_storage.write().await;
-            meta.store_metadata(BEST_CHAINLOCK_METADATA_STORAGE_KEY, &bytes).await.unwrap();
-        }
+        let persisted = PersistedChainLockAnchor {
+            chain_lock: chainlock.clone(),
+            root: checkpoint_root(Network::Testnet),
+        };
+        persist(&storage, CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY, &persisted).await;
 
         // Create a new manager and call initialize (the SyncManager trait method)
         let manager = create_test_manager_with_storage(&storage).await;
@@ -740,6 +879,26 @@ mod tests {
         assert_eq!(restored.block_height, 99999);
         assert_eq!(manager.progress.best_validated_height(), 99999);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
+    }
+
+    /// Trust on a network with checkpoints starts at one. A ChainLock persisted
+    /// before quorums had to be anchored, or one rooted in a first ChainLock,
+    /// was accepted without that, so a restart must not trust it.
+    #[tokio::test]
+    async fn a_chain_lock_not_rooted_in_a_checkpoint_is_not_restored_on_testnet() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        persist(&storage, BEST_CHAINLOCK_METADATA_STORAGE_KEY, &create_test_chainlock(500)).await;
+        let manager = create_test_manager_with_storage(&storage).await;
+        assert!(manager.best_chainlock.as_ref().is_none());
+
+        let persisted = PersistedChainLockAnchor {
+            chain_lock: create_test_chainlock(600),
+            root: AnchorRoot::FirstChainLock,
+        };
+        persist(&storage, CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY, &persisted).await;
+        let manager = create_test_manager_with_storage(&storage).await;
+        assert!(manager.best_chainlock.as_ref().is_none());
+        assert!(manager.masternode_engine.read().await.chain_lock_anchor().is_none());
     }
 
     #[tokio::test]
@@ -756,8 +915,10 @@ mod tests {
         {
             let meta_storage = storage.metadata();
             let meta = meta_storage.read().await;
-            let loaded =
-                meta.load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY).await.unwrap();
+            let loaded = meta
+                .load_metadata::<PersistedChainLockAnchor>(CHAINLOCK_ANCHOR_METADATA_STORAGE_KEY)
+                .await
+                .unwrap();
             assert!(loaded.is_none());
         }
     }
@@ -769,14 +930,14 @@ mod tests {
         // Save first chainlock
         {
             let mut manager = create_test_manager_with_storage(&storage).await;
-            manager.best_chainlock = Some(create_test_chainlock(100));
+            set_best(&mut manager, &create_test_chainlock(100)).await;
             manager.save_best_chainlock().await;
         }
 
         // Save a higher chainlock
         {
             let mut manager = create_test_manager_with_storage(&storage).await;
-            manager.best_chainlock = Some(create_test_chainlock(200));
+            set_best(&mut manager, &create_test_chainlock(200)).await;
             manager.save_best_chainlock().await;
         }
 
@@ -797,7 +958,7 @@ mod tests {
         // Save chainlock at height 200
         {
             let mut manager = create_test_manager_with_storage(&storage).await;
-            manager.best_chainlock = Some(create_test_chainlock(200));
+            set_best(&mut manager, &create_test_chainlock(200)).await;
             manager.save_best_chainlock().await;
         }
 

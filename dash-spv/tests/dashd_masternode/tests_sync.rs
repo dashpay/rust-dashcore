@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 
 use super::helpers::{
     assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
-    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_masternode_sync,
+    mine_until_chain_locked_at_least, storage_snapshot, wait_for_masternode_sync,
     wait_for_mn_state_event, wait_for_mn_state_event_above,
     wait_for_mn_state_with_stored_cycle_above,
 };
@@ -618,12 +618,9 @@ async fn test_masternode_list_sync_end_to_end() {
     tracing::info!("ChainLock received at height {}", cl_height);
 
     // Wait for the SPV ChainLock manager to validate the new ChainLock.
-    let cl_sync_height = wait_for_chainlock_height_at_least(
-        &mut client_handle.progress_receiver,
-        cl_height,
-        SYNC_TIMEOUT,
-    )
-    .await;
+    let cl_sync_height =
+        mine_until_chain_locked_at_least(&mut ctx, &mut client_handle.progress_receiver, cl_height)
+            .await;
     assert!(
         cl_sync_height >= cl_height,
         "SPV should sync to at least ChainLock height {}, got {}",

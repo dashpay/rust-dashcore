@@ -80,6 +80,9 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
         self.sync_state.last_processed_qrinfo_tip = None;
         self.sync_state.given_up_tip = None;
         self.sync_state.forget_given_up_work_lists();
+        // The broker sends the walk's request to the next peers, and a backoff
+        // earned with the old ones does not hold for them.
+        self.sync_state.catch_up.reconnected();
     }
 
     async fn handle_message(
@@ -172,7 +175,13 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
             }
 
             NetworkMessage::MnListDiff(diff) => {
-                let Some(kind) = self.sync_state.mnlistdiff_pipeline.match_response(diff) else {
+                // A diff the pipeline wants too is the pipeline's. The walk asks
+                // for it again on its next tick, once the pipeline released it.
+                let pipeline_kind = self.sync_state.mnlistdiff_pipeline.match_response(diff);
+                if pipeline_kind.is_none() && self.expects_catch_up_diff(diff) {
+                    return self.handle_catch_up_diff(diff, peer, network).await;
+                }
+                let Some(kind) = pipeline_kind else {
                     tracing::debug!("Received unexpected MnListDiff for {}", diff.block_hash);
                     return Ok(vec![]);
                 };
@@ -382,9 +391,11 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     "Headers sync complete at {}, starting masternode sync",
                     self.progress.block_header_tip_height()
                 );
+                // The ChainLock anchor goes up to the tip first, then the
+                // QRInfo follows from where it ended.
                 self.sync_state.qrinfo_retry_count = 0;
                 self.sync_state.clear_pending(network).await;
-                return self.send_qrinfo_for_tip(network).await;
+                return self.begin_catch_up(network, true).await;
             }
         }
 
@@ -411,6 +422,13 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         // Handle ticks for both Syncing (initial) and Synced (incremental updates)
         if !matches!(self.state(), SyncState::Syncing | SyncState::Synced) {
             return Ok(vec![]);
+        }
+
+        // Events only come from a QRInfo the walk lets go. The rest of the
+        // tick runs on the next pass.
+        let events = self.tick_catch_up(now, network).await?;
+        if !events.is_empty() {
+            return Ok(events);
         }
 
         if self

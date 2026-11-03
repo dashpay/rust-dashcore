@@ -12,7 +12,7 @@ use dashcore::Amount;
 use key_wallet::transaction_checking::TransactionContext;
 
 use super::helpers::{
-    mine_dkg_cycle_and_wait, wait_for_chainlock_height_at_least, wait_for_instant_lock_received,
+    mine_dkg_cycle_and_wait, mine_until_chain_locked_at_least, wait_for_instant_lock_received,
     wait_for_instantsend_valid_at_least, wait_for_masternode_sync,
     wait_for_mn_state_with_stored_cycle_above, wait_for_wallet_tx_status,
     wait_for_wallet_txs_chainlocked,
@@ -62,6 +62,14 @@ async fn test_instantsend_full_lifecycle() {
         mine_dkg_cycle_and_wait(&mut ctx, &mut client_handle.sync_event_receiver, initial_height)
             .await;
     tracing::info!("SPV caught up to post-DKG masternode state at height {}", post_dkg_height);
+    // The new cycle's quorums are trusted once a ChainLock covers the block
+    // that mined them.
+    mine_until_chain_locked_at_least(
+        &mut ctx,
+        &mut client_handle.progress_receiver,
+        post_dkg_height,
+    )
+    .await;
 
     // Send transactions sequentially from the controller wallet, waiting for
     // each IS lock before sending the next. Sequential sends avoid concurrent
@@ -121,12 +129,9 @@ async fn test_instantsend_full_lifecycle() {
         .expect("ChainLock should be produced after DKG cycle completion");
 
     // SPV client must catch up to that ChainLock.
-    let cl_sync_height = wait_for_chainlock_height_at_least(
-        &mut client_handle.progress_receiver,
-        cl_height,
-        SYNC_TIMEOUT,
-    )
-    .await;
+    let cl_sync_height =
+        mine_until_chain_locked_at_least(&mut ctx, &mut client_handle.progress_receiver, cl_height)
+            .await;
     assert!(cl_sync_height >= cl_height);
     tracing::info!("SPV synced to ChainLocked height {}", cl_sync_height);
 
@@ -171,6 +176,12 @@ async fn test_instantsend_across_quorum_rotation() {
         mine_dkg_cycle_and_wait(&mut ctx, &mut client_handle.sync_event_receiver, initial_height)
             .await;
     tracing::info!("Post-first-DKG height {}", post_first_height);
+    mine_until_chain_locked_at_least(
+        &mut ctx,
+        &mut client_handle.progress_receiver,
+        post_first_height,
+    )
+    .await;
 
     // Pre-rotation IS lock.
     let send_addr = receive_address(&wallet, &wallet_id).await;
@@ -207,6 +218,15 @@ async fn test_instantsend_across_quorum_rotation() {
     )
     .await;
     tracing::info!("Post-rotation height {}", post_rotation_height);
+
+    // The new cycle's quorums are trusted once a ChainLock covers the block
+    // that mined them.
+    mine_until_chain_locked_at_least(
+        &mut ctx,
+        &mut client_handle.progress_receiver,
+        post_rotation_height,
+    )
+    .await;
 
     // Post-rotation IS lock.
     let post_txid = ctx.mn_ctx.controller.send_to_address(&send_addr, send_amount);
@@ -259,7 +279,17 @@ async fn test_instantsend_islock_arrives_before_tx() {
     tracing::info!("Initial masternode sync at height {}", initial_height);
 
     tracing::info!("Mining DKG cycle to form a live signing quorum...");
-    mine_dkg_cycle_and_wait(&mut ctx, &mut client_handle.sync_event_receiver, initial_height).await;
+    let post_dkg_height =
+        mine_dkg_cycle_and_wait(&mut ctx, &mut client_handle.sync_event_receiver, initial_height)
+            .await;
+    // The new cycle's quorums are trusted once a ChainLock covers the block
+    // that mined them, and the restarted client restores that anchor.
+    mine_until_chain_locked_at_least(
+        &mut ctx,
+        &mut client_handle.progress_receiver,
+        post_dkg_height,
+    )
+    .await;
 
     tracing::info!("Stopping SPV client before sending the transaction");
     client_handle.stop().await;

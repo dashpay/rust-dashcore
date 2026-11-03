@@ -12,6 +12,10 @@ use crate::validation::Validator;
 /// Validates ChainLock signatures against the masternode lists around their
 /// signing height: the list at or below it, and the next list up when that
 /// one holds other ChainLock quorums.
+///
+/// It only checks that a DIP-6 `Verified` quorum of those lists signed, which
+/// a list on headers a peer made up can satisfy. The client accepts a
+/// ChainLock only once a quorum the ChainLock anchor vouches for signed it.
 pub struct ChainLockValidator<'a> {
     quorum_type: LLMQType,
     before: Option<&'a MasternodeList>,
