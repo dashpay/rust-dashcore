@@ -35,6 +35,7 @@ doc:
 # `rust-toolchain.toml` overrides rustup's default, so name the toolchain
 # Check that the workspace compiles on the MSRV
 msrv:
+    rustup toolchain install {{ rust_version }} --profile minimal
     cargo +{{ rust_version }} check --workspace --all-features
 
 # Audit dependencies with cargo-deny

@@ -9,7 +9,6 @@ workflows:
         - 'actions/setup-python@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'codecov/codecov-action@v7.1.1'
-        - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.89.1'
     '.github/workflows/changelog-guard.yml': []
@@ -17,7 +16,6 @@ workflows:
         - 'eps1lon/actions-label-merge-conflict@v3.1.0'
     '.github/workflows/fuzz.yml':
         - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.89.1'
     '.github/workflows/pr-review-policy.yml': []
@@ -26,7 +24,6 @@ workflows:
     '.github/workflows/pre-commit.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-python@v7.1.0'
-        - 'dtolnay/rust-toolchain@stable'
         - 'pre-commit/action@v3.0.1'
         - 'swatinem/rust-cache@v2.9.3'
     '.github/workflows/ready-for-review-trigger.yml': []
@@ -34,8 +31,6 @@ workflows:
         - 'actions/checkout@v7.0.1'
     '.github/workflows/rust.yml':
         - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@1.89'
-        - 'dtolnay/rust-toolchain@stable'
         - 'embarkstudios/cargo-deny-action@v2.1.1'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.89.1'
@@ -45,7 +40,6 @@ workflows:
         - 'taiki-e/install-action@v2.89.1'
     '.github/workflows/update-masternode-seeds.yml':
         - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@stable'
         - 'peter-evans/create-pull-request@v8.1.1'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.89.1'
@@ -92,19 +86,9 @@ dependencies:
         repo_id: 200299178
         uses:
             - 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd'
-    'dtolnay/rust-toolchain@1.89':
-        ref: '1.89'
-        commit: 'sha1-599c45df1a24c1c63ae1129a7e59f46654b8fb66'
-        owner_id: 1940490
-        repo_id: 260749683
     'dtolnay/rust-toolchain@nightly':
         ref: 'nightly'
         commit: 'sha1-2c76c034f9e32a5d6e2c104dc4df23a22476db04'
-        owner_id: 1940490
-        repo_id: 260749683
-    'dtolnay/rust-toolchain@stable':
-        ref: 'stable'
-        commit: 'sha1-b725eda525362e7cf34af9a7243cac1e3f01a7ec'
         owner_id: 1940490
         repo_id: 260749683
     'embarkstudios/cargo-deny-action@v2.1.1':

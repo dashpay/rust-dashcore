@@ -15,5 +15,5 @@ updates:
         patterns:
           - "*"
     ignore:
-      # Its refs are toolchain branches, and `@1.89` is our MSRV, not an action version.
+      # Its refs are toolchain branches, not action versions.
       - dependency-name: dtolnay/rust-toolchain

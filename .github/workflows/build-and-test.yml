@@ -33,9 +33,6 @@ jobs:
       CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: ${{ inputs.coverage && 'llvm-tools' || '' }}
       - uses: Swatinem/rust-cache@v2.9.3
         with:
           shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
