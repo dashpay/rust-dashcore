@@ -153,21 +153,13 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             return Ok(vec![]);
         }
 
-        // Until the engine knows the lock's cycle, or when its signature does not
-        // verify, the engine may only lack its quorum yet: the lock is kept pending.
-        let engine = self.engine.read().await;
-        let result = engine
-            .rotated_quorums_of_cycle(&instantlock.cyclehash)
-            .map(|quorums| InstantLockValidator::new(quorums).validate(instantlock));
-        drop(engine);
-        let validated = match result {
-            Some(Ok(())) => true,
-            Some(Err(e)) => {
-                tracing::warn!("InstantLock for txid {} not verified yet: {}", txid, e);
-                false
-            }
-            None => {
-                tracing::debug!("InstantLock for txid {} is of a cycle not known yet", txid);
+        // Until the engine knows the lock's cycle, holds its quorum as anchored,
+        // or when its signature does not verify, the engine may only lack its
+        // quorum yet: the lock is kept pending.
+        let validated = match self.verify(instantlock).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::debug!("InstantLock for txid {} not verified yet: {}", txid, e);
                 false
             }
         };
@@ -193,6 +185,29 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             instant_lock: instantlock.clone(),
             validated,
         }])
+    }
+
+    /// Verifies `instant_lock` against the quorums of its cycle. Its signing
+    /// quorum's commitment must be the one an anchored list holds: the cycle
+    /// was served with lists no ChainLock may cover yet, which can carry another
+    /// commitment under a genuine quorum's hash.
+    async fn verify(&self, instant_lock: &InstantLock) -> Result<(), String> {
+        let engine = self.engine.read().await;
+        let quorums = engine
+            .rotated_quorums_of_cycle(&instant_lock.cyclehash)
+            .ok_or_else(|| "its cycle is not known yet".to_string())?;
+        let validator = InstantLockValidator::new(quorums);
+        let (quorum, _, index) =
+            validator.signing_quorum(instant_lock).map_err(|e| e.to_string())?;
+        let entry = &quorum.quorum_entry;
+        if entry.quorum_index != Some(index as i16) {
+            return Err(format!("its cycle holds {} under index {index}", entry.quorum_hash));
+        }
+        let anchored = engine.anchored_quorum(entry.llmq_type, entry.quorum_hash, u32::MAX).await;
+        if anchored.is_none_or(|(_, anchored)| anchored.quorum_entry != *entry) {
+            return Err(format!("its signing quorum {} is not anchored", entry.quorum_hash));
+        }
+        validator.validate(instant_lock).map_err(|e| e.to_string())
     }
 
     /// Queue an InstantLock for later validation.
@@ -257,11 +272,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 continue;
             }
 
-            let lock = &pending_lock.instant_lock;
-            let validated =
-                self.engine.read().await.rotated_quorums_of_cycle(&lock.cyclehash).is_some_and(
-                    |quorums| InstantLockValidator::new(quorums).validate(lock).is_ok(),
-                );
+            let validated = self.verify(&pending_lock.instant_lock).await.is_ok();
 
             if validated {
                 self.progress.add_valid(1);
@@ -365,6 +376,9 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for InstantSendManager<H> {
 mod tests {
     use super::*;
     use crate::network::{MessageType, NetworkManager};
+    use crate::sml_engine::anchor::test_support::{
+        anchor_at_newest_list, anchor_at_newest_list_below, mainnet_fixture_is_lock,
+    };
     use crate::sml_engine::test_support::TestEngine;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
     use crate::test_utils::MockHeaderStorage;
@@ -372,6 +386,7 @@ mod tests {
     use dashcore::hash_types::CycleHash;
     use dashcore::hashes::Hash;
     use dashcore::sml::masternode_list::MasternodeList;
+    use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
     use dashcore::{BlockHash, OutPoint};
     use test_case::test_case;
 
@@ -462,6 +477,105 @@ mod tests {
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
+    }
+
+    /// A cycle is served with lists no ChainLock may cover yet, which can carry
+    /// another commitment under a genuine quorum's hash. A lock verifies only
+    /// once an anchored list holds the very commitment that signed it.
+    #[tokio::test]
+    async fn a_lock_verifies_only_once_an_anchored_list_holds_its_quorum() {
+        let mut engine = TestEngine::mainnet_fixture();
+        anchor_at_newest_list(&mut engine);
+        let lock = mainnet_fixture_is_lock();
+        let quorum =
+            engine.rotated_quorums_of_cycle(&lock.cyclehash).expect("the cycle")[&23].clone();
+        let engine = Arc::new(RwLock::new(engine));
+        let mut manager = InstantSendManager::new(engine.clone());
+        let hold = |quorum: QualifiedQuorumEntry| {
+            let engine = engine.clone();
+            async move {
+                let mut engine = engine.write().await;
+                let newest = engine.masternode_lists.values_mut().next_back().expect("a list");
+                Arc::make_mut(&mut newest.quorums)
+                    .entry(quorum.quorum_entry.llmq_type)
+                    .or_default()
+                    .insert(quorum.quorum_entry.quorum_hash, Arc::new(quorum));
+            }
+        };
+
+        let events = manager.process_instantlock(&lock).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived {
+                validated: false,
+                ..
+            }]
+        ));
+
+        let mut substituted = quorum.clone();
+        substituted.quorum_entry.quorum_public_key =
+            dashcore::bls_sig_utils::BLSPublicKey::from([9; 48]);
+        hold(substituted).await;
+        assert!(manager.validate_pending(Instant::now()).await.unwrap().is_empty());
+        assert_eq!(manager.pending_count(), 1);
+
+        hold(quorum).await;
+        let events = manager.validate_pending(Instant::now()).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived {
+                validated: true,
+                ..
+            }]
+        ));
+        assert_eq!(manager.pending_count(), 0);
+    }
+
+    /// A genuine commitment that only a list above the ChainLock anchor holds
+    /// may still be one a peer substituted, so the lock waits. A ChainLock that
+    /// raises the anchor over that list lets it verify, without waiting for the
+    /// next masternode update.
+    #[tokio::test]
+    async fn a_pending_lock_verifies_once_a_chain_lock_anchors_its_quorum() {
+        let mut engine = TestEngine::mainnet_fixture();
+        let newest = engine.latest_masternode_list().expect("a list").known_height;
+        anchor_at_newest_list_below(&mut engine, newest - 1);
+        let lock = mainnet_fixture_is_lock();
+        let quorum =
+            engine.rotated_quorums_of_cycle(&lock.cyclehash).expect("the cycle")[&23].clone();
+        let list = engine.masternode_lists.get_mut(&newest).expect("the newest list");
+        Arc::make_mut(&mut list.quorums)
+            .entry(quorum.quorum_entry.llmq_type)
+            .or_default()
+            .insert(quorum.quorum_entry.quorum_hash, Arc::new(quorum));
+        let engine = Arc::new(RwLock::new(engine));
+        let mut manager = InstantSendManager::new(engine.clone());
+        manager.set_state(SyncState::WaitForEvents);
+
+        let events = manager.process_instantlock(&lock).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived {
+                validated: false,
+                ..
+            }]
+        ));
+
+        anchor_at_newest_list(&mut *engine.write().await);
+        let accepted = SyncEvent::ChainLockReceived {
+            chain_lock: dashcore::ChainLock::dummy(newest),
+            validated: true,
+        };
+        let events = manager.handle_sync_event(&accepted, &no_op_network()).await.unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived {
+                validated: true,
+                ..
+            }]
+        ));
+        assert_eq!(manager.pending_count(), 0);
     }
 
     #[tokio::test]

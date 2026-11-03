@@ -82,6 +82,19 @@ impl<H: BlockHeaderStorage> SyncManager for InstantSendManager<H> {
             return Ok(vec![]);
         }
 
+        // An accepted ChainLock may have anchored the quorums pending locks
+        // wait for. It says nothing about masternode sync, so the state stays.
+        if let SyncEvent::ChainLockReceived {
+            validated: true,
+            ..
+        } = event
+        {
+            if self.pending_count() == 0 {
+                return Ok(vec![]);
+            }
+            return self.validate_pending(Instant::now()).await;
+        }
+
         // Validate pending InstantLocks when masternode state is updated
         if let SyncEvent::MasternodeStateUpdated {
             ..

@@ -78,7 +78,7 @@ impl<'a> InstantLockValidator<'a> {
 
     /// The quorum of the cycle that signs the lock (DIP-24), with the lock's
     /// request id and the quorum index it selects.
-    fn signing_quorum(
+    pub(crate) fn signing_quorum(
         &self,
         instant_lock: &InstantLock,
     ) -> Result<(&'a QualifiedQuorumEntry, QuorumSigningRequestId, u16), MessageVerificationError>
@@ -138,17 +138,12 @@ impl<'a> InstantLockValidator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sml_engine::anchor::test_support::mainnet_fixture_is_lock;
     use crate::sml_engine::test_support::TestEngine;
-    use dashcore::consensus::deserialize;
     use dashcore::sml::llmq_type::LLMQType;
     use dashcore::QuorumHash;
     use hex_conservative::DisplayHex;
     use test_case::test_case;
-
-    /// An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
-    fn fixture_is_lock() -> InstantLock {
-        deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
-    }
 
     #[test]
     fn a_well_formed_lock_passes_the_structure_check() {
@@ -172,7 +167,7 @@ mod tests {
     #[test]
     fn a_lock_verifies_against_the_quorum_its_request_id_selects() {
         let engine = TestEngine::mainnet_fixture();
-        let lock = fixture_is_lock();
+        let lock = mainnet_fixture_is_lock();
         let validator =
             InstantLockValidator::new(engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap());
 

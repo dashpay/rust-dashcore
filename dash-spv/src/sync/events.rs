@@ -147,8 +147,8 @@ pub enum SyncEvent {
     /// `MasternodesManager` for the coinbase ChainLocks that raise the
     /// ChainLock anchor while it walks up to the tip, which can be well below
     /// the tip.
-    /// Consumed by: External listeners, wallet state updates and
-    /// `ChainLockManager` (to persist the anchor)
+    /// Consumed by: External listeners, wallet state updates, `ChainLockManager`
+    /// (to persist the anchor) and `InstantSendManager` (to retry pending locks)
     ChainLockReceived {
         /// The complete ChainLock data
         chain_lock: ChainLock,

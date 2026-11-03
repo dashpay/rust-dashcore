@@ -661,7 +661,7 @@ pub(crate) mod test_support {
     use dashcore::sml::llmq_type::network::NetworkLLMQExt;
     use dashcore::sml::llmq_type::{LLMQType, LLMQ_SIGN_HEIGHT_OFFSET};
     use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-    use dashcore::{BlockHash, ChainLock, QuorumHash};
+    use dashcore::{BlockHash, ChainLock, InstantLock, QuorumHash};
 
     /// The DKG interval and mining window offsets of an LLMQ type.
     #[derive(Clone, Copy)]
@@ -689,6 +689,11 @@ pub(crate) mod test_support {
             root: AnchorRoot::Checkpoint(newest.known_height),
         };
         engine.set_root_anchor(anchor);
+    }
+
+    /// An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
+    pub(crate) fn mainnet_fixture_is_lock() -> InstantLock {
+        dashcore::consensus::deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
     }
 
     /// The root of an anchor persisted on `network`: its newest checkpoint
