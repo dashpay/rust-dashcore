@@ -336,3 +336,49 @@ async fn an_outpoint_already_seen_spent_is_not_credited(
     let coinjoin = &ctx.managed_wallet.accounts.coinjoin_accounts[&0];
     assert_eq!(coinjoin.spent_before_funded.contains_key(&outpoint), held_as_spent_before_funded);
 }
+
+/// A coin the owning account already recorded spending is held under that
+/// spend, as when its funding transaction is processed, so a fork dropping
+/// the spend gives the coin back.
+#[tokio::test]
+async fn a_restored_coin_whose_recorded_spend_a_fork_drops_comes_back() {
+    let mut ctx = TestWalletContext::new_random();
+    let (_, coin) = funded(&ctx.receive_address, 0, 1_000_000);
+    let second_receive = ctx.managed_wallet.accounts.standard_bip44_accounts[&0]
+        .managed_account_type()
+        .address_pools()[0]
+        .address_at_index(1)
+        .expect("a second receive address");
+    let mut spend = Transaction::dummy(&second_receive, 9..10, &[900_000]);
+    spend.input[0].previous_output = coin.outpoint;
+    let block = BlockInfo::new(1_001, BlockHash::from_byte_array([0x12; 32]), 1_700_000_200);
+    assert!(ctx.check_transaction(&spend, TransactionContext::InBlock(block)).await.is_relevant);
+
+    ctx.managed_wallet.restore_utxos(&ctx.wallet, [coin.clone()]).expect("restores");
+    assert!(!held_by_any_funds_account(&ctx, &coin.outpoint));
+
+    ctx.managed_wallet.truncate_above(1_000).expect("truncates");
+    ctx.managed_wallet.update_balance();
+
+    assert!(held_by_any_funds_account(&ctx, &coin.outpoint));
+    assert_eq!(ctx.managed_wallet.balance.total(), 1_000_000);
+}
+
+/// A claimed coin whose funding was processed is kept aside for the claim.
+/// Restoring it credits it and no longer keeps it aside, so it is never in
+/// both.
+#[tokio::test]
+async fn a_restored_coin_kept_aside_for_a_claim_leaves_it() {
+    let mut ctx = TestWalletContext::new_random();
+    let (funding, coin) = funded(&ctx.receive_address, 0, 1_000_000);
+    ctx.managed_wallet.restore_spent_outpoints(&[(coin.outpoint, None)]);
+    let block = BlockInfo::new(1_000, BlockHash::from_byte_array([0x13; 32]), 1_700_000_300);
+    ctx.check_transaction(&funding, TransactionContext::InBlock(block)).await;
+    assert!(ctx.bip44_account().claim_guarded_outputs.contains_key(&coin.outpoint));
+
+    ctx.managed_wallet.restore_utxos(&ctx.wallet, [coin.clone()]).expect("restores");
+
+    let bip44 = ctx.bip44_account();
+    assert!(bip44.utxos.contains_key(&coin.outpoint));
+    assert!(!bip44.claim_guarded_outputs.contains_key(&coin.outpoint));
+}
