@@ -25,21 +25,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           shared-key: "masternode-seeds-fetcher"
 
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2.89.1
+        with:
+          tool: just
 
       - name: Refresh mainnet and testnet seeds (with probes)
         run: just masternode-seeds-fetcher::refresh-all
 
       - name: Open pull request on change
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8.1.1
         with:
           commit-message: "chore(dash-spv): refresh masternode seed files"
           title: "chore(dash-spv): refresh masternode seed files"

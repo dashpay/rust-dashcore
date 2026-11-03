@@ -32,22 +32,26 @@ jobs:
       RUST_BACKTRACE: 1
       CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: ${{ inputs.coverage && 'llvm-tools' || '' }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
           prefix-key: "v1-rust"
           cache-bin: false
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2.89.1
+        with:
+          tool: just
 
       - name: Install cargo-llvm-cov
         if: inputs.coverage
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@v2.89.1
+        with:
+          tool: cargo-llvm-cov
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.12"
       - run: pip install pyyaml
@@ -55,7 +59,7 @@ jobs:
       # Set up dashd and test data for groups that need it
       - name: Cache dashd and test data
         if: matrix.group == 'spv'
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: .rust-dashcore-test
           key: rust-dashcore-test-${{ inputs.os }}-${{ env.DASHVERSION }}-${{ env.TEST_DATA_REPO }}-${{ env.TEST_DATA_VERSION }}
@@ -73,7 +77,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: inputs.coverage && steps.tests.outputs.crate_flags
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7.1.1
         with:
           files: lcov.info
           flags: ${{ steps.tests.outputs.crate_flags }}
@@ -82,7 +86,7 @@ jobs:
 
       - name: Upload failed dashd test logs
         if: failure() && matrix.group == 'spv'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.group }}-test-logs-${{ inputs.os }}
           path: ${{ runner.temp }}/dashd-test-logs/
