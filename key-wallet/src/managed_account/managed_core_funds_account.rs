@@ -267,6 +267,99 @@ impl ManagedCoreFundsAccount {
         }
     }
 
+    /// Take in `output`, an output paying one of this account's addresses,
+    /// the same way whether a processed transaction or
+    /// `ManagedWalletInfo::restore_utxos` brings it, and return whether it was
+    /// credited to `utxos`.
+    ///
+    /// An output already known spent is held back instead, as given: under
+    /// its spender while this account has an unsettled record spending it,
+    /// so a fork dropping the spend gives it back; in `spent_before_funded`
+    /// when the spend was observed in an earlier-processed block
+    /// (`observed_spent`, dashpay/rust-dashcore#649) or it is already held
+    /// there. When `spent_claims` is given, an output it names that this
+    /// account does not already hold is kept in `claim_guarded_outputs`.
+    ///
+    /// A credited output first gets its context flags from `credit`. It then
+    /// keeps the InstantSend lock and trust of any copy it replaces, the
+    /// account's own or one of `copies` another account held, and takes their
+    /// coin lock in place of its own, and it leaves `claim_guarded_outputs`.
+    pub(crate) fn take_in_output(
+        &mut self,
+        mut output: Utxo,
+        mut copies: Vec<Utxo>,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: Option<&BTreeMap<OutPoint, Option<Txid>>>,
+        credit: impl FnOnce(&mut Utxo),
+    ) -> bool {
+        let outpoint = output.outpoint;
+        // Check if this outpoint was already spent by a transaction we've seen.
+        // This handles out-of-order block processing during rescan where a
+        // spending transaction at a higher height may be processed before
+        // the transaction that created the UTXO.
+        // TODO: This is mostly needed for wallet rescan from storage with the
+        //       there is a timing issue with event processing which might lead to
+        //       invalid UTXO set / balances. There might be a way around it.
+        if self.is_outpoint_spent(&outpoint) {
+            tracing::debug!(
+                outpoint = %outpoint,
+                "Skipping UTXO already spent by previously processed transaction"
+            );
+            // Held under its spend, so a fork dropping the spend
+            // gives it back.
+            if let Some(spender) = self.unsettled_spender_of(&outpoint) {
+                self.unsettled_spends.entry(spender).or_default().push(output);
+            }
+            return false;
+        }
+
+        // #649 spend-first ordering: the spend was observed in an
+        // earlier-processed block, so this output is genuinely spent
+        // on-chain even though this account has never seen it before —
+        // never insert it, so the record built below is born correct.
+        if observed_spent.contains_key(&outpoint)
+            || self.spent_before_funded.contains_key(&outpoint)
+        {
+            tracing::debug!(
+                outpoint = %outpoint,
+                "Skipping UTXO already observed spent in an earlier-processed block (#649)"
+            );
+            self.spent_before_funded.insert(outpoint, output);
+            return false;
+        }
+
+        // Held back by a claim alone, so its spender is still to be
+        // recorded: keep the output to resolve that input. Checked
+        // after the observed spends, whose replay of the spending
+        // block depends on `spent_before_funded`. A coin already
+        // held is past guarding and goes on following its funding.
+        if spent_claims.is_some_and(|claims| claims.contains_key(&outpoint))
+            && !self.utxos.contains_key(&outpoint)
+        {
+            tracing::debug!(outpoint = %outpoint, "Skipping UTXO guarded by a spent-output claim");
+            self.claim_guarded_outputs.insert(outpoint, output);
+            return false;
+        }
+
+        credit(&mut output);
+        // Reprocessing (e.g. mempool→block) rebuilds this UTXO from
+        // scratch, so carry forward flags that must not regress. An
+        // InstantSend lock is permanent for a txid (DIP-0010) and
+        // trust only ever settles, so both latch monotonically. A
+        // coin reservation is orthogonal to chain context and is kept
+        // as-is. `is_confirmed` stays freshly derived so a reorg can
+        // still downgrade it.
+        copies.extend(self.utxos.get(&outpoint).cloned());
+        if !copies.is_empty() {
+            output.is_instantlocked |= copies.iter().any(|copy| copy.is_instantlocked);
+            output.is_trusted |= copies.iter().any(|copy| copy.is_trusted);
+            output.is_locked = copies.iter().any(|copy| copy.is_locked);
+        }
+        self.claim_guarded_outputs.remove(&outpoint);
+        self.utxos.insert(outpoint, output);
+        true
+    }
+
     /// Add new UTXOs for received outputs, remove spent ones.
     ///
     /// Skips any output whose outpoint is already in `observed_spent` — it is
@@ -378,83 +471,6 @@ impl ManagedCoreFundsAccount {
                                 vout: vout as u32,
                             };
 
-                            // Check if this outpoint was already spent by a transaction we've seen.
-                            // This handles out-of-order block processing during rescan where a
-                            // spending transaction at a higher height may be processed before
-                            // the transaction that created the UTXO.
-                            // TODO: This is mostly needed for wallet rescan from storage with the
-                            //       there is a timing issue with event processing which might lead to
-                            //       invalid UTXO set / balances. There might be a way around it.
-                            if self.is_outpoint_spent(&outpoint) {
-                                tracing::debug!(
-                                    outpoint = %outpoint,
-                                    "Skipping UTXO already spent by previously processed transaction"
-                                );
-                                // Held under its spend, so a fork dropping the spend
-                                // gives it back.
-                                if let Some(spender) = self.unsettled_spender_of(&outpoint) {
-                                    self.unsettled_spends.entry(spender).or_default().push(
-                                        Utxo::new(
-                                            outpoint,
-                                            output.clone(),
-                                            addr.clone(),
-                                            context.block_info().map_or(0, |i| i.height),
-                                            tx.is_coin_base(),
-                                        ),
-                                    );
-                                }
-                                continue;
-                            }
-
-                            // #649 spend-first ordering: the spend was observed in an
-                            // earlier-processed block, so this output is genuinely spent
-                            // on-chain even though this account has never seen it before —
-                            // never insert it, so the record built below is born correct.
-                            if observed_spent.contains_key(&outpoint)
-                                || self.spent_before_funded.contains_key(&outpoint)
-                            {
-                                tracing::debug!(
-                                    outpoint = %outpoint,
-                                    "Skipping UTXO already observed spent in an earlier-processed block (#649)"
-                                );
-                                self.spent_before_funded.insert(
-                                    outpoint,
-                                    Utxo::new(
-                                        outpoint,
-                                        output.clone(),
-                                        addr.clone(),
-                                        context.block_info().map_or(0, |i| i.height),
-                                        tx.is_coin_base(),
-                                    ),
-                                );
-                                continue;
-                            }
-
-                            // Held back by a claim alone, so its spender is still to be
-                            // recorded: keep the output to resolve that input. Checked
-                            // after the observed spends, whose replay of the spending
-                            // block depends on `spent_before_funded`. A coin already
-                            // held is past guarding and goes on following its funding.
-                            if spent_claims.contains_key(&outpoint)
-                                && !self.utxos.contains_key(&outpoint)
-                            {
-                                tracing::debug!(
-                                    outpoint = %outpoint,
-                                    "Skipping UTXO guarded by a spent-output claim"
-                                );
-                                self.claim_guarded_outputs.insert(
-                                    outpoint,
-                                    Utxo::new(
-                                        outpoint,
-                                        output.clone(),
-                                        addr.clone(),
-                                        context.block_info().map_or(0, |i| i.height),
-                                        tx.is_coin_base(),
-                                    ),
-                                );
-                                continue;
-                            }
-
                             // Flag outputs from a "trusted" mempool transaction we created —
                             // one whose inputs all spend our own final UTXOs and which pays
                             // this output back to one of our internal (change) addresses.
@@ -463,31 +479,25 @@ impl ManagedCoreFundsAccount {
                             // before the parent transaction settles.
                             let is_trusted_output =
                                 all_inputs_final_and_ours && change_addrs.contains(&addr);
-                            let txout = dashcore::TxOut {
-                                value: output.value,
-                                script_pubkey: output.script_pubkey.clone(),
-                            };
-                            let block_height = context.block_info().map_or(0, |info| info.height);
-                            let mut utxo =
-                                Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
-                            utxo.is_confirmed = context.confirmed();
-                            utxo.is_instantlocked =
-                                matches!(context, TransactionContext::InstantSend(_));
-                            utxo.is_trusted = is_trusted_output;
-                            // Reprocessing (e.g. mempool→block) rebuilds this UTXO from
-                            // scratch, so carry forward flags that must not regress. An
-                            // InstantSend lock is permanent for a txid (DIP-0010) and
-                            // trust only ever settles, so both latch monotonically. A
-                            // coin reservation is orthogonal to chain context and is kept
-                            // as-is. `is_confirmed` stays freshly derived so a reorg can
-                            // still downgrade it.
-                            if let Some(prior) = self.utxos.get(&outpoint) {
-                                utxo.is_instantlocked |= prior.is_instantlocked;
-                                utxo.is_trusted |= prior.is_trusted;
-                                utxo.is_locked = prior.is_locked;
-                            }
-                            self.utxos.insert(outpoint, utxo);
-                            utxos_changed = true;
+                            let received = Utxo::new(
+                                outpoint,
+                                output.clone(),
+                                addr,
+                                context.block_info().map_or(0, |info| info.height),
+                                tx.is_coin_base(),
+                            );
+                            utxos_changed |= self.take_in_output(
+                                received,
+                                Vec::new(),
+                                observed_spent,
+                                Some(spent_claims),
+                                |utxo| {
+                                    utxo.is_confirmed = context.confirmed();
+                                    utxo.is_instantlocked =
+                                        matches!(context, TransactionContext::InstantSend(_));
+                                    utxo.is_trusted = is_trusted_output;
+                                },
+                            );
                         }
                     }
                 }
