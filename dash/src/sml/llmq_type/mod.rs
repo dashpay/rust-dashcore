@@ -1,7 +1,9 @@
 pub mod network;
 pub mod rotation;
 
+use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::sync::OnceLock;
 
@@ -214,7 +216,10 @@ pub fn devnet_platform_type_override() -> Option<LLMQType> {
     DEVNET_PLATFORM_OVERRIDE.get().copied()
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
+/// A quorum type, named when this crate knows it. A type is its byte: it compares, orders and
+/// hashes by [`LLMQType::index`], so `Unknown(b)` for a byte a variant stands for is that
+/// variant. [`LLMQType::from`] builds the named variant of a byte that has one.
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[repr(u8)]
@@ -239,13 +244,41 @@ pub enum LLMQType {
 
     /// A type byte no variant above stands for, kept so that a commitment of a type this crate
     /// does not know encodes back to the bytes Dash Core hashes into the coinbase's quorum root.
-    /// It takes devnet parameters, as `LlmqtypeUnknown` does.
+    /// A list stored while the type had no name keeps its quorums under it, and finds them under
+    /// the name a later release gives it. Variants added later go after this one, which keeps
+    /// its bincode position.
     Unknown(u8),
+}
+
+impl PartialEq for LLMQType {
+    fn eq(&self, other: &Self) -> bool {
+        self.index() == other.index()
+    }
+}
+
+impl Eq for LLMQType {}
+
+impl PartialOrd for LLMQType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LLMQType {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.index().cmp(&other.index())
+    }
+}
+
+impl Hash for LLMQType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.index().hash(state);
+    }
 }
 
 impl Display for LLMQType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+        f.write_str(match LLMQType::from(self.index()) {
             LLMQType::LlmqtypeUnknown => "0_Unknown",
             LLMQType::Llmqtype50_60 => "1_50/60",
             LLMQType::Llmqtype400_60 => "2_400/60",
@@ -267,15 +300,13 @@ impl Display for LLMQType {
 }
 
 impl LLMQType {
+    /// The parameters of this type: a devnet's own for the devnet type, Dash Core's fixed ones
+    /// for another type it defines, and devnet ones for a type it does not.
     pub fn params(&self) -> LlmqParams {
-        match self {
-            LLMQType::LlmqtypeDevnet | LLMQType::LlmqtypeUnknown | LLMQType::Unknown(_) => {
-                llmq_devnet_params()
-            }
-            _ => CoreLlmqType::new(self.index())
-                .params()
-                .expect("every named LLMQ type but devnet has fixed parameters"),
+        if *self == LLMQType::LlmqtypeDevnet {
+            return llmq_devnet_params();
         }
+        CoreLlmqType::new(self.index()).params().unwrap_or_else(llmq_devnet_params)
     }
     pub fn size(&self) -> u32 {
         self.params().size.into()
@@ -431,6 +462,25 @@ mod tests {
             let llmq_type: LLMQType = deserialize(&[byte]).expect("any byte decodes");
             assert_eq!(serialize(&llmq_type), [byte], "type byte {byte}");
         }
+    }
+
+    /// A type is its byte: `Unknown(b)` for a byte a variant stands for is that
+    /// variant, with its order, hash, parameters and name.
+    #[test]
+    fn a_type_is_its_byte() {
+        use std::collections::HashSet;
+
+        for byte in 0..=u8::MAX {
+            let named = LLMQType::from(byte);
+            let unknown = LLMQType::Unknown(byte);
+            assert_eq!(unknown, named, "type byte {byte}");
+            assert_eq!(unknown.cmp(&named), Ordering::Equal, "type byte {byte}");
+            assert_eq!(HashSet::from([unknown, named]).len(), 1, "type byte {byte}");
+            assert_eq!(unknown.params(), named.params(), "type byte {byte}");
+            assert_eq!(unknown.to_string(), named.to_string(), "type byte {byte}");
+        }
+        assert!(LLMQType::Unknown(7) > LLMQType::Llmqtype25_67);
+        assert!(LLMQType::Unknown(7) < LLMQType::LlmqtypeTest);
     }
 
     /// Bincode writes a variant's position, and stored masternode engine
