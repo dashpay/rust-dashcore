@@ -1055,9 +1055,10 @@ impl ManagedAccountCollection {
     }
 
     /// Removes each output of `tx` that pays one of the `owner` funds
-    /// account's addresses and that `owner` holds from the other accounts of
-    /// [`Self::all_funding_accounts`] (a host can put a copy there), so the
-    /// wallet counts it once. The removed copy's `is_instantlocked`,
+    /// account's addresses and that `owner` holds, or holds as spent before it
+    /// was funded, from the other accounts of
+    /// [`Self::all_funding_accounts`] (a host can put a copy there), so no
+    /// other account counts it. The removed copy's `is_instantlocked`,
     /// `is_trusted` and `is_locked` flags carry over to `owner`'s copy. An
     /// account holding a contact's coins takes nothing from the others.
     pub(crate) fn settle_outputs_held_elsewhere(
@@ -1080,7 +1081,10 @@ impl ManagedAccountCollection {
             .zip(0u32..)
             .filter(|(output, _)| owner_account.contains_script_pub_key(&output.script_pubkey))
             .map(|(_, vout)| OutPoint::new(txid, vout))
-            .filter(|outpoint| owner_account.utxos.contains_key(outpoint))
+            .filter(|outpoint| {
+                owner_account.utxos.contains_key(outpoint)
+                    || owner_account.spent_before_funded.contains_key(outpoint)
+            })
             .collect();
         if held.is_empty() {
             return;

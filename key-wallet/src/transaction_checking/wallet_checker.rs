@@ -4037,11 +4037,16 @@ mod tests {
     /// a transaction that also pays BIP44. Recording the transaction in a
     /// block (a rescan) leaves X in the CoinJoin account only, so the wallet
     /// balance counts it once (#1294). A lock already on the CoinJoin copy
-    /// stays.
-    #[test_case::test_case(false; "rescan")]
-    #[test_case::test_case(true; "after a locked mempool copy")]
+    /// stays. When a block spending X was seen first, X leaves BIP44 and is
+    /// credited nowhere.
+    #[test_case::test_case(false, false; "rescan")]
+    #[test_case::test_case(true, false; "after a locked mempool copy")]
+    #[test_case::test_case(false, true; "after a block spending it")]
     #[tokio::test]
-    async fn an_output_held_by_another_funds_account_moves_to_its_owner(locked_in_mempool: bool) {
+    async fn an_output_held_by_another_funds_account_moves_to_its_owner(
+        locked_in_mempool: bool,
+        spent_first: bool,
+    ) {
         let mut ctx = TestWalletContext::new_random();
         let xpub = ctx.wallet.get_coinjoin_account(0).expect("CoinJoin account").account_xpub;
         let coinjoin = ctx.managed_wallet.accounts.coinjoin_accounts.get_mut(&0).expect("CoinJoin");
@@ -4066,6 +4071,14 @@ mod tests {
             let coinjoin = ctx.managed_wallet.accounts.coinjoin_accounts.get_mut(&0).unwrap();
             coinjoin.utxos.get_mut(&x).expect("CoinJoin holds X").lock();
         }
+        if spent_first {
+            let mut spend = Transaction::dummy(&ctx.receive_address, 0..1, &[400_000]);
+            spend.input[0].previous_output = x;
+            spend.output[0].script_pubkey = ScriptBuf::new();
+            let later =
+                BlockInfo::new(1_001, BlockHash::from_byte_array([0x11; 32]), 1_700_000_600);
+            ctx.check_transaction(&spend, TransactionContext::InBlock(later)).await;
+        }
         let restored = crate::Utxo::new(x, tx.output[1].clone(), coinjoin_address, 1_000, false);
         let bip44 = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
         bip44.utxos.insert(x, restored);
@@ -4079,6 +4092,11 @@ mod tests {
 
         let accounts = &ctx.managed_wallet.accounts;
         assert!(!accounts.standard_bip44_accounts[&0].utxos.contains_key(&x));
+        if spent_first {
+            assert!(!accounts.coinjoin_accounts[&0].utxos.contains_key(&x));
+            assert_eq!(ctx.managed_wallet.balance.total(), 300_000);
+            return;
+        }
         let held = &accounts.coinjoin_accounts[&0].utxos[&x];
         assert!(held.is_confirmed);
         assert_eq!(held.is_locked, locked_in_mempool);
