@@ -420,19 +420,35 @@ impl ManagedWalletInfo {
     /// Restore `utxos` the host stored, each into the funds account whose
     /// address pools hold its script, and return the ones no account holds.
     ///
-    /// Addresses are found the way a rescan finds them: each pool is extended
-    /// to its own `gap_limit` past its highest used address, a matched
-    /// address is marked used, and this repeats until a pass matches nothing
-    /// new. A UTXO beyond that reach comes back unmatched rather than placed
-    /// in another account; a rescan that processes its funding transaction
-    /// credits it. Accounts without a public key source match only the
-    /// addresses they already hold. The wallet's own accounts are tried before
-    /// DashPay contact accounts, so for a script both hold the UTXO goes to
-    /// the wallet's account. A restored outpoint that another funds account
-    /// already holds is taken out of that account.
+    /// Call it when restoring wallet state, before sync resumes: the pools
+    /// may grow, and blocks already processed are not scanned again for the
+    /// newly derived addresses.
     ///
-    /// Each account whose pools grow or whose UTXOs change gets its monitor
-    /// revision bumped, so a running client rebuilds its filters.
+    /// Addresses are found the way a rescan finds them: each pool is extended
+    /// to its own `gap_limit` past its highest used address, the address of
+    /// each UTXO is marked used in every account that holds it, and this
+    /// repeats until no pool grows. Each UTXO then goes to the first account
+    /// that holds its script, trying the wallet's own accounts before DashPay
+    /// contact accounts, so for a script both hold the UTXO goes to the
+    /// wallet's account. A UTXO beyond that reach comes back unmatched rather
+    /// than placed in another account; a rescan that processes its funding
+    /// transaction credits it. Accounts without a public key source match only
+    /// the addresses they already hold.
+    ///
+    /// A restored outpoint that another funds account already holds is taken
+    /// out of that account. The restored UTXO keeps the InstantSend lock and
+    /// trust of any copy it replaces or takes out, and their coin lock replaces
+    /// its own, as reprocessing a transaction keeps them. A matched outpoint
+    /// the wallet already saw spent is neither credited nor returned: one
+    /// spent in a processed block
+    /// ([`observed_spent_outpoints`](Self::observed_spent_outpoints), or held
+    /// as spent before it was funded) is held as spent before funded, as
+    /// processing its funding transaction does, and one the owning account
+    /// recorded spending is dropped. A spent-output claim
+    /// does not hold a restored UTXO back.
+    ///
+    /// Each account whose pools grow or that gains or loses a UTXO gets its
+    /// monitor revision bumped, so a running client rebuilds its filters.
     ///
     /// Every pool is extended before any UTXO is inserted, so an `Err` from
     /// address derivation leaves the UTXO sets as they were; the addresses
@@ -444,57 +460,72 @@ impl ManagedWalletInfo {
         wallet: &Wallet,
         utxos: impl IntoIterator<Item = Utxo>,
     ) -> crate::error::Result<Vec<Utxo>> {
-        let mut pending: Vec<Utxo> = utxos.into_iter().collect();
-        let mut placed = Vec::new();
-        loop {
-            let placed_before = placed.len();
-            let mut accounts = funds_accounts_wallet_first(&mut self.accounts);
-            for account in accounts.iter_mut() {
-                let key_source =
-                    wallet.key_source_for_account(account.managed_account_type().to_account_type());
-                if matches!(key_source, crate::KeySource::NoKeySource) {
-                    continue;
-                }
-                let mut grew = false;
-                for pool in account.managed_account_type_mut().address_pools_mut() {
-                    grew |= !pool.maintain_gap_limit(&key_source)?.is_empty();
-                }
-                if grew {
-                    account.bump_monitor_revision();
-                }
-            }
-            let mut unmatched = Vec::new();
-            for utxo in pending {
-                let script = &utxo.txout.script_pubkey;
-                match accounts.iter_mut().find(|account| account.contains_script_pub_key(script)) {
-                    Some(account) => {
-                        if let Ok(address) = Address::from_script(script, self.network) {
-                            account.mark_address_used(&address);
-                        }
-                        placed.push((account.managed_account_type().to_account_type(), utxo));
-                    }
-                    None => unmatched.push(utxo),
-                }
-            }
-            pending = unmatched;
-            if placed.len() == placed_before {
-                break;
-            }
-        }
+        let utxos: Vec<Utxo> = utxos.into_iter().collect();
+        let network = self.network;
         let mut accounts = funds_accounts_wallet_first(&mut self.accounts);
-        for (account_type, utxo) in placed {
-            for account in accounts.iter_mut() {
-                let changed = if account.managed_account_type().to_account_type() == account_type {
-                    account.utxos.insert(utxo.outpoint, utxo.clone()).is_none()
-                } else {
-                    account.utxos.remove(&utxo.outpoint).is_some()
-                };
-                if changed {
-                    account.bump_monitor_revision();
+        // Each UTXO's owner is the index in `accounts` of the first account
+        // holding its script. Every pass matches all UTXOs again after the
+        // pools grew, so an account tried earlier claims a UTXO once its pool
+        // reaches it.
+        let owners = loop {
+            let owners: Vec<Option<usize>> = utxos
+                .iter()
+                .map(|utxo| {
+                    let script = &utxo.txout.script_pubkey;
+                    let address = Address::from_script(script, network).ok();
+                    let mut owner = None;
+                    for (index, account) in accounts.iter_mut().enumerate() {
+                        if account.contains_script_pub_key(script) {
+                            if let Some(address) = &address {
+                                account.mark_address_used(address);
+                            }
+                            owner.get_or_insert(index);
+                        }
+                    }
+                    owner
+                })
+                .collect();
+            if !extend_pools(wallet, &mut accounts)? {
+                break owners;
+            }
+        };
+        let mut unmatched = Vec::new();
+        for (mut utxo, owner) in utxos.into_iter().zip(owners) {
+            let Some(owner) = owner else {
+                unmatched.push(utxo);
+                continue;
+            };
+            let outpoint = utxo.outpoint;
+            let mut copies = Vec::new();
+            for (index, account) in accounts.iter_mut().enumerate() {
+                if index != owner {
+                    if let Some(copy) = account.utxos.remove(&outpoint) {
+                        copies.push(copy);
+                        account.bump_monitor_revision();
+                    }
                 }
             }
+            let account = &mut accounts[owner];
+            if account.is_outpoint_spent(&outpoint) {
+                continue;
+            }
+            if self.observed_spent_outpoints.contains_key(&outpoint)
+                || account.spent_before_funded.contains_key(&outpoint)
+            {
+                account.spent_before_funded.entry(outpoint).or_insert(utxo);
+                continue;
+            }
+            copies.extend(account.utxos.get(&outpoint).cloned());
+            if !copies.is_empty() {
+                utxo.is_instantlocked |= copies.iter().any(|copy| copy.is_instantlocked);
+                utxo.is_trusted |= copies.iter().any(|copy| copy.is_trusted);
+                utxo.is_locked = copies.iter().any(|copy| copy.is_locked);
+            }
+            if account.utxos.insert(outpoint, utxo).is_none() {
+                account.bump_monitor_revision();
+            }
         }
-        Ok(pending)
+        Ok(unmatched)
     }
 
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]
@@ -718,6 +749,32 @@ impl ManagedWalletInfo {
 
         Ok(())
     }
+}
+
+/// Extend every pool of `accounts` that has a public key source to its gap
+/// limit, bumping the monitor revision of each account that grew. Returns
+/// whether any pool grew.
+fn extend_pools(
+    wallet: &Wallet,
+    accounts: &mut [&mut crate::managed_account::ManagedCoreFundsAccount],
+) -> crate::error::Result<bool> {
+    let mut any_grew = false;
+    for account in accounts.iter_mut() {
+        let key_source =
+            wallet.key_source_for_account(account.managed_account_type().to_account_type());
+        if matches!(key_source, crate::KeySource::NoKeySource) {
+            continue;
+        }
+        let mut grew = false;
+        for pool in account.managed_account_type_mut().address_pools_mut() {
+            grew |= !pool.maintain_gap_limit(&key_source)?.is_empty();
+        }
+        if grew {
+            account.bump_monitor_revision();
+            any_grew = true;
+        }
+    }
+    Ok(any_grew)
 }
 
 /// The wallet's own funds accounts, in [`ManagedAccountCollection::all_funding_accounts`]
