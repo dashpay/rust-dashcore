@@ -1054,6 +1054,58 @@ impl ManagedAccountCollection {
         accounts
     }
 
+    /// Removes each output of `tx` that pays one of the `owner` funds
+    /// account's addresses and that `owner` holds from the other accounts of
+    /// [`Self::all_funding_accounts`] (a host can put a copy there), so the
+    /// wallet counts it once. The removed copy's `is_instantlocked`,
+    /// `is_trusted` and `is_locked` flags carry over to `owner`'s copy. An
+    /// account holding a contact's coins takes nothing from the others.
+    pub(crate) fn settle_outputs_held_elsewhere(
+        &mut self,
+        owner: &CoreAccountTypeMatch,
+        tx: &Transaction,
+    ) {
+        let Some(ManagedAccountRef::Funds(owner_account)) = self.get_by_account_type_match(owner)
+        else {
+            return;
+        };
+        let owner_type = owner_account.managed_account_type().to_account_type();
+        if owner_type.is_contact_owned() {
+            return;
+        }
+        let txid = tx.txid();
+        let held: Vec<OutPoint> = tx
+            .output
+            .iter()
+            .zip(0u32..)
+            .filter(|(output, _)| owner_account.contains_script_pub_key(&output.script_pubkey))
+            .map(|(_, vout)| OutPoint::new(txid, vout))
+            .filter(|outpoint| owner_account.utxos.contains_key(outpoint))
+            .collect();
+        if held.is_empty() {
+            return;
+        }
+        let mut removed = Vec::new();
+        for account in self.all_funding_accounts_mut() {
+            if account.managed_account_type().to_account_type() == owner_type {
+                continue;
+            }
+            removed.extend(held.iter().filter_map(|outpoint| account.utxos.remove(outpoint)));
+        }
+        let Some(ManagedAccountRefMut::Funds(owner_account)) =
+            self.get_by_account_type_match_mut(owner)
+        else {
+            return;
+        };
+        for prior in removed {
+            if let Some(utxo) = owner_account.utxos.get_mut(&prior.outpoint) {
+                utxo.is_instantlocked |= prior.is_instantlocked;
+                utxo.is_trusted |= prior.is_trusted;
+                utxo.is_locked |= prior.is_locked;
+            }
+        }
+    }
+
     /// Get the count of accounts
     pub fn count(&self) -> usize {
         self.all_accounts().len()

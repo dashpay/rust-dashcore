@@ -356,6 +356,10 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                         result.new_records.push(record);
                     }
                 }
+                for account_match in &result.affected_accounts {
+                    self.accounts
+                        .settle_outputs_held_elsewhere(&account_match.account_type_match, tx);
+                }
                 self.attribute_late_inputs(tx, &mut result);
                 if update_balance {
                     self.update_balance();
@@ -444,6 +448,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
+        for account_match in &result.affected_accounts {
+            self.accounts.settle_outputs_held_elsewhere(&account_match.account_type_match, tx);
+        }
         self.attribute_late_inputs(tx, &mut result);
 
         if is_new {
@@ -4023,5 +4030,58 @@ mod tests {
             .unwrap()
             .utxos
             .contains_key(&outpoint));
+    }
+
+    /// A restore can leave a UTXO in a funds account that does not own its
+    /// address: here BIP44 holds X, an output paid to a CoinJoin address by
+    /// a transaction that also pays BIP44. Recording the transaction in a
+    /// block (a rescan) leaves X in the CoinJoin account only, so the wallet
+    /// balance counts it once (#1294). A lock already on the CoinJoin copy
+    /// stays.
+    #[test_case::test_case(false; "rescan")]
+    #[test_case::test_case(true; "after a locked mempool copy")]
+    #[tokio::test]
+    async fn an_output_held_by_another_funds_account_moves_to_its_owner(locked_in_mempool: bool) {
+        let mut ctx = TestWalletContext::new_random();
+        let xpub = ctx.wallet.get_coinjoin_account(0).expect("CoinJoin account").account_xpub;
+        let coinjoin = ctx.managed_wallet.accounts.coinjoin_accounts.get_mut(&0).expect("CoinJoin");
+        let coinjoin_address = match coinjoin.managed_account_type_mut() {
+            crate::ManagedAccountType::CoinJoin {
+                external_addresses,
+                ..
+            } => external_addresses
+                .next_unused(&crate::KeySource::Public(xpub), true)
+                .expect("CoinJoin address"),
+            _ => unreachable!("a CoinJoin account carries the CoinJoin managed type"),
+        };
+        let mut tx = Transaction::dummy(&ctx.receive_address, 0..1, &[300_000]);
+        tx.output.push(TxOut {
+            value: 500_000,
+            script_pubkey: coinjoin_address.script_pubkey(),
+        });
+        let x = OutPoint::new(tx.txid(), 1);
+
+        if locked_in_mempool {
+            ctx.check_transaction(&tx, TransactionContext::Mempool).await;
+            let coinjoin = ctx.managed_wallet.accounts.coinjoin_accounts.get_mut(&0).unwrap();
+            coinjoin.utxos.get_mut(&x).expect("CoinJoin holds X").lock();
+        }
+        let restored = crate::Utxo::new(x, tx.output[1].clone(), coinjoin_address, 1_000, false);
+        let bip44 = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
+        bip44.utxos.insert(x, restored);
+
+        let block = TransactionContext::InBlock(BlockInfo::new(
+            1_000,
+            BlockHash::from_byte_array([0x10; 32]),
+            1_700_000_000,
+        ));
+        ctx.check_transaction(&tx, block).await;
+
+        let accounts = &ctx.managed_wallet.accounts;
+        assert!(!accounts.standard_bip44_accounts[&0].utxos.contains_key(&x));
+        let held = &accounts.coinjoin_accounts[&0].utxos[&x];
+        assert!(held.is_confirmed);
+        assert_eq!(held.is_locked, locked_in_mempool);
+        assert_eq!(ctx.managed_wallet.balance.total(), 800_000);
     }
 }

@@ -1,4 +1,4 @@
-//! Regression test for DIP-15 contact address pool maintenance (issue #1032).
+//! Regression tests for DIP-15 contact address pools (issues #1032 and #1294).
 
 use dashcore::hashes::Hash;
 use dashcore::{Address, BlockHash, Transaction};
@@ -108,4 +108,30 @@ async fn contact_payments_extend_the_contact_pool() {
             "{direction}: the window must keep moving, not widen once"
         );
     }
+}
+
+/// A wallet holding both identities of a friendship derives the same
+/// addresses for its receiving chain and for the reverse external chain. A
+/// payment to one of them stays in the receiving account, whose coins are
+/// the wallet's, and counts in the balance.
+#[tokio::test]
+async fn a_payment_the_reverse_external_chain_also_matches_stays_ours() {
+    let mut ctx = TestWalletContext::new_random();
+    let receiving = CONTACT_CHAINS[0];
+    let reverse_external = AccountType::DashpayExternalAccount {
+        index: 0,
+        user_identity_id: THEM,
+        friend_identity_id: US,
+    };
+    for contact in [receiving, reverse_external] {
+        ctx.wallet.add_account(contact, None).expect("contact account is addable");
+        ctx.managed_wallet
+            .add_managed_account(&ctx.wallet, contact)
+            .expect("contact account is manageable");
+    }
+    let address = contact_pool(&ctx, receiving).address_at_index(0).expect("first address");
+    assert_eq!(contact_pool(&ctx, reverse_external).address_at_index(0), Some(address.clone()));
+
+    assert!(pay(&mut ctx, &address, 1_555_196).await);
+    assert_eq!(ctx.managed_wallet.balance.total(), 29_000);
 }
