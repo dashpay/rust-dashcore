@@ -16,7 +16,7 @@
 
 ## Coding Style & Naming Conventions
 - Mixed editions (2021/2024); follow crate idioms. Prefer async via `tokio` where applicable.
-- Format with `rustfmt` (see `rustfmt.toml`); run `cargo fmt --all` before commits.
+- Format with `rustfmt` (see `.rustfmt.toml`); run `cargo fmt --all` before commits.
 - Lint with `clippy`; some crates deny warnings in CI. Avoid `unwrap()/expect()` in library code; use error types (e.g., `thiserror`).
 - Naming: `snake_case` (funcs/vars), `UpperCamelCase` (types/traits), `SCREAMING_SNAKE_CASE` (consts). Keep modules focused.
 
