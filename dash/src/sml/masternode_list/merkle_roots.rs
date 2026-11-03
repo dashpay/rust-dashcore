@@ -4,7 +4,7 @@ use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::error::SmlError;
 use crate::sml::masternode_list::MasternodeList;
-use crate::transaction::special_transaction::TransactionPayload;
+use crate::transaction::special_transaction::coinbase::CoinbasePayload;
 
 /// Computes the Merkle root from a list of hashes.
 ///
@@ -46,14 +46,14 @@ pub fn merkle_root_from_hashes(hashes: Vec<sha256d::Hash>) -> Option<sha256d::Ha
 
 impl MasternodeList {
     /// The quorum root is in the coinbase payload from its version 2. An empty
-    /// list hashes to the all-zero root, as in Dash Core.
+    /// list hashes to the all-zero root, as in Dash Core. A payload of a
+    /// version newer than this crate decodes is read as far as it knows the
+    /// layout, see [`CoinbasePayload::from_coinbase_tx`].
     pub fn verify_coinbase_roots(
         &self,
         coinbase_transaction: &Transaction,
     ) -> Result<(), SmlError> {
-        let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) =
-            &coinbase_transaction.special_transaction_payload
-        else {
+        let Some(coinbase_payload) = CoinbasePayload::from_coinbase_tx(coinbase_transaction) else {
             return Err(SmlError::CoinbaseCommitmentMismatch(self.block_hash));
         };
 

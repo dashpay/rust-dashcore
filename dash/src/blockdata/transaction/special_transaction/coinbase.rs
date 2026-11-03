@@ -20,12 +20,17 @@
 
 use hashes::Hash;
 
+use super::{TransactionPayload, TransactionType};
+use crate::Transaction;
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::encode::{compact_size_len, read_compact_size, write_compact_size};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::io;
 use crate::io::{Error, ErrorKind};
+
+/// Newest payload version whose layout this crate decodes.
+const NEWEST_DECODED_VERSION: u16 = 4;
 
 /// A Coinbase payload. This is contained as the payload of a coinbase special transaction.
 /// The Coinbase payload is described in DIP4.
@@ -201,6 +206,30 @@ impl CoinbasePayload {
             best_cl_signature,
             asset_locked_amount,
             merkle_root_asset_unlocks: None,
+        }
+    }
+
+    /// The payload of `coinbase`, read as far as this crate knows its layout.
+    ///
+    /// The transaction decoder keeps a payload of a version newer than this crate decodes raw.
+    /// Dash Core only appends fields in a new version, so such a payload is read as the newest
+    /// version this crate decodes, leaving the newer fields out. The result keeps the payload's
+    /// `version` but encodes only the fields it read.
+    ///
+    /// `None` for a transaction without a coinbase payload, a raw payload of a version this
+    /// crate decodes, which Dash Core never produces, or one too short for the fields this crate
+    /// knows.
+    pub fn from_coinbase_tx(coinbase: &Transaction) -> Option<CoinbasePayload> {
+        match &coinbase.special_transaction_payload {
+            Some(TransactionPayload::CoinbasePayloadType(payload)) => Some(payload.clone()),
+            Some(TransactionPayload::RawPayloadType(tx_type, bytes))
+                if *tx_type == TransactionType::Coinbase.to_u16() =>
+            {
+                CoinbasePayload::consensus_decode(&mut &bytes[..])
+                    .ok()
+                    .filter(|payload| payload.version > NEWEST_DECODED_VERSION)
+            }
+            _ => None,
         }
     }
 
