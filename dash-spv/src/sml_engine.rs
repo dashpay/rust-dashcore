@@ -25,8 +25,8 @@ use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
 use dashcore::sml::quorum_validation_error::QuorumValidationError;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use dashcore::transaction::special_transaction::TransactionPayload;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore::{Network, Transaction};
 use tokio::sync::RwLock;
@@ -173,16 +173,14 @@ fn build_cycle_quorum_map(
 
 /// The ChainLock `coinbase_tx`, the coinbase of the block at `height`, carries
 /// for member selection, as Dash Core's `GetNonNullCoinbaseChainlock` reads it
-/// (`src/evo/cbtx.cpp:200-211`).
+/// (`src/evo/cbtx.cpp:200-211`). A payload of a version newer than this
+/// library decodes is read as far as it knows the layout, see
+/// [`CoinbasePayload::from_coinbase_tx`].
 fn valid_coinbase_chain_lock(
     coinbase_tx: &Transaction,
     height: CoreBlockHeight,
 ) -> Option<BLSSignature> {
-    let Some(TransactionPayload::CoinbasePayloadType(payload)) =
-        &coinbase_tx.special_transaction_payload
-    else {
-        return None;
-    };
+    let payload = CoinbasePayload::from_coinbase_tx(coinbase_tx)?;
     let signature = payload.chain_lock_candidate(height)?;
     signature.as_scheme(BlsScheme::Modern).is_valid().then_some(signature)
 }
