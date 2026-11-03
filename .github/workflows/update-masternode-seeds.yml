@@ -33,7 +33,9 @@ jobs:
         with:
           shared-key: "masternode-seeds-fetcher"
 
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
 
       - name: Refresh mainnet and testnet seeds (with probes)
         run: just masternode-seeds-fetcher::refresh-all

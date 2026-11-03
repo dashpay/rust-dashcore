@@ -40,7 +40,9 @@ jobs:
         with:
           components: rust-src
 
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
 
       - name: Run tests with ASAN
         run: just asan
@@ -54,7 +56,9 @@ jobs:
         with:
           components: rust-src
 
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
 
       - name: Run tests with TSAN
         run: just tsan

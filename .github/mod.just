@@ -5,7 +5,9 @@ import "../mod.just"
 # `gh actions-lock` looks for `.github/workflows` under the current directory.
 set working-directory := ".."
 
-# Pin every action in `actions.lock`, keeping major version refs
+# Pin every action in `actions.lock`, keeping major version refs.
+# Use `taiki-e/install-action@v2` with `tool:`, not tags like `@just`. Those are recreated
+# outside the branch history on every release, so their pins stop resolving.
 lock:
     gh actions-lock --no-narrow --no-interactive
 
