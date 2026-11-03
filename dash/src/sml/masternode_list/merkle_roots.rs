@@ -46,7 +46,8 @@ pub fn merkle_root_from_hashes(hashes: Vec<sha256d::Hash>) -> Option<sha256d::Ha
 
 impl MasternodeList {
     /// The quorum root is in the coinbase payload from its version 2. An empty
-    /// list hashes to the all-zero root, as in Dash Core.
+    /// list hashes to the all-zero root, as in Dash Core. A quorum list holding
+    /// a commitment twice is refused, as Dash Core refuses a mutated root.
     pub fn verify_coinbase_roots(
         &self,
         coinbase_transaction: &Transaction,
@@ -65,9 +66,12 @@ impl MasternodeList {
         }
 
         if coinbase_payload.version >= 2 {
-            let calculated =
-                self.calculate_llmq_merkle_root().unwrap_or_else(MerkleRootQuorums::all_zeros);
-            if calculated != coinbase_payload.merkle_root_quorums {
+            let hashes = self.hashes_for_quorum_merkle_root();
+            // A leaf doubled at the end of an odd level leaves the root as it was.
+            let doubled = hashes.windows(2).any(|pair| pair[0] == pair[1]);
+            let calculated = merkle_root_from_hashes(hashes)
+                .map_or_else(MerkleRootQuorums::all_zeros, MerkleRootQuorums::from_raw_hash);
+            if doubled || calculated != coinbase_payload.merkle_root_quorums {
                 return Err(SmlError::CoinbaseCommitmentMismatch(self.block_hash));
             }
         }
