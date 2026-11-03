@@ -24,11 +24,10 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2.1.1
 
   msrv:
-    name: MSRV Check (1.89)
+    name: MSRV Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2.9.3
       - uses: taiki-e/install-action@v2.89.1
         with:
