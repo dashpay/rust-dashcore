@@ -35,12 +35,12 @@ jobs:
     name: Address Sanitizer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.89.1
         with:
           tool: just
 
@@ -51,12 +51,12 @@ jobs:
     name: Thread Sanitizer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.89.1
         with:
           tool: just
 
