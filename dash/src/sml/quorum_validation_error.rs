@@ -20,6 +20,9 @@ pub enum QuorumValidationError {
     #[error("Required chain lock not present at block height {0}, block hash: {1}")]
     RequiredChainLockNotPresent(CoreBlockHeight, BlockHash),
 
+    /// No longer produced; kept so persisted
+    /// [`LLMQEntryVerificationStatus::Invalid`](crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus::Invalid)
+    /// values still decode.
     #[error("Required rotated chain lock sigs not present for masternode diff block hash: {0}")]
     RequiredRotatedChainLockSigsNotPresent(BlockHash),
 

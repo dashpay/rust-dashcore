@@ -24,8 +24,7 @@ pub enum LLMQEntryVerificationSkipStatus {
     /// retry logic can dispatch to a chain-lock fetch instead of a block
     /// fetch.
     MissingChainLock(CoreBlockHeight, BlockHash),
-    /// The quorum entry came through without an attached
-    /// `VerifyingChainLockSignaturesType::Rotating`.
+    /// No longer produced; kept so persisted statuses still decode.
     MissingRotationChainLockSigs(QuorumHash),
     /// No longer produced; kept so persisted statuses still decode.
     InferredRotationChainLockSigs(QuorumHash),
