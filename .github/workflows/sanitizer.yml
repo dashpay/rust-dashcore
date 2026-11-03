@@ -35,7 +35,7 @@ jobs:
     name: Address Sanitizer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.1.0
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
@@ -51,7 +51,7 @@ jobs:
     name: Thread Sanitizer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.1.0
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src

@@ -4,11 +4,11 @@
 version: 'v0.0.3'
 workflows:
     '.github/workflows/build-and-test.yml':
-        - 'actions/cache@v5.1.0'
-        - 'actions/checkout@v6.1.0'
-        - 'actions/setup-python@v6.3.0'
+        - 'actions/cache@v6.1.0'
+        - 'actions/checkout@v7.0.1'
+        - 'actions/setup-python@v7.1.0'
         - 'actions/upload-artifact@v7.0.2'
-        - 'codecov/codecov-action@v6.0.2'
+        - 'codecov/codecov-action@v7.1.1'
         - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.89.1'
@@ -16,7 +16,7 @@ workflows:
     '.github/workflows/conflict-check.yml':
         - 'eps1lon/actions-label-merge-conflict@v3.1.0'
     '.github/workflows/fuzz.yml':
-        - 'actions/checkout@v6.1.0'
+        - 'actions/checkout@v7.0.1'
         - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.89.1'
@@ -24,29 +24,29 @@ workflows:
     '.github/workflows/pr-title.yml':
         - 'amannn/action-semantic-pull-request@v6.1.1'
     '.github/workflows/pre-commit.yml':
-        - 'actions/checkout@v6.1.0'
-        - 'actions/setup-python@v6.3.0'
+        - 'actions/checkout@v7.0.1'
+        - 'actions/setup-python@v7.1.0'
         - 'dtolnay/rust-toolchain@stable'
         - 'pre-commit/action@v3.0.1'
         - 'swatinem/rust-cache@v2.9.3'
     '.github/workflows/ready-for-review-trigger.yml': []
     '.github/workflows/ready-for-review.yml':
-        - 'actions/checkout@v6.1.0'
+        - 'actions/checkout@v7.0.1'
     '.github/workflows/rust.yml':
-        - 'actions/checkout@v6.1.0'
+        - 'actions/checkout@v7.0.1'
         - 'dtolnay/rust-toolchain@1.89'
         - 'dtolnay/rust-toolchain@stable'
         - 'embarkstudios/cargo-deny-action@v2.1.1'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.89.1'
     '.github/workflows/sanitizer.yml':
-        - 'actions/checkout@v6.1.0'
+        - 'actions/checkout@v7.0.1'
         - 'dtolnay/rust-toolchain@nightly'
         - 'taiki-e/install-action@v2.89.1'
     '.github/workflows/update-masternode-seeds.yml':
-        - 'actions/checkout@v6.1.0'
+        - 'actions/checkout@v7.0.1'
         - 'dtolnay/rust-toolchain@stable'
-        - 'peter-evans/create-pull-request@v7.0.11'
+        - 'peter-evans/create-pull-request@v8.1.1'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.89.1'
 dependencies:
@@ -55,14 +55,14 @@ dependencies:
         commit: 'sha1-0057852bfaa89a56745cba8c7296529d2fc39830'
         owner_id: 44036562
         repo_id: 215566462
-    'actions/cache@v5.1.0':
-        ref: 'v5.1.0'
-        commit: 'sha1-caa296126883cff596d87d8935842f9db880ef25'
+    'actions/cache@v6.1.0':
+        ref: 'v6.1.0'
+        commit: 'sha1-55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
         owner_id: 44036562
         repo_id: 215566462
-    'actions/checkout@v6.1.0':
-        ref: 'v6.1.0'
-        commit: 'sha1-d23441a48e516b6c34aea4fa41551a30e30af803'
+    'actions/checkout@v7.0.1':
+        ref: 'v7.0.1'
+        commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
         owner_id: 44036562
         repo_id: 197814629
     'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd':
@@ -70,9 +70,9 @@ dependencies:
         commit: 'sha1-ed597411d8f924073f98dfc5c65a23a2325f34cd'
         owner_id: 44036562
         repo_id: 205262760
-    'actions/setup-python@v6.3.0':
-        ref: 'v6.3.0'
-        commit: 'sha1-ece7cb06caefa5fff74198d8649806c4678c61a1'
+    'actions/setup-python@v7.1.0':
+        ref: 'v7.1.0'
+        commit: 'sha1-6d4fd22b20465ccc0f7354476588e8df7c9ca0e0'
         owner_id: 44036562
         repo_id: 192625525
     'actions/upload-artifact@v7.0.2':
@@ -85,9 +85,9 @@ dependencies:
         commit: 'sha1-48f256284bd46cdaab1048c3721360e808335d50'
         owner_id: 4038316
         repo_id: 220418983
-    'codecov/codecov-action@v6.0.2':
-        ref: 'v6.0.2'
-        commit: 'sha1-fb8b3582c8e4def4969c97caa2f19720cb33a72f'
+    'codecov/codecov-action@v7.1.1':
+        ref: 'v7.1.1'
+        commit: 'sha1-303a32d7a59b442fa8d48b6a1cc6825c09c847a5'
         owner_id: 8226205
         repo_id: 200299178
         uses:
@@ -117,9 +117,9 @@ dependencies:
         commit: 'sha1-0273be72a0bbd58fcd71d0d6c02c209b50d1e5e1'
         owner_id: 12292047
         repo_id: 248206495
-    'peter-evans/create-pull-request@v7.0.11':
-        ref: 'v7.0.11'
-        commit: 'sha1-22a9089034f40e5a961c8808d113e2c98fb63676'
+    'peter-evans/create-pull-request@v8.1.1':
+        ref: 'v8.1.1'
+        commit: 'sha1-5f6978faf089d4d20b00c7766989d076bb2fc7f1'
         owner_id: 18365890
         repo_id: 197176365
     'pre-commit/action@v3.0.1':
