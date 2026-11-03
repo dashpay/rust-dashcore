@@ -92,6 +92,7 @@ impl Transaction {
         else {
             panic!("a coinbase payload");
         };
+        assert_eq!(payload.version, 3, "a version 3 coinbase payload");
         let mut bytes = serialize(&CoinbasePayload {
             version: 4,
             merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::all_zeros()),

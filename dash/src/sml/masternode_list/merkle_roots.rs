@@ -192,19 +192,12 @@ mod tests {
         tamper: fn(&mut CoinbasePayload),
         error: Option<fn(BlockHash) -> SmlError>,
     ) {
-        let diff: MnListDiff = deserialize(include_bytes!(
-            "../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
-        ))
-        .expect("expected to deserialize");
-        let mut coinbase = diff.coinbase_tx.clone();
-        let list = MasternodeList::from_diff(diff, 2_227_096, Network::Mainnet).expect("builds");
+        let (list, mut coinbase) = fixture_list(|_| {});
         let Some(TransactionPayload::CoinbasePayloadType(payload)) =
             &mut coinbase.special_transaction_payload
         else {
             panic!("coinbase payload");
         };
-        // The capture's masternodes do not hash to its coinbase's root, its quorums do.
-        payload.merkle_root_masternode_list = list.masternode_merkle_root.expect("masternodes");
         tamper(payload);
 
         let result = list.verify_coinbase_roots(&coinbase);
@@ -283,7 +276,7 @@ mod tests {
         assert_eq!(result, expected);
     }
 
-    /// A newer coinbase payload cut short inside its quorum list root commits
+    /// A newer coinbase payload cut short before its quorum list root commits
     /// to nothing, even for a list without quorums, whose root is all zeros.
     #[test]
     fn a_newer_coinbase_payload_cut_short_commits_to_nothing() {
@@ -292,7 +285,8 @@ mod tests {
             diff.quorums_chainlock_signatures.clear();
         });
         assert!(list.quorums.is_empty());
-        let coinbase = newer_coinbase(&coinbase, |_, bytes| bytes.truncate(38 + 16));
+        let coinbase = newer_coinbase(&coinbase, |_, bytes| bytes.truncate(38));
+        assert_eq!(CoinbasePayload::from_coinbase_tx(&coinbase), None);
 
         let result = list.verify_coinbase_roots(&coinbase);
 
