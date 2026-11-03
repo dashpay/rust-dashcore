@@ -45,6 +45,7 @@ use hashes::Hash;
 
 use self::MerkleBlockError::*;
 use crate::blockdata::block::{self, Block};
+use crate::blockdata::constants::MAX_BLOCK_SIZE;
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::{TxMerkleNode, Txid};
@@ -52,10 +53,10 @@ use crate::io;
 use crate::network::message_sml::MnListDiff;
 use crate::prelude::*;
 
-/// An upper bound on the transactions in a Dash block: its 2 MB size limit
-/// over the 60 bytes of the smallest transaction, Dash Core's bound in
+/// An upper bound on the transactions in a Dash block: its size limit over the
+/// 60 bytes of the smallest transaction, Dash Core's bound in
 /// `CPartialMerkleTree::ExtractMatches` (`MaxBlockSize() / 60`).
-const MAX_BLOCK_TRANSACTIONS: u32 = 2_000_000 / 60;
+const MAX_BLOCK_TRANSACTIONS: u32 = MAX_BLOCK_SIZE / 60;
 
 /// Data structure that represents a block header paired to a partial merkle tree.
 ///

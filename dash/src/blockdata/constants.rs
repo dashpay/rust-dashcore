@@ -24,10 +24,9 @@ use crate::pow::CompactTarget;
 
 /// How many satoshis are in "one dash".
 pub const COIN_VALUE: u64 = 100_000_000;
-/// The maximum allowed weight for a block, see BIP 141 (network rule).
-pub const MAX_BLOCK_WEIGHT: u32 = 4_000_000;
-/// The minimum transaction weight for a valid serialized transaction.
-pub const MIN_TRANSACTION_WEIGHT: u32 = 4 * 60;
+/// The maximum size of a serialized block once DIP-0001 is active, Dash Core's
+/// `MAX_DIP0001_BLOCK_SIZE` (network rule).
+pub const MAX_BLOCK_SIZE: u32 = 2_000_000;
 /// The factor that non-witness serialization data is multiplied by during weight calculation.
 pub const WITNESS_SCALE_FACTOR: usize = 4;
 /// The maximum allowed number of signature check operations in a block.
