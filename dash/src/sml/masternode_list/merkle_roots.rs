@@ -4,7 +4,7 @@ use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::error::SmlError;
 use crate::sml::masternode_list::MasternodeList;
-use crate::transaction::special_transaction::TransactionPayload;
+use crate::transaction::special_transaction::coinbase::CoinbasePayload;
 
 /// Computes the Merkle root from a list of hashes.
 ///
@@ -46,15 +46,15 @@ pub fn merkle_root_from_hashes(hashes: Vec<sha256d::Hash>) -> Option<sha256d::Ha
 
 impl MasternodeList {
     /// The quorum root is in the coinbase payload from its version 2. An empty
-    /// list hashes to the all-zero root, as in Dash Core. A quorum list holding
+    /// list hashes to the all-zero root, as in Dash Core. A payload of a
+    /// version newer than this crate decodes is read as far as it knows the
+    /// layout, see [`CoinbasePayload::from_coinbase_tx`]. A quorum list holding
     /// a commitment twice is refused, as Dash Core refuses a mutated root.
     pub fn verify_coinbase_roots(
         &self,
         coinbase_transaction: &Transaction,
     ) -> Result<(), SmlError> {
-        let Some(TransactionPayload::CoinbasePayloadType(coinbase_payload)) =
-            &coinbase_transaction.special_transaction_payload
-        else {
+        let Some(coinbase_payload) = CoinbasePayload::from_coinbase_tx(coinbase_transaction) else {
             return Err(SmlError::CoinbaseCommitmentMismatch(self.block_hash));
         };
 
@@ -171,9 +171,10 @@ mod tests {
     use crate::network::message_sml::MnListDiff;
     use crate::sml::error::SmlError;
     use crate::sml::masternode_list::MasternodeList;
+    use crate::test_utils::UNASSIGNED_SPECIAL_TX_TYPE;
     use crate::transaction::special_transaction::TransactionPayload;
     use crate::transaction::special_transaction::coinbase::CoinbasePayload;
-    use crate::{BlockHash, Network, QuorumHash};
+    use crate::{BlockHash, Network, QuorumHash, Transaction};
 
     #[test_case(|_| {}, None; "matching")]
     #[test_case(
@@ -198,10 +199,27 @@ mod tests {
         tamper: fn(&mut CoinbasePayload),
         error: Option<fn(BlockHash) -> SmlError>,
     ) {
-        let diff: MnListDiff = deserialize(include_bytes!(
+        let (list, mut coinbase) = fixture_list(|_| {});
+        let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+            &mut coinbase.special_transaction_payload
+        else {
+            panic!("coinbase payload");
+        };
+        tamper(payload);
+
+        let result = list.verify_coinbase_roots(&coinbase);
+
+        assert_eq!(result, error.map_or(Ok(()), |error| Err(error(list.block_hash))));
+    }
+
+    /// The list of the 2227096 capture, built after `edit`, and the capture's
+    /// coinbase committing to its masternodes.
+    fn fixture_list(edit: fn(&mut MnListDiff)) -> (MasternodeList, Transaction) {
+        let mut diff: MnListDiff = deserialize(include_bytes!(
             "../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
         ))
         .expect("expected to deserialize");
+        edit(&mut diff);
         let mut coinbase = diff.coinbase_tx.clone();
         let list = MasternodeList::from_diff(diff, 2_227_096, Network::Mainnet).expect("builds");
         let Some(TransactionPayload::CoinbasePayloadType(payload)) =
@@ -211,11 +229,75 @@ mod tests {
         };
         // The capture's masternodes do not hash to its coinbase's root, its quorums do.
         payload.merkle_root_masternode_list = list.masternode_merkle_root.expect("masternodes");
-        tamper(payload);
+        (list, coinbase)
+    }
+
+    /// `coinbase` with its payload written as a version this crate does not
+    /// decode, its type and bytes edited, and decoded back from the wire.
+    fn newer_coinbase(
+        coinbase: &Transaction,
+        edit: impl FnOnce(&mut u16, &mut Vec<u8>),
+    ) -> Transaction {
+        let mut newer = coinbase.with_newer_coinbase_payload();
+        let Some(TransactionPayload::RawPayloadType(tx_type, bytes)) =
+            &mut newer.special_transaction_payload
+        else {
+            panic!("a raw payload");
+        };
+        edit(tx_type, bytes);
+        let decoded: Transaction = deserialize(&serialize(&newer)).expect("decodes");
+        assert_eq!(decoded, newer, "the decoder keeps the payload raw");
+        decoded
+    }
+
+    /// A coinbase payload of a version this crate does not decode stays raw.
+    /// Dash Core only appends fields in a new version, so the roots are read
+    /// from the fields this crate knows, at bytes 6..38 and 38..70, and still
+    /// have to match. A raw payload of a version this crate decodes, which
+    /// Dash Core never produces, or of another transaction type commits to
+    /// nothing.
+    #[test_case(|_, _| {}, true; "of a newer version")]
+    #[test_case(|_, bytes| bytes[6] ^= 1, false; "of a newer version off the masternode list root")]
+    #[test_case(|_, bytes| bytes[38] ^= 1, false; "of a newer version off the quorum list root")]
+    #[test_case(
+        |_, bytes| bytes[..2].copy_from_slice(&4u16.to_le_bytes()),
+        false;
+        "of a known version with bytes left over"
+    )]
+    #[test_case(
+        |tx_type, _| *tx_type = UNASSIGNED_SPECIAL_TX_TYPE,
+        false;
+        "of another transaction type"
+    )]
+    fn verify_coinbase_roots_of_a_raw_payload(edit: fn(&mut u16, &mut Vec<u8>), matches: bool) {
+        let (list, coinbase) = fixture_list(|_| {});
+        let coinbase = newer_coinbase(&coinbase, edit);
 
         let result = list.verify_coinbase_roots(&coinbase);
 
-        assert_eq!(result, error.map_or(Ok(()), |error| Err(error(list.block_hash))));
+        let expected = if matches {
+            Ok(())
+        } else {
+            Err(SmlError::CoinbaseCommitmentMismatch(list.block_hash))
+        };
+        assert_eq!(result, expected);
+    }
+
+    /// A newer coinbase payload cut short before its quorum list root commits
+    /// to nothing, even for a list without quorums, whose root is all zeros.
+    #[test]
+    fn a_newer_coinbase_payload_cut_short_commits_to_nothing() {
+        let (list, coinbase) = fixture_list(|diff| {
+            diff.new_quorums.clear();
+            diff.quorums_chainlock_signatures.clear();
+        });
+        assert!(list.quorums.is_empty());
+        let coinbase = newer_coinbase(&coinbase, |_, bytes| bytes.truncate(38));
+        assert_eq!(CoinbasePayload::from_coinbase_tx(&coinbase), None);
+
+        let result = list.verify_coinbase_roots(&coinbase);
+
+        assert_eq!(result, Err(SmlError::CoinbaseCommitmentMismatch(list.block_hash)));
     }
 
     /// Offset of the quorum type byte in a serialized commitment, after its

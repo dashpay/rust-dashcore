@@ -20,12 +20,18 @@
 
 use hashes::Hash;
 
+use super::{TransactionPayload, TransactionType};
+use crate::Transaction;
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::encode::{compact_size_len, read_compact_size, write_compact_size};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::io;
 use crate::io::{Error, ErrorKind};
+
+/// Newest payload version whose layout this crate decodes: the last version
+/// `CoinbasePayload::consensus_decode` reads fields for.
+const NEWEST_DECODED_VERSION: u16 = 4;
 
 /// A Coinbase payload. This is contained as the payload of a coinbase special transaction.
 /// The Coinbase payload is described in DIP4.
@@ -201,6 +207,32 @@ impl CoinbasePayload {
             best_cl_signature,
             asset_locked_amount,
             merkle_root_asset_unlocks: None,
+        }
+    }
+
+    /// The payload of `coinbase`, read as far as this crate knows its layout.
+    ///
+    /// The transaction decoder keeps a payload raw when bytes follow the fields this crate
+    /// knows, as they do in a newer version that appends fields. Dash Core only appends fields in
+    /// a new version, so a raw payload of a version newer than this crate decodes is read as the
+    /// newest version it decodes, leaving the newer fields out. Should a later version change
+    /// the meaning of a field this crate knows, this has to change with it. The result keeps the
+    /// payload's `version`, so it does not encode to the payload's bytes.
+    ///
+    /// `None` for a transaction without a coinbase payload, a raw payload of a version this
+    /// crate decodes, which Dash Core never produces, or one too short for the fields this crate
+    /// knows.
+    pub fn from_coinbase_tx(coinbase: &Transaction) -> Option<CoinbasePayload> {
+        match &coinbase.special_transaction_payload {
+            Some(TransactionPayload::CoinbasePayloadType(payload)) => Some(payload.clone()),
+            Some(TransactionPayload::RawPayloadType(tx_type, bytes))
+                if *tx_type == TransactionType::Coinbase.to_u16() =>
+            {
+                CoinbasePayload::consensus_decode(&mut &bytes[..])
+                    .ok()
+                    .filter(|payload| payload.version > NEWEST_DECODED_VERSION)
+            }
+            _ => None,
         }
     }
 
@@ -383,9 +415,11 @@ impl Decodable for CoinbasePayload {
 mod tests {
     use hashes::Hash;
 
+    use crate::Transaction;
     use crate::bls_sig_utils::BLSSignature;
     use crate::consensus::{Decodable, Encodable};
     use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
+    use crate::transaction::special_transaction::TransactionPayload;
     use crate::transaction::special_transaction::coinbase::CoinbasePayload;
     use test_case::test_case;
 
@@ -679,5 +713,70 @@ mod tests {
         let mut json = serde_json::to_value(&payload).unwrap();
         json["version"] = 3.into();
         assert!(serde_json::from_value::<CoinbasePayload>(json).is_err());
+    }
+
+    /// A raw coinbase payload of a version newer than this crate decodes is
+    /// read as far as it knows the layout: the fields up to version 4, under
+    /// the payload's own version. A raw payload of a version it decodes, or
+    /// one cut short anywhere inside those fields, gives nothing.
+    #[test]
+    fn from_coinbase_tx_reads_the_known_fields_of_a_newer_payload() {
+        let typed = mainnet_v20_payload();
+        let coinbase = Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: Some(TransactionPayload::CoinbasePayloadType(
+                typed.clone(),
+            )),
+        };
+        assert_eq!(CoinbasePayload::from_coinbase_tx(&coinbase), Some(typed.clone()));
+        let newer = coinbase.with_newer_coinbase_payload();
+        let Some(TransactionPayload::RawPayloadType(tx_type, bytes)) =
+            &newer.special_transaction_payload
+        else {
+            panic!("a raw payload");
+        };
+        let raw = |bytes: Vec<u8>| Transaction {
+            special_transaction_payload: Some(TransactionPayload::RawPayloadType(*tx_type, bytes)),
+            ..newer.clone()
+        };
+        let with_version = |version: u16| {
+            let mut bytes = bytes.clone();
+            bytes[..2].copy_from_slice(&version.to_le_bytes());
+            raw(bytes)
+        };
+
+        let known_fields = CoinbasePayload {
+            version: 4,
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::all_zeros()),
+            ..typed
+        };
+        for version in [5, u16::MAX] {
+            assert_eq!(
+                CoinbasePayload::from_coinbase_tx(&with_version(version)),
+                Some(CoinbasePayload {
+                    version,
+                    ..known_fields.clone()
+                }),
+                "version {version}"
+            );
+        }
+        for version in 0..=4 {
+            assert_eq!(
+                CoinbasePayload::from_coinbase_tx(&with_version(version)),
+                None,
+                "version {version}"
+            );
+        }
+        for len in 0..known_fields.size() {
+            assert_eq!(
+                CoinbasePayload::from_coinbase_tx(&raw(bytes[..len].to_vec())),
+                None,
+                "cut to {len} bytes"
+            );
+        }
+        assert_eq!(CoinbasePayload::from_coinbase_tx(&Transaction::dummy_empty()), None);
     }
 }

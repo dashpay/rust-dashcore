@@ -450,7 +450,7 @@ The crate uses a custom `Error` type with specific variants:
 
 ## Version Compatibility
 
-- Minimum Supported Rust Version (MSRV): 1.89
+- Minimum Supported Rust Version (MSRV): `rust-version` in the workspace `Cargo.toml`
 - Compatible with Dash Core: 0.18.0 - 0.23.x
 - Follows semantic versioning (currently 0.x.x = unstable API)
 
