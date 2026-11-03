@@ -59,13 +59,13 @@ impl LLMQModifierType {
         match self {
             LLMQModifierType::PreCoreV20(llmq_type, block_hash) => {
                 // Encode LLMQ type as VarInt
-                VarInt(*llmq_type as u64).consensus_encode(&mut writer).unwrap();
+                VarInt(u64::from(llmq_type.index())).consensus_encode(&mut writer).unwrap();
                 // Encode block hash as raw bytes
                 writer.write_all(&block_hash.to_byte_array()).unwrap();
             }
             LLMQModifierType::CoreV20(llmq_type, block_height, cl_signature) => {
                 // Encode LLMQ type as VarInt
-                VarInt(*llmq_type as u64).consensus_encode(&mut writer).unwrap();
+                VarInt(u64::from(llmq_type.index())).consensus_encode(&mut writer).unwrap();
                 // Encode block height
                 block_height.consensus_encode(&mut writer).unwrap();
                 // Encode the signature

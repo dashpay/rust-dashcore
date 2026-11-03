@@ -217,8 +217,9 @@ pub fn devnet_platform_type_override() -> Option<LLMQType> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[repr(u8)]
 pub enum LLMQType {
-    LlmqtypeUnknown = 0, // other kind of
+    LlmqtypeUnknown = 0, // type 0, which no network defines
     Llmqtype50_60 = 1,   // 50 members,  30  (60%) threshold, 24 / day
     Llmqtype400_60 = 2,  // 400 members, 240 (60%) threshold, 2  / day
     Llmqtype400_85 = 3,  // 400 members, 340 (85%) threshold, 1  / day
@@ -235,6 +236,11 @@ pub enum LLMQType {
     LlmqtypeDevnetDIP0024 = 105, // 8 members, 4 (50%) threshold, one per hour. Params might differ when -llmqdevnetparams is used
     LlmqtypeTestnetPlatform = 106, // 8 members, 4 (50%) threshold, one per hour. Params might differ when -llmqdevnetparams is used
     LlmqtypeDevnetPlatform = 107, // 8 members, 4 (50%) threshold, one per hour. Params might differ when -llmqdevnetparams is used
+
+    /// A type byte no variant above stands for, kept so that a commitment of a type this crate
+    /// does not know encodes back to the bytes Dash Core hashes into the coinbase's quorum root.
+    /// It takes devnet parameters, as `LlmqtypeUnknown` does.
+    Unknown(u8),
 }
 
 impl Display for LLMQType {
@@ -255,6 +261,7 @@ impl Display for LLMQType {
             LLMQType::LlmqtypeDevnetDIP0024 => "105_Dev-dip-24",
             LLMQType::LlmqtypeTestnetPlatform => "106_Test-Platform",
             LLMQType::LlmqtypeDevnetPlatform => "107_Dev-Platform",
+            LLMQType::Unknown(byte) => return write!(f, "{byte}_Unknown"),
         })
     }
 }
@@ -262,7 +269,9 @@ impl Display for LLMQType {
 impl LLMQType {
     pub fn params(&self) -> LlmqParams {
         match self {
-            LLMQType::LlmqtypeDevnet | LLMQType::LlmqtypeUnknown => llmq_devnet_params(),
+            LLMQType::LlmqtypeDevnet | LLMQType::LlmqtypeUnknown | LLMQType::Unknown(_) => {
+                llmq_devnet_params()
+            }
             _ => CoreLlmqType::new(self.index())
                 .params()
                 .expect("every named LLMQ type but devnet has fixed parameters"),
@@ -308,7 +317,8 @@ impl From<u8> for LLMQType {
             105 => LLMQType::LlmqtypeDevnetDIP0024,
             106 => LLMQType::LlmqtypeTestnetPlatform,
             107 => LLMQType::LlmqtypeDevnetPlatform,
-            _ => LLMQType::LlmqtypeUnknown,
+            0 => LLMQType::LlmqtypeUnknown,
+            byte => LLMQType::Unknown(byte),
         }
     }
 }
@@ -321,7 +331,24 @@ impl From<CoreLlmqType> for LLMQType {
 
 impl From<LLMQType> for u8 {
     fn from(value: LLMQType) -> Self {
-        value as u8
+        match value {
+            LLMQType::LlmqtypeUnknown => 0,
+            LLMQType::Llmqtype50_60 => 1,
+            LLMQType::Llmqtype400_60 => 2,
+            LLMQType::Llmqtype400_85 => 3,
+            LLMQType::Llmqtype100_67 => 4,
+            LLMQType::Llmqtype60_75 => 5,
+            LLMQType::Llmqtype25_67 => 6,
+            LLMQType::LlmqtypeTest => 100,
+            LLMQType::LlmqtypeDevnet => 101,
+            LLMQType::LlmqtypeTestV17 => 102,
+            LLMQType::LlmqtypeTestDIP0024 => 103,
+            LLMQType::LlmqtypeTestInstantSend => 104,
+            LLMQType::LlmqtypeDevnetDIP0024 => 105,
+            LLMQType::LlmqtypeTestnetPlatform => 106,
+            LLMQType::LlmqtypeDevnetPlatform => 107,
+            LLMQType::Unknown(byte) => byte,
+        }
     }
 }
 
