@@ -30,7 +30,7 @@ jobs:
   validate-triggers:
     runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           sparse-checkout: |
             .github/scripts
@@ -78,7 +78,7 @@ jobs:
   evaluate:
     runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
         with:
           sparse-checkout: .github/scripts
           sparse-checkout-cone-mode: true
