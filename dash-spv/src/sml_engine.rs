@@ -1483,7 +1483,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
-    use super::{build_cycle_quorum_map, qr_info_diffs};
+    use super::{build_cycle_quorum_map, qr_info_diffs, valid_coinbase_chain_lock};
     use super::{FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
@@ -3304,6 +3304,25 @@ mod tests {
             None,
             "an entry for another block at the height reads as missing"
         );
+    }
+
+    /// A coinbase payload of a version this library does not decode still
+    /// carries the ChainLock member selection reads: Dash Core only appends
+    /// fields in a new version, so it holds the version 3 fields where they
+    /// were.
+    #[test]
+    fn a_newer_coinbase_payload_carries_its_chain_lock() {
+        const HEIGHT: CoreBlockHeight = 2_227_096;
+        let diff: MnListDiff = deserialize(include_bytes!(
+            "../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("diff");
+        let chain_lock = valid_coinbase_chain_lock(&diff.coinbase_tx, HEIGHT);
+        assert!(chain_lock.is_some(), "the capture's coinbase carries a ChainLock");
+
+        let newer = diff.coinbase_tx.with_newer_coinbase_payload();
+
+        assert_eq!(valid_coinbase_chain_lock(&newer, HEIGHT), chain_lock);
     }
 
     /// On an engine that checks coinbases, a restarted engine records the
