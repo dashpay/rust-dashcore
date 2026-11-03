@@ -30,7 +30,9 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - name: Check workspace compiles on MSRV
         run: just msrv
 
@@ -41,7 +43,9 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - name: Build documentation
         run: just doc
 
@@ -50,7 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - run: pip install pyyaml
       - name: Verify group config and hardcoded matrix
         run: just gha::verify-groups
@@ -62,7 +68,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - name: Verify the action lockfile
         env:
           GH_TOKEN: ${{ github.token }}

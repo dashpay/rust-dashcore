@@ -11,8 +11,7 @@ workflows:
         - 'codecov/codecov-action@v6'
         - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2'
-        - 'taiki-e/install-action@cargo-llvm-cov'
-        - 'taiki-e/install-action@just'
+        - 'taiki-e/install-action@v2'
     '.github/workflows/changelog-guard.yml': []
     '.github/workflows/conflict-check.yml':
         - 'eps1lon/actions-label-merge-conflict@v3'
@@ -20,7 +19,7 @@ workflows:
         - 'actions/checkout@v6'
         - 'dtolnay/rust-toolchain@stable'
         - 'swatinem/rust-cache@v2'
-        - 'taiki-e/install-action@just'
+        - 'taiki-e/install-action@v2'
     '.github/workflows/pr-review-policy.yml': []
     '.github/workflows/pr-title.yml':
         - 'amannn/action-semantic-pull-request@v6'
@@ -39,17 +38,17 @@ workflows:
         - 'dtolnay/rust-toolchain@stable'
         - 'embarkstudios/cargo-deny-action@v2'
         - 'swatinem/rust-cache@v2'
-        - 'taiki-e/install-action@just'
+        - 'taiki-e/install-action@v2'
     '.github/workflows/sanitizer.yml':
         - 'actions/checkout@v6'
         - 'dtolnay/rust-toolchain@nightly'
-        - 'taiki-e/install-action@just'
+        - 'taiki-e/install-action@v2'
     '.github/workflows/update-masternode-seeds.yml':
         - 'actions/checkout@v6'
         - 'dtolnay/rust-toolchain@stable'
         - 'peter-evans/create-pull-request@v7'
         - 'swatinem/rust-cache@v2'
-        - 'taiki-e/install-action@just'
+        - 'taiki-e/install-action@v2'
 dependencies:
     'actions/cache@v4':
         ref: 'v4'
@@ -135,13 +134,8 @@ dependencies:
         commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
         owner_id: 580492
         repo_id: 298565987
-    'taiki-e/install-action@cargo-llvm-cov':
-        ref: 'cargo-llvm-cov'
-        commit: 'sha1-3597834a0a5e3e38f058c7b6dc454f0aa1a25609'
-        owner_id: 43724913
-        repo_id: 442947557
-    'taiki-e/install-action@just':
-        ref: 'just'
-        commit: 'sha1-88d9f9562f8b818c3547ffb63d403044226d2852'
+    'taiki-e/install-action@v2':
+        ref: 'v2'
+        commit: 'sha1-682ce6c3c696a4cd5168a05f98e51aa02b877941'
         owner_id: 43724913
         repo_id: 442947557
