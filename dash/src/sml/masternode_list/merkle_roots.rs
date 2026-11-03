@@ -156,10 +156,10 @@ impl MasternodeList {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
-    use test_case::test_case;
+    use std::sync::Arc;
 
-    use hashes::sha256d;
+    use hashes::{Hash, sha256d};
+    use test_case::test_case;
 
     use super::merkle_root_from_hashes;
     use crate::consensus::{deserialize, serialize};
@@ -169,7 +169,7 @@ mod tests {
     use crate::sml::masternode_list::MasternodeList;
     use crate::transaction::special_transaction::TransactionPayload;
     use crate::transaction::special_transaction::coinbase::CoinbasePayload;
-    use crate::{BlockHash, Network};
+    use crate::{BlockHash, Network, QuorumHash};
 
     #[test_case(|_| {}, None; "matching")]
     #[test_case(
@@ -265,5 +265,52 @@ mod tests {
             Err(SmlError::CoinbaseCommitmentMismatch(list.block_hash))
         };
         assert_eq!(result, expected);
+    }
+
+    /// A list maps each commitment by the type and quorum hash it hashes, so
+    /// one built from diffs never holds a commitment twice. One edited
+    /// through its public maps or restored from damaged storage can. Doubling
+    /// the last leaf of an odd level leaves the merkle root as it was, so Dash
+    /// Core refuses such a root (`mutated-calc-cbtx-quorummerkleroot`), and so
+    /// does this check.
+    #[test]
+    fn a_quorum_list_holding_a_commitment_twice_is_refused() {
+        let diff: MnListDiff = deserialize(include_bytes!(
+            "../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("expected to deserialize");
+        let mut coinbase = diff.coinbase_tx.clone();
+        let mut list =
+            MasternodeList::from_diff(diff, 2_227_096, Network::Mainnet).expect("builds");
+        let quorums = Arc::make_mut(&mut list.quorums);
+        if quorums.values().map(|quorums| quorums.len()).sum::<usize>() % 2 == 0 {
+            quorums.values_mut().next().expect("quorums").pop_first();
+        }
+        let last = Arc::clone(
+            quorums
+                .values()
+                .flat_map(|quorums| quorums.values())
+                .max_by_key(|quorum| quorum.entry_hash)
+                .expect("quorums"),
+        );
+        let committed = list.calculate_llmq_merkle_root().expect("quorums");
+        let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+            &mut coinbase.special_transaction_payload
+        else {
+            panic!("coinbase payload");
+        };
+        payload.merkle_root_masternode_list = list.masternode_merkle_root.expect("masternodes");
+        payload.merkle_root_quorums = committed;
+        assert_eq!(list.verify_coinbase_roots(&coinbase), Ok(()));
+
+        Arc::make_mut(&mut list.quorums)
+            .get_mut(&last.quorum_entry.llmq_type)
+            .expect("its type")
+            .insert(QuorumHash::from_byte_array([0xEE; 32]), last);
+        assert_eq!(list.calculate_llmq_merkle_root(), Some(committed), "the root is as it was");
+
+        let result = list.verify_coinbase_roots(&coinbase);
+
+        assert_eq!(result, Err(SmlError::CoinbaseCommitmentMismatch(list.block_hash)));
     }
 }
