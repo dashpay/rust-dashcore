@@ -6,7 +6,7 @@
 - FFI bindings are in `*-ffi`. Shared helpers in `internals/` and `test-utils/`.
 
 ## Build, Test, and Development Commands
-- MSRV: 1.89. Build all: `cargo build --workspace --all-features`
+- MSRV: `rust-version` in the workspace `Cargo.toml`. Build all: `cargo build --workspace --all-features`
 - Test all: `cargo test --workspace --all-features`; `just test [group...]` runs the groups in `.github/ci-groups.yml`
 - Targeted tests: `cargo test -p dash-spv --all-features`
 - FFI iOS builds: `just key-wallet-ffi::build-ios`
