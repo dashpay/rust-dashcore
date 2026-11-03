@@ -22,7 +22,10 @@ pub enum LLMQEntryVerificationSkipStatus {
     /// caller. The block itself may be known; the chain-lock signature for
     /// it just hasn't been fetched yet. Distinct from `UnknownBlock` so
     /// retry logic can dispatch to a chain-lock fetch instead of a block
-    /// fetch.
+    /// fetch. Also given to a quorum whose masternode list, at this
+    /// height/block hash, is above every block a verified chain lock or a
+    /// trusted checkpoint makes final: until one covers it, the list may come
+    /// from headers a peer made up.
     MissingChainLock(CoreBlockHeight, BlockHash),
     /// The quorum entry came through without an attached
     /// `VerifyingChainLockSignaturesType::Rotating`. Each of the four quarter

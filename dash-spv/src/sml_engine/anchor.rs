@@ -6,6 +6,7 @@
 //! network without checkpoints from the first ChainLock a DIP-6 verified quorum
 //! signs.
 
+use super::helpers::QUORUM_WALK_BACK_ACTIVE_WINDOWS;
 use crate::chain::CheckpointManager;
 use crate::error::StorageResult;
 use crate::sml_engine::{FeedError, MasternodeListEngine};
@@ -273,6 +274,13 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
     }
 
+    /// [`Self::try_is_anchored`], with a header storage that cannot be read
+    /// vouching for nothing.
+    async fn is_anchored(&self, list: &MasternodeList, anchor: &ChainLockAnchor) -> bool {
+        list.known_height <= anchor.height
+            && self.stored_hash_is(list.known_height, list.block_hash).await
+    }
+
     /// The newest list at or below `height` that the usable anchor covers.
     pub(crate) async fn latest_anchored_list(
         &self,
@@ -304,6 +312,38 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             }
         }
         Ok(None)
+    }
+
+    /// The quorum as the newest anchored list at or below `height` holding it
+    /// has it, with that list. Like
+    /// [`Self::quorum_entry_for_hash_at_or_before_height`] the walk goes back
+    /// `QUORUM_WALK_BACK_ACTIVE_WINDOWS` and skips `Invalid` entries. The entry
+    /// comes from the anchored list, never from a list above the anchor, which
+    /// may carry another commitment under the same hash.
+    pub(crate) async fn anchored_quorum(
+        &self,
+        llmq_type: LLMQType,
+        quorum_hash: QuorumHash,
+        height: CoreBlockHeight,
+    ) -> Option<(&MasternodeList, &QualifiedQuorumEntry)> {
+        let anchor = self.usable_anchor().await?;
+        let top = height.min(anchor.height);
+        let floor = top.saturating_sub(
+            llmq_type.active_window().saturating_mul(QUORUM_WALK_BACK_ACTIVE_WINDOWS),
+        );
+        for (_, list) in self.masternode_lists.range(floor..=top).rev() {
+            let Some(quorum) =
+                list.quorum_entry_of_type_for_quorum_hash(llmq_type, quorum_hash).filter(
+                    |quorum| !matches!(quorum.verified, LLMQEntryVerificationStatus::Invalid(_)),
+                )
+            else {
+                continue;
+            };
+            if self.is_anchored(list, &anchor).await {
+                return Some((list, quorum));
+            }
+        }
+        None
     }
 
     /// The entry of `quorum_hash` in the anchored list that vouches for it as
@@ -859,6 +899,63 @@ mod tests {
         );
     }
 
+    /// A list above the anchor proves nothing, so the quorum a peer minted in
+    /// it does not resolve as anchored.
+    #[tokio::test]
+    async fn a_quorum_minted_above_the_anchor_does_not_resolve() {
+        let mut engine = TestEngine::mainnet_fixture();
+        anchor_at_newest_list(&mut engine);
+        let forged = forge_chain_lock_above_the_newest_list(&mut engine);
+        let chain_locks_type = engine.network().chain_locks_type();
+        let forged_list = engine.latest_masternode_list().expect("the forged list").clone();
+        let request_id = forged.request_id().expect("request id");
+        let minted = forged_list
+            .quorum_for_request(chain_locks_type, &request_id)
+            .expect("selected")
+            .quorum_entry
+            .quorum_hash;
+
+        assert!(engine.anchored_quorum(chain_locks_type, minted, u32::MAX).await.is_none());
+    }
+
+    /// A list above the anchor can carry another commitment under the hash of
+    /// an anchored quorum. The anchored entry, and its key, is the one used.
+    #[tokio::test]
+    async fn an_unanchored_list_cannot_swap_the_key_of_an_anchored_quorum() {
+        let mut engine = TestEngine::mainnet_fixture();
+        anchor_at_newest_list(&mut engine);
+        let chain_locks_type = engine.network().chain_locks_type();
+        let mut list = engine.latest_masternode_list().expect("anchored list").clone();
+        let (quorum_hash, genuine) = list.quorums[&chain_locks_type]
+            .iter()
+            .next()
+            .map(|(hash, quorum)| (*hash, quorum.quorum_entry.quorum_public_key))
+            .expect("a ChainLock quorum");
+
+        let mut swapped = quorum_entry(chain_locks_type, quorum_hash, None);
+        swapped.quorum_public_key = dashcore::bls_sig_utils::BLSPublicKey::from([9; 48]);
+        let height = list.known_height + 1;
+        list.known_height = height;
+        list.block_hash = BlockHash::from_byte_array([0xee; 32]);
+        Arc::make_mut(&mut list.quorums)
+            .get_mut(&chain_locks_type)
+            .expect("ChainLock quorums")
+            .insert(quorum_hash, Arc::new(swapped.into()));
+        engine.feed_block_height(height, list.block_hash);
+        engine.masternode_lists.insert(height, list);
+
+        let (anchored_list, quorum) = engine
+            .anchored_quorum(chain_locks_type, quorum_hash, u32::MAX)
+            .await
+            .expect("the anchored entry");
+        assert_eq!(quorum.quorum_entry.quorum_public_key, genuine);
+        assert!(anchored_list.known_height < height);
+    }
+
+    /// Each ChainLock mining window between the newest anchored list and the
+    /// signing height may retire that list's oldest quorum, so a list with no
+    /// exact anchored list around the signing height vouches only for its
+    /// newest `active − windows` quorums.
     #[tokio::test]
     async fn an_anchored_quorum_the_crossed_windows_may_have_retired_does_not_sign() {
         let chain_locks_type = Network::Mainnet.chain_locks_type();
@@ -1442,5 +1539,32 @@ mod tests {
 
         assert_eq!(engine.chain_lock_anchor(), None);
         assert_eq!(engine.usable_anchor().await, None);
+    }
+
+    /// A quorum that only a list off the header chain holds, below the anchor,
+    /// does not resolve as anchored: that list may sit on a branch a peer made
+    /// up, or one the chain left.
+    #[tokio::test]
+    async fn a_quorum_only_a_list_off_the_header_chain_holds_does_not_resolve() {
+        let mut engine = TestEngine::mainnet_fixture();
+        anchor_at_newest_list(&mut engine);
+        let chain_locks_type = engine.network().chain_locks_type();
+        let newest = engine.latest_masternode_list().expect("the anchored list").known_height;
+        let off_chain = (0..newest)
+            .rev()
+            .find(|height| engine.block_hash_at(*height).is_none())
+            .expect("a height the fixture holds no block at");
+        let quorum_hash = QuorumHash::from_byte_array([0x99; 32]);
+        let mut list = MasternodeList::empty(BlockHash::from_byte_array([0xab; 32]), off_chain);
+        Arc::make_mut(&mut list.quorums)
+            .entry(chain_locks_type)
+            .or_default()
+            .insert(quorum_hash, Arc::new(forged_chain_lock_quorum(chain_locks_type, quorum_hash)));
+        engine.masternode_lists.insert(off_chain, list);
+
+        assert!(engine
+            .quorum_entry_for_hash_at_or_before_height(chain_locks_type, quorum_hash, newest)
+            .is_some());
+        assert!(engine.anchored_quorum(chain_locks_type, quorum_hash, u32::MAX).await.is_none());
     }
 }

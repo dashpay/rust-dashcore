@@ -13,7 +13,7 @@ use std::sync::Arc;
 /// Active windows [`MasternodeListEngine::quorum_entry_for_hash_at_or_before_height`]
 /// walks back. Platform selects a signing quorum about 4.5 DKG intervals back,
 /// more than one window, and four bound a miss with a wide margin.
-const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
+pub(super) const QUORUM_WALK_BACK_ACTIVE_WINDOWS: u32 = 4;
 
 /// Cycles below the tip cycle the oldest diff of an `extraShare` QRInfo
 /// reaches (h-4c, DIP-24), so its base must be at least that old.
