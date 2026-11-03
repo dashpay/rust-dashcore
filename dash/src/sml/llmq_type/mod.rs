@@ -433,6 +433,38 @@ mod tests {
         }
     }
 
+    /// Bincode writes a variant's position, and stored masternode engine
+    /// snapshots hold those bytes, so every named type keeps its position and
+    /// `Unknown` comes after them all.
+    #[cfg(feature = "bincode")]
+    #[test]
+    fn bincode_writes_every_type_at_its_position() {
+        let named = [
+            LLMQType::LlmqtypeUnknown,
+            LLMQType::Llmqtype50_60,
+            LLMQType::Llmqtype400_60,
+            LLMQType::Llmqtype400_85,
+            LLMQType::Llmqtype100_67,
+            LLMQType::Llmqtype60_75,
+            LLMQType::Llmqtype25_67,
+            LLMQType::LlmqtypeTest,
+            LLMQType::LlmqtypeDevnet,
+            LLMQType::LlmqtypeTestV17,
+            LLMQType::LlmqtypeTestDIP0024,
+            LLMQType::LlmqtypeTestInstantSend,
+            LLMQType::LlmqtypeDevnetDIP0024,
+            LLMQType::LlmqtypeTestnetPlatform,
+            LLMQType::LlmqtypeDevnetPlatform,
+        ];
+        let config = bincode::config::standard();
+        for (position, llmq_type) in named.into_iter().enumerate() {
+            let encoded = bincode::encode_to_vec(llmq_type, config).expect("encodes");
+            assert_eq!(encoded, [position as u8], "{llmq_type}");
+        }
+        let encoded = bincode::encode_to_vec(LLMQType::Unknown(200), config).expect("encodes");
+        assert_eq!(encoded, [named.len() as u8, 200]);
+    }
+
     #[test]
     fn test_get_cycle_base_height() {
         let llmq = LLMQType::Llmqtype50_60; // interval 24
