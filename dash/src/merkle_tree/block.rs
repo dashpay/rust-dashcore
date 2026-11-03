@@ -676,6 +676,32 @@ mod tests {
         }
     }
 
+    /// A Dash block holds up to 33,333 transactions: its 2 MB size limit over
+    /// the 60 bytes of the smallest transaction, the bound Dash Core's
+    /// `CPartialMerkleTree::ExtractMatches` allows. A proof of a transaction
+    /// in such a block is accepted, one claiming a larger block is refused.
+    #[test]
+    fn a_partial_merkle_tree_spans_as_many_transactions_as_a_dash_block_holds() {
+        let tree = |count: u32| {
+            let txids: Vec<Txid> = (0..count)
+                .map(|i| {
+                    let mut bytes = [0u8; 32];
+                    bytes[..4].copy_from_slice(&i.to_le_bytes());
+                    Txid::from_byte_array(bytes)
+                })
+                .collect();
+            let mut matches = vec![false; count as usize];
+            matches[0] = true;
+            PartialMerkleTree::from_txids(&txids, &matches)
+        };
+
+        assert!(tree(33_333).extract_matches(&mut vec![], &mut vec![]).is_ok());
+        assert_eq!(
+            tree(33_334).extract_matches(&mut vec![], &mut vec![]),
+            Err(MerkleBlockError::TooManyTransactions)
+        );
+    }
+
     #[test]
     fn pmt_malleability() {
         // Create some fake tx ids with the last 2 hashes repeating
