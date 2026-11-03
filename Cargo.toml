@@ -1,8 +1,40 @@
 [workspace]
-members = ["dash", "crypto", "dash-network", "hashes", "internals", "fuzz", "rpc-client", "rpc-json", "rpc-integration-test", "key-wallet", "key-wallet-manager", "key-wallet-ffi", "dash-spv", "git-state", "dash-network-seeds", "masternode-seeds-fetcher", "dash-spv-bench"]
-resolver = "2"
+members = [
+    "dash",
+    "crypto",
+    "dash-network",
+    "hashes",
+    "internals",
+    "fuzz",
+    "rpc-client",
+    "rpc-json",
+    "rpc-integration-test",
+    "key-wallet",
+    "key-wallet-manager",
+    "key-wallet-ffi",
+    "dash-spv",
+    "git-state",
+    "dash-network-seeds",
+    "masternode-seeds-fetcher",
+    "dash-spv-bench",
+]
+resolver = "3"
 
 [workspace.dependencies]
+# Crates of this workspace
+dash-network = { path = "dash-network" }
+dash-network-seeds = { path = "dash-network-seeds" }
+dash-spv = { path = "dash-spv" }
+dashcore = { path = "dash" }
+dashcore-crypto = { path = "crypto" }
+dashcore-rpc = { path = "rpc-client" }
+dashcore-rpc-json = { path = "rpc-json" }
+dashcore_hashes = { path = "hashes" }
+git-state = { path = "git-state" }
+internals = { path = "internals", package = "dashcore-private" }
+key-wallet = { path = "key-wallet" }
+key-wallet-manager = { path = "key-wallet-manager" }
+
 # Packages shared across crates
 bincode = { package = "grovedb-bincode", version = "=2.1.0" }
 bincode_derive = { package = "grovedb-bincode-derive", version = "=2.1.0" }
@@ -10,6 +42,22 @@ futures = "0.3"
 rayon = "1.11"
 serde = { version = "1.0.219", default-features = false }
 zeroize = { version = "1.8", features = ["derive"] }
+anyhow = "1.0"
+async-trait = "0.1"
+cbindgen = "0.29"
+chrono = { version = "0.4.20", default-features = false }
+clap = { version = "4.0", features = ["derive", "env"] }
+criterion = "0.8.1"
+rand = "0.9"
+serde_json = "1.0.140"
+serde_test = "1.0.177"
+tempfile = "3.0"
+test-case = "3.4"
+thiserror = "2"
+tokio = "1.32"
+tokio-util = { version = "0.7", default-features = false }
+tracing = "0.1"
+tracing-subscriber = "0.3.20"
 
 # Packages from `dashpay/base-sdk`, MUST share same version ACROSS crates
 dash-num = { git = "https://github.com/dashpay/base-sdk", rev = "89828032b6be3341cafda0ce433c010a23217b39", default-features = false }
@@ -25,6 +73,13 @@ bitcoin-crypto = { git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "
 bitcoin-units = { git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "7ba35c7c1dd63892bfb9c9395bbd80e2ab5df516", default-features = false }
 hex-conservative = { version = "1.3.0" }
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "deny", check-cfg = [
+    'cfg(bench)',
+    'cfg(fuzzing)',
+    'cfg(kani)',
+] }
+
 [workspace.package]
 authors = ["The rust-dashcore Developers"]
 edition = "2024"
@@ -36,17 +91,10 @@ version = "0.46.0"
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }
 
-[profile.release]
-# Default to unwinding for most crates
-panic = "unwind"
-
 [profile.release.package.dash-fuzz]
 # Disable LTO and keep debuginfo for honggfuzz to avoid link GC issues
 codegen-units = 16
 debug = 1
-
-[profile.dev]
-# Default to unwinding for most crates
 
 [profile.dev.package.dash-pow]
 # Unoptimized X11 is slow enough to stall header sync

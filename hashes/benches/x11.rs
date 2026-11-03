@@ -6,8 +6,9 @@
 
 //! Benchmarks for the proof of work scheme
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use dashcore_hashes::{hash_x11, Hash, HashEngine};
+use std::hint::black_box;
 
 fn bench_x11(c: &mut Criterion) {
     let mut group = c.benchmark_group("x11");

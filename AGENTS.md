@@ -6,7 +6,7 @@
 - FFI bindings are in `*-ffi`. Shared helpers in `internals/` and `test-utils/`.
 
 ## Build, Test, and Development Commands
-- MSRV: 1.89. Build all: `cargo build --workspace --all-features`
+- MSRV: `rust-version` in the workspace `Cargo.toml`. Build all: `cargo build --workspace --all-features`
 - Test all: `cargo test --workspace --all-features`; `just test [group...]` runs the groups in `.github/ci-groups.yml`
 - Targeted tests: `cargo test -p dash-spv --all-features`
 - FFI iOS builds: `just key-wallet-ffi::build-ios`
@@ -16,7 +16,7 @@
 
 ## Coding Style & Naming Conventions
 - Mixed editions (2021/2024); follow crate idioms. Prefer async via `tokio` where applicable.
-- Format with `rustfmt` (see `rustfmt.toml`); run `cargo fmt --all` before commits.
+- Format with `rustfmt` (see `.rustfmt.toml`); run `cargo fmt --all` before commits.
 - Lint with `clippy`; some crates deny warnings in CI. Avoid `unwrap()/expect()` in library code; use error types (e.g., `thiserror`).
 - Naming: `snake_case` (funcs/vars), `UpperCamelCase` (types/traits), `SCREAMING_SNAKE_CASE` (consts). Keep modules focused.
 

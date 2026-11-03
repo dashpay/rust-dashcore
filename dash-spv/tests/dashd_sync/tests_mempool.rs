@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::NetworkEvent;
-use dash_spv::test_utils::{create_test_wallet, DashdTestContext, TestChain};
+use dash_spv::test_utils::{create_test_wallet, DashCoreNode, DashdTestContext, TestChain};
 use dashcore::Amount;
 
 use super::helpers::{
@@ -571,6 +571,28 @@ async fn test_broadcast_transaction_local_detection() {
     tracing::info!("test_broadcast_transaction_local_detection passed");
 }
 
+const NODE_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Waits until `node` is at `height` or above and out of initial block download.
+async fn wait_for_node_to_leave_ibd(node: &DashCoreNode, height: u32) {
+    let deadline = tokio::time::Instant::now() + NODE_SYNC_TIMEOUT;
+    loop {
+        let info = node.try_rpc_call("getblockchaininfo", &[]);
+        let synced = info.as_ref().is_some_and(|info| {
+            info["blocks"].as_u64().is_some_and(|blocks| blocks >= u64::from(height))
+                && info["initialblockdownload"] == serde_json::Value::Bool(false)
+        });
+        if synced {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "dashd did not reach height {height} and leave initial block download: {info:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// Verify network acceptance detection with two dashd nodes.
 ///
 /// The SPV client connects to both nodes. A broadcast is sent to only a
@@ -635,6 +657,14 @@ async fn test_broadcast_transaction_network_acceptance() {
     ctx.dashd.node.generate_blocks(1, &miner_address);
     super::helpers::wait_for_sync(&mut handle.progress_receiver, ctx.dashd.initial_height + 1)
         .await;
+
+    // The second node starts on the fixture chain, whose tip is older than
+    // dashd's maximum tip age, so it stays in initial block download until it
+    // connects the block just mined. Until then Dash Core drops a transaction
+    // it receives without a reply and does not request one it is announced
+    // (`src/net_processing.cpp:4858-4861` and `4570-4573` at develop
+    // 15db47875), so the broadcast would not be relayed whichever node gets it.
+    wait_for_node_to_leave_ibd(&dashd2.node, ctx.dashd.initial_height + 1).await;
 
     // Create a signed transaction without broadcasting it via dashd.
     let wallet_name = &ctx.dashd.wallet.wallet_name;

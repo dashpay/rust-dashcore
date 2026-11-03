@@ -1,12 +1,12 @@
-use std::{env, fs, path::Path};
-
 fn main() {
-    if std::env::var("CARGO_FEATURE_FFI").is_ok() {
-        generate_bindings();
-    }
+    #[cfg(feature = "ffi")]
+    generate_bindings();
 }
 
+#[cfg(feature = "ffi")]
 fn generate_bindings() {
+    use std::{env, fs, path::Path};
+
     let crate_name = env::var("CARGO_PKG_NAME").unwrap();
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let out_dir = env::var("OUT_DIR").unwrap();

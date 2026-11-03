@@ -9,24 +9,35 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-dash-spv = { path = "../dash-spv" }
-dashcore = { path = "../dash", features = ["serde", "core-block-hash-use-x11", "message_verification", "bls", "quorum_validation"] }
-key-wallet = { path = "../key-wallet" }
-key-wallet-manager = { path = "../key-wallet-manager" }
+dash-spv = { workspace = true }
+dashcore = { workspace = true, features = [
+    "serde",
+    "core-block-hash-use-x11",
+    "message_verification",
+    "bls",
+    "quorum_validation",
+] }
+key-wallet = { workspace = true }
+key-wallet-manager = { workspace = true }
 
-tokio = { version = "1.0", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 
-anyhow = "1.0"
-tempfile = "3.0"
+anyhow = { workspace = true }
+tempfile = { workspace = true }
 
-tracing = "0.1"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 indicatif = "0.18"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pprof = { version = "0.14", features = ["flamegraph"], optional = true }
-tikv-jemallocator = { version = "0.7", features = ["profiling"], optional = true }
-jemalloc_pprof = { version = "0.9", features = ["flamegraph", "symbolize"], optional = true }
+tikv-jemallocator = { version = "0.7", features = [
+    "profiling",
+], optional = true }
+jemalloc_pprof = { version = "0.9", features = [
+    "flamegraph",
+    "symbolize",
+], optional = true }
 
 [features]
 cpu-profile = ["dep:pprof"]
@@ -35,3 +46,6 @@ heap-profile = ["dep:tikv-jemallocator", "dep:jemalloc_pprof"]
 [[bin]]
 name = "dash-spv-bench"
 path = "src/main.rs"
+
+[lints]
+workspace = true

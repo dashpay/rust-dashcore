@@ -4,8 +4,8 @@
 //! checkpoint every `--interval` blocks, each validated, to `checkpoints/<network>.json`.
 //!
 //! ```bash
-//! cargo run --release -p dash-spv --bin generate-checkpoints -- -n mainnet -d <dir>
-//! cargo run --release -p dash-spv --bin generate-checkpoints -- -n testnet -d <dir>
+//! cargo run --release -p dash-spv --features cli --bin generate-checkpoints -- -n mainnet -d <dir>
+//! cargo run --release -p dash-spv --features cli --bin generate-checkpoints -- -n testnet -d <dir>
 //! ```
 //!
 //! Running again with the same `<dir>` resumes the sync from where it stopped.

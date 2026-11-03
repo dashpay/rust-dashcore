@@ -24,8 +24,8 @@ use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
 use dashcore::sml::quorum_validation_error::QuorumValidationError;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use dashcore::transaction::special_transaction::TransactionPayload;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore::{Network, Transaction};
 use tokio::sync::RwLock;
@@ -172,16 +172,14 @@ fn build_cycle_quorum_map(
 
 /// The ChainLock `coinbase_tx`, the coinbase of the block at `height`, carries
 /// for member selection, as Dash Core's `GetNonNullCoinbaseChainlock` reads it
-/// (`src/evo/cbtx.cpp:200-211`).
+/// (`src/evo/cbtx.cpp:200-211`). A payload of a version newer than this
+/// library decodes is read as far as it knows the layout, see
+/// [`CoinbasePayload::from_coinbase_tx`].
 fn valid_coinbase_chain_lock(
     coinbase_tx: &Transaction,
     height: CoreBlockHeight,
 ) -> Option<BLSSignature> {
-    let Some(TransactionPayload::CoinbasePayloadType(payload)) =
-        &coinbase_tx.special_transaction_payload
-    else {
-        return None;
-    };
+    let payload = CoinbasePayload::from_coinbase_tx(coinbase_tx)?;
     let signature = payload.chain_lock_candidate(height)?;
     signature.as_scheme(BlsScheme::Modern).is_valid().then_some(signature)
 }
@@ -1311,6 +1309,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::build_cycle_quorum_map;
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
+    use super::valid_coinbase_chain_lock;
     use super::{FeedError, MasternodeListEngine, QRInfoFeedResult};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
@@ -3011,6 +3010,25 @@ mod tests {
             None,
             "an entry for another block at the height reads as missing"
         );
+    }
+
+    /// A coinbase payload of a version this library does not decode still
+    /// carries the ChainLock member selection reads: Dash Core only appends
+    /// fields in a new version, so it holds the version 3 fields where they
+    /// were.
+    #[test]
+    fn a_newer_coinbase_payload_carries_its_chain_lock() {
+        const HEIGHT: CoreBlockHeight = 2_227_096;
+        let diff: MnListDiff = deserialize(include_bytes!(
+            "../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("diff");
+        let chain_lock = valid_coinbase_chain_lock(&diff.coinbase_tx, HEIGHT);
+        assert!(chain_lock.is_some(), "the capture's coinbase carries a ChainLock");
+
+        let newer = diff.coinbase_tx.with_newer_coinbase_payload();
+
+        assert_eq!(valid_coinbase_chain_lock(&newer, HEIGHT), chain_lock);
     }
 
     /// On an engine that checks coinbases, a restarted engine records the
