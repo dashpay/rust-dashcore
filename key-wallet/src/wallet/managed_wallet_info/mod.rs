@@ -417,6 +417,86 @@ impl ManagedWalletInfo {
         still_held.into_iter().collect()
     }
 
+    /// Restore `utxos` the host stored, each into the funds account whose
+    /// address pools hold its script, and return the ones no account holds.
+    ///
+    /// Addresses are found the way a rescan finds them: each pool is extended
+    /// to its own `gap_limit` past its highest used address, a matched
+    /// address is marked used, and this repeats until a pass matches nothing
+    /// new. A UTXO beyond that reach comes back unmatched rather than placed
+    /// in another account; a rescan that processes its funding transaction
+    /// credits it. Accounts without a public key source match only the
+    /// addresses they already hold. The wallet's own accounts are tried before
+    /// DashPay contact accounts, so for a script both hold the UTXO goes to
+    /// the wallet's account. A restored outpoint that another funds account
+    /// already holds is taken out of that account.
+    ///
+    /// Each account whose pools grow or whose UTXOs change gets its monitor
+    /// revision bumped, so a running client rebuilds its filters.
+    ///
+    /// Every pool is extended before any UTXO is inserted, so an `Err` from
+    /// address derivation leaves the UTXO sets as they were; the addresses
+    /// derived and marked used by then stay. The balance is not recomputed:
+    /// the next [`update_balance`](WalletInfoInterface::update_balance) or
+    /// processed transaction reflects the restored UTXOs.
+    pub fn restore_utxos(
+        &mut self,
+        wallet: &Wallet,
+        utxos: impl IntoIterator<Item = Utxo>,
+    ) -> crate::error::Result<Vec<Utxo>> {
+        let mut pending: Vec<Utxo> = utxos.into_iter().collect();
+        let mut placed = Vec::new();
+        loop {
+            let placed_before = placed.len();
+            let mut accounts = funds_accounts_wallet_first(&mut self.accounts);
+            for account in accounts.iter_mut() {
+                let key_source =
+                    wallet.key_source_for_account(account.managed_account_type().to_account_type());
+                if matches!(key_source, crate::KeySource::NoKeySource) {
+                    continue;
+                }
+                let mut grew = false;
+                for pool in account.managed_account_type_mut().address_pools_mut() {
+                    grew |= !pool.maintain_gap_limit(&key_source)?.is_empty();
+                }
+                if grew {
+                    account.bump_monitor_revision();
+                }
+            }
+            let mut unmatched = Vec::new();
+            for utxo in pending {
+                let script = &utxo.txout.script_pubkey;
+                match accounts.iter_mut().find(|account| account.contains_script_pub_key(script)) {
+                    Some(account) => {
+                        if let Ok(address) = Address::from_script(script, self.network) {
+                            account.mark_address_used(&address);
+                        }
+                        placed.push((account.managed_account_type().to_account_type(), utxo));
+                    }
+                    None => unmatched.push(utxo),
+                }
+            }
+            pending = unmatched;
+            if placed.len() == placed_before {
+                break;
+            }
+        }
+        let mut accounts = funds_accounts_wallet_first(&mut self.accounts);
+        for (account_type, utxo) in placed {
+            for account in accounts.iter_mut() {
+                let changed = if account.managed_account_type().to_account_type() == account_type {
+                    account.utxos.insert(utxo.outpoint, utxo.clone()).is_none()
+                } else {
+                    account.utxos.remove(&utxo.outpoint).is_some()
+                };
+                if changed {
+                    account.bump_monitor_revision();
+                }
+            }
+        }
+        Ok(pending)
+    }
+
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]
     /// at `height`. Insert-only bookkeeping — it never touches account UTXO sets,
     /// so it is safe to call before `record_transaction` builds a spend's
@@ -638,6 +718,28 @@ impl ManagedWalletInfo {
 
         Ok(())
     }
+}
+
+/// The wallet's own funds accounts, in [`ManagedAccountCollection::all_funding_accounts`]
+/// order, then the DashPay contact accounts.
+fn funds_accounts_wallet_first(
+    accounts: &mut ManagedAccountCollection,
+) -> Vec<&mut crate::managed_account::ManagedCoreFundsAccount> {
+    let ManagedAccountCollection {
+        standard_bip44_accounts,
+        standard_bip32_accounts,
+        coinjoin_accounts,
+        dashpay_receival_accounts,
+        dashpay_external_accounts,
+        ..
+    } = accounts;
+    standard_bip44_accounts
+        .values_mut()
+        .chain(standard_bip32_accounts.values_mut())
+        .chain(coinjoin_accounts.values_mut())
+        .chain(dashpay_receival_accounts.values_mut())
+        .chain(dashpay_external_accounts.values_mut())
+        .collect()
 }
 
 /// Re-export types from account module for convenience
