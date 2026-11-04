@@ -243,6 +243,7 @@ mod tests {
     use super::*;
     use crate::account::account_collection::AccountCollection;
     use crate::account::{AccountType, StandardAccountType};
+    use crate::Error;
 
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
@@ -566,6 +567,59 @@ mod tests {
 
         // Default creates multiple accounts
         assert!(wallet.accounts.count() >= 2);
+    }
+
+    #[test]
+    fn test_add_account_rejects_imported_xpub_in_use() {
+        let mut wallet = Wallet::new_random(
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+        let xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let count = wallet.accounts.count();
+
+        let result = wallet.add_account(
+            AccountType::Standard {
+                index: 5,
+                standard_account_type: StandardAccountType::BIP32Account,
+            },
+            Some(xpub),
+        );
+
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+        assert_eq!(wallet.accounts.count(), count);
+    }
+
+    #[test]
+    fn test_add_account_rejects_derived_xpub_in_use() {
+        let mut wallet = Wallet::new_random(
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+        let bip44 = AccountType::Standard {
+            index: 5,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        let xpub = wallet
+            .derive_extended_public_key(&bip44.derivation_path(Network::Testnet).unwrap())
+            .unwrap();
+        wallet
+            .add_account(
+                AccountType::Standard {
+                    index: 5,
+                    standard_account_type: StandardAccountType::BIP32Account,
+                },
+                Some(xpub),
+            )
+            .unwrap();
+        let count = wallet.accounts.count();
+
+        let result = wallet.add_account(bip44, None);
+
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+        assert_eq!(wallet.accounts.count(), count);
     }
 
     // ✓ Test wallet ID generation
