@@ -62,8 +62,8 @@ use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::ScriptHash;
+use crate::io;
 use crate::prelude::*;
-use crate::{OutPoint, io};
 
 mod borrowed;
 mod builder;
@@ -730,33 +730,15 @@ pub enum Error {
     EarlyEndOfScript,
     /// Tried to read an array off the stack as a number when it was more than 4 bytes.
     NumericOverflow,
-    /// Error validating the script with bitcoinconsensus library.
-    #[cfg(feature = "bitcoinconsensus")]
-    BitcoinConsensus(bitcoinconsensus::Error),
-    /// Can not find the spent output.
-    UnknownSpentOutput(OutPoint),
-    /// Can not serialize the spending transaction.
-    Serialization,
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        #[cfg(feature = "bitcoinconsensus")]
-        use internals::write_err;
-
         match *self {
             Error::NonMinimalPush => f.write_str("non-minimal datapush"),
             Error::EarlyEndOfScript => f.write_str("unexpected end of script"),
             Error::NumericOverflow => {
                 f.write_str("numeric overflow (number on stack larger than 4 bytes)")
-            }
-            #[cfg(feature = "bitcoinconsensus")]
-            Error::BitcoinConsensus(ref e) => {
-                write_err!(f, "bitcoinconsensus verification failed"; e)
-            }
-            Error::UnknownSpentOutput(ref point) => write!(f, "unknown spent output: {}", point),
-            Error::Serialization => {
-                f.write_str("can not serialize the spending transaction in Transaction::verify()")
             }
         }
     }
@@ -767,13 +749,7 @@ impl std::error::Error for Error {
         use self::Error::*;
 
         match *self {
-            NonMinimalPush
-            | EarlyEndOfScript
-            | NumericOverflow
-            | UnknownSpentOutput(_)
-            | Serialization => None,
-            #[cfg(feature = "bitcoinconsensus")]
-            BitcoinConsensus(_) => None,
+            NonMinimalPush | EarlyEndOfScript | NumericOverflow => None,
         }
     }
 }
@@ -791,13 +767,5 @@ impl From<UintError> for Error {
             UintError::EarlyEndOfScript => Error::EarlyEndOfScript,
             UintError::NumericOverflow => Error::NumericOverflow,
         }
-    }
-}
-
-#[cfg(feature = "bitcoinconsensus")]
-#[doc(hidden)]
-impl From<bitcoinconsensus::Error> for Error {
-    fn from(err: bitcoinconsensus::Error) -> Error {
-        Error::BitcoinConsensus(err)
     }
 }
