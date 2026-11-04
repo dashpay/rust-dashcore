@@ -215,6 +215,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         drop(header_storage);
 
         self.lower_batch = Some((start, stop_hash));
+        if self.state() == SyncState::Synced {
+            self.set_state(SyncState::Syncing);
+        }
         network
             .send(GetCFHeaders {
                 filter_type: 0,
@@ -251,11 +254,17 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         }
         let first = start.saturating_sub(1);
         storage.store_filter_headers_at_height(&headers, first).await?;
-        Ok(vec![SyncEvent::FilterHeadersStored {
+        drop(storage);
+        let mut events = vec![SyncEvent::FilterHeadersStored {
             start_height: first,
             end_height: end - 1,
             tip_height: self.progress.current_height(),
-        }])
+        }];
+        let header_start = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+        if first <= header_start.saturating_sub(1) {
+            events.extend(self.try_complete_sync());
+        }
+        Ok(events)
     }
 
     /// Start or resume filter header download.
