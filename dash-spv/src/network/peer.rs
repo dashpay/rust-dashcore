@@ -40,7 +40,7 @@ use crate::{error::NetworkResult, NetworkError};
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
 
 /// Dash Core's `MAX_SUBVERSION_LENGTH`. Core drops a `version` with a longer user agent.
-const MAX_USER_AGENT_LEN: usize = 256;
+pub(crate) const MAX_USER_AGENT_LEN: usize = 256;
 
 /// Identifies one connection, not one address: a late close event from an old
 /// connection must not evict a newer live connection to the same address.
