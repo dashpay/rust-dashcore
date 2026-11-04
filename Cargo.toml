@@ -74,6 +74,7 @@ bitcoin-units = { git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "7
 hex-conservative = { version = "1.3.0" }
 
 [workspace.lints.rust]
+unnameable_types = "deny"
 unexpected_cfgs = { level = "deny", check-cfg = [
     'cfg(bench)',
     'cfg(fuzzing)',

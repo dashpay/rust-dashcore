@@ -21,7 +21,9 @@ pub use context::DashdTestContext;
 pub use event_handler::TestEventHandler;
 pub use fs_helpers::retain_test_dir;
 pub use header_storage::MockHeaderStorage;
-pub use masternode_network::MasternodeTestContext;
+pub use masternode_network::{
+    ControllerInfo, MasternodeInfo, MasternodeTestContext, NetworkMetadata,
+};
 pub use network::{test_socket_address, MockNetworkManager};
 pub use node::{DashCoreNode, TestChain, WalletFile};
 pub use wallet::{
@@ -35,8 +37,10 @@ pub use crate::sml_engine::{FeedError, MasternodeListEngine, WORK_DIFF_DEPTH};
 
 /// Storage types for tests and benches that open the client's storage directly.
 pub use crate::storage::{
-    BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage, PersistentStorage,
-    StorageManager,
+    BlockHeaderStorage, BlockStorage, DiskStorageManager, FilterHeaderStorage, FilterStorage,
+    MasternodeStorage, MetadataStorage, PersistentBlockHeaderStorage, PersistentBlockStorage,
+    PersistentFilterHeaderStorage, PersistentFilterStorage, PersistentMasternodeStorage,
+    PersistentMetadataStorage, PersistentStorage, StorageManager,
 };
 
 /// The client's masternode list engine, for tests that inspect its state.
