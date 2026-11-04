@@ -1241,6 +1241,7 @@ mod private {
     use crate::{Amount, SignedAmount};
 
     /// Used to seal the `CheckedSum` trait
+    #[allow(unnameable_types)]
     pub trait SumSeal<A> {}
 
     impl<T> SumSeal<Amount> for T where T: Iterator<Item = Amount> {}
@@ -1285,6 +1286,7 @@ pub mod serde {
     mod private {
         /// add this as a trait bound to traits which consumers of this library
         /// should not be able to implement.
+        #[allow(unnameable_types)]
         pub trait Sealed {}
         impl Sealed for super::Amount {}
         impl Sealed for super::SignedAmount {}
