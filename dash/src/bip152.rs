@@ -212,7 +212,13 @@ impl HeaderAndShortIds {
                     },
                 });
             } else {
-                short_ids.push(ShortId::with_siphash_keys(&tx.txid().to_raw_hash(), siphash_keys));
+                short_ids.push(ShortId::with_siphash_keys(
+                    // Dash Core hashes the full serialization (`GetInstanceHash()`), which
+                    // differs from the txid for version 2+ asset unlocks; its mempool is
+                    // indexed the same way.
+                    &tx.instance_hash().to_raw_hash(),
+                    siphash_keys,
+                ));
             }
         }
 
@@ -400,6 +406,27 @@ mod test {
             },
             txdata: vec![dummy_tx(&[2]), dummy_tx(&[3]), dummy_tx(&[4])],
         }
+    }
+
+    #[test]
+    fn short_ids_use_the_instance_hash() {
+        use crate::blockdata::transaction::special_transaction::TransactionPayload;
+
+        // An asset unlock with a version 2 payload: its txid leaves out the quorum signature.
+        let mut payload = vec![7u8; 145];
+        payload[0] = 2;
+        let mut unlock = dummy_tx(&[5]);
+        unlock.version = 3;
+        unlock.special_transaction_payload = Some(TransactionPayload::RawPayloadType(9, payload));
+        assert_ne!(unlock.txid(), unlock.instance_hash());
+        let mut block = dummy_block();
+        block.txdata.push(unlock.clone());
+
+        let compact = HeaderAndShortIds::from_block(&block, 42, 1, &[]).unwrap();
+        let keys = ShortId::calculate_siphash_keys(&block.header, 42);
+        let expected = ShortId::with_siphash_keys(&unlock.instance_hash().to_raw_hash(), keys);
+        assert_eq!(compact.short_ids.last(), Some(&expected));
+        assert_ne!(ShortId::with_siphash_keys(&unlock.txid().to_raw_hash(), keys), expected);
     }
 
     #[test]

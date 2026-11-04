@@ -171,7 +171,7 @@ Follow idiomatic Rust and crate‑local patterns.
 
 ### MSRV
 
-The Minimal Supported Rust Version (MSRV) is 1.89; it is enforced by CI. Crates use mixed editions (2021/2024); consult `Cargo.toml` and README for details.
+The Minimal Supported Rust Version (MSRV) is `rust-version` in the workspace `Cargo.toml`; it is enforced by CI. Crates use mixed editions (2021/2024); consult `Cargo.toml` and README for details.
 
 ### Naming conventions
 

@@ -2,8 +2,10 @@ use std::ops::Range;
 
 use hashes::Hash;
 
-use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::consensus::serialize;
+use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::transaction::special_transaction::coinbase::CoinbasePayload;
+use crate::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
 
 /// A special transaction type no Dash Core version assigns
@@ -77,6 +79,33 @@ impl Transaction {
             input: inputs,
             output: outputs,
             special_transaction_payload: None,
+        }
+    }
+
+    /// This coinbase with its version 3 payload written as a version this crate does not decode,
+    /// the way a later Dash Core release that appends fields would write it: the version 4
+    /// fields under version 5, then 8 bytes of a field of its own. The transaction decoder keeps
+    /// such a payload raw.
+    pub fn with_newer_coinbase_payload(&self) -> Transaction {
+        let Some(TransactionPayload::CoinbasePayloadType(payload)) =
+            &self.special_transaction_payload
+        else {
+            panic!("a coinbase payload");
+        };
+        assert_eq!(payload.version, 3, "a version 3 coinbase payload");
+        let mut bytes = serialize(&CoinbasePayload {
+            version: 4,
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::all_zeros()),
+            ..payload.clone()
+        });
+        bytes[..2].copy_from_slice(&5u16.to_le_bytes());
+        bytes.extend([0xA5; 8]);
+        Transaction {
+            special_transaction_payload: Some(TransactionPayload::RawPayloadType(
+                TransactionType::Coinbase.to_u16(),
+                bytes,
+            )),
+            ..self.clone()
         }
     }
 }

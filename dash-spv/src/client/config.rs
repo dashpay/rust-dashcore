@@ -195,7 +195,7 @@ impl ClientConfig {
     }
 
     /// Set custom user agent string for the P2P handshake.
-    /// The library will lightly validate and normalize it during handshake.
+    /// Missing `/` delimiters are added and the result is capped at 256 bytes, the limit Dash Core accepts.
     pub fn with_user_agent(mut self, agent: impl Into<String>) -> Self {
         self.user_agent = agent.into();
         self
