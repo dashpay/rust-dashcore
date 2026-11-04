@@ -4,7 +4,6 @@ use dashcore::bls_sig_utils::BlsScheme;
 use dashcore::sml::message_verification_error::MessageVerificationError;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{InstantLock, QuorumSigningRequestId};
-use dashcore_hashes::Hash;
 
 use crate::error::{ValidationError, ValidationResult};
 use crate::validation::Validator;

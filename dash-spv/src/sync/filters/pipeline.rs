@@ -228,7 +228,6 @@ mod tests {
     use super::*;
     use dashcore::block::Header;
     use dashcore::network::message::NetworkMessage;
-    use dashcore_hashes::Hash;
     use key_wallet_manager::FilterMatchKey;
 
     /// Generate dummy filter data for testing.

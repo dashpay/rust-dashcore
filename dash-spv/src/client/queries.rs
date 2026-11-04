@@ -10,7 +10,6 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::PersistentBlockHeaderStorage;
-use dashcore::hashes::Hash;
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;

@@ -851,7 +851,6 @@ impl<W: WalletInterface> fmt::Debug for MempoolManager<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dashcore::hashes::Hash;
     use dashcore::network::message::NetworkMessage;
     use dashcore::{Address, BlockHash, Network, ScriptBuf, Transaction};
     use key_wallet::transaction_checking::TransactionContext;

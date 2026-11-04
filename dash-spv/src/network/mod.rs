@@ -12,7 +12,6 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::{GetHeadersMessage, Inventory};
 use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
 use dashcore::BlockHash;
-use dashcore_hashes::Hash;
 use std::net::SocketAddr;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedReceiver;

@@ -21,7 +21,6 @@ use dashcore::network::message::{
 use dashcore::network::message_network::VersionMessage;
 use dashcore::network::message_sml::GetMnListDiff;
 use dashcore::{BlockHash, Network};
-use dashcore_hashes::Hash;
 use futures::StreamExt;
 use tempfile::TempDir;
 use tokio::io::{copy, AsyncReadExt, AsyncWriteExt};

@@ -100,7 +100,6 @@ fn validate_signed_by(
 
 #[cfg(test)]
 mod tests {
-    use dashcore::hashes::Hash;
 
     use super::*;
     use crate::sml_engine::test_support::{quorum_entry, TestEngine};
