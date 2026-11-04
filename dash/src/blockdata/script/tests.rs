@@ -1,6 +1,6 @@
 use core::str::FromStr;
 
-use hashes::Hash;
+use hashes::hash160;
 use hex_conservative::hex;
 
 use super::*;
@@ -192,11 +192,11 @@ fn script_generators() {
             .unwrap();
     assert!(ScriptBuf::new_p2pk(&pubkey).is_p2pk());
 
-    let pubkey_hash = PubkeyHash::hash(&pubkey.inner.to_compressed());
+    let pubkey_hash = PubkeyHash::from_raw_hash(hash160::Hash::hash(&pubkey.inner.to_compressed()));
     assert!(ScriptBuf::new_p2pkh(&pubkey_hash).is_p2pkh());
 
     let script = Builder::new().push_opcode(OP_NUMEQUAL).push_verify().into_script();
-    let script_hash = ScriptHash::hash(&script.to_bytes());
+    let script_hash = ScriptHash::from_raw_hash(hash160::Hash::hash(&script.to_bytes()));
     let p2sh = ScriptBuf::new_p2sh(&script_hash);
     assert!(p2sh.is_p2sh());
     assert_eq!(script.to_p2sh(), p2sh);

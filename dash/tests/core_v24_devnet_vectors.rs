@@ -15,7 +15,6 @@ use dashcore::blockdata::transaction::special_transaction::provider_registration
 };
 use dashcore::consensus::{deserialize, serialize};
 use dashcore::hash_types::MerkleRootAssetUnlocks;
-use dashcore::hashes::Hash;
 use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::sml::masternode_list_entry::net_info::{ExtNetInfo, NetInfoEntry, NetInfoPurpose};
 use dashcore::{Address, Block, Network, PlatformNodeId, ScriptBuf, Transaction, Txid, VarInt};

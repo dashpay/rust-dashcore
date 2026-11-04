@@ -10,7 +10,6 @@ use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::Hash;
 
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::encode::Error;

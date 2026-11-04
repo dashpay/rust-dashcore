@@ -41,7 +41,7 @@
 
 use core::fmt;
 
-use hashes::Hash;
+use hashes::{HashEngine, sha256d};
 
 use self::MerkleBlockError::*;
 use crate::blockdata::block::{self, Block};
@@ -461,10 +461,10 @@ impl PartialMerkleTree {
 
     /// Helper method to produce SHA256D(left + right)
     fn parent_hash(left: TxMerkleNode, right: TxMerkleNode) -> TxMerkleNode {
-        let mut encoder = TxMerkleNode::engine();
+        let mut encoder = sha256d::Hash::engine();
         left.consensus_encode(&mut encoder).expect("engines don't error");
         right.consensus_encode(&mut encoder).expect("engines don't error");
-        TxMerkleNode::from_engine(encoder)
+        TxMerkleNode::from_raw_hash(encoder.finalize())
     }
 }
 
@@ -552,13 +552,10 @@ impl std::error::Error for MerkleBlockError {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "rand-std")]
-    use crate::crypto::key::rand::prelude::*;
-    #[cfg(feature = "rand-std")]
-    use hashes::Hash;
-
     use super::*;
     use crate::consensus::encode::{deserialize, serialize};
+    #[cfg(feature = "rand-std")]
+    use crate::crypto::key::rand::prelude::*;
     #[cfg(feature = "rand-std")]
     use crate::hash_types::TxMerkleNode;
     use crate::internal_macros::hex;

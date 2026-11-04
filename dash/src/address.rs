@@ -45,7 +45,6 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
 
-use hashes::Hash;
 use internals::write_err;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

@@ -5,7 +5,7 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use core::fmt::{Debug, Formatter};
-use hashes::{Hash, HashEngine};
+use hashes::{HashEngine, sha256d};
 #[cfg(test)]
 pub use std::vec::Vec;
 
@@ -54,7 +54,7 @@ impl Default for InstantLock {
 impl InstantLock {
     /// Returns quorum signing request ID
     pub fn request_id(&self) -> Result<QuorumSigningRequestId, io::Error> {
-        let mut engine = QuorumSigningRequestId::engine();
+        let mut engine = sha256d::Hash::engine();
 
         // Prefix
         let prefix_len = VarInt(IS_LOCK_REQUEST_ID_PREFIX.len() as u64);
@@ -71,7 +71,7 @@ impl InstantLock {
             engine.input(&input.vout.to_le_bytes());
         }
 
-        Ok(QuorumSigningRequestId::from_engine(engine))
+        Ok(QuorumSigningRequestId::from_raw_hash(engine.finalize()))
     }
 
     /// Returns the sign id
@@ -81,14 +81,14 @@ impl InstantLock {
         quorum_hash: QuorumHash,
         precomputed_request_id: Option<QuorumSigningRequestId>,
     ) -> Result<QuorumSigningSignId, io::Error> {
-        let mut engine = QuorumSigningSignId::engine();
+        let mut engine = sha256d::Hash::engine();
 
         engine.input(&[quorum_type as u8]);
         engine.input(quorum_hash.as_byte_array());
         engine.input(precomputed_request_id.unwrap_or(self.request_id()?).as_byte_array());
         engine.input(self.txid.as_byte_array());
 
-        Ok(QuorumSigningSignId::from_engine(engine))
+        Ok(QuorumSigningSignId::from_raw_hash(engine.finalize()))
     }
 }
 

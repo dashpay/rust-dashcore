@@ -9,7 +9,7 @@
 //!
 
 use dash_params::{ChainParams, Network as CoreNetwork};
-use hashes::{Hash, sha256d};
+use hashes::sha256d;
 
 use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;
@@ -19,6 +19,7 @@ use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
+use crate::hash_types::BlockHash;
 use crate::network::constants::Network;
 use crate::pow::CompactTarget;
 
@@ -73,7 +74,7 @@ pub fn genesis_block(network: Network) -> Block {
     Block {
         header: block::Header {
             version: block::Version::from_consensus(genesis.version),
-            prev_blockhash: Hash::all_zeros(),
+            prev_blockhash: BlockHash::all_zeros(),
             merkle_root: merkle_root.into(),
             time: genesis.time,
             bits: CompactTarget::from_consensus(genesis.bits),
@@ -88,7 +89,6 @@ mod test {
     use test_case::test_case;
 
     use super::*;
-    use crate::BlockHash;
     use crate::network::constants::NetworkExt;
 
     #[test_case(

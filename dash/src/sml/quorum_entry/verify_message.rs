@@ -1,5 +1,3 @@
-use hashes::Hash;
-
 use crate::bls_sig_utils::{BLSSignature, BlsScheme};
 use crate::sml::message_verification_error::MessageVerificationError;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;

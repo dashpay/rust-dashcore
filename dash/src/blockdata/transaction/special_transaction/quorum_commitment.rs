@@ -219,7 +219,6 @@ impl Decodable for QuorumCommitmentPayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use crate::consensus::{Encodable, deserialize, serialize};
