@@ -39,6 +39,9 @@ use crate::{error::NetworkResult, NetworkError};
 
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(0);
 
+/// Dash Core's `MAX_SUBVERSION_LENGTH`. Core drops a `version` with a longer user agent.
+pub(crate) const MAX_USER_AGENT_LEN: usize = 256;
+
 /// Identifies one connection, not one address: a late close event from an old
 /// connection must not evict a newer live connection to the same address.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -684,11 +687,22 @@ fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
         Address::new(&peer, ServiceFlags::NETWORK),
         Address::new(&unspecified, ServiceFlags::NONE),
         rand::random(),
-        user_agent.to_string(),
+        normalize_user_agent(user_agent),
         0,
         false,
         [0u8; 32],
     )
+}
+
+/// Wraps `user_agent` in `/` delimiters and caps it at `MAX_USER_AGENT_LEN` bytes.
+fn normalize_user_agent(user_agent: &str) -> String {
+    let body = user_agent.strip_prefix('/').unwrap_or(user_agent);
+    let body = body.strip_suffix('/').unwrap_or(body);
+    let mut end = body.len().min(MAX_USER_AGENT_LEN - 2);
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("/{}/", &body[..end])
 }
 
 async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> NetworkResult<()> {
@@ -724,5 +738,25 @@ mod tests {
         // Other failures are surfaced rather than masked by a V1 retry.
         assert!(!should_fall_back_to_v1(&io_error(ErrorKind::BrokenPipe)));
         assert!(!should_fall_back_to_v1(&Bip324Error::PacketTooBig.into()));
+    }
+
+    #[test]
+    fn version_user_agent_is_delimited_and_capped() {
+        let peer: SocketAddr = ([127, 0, 0, 1], 9999).into();
+        let wire_agent = |agent: &str| build_version(peer, agent).user_agent;
+
+        assert_eq!(wire_agent("dash-spv:1.0"), "/dash-spv:1.0/");
+        assert_eq!(wire_agent("/dash-spv:1.0"), "/dash-spv:1.0/");
+        assert_eq!(wire_agent("dash-spv:1.0/"), "/dash-spv:1.0/");
+        assert_eq!(wire_agent("/dash-spv:1.0/"), "/dash-spv:1.0/");
+
+        let long = wire_agent(&"a".repeat(300));
+        assert_eq!(long.len(), MAX_USER_AGENT_LEN);
+        assert_eq!(long, format!("/{}/", "a".repeat(MAX_USER_AGENT_LEN - 2)));
+
+        // The 2-byte `é` starts on the last byte the body can hold, so it is dropped whole.
+        let straddling =
+            wire_agent(&format!("{}é{}", "a".repeat(MAX_USER_AGENT_LEN - 3), "b".repeat(10)));
+        assert_eq!(straddling, format!("/{}/", "a".repeat(MAX_USER_AGENT_LEN - 3)));
     }
 }

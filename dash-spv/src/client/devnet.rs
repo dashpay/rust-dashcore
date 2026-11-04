@@ -8,6 +8,9 @@ use dashcore::sml::llmq_type::{
     set_llmq_devnet_params, LLMQType, LlmqDevnetParams,
 };
 
+use crate::network::MAX_USER_AGENT_LEN;
+use crate::VERSION;
+
 /// Configuration values that only apply on `Network::Devnet`.
 ///
 /// The `name` field is required because Dash Core embeds the devnet name into
@@ -73,7 +76,7 @@ impl DevnetConfig {
     /// Render the user agent suffix that signals devnet identity to peers,
     /// matching the format `dashd` itself uses: `/<base>(devnet.devnet-<name>)/`.
     pub fn user_agent(&self, crate_version: &str) -> String {
-        format!("/rust-dash-spv:{}(devnet.devnet-{})/", crate_version, self.name)
+        format!("/dash-spv:{}(devnet.devnet-{})/", crate_version, self.name)
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {
@@ -82,6 +85,14 @@ impl DevnetConfig {
         }
         if self.name.contains('/') {
             return Err("devnet name must not contain '/'".to_string());
+        }
+        // Dash Core bans a devnet peer whose user agent lacks the devnet name,
+        // so a truncated user agent would get us banned.
+        if self.user_agent(VERSION).len() > MAX_USER_AGENT_LEN {
+            return Err(format!(
+                "devnet name is too long, the user agent must not exceed {} bytes",
+                MAX_USER_AGENT_LEN
+            ));
         }
         Ok(())
     }
