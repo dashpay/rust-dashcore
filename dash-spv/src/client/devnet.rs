@@ -73,7 +73,7 @@ impl DevnetConfig {
     /// Render the user agent suffix that signals devnet identity to peers,
     /// matching the format `dashd` itself uses: `/<base>(devnet.devnet-<name>)/`.
     pub fn user_agent(&self, crate_version: &str) -> String {
-        format!("/rust-dash-spv:{}(devnet.devnet-{})/", crate_version, self.name)
+        format!("/dash-spv:{}(devnet.devnet-{})/", crate_version, self.name)
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {

@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn test_user_agent_format_matches_dash_core() {
         let devnet = DevnetConfig::new("alpha");
-        assert_eq!(devnet.user_agent("0.43.0"), "/rust-dash-spv:0.43.0(devnet.devnet-alpha)/");
+        assert_eq!(devnet.user_agent("0.43.0"), "/dash-spv:0.43.0(devnet.devnet-alpha)/");
     }
 
     #[test]
