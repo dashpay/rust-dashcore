@@ -367,23 +367,7 @@ managed_account.mark_addresses_used(&tx);
 
 ## Common Integration Points
 
-### 1. FFI Bindings (key-wallet-ffi)
-```rust
-// Expose safe C interfaces
-#[no_mangle]
-pub extern "C" fn wallet_from_mnemonic(
-    mnemonic: *const c_char,
-    network: u8
-) -> *mut Wallet
-```
-
-### 2. Swift Integration
-```swift
-// Swift SDK uses the FFI bindings
-let wallet = DashWallet(mnemonic: "...", network: .mainnet)
-```
-
-### 3. RPC Integration
+### 1. RPC Integration
 ```rust
 // Sync with Dash Core node
 let client = RpcClient::new(url)?;
