@@ -20,6 +20,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 pub use broker::RequestKey;
 pub use manager::NetworkEvent;
 pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager};
+pub(crate) use peer::MAX_USER_AGENT_LEN;
 pub use transport::TransportPreference;
 // Used by the mock network manager to enforce the same de-duplication contract.
 #[cfg(any(test, feature = "test-utils"))]

@@ -17,16 +17,14 @@ jobs:
     steps:
       - name: Install test dependencies
         run: sudo apt-get update -y && sudo apt-get install -y binutils-dev libunwind8-dev libcurl4-openssl-dev libelf-dev libdw-dev cmake gcc libiberty-dev
-      - uses: actions/checkout@v6
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.89
+      - uses: actions/checkout@v7.0.1
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: "fuzz -> target"
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2.89.1
+        with:
+          tool: just
       - name: Run all fuzz targets
         env:
           HFUZZ_FAIL_ON_CRASH: 1

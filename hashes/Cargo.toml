@@ -4,7 +4,7 @@ description = "Hash functions used by the rust-dash eccosystem"
 authors = ["Samuel Westrich <sam@dash.org>"]
 edition = "2021"
 categories = ["algorithms"]
-keywords = [ "crypto", "dash", "hash", "digest" ]
+keywords = ["crypto", "dash", "hash", "digest"]
 readme = "README.md"
 exclude = ["tests", "contrib"]
 license.workspace = true
@@ -44,9 +44,9 @@ dash-pow = { workspace = true, optional = true, features = ["portable"] }
 dash-pow = { workspace = true, optional = true, features = ["portable"] }
 
 [dev-dependencies]
-serde_test = "1.0"
-criterion = "0.5"
-test-case = "3.4"
+serde_test = { workspace = true }
+criterion = { workspace = true }
+test-case = { workspace = true }
 
 [target.wasm32-unknown-unknown.dev-dependencies]
 wasm-bindgen-test = "0.3"
@@ -64,5 +64,5 @@ name = "x11"
 harness = false
 required-features = ["x11"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }
+[lints]
+workspace = true

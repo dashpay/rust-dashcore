@@ -1,6 +1,5 @@
 //! Configuration management for the Dash SPV client.
 
-use clap::ValueEnum;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,7 +13,8 @@ use crate::sync::BroadcastHoldout;
 use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum MempoolStrategy {
     /// Fetch all announced transactions (high bandwidth, sees all transactions).
     FetchAll,
@@ -195,7 +195,7 @@ impl ClientConfig {
     }
 
     /// Set custom user agent string for the P2P handshake.
-    /// The library will lightly validate and normalize it during handshake.
+    /// Missing `/` delimiters are added and the result is capped at 256 bytes, the limit Dash Core accepts.
     pub fn with_user_agent(mut self, agent: impl Into<String>) -> Self {
         self.user_agent = agent.into();
         self

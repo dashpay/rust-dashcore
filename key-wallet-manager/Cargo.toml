@@ -31,11 +31,11 @@ keep-finalized-transactions = ["key-wallet/keep-finalized-transactions"]
 # always returns an error. Workspace builds and the dev-dependency below both
 # enable it via feature unification, so dropping it here fails only for external
 # consumers — and only at runtime.
-key-wallet = { path = "../key-wallet", default-features = false, features = ["getrandom"] }
-dashcore = { path = "../dash" }
-async-trait = "0.1"
-tokio = { version = "1", features = ["macros", "rt", "sync"] }
-tracing = "0.1"
+key-wallet = { workspace = true, features = ["getrandom"] }
+dashcore = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+tracing = { workspace = true }
 zeroize = { workspace = true }
 hex-conservative = { workspace = true }
 rayon = { workspace = true, optional = true }
@@ -43,14 +43,14 @@ bincode = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
-key-wallet = { path = "../key-wallet", features = ["test-utils", "bincode"] }
-dashcore = { path = "../dash", features = ["test-utils"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-criterion = "0.8.1"
+key-wallet = { workspace = true, features = ["test-utils", "bincode"] }
+dashcore = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+criterion = { workspace = true }
 
 [[bench]]
 name = "filter_scan"
 harness = false
 
-[lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }
+[lints]
+workspace = true
