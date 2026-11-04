@@ -19,7 +19,6 @@ use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 use dashcore::sighash::{EcdsaSighashType, LegacySighash, SighashCache};
 use dashcore::Address;
 use dashcore::{Network, TxIn, TxOut};
-use dashcore_hashes::Hash;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
@@ -1148,7 +1147,7 @@ mod tests {
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore::consensus::serialize;
     use dashcore::{OutPoint, Txid};
-    use dashcore_hashes::{sha256d, Hash};
+    use dashcore_hashes::sha256d;
 
     fn op_return_script(data: &[u8]) -> ScriptBuf {
         let push_bytes = <&PushBytes>::try_from(data).expect("test OP_RETURN bytes");
@@ -1356,7 +1355,7 @@ mod tests {
         // Check if it's a coinbase transaction by checking if first input has null previous_output
         assert_eq!(
             tx.input[0].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[0u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([0u8; 32]))
         );
         assert_eq!(tx.input[0].previous_output.vout, 0xffffffff);
         assert_eq!(tx.output.len(), 2);
@@ -1817,7 +1816,7 @@ mod tests {
         // Test that inputs are sorted according to BIP-69
         let mut utxo1 = Utxo::new(
             OutPoint {
-                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[2u8; 32]).unwrap()),
+                txid: Txid::from_raw_hash(sha256d::Hash::from_byte_array([2u8; 32])),
                 vout: 1,
             },
             TxOut {
@@ -1832,7 +1831,7 @@ mod tests {
 
         let mut utxo2 = Utxo::new(
             OutPoint {
-                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
+                txid: Txid::from_raw_hash(sha256d::Hash::from_byte_array([1u8; 32])),
                 vout: 2,
             },
             TxOut {
@@ -1847,7 +1846,7 @@ mod tests {
 
         let mut utxo3 = Utxo::new(
             OutPoint {
-                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
+                txid: Txid::from_raw_hash(sha256d::Hash::from_byte_array([1u8; 32])),
                 vout: 0,
             },
             TxOut {
@@ -1880,19 +1879,19 @@ mod tests {
         // Expected order: [1u8; 32]:0, [1u8; 32]:2, [2u8; 32]:1
         assert_eq!(
             tx.input[0].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([1u8; 32]))
         );
         assert_eq!(tx.input[0].previous_output.vout, 0);
 
         assert_eq!(
             tx.input[1].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([1u8; 32]))
         );
         assert_eq!(tx.input[1].previous_output.vout, 2);
 
         assert_eq!(
             tx.input[2].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[2u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([2u8; 32]))
         );
         assert_eq!(tx.input[2].previous_output.vout, 1);
     }

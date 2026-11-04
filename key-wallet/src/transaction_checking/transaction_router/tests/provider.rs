@@ -18,7 +18,6 @@ use dashcore::blockdata::transaction::special_transaction::provider_update_servi
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::BLSSignature;
-use dashcore::hashes::Hash;
 use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 use std::net::SocketAddr;

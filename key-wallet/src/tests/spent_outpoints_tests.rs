@@ -3,7 +3,6 @@
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
-use dashcore::hashes::Hash;
 use dashcore::{BlockHash, TxIn, Txid};
 
 use crate::account::{AccountType, StandardAccountType, TransactionRecord};

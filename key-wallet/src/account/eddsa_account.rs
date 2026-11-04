@@ -341,7 +341,6 @@ impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, EddsaPkByt
         let node_id = EddsaPkHash::from(ed25519_pubkey).to_canonical_bytes();
 
         use dashcore::address::Payload;
-        use dashcore::hashes::Hash;
         let payload = Payload::PubkeyHash(dashcore::PubkeyHash::from_byte_array(node_id));
         Ok(Address::new(self.network, payload))
     }
@@ -528,8 +527,6 @@ mod tests {
     /// with an independent Ed25519 implementation).
     #[test]
     fn test_derive_address_at_uses_tenderdash_node_id() {
-        use dashcore::hashes::Hash;
-
         let seed = hex_conservative::decode_to_vec(
             "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1\
              9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",

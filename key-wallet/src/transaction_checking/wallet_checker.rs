@@ -490,7 +490,6 @@ mod tests {
     use dashcore::OutPoint;
     use dashcore::TxOut;
     use dashcore::{Address, BlockHash, TxIn, Txid};
-    use dashcore_hashes::Hash;
     use std::collections::{BTreeMap, BTreeSet};
 
     /// Test wallet checker with unrelated transaction

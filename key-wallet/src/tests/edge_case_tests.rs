@@ -7,7 +7,6 @@ use crate::bip32::{ChildNumber, DerivationPath};
 use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
 use crate::Network;
-use dashcore::hashes::Hash;
 
 #[test]
 fn test_account_index_overflow() {
