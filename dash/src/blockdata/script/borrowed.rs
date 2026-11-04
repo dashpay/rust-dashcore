@@ -8,8 +8,6 @@ use hashes::Hash;
 
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
-#[cfg(feature = "bitcoinconsensus")]
-use crate::blockdata::script::Error;
 use crate::blockdata::script::{
     Builder, Instruction, InstructionIndices, Instructions, ScriptBuf, bytes_to_asm_fmt,
 };
@@ -303,46 +301,6 @@ impl Script {
     #[inline]
     pub fn instruction_indices_minimal(&self) -> InstructionIndices<'_> {
         InstructionIndices::from_instructions(self.instructions_minimal())
-    }
-
-    /// Shorthand for [`Self::verify_with_flags`] with flag [bitcoinconsensus::VERIFY_ALL].
-    ///
-    /// # Parameters
-    ///  * `index` - The input index in spending which is spending this transaction.
-    ///  * `amount` - The amount this script guards.
-    ///  * `spending_tx` - The transaction that attempts to spend the output holding this script.
-    #[cfg(feature = "bitcoinconsensus")]
-    pub fn verify(
-        &self,
-        index: usize,
-        amount: crate::Amount,
-        spending_tx: &[u8],
-    ) -> Result<(), Error> {
-        self.verify_with_flags(index, amount, spending_tx, bitcoinconsensus::VERIFY_ALL)
-    }
-
-    /// Verifies spend of an input script.
-    ///
-    /// # Parameters
-    ///  * `index` - The input index in spending which is spending this transaction.
-    ///  * `amount` - The amount this script guards.
-    ///  * `spending_tx` - The transaction that attempts to spend the output holding this script.
-    ///  * `flags` - Verification flags, see [`bitcoinconsensus::VERIFY_ALL`] and similar.
-    #[cfg(feature = "bitcoinconsensus")]
-    pub fn verify_with_flags<F: Into<u32>>(
-        &self,
-        index: usize,
-        amount: crate::Amount,
-        spending_tx: &[u8],
-        flags: F,
-    ) -> Result<(), Error> {
-        Ok(bitcoinconsensus::verify_with_flags(
-            &self.0[..],
-            amount.to_sat(),
-            spending_tx,
-            index,
-            flags.into(),
-        )?)
     }
 
     /// Writes the assembly decoding of the script to the formatter.
