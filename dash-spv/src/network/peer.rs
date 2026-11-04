@@ -404,7 +404,7 @@ impl DisconnectedPeer {
         let handshake =
             v2_handshake(magic.to_le_bytes(), Role::Initiator, garbage, None, read_half, &mut half);
         let error = match tokio::time::timeout(V2_HANDSHAKE_TIMEOUT, handshake).await {
-            Ok(Ok((inbound, outbound, reader))) => {
+            Ok(Ok((inbound, outbound, reader, _session_id))) => {
                 return Ok(Link {
                     reader: Either::Left(reader),
                     codec: SizedCodec::V2(V2Decoder::new(magic, inbound)),
