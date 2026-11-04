@@ -129,8 +129,10 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let storage = self.header_storage.read().await;
         let Some(start) = storage.get_start_height().await.filter(|start| floor < *start) else {
             self.floor = None;
+            self.progress.update_missing_below(0);
             return Ok(());
         };
+        self.progress.update_missing_below(start - floor);
         let join = storage
             .get_header(start)
             .await?

@@ -202,6 +202,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         let (Some(header_start), Some(end)) = (header_start, filter_start) else {
             return Ok(());
         };
+        self.progress.update_missing_below(end.saturating_sub(header_start.saturating_sub(1)));
         if end <= header_start.saturating_sub(1) {
             return Ok(());
         }

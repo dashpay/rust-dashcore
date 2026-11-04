@@ -265,11 +265,16 @@ pub trait ProgressPercentage {
     fn target_height(&self) -> CoreBlockHeight;
     /// Get the current height used for calculating progress.
     fn current_height(&self) -> CoreBlockHeight;
+    /// Get the number of heights below the stored ones still to sync.
+    fn missing_below(&self) -> CoreBlockHeight {
+        0
+    }
     /// Get completion percentage (0.0 to 1.0).
     fn percentage(&self) -> f64 {
         if self.target_height() == 0 {
             return 0.0;
         }
-        (self.current_height() as f64 / self.target_height() as f64).min(1.0)
+        let done = self.current_height().saturating_sub(self.missing_below());
+        (done as f64 / self.target_height() as f64).min(1.0)
     }
 }
