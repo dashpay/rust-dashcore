@@ -26,7 +26,6 @@ use std::error;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use bitcoin_units::parse_int::int_from_str;
-use hashes::{self, Hash};
 
 use crate::consensus::{Decodable, Encodable, deserialize, encode};
 use crate::hash_types::Txid;
@@ -84,7 +83,7 @@ impl OutPoint {
     #[inline]
     pub fn null() -> OutPoint {
         OutPoint {
-            txid: Hash::all_zeros(),
+            txid: Txid::all_zeros(),
             vout: u32::MAX,
         }
     }

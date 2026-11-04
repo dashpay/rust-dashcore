@@ -349,7 +349,7 @@ mod tests {
     use crate::Utxo;
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::{Address, Network, Transaction, Txid};
-    use dashcore_hashes::{sha256d, Hash};
+    use dashcore_hashes::sha256d;
     use std::str::FromStr;
 
     #[test]
@@ -493,7 +493,7 @@ mod tests {
         // Check if it's a coinbase transaction by checking if first input has null previous_output
         assert_eq!(
             tx.input[0].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[0u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([0u8; 32]))
         );
         assert_eq!(tx.input[0].previous_output.vout, 0xffffffff);
         assert_eq!(tx.output.len(), 2);

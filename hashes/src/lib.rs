@@ -25,7 +25,6 @@
 //!
 //! ```rust
 //! use dashcore_hashes::sha256;
-//! use dashcore_hashes::Hash;
 //!
 //! let bytes = [0u8; 5];
 //! let hash_of_bytes = sha256::Hash::hash(&bytes);
@@ -37,7 +36,6 @@
 //!
 //! ```rust
 //! use dashcore_hashes::sha256;
-//! use dashcore_hashes::Hash;
 //!
 //! #[cfg(std)]
 //! # fn main() -> std::io::Result<()> {
@@ -57,7 +55,6 @@
 //!
 //! ```rust
 //! use dashcore_hashes::sha256;
-//! use dashcore_hashes::Hash;
 //! use std::io::Write;
 //!
 //! #[cfg(std)]
@@ -100,7 +97,7 @@ pub extern crate bitcoin_hashes;
 pub mod _export {
     pub use hex_conservative;
 
-    pub use crate::util::pad_hex;
+    pub use crate::util::{pad_hex, slice_to_array};
     /// A re-export of core::*
     pub mod _core {
         pub use core::*;
@@ -108,13 +105,11 @@ pub mod _export {
 }
 
 // Primitives come straight from upstream.
-// The tag helpers are upstream's verbatim. Only `sha256t_hash_newtype!` stays
-// ours, so that tagged hashes route through our `hash_newtype!`.
 pub use bitcoin_hashes::{
-    cmp, hash160, hmac, ripemd160, sha1, sha256, sha256d, sha512, sha512_256, FromSliceError, Hash,
+    cmp, hash160, hmac, ripemd160, sha1, sha256, sha256d, sha256t, sha512, sha512_256, Hash,
     HashEngine, Hmac, HmacEngine,
 };
-pub use bitcoin_hashes::{sha256t_hash_newtype_tag, sha256t_hash_newtype_tag_constructor};
+pub use util::FromSliceError;
 
 /// Kept under the old Dash name.
 pub type Error = FromSliceError;
@@ -126,5 +121,4 @@ pub mod serde_macros;
 mod bincode_macros;
 #[cfg(feature = "x11")]
 pub mod hash_x11;
-pub mod sha256t;
 pub mod siphash24;

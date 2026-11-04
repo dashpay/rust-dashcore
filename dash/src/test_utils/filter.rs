@@ -1,7 +1,5 @@
 use std::ops::Range;
 
-use hashes::Hash;
-
 use crate::hash_types::FilterHeader;
 
 impl FilterHeader {

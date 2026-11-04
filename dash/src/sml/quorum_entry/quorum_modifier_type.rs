@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::Write;
 
-use hashes::Hash;
+use hashes::sha256d;
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::Encodable;
@@ -72,7 +72,7 @@ impl LLMQModifierType {
                 writer.write_all(cl_signature.as_bytes()).unwrap();
             }
         }
-        QuorumModifierHash::hash(&writer)
+        QuorumModifierHash::from_raw_hash(sha256d::Hash::hash(&writer))
     }
 
     /// Creates a new `LLMQModifierType` based on the network activation rules.
@@ -117,7 +117,6 @@ impl LLMQModifierType {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use super::*;
     use crate::Network;

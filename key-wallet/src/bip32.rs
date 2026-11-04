@@ -164,7 +164,7 @@ impl core::ops::Index<core::ops::RangeFull> for ChainCode {
 
 impl ChainCode {
     fn from_hmac(hmac: Hmac<sha512::Hash>) -> Self {
-        hmac[32..].try_into().expect("half of hmac is guaranteed to be 32 bytes")
+        hmac.as_byte_array()[32..].try_into().expect("half of hmac is guaranteed to be 32 bytes")
     }
 }
 
@@ -1277,9 +1277,9 @@ impl ExtendedPrivKey {
             return Err(Error::InvalidSeedLength(seed.len()));
         }
 
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"Bitcoin seed");
+        let mut hmac_engine: HmacEngine<sha512::HashEngine> = HmacEngine::new(b"Bitcoin seed");
         hmac_engine.input(seed);
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
 
         Ok(ExtendedPrivKey {
             network,
@@ -1310,7 +1310,7 @@ impl ExtendedPrivKey {
 
     /// Private->Private child key derivation
     pub fn ckd_priv(&self, i: ChildNumber) -> Result<ExtendedPrivKey, Error> {
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
+        let mut hmac_engine: HmacEngine<sha512::HashEngine> = HmacEngine::new(&self.chain_code[..]);
         match i {
             ChildNumber::Normal {
                 index,
@@ -1343,7 +1343,7 @@ impl ExtendedPrivKey {
                 hmac_engine.input(&index);
             }
         }
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
         // IL added to the parent scalar; `add_tweak` rejects IL >= n and a zero
         // sum, the two cases BIP32 declares invalid.
         let tweaked = self
@@ -1525,7 +1525,7 @@ impl ExtendedPrivKey {
 
     /// Returns the first four bytes of the identifier
     pub fn fingerprint(&self) -> Fingerprint {
-        self.identifier()[0..4].try_into().expect("4 is the fingerprint length")
+        self.identifier().as_byte_array()[0..4].try_into().expect("4 is the fingerprint length")
     }
 
     /// Convert to a PrivateKey for signing operations
@@ -1583,12 +1583,12 @@ impl ExtendedPubKey {
             ChildNumber::Normal {
                 index: n,
             } => {
-                let mut hmac_engine: HmacEngine<sha512::Hash> =
+                let mut hmac_engine: HmacEngine<sha512::HashEngine> =
                     HmacEngine::new(&self.chain_code[..]);
                 hmac_engine.input(&self.public_key.to_compressed()[..]);
                 hmac_engine.input(&n.to_be_bytes());
 
-                let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+                let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
 
                 let private_key = EcdsaSecretKey::from_bytes(&hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
@@ -1598,14 +1598,14 @@ impl ExtendedPubKey {
                 index: idx,
             } => {
                 // UInt256 mode (index >= 2^32)
-                let mut hmac_engine: HmacEngine<sha512::Hash> =
+                let mut hmac_engine: HmacEngine<sha512::HashEngine> =
                     HmacEngine::new(&self.chain_code[..]);
 
                 // HMAC Input: serP(Kpar) || ser256(i)
                 hmac_engine.input(&self.public_key.to_compressed()[..]);
                 hmac_engine.input(&idx);
 
-                let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+                let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
 
                 // IL must be less than n (order of the curve)
                 let private_key = EcdsaSecretKey::from_bytes(&hmac_secret_half(&hmac_result))?;
@@ -1793,7 +1793,7 @@ impl ExtendedPubKey {
 
     /// Returns the first four bytes of the identifier
     pub fn fingerprint(&self) -> Fingerprint {
-        self.identifier()[0..4].try_into().expect("4 is the fingerprint length")
+        self.identifier().as_byte_array()[0..4].try_into().expect("4 is the fingerprint length")
     }
 
     /// Convert to a PublicKey for use in address generation

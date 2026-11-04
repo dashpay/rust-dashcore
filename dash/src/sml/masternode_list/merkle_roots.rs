@@ -1,4 +1,4 @@
-use hashes::{Hash, sha256d};
+use hashes::sha256d;
 
 use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
@@ -156,7 +156,6 @@ impl MasternodeList {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
     use test_case::test_case;
 
     use crate::consensus::{deserialize, serialize};

@@ -302,7 +302,7 @@ impl Decodable for MNSkipListMode {
 
 #[cfg(test)]
 mod tests {
-    use hashes::{Hash, sha256};
+    use hashes::sha256;
 
     use super::{MNSkipListMode, QRInfo, QuorumSnapshot};
     use crate::consensus::{deserialize, serialize};

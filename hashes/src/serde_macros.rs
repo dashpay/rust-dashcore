@@ -18,11 +18,11 @@
 /// Functions used by serde impls of all hashes.
 #[cfg(feature = "serde")]
 pub mod serde_details {
+    use core::array::TryFromSliceError;
     use core::marker::PhantomData;
     use core::str::FromStr;
     use core::{fmt, ops, str};
 
-    use crate::Error;
     use serde::{de, Deserializer, Serializer};
 
     /// Single visitor that accepts every shape a hash can arrive in: an ASCII
@@ -152,7 +152,7 @@ pub mod serde_details {
         const N: usize;
 
         /// Helper function to turn a deserialized slice into the correct hash type.
-        fn from_slice_delegated(sl: &[u8]) -> Result<Self, Error>;
+        fn from_slice_delegated(sl: &[u8]) -> Result<Self, TryFromSliceError>;
 
         /// Do serde serialization.
         fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -193,10 +193,8 @@ macro_rules! serde_impl(
     ($t:ident, $len:expr $(, $gen:ident: $gent:ident)*) => (
         impl<$($gen: $gent),*> $crate::serde_macros::serde_details::SerdeHash for $t<$($gen),*> {
             const N : usize = $len;
-            fn from_slice_delegated(sl: &[u8]) -> Result<Self, $crate::Error> {
-                #[allow(unused_imports)]
-                use $crate::Hash as _;
-                $t::from_slice(sl)
+            fn from_slice_delegated(sl: &[u8]) -> Result<Self, $crate::_export::_core::array::TryFromSliceError> {
+                <[u8; $len]>::try_from(sl).map(<Self as $crate::Hash>::from_byte_array)
             }
         }
 

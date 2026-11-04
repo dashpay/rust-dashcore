@@ -44,7 +44,6 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::blockdata::witness::Witness;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::crypto::ecdsa::EcdsaRecSignature;
-use dashcore::hashes::Hash;
 use dashcore::sml::masternode_list_entry::net_info::ExtNetInfo;
 use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{BlockHash, Txid};

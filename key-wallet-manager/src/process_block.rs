@@ -676,7 +676,6 @@ mod tests {
     use crate::test_helpers::*;
     use dashcore::bip158::BlockFilter;
     use dashcore::block::{Header, Version};
-    use dashcore::hashes::Hash;
     use dashcore::pow::CompactTarget;
     use dashcore::{
         BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,

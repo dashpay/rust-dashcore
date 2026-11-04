@@ -13,7 +13,7 @@ use std::error;
 
 use dashcore::eddsa::{EddsaPkBytes, EddsaPublicKey, EddsaSecretKey, EddsaSkBytes};
 use dashcore::Network;
-use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
+use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde;
 
@@ -86,9 +86,9 @@ impl ExtendedEd25519PrivKey {
             return Err(Error::InvalidSeedLength(seed.len()));
         }
 
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"ed25519 seed");
+        let mut hmac_engine: HmacEngine<sha512::HashEngine> = HmacEngine::new(b"ed25519 seed");
         hmac_engine.input(seed);
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
         let hmac_bytes = hmac_result.as_byte_array();
 
         // First 32 bytes are the private key seed
@@ -133,14 +133,15 @@ impl ExtendedEd25519PrivKey {
             return Err(Error::InvalidChildNumberFormat);
         }
 
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(self.chain_code.as_ref());
+        let mut hmac_engine: HmacEngine<sha512::HashEngine> =
+            HmacEngine::new(self.chain_code.as_ref());
 
         // For Ed25519: data = 0x00 || private_key || index
         hmac_engine.input(&[0x00]);
         hmac_engine.input(self.private_key.as_bytes());
         hmac_engine.input(&u32::from(child).to_be_bytes());
 
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
         let hmac_bytes = hmac_result.as_byte_array();
 
         // First 32 bytes become the new private key seed
@@ -171,17 +172,15 @@ impl ExtendedEd25519PrivKey {
 
     /// Get the fingerprint of this key
     pub fn fingerprint(&self) -> Result<Fingerprint, Error> {
-        use dashcore_hashes::{hash160, Hash};
-
         let pubkey = self.public_key()?;
         let hash = hash160::Hash::hash(&pubkey.to_bytes());
-        Ok(Fingerprint::from_bytes(hash[..4].try_into().expect("hash160 has enough bytes")))
+        Ok(Fingerprint::from_bytes(
+            hash.as_byte_array()[..4].try_into().expect("hash160 has enough bytes"),
+        ))
     }
 
     /// Get identifier (hash160 of public key)
     pub fn identifier(&self) -> Result<[u8; 20], Error> {
-        use dashcore_hashes::{hash160, Hash};
-
         let pubkey = self.public_key()?;
         let hash = hash160::Hash::hash(&pubkey.to_bytes());
         Ok(hash.to_byte_array())
@@ -322,16 +321,14 @@ impl ExtendedEd25519PubKey {
 
     /// Get the fingerprint of this key
     pub fn fingerprint(&self) -> Fingerprint {
-        use dashcore_hashes::{hash160, Hash};
-
         let hash = hash160::Hash::hash(self.public_key.as_bytes());
-        Fingerprint::from_bytes(hash[..4].try_into().expect("hash160 has enough bytes"))
+        Fingerprint::from_bytes(
+            hash.as_byte_array()[..4].try_into().expect("hash160 has enough bytes"),
+        )
     }
 
     /// Get identifier (hash160 of public key)
     pub fn identifier(&self) -> [u8; 20] {
-        use dashcore_hashes::{hash160, Hash};
-
         let hash = hash160::Hash::hash(self.public_key.as_bytes());
         hash.to_byte_array()
     }

@@ -128,7 +128,6 @@ impl Validator<FilterValidationInput<'_>> for FilterValidator {
 mod tests {
     use dashcore::bip158::BlockFilter;
     use dashcore::BlockHash;
-    use dashcore_hashes::Hash;
     use key_wallet_manager::FilterMatchKey;
 
     use super::*;

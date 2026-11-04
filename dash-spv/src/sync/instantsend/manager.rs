@@ -370,7 +370,6 @@ mod tests {
     use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::CycleHash;
-    use dashcore::hashes::Hash;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::{BlockHash, OutPoint};
     use test_case::test_case;

@@ -1,4 +1,4 @@
-use hashes::{Hash, sha256d};
+use hashes::sha256d;
 
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 
@@ -12,7 +12,6 @@ impl MasternodeListEntry {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use crate::consensus::deserialize;
     use crate::network::message_sml::MnListDiff;

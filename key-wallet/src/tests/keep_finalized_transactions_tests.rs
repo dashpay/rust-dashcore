@@ -34,7 +34,6 @@ use crate::{
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 #[cfg(not(feature = "keep-finalized-transactions"))]
 use dashcore::ephemerealdata::instant_lock::InstantLock;
-use dashcore::hashes::Hash;
 use dashcore::{BlockHash, Transaction};
 
 fn bip44_account_type() -> AccountType {

@@ -18,8 +18,6 @@
 //! It is defined in DIP4 [dip-0004](https://github.com/dashpay/dips/blob/master/dip-0004.md).
 //!
 
-use hashes::Hash;
-
 use super::{TransactionPayload, TransactionType};
 use crate::Transaction;
 use crate::bls_sig_utils::BLSSignature;
@@ -413,7 +411,6 @@ impl Decodable for CoinbasePayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use crate::Transaction;
     use crate::bls_sig_utils::BLSSignature;

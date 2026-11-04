@@ -10,7 +10,6 @@ use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::GetHeadersMessage;
 use dashcore::BlockHash;
-use dashcore_hashes::Hash;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

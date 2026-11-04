@@ -10,7 +10,6 @@ use crate::error::{StorageError, StorageResult};
 use crate::storage::BlockHeaderStorage;
 use crate::validation::MasternodeListValidator;
 use dashcore::bls_sig_utils::{BLSSignature, BlsScheme};
-use dashcore::hashes::Hash;
 use dashcore::network::constants::NetworkExt;
 use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
@@ -1491,7 +1490,6 @@ mod tests {
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
-    use dashcore::hashes::Hash;
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
     use dashcore::prelude::CoreBlockHeight;
