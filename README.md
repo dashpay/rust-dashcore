@@ -142,7 +142,7 @@ The following versions are officially supported:
 * 0.23.x
 
 # Minimum Supported Rust Version (MSRV)
-This workspace compiles on Rust 1.89 or newer. Crates use mixed editions (2021 and 2024). See CLAUDE.md/AGENTS.md for common commands and CI expectations.
+This workspace compiles on Rust 1.89 or newer. Crates use mixed editions (2021 and 2024). See AGENTS.md for common commands and CI expectations.
 
 
 # Documentation
@@ -157,7 +157,7 @@ architectural mismatches.
 
 ## Branching Model
 
-Feature work targets the `dev` branch. Submit hotfixes and documentation-only changes to `main` unless maintainers direct otherwise. The `main` branch tracks the latest tagged release. Release branches (`chore/release-vX.Y.Z`) are short-lived, cut from `dev` per release.
+Every pull request targets the `dev` branch, including fixes and documentation changes. The `master` branch tracks the latest release. Maintainers prepare each release on a short-lived `chore/release-vX.Y.Z` branch, merge it into `master` and tag it.
 
 ## Installing Rust
 
@@ -191,7 +191,8 @@ Every PR needs at least two reviews to get merged. During the review phase
 maintainers and contributors are likely to leave comments and request changes.
 Please try to address them, otherwise your PR might get closed without merging
 after a longer time of inactivity. If your PR isn't ready for review yet please
-mark it by prefixing the title with `WIP: `.
+open it as a draft. CI rejects titles that don't start with a Conventional Commits
+type, so a `WIP: ` prefix fails the title check.
 
 ### CI Pipeline
 
