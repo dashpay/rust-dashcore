@@ -4,7 +4,7 @@ use dashcore::bls_sig_utils::BlsScheme;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::message_verification_error::MessageVerificationError;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-use dashcore::{InstantLock, QuorumSigningRequestId, Transaction, Txid};
+use dashcore::{InstantLock, Network, QuorumSigningRequestId, Transaction, Txid};
 use dashcore_hashes::Hash;
 
 use crate::error::{ValidationError, ValidationResult};
@@ -19,6 +19,7 @@ use crate::validation::Validator;
 #[derive(Debug, Clone)]
 pub struct VerifiedInstantLock {
     instant_lock: InstantLock,
+    network: Network,
 }
 
 /// A stored or received InstantLock failed authentication.
@@ -38,6 +39,11 @@ impl VerifiedInstantLock {
         &self.instant_lock
     }
 
+    /// The network of the client whose quorum state authenticated this lock.
+    pub fn network(&self) -> Network {
+        self.network
+    }
+
     /// The transaction ID covered by the quorum signature.
     pub fn txid(&self) -> Txid {
         self.instant_lock.txid
@@ -46,6 +52,7 @@ impl VerifiedInstantLock {
     /// Binds the evidence to the complete transaction and its ordered inputs.
     ///
     /// No wallet arithmetic or transaction consensus validation is performed.
+    /// Consumers must also match `network()` to the wallet receiving the evidence.
     pub fn matches_transaction(&self, transaction: &Transaction) -> bool {
         self.txid() == transaction.txid()
             && self
@@ -63,9 +70,10 @@ impl VerifiedInstantLock {
         InstantLockStructureValidator
             .validate(instant_lock)
             .map_err(InstantLockVerificationError::Malformed)?;
-        let Some(quorums) =
-            engine.and_then(|engine| engine.rotated_quorums_of_cycle(&instant_lock.cyclehash))
-        else {
+        let Some(engine) = engine else {
+            return Ok(None);
+        };
+        let Some(quorums) = engine.rotated_quorums_of_cycle(&instant_lock.cyclehash) else {
             return Ok(None);
         };
         if quorums.values().any(|quorum| quorum.verified != LLMQEntryVerificationStatus::Verified) {
@@ -82,6 +90,7 @@ impl VerifiedInstantLock {
         validator.validate(instant_lock).map_err(InstantLockVerificationError::InvalidSignature)?;
         Ok(Some(Self {
             instant_lock: instant_lock.clone(),
+            network: engine.network(),
         }))
     }
 }
@@ -292,6 +301,7 @@ mod tests {
         lock.inputs = transaction.input.iter().map(|input| input.previous_output).collect();
         let verified = VerifiedInstantLock {
             instant_lock: lock,
+            network: Network::Mainnet,
         };
         assert!(verified.matches_transaction(&transaction));
         let mut changed = transaction.clone();
