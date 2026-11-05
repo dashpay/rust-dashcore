@@ -699,7 +699,6 @@ fn spawn_reader(
             }
         }
 
-        tracing::info!("NETWORK: peer {} disconnected", addr);
         let _ = inbound.send(PeerEvent::Disconnected(addr));
     });
 }

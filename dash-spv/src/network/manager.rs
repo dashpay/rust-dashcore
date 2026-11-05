@@ -1248,7 +1248,7 @@ fn spawn_pump(
                     // evict the live one. One that already left was announced by whoever removed
                     // it, and a probed backup never joined.
                     let departed = HashSet::from([peer]);
-                    let (_, remaining) = connected.remove(&departed).await;
+                    let (removed, remaining) = connected.remove(&departed).await;
 
                     if remaining < *max_peers {
                         peer_wake.notify_one();
@@ -1258,13 +1258,22 @@ fn spawn_pump(
                     // connected peers, so they would otherwise leak in the registry.
                     let retried = broker.requeue_from(&departed).await;
 
-                    tracing::info!(
-                        target: "dash_spv::network",
-                        "peer disconnected: {} | {} peers remaining | {} request(s) re-queued",
-                        addr,
-                        remaining,
-                        retried,
-                    );
+                    if removed.is_empty() {
+                        tracing::debug!(
+                            target: "dash_spv::network",
+                            "connection to {} closed outside the peer set | {} request(s) re-queued",
+                            addr,
+                            retried,
+                        );
+                    } else {
+                        tracing::info!(
+                            target: "dash_spv::network",
+                            "peer disconnected: {} | {} peers remaining | {} request(s) re-queued",
+                            addr,
+                            remaining,
+                            retried,
+                        );
+                    }
                     broker.wake();
                 }
             }
