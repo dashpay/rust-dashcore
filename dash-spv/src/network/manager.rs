@@ -733,10 +733,17 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                     tracing::debug!(target: "dash_spv::network", "endgame: hedged {} block request(s)", hedged);
                 }
             }
-            if underserving.is_some() && underserving != last_underserving {
+            if let Some(slow) = underserving.filter(|slow| Some(slow.addr) != last_underserving) {
+                tracing::debug!(
+                    target: "dash_spv::network",
+                    "{} serving at {:.2} MB/s vs best {:.2} MB/s — a replacement is worth probing for",
+                    slow.addr,
+                    slow.rate as f64 / 1e6,
+                    slow.best as f64 / 1e6,
+                );
                 peer_wake.notify_one();
             }
-            last_underserving = underserving;
+            last_underserving = underserving.map(|slow| slow.addr);
         }
     })
 }
@@ -815,7 +822,10 @@ impl Supervisor {
             // Only look for a laggard once full: below cap every arrival is wanted anyway.
             // Each swap re-sends the work the old peer held, so at most one per cooldown.
             let cooled = self.last_swap.lock().await.is_none_or(|t| t.elapsed() >= SWAP_COOLDOWN);
-            let slow = (deficit == 0 && cooled).then(|| underserving_peer(&peers)).flatten();
+            let slow = (deficit == 0 && cooled)
+                .then(|| underserving_peer(&peers))
+                .flatten()
+                .map(|slow| slow.addr);
             (deficit, slow)
         };
         if deficit == 0 && slow.is_none() {
@@ -946,10 +956,18 @@ impl Supervisor {
     }
 }
 
+/// A peer underserving the rest, with its serving rate and the best one in bytes/s.
+#[derive(Clone, Copy)]
+struct SlowPeer {
+    addr: SocketAddr,
+    rate: u64,
+    best: u64,
+}
+
 /// The connected peer clearly underserving the rest, if any: serving bytes at a small
 /// fraction of the best connected peer's rate while it had work. Relative, so a slow
 /// client link (every peer slow alike) never condemns anyone.
-fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
+fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SlowPeer> {
     let measured: Vec<(SocketAddr, u64)> = peers
         .iter()
         .filter_map(|p| {
@@ -964,15 +982,10 @@ fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
     }
     let best = measured.iter().map(|&(_, r)| r).max().expect("non-empty");
     let (addr, worst) = measured.iter().copied().min_by_key(|&(_, r)| r).expect("non-empty");
-    ((worst as f64) < best as f64 * SLOW_RATE_FRACTION).then(|| {
-        tracing::debug!(
-            target: "dash_spv::network",
-            "{} serving at {:.2} MB/s vs best {:.2} MB/s — a replacement is worth probing for",
-            addr,
-            worst as f64 / 1e6,
-            best as f64 / 1e6,
-        );
-        addr
+    ((worst as f64) < best as f64 * SLOW_RATE_FRACTION).then_some(SlowPeer {
+        addr,
+        rate: worst,
+        best,
     })
 }
 
