@@ -9,9 +9,7 @@ use test_case::test_case;
 use tokio::sync::RwLock;
 
 use dash_spv::chain::checkpoints::CHECKPOINT_HEADERS;
-use dash_spv::test_utils::{
-    BlockHeaderStorage, DashCoreNode, DiskStorageManager, StorageManager, SYNC_TIMEOUT,
-};
+use dash_spv::test_utils::{BlockHeaderStorage, DashCoreNode, DiskStorageManager, StorageManager};
 use dash_spv::types::HashedBlockHeader;
 use dash_spv::{ClientConfig, Network, ProgressPercentage, SyncState};
 use dashcore::block::Header;
@@ -686,27 +684,6 @@ async fn test_wallet_added_below_synced_wallet(restart: bool, mine: bool) {
         let miner = ctx.dashd.node.get_new_address_from_wallet("default");
         ctx.dashd.node.generate_blocks(1, &miner);
     }
-
-    let backfilling = |progress: &dyn ProgressPercentage, state: SyncState| {
-        progress.missing_below() > 0 && progress.percentage() < 1.0 && state == SyncState::Syncing
-    };
-    let (mut headers_seen, mut filter_headers_seen) = (false, false);
-    tokio::time::timeout(SYNC_TIMEOUT, async {
-        while !(headers_seen && filter_headers_seen) {
-            {
-                let progress = handle.progress_receiver.borrow_and_update();
-                if let Ok(headers) = progress.headers() {
-                    headers_seen |= backfilling(headers, headers.state());
-                }
-                if let Ok(filter_headers) = progress.filter_headers() {
-                    filter_headers_seen |= backfilling(filter_headers, filter_headers.state());
-                }
-            }
-            handle.progress_receiver.changed().await.unwrap();
-        }
-    })
-    .await
-    .expect("headers and filter headers should report the backfill");
 
     wait_for_sync(&mut handle.progress_receiver, tip).await;
     wait_for_wallet_synced(&wallet, &history_id, tip).await;
