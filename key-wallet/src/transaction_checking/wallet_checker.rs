@@ -8,7 +8,7 @@ use super::account_checker::{AccountMatch, DerivedAddressInfo};
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::transaction_record::{InputDetail, OutputRole, TransactionRecord};
+use crate::managed_account::transaction_record::{InputDetail, TransactionRecord};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -33,9 +33,11 @@ pub trait WalletTransactionChecker {
     /// and refresh once at the end via `update_last_processed_height`.
     ///
     /// Late funding corrects accounting only while the spender's full record is retained.
-    /// By default, ChainLocks prune funds records to txids; later funding cannot correct
-    /// those records or previously emitted copies. Enable `keep-finalized-transactions`
-    /// before processing for corrections after finalization, at the cost of retaining history.
+    /// By default, ChainLocks prune funds records to txids and summaries; later funding
+    /// cannot correct those records or previously emitted copies, and a record a rescan
+    /// rebuilds from its summary has only the inputs known when it was pruned. Enable
+    /// `keep-finalized-transactions` before processing for corrections after finalization,
+    /// at the cost of retaining history.
     ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
@@ -114,10 +116,9 @@ impl ManagedWalletInfo {
                     // does not own yet, and so does one after finality pruned
                     // the record to its summary.
                     if record.context.confirmed() {
-                        let adopted = outputs.iter().filter(|d| {
-                            matches!(d.role, OutputRole::Received | OutputRole::Change)
-                                && !before.contains(&d.index)
-                        });
+                        let adopted_indices =
+                            &TransactionRecord::owned_indices(&record.output_details) - &before;
+                        let adopted = outputs.iter().filter(|d| adopted_indices.contains(&d.index));
                         if funds.take_in_mined_outputs(
                             &record.transaction,
                             &record.context,
@@ -4336,8 +4337,9 @@ mod tests {
 
     /// The summary a pruned record leaves persists with the account: a
     /// reloaded account still rebuilds and emits the record a rescan
-    /// corrects. An account saved before summaries were kept loads too, and
-    /// its finalized txids still get the late coin, though not the record.
+    /// corrects. An account saved as JSON before summaries were kept loads
+    /// too, and its finalized txids still get the late coin, though not the
+    /// record.
     #[cfg(not(feature = "keep-finalized-transactions"))]
     #[tokio::test]
     async fn test_reloaded_account_rebuilds_the_pruned_record_a_rescan_corrects() {
@@ -4403,11 +4405,59 @@ mod tests {
         )
         .await;
 
-        let again = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        // Delivered as `InBlock`, as below another wallet's lower ChainLock.
+        let again = ctx.check_transaction(&early, in_block(100, 1)).await;
         assert!(ctx.bip44_account().utxos.contains_key(&OutPoint::new(early.txid(), 1)));
         assert_eq!(ctx.managed_wallet.balance.total(), 40_000 + 40_000 + 7_000 + 5_000);
         assert_eq!(again.updated_records.len(), 1);
         assert_eq!(again.updated_records[0].net_amount, 80_000);
+        assert!(again.updated_records[0].context.is_chain_locked());
+    }
+
+    /// A late output's coin that an unsettled transaction already spends is
+    /// held under that spend, whether a late input or a finalized
+    /// re-delivery makes the record own it, so a fork dropping the spend
+    /// gives it back.
+    #[tokio::test]
+    async fn test_late_owned_output_spent_by_a_reorged_transaction_comes_back() {
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+
+        // A late input makes the record own it.
+        let mut ctx = TestWalletContext::new_random();
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let funding = paying(4, &[&addresses[3]], 100_000);
+        let mut spend = paying(0, &[&addresses[1], &addresses[2 * gap]], 30_000);
+        spend.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+        ctx.check_transaction(&spend, in_block(101, 2)).await;
+        ctx.check_transaction(&paying(3, &[&addresses[gap]], 7_000), in_block(102, 3)).await;
+        let far = OutPoint::new(spend.txid(), 1);
+        let mut child = paying(9, &[&addresses[5]], 1_000);
+        child.input[0].previous_output = far;
+        ctx.check_transaction(&child, in_block(103, 4)).await;
+        ctx.check_transaction(&funding, in_block(100, 1)).await;
+        ctx.managed_wallet.truncate_above(102).expect("truncate");
+        assert!(ctx.bip44_account().utxos.contains_key(&far), "late input");
+        assert_eq!(ctx.managed_wallet.balance.total(), 30_000 + 30_000 + 7_000);
+        ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(102));
+        ctx.check_transaction(&spend, in_chain_locked_block(101, 2)).await;
+        assert_eq!(ctx.managed_wallet.balance.total(), 30_000 + 30_000 + 7_000);
+
+        // A finalized re-delivery makes it own it.
+        let mut ctx = TestWalletContext::new_random();
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+        ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        ctx.check_transaction(&paying(2, &[&addresses[gap]], 7_000), in_chain_locked_block(101, 2))
+            .await;
+        ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(101));
+        let far = OutPoint::new(early.txid(), 1);
+        let mut child = paying(9, &[&addresses[5]], 1_000);
+        child.input[0].previous_output = far;
+        ctx.check_transaction(&child, in_block(102, 3)).await;
+        ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        ctx.managed_wallet.truncate_above(101).expect("truncate");
+        assert!(ctx.bip44_account().utxos.contains_key(&far), "finalized re-delivery");
+        assert_eq!(ctx.managed_wallet.balance.total(), 40_000 + 40_000 + 7_000);
     }
 
     /// A late input that makes a mined spender's record own a late output

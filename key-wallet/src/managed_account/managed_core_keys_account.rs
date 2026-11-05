@@ -52,10 +52,10 @@ pub struct ManagedCoreKeysAccount {
     /// processed transaction lives here for the wallet's lifetime —
     /// including ones that have been chainlocked. With the feature OFF
     /// (the default), records of chainlocked transactions are dropped
-    /// from this map and only their txids and summaries are retained in
-    /// `finalized_txids` and `finalized_summaries` to bound memory growth —
-    /// except provider-payload
-    /// records on provider-key accounts, which are always retained (see
+    /// from this map to bound memory growth, keeping their txids in
+    /// `finalized_txids` and, on funds accounts, their summaries in
+    /// `finalized_summaries` — except provider-payload records on
+    /// provider-key accounts, which are always retained (see
     /// [`Self::drop_finalized_transaction`]).
     transactions: BTreeMap<Txid, TransactionRecord>,
     /// Txids of transactions that have been finalized in a chainlocked
@@ -73,9 +73,10 @@ pub struct ManagedCoreKeysAccount {
     #[cfg(not(feature = "keep-finalized-transactions"))]
     #[cfg_attr(feature = "serde", serde(default))]
     finalized_txids: HashSet<Txid>,
-    /// The summary of each record dropped to `finalized_txids`, from which a
-    /// rescan finding it owning more outputs rebuilds it. A txid finalized
-    /// by a version that kept no summary has none.
+    /// On funds accounts, the summary of each record dropped to
+    /// `finalized_txids`, from which a rescan finding it owning more outputs
+    /// rebuilds it. A txid finalized by a version that kept no summary has
+    /// none.
     #[cfg(not(feature = "keep-finalized-transactions"))]
     #[cfg_attr(feature = "serde", serde(default))]
     finalized_summaries: HashMap<Txid, FinalizedSummary>,
@@ -100,8 +101,8 @@ impl ManagedCoreKeysAccount {
         }
     }
 
-    /// Drop the full record for `txid` and remember only its txid and its
-    /// [`FinalizedSummary`].
+    /// Drop the full record for `txid` and remember only its txid and, on a
+    /// funds account, its [`FinalizedSummary`].
     ///
     /// Only defined when the `keep-finalized-transactions` Cargo feature
     /// is OFF (the default). Called when a transaction transitions into
@@ -132,8 +133,23 @@ impl ManagedCoreKeysAccount {
             return;
         }
         if let Some(record) = self.transactions.remove(txid) {
-            self.finalized_summaries.insert(*txid, FinalizedSummary::of(&record));
+            if self.tracks_funds() {
+                self.finalized_summaries.insert(*txid, FinalizedSummary::of(&record));
+            }
         }
+    }
+
+    /// Whether this is the keys state of a funds account, the only kind
+    /// whose re-deliveries adopt outputs.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    fn tracks_funds(&self) -> bool {
+        matches!(
+            self.managed_account_type,
+            ManagedAccountType::Standard { .. }
+                | ManagedAccountType::CoinJoin { .. }
+                | ManagedAccountType::DashpayReceivingFunds { .. }
+                | ManagedAccountType::DashpayExternalAccount { .. }
+        )
     }
 
     /// The summary kept for the pruned record of `txid`.

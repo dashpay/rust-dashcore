@@ -1047,9 +1047,9 @@ impl ManagedCoreFundsAccount {
     ///
     /// An output is new when the record, or the summary kept of it once
     /// pruned, does not own it: every output a record owns had its coin
-    /// taken in. A txid finalized without a summary, by a version that kept
-    /// none, has no record to correct; its outputs count as new while their
-    /// address is unused, since recording marks every address it owns as
+    /// passed through `take_in_output`. A txid finalized without a summary,
+    /// by a version that kept none, has no record to correct; its outputs
+    /// count as new while their address is unused, since recording marks every address it owns as
     /// used.
     ///
     /// The inputs are marked spent again too. A reload rebuilds the spent
@@ -1100,10 +1100,16 @@ impl ManagedCoreFundsAccount {
                 .collect();
             if !adopted.is_empty() {
                 summary.owned_outputs = now.into_iter().collect();
+                // A block delivery below another wallet's ChainLock comes
+                // as `InBlock`, but this transaction is chainlocked.
+                let context = context.block_info().map_or_else(
+                    || context.clone(),
+                    |info| TransactionContext::InChainLockedBlock(*info),
+                );
                 let mut rebuilt = TransactionRecord::new(
                     tx.clone(),
                     self.keys.managed_account_type().to_account_type(),
-                    context.clone(),
+                    context,
                     transaction_type,
                     TransactionDirection::Incoming,
                     input_details,
@@ -1154,8 +1160,10 @@ impl ManagedCoreFundsAccount {
         }
     }
 
-    /// Take in the coins of the mined `tx`'s `outputs`, owned outputs the
-    /// account has no trace of, and return whether one was credited.
+    /// Take in the coins of the mined `tx`'s `outputs`, owned outputs not
+    /// yet in `utxos`, and return whether one was credited. A coin a recorded
+    /// transaction already spends is held under that spend while it is
+    /// unsettled, so a fork dropping the spend gives it back.
     pub(crate) fn take_in_mined_outputs<'a>(
         &mut self,
         tx: &Transaction,
@@ -1172,7 +1180,7 @@ impl ManagedCoreFundsAccount {
                 continue;
             };
             let outpoint = OutPoint::new(txid, detail.index);
-            if self.utxos.contains_key(&outpoint) || self.is_outpoint_spent(&outpoint) {
+            if self.utxos.contains_key(&outpoint) {
                 continue;
             }
             let output = tx.output[detail.index as usize].clone();
