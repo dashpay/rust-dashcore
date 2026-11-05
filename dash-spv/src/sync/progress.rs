@@ -80,7 +80,7 @@ impl SyncProgress {
     }
 
     /// Returns the states of the managers that reported, in a fixed manager order.
-    fn manager_states(&self) -> Vec<SyncState> {
+    pub(crate) fn manager_states(&self) -> Vec<SyncState> {
         [
             self.headers.as_ref().map(|h| h.state()),
             self.filter_headers.as_ref().map(|f| f.state()),
