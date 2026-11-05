@@ -347,7 +347,7 @@ mod tests {
         };
         handler.on_sync_event(&event);
         handler.on_network_event(&NetworkEvent::PeersUpdated {
-            connected_count: 0,
+            addresses: vec![],
             best_height: 0,
         });
         handler.on_progress(&SyncProgress::default());

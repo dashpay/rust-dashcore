@@ -807,7 +807,7 @@ mod tests {
         // Use a target below the first testnet checkpoint (50000) so the
         // pipeline produces a single open-ended tip segment.
         let initial_event = NetworkEvent::PeersUpdated {
-            connected_count: 1,
+            addresses: vec![test_socket_address(1)],
             best_height: 40_000,
         };
         manager.handle_network_event(&initial_event, &network).await.unwrap();
@@ -845,7 +845,7 @@ mod tests {
         mock.clear_sent().await;
 
         let disconnect_event = NetworkEvent::PeersUpdated {
-            connected_count: 0,
+            addresses: vec![],
             best_height: 40_000,
         };
         manager.handle_network_event(&disconnect_event, &network).await.unwrap();
@@ -888,7 +888,7 @@ mod tests {
         let network: Arc<dyn NetworkManager> = mock.clone();
 
         let disconnect_event = NetworkEvent::PeersUpdated {
-            connected_count: 0,
+            addresses: vec![],
             best_height: tip.height(),
         };
         manager.handle_network_event(&disconnect_event, &network).await.unwrap();
@@ -899,7 +899,7 @@ mod tests {
 
         // Reconnect with a higher peer best_height (a new block was mined).
         let reconnect_event = NetworkEvent::PeersUpdated {
-            connected_count: 1,
+            addresses: vec![test_socket_address(1)],
             best_height: tip.height() + 1,
         };
         manager.handle_network_event(&reconnect_event, &network).await.unwrap();

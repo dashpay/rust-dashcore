@@ -13,7 +13,7 @@ use crate::network::peer::{ConnectedPeer, PeerId};
 
 /// The connected peers. Every change is announced while the set's lock is held, so
 /// subscribers that mirror the set from the events see the changes in the order they
-/// happened, and the last `PeersUpdated` always carries the current count.
+/// happened, and the last `PeersUpdated` always lists the current peers.
 pub(crate) struct PeerSet {
     peers: Mutex<Vec<ConnectedPeer>>,
     events: broadcast::Sender<NetworkEvent>,
@@ -119,7 +119,7 @@ impl PeerSet {
     }
 
     /// Announces the peers at `departed` and `arrived` against the `remaining` set,
-    /// then the new count if anything changed.
+    /// then the `remaining` peers if anything changed.
     fn announce(
         &self,
         remaining: &[ConnectedPeer],
@@ -141,7 +141,7 @@ impl PeerSet {
         }
         if changed {
             let _ = self.events.send(NetworkEvent::PeersUpdated {
-                connected_count: remaining.len() as u32,
+                addresses: remaining.iter().map(|p| p.addr()).collect(),
                 best_height: self.best_tip(),
             });
         }
@@ -157,10 +157,10 @@ mod tests {
         PeerId::for_test(test_socket_address(addr), 0)
     }
 
-    fn queued(events: &mut broadcast::Receiver<NetworkEvent>) -> Vec<String> {
+    fn queued(events: &mut broadcast::Receiver<NetworkEvent>) -> Vec<NetworkEvent> {
         let mut out = Vec::new();
         while let Ok(event) = events.try_recv() {
-            out.push(event.to_string());
+            out.push(event);
         }
         out
     }
@@ -190,9 +190,12 @@ mod tests {
         assert_eq!(
             queued(&mut events),
             [
-                format!("PeerDisconnected({})", conn(1).addr()),
-                format!("PeerConnected({})", conn(3).addr()),
-                "PeersUpdated(2 peers)".to_string(),
+                NetworkEvent::PeerDisconnected(conn(1).addr()),
+                NetworkEvent::PeerConnected(conn(3).addr()),
+                NetworkEvent::PeersUpdated {
+                    addresses: vec![conn(2).addr(), conn(3).addr()],
+                    best_height: 0,
+                },
             ]
         );
 
