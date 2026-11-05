@@ -282,7 +282,8 @@ impl Broker {
         let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle)> = Vec::new();
         let mut msgs = msgs.into_iter();
         for (height, msg) in msgs.by_ref() {
-            let open = peers.iter().filter(|p| p.in_flight_bytes() < p.cap());
+            // `peers` can be a snapshot taken before the timeout monitor closed one of them.
+            let open = peers.iter().filter(|p| !p.is_closed() && p.in_flight_bytes() < p.cap());
             let Some(peer) = choose_peer(open, classify(&msg)) else {
                 unsent.push((height, msg));
                 break;
@@ -666,6 +667,22 @@ mod tests {
             };
             assert_eq!(broker.state_of(&RequestKey::CFilters(height)).await, Some(want));
         }
+    }
+
+    #[tokio::test]
+    async fn requeued_work_skips_a_closed_peer_still_listed() {
+        let broker = Broker::new();
+        let gone = ConnectedPeer::for_test(conn(1, 0)).await;
+        let other = ConnectedPeer::for_test(conn(2, 0)).await;
+        broker.mark_on_wire(&get_cfilters(0), gone.id()).await;
+        gone.close();
+        broker.requeue_from(&HashSet::from([gone.id()])).await;
+
+        // Only the charge matters here: the loopback has no reader to answer it.
+        broker.route(&[gone.handle(), other.handle()], u64::MAX, &ResponseCosts::new()).await;
+
+        assert_eq!(gone.in_flight_bytes(), 0);
+        assert!(other.in_flight_bytes() > 0);
     }
 
     #[tokio::test]

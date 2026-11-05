@@ -1093,15 +1093,15 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 continue;
             }
 
-            // Re-queue every on-wire request of a culprit (fresh ones too: the connection is
-            // going away), keeping keys as Queued so de-dup holds.
-            let retried = broker.requeue_from(&culprits).await;
-
-            // Drop culprits still in the set (some may already be gone).
+            // Drop culprits still in the set (some may already be gone) before their work
+            // is re-queued, so the router cannot hand it back to them.
             let (kicked, remaining) = connected.remove(&culprits).await;
             for peer in &kicked {
                 peer.close();
             }
+            // Re-queue every on-wire request of a culprit (fresh ones too: the connection is
+            // going away), keeping keys as Queued so de-dup holds.
+            let retried = broker.requeue_from(&culprits).await;
             let dropped = kicked.len();
             for peer in &culprits {
                 bans.ban(peer.addr(), Ban::Kicked).await;
