@@ -595,6 +595,38 @@ struct PeerFlow {
     serving_ticks: u32,
 }
 
+impl PeerFlow {
+    fn new(bytes: u64) -> Self {
+        Self {
+            limiter: ByteLimiter::new(MIN_CAP_BYTES, bytes),
+            serving_rate: 0.0,
+            serving_ticks: 0,
+        }
+    }
+
+    /// One tick with the peer's cumulative bytes received and its bytes in flight now.
+    /// Returns its new cap.
+    fn tick(&mut self, bytes: u64, in_flight: u64) -> u64 {
+        let cap = self.limiter.tick(bytes, in_flight, CAP_STEP_BYTES_PER_SEC);
+        if in_flight > 0 {
+            self.serving_ticks += 1;
+            let alpha = 1.0 / self.serving_ticks.min(SERVING_SAMPLE_TICKS) as f64;
+            self.serving_rate += alpha * (self.limiter.rate - self.serving_rate);
+        }
+        cap
+    }
+
+    /// Returns the peer's serving rate in bytes/s, 0 until measured.
+    fn serving_rate(&self) -> u64 {
+        let measured = self.limiter.found_ceiling && self.serving_ticks >= SERVING_SAMPLE_TICKS;
+        if measured {
+            self.serving_rate as u64
+        } else {
+            0
+        }
+    }
+}
+
 /// Sizes the byte caps of every peer and of the client's own link, each with a
 /// [`ByteLimiter`] on its own throughput: the router sends while both have room.
 /// Also reports how fast each peer serves while it has work, for [`underserving_peer`].
@@ -632,25 +664,9 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             for p in g.iter() {
                 let in_flight = p.in_flight_bytes();
                 total_in_flight += in_flight;
-                let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow {
-                    limiter: ByteLimiter::new(MIN_CAP_BYTES, p.bytes_read()),
-                    serving_rate: 0.0,
-                    serving_ticks: 0,
-                });
-                let cap = flow.limiter.tick(p.bytes_read(), in_flight, CAP_STEP_BYTES_PER_SEC);
-                p.set_cap(cap);
-                if in_flight > 0 {
-                    flow.serving_ticks += 1;
-                    let alpha = 1.0 / flow.serving_ticks.min(SERVING_SAMPLE_TICKS) as f64;
-                    flow.serving_rate += alpha * (flow.limiter.rate - flow.serving_rate);
-                }
-                let measured =
-                    flow.limiter.found_ceiling && flow.serving_ticks >= SERVING_SAMPLE_TICKS;
-                p.set_serving_rate(if measured {
-                    flow.serving_rate as u64
-                } else {
-                    0
-                });
+                let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
+                p.set_cap(flow.tick(p.bytes_read(), in_flight));
+                p.set_serving_rate(flow.serving_rate());
             }
 
             global.min_cap = (MIN_CAP_BYTES * g.len() as u64) as f64;
