@@ -64,7 +64,15 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     }
 
     /// The coinbase payload of the newest block a masternode list diff proved it
-    /// in, `None` while masternode sync is off or has validated none yet.
+    /// in, `None` while masternode sync is off, has validated none yet, or has
+    /// rolled it back after following a fork.
+    ///
+    /// It is not checked against the tip: after a restart it is the one stored
+    /// before, until sync proves a newer one. It is current once
+    /// `progress().masternodes()` has `state() == SyncState::Synced` and
+    /// `current_height() >= block_header_tip_height()`. Even then, on the last
+    /// block before a fork activates, its version follows the tip's rules, not
+    /// the next block's ones that Core checks mempool transactions against.
     pub async fn latest_coinbase(&self) -> Option<CoinbasePayload> {
         let engine = self.masternode_engine.as_ref()?;
         engine.read().await.latest_coinbase().cloned()
