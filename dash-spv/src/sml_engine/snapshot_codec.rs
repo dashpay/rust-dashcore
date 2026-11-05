@@ -400,7 +400,6 @@ mod tests {
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::consensus::deserialize;
     use dashcore::hash_types::MerkleRootAssetUnlocks;
-    use dashcore::hashes::Hash;
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::prelude::CoreBlockHeight;
