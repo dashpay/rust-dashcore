@@ -969,9 +969,10 @@ fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 /// Time requests out and evict the peers that stalled on them.
 ///
 /// A peer is a culprit when it has in-flight work and no bytes have arrived from it
-/// for a full [`REQUEST_TIMEOUT`], or when one of its requests made no progress
-/// for that long. Liveness is per peer, not per request age: a healthy peer
-/// draining a deep backlog keeps sending bytes even while its oldest request waits.
+/// for a full [`REQUEST_TIMEOUT`] since it was given that work, or when one of its
+/// requests made no progress for that long. Liveness is per peer, not per request
+/// age: a healthy peer draining a deep backlog keeps sending bytes even while its
+/// oldest request waits.
 ///
 /// A culprit is kicked immediately and ALL its on-wire requests are re-queued for
 /// other peers; leaving it connected would just route the freed work back to it.
@@ -987,7 +988,7 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             ..
         } = &*state;
         let mut ticker = tokio::time::interval(TIMEOUT_CHECK);
-        // Per-peer liveness: (bytes read at last progress, when it last rose).
+        // Per-peer liveness: (bytes read, when the peer last sent bytes or was idle).
         let mut progress: HashMap<PeerId, (u64, Instant)> = HashMap::new();
         loop {
             tokio::select! {
@@ -1009,12 +1010,14 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 for peer in peers.iter() {
                     let addr = peer.id();
                     let bytes = peer.bytes_read();
+                    let in_flight = peer.in_flight_bytes();
                     let entry = progress.entry(addr).or_insert((bytes, now));
-                    if bytes > entry.0 {
+                    // An idle peer owes no bytes, so its silence before it gets work
+                    // must not count against its first request.
+                    if bytes > entry.0 || in_flight == 0 {
                         *entry = (bytes, now);
                     }
-                    if peer.in_flight_bytes() > 0
-                        && now.duration_since(entry.1) > request_timeout(peer.lag_ms())
+                    if in_flight > 0 && now.duration_since(entry.1) > request_timeout(peer.lag_ms())
                     {
                         culprits.insert(addr);
                     }
@@ -1432,6 +1435,35 @@ mod tests {
         };
         assert_eq!(net.state.broker.state_of(&RequestKey::CFilters(0)).await, Some(want));
         assert_eq!(net.state.broker.len(), stalls as usize);
+    }
+
+    /// A peer that was silent while idle is timed from the request it is given, and
+    /// kicked only when it stays silent with that work for the full timeout.
+    #[tokio::test(start_paused = true)]
+    async fn the_timeout_monitor_times_an_idle_peer_from_its_first_request() {
+        let net = broker().await;
+        let session = net.session.lock().await.clone();
+        let id = conn(1, 0);
+        let peer = ConnectedPeer::for_test(id).await;
+        let handle = peer.handle();
+        let admitted = net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+        assert!(matches!(admitted, Admission::Joined));
+
+        for _ in 0..3 {
+            tokio::time::advance(REQUEST_TIMEOUT).await;
+            tokio::task::yield_now().await;
+        }
+        // Only the charge matters here: the loopback has no reader to answer it.
+        let _ = handle.send(&get_cfilters(0)).await;
+        assert!(handle.in_flight_bytes() > 0);
+
+        tokio::time::advance(TIMEOUT_CHECK * 2).await;
+        tokio::task::yield_now().await;
+        assert_eq!(net.connected_count().await, 1, "kicked right after its first request");
+
+        tokio::time::advance(REQUEST_TIMEOUT).await;
+        tokio::task::yield_now().await;
+        assert_eq!(net.connected_count().await, 0, "a peer silent with work stays connected");
     }
 
     #[test_case(&[&[MessageType::Inv], &[MessageType::Inv]], 0, &[1, 1]; "every subscriber of the type")]
