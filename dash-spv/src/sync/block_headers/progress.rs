@@ -87,7 +87,6 @@ impl BlockHeadersProgress {
     /// Update the number of heights below the stored ones still to sync.
     pub fn update_missing_below(&mut self, count: u32) {
         self.missing_below = count;
-        self.bump_last_activity();
     }
     /// Bump the last activity time.
     pub fn bump_last_activity(&mut self) {
