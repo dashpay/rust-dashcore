@@ -1,5 +1,3 @@
-use hashes::Hash;
-
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::sml::masternode_list::MasternodeList;
 use hex_conservative::DisplayHex;

@@ -723,7 +723,6 @@ mod tests {
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
     use dashcore::block::Header;
-    use dashcore::hashes::Hash;
     use dashcore::sml::masternode_list::MasternodeList;
 
     type TestMasternodesManager = MasternodesManager<PersistentBlockHeaderStorage>;

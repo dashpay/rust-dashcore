@@ -10,7 +10,6 @@ use dashcore::blockdata::transaction::special_transaction::{
 };
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::hash_types::{InputsHash, PubkeyHash};
-use dashcore::hashes::Hash;
 use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{OutPoint, PlatformNodeId, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::net::SocketAddr;

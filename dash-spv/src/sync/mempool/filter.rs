@@ -68,7 +68,6 @@ mod tests {
 
     use super::*;
     use crate::sync::mempool::BLOOM_FALSE_POSITIVE_RATE;
-    use dashcore::hashes::Hash;
     use dashcore::{Network, Txid};
 
     fn test_addr(seed: usize) -> Address {

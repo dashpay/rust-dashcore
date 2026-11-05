@@ -35,7 +35,7 @@
 //! [`ExtendedBLSPubKey::to_bytes_legacy`]).
 
 use core::fmt;
-use dashcore_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
+use dashcore_hashes::{hash160, sha256, Hash, HashEngine, HmacEngine};
 use std::error;
 
 // NOTE: We use Bls12381G2Impl for BLS keys (48-byte public keys)
@@ -138,11 +138,11 @@ impl Drop for ExtendedBLSPrivKey {
 
 /// HMAC-SHA256 over `input || suffix` used for extended key derivation.
 fn derivation_hmac(key: &[u8], input: &[u8], suffix: u8) -> [u8; 32] {
-    let mut engine: HmacEngine<sha256::Hash> = HmacEngine::new(key);
+    let mut engine: HmacEngine<sha256::HashEngine> = HmacEngine::new(key);
     engine.input(input);
     engine.input(&[suffix]);
 
-    *Hmac::<sha256::Hash>::from_engine(engine).as_byte_array()
+    *engine.finalize().as_byte_array()
 }
 
 impl ExtendedBLSPrivKey {
@@ -329,11 +329,10 @@ impl ExtendedBLSPrivKey {
 
     /// Get the fingerprint of this key
     pub fn fingerprint(&self) -> Result<Fingerprint, Error> {
-        use dashcore_hashes::hash160;
         let public_key_bytes = self.public_key_bytes()?;
         let hash = hash160::Hash::hash(&public_key_bytes);
         let mut fingerprint_bytes = [0u8; 4];
-        fingerprint_bytes.copy_from_slice(&hash[..4]);
+        fingerprint_bytes.copy_from_slice(&hash.as_byte_array()[..4]);
         Ok(Fingerprint::from_bytes(fingerprint_bytes))
     }
 
@@ -483,7 +482,6 @@ impl ExtendedBLSPubKey {
 
     /// Get the fingerprint of this key
     pub fn fingerprint(&self) -> Fingerprint {
-        use dashcore_hashes::hash160;
         let public_key_bytes = self.public_key.to_bytes();
         let hash = hash160::Hash::hash(&public_key_bytes);
         let mut fingerprint_bytes = [0u8; 4];

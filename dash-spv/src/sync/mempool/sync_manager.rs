@@ -187,7 +187,6 @@ mod tests {
     use crate::client::config::MempoolStrategy;
     use crate::sync::BroadcastConfig;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
-    use dashcore::hashes::Hash;
     use key_wallet_manager::test_utils::MockWallet;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;

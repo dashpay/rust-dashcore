@@ -1,7 +1,5 @@
 use std::ops::Range;
 
-use hashes::Hash;
-
 use crate::consensus::serialize;
 use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::transaction::special_transaction::coinbase::CoinbasePayload;

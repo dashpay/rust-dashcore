@@ -165,7 +165,6 @@ mod tests {
     use crate::test_utils::MockHeaderStorage;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::BlockHash;
-    use dashcore_hashes::Hash;
 
     use tempfile::TempDir;
     use test_case::test_case;

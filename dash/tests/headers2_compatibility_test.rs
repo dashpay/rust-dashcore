@@ -7,7 +7,6 @@ use dashcore::consensus::{deserialize, serialize};
 use dashcore::hash_types::{BlockHash, TxMerkleNode};
 use dashcore::network::message_headers2::{CompressedHeader, CompressionState, Headers2Message};
 use dashcore::pow::CompactTarget;
-use dashcore_hashes::Hash;
 use hex_conservative::DisplayHex;
 
 fn create_header(version: i32, prev_hash: [u8; 32], time: u32, bits: u32, nonce: u32) -> Header {

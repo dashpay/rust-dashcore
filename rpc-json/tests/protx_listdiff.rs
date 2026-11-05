@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use dashcore_rpc_json::dashcore::ProTxHash;
-use dashcore_rpc_json::dashcore::hashes::{Hash, hash160};
+use dashcore_rpc_json::dashcore::hashes::hash160;
 use dashcore_rpc_json::{DMNState, DMNStateDiff, MasternodeListDiff};
 use serde_json::Value;
 

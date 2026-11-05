@@ -287,7 +287,6 @@ mod tests {
     async fn test_process_buffered_blocks_routes_wallet_set() {
         use dashcore::block::Header;
         use dashcore::{Block, TxMerkleNode};
-        use dashcore_hashes::Hash;
 
         let mut manager = create_test_manager().await;
         manager.progress.set_state(SyncState::Syncing);
@@ -365,7 +364,6 @@ mod tests {
     async fn test_process_buffered_blocks_excludes_uninterested_wallet() {
         use dashcore::block::Header;
         use dashcore::{Block, TxMerkleNode};
-        use dashcore_hashes::Hash;
         use key_wallet_manager::test_utils::{MockWalletState, MultiMockWallet};
         use key_wallet_manager::WalletId;
 
@@ -429,7 +427,6 @@ mod tests {
     async fn test_on_disconnect_preserves_pipeline_work() {
         use dashcore::block::Header;
         use dashcore::{Block, TxMerkleNode};
-        use dashcore_hashes::Hash;
 
         let mut manager = create_test_manager().await;
         manager.filters_sync_complete = true;

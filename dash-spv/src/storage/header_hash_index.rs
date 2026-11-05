@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use dashcore::BlockHash;
-use dashcore_hashes::Hash;
 
 const GROUP_SIZE: u32 = 4096;
 const GROUPS: usize = (u32::MAX / GROUP_SIZE) as usize + 1;

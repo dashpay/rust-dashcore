@@ -14,7 +14,6 @@ use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::hashes::Hash;
 use dashcore::{OutPoint, TxIn, TxOut, Txid};
 
 #[test]

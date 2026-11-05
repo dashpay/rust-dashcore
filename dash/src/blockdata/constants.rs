@@ -9,7 +9,7 @@
 //!
 
 use dash_params::{ChainParams, Network as CoreNetwork};
-use hashes::{Hash, sha256d};
+use hashes::sha256d;
 
 use crate::blockdata::block::{self, Block};
 use crate::blockdata::locktime::absolute;
@@ -19,15 +19,15 @@ use crate::blockdata::transaction::outpoint::OutPoint;
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
+use crate::hash_types::BlockHash;
 use crate::network::constants::Network;
 use crate::pow::CompactTarget;
 
 /// How many satoshis are in "one dash".
 pub const COIN_VALUE: u64 = 100_000_000;
-/// The maximum allowed weight for a block, see BIP 141 (network rule).
-pub const MAX_BLOCK_WEIGHT: u32 = 4_000_000;
-/// The minimum transaction weight for a valid serialized transaction.
-pub const MIN_TRANSACTION_WEIGHT: u32 = 4 * 60;
+/// The maximum size of a serialized block once DIP-0001 is active, Dash Core's
+/// `MAX_DIP0001_BLOCK_SIZE` (network rule).
+pub const MAX_BLOCK_SIZE: u32 = 2_000_000;
 /// The factor that non-witness serialization data is multiplied by during weight calculation.
 pub const WITNESS_SCALE_FACTOR: usize = 4;
 /// The maximum allowed number of signature check operations in a block.
@@ -73,7 +73,7 @@ pub fn genesis_block(network: Network) -> Block {
     Block {
         header: block::Header {
             version: block::Version::from_consensus(genesis.version),
-            prev_blockhash: Hash::all_zeros(),
+            prev_blockhash: BlockHash::all_zeros(),
             merkle_root: merkle_root.into(),
             time: genesis.time,
             bits: CompactTarget::from_consensus(genesis.bits),
@@ -88,7 +88,6 @@ mod test {
     use test_case::test_case;
 
     use super::*;
-    use crate::BlockHash;
     use crate::network::constants::NetworkExt;
 
     #[test_case(

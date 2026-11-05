@@ -1,7 +1,5 @@
 use std::ops::Range;
 
-use hashes::Hash;
-
 use crate::{
     Block, BlockHash, CompactTarget, Header, Transaction, TxMerkleNode,
     bip158::{BlockFilter, BlockFilterWriter},

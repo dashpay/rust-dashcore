@@ -170,8 +170,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 mod tests {
     use std::slice;
 
-    use dashcore::hashes::Hash;
-
     use super::*;
     use crate::sml_engine::test_support::TestEngine;
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
@@ -327,7 +325,6 @@ mod tests {
 mod shared_map_tests {
     use super::tests::{quorum_entry, PLATFORM_TYPE};
     use crate::sml_engine::test_support::TestEngine;
-    use dashcore::hashes::Hash;
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::prelude::CoreBlockHeight;
     use dashcore::sml::llmq_entry_verification::{

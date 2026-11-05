@@ -150,7 +150,6 @@ impl MnListDiffPipeline {
 mod tests {
     use dashcore::transaction::{OutPoint, Transaction};
     use dashcore::{ScriptBuf, TxIn, TxOut, Witness};
-    use dashcore_hashes::Hash;
 
     use super::*;
     use crate::test_utils::MockNetworkManager;

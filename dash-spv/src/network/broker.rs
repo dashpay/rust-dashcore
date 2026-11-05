@@ -550,7 +550,6 @@ mod tests {
     use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
     use dashcore::network::message_sml::GetMnListDiff;
     use dashcore::Txid;
-    use dashcore_hashes::Hash;
     use test_case::test_case;
 
     fn get_headers(locator: u32) -> NetworkMessage {

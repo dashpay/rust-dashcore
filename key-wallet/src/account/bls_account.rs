@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::managed_account::address_pool::AddressPoolType;
 use crate::{ChildNumber, DerivationPath, Network};
 use core::fmt;
+use dashcore::hashes::hash160;
 use dashcore::Address;
 
 #[cfg(feature = "serde")]
@@ -381,7 +382,6 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey, BlsS
 
         // Create a P2PKH address from the hash160 of the BLS public key
         // This uses the same hash160 (SHA256 + RIPEMD160) as ECDSA addresses
-        use dashcore::hashes::{hash160, Hash};
         let pubkey_hash = hash160::Hash::hash(&pubkey_bytes);
 
         // Create the address from the public key hash

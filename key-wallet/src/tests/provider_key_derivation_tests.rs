@@ -166,7 +166,6 @@ fn platform_pool_entries_are_keyed_by_tenderdash_node_id() {
     use crate::derivation_slip10::ExtendedEd25519PrivKey;
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
     use crate::wallet::managed_wallet_info::ManagedWalletInfo;
-    use dashcore::hashes::Hash;
 
     let wallet = test_wallet(Network::Mainnet);
     let mut info = ManagedWalletInfo::from_wallet_with_name(&wallet, "node-id".to_string(), 0);

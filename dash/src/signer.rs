@@ -3,7 +3,7 @@
 use core::convert::TryInto;
 
 use anyhow::{anyhow, ensure};
-use hashes::{Hash, hash160, sha256d};
+use hashes::{hash160, sha256d};
 
 use crate::PublicKey as ECDSAPublicKey;
 use crate::crypto::ecdsa::{ECDSA_REC_SIG_LEN, EcdsaPublicKey, EcdsaSecretKey};

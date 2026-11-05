@@ -342,7 +342,6 @@ mod tests {
     use crate::test_utils::MockNetworkManager;
     use crate::Network;
     use dashcore::bls_sig_utils::BLSSignature;
-    use dashcore::hashes::Hash;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::BlockHash;
     use test_case::test_case;

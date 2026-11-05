@@ -12,7 +12,7 @@
 use core::fmt;
 use std::collections::HashSet;
 
-use hashes::Hash;
+use hashes::HashEngine;
 
 use super::Weight;
 use crate::blockdata::script;
@@ -20,7 +20,7 @@ use crate::blockdata::transaction::Transaction;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::error::Error::{self, BlockBadProofOfWork, BlockBadTarget};
 pub use crate::hash_types::BlockHash;
-use crate::hash_types::TxMerkleNode;
+use crate::hash_types::{BlockHashEngine, TxMerkleNode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::pow::{CompactTarget, Target, Work};
 use crate::prelude::*;
@@ -58,9 +58,9 @@ impl_consensus_encoding!(Header, version, prev_blockhash, merkle_root, time, bit
 impl Header {
     /// Returns the block hash.
     pub fn block_hash(&self) -> BlockHash {
-        let mut engine = BlockHash::engine();
+        let mut engine = BlockHashEngine::default();
         self.consensus_encode(&mut engine).expect("engines don't error");
-        BlockHash::from_engine(engine)
+        BlockHash::from_raw_hash(engine.finalize())
     }
 
     /// Computes the target (range [0, T] inclusive) that a blockhash must land in to be valid.

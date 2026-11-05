@@ -71,6 +71,8 @@ impl From<EddsaPkBytes> for EddsaPkHash {
 
 #[cfg(test)]
 mod tests {
+    use dashcore_hashes::sha256;
+
     use super::*;
 
     /// Persisted masternode-list snapshots were written while the platform
@@ -79,8 +81,6 @@ mod tests {
     #[cfg(feature = "bincode")]
     #[test]
     fn bincode_layout_matches_pubkey_hash() {
-        use dashcore_hashes::Hash as _;
-
         let bytes = [
             0x8b, 0xaa, 0xdf, 0xf0, 0x0d, 0x8b, 0xaa, 0xdf, 0xf0, 0x0d, 0x8b, 0xaa, 0xdf, 0xf0,
             0x0d, 0x8b, 0xaa, 0xdf, 0xf0, 0x0d,
@@ -121,8 +121,6 @@ mod tests {
 
     #[test]
     fn hash_is_truncated_sha256() {
-        use dashcore_hashes::{sha256, Hash};
-
         let public_key = [7u8; 32];
         let digest = sha256::Hash::hash(&public_key);
         // `EddsaPkHash` holds the wire order, which is the byte-reversal of

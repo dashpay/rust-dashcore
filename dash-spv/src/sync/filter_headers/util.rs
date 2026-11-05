@@ -1,6 +1,6 @@
 use dashcore::hash_types::FilterHeader;
 use dashcore::network::message_filter::CFHeaders;
-use dashcore_hashes::{sha256d, Hash};
+use dashcore_hashes::sha256d;
 
 /// Compute filter headers from a CFHeaders message.
 ///

@@ -84,7 +84,6 @@ impl Decodable for AssetUnlockRequestInfo {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use crate::consensus::Encodable;
     use crate::hash_types::QuorumHash;

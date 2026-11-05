@@ -1,13 +1,13 @@
-use dashcore::hashes::{Hash, HashEngine, ripemd160};
+use dashcore::hashes::{HashEngine, ripemd160};
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
     let mut engine = ripemd160::Hash::engine();
     engine.input(data);
-    let eng_hash = ripemd160::Hash::from_engine(engine);
+    let eng_hash = engine.finalize();
 
     let hash = ripemd160::Hash::hash(data);
-    assert_eq!(&hash[..], &eng_hash[..]);
+    assert_eq!(hash, eng_hash);
 }
 
 fn main() {
