@@ -14,6 +14,8 @@ use crate::account::TransactionRecord;
 use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
+#[cfg(not(feature = "keep-finalized-transactions"))]
+use crate::managed_account::transaction_record::FinalizedSummary;
 use crate::managed_account::transaction_record::TransactionDirection;
 use crate::transaction_checking::account_checker::AccountMatch;
 use crate::transaction_checking::transaction_router::TransactionType;
@@ -25,7 +27,7 @@ use dashcore::{Transaction, Txid};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(not(feature = "keep-finalized-transactions"))]
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Managed core keys account with mutable state but no funds tracking.
 ///
@@ -50,8 +52,9 @@ pub struct ManagedCoreKeysAccount {
     /// processed transaction lives here for the wallet's lifetime —
     /// including ones that have been chainlocked. With the feature OFF
     /// (the default), records of chainlocked transactions are dropped
-    /// from this map and only their txids are retained in
-    /// `finalized_txids` to bound memory growth — except provider-payload
+    /// from this map and only their txids and summaries are retained in
+    /// `finalized_txids` and `finalized_summaries` to bound memory growth —
+    /// except provider-payload
     /// records on provider-key accounts, which are always retained (see
     /// [`Self::drop_finalized_transaction`]).
     transactions: BTreeMap<Txid, TransactionRecord>,
@@ -70,6 +73,12 @@ pub struct ManagedCoreKeysAccount {
     #[cfg(not(feature = "keep-finalized-transactions"))]
     #[cfg_attr(feature = "serde", serde(default))]
     finalized_txids: HashSet<Txid>,
+    /// The summary of each record dropped to `finalized_txids`, from which a
+    /// rescan finding it owning more outputs rebuilds it. A txid finalized
+    /// by a version that kept no summary has none.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    #[cfg_attr(feature = "serde", serde(default))]
+    finalized_summaries: HashMap<Txid, FinalizedSummary>,
     /// Revision counter incremented when the monitored address set changes
     /// (e.g. new addresses generated). Used to detect bloom filter staleness.
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -85,17 +94,20 @@ impl ManagedCoreKeysAccount {
             transactions: BTreeMap::new(),
             #[cfg(not(feature = "keep-finalized-transactions"))]
             finalized_txids: HashSet::new(),
+            #[cfg(not(feature = "keep-finalized-transactions"))]
+            finalized_summaries: HashMap::new(),
             monitor_revision: 0,
         }
     }
 
-    /// Drop the full record for `txid` and remember only its txid.
+    /// Drop the full record for `txid` and remember only its txid and its
+    /// [`FinalizedSummary`].
     ///
     /// Only defined when the `keep-finalized-transactions` Cargo feature
     /// is OFF (the default). Called when a transaction transitions into
     /// `InChainLockedBlock` — the record's information is no longer
-    /// expected to change, so we save memory by replacing it with a
-    /// txid-only entry. [`ManagedAccountTrait::has_transaction`] keeps
+    /// expected to change, so we save memory by replacing it with its txid
+    /// and summary. [`ManagedAccountTrait::has_transaction`] keeps
     /// reporting it as known, and
     /// [`ManagedAccountTrait::transaction_is_finalized`] keeps
     /// returning `true`.
@@ -119,7 +131,15 @@ impl ManagedCoreKeysAccount {
         if self.retains_provider_payload_record(txid) {
             return;
         }
-        self.transactions.remove(txid);
+        if let Some(record) = self.transactions.remove(txid) {
+            self.finalized_summaries.insert(*txid, FinalizedSummary::of(&record));
+        }
+    }
+
+    /// The summary kept for the pruned record of `txid`.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    pub(crate) fn finalized_summary_mut(&mut self, txid: &Txid) -> Option<&mut FinalizedSummary> {
+        self.finalized_summaries.get_mut(txid)
     }
 
     /// Whether the record for `txid` must survive finalization: true only

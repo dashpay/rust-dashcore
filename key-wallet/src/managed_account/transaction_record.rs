@@ -16,6 +16,7 @@ use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Maximum length of a transaction label in bytes.
 pub const MAX_LABEL_LENGTH: usize = 256;
@@ -121,6 +122,32 @@ pub enum TransactionDirection {
     Internal,
     /// CoinJoin mixing transaction
     CoinJoin,
+}
+
+/// What an account keeps of a record that ChainLock finality pruned: the
+/// outputs it owned and the inputs that spent the account's coins. A rescan
+/// that re-delivers the transaction rebuilds the record from it when the
+/// transaction now owns more outputs.
+#[cfg(not(feature = "keep-finalized-transactions"))]
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub(crate) struct FinalizedSummary {
+    /// Indices of the outputs the record owned, ascending.
+    pub(crate) owned_outputs: Box<[u32]>,
+    /// The record's `input_details`.
+    pub(crate) input_details: Box<[InputDetail]>,
+}
+
+#[cfg(not(feature = "keep-finalized-transactions"))]
+impl FinalizedSummary {
+    pub(crate) fn of(record: &TransactionRecord) -> Self {
+        Self {
+            owned_outputs: TransactionRecord::owned_indices(&record.output_details)
+                .into_iter()
+                .collect(),
+            input_details: record.input_details.iter().cloned().collect(),
+        }
+    }
 }
 
 /// Transaction record with full details
@@ -251,6 +278,15 @@ impl TransactionRecord {
             });
         }
         output_details
+    }
+
+    /// Indices of the outputs among `output_details` that pay the account.
+    pub(crate) fn owned_indices(output_details: &[OutputDetail]) -> BTreeSet<u32> {
+        output_details
+            .iter()
+            .filter(|d| matches!(d.role, OutputRole::Received | OutputRole::Change))
+            .map(|d| d.index)
+            .collect()
     }
 
     /// Take `output_details`, built by [`Self::output_details_for`], as this

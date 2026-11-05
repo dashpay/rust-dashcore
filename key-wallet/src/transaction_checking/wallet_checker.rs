@@ -8,7 +8,7 @@ use super::account_checker::{AccountMatch, DerivedAddressInfo};
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::transaction_record::{InputDetail, TransactionRecord};
+use crate::managed_account::transaction_record::{InputDetail, OutputRole, TransactionRecord};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -105,12 +105,33 @@ impl ManagedWalletInfo {
                     });
                     record.input_details.sort_by_key(|d| d.index);
                     // Address pools may have expanded since this spender was recorded.
-                    record.replace_output_details(outputs);
+                    let before = TransactionRecord::owned_indices(&record.output_details);
+                    record.replace_output_details(outputs.clone());
                     record.recompute_net_and_direction();
+                    let record = record.clone();
+                    // A mined record owns only outputs whose coins were taken
+                    // in: a finalized re-delivery credits just the outputs it
+                    // does not own yet, and so does one after finality pruned
+                    // the record to its summary.
+                    if record.context.confirmed() {
+                        let adopted = outputs.iter().filter(|d| {
+                            matches!(d.role, OutputRole::Received | OutputRole::Change)
+                                && !before.contains(&d.index)
+                        });
+                        if funds.take_in_mined_outputs(
+                            &record.transaction,
+                            &record.context,
+                            adopted,
+                            &self.observed_spent_outpoints,
+                            &self.spent_claims,
+                        ) {
+                            funds.bump_monitor_revision();
+                        }
+                    }
                     result
                         .updated_records
                         .retain(|r| r.txid != record.txid || r.account_type != record.account_type);
-                    result.updated_records.push(record.clone());
+                    result.updated_records.push(record);
                     result.state_modified = true;
                 }
             }
@@ -437,12 +458,7 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 result.state_modified = true;
             } else {
                 let existed_before = account.has_transaction(&tx.txid());
-                // A finalized record may be pruned, so a coin this delivery
-                // credits can come with no record to report.
-                let finalized_revision = account
-                    .transaction_is_finalized(&tx.txid())
-                    .then(|| account.monitor_revision());
-                if let Some(record) = account.confirm_transaction_with_observed_spends(
+                let confirmation = account.confirm_transaction_with_observed_spends(
                     tx,
                     &account_match,
                     context.clone(),
@@ -450,15 +466,15 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     &self.observed_spent_outpoints,
                     &self.spent_claims,
                     &external_final_parents,
-                ) {
+                );
+                result.state_modified |= confirmation.coins_changed;
+                if let Some(record) = confirmation.record {
                     result.state_modified = true;
                     if existed_before {
                         result.updated_records.push(record);
                     } else {
                         result.new_records.push(record);
                     }
-                } else if finalized_revision.is_some_and(|r| r != account.monitor_revision()) {
-                    result.state_modified = true;
                 }
             }
         }
@@ -505,12 +521,14 @@ mod tests {
     use crate::test_utils::TestWalletContext;
     use crate::transaction_checking::BlockInfo;
     use crate::transaction_checking::TransactionType;
+    use crate::utxo::Utxo;
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use crate::wallet::{ManagedWalletInfo, Wallet};
     use crate::{AccountType, Network};
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::blockdata::transaction::Transaction;
+    use dashcore::ephemerealdata::chain_lock::ChainLock;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
     use dashcore::OutPoint;
     use dashcore::TxOut;
@@ -1755,7 +1773,10 @@ mod tests {
             &BTreeMap::new(),
             &BTreeSet::new(),
         );
-        assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
+        assert!(
+            backfilled.record.is_some(),
+            "Should return Some when backfilling a missing record"
+        );
 
         // Verify the transaction was recorded with block context
         let record = account.transactions().get(&txid).expect("Should have backfilled record");
@@ -1814,7 +1835,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeSet::new(),
         );
-        assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
+        assert!(confirmed.record.is_some(), "Should return Some when confirming unconfirmed tx");
 
         let record = account.transactions().get(&txid).expect("Should have record");
         assert!(record.is_confirmed());
@@ -2383,10 +2404,9 @@ mod tests {
     }
 
     /// The rescan recovery above has a boundary: a funding transaction that
-    /// was chainlock-finalized keeps only its txid, so re-delivering it is not
-    /// a new sighting, and it credits only outputs paying addresses derived
-    /// since it was recorded. This coin's address was already used, so the
-    /// coin stays absent. Documented rather than fixed — recovering it
+    /// was chainlock-finalized is not a new sighting when it is re-delivered,
+    /// and it credits only outputs its record did not own. This coin's output
+    /// was owned, so the coin stays absent. Documented rather than fixed — recovering it
     /// needs a rescan deep enough to re-fetch the block, which is above this
     /// layer.
     #[tokio::test]
@@ -4219,8 +4239,8 @@ mod tests {
 
     /// A rescan of a block below the wallet's last ChainLock re-delivers a
     /// finalized transaction. The output a later extension revealed must
-    /// still be credited, and the record corrected and reported while it is
-    /// retained.
+    /// still be credited, and the record corrected and reported, rebuilt
+    /// from its summary when it was pruned.
     #[tokio::test]
     async fn test_redelivered_finalized_transaction_owning_a_newly_derived_output_is_credited() {
         let mut ctx = TestWalletContext::new_random();
@@ -4238,20 +4258,187 @@ mod tests {
         assert_eq!(credited, 2);
         assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
         assert!(again.state_modified, "the credit is a state change in both configs");
+        assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
+        let updated = &again.updated_records[0];
+        assert_eq!(owned_output_count(updated), 2);
+        assert_eq!(updated.net_amount, 80_000);
+        assert_eq!(updated.direction, TransactionDirection::Incoming);
+        assert!(updated.context.is_chain_locked());
         #[cfg(feature = "keep-finalized-transactions")]
-        {
-            assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
-            assert_eq!(owned_output_count(&again.updated_records[0]), 2);
-            assert_eq!(again.updated_records[0].net_amount, 80_000);
-            assert_eq!(ctx.transaction(&early.txid()).net_amount, 80_000, "stored record");
-        }
-        #[cfg(not(feature = "keep-finalized-transactions"))]
-        assert!(again.updated_records.is_empty(), "the pruned record cannot be rebuilt");
+        assert_eq!(ctx.transaction(&early.txid()).net_amount, 80_000, "stored record");
 
         let settled = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
         assert!(settled.updated_records.is_empty());
         assert!(!settled.state_modified);
         assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
+    }
+
+    /// A host that keeps only the emitted records, and on load restores the
+    /// coins they own, must find the coin a rescan's finalized re-delivery
+    /// credited (dashpay/rust-dashcore#714).
+    #[tokio::test]
+    async fn test_store_built_from_emitted_records_keeps_a_rescan_credit_across_a_restart() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+        let later = paying(2, &[&addresses[gap]], 7_000);
+
+        let mut store: BTreeMap<(AccountType, Txid), TransactionRecord> = BTreeMap::new();
+        for (tx, context) in [
+            (&early, in_chain_locked_block(100, 1)),
+            (&later, in_chain_locked_block(101, 2)),
+            (&early, in_chain_locked_block(100, 1)),
+        ] {
+            let result = ctx.check_transaction(tx, context).await;
+            for record in result.new_records.into_iter().chain(result.updated_records) {
+                store.insert((record.account_type, record.txid), record);
+            }
+        }
+        assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
+
+        let spent: BTreeSet<OutPoint> = store
+            .values()
+            .flat_map(|record| &record.transaction.input)
+            .map(|input| input.previous_output)
+            .collect();
+        let coins: Vec<Utxo> = store
+            .values()
+            .flat_map(|record| {
+                record
+                    .output_details
+                    .iter()
+                    .filter(|d| matches!(d.role, OutputRole::Received | OutputRole::Change))
+                    .map(move |d| {
+                        let outpoint = OutPoint::new(record.txid, d.index);
+                        let txout = record.transaction.output[d.index as usize].clone();
+                        let address = d.address.clone().expect("owned output has an address");
+                        let height = record.height().unwrap_or(0);
+                        let mut utxo = Utxo::new(outpoint, txout, address, height, false);
+                        utxo.is_confirmed = true;
+                        utxo
+                    })
+            })
+            .filter(|utxo| !spent.contains(&utxo.outpoint))
+            .collect();
+
+        let mut restarted = ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "R".into(), 0);
+        let unmatched = restarted.restore_utxos(&ctx.wallet, coins).expect("restore");
+        assert!(unmatched.is_empty());
+        restarted.update_balance();
+        let far = OutPoint::new(early.txid(), 1);
+        assert!(
+            restarted.first_bip44_managed_account().unwrap().utxos.contains_key(&far),
+            "the late coin survives the restart"
+        );
+        assert_eq!(restarted.balance.total(), 87_000);
+    }
+
+    /// The summary a pruned record leaves persists with the account: a
+    /// reloaded account still rebuilds and emits the record a rescan
+    /// corrects. An account saved before summaries were kept loads too, and
+    /// its finalized txids still get the late coin, though not the record.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    #[tokio::test]
+    async fn test_reloaded_account_rebuilds_the_pruned_record_a_rescan_corrects() {
+        type Reload = fn(&ManagedCoreFundsAccount) -> ManagedCoreFundsAccount;
+        let json: Reload =
+            |account| serde_json::from_str(&serde_json::to_string(account).unwrap()).unwrap();
+        let bincode: Reload = |account| {
+            let config = bincode::config::standard();
+            let bytes = bincode::serde::encode_to_vec(account, config).unwrap();
+            bincode::serde::decode_from_slice(&bytes, config).unwrap().0
+        };
+        let without_summaries: Reload = |account| {
+            let mut value = serde_json::to_value(account).unwrap();
+            let keys = value["keys"].as_object_mut().unwrap();
+            assert!(keys.remove("finalized_summaries").is_some());
+            serde_json::from_value(value).unwrap()
+        };
+
+        for (format, reload, has_summary) in
+            [("json", json, true), ("bincode", bincode, true), ("legacy", without_summaries, false)]
+        {
+            let mut ctx = TestWalletContext::new_random();
+            let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+            let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+            let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+            ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+            let account = ctx.managed_wallet.first_bip44_managed_account_mut().unwrap();
+            assert!(!account.transactions().contains_key(&early.txid()), "pruned");
+            *account = reload(account);
+            assert!(ctx.bip44_account().transaction_is_finalized(&early.txid()), "{format}");
+
+            let later = paying(2, &[&addresses[gap]], 7_000);
+            ctx.check_transaction(&later, in_chain_locked_block(101, 2)).await;
+            let again = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+
+            assert_eq!(ctx.managed_wallet.balance.total(), 87_000, "{format}");
+            if has_summary {
+                assert_eq!(again.updated_records.len(), 1, "{format}");
+                assert_eq!(owned_output_count(&again.updated_records[0]), 2, "{format}");
+                assert_eq!(again.updated_records[0].net_amount, 80_000, "{format}");
+            } else {
+                assert!(again.updated_records.is_empty(), "{format}");
+                assert!(again.state_modified, "{format}");
+            }
+        }
+    }
+
+    /// Whether a finalized re-delivery's output is new follows from what its
+    /// record owned, not from its address being unused: another payment to
+    /// the late address before the rescan must not cost the coin.
+    #[tokio::test]
+    async fn test_redelivered_finalized_transaction_credits_a_late_output_another_payment_used() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+        ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        ctx.check_transaction(&paying(2, &[&addresses[gap]], 7_000), in_chain_locked_block(101, 2))
+            .await;
+        ctx.check_transaction(
+            &paying(3, &[&addresses[2 * gap]], 5_000),
+            in_chain_locked_block(102, 3),
+        )
+        .await;
+
+        let again = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        assert!(ctx.bip44_account().utxos.contains_key(&OutPoint::new(early.txid(), 1)));
+        assert_eq!(ctx.managed_wallet.balance.total(), 40_000 + 40_000 + 7_000 + 5_000);
+        assert_eq!(again.updated_records.len(), 1);
+        assert_eq!(again.updated_records[0].net_amount, 80_000);
+    }
+
+    /// A late input that makes a mined spender's record own a late output
+    /// takes its coin in: a finalized re-delivery credits only outputs the
+    /// record, or the summary finality pruned it to, does not own yet. The
+    /// spender is either finalized on arrival or chainlocked later.
+    #[tokio::test]
+    async fn test_mined_spender_output_is_credited_when_a_late_input_relabels_it() {
+        for chainlocked_on_arrival in [true, false] {
+            let mut ctx = TestWalletContext::new_random();
+            let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+            let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+            let mined = |height, byte| match chainlocked_on_arrival {
+                true => in_chain_locked_block(height, byte),
+                false => in_block(height, byte),
+            };
+            let funding = paying(4, &[&addresses[3]], 100_000);
+            let mut spend = paying(0, &[&addresses[1], &addresses[2 * gap]], 30_000);
+            spend.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+            ctx.check_transaction(&spend, mined(101, 2)).await;
+            ctx.check_transaction(&paying(3, &[&addresses[gap]], 7_000), mined(102, 3)).await;
+            ctx.check_transaction(&funding, mined(100, 1)).await;
+            ctx.managed_wallet.apply_chain_lock(ChainLock::dummy(102));
+            let other = paying(5, &[&addresses[2 * gap]], 1_000);
+            ctx.check_transaction(&other, in_chain_locked_block(103, 4)).await;
+
+            ctx.check_transaction(&spend, in_chain_locked_block(101, 2)).await;
+            let far = OutPoint::new(spend.txid(), 1);
+            assert!(ctx.bip44_account().utxos.contains_key(&far), "{chainlocked_on_arrival}");
+            assert_eq!(ctx.managed_wallet.balance.total(), 30_000 + 30_000 + 7_000 + 1_000);
+        }
     }
 
     /// A reload rebuilds the spent marks from the records it holds, so a
