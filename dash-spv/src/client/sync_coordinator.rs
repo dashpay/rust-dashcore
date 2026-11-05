@@ -52,6 +52,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         let loop_id = NEXT_LOOP_ID.fetch_add(1, Ordering::Relaxed);
 
         let handlers = self.event_handlers.clone();
+        let loop_shutdown = CancellationToken::new();
         let monitor_shutdown = CancellationToken::new();
         let (monitor_failure_tx, mut monitor_failure_rx) = mpsc::channel::<String>(1);
 
@@ -76,7 +77,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         let chainlock_dispatch_task = spawn_chainlock_wallet_dispatch(
             chainlock_dispatch_rx,
             self.wallet.clone(),
-            monitor_shutdown.clone(),
+            loop_shutdown.clone(),
             monitor_failure_tx.clone(),
         );
 
@@ -105,15 +106,15 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             monitor_failure_tx,
         );
 
+        let monitors = vec![sync_task, network_task, wallet_task, progress_task];
+
         if let Err(e) = self.start_sync().await {
+            loop_shutdown.cancel();
             monitor_shutdown.cancel();
-            let _ = tokio::join!(
-                sync_task,
-                chainlock_dispatch_task,
-                network_task,
-                wallet_task,
-                progress_task
-            );
+            let _ = chainlock_dispatch_task.await;
+            for monitor in monitors {
+                let _ = monitor.await;
+            }
             for handler in handlers.iter() {
                 handler.on_error(&e.to_string());
             }
@@ -125,13 +126,13 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         // reservations while `run()` is still on its way to returning an error.
         let reservation_sweep_task =
             self.config.read().await.reservation_sweep_ttl_secs.map(|ttl| {
-                spawn_reservation_sweep(self.wallet.clone(), ttl, monitor_shutdown.clone())
+                spawn_reservation_sweep(self.wallet.clone(), ttl, loop_shutdown.clone())
             });
 
         // Set before the loop starts, so a loop failing right away clears it.
         self.running.store(true, Ordering::Release);
         let client = self.clone();
-        let shutdown = monitor_shutdown.clone();
+        let shutdown = loop_shutdown.clone();
 
         let task = tokio::spawn(async move {
             tracing::info!("Starting continuous sync monitoring...");
@@ -145,13 +146,13 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     _ = sync_coordinator_tick_interval.tick() => {
                         client.sync_coordinator.lock().await.tick().await.err().map(Into::into)
                     }
-                    _ = monitor_shutdown.cancelled() => {
+                    _ = loop_shutdown.cancelled() => {
                         break None
                     }
                     Ok(SyncEvent::ForkDetected { fork_height }) = fork_rx.recv() => {
                         // Recovering stops this task, so it runs in a task of its own,
                         // which only acts on this loop.
-                        monitor_shutdown.cancel();
+                        loop_shutdown.cancel();
                         let recovering = client.clone();
 
                         client.detached_tasks.lock().await.spawn(async move {
@@ -175,18 +176,11 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                 }
             };
 
-            // Signal monitors to shut down before channels close
             client.running.store(false, Ordering::Release);
-            monitor_shutdown.cancel();
+            loop_shutdown.cancel();
             tracing::info!("Stopping sync monitoring");
 
-            let _ = tokio::join!(
-                sync_task,
-                chainlock_dispatch_task,
-                network_task,
-                wallet_task,
-                progress_task
-            );
+            let _ = chainlock_dispatch_task.await;
             if let Some(task) = reservation_sweep_task {
                 let _ = task.await;
             }
@@ -209,6 +203,8 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             id: loop_id,
             task,
             shutdown,
+            monitors,
+            monitor_shutdown,
         });
 
         Ok(())
