@@ -257,6 +257,10 @@ impl PeerHandle {
         self.id
     }
 
+    pub(super) fn serving_rate(&self) -> u64 {
+        self.serving_rate.load(Ordering::Relaxed)
+    }
+
     pub fn in_flight_bytes(&self) -> u64 {
         self.ledger.in_flight_bytes()
     }
@@ -357,7 +361,7 @@ impl ConnectedPeer {
     }
 
     pub fn serving_rate(&self) -> u64 {
-        self.handle.serving_rate.load(Ordering::Relaxed)
+        self.handle.serving_rate()
     }
 
     pub fn set_serving_rate(&self, bytes_per_sec: u64) {
