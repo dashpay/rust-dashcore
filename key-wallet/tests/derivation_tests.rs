@@ -7,7 +7,6 @@
 
 use std::str::FromStr;
 
-use dashcore::hashes::Hash;
 use hex_conservative::DisplayHex;
 use key_wallet::mnemonic::Mnemonic;
 use key_wallet::{DerivationPath, ExtendedPrivKey, ExtendedPubKey, Network};

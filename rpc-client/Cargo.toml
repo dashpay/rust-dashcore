@@ -22,7 +22,7 @@ path = "src/lib.rs"
 dashcore-rpc-json = { workspace = true }
 hex-conservative = { workspace = true }
 
-jsonrpc = "0.18.0"
+jsonrpc = "0.21.0"
 tracing = { workspace = true }
 
 # Used for deserialization of JSON.

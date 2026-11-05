@@ -318,8 +318,6 @@ fn apply_skip_strategy_of_type<'a>(
 mod tests {
     use std::net::SocketAddr;
 
-    use dashcore::hashes::Hash;
-
     use super::*;
     use crate::sml_engine::test_support::{quorum_entry, TestEngine};
     use dashcore::bls_sig_utils::BLSPublicKey;

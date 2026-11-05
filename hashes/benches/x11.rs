@@ -7,7 +7,7 @@
 //! Benchmarks for the proof of work scheme
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use dashcore_hashes::{hash_x11, Hash, HashEngine};
+use dashcore_hashes::{hash_x11, HashEngine};
 use std::hint::black_box;
 
 fn bench_x11(c: &mut Criterion) {
@@ -32,7 +32,7 @@ fn bench_x11(c: &mut Criterion) {
             for field in [0..4, 4..36, 36..68, 68..72, 72..76, 76..80] {
                 engine.input(&header[field]);
             }
-            hash_x11::Hash::from_engine(engine)
+            engine.finalize()
         })
     });
     group.finish();

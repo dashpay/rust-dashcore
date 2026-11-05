@@ -621,7 +621,6 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
-    use crate::hashes::Hash;
 
     fn create_test_header(nonce: u32, prev_nonce: u32) -> Header {
         let mut prev_hash = [0u8; 32];

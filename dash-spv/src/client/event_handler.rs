@@ -46,7 +46,8 @@ impl EventHandler for () {}
 /// `dash_spv::client::event_handler=warn`.
 ///
 /// On failure, the error message is sent via `on_failure` so the coordinator can report
-/// it as the single source of error handling.
+/// it as the single source of error handling. On `shutdown` it delivers the events
+/// already queued before it exits.
 pub(crate) fn spawn_broadcast_monitor<E, F>(
     name: &'static str,
     mut receiver: broadcast::Receiver<E>,
@@ -57,20 +58,21 @@ pub(crate) fn spawn_broadcast_monitor<E, F>(
 ) -> JoinHandle<()>
 where
     E: Clone + Display + Send + 'static,
-    F: Fn(&dyn EventHandler, &E) + Send + 'static,
+    F: Fn(&dyn EventHandler, &E) + Send + Sync + 'static,
 {
     tokio::spawn(async move {
         tracing::debug!("{} monitoring task started", name);
+        let dispatch = |event: E| {
+            tracing::info!("{}: {}", name, event);
+            for handler in handlers.iter() {
+                dispatch_fn(handler.as_ref(), &event);
+            }
+        };
         loop {
             tokio::select! {
                 result = receiver.recv() => {
                     match result {
-                        Ok(event) => {
-                            tracing::info!("{}: {}", name, event);
-                            for handler in handlers.iter() {
-                                dispatch_fn(handler.as_ref(), &event);
-                            }
-                        }
+                        Ok(event) => dispatch(event),
                         Err(broadcast::error::RecvError::Closed) if shutdown.is_cancelled() => break,
                         Err(broadcast::error::RecvError::Closed) => {
                             let msg = format!("{} monitor channel closed unexpectedly", name);
@@ -87,7 +89,24 @@ where
                         }
                     }
                 }
-                _ = shutdown.cancelled() => break,
+                _ = shutdown.cancelled() => {
+                    // What was sent before the stop is still owed to the handlers, such as
+                    // the departures the network announces while it stops.
+                    loop {
+                        match receiver.try_recv() {
+                            Ok(event) => dispatch(event),
+                            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                                tracing::warn!(
+                                    "{} monitor lagged while stopping, missed {} events",
+                                    name,
+                                    n
+                                );
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    break;
+                }
             }
         }
         tracing::debug!("{} monitoring task exiting", name);
@@ -264,7 +283,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -274,6 +292,7 @@ mod tests {
     use super::{spawn_broadcast_monitor, spawn_progress_monitor, EventHandler};
     use crate::network::NetworkEvent;
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncProgress};
+    use crate::test_utils::test_socket_address;
     use key_wallet_manager::WalletEvent;
 
     struct RecordingHandler {
@@ -328,7 +347,7 @@ mod tests {
         };
         handler.on_sync_event(&event);
         handler.on_network_event(&NetworkEvent::PeersUpdated {
-            connected_count: 0,
+            addresses: vec![],
             best_height: 0,
         });
         handler.on_progress(&SyncProgress::default());
@@ -517,9 +536,11 @@ mod tests {
         assert!(msg.contains("closed unexpectedly"));
     }
 
+    /// Events sent before the shutdown are still delivered, such as the departures
+    /// the network announces while it stops.
     #[tokio::test]
     async fn network_event_dispatch() {
-        let (tx, rx) = broadcast::channel(16);
+        let (tx, rx) = broadcast::channel(64);
         let handler = Arc::new(RecordingHandler::new());
         let shutdown = CancellationToken::new();
         let (failure_tx, _failure_rx) = mpsc::channel(1);
@@ -533,15 +554,16 @@ mod tests {
             |h, event: &NetworkEvent| h.on_network_event(event),
         );
 
-        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
-        tx.send(NetworkEvent::PeerConnected(addr)).unwrap();
-        tx.send(NetworkEvent::PeerDisconnected(addr)).unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
+        for id in 0..16 {
+            let addr = test_socket_address(id);
+            tx.send(NetworkEvent::PeerConnected(addr)).unwrap();
+            tx.send(NetworkEvent::PeerDisconnected(addr)).unwrap();
+        }
+        // Before the monitor first runs, so all the events are still queued.
         shutdown.cancel();
         task.await.unwrap();
 
-        assert_eq!(handler.network_count.load(Ordering::SeqCst), 2);
+        assert_eq!(handler.network_count.load(Ordering::SeqCst), 32);
     }
 
     #[tokio::test]

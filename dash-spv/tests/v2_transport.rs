@@ -21,7 +21,6 @@ use dashcore::network::message::{
 use dashcore::network::message_network::VersionMessage;
 use dashcore::network::message_sml::GetMnListDiff;
 use dashcore::{BlockHash, Network};
-use dashcore_hashes::Hash;
 use futures::StreamExt;
 use tempfile::TempDir;
 use tokio::io::{copy, AsyncReadExt, AsyncWriteExt};
@@ -126,7 +125,7 @@ impl MockPeer {
         let (stream, client) = listener.accept().await.unwrap();
         let (read_half, mut writer) = stream.into_split();
         let magic = network.magic().to_le_bytes();
-        let (inbound, outbound, reader) =
+        let (inbound, outbound, reader, _session_id) =
             bip324_handshake(magic, Role::Responder, None, None, read_half, &mut writer)
                 .await
                 .expect("responder handshake");

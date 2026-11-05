@@ -2,7 +2,6 @@ use crate::error::SyncResult;
 use crate::storage::FilterHeaderStorage;
 use crate::SyncError;
 use dashcore::hash_types::FilterHeader;
-use dashcore_hashes::Hash;
 
 /// Get previous filter header for verification.
 ///

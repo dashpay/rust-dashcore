@@ -15,7 +15,6 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
-use hashes::Hash;
 use std::collections::BTreeMap;
 
 impl MasternodeList {

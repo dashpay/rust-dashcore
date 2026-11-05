@@ -296,7 +296,6 @@ mod tests {
     use bincode::config;
     #[cfg(feature = "serde")]
     use bincode::serde::{decode_from_slice, encode_to_vec};
-    use dashcore::hashes::Hash;
     use dashcore::BlockHash;
 
     fn test_account_type() -> AccountType {

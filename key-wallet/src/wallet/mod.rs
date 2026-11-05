@@ -23,7 +23,7 @@ use crate::Network;
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use core::fmt;
-use dashcore_hashes::{sha256, Hash};
+use dashcore_hashes::sha256;
 use hex_conservative::DisplayHex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

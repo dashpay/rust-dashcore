@@ -237,7 +237,6 @@ impl FilterHeadersPipeline {
 #[cfg(test)]
 mod tests {
     use dashcore::hash_types::{FilterHash, FilterHeader};
-    use dashcore_hashes::Hash;
 
     use super::*;
     use crate::test_utils::MockNetworkManager;

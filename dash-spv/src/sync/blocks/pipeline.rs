@@ -160,7 +160,6 @@ impl BlocksPipeline {
 #[cfg(test)]
 mod tests {
     use dashcore::blockdata::block::Block;
-    use dashcore_hashes::Hash;
 
     use super::*;
 

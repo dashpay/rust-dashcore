@@ -25,7 +25,7 @@
 use base64::Engine as _;
 #[cfg(feature = "base64")]
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hashes::{Hash, HashEngine, sha256d};
+use hashes::{HashEngine, sha256d};
 
 use crate::address::{Address, AddressType, Payload};
 use crate::consensus::{Encodable, encode};

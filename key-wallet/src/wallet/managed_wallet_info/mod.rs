@@ -344,11 +344,11 @@ impl ManagedWalletInfo {
     ///
     /// For a wallet loaded without the transactions that spent its coins.
     /// Each entry is a spent outpoint and, when known, the transaction that
-    /// spent it (its claimant). A restored outpoint is never added to the
-    /// `utxos` of any account that holds funds — a contact's watch-only
-    /// DashPay account and an account added after this call included — and
-    /// the guard survives ChainLock pruning. Outpoints this wallet does not
-    /// own are accepted.
+    /// spent it (its claimant). A transaction processed later does not
+    /// credit a restored outpoint to any account that holds funds — a
+    /// contact's watch-only DashPay account and an account added after this
+    /// call included — and the guard survives ChainLock pruning. Outpoints
+    /// this wallet does not own are accepted.
     ///
     /// **When to call:** once after each load, since claims are not part of
     /// wallet snapshots — before any transaction funding a restored outpoint
@@ -356,6 +356,9 @@ impl ManagedWalletInfo {
     /// The guard only stops a later credit: a restored outpoint already in
     /// `utxos` stays credited and spendable until it leaves `utxos`. Those
     /// outpoints are returned, sorted, and their count is logged at `warn`.
+    /// A host that also restores UTXOs calls
+    /// [`restore_utxos`](Self::restore_utxos) first, so this call reports any
+    /// restored UTXO a claim names.
     ///
     /// **Claimants:** [`sweep_conflicts`](Self::sweep_conflicts) or
     /// [`abandon_transaction`](Self::abandon_transaction) removing the
@@ -370,6 +373,8 @@ impl ManagedWalletInfo {
     /// * Only transactions processed by the wallet are guarded:
     ///   `ManagedAccountRefMut::record_transaction` and `confirm_transaction`
     ///   drive one account and credit a restored outpoint.
+    /// * [`restore_utxos`](Self::restore_utxos) does not consult claims: it
+    ///   credits a restored UTXO a claim names, called before or after this.
     /// * A claim restored once the funding is held as a txid only —
     ///   ChainLocked, without `keep-finalized-transactions` — leaves a later
     ///   spender recorded as if the coin were not the wallet's.
@@ -415,6 +420,112 @@ impl ManagedWalletInfo {
             );
         }
         still_held.into_iter().collect()
+    }
+
+    /// Restore `utxos` the host stored, each into the funds account whose
+    /// address pools hold its script, and return the ones no account holds.
+    ///
+    /// Call it when restoring wallet state, before sync resumes: the pools
+    /// may grow, and blocks already processed are not scanned again for the
+    /// newly derived addresses. Mark the addresses the host stored as used
+    /// first: only used addresses extend the reach. Call it before
+    /// [`restore_spent_outpoints`](Self::restore_spent_outpoints), which then
+    /// reports any restored UTXO a claim names.
+    ///
+    /// Addresses are found the way a rescan finds them: each pool is extended
+    /// to its own `gap_limit` past its highest used address, the address of
+    /// each UTXO is marked used in every account that holds it, and this
+    /// repeats until no pool grows. Each UTXO then goes to the first account
+    /// that holds its script, trying the wallet's own accounts before DashPay
+    /// contact accounts, so for a script both hold the UTXO goes to the
+    /// wallet's account. A UTXO beyond that reach comes back unmatched rather
+    /// than placed in another account. Only processing its funding
+    /// transaction credits it then, and sync resumes at `synced_height + 1`,
+    /// so one at or below `synced_height` is credited only if the host
+    /// rewinds `synced_height` below its height. Accounts without a public
+    /// key source match only the addresses they already hold.
+    ///
+    /// A restored outpoint that another funds account already holds is taken
+    /// out of that account. The owning account then takes the UTXO in the same
+    /// way as when it processes the funding transaction, except that claims
+    /// are not consulted. The restored UTXO
+    /// keeps the InstantSend lock and trust of any copy it replaces or takes
+    /// out, and their coin lock replaces its own. A matched outpoint the
+    /// wallet already saw spent is neither credited nor returned: one the
+    /// owning account recorded spending is held under that spend, so a fork
+    /// dropping the spend gives it back, and one spent in a processed block
+    /// ([`observed_spent_outpoints`](Self::observed_spent_outpoints), or held
+    /// as spent before it was funded) is held as spent before funded. A
+    /// spent-output claim does not hold a restored UTXO back; a credited
+    /// UTXO is no longer kept aside for one.
+    ///
+    /// Each account whose pools grow, or that is credited a UTXO or loses one,
+    /// gets its monitor revision bumped, so a running client rebuilds its
+    /// filters.
+    ///
+    /// Every pool is extended before any UTXO is inserted, so an `Err` from
+    /// address derivation leaves the UTXO sets as they were; the addresses
+    /// derived and marked used by then stay. The balance is not recomputed:
+    /// the next [`update_balance`](WalletInfoInterface::update_balance) or
+    /// processed transaction reflects the restored UTXOs.
+    pub fn restore_utxos(
+        &mut self,
+        wallet: &Wallet,
+        utxos: impl IntoIterator<Item = Utxo>,
+    ) -> crate::error::Result<Vec<Utxo>> {
+        let utxos: Vec<Utxo> = utxos.into_iter().collect();
+        let network = self.network;
+        let mut accounts = funds_accounts_wallet_first(&mut self.accounts);
+        // Each UTXO's owner is the index in `accounts` of the first account
+        // holding its script. Every pass matches all UTXOs again after the
+        // pools grew, so an account tried earlier claims a UTXO once its pool
+        // reaches it.
+        let owners = loop {
+            let owners: Vec<Option<usize>> = utxos
+                .iter()
+                .map(|utxo| {
+                    let script = &utxo.txout.script_pubkey;
+                    let address = Address::from_script(script, network).ok();
+                    let mut owner = None;
+                    for (index, account) in accounts.iter_mut().enumerate() {
+                        if account.contains_script_pub_key(script) {
+                            if let Some(address) = &address {
+                                account.mark_address_used(address);
+                            }
+                            owner.get_or_insert(index);
+                        }
+                    }
+                    owner
+                })
+                .collect();
+            if !extend_pools(wallet, &mut accounts)? {
+                break owners;
+            }
+        };
+        let mut unmatched = Vec::new();
+        for (utxo, owner) in utxos.into_iter().zip(owners) {
+            let Some(owner) = owner else {
+                unmatched.push(utxo);
+                continue;
+            };
+            let outpoint = utxo.outpoint;
+            let mut copies = Vec::new();
+            for (index, account) in accounts.iter_mut().enumerate() {
+                if index != owner {
+                    if let Some(copy) = account.utxos.remove(&outpoint) {
+                        copies.push(copy);
+                        account.bump_monitor_revision();
+                    }
+                }
+            }
+            let account = &mut accounts[owner];
+            let credited =
+                account.take_in_output(utxo, copies, &self.observed_spent_outpoints, None, |_| {});
+            if credited {
+                account.bump_monitor_revision();
+            }
+        }
+        Ok(unmatched)
     }
 
     /// Record every outpoint `tx` spends into [`Self::observed_spent_outpoints`]
@@ -638,6 +749,54 @@ impl ManagedWalletInfo {
 
         Ok(())
     }
+}
+
+/// Extend every pool of `accounts` that has a public key source to its gap
+/// limit, bumping the monitor revision of each account that grew. Returns
+/// whether any pool grew.
+fn extend_pools(
+    wallet: &Wallet,
+    accounts: &mut [&mut crate::managed_account::ManagedCoreFundsAccount],
+) -> crate::error::Result<bool> {
+    let mut any_grew = false;
+    for account in accounts.iter_mut() {
+        let key_source =
+            wallet.key_source_for_account(account.managed_account_type().to_account_type());
+        if matches!(key_source, crate::KeySource::NoKeySource) {
+            continue;
+        }
+        let mut grew = false;
+        for pool in account.managed_account_type_mut().address_pools_mut() {
+            grew |= !pool.maintain_gap_limit(&key_source)?.is_empty();
+        }
+        if grew {
+            account.bump_monitor_revision();
+            any_grew = true;
+        }
+    }
+    Ok(any_grew)
+}
+
+/// The wallet's own funds accounts, in [`ManagedAccountCollection::all_funding_accounts`]
+/// order, then the DashPay contact accounts.
+fn funds_accounts_wallet_first(
+    accounts: &mut ManagedAccountCollection,
+) -> Vec<&mut crate::managed_account::ManagedCoreFundsAccount> {
+    let ManagedAccountCollection {
+        standard_bip44_accounts,
+        standard_bip32_accounts,
+        coinjoin_accounts,
+        dashpay_receival_accounts,
+        dashpay_external_accounts,
+        ..
+    } = accounts;
+    standard_bip44_accounts
+        .values_mut()
+        .chain(standard_bip32_accounts.values_mut())
+        .chain(coinjoin_accounts.values_mut())
+        .chain(dashpay_receival_accounts.values_mut())
+        .chain(dashpay_external_accounts.values_mut())
+        .collect()
 }
 
 /// Re-export types from account module for convenience

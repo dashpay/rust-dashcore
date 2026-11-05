@@ -33,7 +33,7 @@ changes to this document in a pull request.
 
 ## General
 
-We welcome contributions of all kinds: bug fixes, features, tests, docs, and reviews. This codebase powers Dash protocol libraries (networking, SPV, wallet, FFI). Changes must be reviewed with security and backward‑compatibility in mind.
+We welcome contributions of all kinds: bug fixes, features, tests, docs, and reviews. This codebase powers Dash protocol libraries (networking, SPV, wallet). Changes must be reviewed with security and backward‑compatibility in mind.
 
 
 ## Communication
@@ -110,8 +110,6 @@ That's it! Hooks run automatically from now on.
 
 **On git push** (~30-90 seconds additional):
 - `cargo clippy` — Strict linting on entire workspace
-- `verify-ffi-headers` — Ensures FFI C headers are up to date
-- `verify-ffi-docs` — Ensures FFI API documentation is current
 
 **Note:** CI runs the exact same checks, so passing locally = passing in CI.
 
@@ -179,7 +177,7 @@ Use Rust standards: `UpperCamelCase` for types/traits, `snake_case` for modules/
 
 ### Unsafe code
 
-Minimize `unsafe`. When required (especially across FFI boundaries), encapsulate it, document invariants, add tests, and consider Miri/sanitizers.
+Minimize `unsafe`. When required, encapsulate it, document invariants, add tests, and consider Miri/sanitizers.
 
 
 ## Security

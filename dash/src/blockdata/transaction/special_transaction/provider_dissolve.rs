@@ -71,7 +71,6 @@ impl Decodable for ProviderDissolvePayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use super::*;
     use crate::consensus::{deserialize, serialize};

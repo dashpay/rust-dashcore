@@ -4,7 +4,9 @@
 mod tests {
     use crate::client::config::{ClientConfig, MempoolStrategy};
     use crate::client::devnet::DevnetConfig;
+    use crate::network::MAX_USER_AGENT_LEN;
     use crate::types::ValidationMode;
+    use crate::VERSION;
     use dashcore::sml::llmq_type::{
         devnet_chain_locks_type_override, devnet_isd_type_override, devnet_platform_type_override,
         llmq_devnet_params, LLMQType, LlmqDevnetParams,
@@ -104,7 +106,7 @@ mod tests {
     #[test]
     fn test_user_agent_format_matches_dash_core() {
         let devnet = DevnetConfig::new("alpha");
-        assert_eq!(devnet.user_agent("0.43.0"), "/rust-dash-spv:0.43.0(devnet.devnet-alpha)/");
+        assert_eq!(devnet.user_agent("0.43.0"), "/dash-spv:0.43.0(devnet.devnet-alpha)/");
     }
 
     #[test]
@@ -141,13 +143,22 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_rejects_empty_devnet_name() {
+    fn test_validate_devnet_name() {
         let tmp = TempDir::new().unwrap();
-        let config = ClientConfig::new(Network::Devnet)
-            .with_storage_path(tmp.path().join("storage"))
-            .with_devnet(DevnetConfig::new(""));
-        let err = config.validate().expect_err("empty name must be rejected");
+        let validate = |name: &str| {
+            ClientConfig::new(Network::Devnet)
+                .with_storage_path(tmp.path().join("storage"))
+                .with_devnet(DevnetConfig::new(name))
+                .validate()
+        };
+
+        let err = validate("").expect_err("empty name must be rejected");
         assert!(err.contains("must not be empty"), "got: {}", err);
+
+        let longest = MAX_USER_AGENT_LEN - DevnetConfig::new("").user_agent(VERSION).len();
+        assert!(validate(&"a".repeat(longest)).is_ok());
+        let err = validate(&"a".repeat(longest + 1)).expect_err("too long name must be rejected");
+        assert!(err.contains("too long"), "got: {}", err);
     }
 
     #[test]

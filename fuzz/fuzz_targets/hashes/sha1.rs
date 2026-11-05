@@ -1,13 +1,13 @@
-use dashcore::hashes::{Hash, HashEngine, sha1};
+use dashcore::hashes::{HashEngine, sha1};
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
     let mut engine = sha1::Hash::engine();
     engine.input(data);
-    let eng_hash = sha1::Hash::from_engine(engine);
+    let eng_hash = engine.finalize();
 
     let hash = sha1::Hash::hash(data);
-    assert_eq!(&hash[..], &eng_hash[..]);
+    assert_eq!(hash, eng_hash);
 }
 
 fn main() {

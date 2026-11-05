@@ -2,7 +2,6 @@ use crate::bls_sig_utils::{BlsPkBytes, BlsScheme};
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 use crate::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use crate::sml::quorum_validation_error::QuorumValidationError;
-use hashes::Hash;
 
 impl QualifiedQuorumEntry {
     /// Verifies the aggregated commitment signature for the quorum.

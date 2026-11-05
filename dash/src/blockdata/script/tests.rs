@@ -1,6 +1,6 @@
 use core::str::FromStr;
 
-use hashes::Hash;
+use hashes::hash160;
 use hex_conservative::hex;
 
 use super::*;
@@ -192,11 +192,11 @@ fn script_generators() {
             .unwrap();
     assert!(ScriptBuf::new_p2pk(&pubkey).is_p2pk());
 
-    let pubkey_hash = PubkeyHash::hash(&pubkey.inner.to_compressed());
+    let pubkey_hash = PubkeyHash::from_raw_hash(hash160::Hash::hash(&pubkey.inner.to_compressed()));
     assert!(ScriptBuf::new_p2pkh(&pubkey_hash).is_p2pkh());
 
     let script = Builder::new().push_opcode(OP_NUMEQUAL).push_verify().into_script();
-    let script_hash = ScriptHash::hash(&script.to_bytes());
+    let script_hash = ScriptHash::from_raw_hash(hash160::Hash::hash(&script.to_bytes()));
     let p2sh = ScriptBuf::new_p2sh(&script_hash);
     assert!(p2sh.is_p2sh());
     assert_eq!(script.to_p2sh(), p2sh);
@@ -548,18 +548,6 @@ fn script_ord() {
     assert!(script_4 > script_3);
     assert!(script_3 > script_2);
     assert!(script_2 > script_1);
-}
-
-#[test]
-#[cfg(feature = "bitcoinconsensus")]
-fn test_bitcoinconsensus() {
-    // a simple P2PKH transaction
-    let spent_bytes = hex!("76a91495aef692617d767d1edc5c8a594d30f6eecd14c288ac");
-    let spent = Script::from_bytes(&spent_bytes);
-    let spending = hex!(
-        "0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000"
-    );
-    spent.verify(0, crate::Amount::from_sat(100000000), &spending).unwrap();
 }
 
 #[test]

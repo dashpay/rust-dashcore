@@ -71,7 +71,6 @@ impl QualifiedQuorumEntry {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use super::*;
     use crate::QuorumHash;

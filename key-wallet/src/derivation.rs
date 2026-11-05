@@ -270,7 +270,6 @@ mod tests {
     use super::*;
     use crate::mnemonic::Mnemonic;
     use dashcore::ecdsa::EcdsaPublicKey;
-    use dashcore_hashes::Hash;
 
     // ✓ Test BIP32 derivation with exact DashSync test vectors
     #[test]

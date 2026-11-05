@@ -187,7 +187,6 @@ mod tests {
     use crate::client::config::MempoolStrategy;
     use crate::sync::BroadcastConfig;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
-    use dashcore::hashes::Hash;
     use key_wallet_manager::test_utils::MockWallet;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
@@ -712,7 +711,7 @@ mod tests {
 
         // PeersUpdated with 1 but no peers tracked yet: stays WaitingForConnections
         let update = NetworkEvent::PeersUpdated {
-            connected_count: 1,
+            addresses: vec![peer],
             best_height: 1000,
         };
         manager.handle_network_event(&update, &network).await.unwrap();
@@ -721,7 +720,7 @@ mod tests {
         // Peer reconnects and PeersUpdated fires again
         manager.handle_peer_connected(peer);
         let update = NetworkEvent::PeersUpdated {
-            connected_count: 1,
+            addresses: vec![peer],
             best_height: 1000,
         };
         manager.handle_network_event(&update, &network).await.unwrap();

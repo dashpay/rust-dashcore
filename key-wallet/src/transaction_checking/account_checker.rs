@@ -14,7 +14,6 @@ use crate::managed_account::transaction_record::TransactionRecord;
 use crate::Address;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
-use dashcore::hashes::Hash as _;
 use dashcore::transaction::TransactionPayload;
 use dashcore::ScriptBuf;
 use dashcore::Txid;
