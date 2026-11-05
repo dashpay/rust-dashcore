@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::network::costs::ResponseCosts;
 use bip324::futures::{handshake as v2_handshake, ProtocolSessionReader};
 use bip324::io::{ProtocolError, ProtocolFailureSuggestion};
 use bip324::{Error as Bip324Error, OutboundCipher, Role};
@@ -364,7 +366,7 @@ impl ConnectedPeer {
 
     /// A handshaken connection `id` over a loopback socket, with no reader running.
     #[cfg(test)]
-    pub async fn for_test(id: PeerId, state: &NetworkState) -> Self {
+    pub(crate) async fn for_test(id: PeerId) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
         let addr = listener.local_addr().expect("bound address");
         let stream = TcpStream::connect(addr).await.expect("connect loopback");
@@ -373,7 +375,7 @@ impl ConnectedPeer {
             handle: PeerHandle {
                 id,
                 writer: Arc::new(Mutex::new(link.writer)),
-                ledger: Arc::new(Ledger::new(state.costs.clone())),
+                ledger: Arc::new(Ledger::new(Arc::new(ResponseCosts::new()))),
                 cap: Arc::new(AtomicU64::new(INITIAL_CAP_BYTES)),
                 serving_rate: Arc::new(AtomicU64::new(0)),
                 headers2: false,
