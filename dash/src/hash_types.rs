@@ -280,7 +280,7 @@ mod newtypes {
         /// # Returns
         /// * A hashed score derived from the input values.
         pub fn create(quorum: &QuorumEntry, request_id: &QuorumSigningRequestId) -> Self {
-            let mut bytes = vec![quorum.llmq_type as u8];
+            let mut bytes = vec![quorum.llmq_type.index()];
             bytes.extend_from_slice(quorum.quorum_hash.as_byte_array());
             bytes.extend_from_slice(request_id.as_byte_array());
             Self::from_raw_hash(sha256d::Hash::hash(bytes.as_slice()))
