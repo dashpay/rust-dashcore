@@ -181,10 +181,11 @@ impl MessageType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NetworkEvent {
     PeersUpdated {
-        connected_count: u32,
+        /// Addresses of every connected peer.
+        addresses: Vec<SocketAddr>,
         /// Best tip height advertised across those peers.
         best_height: u32,
     },
@@ -1312,8 +1313,8 @@ mod tests {
     }
 
     /// Subscribers mirror the peer set from these events, so every departure is
-    /// announced exactly once and the last count they see is zero, which is what the
-    /// sync layer acts on. A connection's own disconnect arriving after it left the set
+    /// announced exactly once, every `PeersUpdated` lists the peers the other events
+    /// left, and the last list is empty, which is what the sync layer acts on. A connection's own disconnect arriving after it left the set
     /// stays silent, and a handshake completing while `stop` runs never joins.
     #[test_case(Departure::Drop, 2; "the peers drop")]
     #[test_case(Departure::Kick, 2; "the timeout monitor kicks them")]
@@ -1355,12 +1356,20 @@ mod tests {
         let mut tracked = HashSet::new();
         for event in &received {
             match event {
-                NetworkEvent::PeerConnected(addr) => tracked.insert(*addr),
-                NetworkEvent::PeerDisconnected(addr) => tracked.remove(addr),
+                NetworkEvent::PeerConnected(addr) => {
+                    tracked.insert(*addr);
+                }
+                NetworkEvent::PeerDisconnected(addr) => {
+                    tracked.remove(addr);
+                }
                 NetworkEvent::PeersUpdated {
+                    addresses,
                     ..
-                } => false,
-            };
+                } => {
+                    let listed: HashSet<_> = addresses.iter().copied().collect();
+                    assert_eq!(listed, tracked, "got {received:?}");
+                }
+            }
         }
         assert!(tracked.is_empty(), "connected peers never announced as gone: {received:?}");
         let mut departed: Vec<_> = received
@@ -1373,14 +1382,14 @@ mod tests {
         departed.sort();
         let expected: Vec<_> = peers.iter().map(|id| id.addr()).collect();
         assert_eq!(departed, expected, "got {received:?}");
-        let last_count = received.iter().rev().find_map(|event| match event {
+        let last_listed = received.iter().rev().find_map(|event| match event {
             NetworkEvent::PeersUpdated {
-                connected_count,
+                addresses,
                 ..
-            } => Some(*connected_count),
+            } => Some(addresses.clone()),
             _ => None,
         });
-        assert_eq!(last_count, (joined > 0).then_some(0), "got {received:?}");
+        assert_eq!(last_listed, (joined > 0).then(Vec::new), "got {received:?}");
         assert!(late.is_none_or(|admitted| matches!(admitted, Admission::Stopped(_))));
 
         disconnect_all();

@@ -233,7 +233,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                 self.announced_peers.remove(address);
             }
             NetworkEvent::PeersUpdated {
-                connected_count,
+                addresses,
                 best_height,
             } => {
                 self.progress.update_target_height(*best_height);
@@ -241,7 +241,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                     let mut metadata_storage = self.metadata_storage.write().await;
                     metadata_storage.store_last_target_height(*best_height).await?;
                 }
-                if *connected_count == 0 {
+                if addresses.is_empty() {
                     self.stop_sync();
                 } else {
                     if self.state() == SyncState::WaitingForConnections {

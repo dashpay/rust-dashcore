@@ -219,13 +219,14 @@ pub(super) async fn wait_for_network_event(
     }
 }
 
-/// The peer set an event handler rebuilds from the `NetworkEvent`s it was given,
-/// as an external subscriber does.
+/// The peer set an event handler rebuilds from the connect and disconnect events
+/// it was given, checked against the list in every `PeersUpdated`.
 #[derive(Default)]
 pub(super) struct PeerTracker {
     pub(super) peers: HashSet<SocketAddr>,
-    pub(super) connected_count: Option<u32>,
-    /// Whether a `PeersUpdated` with no peers arrived since the last `reset_counts`.
+    /// The peers in the latest `PeersUpdated` since the last `reset_lists`.
+    pub(super) listed: Option<HashSet<SocketAddr>>,
+    /// Whether a `PeersUpdated` with no peers arrived since the last `reset_lists`.
     pub(super) emptied: bool,
 }
 
@@ -241,11 +242,13 @@ impl PeerTracker {
                     self.peers.remove(&addr);
                 }
                 Ok(NetworkEvent::PeersUpdated {
-                    connected_count,
+                    addresses,
                     ..
                 }) => {
-                    self.connected_count = Some(connected_count);
-                    self.emptied |= connected_count == 0;
+                    let listed: HashSet<_> = addresses.into_iter().collect();
+                    assert_eq!(listed, self.peers, "the list disagrees with the peer events");
+                    self.emptied |= listed.is_empty();
+                    self.listed = Some(listed);
                 }
                 Err(broadcast::error::TryRecvError::Empty) => return,
                 Err(e) => panic!("network events lost: {e}"),
@@ -253,9 +256,9 @@ impl PeerTracker {
         }
     }
 
-    /// Forgets the counts received so far, so later checks only see new ones.
-    pub(super) fn reset_counts(&mut self) {
-        self.connected_count = None;
+    /// Forgets the lists received so far, so later checks only see new ones.
+    pub(super) fn reset_lists(&mut self) {
+        self.listed = None;
         self.emptied = false;
     }
 }

@@ -1,5 +1,6 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,7 +34,7 @@ async fn test_sync_restart_consistency() {
     client_handle.stop().await;
     tracker.update(&mut client_handle.network_event_receiver);
     assert!(tracker.peers.is_empty(), "peers still tracked after stop: {:?}", tracker.peers);
-    assert_eq!(tracker.connected_count, Some(0));
+    assert_eq!(tracker.listed, Some(HashSet::new()));
     ctx.assert_synced(&client_handle.client.progress().await).await;
     let first_balance = ctx.spendable_balance().await;
     let first_tx_count = ctx.transaction_count().await;

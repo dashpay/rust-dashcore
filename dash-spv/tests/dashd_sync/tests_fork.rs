@@ -69,7 +69,7 @@ async fn test_sync_follows_reorg() {
     let mut tracker = PeerTracker::default();
     tracker.update(&mut client_handle.network_event_receiver);
     assert_eq!(tracker.peers, HashSet::from([ctx.dashd.addr]));
-    tracker.reset_counts();
+    tracker.reset_lists();
 
     // Replace it with a branch of 3 blocks that leave the spend out.
     let mut events = wallet.read().await.subscribe_events();
@@ -96,7 +96,7 @@ async fn test_sync_follows_reorg() {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             tracker.update(&mut client_handle.network_event_receiver);
-            if tracker.connected_count == Some(1) {
+            if tracker.listed == Some(HashSet::from([ctx.dashd.addr])) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -146,7 +146,7 @@ async fn test_sync_follows_reorg() {
     client_handle.stop().await;
     tracker.update(&mut client_handle.network_event_receiver);
     assert!(tracker.peers.is_empty(), "peers still tracked after stop: {:?}", tracker.peers);
-    assert_eq!(tracker.connected_count, Some(0));
+    assert_eq!(tracker.listed, Some(HashSet::new()));
     drop(client_handle);
     let network_manager = PeerNetworkManager::new(&config).await;
     DashSpvClient::new(config, network_manager, wallet, vec![])
