@@ -322,54 +322,38 @@ impl Broker {
         sent
     }
 
-    /// Endgame: asks an idle peer too for the lowest blocks stuck at a slow one.
-    pub async fn hedge(&self, peers: &[PeerHandle], costs: &ResponseCosts) -> usize {
-        let mut plan: Vec<(RequestKey, NetworkMessage, PeerHandle)> = Vec::new();
-        {
+    /// Endgame: asks a second peer for the lowest block on the wire once it has waited
+    /// [`HEDGE_AFTER`], and returns its height. Blocks are processed in height order, so
+    /// only the lowest one holds up progress and a second copy of any other is wasted.
+    pub async fn hedge(&self, peers: &[PeerHandle]) -> Option<u32> {
+        let (key, msg, height, peer) = {
             let reqs = self.requests.lock().await;
-            let mut stalled: Vec<(u32, &RequestKey, &OnWire)> = reqs
+            let (key, o) = reqs
                 .iter()
                 .filter_map(|(key, state)| match state {
-                    ReqState::OnWire(o)
-                        if matches!(key, RequestKey::Block(_))
-                            && o.hedge.is_none()
-                            && o.sent.elapsed() >= HEDGE_AFTER =>
-                    {
-                        Some((o.height, key, o.as_ref()))
+                    ReqState::OnWire(o) if matches!(key, RequestKey::Block(_)) => {
+                        Some((key, o.as_ref()))
                     }
                     _ => None,
                 })
-                .collect();
-            stalled.sort_by_key(|(height, _, _)| *height);
-            let mut room: Vec<(PeerHandle, u64)> = peers
+                .min_by_key(|(_, o)| o.height)?;
+            if o.hedge.is_some() || o.sent.elapsed() < HEDGE_AFTER {
+                return None;
+            }
+            let peer = peers
                 .iter()
-                .map(|p| (p.clone(), p.cap().saturating_sub(p.in_flight_bytes())))
-                .collect();
-            for (_, key, o) in stalled {
-                let Some((peer, left)) = room
-                    .iter_mut()
-                    .filter(|(p, left)| p.id() != o.peer && *left > 0)
-                    .max_by_key(|(_, left)| *left)
-                else {
-                    break;
-                };
-                *left = left.saturating_sub(costs.cost(&o.msg));
-                plan.push((key.clone(), o.msg.clone(), peer.clone()));
+                .filter(|p| p.id() != o.peer && p.in_flight_bytes() < p.cap())
+                .max_by_key(|p| p.cap().saturating_sub(p.in_flight_bytes()))?;
+            (key.clone(), o.msg.clone(), o.height, peer.clone())
+        };
+        peer.send(&msg).await.ok()?;
+        match self.requests.lock().await.get_mut(&key) {
+            Some(ReqState::OnWire(o)) if o.hedge.is_none() => {
+                o.hedge = Some(peer.id());
+                Some(height)
             }
+            _ => None,
         }
-        let mut hedged = 0;
-        for (key, msg, peer) in plan {
-            if peer.send(&msg).await.is_err() {
-                continue;
-            }
-            if let Some(ReqState::OnWire(o)) = self.requests.lock().await.get_mut(&key) {
-                if o.hedge.is_none() {
-                    o.hedge = Some(peer.id());
-                    hedged += 1;
-                }
-            }
-        }
-        hedged
     }
 
     #[cfg(test)]
@@ -687,6 +671,53 @@ mod tests {
         assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, None);
         broker.enqueue(0, get_cfilters(0)).await;
         assert_eq!(broker.len(), 1);
+    }
+
+    /// Blocks are processed in height order, so a stalled block at a slow peer only gets
+    /// a second copy from another peer once it is the lowest block on the wire.
+    #[tokio::test(start_paused = true)]
+    async fn hedge_asks_another_peer_only_for_the_lowest_stalled_block() {
+        let broker = Broker::new();
+        let costs = ResponseCosts::new();
+        let peers = [
+            ConnectedPeer::for_test(conn(1, 0)).await.handle(),
+            ConnectedPeer::for_test(conn(2, 0)).await.handle(),
+        ];
+        let (slow, idle) = (&peers[..1], peers[1].id());
+        let get_block = |n: u32| NetworkMessage::GetData(vec![block(n)]);
+        let hedged_blocks = || async {
+            let mut hedged: Vec<u32> = broker
+                .requests
+                .lock()
+                .await
+                .values()
+                .filter_map(|state| match state {
+                    ReqState::OnWire(o) if o.hedge == Some(idle) => Some(o.height),
+                    _ => None,
+                })
+                .collect();
+            hedged.sort();
+            hedged
+        };
+
+        for n in [11, 12] {
+            broker.enqueue(n, get_block(n)).await;
+        }
+        assert_eq!(broker.route(slow, u64::MAX, &costs).await, 2);
+        tokio::time::advance(HEDGE_AFTER).await;
+        broker.enqueue(10, get_block(10)).await;
+        assert_eq!(broker.route(slow, u64::MAX, &costs).await, 1);
+        assert_eq!(broker.hedge(&peers).await, None, "the lowest block has not waited long enough");
+
+        tokio::time::advance(HEDGE_AFTER).await;
+        assert_eq!(broker.hedge(&peers).await, Some(10));
+        assert_eq!(broker.hedge(&peers).await, None, "later blocks wait for the lowest");
+        assert_eq!(hedged_blocks().await, [10]);
+
+        broker.block_arrived(idle, BlockHash::dummy(10)).await;
+        assert_eq!(broker.hedge(&peers).await, Some(11));
+        assert_eq!(hedged_blocks().await, [11]);
+        assert_eq!(broker.hedge(slow).await, None, "no other peer to ask");
     }
 
     #[test_case(get_mnlistdiff(3), vec![RequestKey::MnListDiff(BlockHash::dummy(4))], 0; "its only key")]
