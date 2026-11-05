@@ -11,10 +11,14 @@ use dashcore_hashes::sha256d;
 use tokio::sync::Mutex;
 
 const HEADERS_RESP_BYTES: u64 = 2000 * 81;
+/// Dash Core sends up to 8000 compressed headers of about 43 bytes each.
+const HEADERS2_RESP_BYTES: u64 = 8000 * 43;
 const CFHEADERS_RESP_BYTES: u64 = 2000 * 32 + 65;
 const RESP_BYTES_ALPHA: f64 = 0.3;
-const RESP_BYTES_BOOTSTRAP: [u64; 9] = [
+const REPLY_KINDS: usize = 10;
+const RESP_BYTES_BOOTSTRAP: [u64; REPLY_KINDS] = [
     HEADERS_RESP_BYTES,
+    HEADERS2_RESP_BYTES,
     CFHEADERS_RESP_BYTES,
     256 << 10,
     32 << 10,
@@ -28,6 +32,7 @@ const RESP_BYTES_BOOTSTRAP: [u64; 9] = [
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Reply {
     Headers,
+    Headers2,
     CfHeaders(BlockHash),
     CFilters(BlockHash),
     Block(BlockHash),
@@ -42,20 +47,22 @@ impl Reply {
     fn kind(&self) -> usize {
         match self {
             Reply::Headers => 0,
-            Reply::CfHeaders(_) => 1,
-            Reply::CFilters(_) => 2,
-            Reply::Block(_) => 3,
-            Reply::Tx(_) => 4,
-            Reply::InstantLock(_) => 5,
-            Reply::ChainLock(_) => 6,
-            Reply::MnListDiff(_) => 7,
-            Reply::QrInfo => 8,
+            Reply::Headers2 => 1,
+            Reply::CfHeaders(_) => 2,
+            Reply::CFilters(_) => 3,
+            Reply::Block(_) => 4,
+            Reply::Tx(_) => 5,
+            Reply::InstantLock(_) => 6,
+            Reply::ChainLock(_) => 7,
+            Reply::MnListDiff(_) => 8,
+            Reply::QrInfo => 9,
         }
     }
 
     fn awaited(msg: &NetworkMessage) -> Vec<Reply> {
         match msg {
-            NetworkMessage::GetHeaders(_) | NetworkMessage::GetHeaders2(_) => vec![Reply::Headers],
+            NetworkMessage::GetHeaders(_) => vec![Reply::Headers],
+            NetworkMessage::GetHeaders2(_) => vec![Reply::Headers2],
             NetworkMessage::GetCFHeaders(m) => vec![Reply::CfHeaders(m.stop_hash)],
             NetworkMessage::GetCFilters(m) => vec![Reply::CFilters(m.stop_hash)],
             NetworkMessage::GetData(inv) => inv.iter().filter_map(Reply::of_item).collect(),
@@ -77,7 +84,8 @@ impl Reply {
 
     fn of(msg: &NetworkMessage) -> Option<Reply> {
         Some(match msg {
-            NetworkMessage::Headers(_) | NetworkMessage::Headers2(_) => Reply::Headers,
+            NetworkMessage::Headers(_) => Reply::Headers,
+            NetworkMessage::Headers2(_) => Reply::Headers2,
             NetworkMessage::CFHeaders(m) => Reply::CfHeaders(m.stop_hash),
             NetworkMessage::Block(block) => Reply::Block(block.block_hash()),
             NetworkMessage::Tx(tx) => Reply::Tx(tx.txid()),
@@ -95,7 +103,7 @@ impl Reply {
 }
 
 pub struct ResponseCosts {
-    expected: [AtomicU64; 9],
+    expected: [AtomicU64; REPLY_KINDS],
 }
 
 impl ResponseCosts {
@@ -109,7 +117,7 @@ impl ResponseCosts {
         Reply::awaited(msg).iter().map(|reply| self.expected(reply)).sum()
     }
 
-    pub fn expected_kb(&self) -> [u64; 9] {
+    pub fn expected_kb(&self) -> [u64; REPLY_KINDS] {
         self.expected.each_ref().map(|e| e.load(Ordering::Relaxed) >> 10)
     }
 
@@ -118,7 +126,7 @@ impl ResponseCosts {
     }
 
     fn record(&self, reply: &Reply, bytes: u64) {
-        if matches!(reply, Reply::Headers | Reply::CfHeaders(_)) {
+        if matches!(reply, Reply::Headers | Reply::Headers2 | Reply::CfHeaders(_)) {
             return;
         }
         let expected = &self.expected[reply.kind()];
@@ -226,5 +234,47 @@ impl Ledger {
         let _ = self
             .in_flight_bytes
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(cost)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashcore::network::message_blockdata::GetHeadersMessage;
+    use dashcore::network::message_headers2::Headers2Message;
+    use test_case::test_case;
+
+    fn locator() -> GetHeadersMessage {
+        GetHeadersMessage::new(vec![BlockHash::dummy(1)], BlockHash::dummy(0))
+    }
+
+    fn headers2() -> NetworkMessage {
+        NetworkMessage::Headers2(Headers2Message {
+            headers: Vec::new(),
+        })
+    }
+
+    #[test_case(NetworkMessage::GetHeaders(locator()) => 2000 * 81; "plain headers")]
+    #[test_case(NetworkMessage::GetHeaders2(locator()) => 8000 * 43; "compressed headers")]
+    fn a_header_request_costs_a_full_reply(request: NetworkMessage) -> u64 {
+        ResponseCosts::new().cost(&request)
+    }
+
+    /// Charges a `getheaders2` and settles it with `reply`, a full reply in size.
+    #[test_case(headers2(), 0; "a headers2 reply settles it")]
+    #[test_case(NetworkMessage::Headers(Vec::new()), 8000 * 43; "a plain headers announcement does not")]
+    #[tokio::test]
+    async fn a_compressed_header_request_is_settled_by_its_reply(
+        reply: NetworkMessage,
+        in_flight: u64,
+    ) {
+        let costs = Arc::new(ResponseCosts::new());
+        let ledger = Ledger::new(costs.clone());
+        ledger.charge(&NetworkMessage::GetHeaders2(locator())).await;
+        assert_eq!(ledger.in_flight_bytes(), 8000 * 43);
+
+        ledger.settle(&reply, 8000 * 43).await;
+        assert_eq!(ledger.in_flight_bytes(), in_flight);
+        assert_eq!(costs.cost(&NetworkMessage::GetHeaders2(locator())), 8000 * 43);
     }
 }
