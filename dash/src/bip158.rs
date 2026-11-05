@@ -43,7 +43,7 @@ use core::cmp::{self, Ordering};
 use core::convert::TryInto;
 use core::fmt::{self, Display, Formatter};
 
-use hashes::{Hash, siphash24};
+use hashes::{sha256d, siphash24};
 use internals::write_err;
 
 use crate::blockdata::block::Block;
@@ -108,7 +108,7 @@ impl FilterHash {
         let mut header_data = [0u8; 64];
         header_data[0..32].copy_from_slice(&self[..]);
         header_data[32..64].copy_from_slice(&previous_filter_header[..]);
-        FilterHeader::hash(&header_data)
+        FilterHeader::from_raw_hash(sha256d::Hash::hash(&header_data))
     }
 }
 
@@ -142,7 +142,7 @@ impl BlockFilter {
     ///
     /// [BIP 157]: <https://github.com/bitcoin/bips/blob/master/bip-0157.mediawiki#Filter_Headers>
     pub fn filter_header(&self, previous_filter_header: &FilterHeader) -> FilterHeader {
-        let filter_hash = FilterHash::hash(self.content.as_slice());
+        let filter_hash = FilterHash::from_raw_hash(sha256d::Hash::hash(self.content.as_slice()));
         filter_hash.filter_header(previous_filter_header)
     }
 

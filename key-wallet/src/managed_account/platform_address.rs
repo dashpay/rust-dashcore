@@ -8,7 +8,6 @@ use crate::Network;
 use core::fmt;
 use dashcore::address::Payload;
 use dashcore::hashes::hash160::Hash as Hash160;
-use dashcore::hashes::Hash as HashTrait;
 use dashcore::Address;
 use hex_conservative::DisplayHex;
 #[cfg(feature = "serde")]
@@ -66,7 +65,7 @@ impl PlatformP2PKHAddress {
     /// Note: This is for interoperability - Platform addresses typically
     /// use bech32m encoding rather than base58 P2PKH format.
     pub fn to_address(&self, network: Network) -> Address {
-        let pubkey_hash = Hash160::from_slice(&self.0).expect("20 bytes is valid for Hash160");
+        let pubkey_hash = Hash160::from_byte_array(self.0);
         let payload = Payload::PubkeyHash(pubkey_hash.into());
         Address::new(network, payload)
     }

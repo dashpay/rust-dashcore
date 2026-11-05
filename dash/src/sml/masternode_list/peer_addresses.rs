@@ -1,8 +1,6 @@
 use std::cmp::Ordering;
 use std::net::SocketAddr;
 
-use hashes::Hash;
-
 use crate::sml::masternode_list::MasternodeList;
 use crate::sml::masternode_list::masternode_helpers::reverse_cmp_sup;
 

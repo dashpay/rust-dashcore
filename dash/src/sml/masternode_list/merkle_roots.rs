@@ -1,4 +1,4 @@
-use hashes::{Hash, sha256d};
+use hashes::sha256d;
 
 use crate::Transaction;
 use crate::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
@@ -162,7 +162,7 @@ impl MasternodeList {
 mod tests {
     use std::sync::Arc;
 
-    use hashes::{Hash, sha256d};
+    use hashes::sha256d;
     use test_case::test_case;
 
     use super::merkle_root_from_hashes;

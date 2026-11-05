@@ -89,7 +89,6 @@ impl Validator<&[HashedBlockHeader]> for BlockHeaderValidator {
 #[cfg(test)]
 mod tests {
     use dashcore::{constants::genesis_block, BlockHash, Header, Network};
-    use dashcore_hashes::Hash;
 
     use super::*;
 

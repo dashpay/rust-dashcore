@@ -28,14 +28,12 @@ macro_rules! impl_hashencode {
     ($hashtype:ident) => {
         impl $crate::consensus::Encodable for $hashtype {
             fn consensus_encode<W: $crate::io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, $crate::io::Error> {
-                use $crate::hashes::Hash;
                 self.to_byte_array().consensus_encode(w)
             }
         }
 
         impl $crate::consensus::Decodable for $hashtype {
             fn consensus_decode<R: $crate::io::Read + ?Sized>(r: &mut R) -> Result<Self, $crate::consensus::encode::Error> {
-                use $crate::hashes::Hash;
                 Ok(Self::from_byte_array(<<$hashtype as $crate::hashes::Hash>::Bytes>::consensus_decode(r)?))
             }
         }
@@ -48,14 +46,12 @@ macro_rules! impl_asref_push_bytes {
         $(
             impl AsRef<$crate::blockdata::script::PushBytes> for $hashtype {
                 fn as_ref(&self) -> &$crate::blockdata::script::PushBytes {
-                    use $crate::hashes::Hash;
                     self.as_byte_array().into()
                 }
             }
 
             impl From<$hashtype> for $crate::blockdata::script::PushBytesBuf {
                 fn from(hash: $hashtype) -> Self {
-                    use $crate::hashes::Hash;
                     hash.as_byte_array().into()
                 }
             }
@@ -74,34 +70,22 @@ mod newtypes {
 
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
-    use hashes::{Hash, hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
+    use hashes::{hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
     use hex_conservative::DecodeFixedLengthBytesError as Error;
 
     use crate::alloc::string::ToString;
     use crate::prelude::String;
     use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
 
-    /// Parses hex in the inner hash's display order.
-    ///
-    /// The `from_hex`/`to_hex` pairs below follow the wrapped hash, which is
-    /// not always the newtype's own `FromStr` order (see `ProTxHash`). The
-    /// inner hash's `FromStr` would report a `hex-conservative` 0.2 error, so
-    /// decode here and flip the bytes the way it would.
-    fn from_inner_hex<H: Hash<Bytes = [u8; 32]>>(s: &str) -> Result<H, Error> {
-        let mut bytes: [u8; 32] = hex_conservative::decode_to_array(s)?;
-        if H::DISPLAY_BACKWARD {
-            bytes.reverse();
-        }
-        Ok(H::from_byte_array(bytes))
-    }
-
     /// Adds `from_hex`/`to_hex`, both in the wrapped hash's display order.
+    ///
+    /// That order is not always the newtype's own `FromStr` order (see `ProTxHash`).
     macro_rules! impl_inner_hex {
         ($($newtype:ident($inner:ty)),* $(,)?) => {$(
             impl $newtype {
                 /// Parses hex in the wrapped hash's display order.
                 pub fn from_hex(s: &str) -> Result<Self, Error> {
-                    from_inner_hex::<$inner>(s).map(Self)
+                    s.parse::<$inner>().map(Self)
                 }
 
                 /// Formats as hex in the wrapped hash's display order.
@@ -122,6 +106,12 @@ mod newtypes {
         /// A dash block hash.
         pub struct BlockHash(sha256d::Hash);
     }
+
+    /// Engine of the hash that [`BlockHash`] wraps.
+    #[cfg(feature = "core-block-hash-use-x11")]
+    pub(crate) type BlockHashEngine = hash_x11::HashEngine;
+    #[cfg(not(feature = "core-block-hash-use-x11"))]
+    pub(crate) type BlockHashEngine = sha256d::HashEngine;
 
     hash_newtype! {
         /// A dash transaction hash/transaction ID.
@@ -276,7 +266,7 @@ mod newtypes {
                 bytes.append(&mut confirmed_hash_hashed_with_pro_reg_tx.to_byte_array().to_vec());
             }
             bytes.append(&mut modifier.to_byte_array().to_vec());
-            Self::hash(bytes.as_slice())
+            Self::from_raw_hash(sha256::Hash::hash(bytes.as_slice()))
         }
     }
 
@@ -293,7 +283,7 @@ mod newtypes {
             let mut bytes = vec![quorum.llmq_type.index()];
             bytes.extend_from_slice(quorum.quorum_hash.as_byte_array());
             bytes.extend_from_slice(request_id.as_byte_array());
-            Self::hash(bytes.as_slice())
+            Self::from_raw_hash(sha256d::Hash::hash(bytes.as_slice()))
         }
     }
 
@@ -306,16 +296,16 @@ mod newtypes {
     impl ConfirmedHashHashedWithProRegTx {
         /// Hashes the members
         pub fn hash_members(pro_tx_hash: &ProTxHash, confirmed_hash: &ConfirmedHash) -> Self {
-            Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
+            Self::from_raw_hash(sha256::Hash::hash(
+                &[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat(),
+            ))
         }
         /// Hashes the members
         pub fn hash_members_confirmed_hash_optional(
             pro_tx_hash: &ProTxHash,
             confirmed_hash: Option<&ConfirmedHash>,
         ) -> Option<Self> {
-            confirmed_hash.map(|confirmed_hash| {
-                Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
-            })
+            confirmed_hash.map(|confirmed_hash| Self::hash_members(pro_tx_hash, confirmed_hash))
         }
     }
 

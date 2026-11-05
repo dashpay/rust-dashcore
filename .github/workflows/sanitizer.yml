@@ -8,7 +8,6 @@ on:
       - dev
   pull_request:
     paths:
-      - 'key-wallet-ffi/**'
       - 'dash/**'
       - 'hashes/**'
       - 'crypto/**'

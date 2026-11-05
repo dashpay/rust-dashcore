@@ -4,7 +4,6 @@ use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::message_verification_error::MessageVerificationError;
 use dashcore::{ChainLock, QuorumSigningRequestId};
-use dashcore_hashes::Hash;
 
 use crate::error::{ValidationError, ValidationResult};
 use crate::validation::Validator;
@@ -114,7 +113,6 @@ mod tests {
     use dashcore::sml::llmq_type::network::NetworkLLMQExt;
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
     use dashcore::ChainLock;
-    use dashcore_hashes::Hash;
     use hex_conservative::DisplayHex;
     use std::sync::Arc;
     use test_case::test_case;

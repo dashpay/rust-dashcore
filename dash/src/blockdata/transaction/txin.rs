@@ -127,7 +127,6 @@ mod tests {
     use crate::Txid;
     use crate::blockdata::script::{Builder, PushBytesBuf};
     use crate::consensus::encode::deserialize;
-    use crate::hashes::Hash;
 
     #[test]
     fn test_txin() {

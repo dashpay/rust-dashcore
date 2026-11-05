@@ -4,7 +4,6 @@ use crate::transaction_checking::BlockInfo;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
-use dashcore::hashes::Hash;
 use dashcore::{Address, BlockHash, Network, TxOut};
 
 /// Creates a `BlockInfo` with the given height and deterministic defaults.

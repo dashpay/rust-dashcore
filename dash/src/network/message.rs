@@ -998,7 +998,6 @@ mod codec_tests {
 mod test {
     use std::net::Ipv4Addr;
 
-    use hashes::Hash as HashTrait;
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11::Hash as X11Hash;
     use hashes::sha256d::Hash;
@@ -1031,7 +1030,7 @@ mod test {
     use crate::pow::CompactTarget;
 
     fn hash(slice: [u8; 32]) -> Hash {
-        Hash::from_slice(&slice).unwrap()
+        Hash::from_byte_array(slice)
     }
 
     #[cfg(feature = "core-block-hash-use-x11")]
@@ -1041,7 +1040,7 @@ mod test {
 
     #[cfg(not(feature = "core-block-hash-use-x11"))]
     fn hash_x11(slice: [u8; 32]) -> Hash {
-        Hash::from_slice(&slice).unwrap()
+        Hash::from_byte_array(slice)
     }
 
     #[test]

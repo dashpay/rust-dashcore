@@ -24,7 +24,7 @@ use dashcore_rpc::{
         SignedAmount, Transaction, TxIn, TxOut, Txid, Witness,
         consensus::encode::{deserialize, serialize},
         ecdsa::EcdsaSecretKey,
-        hashes::Hash,
+        hashes::sha256d,
     },
 };
 
@@ -678,7 +678,7 @@ fn test_get_mempool_entry(cl: &Client) {
     let entry = cl.get_mempool_entry(&txid).unwrap();
     assert!(entry.spent_by.is_empty());
 
-    let fake = Txid::hash(&[1, 2]);
+    let fake = Txid::from_raw_hash(sha256d::Hash::hash(&[1, 2]));
     assert!(cl.get_mempool_entry(&fake).is_err());
 }
 

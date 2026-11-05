@@ -5,7 +5,6 @@
 use crate::account::{AccountType, StandardAccountType};
 use crate::wallet::Wallet;
 use crate::Network;
-use dashcore::hashes::Hash;
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::collections::{BTreeMap, HashMap};
 

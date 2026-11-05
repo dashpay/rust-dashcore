@@ -39,7 +39,6 @@ use clap::Parser;
 use dash_network_seeds::{
     CoreStatus, MasternodeSeed, MasternodeType, PlatformStatus, Reachability,
 };
-use dashcore::hashes::Hash;
 use dashcore::network::Address;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;

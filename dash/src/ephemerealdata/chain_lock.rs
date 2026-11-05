@@ -6,7 +6,7 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use core::fmt::Debug;
-use hashes::{Hash, HashEngine};
+use hashes::{HashEngine, sha256d};
 pub use std::vec::Vec;
 
 use crate::bls_sig_utils::BLSSignature;
@@ -39,7 +39,7 @@ impl_consensus_encoding!(ChainLock, block_height, block_hash, signature);
 impl ChainLock {
     /// Returns quorum signing request ID
     pub fn request_id(&self) -> Result<QuorumSigningRequestId, io::Error> {
-        let mut engine = QuorumSigningRequestId::engine();
+        let mut engine = sha256d::Hash::engine();
 
         // Prefix
         let prefix_len = VarInt(CL_REQUEST_ID_PREFIX.len() as u64);
@@ -50,7 +50,7 @@ impl ChainLock {
         // Inputs
         engine.input(&self.block_height.to_le_bytes());
 
-        Ok(QuorumSigningRequestId::from_engine(engine))
+        Ok(QuorumSigningRequestId::from_raw_hash(engine.finalize()))
     }
 
     /// Height of the masternode list that holds the quorum signing this ChainLock.
@@ -64,14 +64,14 @@ impl ChainLock {
         quorum_hash: QuorumHash,
         precomputed_request_id: Option<QuorumSigningRequestId>,
     ) -> Result<QuorumSigningSignId, io::Error> {
-        let mut engine = QuorumSigningSignId::engine();
+        let mut engine = sha256d::Hash::engine();
 
         engine.input(&[quorum_type.index()]);
         engine.input(quorum_hash.as_byte_array());
         engine.input(precomputed_request_id.unwrap_or(self.request_id()?).as_byte_array());
         engine.input(self.block_hash.as_byte_array());
 
-        Ok(QuorumSigningSignId::from_engine(engine))
+        Ok(QuorumSigningSignId::from_raw_hash(engine.finalize()))
     }
 }
 

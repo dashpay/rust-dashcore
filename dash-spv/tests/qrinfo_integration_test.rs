@@ -10,7 +10,6 @@ use dashcore::{
     transaction::special_transaction::quorum_commitment::QuorumEntry,
     BlockHash, QuorumHash, Transaction,
 };
-use dashcore_hashes::Hash;
 
 /// Helper to generate test QRInfo data
 fn create_test_qr_info(_base_height: u32, tip_height: u32) -> QRInfo {

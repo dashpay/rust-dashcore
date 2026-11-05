@@ -23,8 +23,6 @@
 use core::convert::From;
 use core::{fmt, ops};
 
-use hashes::Hash;
-
 pub use dash_network::{Network, ParseNetworkError};
 
 use crate::blockdata::constants::genesis_chain_params;

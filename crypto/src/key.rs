@@ -23,7 +23,7 @@ pub use bitcoin_crypto::secp256k1::Scalar;
 use dash_network::Network;
 #[cfg(feature = "serde")]
 use dash_types::serialize::hex as serde_hex;
-use hashes::{hash160, hash_newtype, Hash as _};
+use hashes::{hash160, hash_newtype};
 use hex_conservative::DisplayHex;
 use thiserror::Error as ThisError;
 use zeroize::Zeroizing;
@@ -138,7 +138,7 @@ impl PublicKey {
 
     /// Returns dash 160-bit hash of the public key
     pub fn pubkey_hash(&self) -> PubkeyHash {
-        self.with_serialized(PubkeyHash::hash)
+        self.with_serialized(|bytes| PubkeyHash::from_raw_hash(hash160::Hash::hash(bytes)))
     }
 }
 

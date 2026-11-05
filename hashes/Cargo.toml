@@ -24,7 +24,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 bincode = { workspace = true, optional = true }
-bitcoin_hashes = { workspace = true, features = ["std"] }
+bitcoin_hashes = { workspace = true, features = ["std", "hex"] }
 hex-conservative = { workspace = true }
 serde = { workspace = true, optional = true }
 

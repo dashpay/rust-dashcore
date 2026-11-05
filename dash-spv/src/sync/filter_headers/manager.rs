@@ -314,7 +314,7 @@ mod tests {
     use dashcore::hash_types::{FilterHash, FilterHeader};
     use dashcore::network::message::NetworkMessage;
     use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
-    use dashcore_hashes::Hash;
+    use dashcore_hashes::sha256d;
 
     type TestFilterHeadersManager =
         FilterHeadersManager<PersistentBlockHeaderStorage, PersistentFilterHeaderStorage>;
@@ -582,7 +582,9 @@ mod tests {
             filter_type: 0,
             stop_hash,
             previous_filter_header,
-            filter_hashes: (0..count).map(|i| FilterHash::hash(&i.to_le_bytes())).collect(),
+            filter_hashes: (0..count)
+                .map(|i| FilterHash::from_raw_hash(sha256d::Hash::hash(&i.to_le_bytes())))
+                .collect(),
         }
     }
 
@@ -659,7 +661,11 @@ mod tests {
 
         // A second batch with a different previous filter header is not stored
         // and is requested again.
-        let wrong = cfheaders(FilterHeader::hash(b"other"), hashes[3999], 2000);
+        let wrong = cfheaders(
+            FilterHeader::from_raw_hash(sha256d::Hash::hash(b"other")),
+            hashes[3999],
+            2000,
+        );
         let (stored, requests) = deliver(&mut manager, &network, wrong).await;
         assert!(stored.is_empty());
         assert_eq!(requests, vec![(2000, hashes[3999])]);
@@ -679,7 +685,11 @@ mod tests {
         let (mut manager, network) = start_sync(&storage, 3999).await;
 
         // The second batch arrives first and is buffered.
-        let wrong = cfheaders(FilterHeader::hash(b"other"), hashes[3999], 2000);
+        let wrong = cfheaders(
+            FilterHeader::from_raw_hash(sha256d::Hash::hash(b"other")),
+            hashes[3999],
+            2000,
+        );
         assert_eq!(deliver(&mut manager, &network, wrong).await, (vec![], vec![]));
 
         // The first batch is stored; the buffered one is rejected and requested again.
@@ -716,7 +726,7 @@ mod tests {
         assert_eq!(manager.checkpoint_start_height, Some(5000));
 
         // Nothing is stored below the checkpoint, so its previous header is taken as is.
-        let checkpoint_prev = FilterHeader::hash(b"checkpoint");
+        let checkpoint_prev = FilterHeader::from_raw_hash(sha256d::Hash::hash(b"checkpoint"));
         let first = cfheaders(checkpoint_prev, hashes[99], 100);
         assert_eq!(deliver(&mut manager, &network, first).await.0, vec![(5000, 5099)]);
         let filter_headers = storage.filter_headers();

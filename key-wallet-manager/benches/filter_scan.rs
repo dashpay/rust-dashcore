@@ -20,7 +20,6 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use dashcore::bip158::BlockFilter;
-use dashcore::hashes::Hash;
 use dashcore::{Address, Block, OutPoint, Transaction, TxOut, Txid};
 use key_wallet::account::ManagedAccountTrait;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;

@@ -11,7 +11,6 @@ use dashcore::blockdata::transaction::special_transaction::coinbase::CoinbasePay
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
-use dashcore::hashes::Hash;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, Transaction, TxIn, TxOut};
 
 /// Helper to create a coinbase transaction
