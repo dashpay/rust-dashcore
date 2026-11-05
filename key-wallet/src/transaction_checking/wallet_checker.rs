@@ -3,12 +3,12 @@
 //! This module provides methods on ManagedWalletInfo for checking
 //! if transactions belong to the wallet.
 
-use super::account_checker::AddressClassification;
+use super::account_checker::AccountMatch;
 pub(crate) use super::account_checker::TransactionCheckResult;
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
-use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
+use crate::managed_account::transaction_record::{InputDetail, TransactionRecord};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::{KeySource, Wallet};
@@ -80,34 +80,17 @@ impl ManagedWalletInfo {
                         if record.input_details.iter().any(|d| d.index == index as u32) {
                             return None;
                         }
-                        let outputs: Vec<_> = record
-                            .transaction
-                            .output
-                            .iter()
-                            .enumerate()
-                            .map(|(index, output)| {
-                                let address =
-                                    Address::from_script(&output.script_pubkey, self.network).ok();
-                                let role = match address.as_ref() {
-                                    Some(address) if funds.contains_address(address) => {
-                                        match funds.classify_address(address) {
-                                            AddressClassification::Internal => OutputRole::Change,
-                                            _ => OutputRole::Received,
-                                        }
-                                    }
-                                    None if output.script_pubkey.is_provably_unspendable() => {
-                                        OutputRole::Unspendable
-                                    }
-                                    _ => OutputRole::Sent,
-                                };
-                                OutputDetail {
-                                    index: index as u32,
-                                    role,
-                                    address,
-                                    value: output.value,
-                                }
-                            })
-                            .collect();
+                        // Classified the way recording it would now, so a
+                        // re-delivery finds the same roles.
+                        let account_match =
+                            funds.check_transaction_for_match(&record.transaction, None);
+                        let lookup = account_match.as_ref().map(AccountMatch::output_role_lookup);
+                        let outputs = TransactionRecord::output_details_for(
+                            &record.transaction,
+                            self.network,
+                            true,
+                            |address| lookup.as_ref().and_then(|role_of| role_of(address)),
+                        );
                         Some((record.txid, index as u32, outputs))
                     })
                     .collect();
@@ -122,18 +105,7 @@ impl ManagedWalletInfo {
                     });
                     record.input_details.sort_by_key(|d| d.index);
                     // Address pools may have expanded since this spender was recorded.
-                    for output in outputs {
-                        if let Some(detail) =
-                            record.output_details.iter_mut().find(|d| d.index == output.index)
-                        {
-                            if detail.role == OutputRole::Sent {
-                                detail.role = output.role;
-                            }
-                        } else {
-                            record.output_details.push(output);
-                        }
-                    }
-                    record.output_details.sort_by_key(|d| d.index);
+                    record.replace_output_details(outputs);
                     record.recompute_net_and_direction();
                     result
                         .updated_records
@@ -476,8 +448,11 @@ mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
     use crate::account::{ECDSAAddressDerivation, TransactionRecord};
-    use crate::gap_limit::{DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT};
+    use crate::gap_limit::{
+        DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
+    };
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+    use crate::managed_account::managed_core_funds_account::ManagedCoreFundsAccount;
     use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
     use crate::test_utils::TestWalletContext;
     use crate::transaction_checking::BlockInfo;
@@ -4176,5 +4151,41 @@ mod tests {
         assert_eq!(updated.direction, TransactionDirection::Internal);
         assert_eq!(updated.net_amount, -1_000);
         assert!(ctx.bip44_account().utxos.contains_key(&OutPoint::new(spend.txid(), 0)));
+    }
+
+    /// A late input's correction and a rescan's re-delivery must give a
+    /// CoinJoin account's internal output the same role, or the re-delivery
+    /// rewrites it and reports a correction that changes nothing.
+    #[tokio::test]
+    async fn test_coinjoin_internal_output_keeps_its_role_across_a_late_input_and_a_rescan() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_COINJOIN_GAP_LIMIT;
+        let account = &ctx.wallet.accounts.coinjoin_accounts[&0];
+        let external = account.derive_receive_addresses(0, 2).unwrap();
+        let internal = account.derive_change_addresses(0, 2 * gap).unwrap();
+        let (near, far) = (&internal[gap as usize - 1], &internal[2 * gap as usize - 1]);
+        fn coinjoin(ctx: &TestWalletContext) -> &ManagedCoreFundsAccount {
+            ctx.managed_wallet.first_coinjoin_managed_account().unwrap()
+        }
+        assert!(coinjoin(&ctx).contains_address(near));
+        assert!(!coinjoin(&ctx).contains_address(far));
+
+        let funding = paying(1, &[&external[1]], 100_000);
+        let mut spend = paying(0, &[&external[0], far], 40_000);
+        spend.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+        ctx.check_transaction(&spend, in_block(101, 2)).await;
+        ctx.check_transaction(&paying(3, &[near], 7_000), in_block(102, 3)).await;
+        assert!(coinjoin(&ctx).contains_address(far));
+
+        let late = ctx.check_transaction(&funding, in_block(100, 1)).await;
+        assert_eq!(late.updated_records.len(), 1, "the late input corrects the spend");
+        let corrected = late.updated_records[0].clone();
+        assert_eq!(owned_output_count(&corrected), 2);
+
+        let again = ctx.check_transaction(&spend, in_block(101, 2)).await;
+        assert!(again.updated_records.is_empty(), "the rescan learns nothing new");
+        let roles =
+            |r: &TransactionRecord| r.output_details.iter().map(|d| d.role).collect::<Vec<_>>();
+        assert_eq!(roles(&coinjoin(&ctx).transactions()[&spend.txid()]), roles(&corrected));
     }
 }

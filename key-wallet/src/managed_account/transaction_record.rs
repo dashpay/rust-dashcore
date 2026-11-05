@@ -7,7 +7,7 @@ use crate::account::AccountType;
 use crate::error::Error;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
-use crate::Address;
+use crate::{Address, Network};
 #[cfg(feature = "serde")]
 use core::str::FromStr;
 #[cfg(feature = "serde")]
@@ -218,6 +218,53 @@ impl TransactionRecord {
         } else {
             TransactionDirection::Incoming
         }
+    }
+
+    /// Every output's role for one account. `owned` names the role of an
+    /// output paying one of the account's addresses. `has_inputs` says
+    /// whether the transaction spends the account's coins, which makes every
+    /// other output a payment out. Outputs that are neither are left out.
+    pub(crate) fn output_details_for(
+        transaction: &Transaction,
+        network: Network,
+        has_inputs: bool,
+        owned: impl Fn(&Address) -> Option<OutputRole>,
+    ) -> Vec<OutputDetail> {
+        let mut output_details = Vec::new();
+        for (index, output) in transaction.output.iter().enumerate() {
+            let address = Address::from_script(&output.script_pubkey, network).ok();
+            let role = match &address {
+                Some(address) => match owned(address) {
+                    Some(role) => role,
+                    None if has_inputs => OutputRole::Sent,
+                    None => continue,
+                },
+                None if output.script_pubkey.is_provably_unspendable() => OutputRole::Unspendable,
+                None if has_inputs => OutputRole::Sent,
+                None => continue,
+            };
+            output_details.push(OutputDetail {
+                index: index as u32,
+                role,
+                address,
+                value: output.value,
+            });
+        }
+        output_details
+    }
+
+    /// Take `output_details`, built by [`Self::output_details_for`], as this
+    /// record's outputs and return whether any role changed. The net amount
+    /// and direction are left to the caller.
+    pub(crate) fn replace_output_details(&mut self, output_details: Vec<OutputDetail>) -> bool {
+        let roles = |details: &[OutputDetail]| -> Vec<(u32, OutputRole)> {
+            details.iter().map(|d| (d.index, d.role)).collect()
+        };
+        if roles(&self.output_details) == roles(&output_details) {
+            return false;
+        }
+        self.output_details = output_details;
+        true
     }
 
     /// Calculate the number of confirmations based on current chain height

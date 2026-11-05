@@ -20,7 +20,7 @@ use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
-use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
+use crate::managed_account::transaction_record::InputDetail;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
@@ -1045,19 +1045,6 @@ impl ManagedCoreFundsAccount {
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
-        let receive_addrs: HashSet<_> = account_match
-            .account_type_match
-            .involved_receive_addresses()
-            .iter()
-            .map(|info| &info.address)
-            .collect();
-        let change_addrs: HashSet<_> = account_match
-            .account_type_match
-            .involved_change_addresses()
-            .iter()
-            .map(|info| &info.address)
-            .collect();
-
         // Input details must be built before `update_utxos` removes spent UTXOs
         // and drops the `spent_before_funded` or `claim_guarded_outputs` entry for that outpoint.
         let mut input_details = Vec::new();
@@ -1087,38 +1074,12 @@ impl ManagedCoreFundsAccount {
         // snapshots.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
-        let network = self.keys.network();
-        let resolved_outputs: Vec<Option<Address>> = tx
-            .output
-            .iter()
-            .map(|output| Address::from_script(&output.script_pubkey, network).ok())
-            .collect();
-
-        // Build output details — annotate every output with its role
-        let mut output_details = Vec::new();
-        for (idx, output) in tx.output.iter().enumerate() {
-            let role = match &resolved_outputs[idx] {
-                Some(addr) if receive_addrs.contains(addr) => OutputRole::Received,
-                Some(addr) if change_addrs.contains(addr) => OutputRole::Change,
-                Some(_) if has_inputs => OutputRole::Sent,
-                Some(_) => continue,
-                None => {
-                    if output.script_pubkey.is_provably_unspendable() {
-                        OutputRole::Unspendable
-                    } else if has_inputs {
-                        OutputRole::Sent
-                    } else {
-                        continue;
-                    }
-                }
-            };
-            output_details.push(OutputDetail {
-                index: idx as u32,
-                role,
-                address: resolved_outputs[idx].clone(),
-                value: output.value,
-            });
-        }
+        let output_details = TransactionRecord::output_details_for(
+            tx,
+            self.keys.network(),
+            has_inputs,
+            account_match.output_role_lookup(),
+        );
 
         let direction =
             TransactionRecord::direction_for(transaction_type, has_inputs, &output_details);
@@ -1586,46 +1547,21 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
     }
 }
 
-/// File every output of `record` that pays one of `account_match`'s receive
-/// or change addresses as ours, and re-derive the record's flow when that
-/// changed anything. Returns whether it did.
+/// Re-derive `record`'s output roles from `account_match`, against its
+/// stored inputs, and its flow when a role changed. Returns whether one did.
 fn adopt_owned_outputs(
     record: &mut TransactionRecord,
     account_match: &AccountMatch,
     network: Network,
 ) -> bool {
-    let involved = &account_match.account_type_match;
-    let receive: HashSet<_> =
-        involved.involved_receive_addresses().iter().map(|info| &info.address).collect();
-    let change: HashSet<_> =
-        involved.involved_change_addresses().iter().map(|info| &info.address).collect();
-    let mut adopted = false;
-    for (index, output) in record.transaction.output.iter().enumerate() {
-        let Ok(address) = Address::from_script(&output.script_pubkey, network) else {
-            continue;
-        };
-        let role = if receive.contains(&address) {
-            OutputRole::Received
-        } else if change.contains(&address) {
-            OutputRole::Change
-        } else {
-            continue;
-        };
-        let index = index as u32;
-        match record.output_details.iter_mut().find(|d| d.index == index) {
-            Some(detail) if detail.role == role => continue,
-            Some(detail) => detail.role = role,
-            None => record.output_details.push(OutputDetail {
-                index,
-                role,
-                address: Some(address),
-                value: output.value,
-            }),
-        }
-        adopted = true;
-    }
+    let output_details = TransactionRecord::output_details_for(
+        &record.transaction,
+        network,
+        !record.input_details.is_empty(),
+        account_match.output_role_lookup(),
+    );
+    let adopted = record.replace_output_details(output_details);
     if adopted {
-        record.output_details.sort_by_key(|d| d.index);
         record.recompute_net_and_direction();
     }
     adopted
