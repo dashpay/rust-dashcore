@@ -81,3 +81,49 @@ async fn should_defer_instant_lock_when_masternodes_are_disabled() {
         Err(InstantLockVerificationError::Malformed(_))
     ));
 }
+
+#[tokio::test]
+async fn should_defer_instant_lock_until_selected_quorum_arrives() {
+    let directory = TempDir::new().unwrap();
+    let config = ClientConfig::mainnet().without_filters().with_storage_path(directory.path());
+    let client = DashSpvClient::new(
+        config,
+        MockNetworkManager::new(),
+        Arc::new(RwLock::new(MockWallet::new())),
+        vec![],
+    )
+    .await
+    .unwrap();
+    let transaction = Transaction {
+        version: 1,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(Txid::from_byte_array([3; 32]), 0),
+            ..Default::default()
+        }],
+        output: vec![],
+        special_transaction_payload: None,
+    };
+    let fixture = InstantLockFixture::new(&transaction).unwrap();
+    let lock = fixture.instant_lock();
+    let mut missing = 0;
+    // The test quorum type has two active slots; exactly one signs this lock.
+    for index in 0..2 {
+        fixture.clone().without_quorum(index).install(&client).await.unwrap();
+        match client.verify_instant_lock(lock).await {
+            Ok(None) => missing += 1,
+            Ok(Some(proof)) => assert!(proof.matches_transaction(&transaction)),
+            Err(error) => panic!("incomplete quorum data is unavailable, not invalid: {error}"),
+        }
+    }
+    assert_eq!(missing, 1);
+    fixture.clone().without_quorum(0).without_quorum(1).install(&client).await.unwrap();
+    assert!(client.verify_instant_lock(lock).await.unwrap().is_none());
+    fixture.install(&client).await.unwrap();
+    assert!(client
+        .verify_instant_lock(lock)
+        .await
+        .unwrap()
+        .unwrap()
+        .matches_transaction(&transaction));
+}

@@ -78,6 +78,12 @@ impl InstantLockFixture {
         })
     }
 
+    /// Omits one quorum slot to model a cycle whose synchronization is incomplete.
+    pub fn without_quorum(mut self, index: u16) -> Self {
+        self.quorums.remove(&index);
+        self
+    }
+
     /// The signed payload to pass through the public verification query.
     pub fn instant_lock(&self) -> &InstantLock {
         &self.instant_lock

@@ -70,9 +70,15 @@ impl VerifiedInstantLock {
         if quorums.values().any(|quorum| quorum.verified != LLMQEntryVerificationStatus::Verified) {
             return Ok(None);
         }
-        InstantLockValidator::new(quorums)
-            .validate(instant_lock)
-            .map_err(InstantLockVerificationError::InvalidSignature)?;
+        let validator = InstantLockValidator::new(quorums);
+        if matches!(
+            validator.signing_quorum(instant_lock),
+            Err(MessageVerificationError::CycleHashNotPresent(_)
+                | MessageVerificationError::QuorumIndexNotFound(..))
+        ) {
+            return Ok(None);
+        }
+        validator.validate(instant_lock).map_err(InstantLockVerificationError::InvalidSignature)?;
         Ok(Some(Self {
             instant_lock: instant_lock.clone(),
         }))
