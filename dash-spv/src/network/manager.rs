@@ -307,9 +307,9 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     /// Ask the broker to make a request. De-duplicated by [`RequestKey`]: a request already
-    /// queued or on the wire is a no-op, so pipelines can re-declare their whole wanted
-    /// set every tick. Keyless messages (tx, mempool, control `getdata`) are queued
-    /// untracked.
+    /// queued, on the wire or answered but not yet released is a no-op, so pipelines can
+    /// re-declare their whole wanted set every tick. Keyless messages (tx, mempool,
+    /// control `getdata`) are queued untracked.
     async fn enqueue(&self, height: u32, msg: NetworkMessage) {
         self.state.broker.enqueue(height, msg).await;
     }
