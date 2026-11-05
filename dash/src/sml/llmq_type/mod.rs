@@ -1,7 +1,9 @@
 pub mod network;
 pub mod rotation;
 
+use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::sync::OnceLock;
 
@@ -214,17 +216,27 @@ pub fn devnet_platform_type_override() -> Option<LLMQType> {
     DEVNET_PLATFORM_OVERRIDE.get().copied()
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Hash, Ord)]
+/// A quorum type, named when this crate knows it. A type is its byte: it compares, orders and
+/// hashes by [`LLMQType::index`], so `LlmqtypeUnknown(b)` for a byte a variant stands for is that
+/// variant. [`LLMQType::from`] builds the named variant of a byte that has one.
+#[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
+#[repr(u8)]
 pub enum LLMQType {
-    LlmqtypeUnknown = 0, // other kind of
-    Llmqtype50_60 = 1,   // 50 members,  30  (60%) threshold, 24 / day
-    Llmqtype400_60 = 2,  // 400 members, 240 (60%) threshold, 2  / day
-    Llmqtype400_85 = 3,  // 400 members, 340 (85%) threshold, 1  / day
-    Llmqtype100_67 = 4,  // 100 members, 67  (67%) threshold, 24 / day
-    Llmqtype60_75 = 5,   // 60 members,  45  (75%) threshold, 2  / day
-    Llmqtype25_67 = 6,   // 25 members,  67  (67%) threshold, 24 / day
+    /// A type byte no variant below stands for, type 0 included, which no network defines. It is
+    /// kept so that a commitment of a type this crate does not know encodes back to the bytes
+    /// Dash Core hashes into the coinbase's quorum root. A list stored while a type had no name
+    /// keeps its quorums under it, and finds them under the name a later release gives it. Such a
+    /// stored value stays `LlmqtypeUnknown`, so compare types with `==` rather than match on a
+    /// name.
+    LlmqtypeUnknown(u8) = 0,
+    Llmqtype50_60 = 1,  // 50 members,  30  (60%) threshold, 24 / day
+    Llmqtype400_60 = 2, // 400 members, 240 (60%) threshold, 2  / day
+    Llmqtype400_85 = 3, // 400 members, 340 (85%) threshold, 1  / day
+    Llmqtype100_67 = 4, // 100 members, 67  (67%) threshold, 24 / day
+    Llmqtype60_75 = 5,  // 60 members,  45  (75%) threshold, 2  / day
+    Llmqtype25_67 = 6,  // 25 members,  67  (67%) threshold, 24 / day
 
     // dev-only
     LlmqtypeTest = 100,            // 3 members, 2 (66%) threshold, one per hour
@@ -237,10 +249,36 @@ pub enum LLMQType {
     LlmqtypeDevnetPlatform = 107, // 8 members, 4 (50%) threshold, one per hour. Params might differ when -llmqdevnetparams is used
 }
 
+impl PartialEq for LLMQType {
+    fn eq(&self, other: &Self) -> bool {
+        self.index() == other.index()
+    }
+}
+
+impl Eq for LLMQType {}
+
+impl PartialOrd for LLMQType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LLMQType {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.index().cmp(&other.index())
+    }
+}
+
+impl Hash for LLMQType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.index().hash(state);
+    }
+}
+
 impl Display for LLMQType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            LLMQType::LlmqtypeUnknown => "0_Unknown",
+        f.write_str(match LLMQType::from(self.index()) {
+            LLMQType::LlmqtypeUnknown(byte) => return write!(f, "{byte}_Unknown"),
             LLMQType::Llmqtype50_60 => "1_50/60",
             LLMQType::Llmqtype400_60 => "2_400/60",
             LLMQType::Llmqtype400_85 => "3_400/85",
@@ -260,13 +298,13 @@ impl Display for LLMQType {
 }
 
 impl LLMQType {
+    /// The parameters of this type: a devnet's own for the devnet type, Dash Core's fixed ones
+    /// for another type it defines, and devnet ones for a type it does not.
     pub fn params(&self) -> LlmqParams {
-        match self {
-            LLMQType::LlmqtypeDevnet | LLMQType::LlmqtypeUnknown => llmq_devnet_params(),
-            _ => CoreLlmqType::new(self.index())
-                .params()
-                .expect("every named LLMQ type but devnet has fixed parameters"),
+        if *self == LLMQType::LlmqtypeDevnet {
+            return llmq_devnet_params();
         }
+        CoreLlmqType::new(self.index()).params().unwrap_or_else(llmq_devnet_params)
     }
     pub fn size(&self) -> u32 {
         self.params().size.into()
@@ -308,7 +346,7 @@ impl From<u8> for LLMQType {
             105 => LLMQType::LlmqtypeDevnetDIP0024,
             106 => LLMQType::LlmqtypeTestnetPlatform,
             107 => LLMQType::LlmqtypeDevnetPlatform,
-            _ => LLMQType::LlmqtypeUnknown,
+            byte => LLMQType::LlmqtypeUnknown(byte),
         }
     }
 }
@@ -321,7 +359,23 @@ impl From<CoreLlmqType> for LLMQType {
 
 impl From<LLMQType> for u8 {
     fn from(value: LLMQType) -> Self {
-        value as u8
+        match value {
+            LLMQType::LlmqtypeUnknown(byte) => byte,
+            LLMQType::Llmqtype50_60 => 1,
+            LLMQType::Llmqtype400_60 => 2,
+            LLMQType::Llmqtype400_85 => 3,
+            LLMQType::Llmqtype100_67 => 4,
+            LLMQType::Llmqtype60_75 => 5,
+            LLMQType::Llmqtype25_67 => 6,
+            LLMQType::LlmqtypeTest => 100,
+            LLMQType::LlmqtypeDevnet => 101,
+            LLMQType::LlmqtypeTestV17 => 102,
+            LLMQType::LlmqtypeTestDIP0024 => 103,
+            LLMQType::LlmqtypeTestInstantSend => 104,
+            LLMQType::LlmqtypeDevnetDIP0024 => 105,
+            LLMQType::LlmqtypeTestnetPlatform => 106,
+            LLMQType::LlmqtypeDevnetPlatform => 107,
+        }
     }
 }
 
@@ -392,7 +446,108 @@ impl LLMQType {
 mod tests {
     use super::*;
     use crate::Network;
+    use crate::consensus::{deserialize, serialize};
     use crate::sml::llmq_type::network::NetworkLLMQExt;
+
+    /// A commitment hashes into its coinbase's quorum root as Dash Core
+    /// serialized it, so a type byte has to encode back to itself, a byte no
+    /// type of this crate stands for included.
+    #[test]
+    fn every_type_byte_encodes_back_to_itself() {
+        for byte in 0..=u8::MAX {
+            let llmq_type: LLMQType = deserialize(&[byte]).expect("any byte decodes");
+            assert_eq!(serialize(&llmq_type), [byte], "type byte {byte}");
+        }
+    }
+
+    /// A type is its byte: `LlmqtypeUnknown(b)` for a byte a variant stands for
+    /// is that variant, with its order, hash, parameters and name.
+    #[test]
+    fn a_type_is_its_byte() {
+        use std::collections::HashSet;
+
+        for byte in 0..=u8::MAX {
+            let named = LLMQType::from(byte);
+            let unknown = LLMQType::LlmqtypeUnknown(byte);
+            assert_eq!(unknown, named, "type byte {byte}");
+            assert_eq!(unknown.cmp(&named), Ordering::Equal, "type byte {byte}");
+            assert_eq!(HashSet::from([unknown, named]).len(), 1, "type byte {byte}");
+            // A concurrent test may set the devnet override between two reads of devnet
+            // parameters, never between two reads of fixed ones.
+            if named != LLMQType::LlmqtypeDevnet && CoreLlmqType::new(byte).params().is_some() {
+                assert_eq!(unknown.params(), named.params(), "type byte {byte}");
+            }
+            assert_eq!(unknown.to_string(), named.to_string(), "type byte {byte}");
+        }
+        assert!(LLMQType::LlmqtypeUnknown(7) > LLMQType::Llmqtype25_67);
+        assert!(LLMQType::LlmqtypeUnknown(7) < LLMQType::LlmqtypeTest);
+    }
+
+    /// Every named type, with the position bincode and serde write for it and
+    /// the name serde writes.
+    #[cfg(any(feature = "bincode", feature = "serde"))]
+    const NAMED_TYPES: [(LLMQType, u8, &str); 14] = [
+        (LLMQType::Llmqtype50_60, 1, "Llmqtype50_60"),
+        (LLMQType::Llmqtype400_60, 2, "Llmqtype400_60"),
+        (LLMQType::Llmqtype400_85, 3, "Llmqtype400_85"),
+        (LLMQType::Llmqtype100_67, 4, "Llmqtype100_67"),
+        (LLMQType::Llmqtype60_75, 5, "Llmqtype60_75"),
+        (LLMQType::Llmqtype25_67, 6, "Llmqtype25_67"),
+        (LLMQType::LlmqtypeTest, 7, "LlmqtypeTest"),
+        (LLMQType::LlmqtypeDevnet, 8, "LlmqtypeDevnet"),
+        (LLMQType::LlmqtypeTestV17, 9, "LlmqtypeTestV17"),
+        (LLMQType::LlmqtypeTestDIP0024, 10, "LlmqtypeTestDIP0024"),
+        (LLMQType::LlmqtypeTestInstantSend, 11, "LlmqtypeTestInstantSend"),
+        (LLMQType::LlmqtypeDevnetDIP0024, 12, "LlmqtypeDevnetDIP0024"),
+        (LLMQType::LlmqtypeTestnetPlatform, 13, "LlmqtypeTestnetPlatform"),
+        (LLMQType::LlmqtypeDevnetPlatform, 14, "LlmqtypeDevnetPlatform"),
+    ];
+
+    /// Bincode writes a variant's position, and stored masternode engine
+    /// snapshots hold those bytes, so every named type keeps its position, and
+    /// a type without a name writes the first position and its byte.
+    #[cfg(feature = "bincode")]
+    #[test]
+    fn bincode_writes_every_type_at_its_position() {
+        let config = bincode::config::standard();
+        let unknown = (LLMQType::LlmqtypeUnknown(200), vec![0, 200]);
+        let named = NAMED_TYPES.map(|(llmq_type, position, _)| (llmq_type, vec![position]));
+        for (llmq_type, bytes) in named.into_iter().chain([unknown]) {
+            let encoded = bincode::encode_to_vec(llmq_type, config).expect("encodes");
+            assert_eq!(encoded, bytes, "{llmq_type}");
+            let (decoded, _): (LLMQType, usize) =
+                bincode::decode_from_slice(&bytes, config).expect("decodes");
+            assert_eq!(decoded.index(), llmq_type.index(), "{llmq_type}");
+        }
+    }
+
+    /// Serde writes every named type under its variant name, and a type
+    /// without a name as `LlmqtypeUnknown` with its byte.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_names_every_type() {
+        use serde_test::{Token, assert_tokens};
+
+        for (llmq_type, _, variant) in NAMED_TYPES {
+            assert_tokens(
+                &llmq_type,
+                &[Token::UnitVariant {
+                    name: "LLMQType",
+                    variant,
+                }],
+            );
+        }
+        assert_tokens(
+            &LLMQType::LlmqtypeUnknown(200),
+            &[
+                Token::NewtypeVariant {
+                    name: "LLMQType",
+                    variant: "LlmqtypeUnknown",
+                },
+                Token::U8(200),
+            ],
+        );
+    }
 
     #[test]
     fn test_get_cycle_base_height() {

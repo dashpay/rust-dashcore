@@ -7,7 +7,7 @@ use dash_spv::Network;
 use dash_spv::{SyncEvent, SyncProgress};
 
 use super::helpers::{
-    get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete,
+    get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete, PeerTracker,
 };
 use dash_spv::test_utils::SYNC_TIMEOUT;
 
@@ -25,8 +25,15 @@ async fn test_sync_restart_consistency() {
     tracing::info!("Starting first sync");
     let mut client_handle = ctx.spawn_new_client().await;
     wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+    let mut tracker = PeerTracker::default();
+    tracker.update(&mut client_handle.network_event_receiver);
+    assert!(tracker.peers.contains(&ctx.dashd.addr), "synced through the dashd peer");
 
+    // The handler must hear the peers go, or it keeps reporting peers the client dropped.
     client_handle.stop().await;
+    tracker.update(&mut client_handle.network_event_receiver);
+    assert!(tracker.peers.is_empty(), "peers still tracked after stop: {:?}", tracker.peers);
+    assert_eq!(tracker.connected_count, Some(0));
     ctx.assert_synced(&client_handle.client.progress().await).await;
     let first_balance = ctx.spendable_balance().await;
     let first_tx_count = ctx.transaction_count().await;

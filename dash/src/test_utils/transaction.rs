@@ -1,7 +1,8 @@
 use std::ops::Range;
 
+use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::serialize;
-use crate::hash_types::MerkleRootAssetUnlocks;
+use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
@@ -104,6 +105,22 @@ impl Transaction {
                 bytes,
             )),
             ..self.clone()
+        }
+    }
+}
+
+impl CoinbasePayload {
+    /// A current version payload at `height` committing to empty lists.
+    pub fn dummy(height: u32) -> Self {
+        CoinbasePayload {
+            version: CoinbasePayload::CURRENT_VERSION,
+            height,
+            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
+            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+            best_cl_height: Some(0),
+            best_cl_signature: Some(BLSSignature::from([0; 96])),
+            asset_locked_amount: Some(0),
+            merkle_root_asset_unlocks: None,
         }
     }
 }
