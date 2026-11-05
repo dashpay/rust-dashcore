@@ -184,18 +184,23 @@ impl Broker {
     }
 
     /// Settled on arrival, not when processed: blocks wait in height order, and that
-    /// wait is not the peer's. The first copy of a hedged block settles it. The key
-    /// stays registered until released, so a re-declare before then sends nothing.
+    /// wait is not the peer's. The first copy of a hedged block settles it. A request
+    /// put back in the queue is settled by a copy from any peer, and its message dropped.
+    /// The key stays registered until released, so a re-declare before then sends nothing.
     pub async fn block_arrived(&self, peer: PeerId, hash: BlockHash) {
         let key = RequestKey::Block(hash);
         let mut reqs = self.requests.lock().await;
-        if let Some(state) = reqs.get_mut(&key) {
-            if matches!(state, ReqState::OnWire(o) if o.peer == peer || o.hedge == Some(peer)) {
-                *state = ReqState::Arrived;
-                drop(reqs);
-                self.wake();
+        match reqs.get(&key) {
+            Some(ReqState::OnWire(o)) if o.peer == peer || o.hedge == Some(peer) => {}
+            Some(ReqState::Queued(_)) => {
+                reqs.remove(&key);
+                self.drop_queued(&key, &reqs).await;
             }
+            _ => return,
         }
+        reqs.insert(key, ReqState::Arrived);
+        drop(reqs);
+        self.wake();
     }
 
     /// Peers answer in order, so any answer is progress on all of its requests.
@@ -301,6 +306,7 @@ impl Broker {
                         let attempts = match slot {
                             ReqState::Queued(attempts) => *attempts,
                             ReqState::OnWire(o) => o.attempts,
+                            // The block of a requeued request can arrive while it is resent.
                             ReqState::Arrived => continue,
                         };
                         *slot = ReqState::OnWire(Box::new(OnWire {
@@ -756,6 +762,25 @@ mod tests {
         assert_eq!(broker.state_of(&key).await, None);
         broker.enqueue(0, getdata).await;
         assert_eq!(broker.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_requeued_block_is_settled_by_a_copy_from_any_peer() {
+        let broker = Broker::new();
+        let carrier = conn(1, 0);
+        let getdata = NetworkMessage::GetData(vec![block(1)]);
+        let key = RequestKey::Block(BlockHash::dummy(1));
+
+        broker.mark_on_wire(&getdata, carrier).await;
+        assert_eq!(broker.requeue_from(&HashSet::from([carrier])).await, 1);
+        assert_eq!(broker.state_of(&key).await, Some("queued"));
+
+        broker.block_arrived(conn(2, 0), BlockHash::dummy(1)).await;
+        assert_eq!(broker.state_of(&key).await, Some("arrived"));
+        assert_eq!(broker.len(), 0, "the queued getdata must not go out after the block arrived");
+
+        broker.enqueue(0, getdata).await;
+        assert_eq!(broker.len(), 0);
     }
 
     #[test_case(get_mnlistdiff(3), vec![RequestKey::MnListDiff(BlockHash::dummy(4))], 0; "its only key")]
