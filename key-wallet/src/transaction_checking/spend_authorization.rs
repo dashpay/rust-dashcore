@@ -100,7 +100,7 @@ mod tests {
     };
     use dashcore::crypto::ecdsa::EcdsaSecretKey;
     use dashcore::script::{Builder, PushBytesBuf};
-    use dashcore::{OutPoint, ScriptBuf, TxIn, Txid};
+    use dashcore::{OutPoint, ScriptBuf, TxIn, Txid, Witness};
 
     fn signed(uncompressed: bool) -> (Transaction, TxOut) {
         let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
@@ -220,6 +220,15 @@ mod tests {
             tx.input[0].script_sig = ScriptBuf::from_bytes(bytes);
             assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
         }
+    }
+
+    #[test]
+    fn should_preserve_authorization_with_uncommitted_witness() {
+        let (mut tx, prevout) = signed(false);
+        let original_txid = tx.txid();
+        tx.input[0].witness = Witness::from_slice(&[b"peer-attached witness"]);
+        assert_eq!(tx.txid(), original_txid);
+        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(true));
     }
 
     #[test]
