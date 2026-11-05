@@ -192,7 +192,7 @@ maintainers and contributors are likely to leave comments and request changes.
 Please try to address them, otherwise your PR might get closed without merging
 after a longer time of inactivity. If your PR isn't ready for review yet please
 open it as a draft. CI rejects titles that don't start with a Conventional Commits
-type, so a `WIP: ` prefix fails the title check.
+type, so a `WIP:` prefix fails the title check.
 
 ### CI Pipeline
 
