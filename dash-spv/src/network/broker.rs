@@ -121,16 +121,19 @@ impl Broker {
                 drop(reqs);
                 self.wake();
             }
-            Some(ReqState::Queued(_)) => {
-                self.queue
-                    .remove(|msg| {
-                        let keys = request_keys(msg);
-                        keys.contains(key) && !keys.iter().any(|k| reqs.contains_key(k))
-                    })
-                    .await;
-            }
+            Some(ReqState::Queued(_)) => self.drop_queued(key, &reqs).await,
             Some(ReqState::Arrived) | None => {}
         }
+    }
+
+    /// Drops the queued messages carrying `key` that no other registered key still needs.
+    async fn drop_queued(&self, key: &RequestKey, reqs: &HashMap<RequestKey, ReqState>) {
+        self.queue
+            .remove(|msg| {
+                let keys = request_keys(msg);
+                keys.contains(key) && !keys.iter().any(|k| reqs.contains_key(k))
+            })
+            .await;
     }
 
     pub async fn clear(&self) {
