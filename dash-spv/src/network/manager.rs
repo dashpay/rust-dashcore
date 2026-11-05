@@ -448,9 +448,13 @@ const MIN_PERIOD_TICKS: u32 = 4;
 /// Smallest cap of a peer (and of the link, per peer): one response always fits.
 const MIN_CAP_BYTES: u64 = INITIAL_CAP_BYTES;
 
-/// Linear probe per second, per peer: linear in time, not per adjustment, so a far
-/// peer (adjusted once per two long round trips) ramps as fast as a near one.
+/// Linear probe per second, per peer: linear in time, not per adjustment, so a peer
+/// with a round trip of up to a second ramps as fast as a near one.
 const CAP_STEP_BYTES_PER_SEC: f64 = 512.0 * 1024.0;
+
+/// Most seconds of growth a single adjustment adds. The round trip grows with the
+/// queue, so an unbounded step would grow the cap fastest when the path is most backed up.
+const MAX_STEP_SECS: f64 = 2.0;
 
 /// Added in-flight must buy at least this share of a proportional rate gain, or the
 /// path is full and the addition only queued.
@@ -553,7 +557,7 @@ impl ByteLimiter {
         if self.since_adjust < period {
             return self.cap as u64;
         }
-        let step = step * self.since_adjust as f64 * tick_s;
+        let step = step * (self.since_adjust as f64 * tick_s).min(MAX_STEP_SECS);
         self.since_adjust = 0;
         let (prev_rate, prev_in_flight) = (self.prev_rate, self.prev_in_flight);
         self.prev_rate = self.rate;
@@ -1512,5 +1516,47 @@ mod tests {
     #[test_case("Headers" => None; "case sensitive")]
     fn message_type_from_cmd(cmd: &str) -> Option<MessageType> {
         MessageType::from_cmd(cmd)
+    }
+
+    /// Returns the initial cap and the cap after every tick of `secs`, while the sender
+    /// keeps the cap full and the path delivers `serve(in_flight)` bytes/s.
+    fn caps_while_full(secs: f64, serve: impl Fn(f64) -> f64) -> Vec<u64> {
+        let tick_s = FLOW_TICK.as_secs_f64();
+        let mut limiter = ByteLimiter::new(MIN_CAP_BYTES, 0);
+        let mut bytes = 0.0;
+        let mut caps = vec![MIN_CAP_BYTES];
+        for _ in 0..(secs / tick_s) as usize {
+            let cap = caps[caps.len() - 1];
+            bytes += serve(cap as f64) * tick_s;
+            caps.push(limiter.tick(bytes as u64, cap, CAP_STEP_BYTES_PER_SEC));
+        }
+        caps
+    }
+
+    /// A slow peer's round trip is tens of seconds of queue, and adjustments come
+    /// once per two round trips, so a step counting every tick since the last one
+    /// would add megabytes at once.
+    #[test]
+    fn a_slow_peer_cap_grows_in_bounded_steps() {
+        let caps = caps_while_full(300.0, |_| 150_000.0);
+
+        let largest_growth = caps.windows(2).map(|w| w[1].saturating_sub(w[0])).max();
+        let bound = (CAP_STEP_BYTES_PER_SEC * MAX_STEP_SECS) as u64;
+        assert!(largest_growth.is_some_and(|growth| growth <= bound), "{largest_growth:?}");
+        let peak = caps.iter().max().copied().unwrap_or_default();
+        assert!(peak < 2 << 20, "peak cap {peak}");
+    }
+
+    #[test_case(0.1; "a near link")]
+    #[test_case(0.8; "a far link")]
+    fn a_byte_cap_ramps_to_fill_a_fast_link(base_rtt: f64) {
+        let link_rate = 10e6;
+        let caps = caps_while_full(30.0, |in_flight| (in_flight / base_rtt).min(link_rate));
+
+        let bdp = (link_rate * base_rtt) as u64;
+        let ramp_secs = (bdp - MIN_CAP_BYTES) as f64 / CAP_STEP_BYTES_PER_SEC;
+        let filled_secs =
+            caps.iter().position(|&cap| cap >= bdp).map(|t| t as f64 * FLOW_TICK.as_secs_f64());
+        assert!(filled_secs.is_some_and(|secs| secs <= ramp_secs + 2.0), "{filled_secs:?}");
     }
 }
