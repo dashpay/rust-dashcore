@@ -337,7 +337,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             scan_start
         };
 
-        // And for the filter headers the downloaded filters are verified against.
+        // Also wait until the filter headers reach below the filters we are about to download.
         let filter_header_start =
             self.filter_header_storage.read().await.get_filter_start_height().await;
         if filter_header_start.is_some_and(|start| start > download_start.saturating_sub(1)) {

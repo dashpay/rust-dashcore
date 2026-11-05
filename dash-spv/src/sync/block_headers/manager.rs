@@ -116,8 +116,10 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             .ok_or_else(|| SyncError::MissingDependency("storage not initialized".to_string()))
     }
 
-    /// Sync from the checkpoint below the lowest stored header, or genesis, up to
-    /// it, once the pipeline runs, one checkpoint at a time down to [`Self::floor`].
+    /// Sync the headers below the lowest stored one, down to [`Self::floor`].
+    ///
+    /// Each step starts at the checkpoint below the lowest stored header, or at genesis,
+    /// and syncs up to that header. It waits until the pipeline runs.
     pub(super) async fn extend_down(&mut self) -> SyncResult<()> {
         if self.pipeline.is_syncing_below() || !self.pipeline.is_initialized() {
             return Ok(());
