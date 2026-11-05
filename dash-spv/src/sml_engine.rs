@@ -410,6 +410,15 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.rotated_quorums_per_cycle.get(cycle_hash)
     }
 
+    #[cfg(feature = "test-utils")]
+    pub(crate) fn install_test_instant_lock_cycle(
+        &mut self,
+        cycle: BlockHash,
+        quorums: BTreeMap<u16, QualifiedQuorumEntry>,
+    ) {
+        self.rotated_quorums_per_cycle.insert(cycle, quorums);
+    }
+
     #[cfg(any(test, feature = "test-utils"))]
     pub fn rotated_quorums_per_cycle(
         &self,

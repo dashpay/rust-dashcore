@@ -131,7 +131,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
             }
             SyncEvent::InstantLockReceived {
                 instant_lock,
-                ..
+                validated: true,
             } => Ok(self.process_instant_send(instant_lock.clone()).await),
             _ => Ok(vec![]),
         }

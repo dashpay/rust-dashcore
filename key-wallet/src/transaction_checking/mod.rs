@@ -17,3 +17,6 @@ pub use platform_checker::WalletPlatformChecker;
 pub use transaction_context::{BlockInfo, TransactionContext};
 pub use transaction_router::{PlatformAccountConversionError, TransactionRouter, TransactionType};
 pub use wallet_checker::WalletTransactionChecker;
+
+/// Owner authorization for pending Core coin reservations.
+pub mod spend_authorization;
