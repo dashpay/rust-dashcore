@@ -210,6 +210,33 @@ pub struct NetworkState {
     pub transport_preference: TransportPreference,
 }
 
+impl NetworkState {
+    /// Announces that the peers at `departed` left the connected set, which now holds
+    /// `remaining`. Only whoever removes a connection from the set calls this, while
+    /// still holding its lock, so each departure is announced once.
+    fn announce_departures(
+        &self,
+        departed: impl IntoIterator<Item = SocketAddr>,
+        remaining: &[ConnectedPeer],
+    ) {
+        let mut any = false;
+        for addr in departed {
+            any = true;
+            // Subscribers know peers by address only, so a live connection to the
+            // same address keeps it.
+            if !remaining.iter().any(|p| p.addr() == addr) {
+                let _ = self.events.send(NetworkEvent::PeerDisconnected(addr));
+            }
+        }
+        if any {
+            let _ = self.events.send(NetworkEvent::PeersUpdated {
+                connected_count: remaining.len() as u32,
+                best_height: self.best_tip.load(Ordering::Relaxed),
+            });
+        }
+    }
+}
+
 pub struct PeerNetworkManager {
     state: Arc<NetworkState>,
     shutdown: CancellationToken,
@@ -293,12 +320,16 @@ impl NetworkManager for PeerNetworkManager {
         spawn_peer_supervisor(self.state.clone(), session);
     }
 
-    /// Disconnect every peer and forget the requests in play, so none of them
-    /// reaches the peers of the next `start()`.
+    /// Disconnect and announce every peer, and forget the requests in play, so none
+    /// of them reaches the peers of the next `start()`.
     async fn stop(&self) {
         tracing::info!(target: "dash_spv::network", "network manager stopping: cancelling peers");
         self.session.lock().await.cancel();
-        self.state.connected.lock().await.clear();
+        {
+            let mut peers = self.state.connected.lock().await;
+            let departed: Vec<_> = peers.drain(..).map(|p| p.addr()).collect();
+            self.state.announce_departures(departed, &peers);
+        }
         self.state.broker.clear().await;
     }
 
@@ -1073,16 +1104,19 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // Drop culprits still in the set (some may already be gone).
             let (dropped, remaining) = {
                 let mut peers = connected.lock().await;
-                let before = peers.len();
+                let mut kicked = Vec::new();
                 peers.retain(|p| {
                     if culprits.contains(&p.id()) {
                         p.close();
+                        kicked.push(p.addr());
                         false
                     } else {
                         true
                     }
                 });
-                (before - peers.len(), peers.len())
+                let dropped = kicked.len();
+                state.announce_departures(kicked, &peers);
+                (dropped, peers.len())
             };
             for peer in &culprits {
                 bans.ban(peer.addr(), Ban::Kicked).await;
@@ -1113,12 +1147,10 @@ fn spawn_pump(
         let NetworkState {
             subscribers,
             connected,
-            events,
             broker,
             peer_wake,
             max_peers,
             discoverer,
-            best_tip,
             ..
         } = &*state;
         // Per-peer received-message counter to check load balance across peers.
@@ -1265,11 +1297,15 @@ fn spawn_pump(
                     let addr = peer.addr();
                     // By CONNECTION: this event can arrive for one that already left the set while
                     // the supervisor reconnected to the same address; matching by address would
-                    // evict the live one.
-                    let (remaining, reconnected) = {
+                    // evict the live one. One that already left was announced by whoever removed
+                    // it, and a probed backup never joined.
+                    let remaining = {
                         let mut guard = connected.lock().await;
+                        let before = guard.len();
                         guard.retain(|p| p.id() != peer);
-                        (guard.len(), guard.iter().any(|p| p.addr() == addr))
+                        let removed = guard.len() < before;
+                        state.announce_departures(removed.then_some(addr), &guard);
+                        guard.len()
                     };
 
                     if remaining < *max_peers {
@@ -1288,17 +1324,6 @@ fn spawn_pump(
                         retried,
                     );
                     broker.wake();
-
-                    // Subscribers know peers by address only: a late disconnect of the old
-                    // connection would make them drop the live one that replaced it.
-                    if !reconnected {
-                        let _ = events.send(NetworkEvent::PeerDisconnected(addr));
-                    }
-
-                    let _ = events.send(NetworkEvent::PeersUpdated {
-                        connected_count: remaining as u32,
-                        best_height: best_tip.load(Ordering::Relaxed),
-                    });
                 }
             }
         }
@@ -1337,6 +1362,16 @@ mod tests {
         PeerNetworkManager::new(&config).await
     }
 
+    /// The events received until none arrives for a while.
+    async fn drain(events: &mut broadcast::Receiver<NetworkEvent>) -> Vec<NetworkEvent> {
+        let mut received = Vec::new();
+        while let Ok(event) = tokio::time::timeout(Duration::from_millis(200), events.recv()).await
+        {
+            received.push(event.expect("channel open"));
+        }
+        received
+    }
+
     #[test]
     fn headers_carry_the_hashes_computed_while_decompressing_them() {
         let header = Header::dummy(1);
@@ -1348,33 +1383,65 @@ mod tests {
         assert_eq!(InboundMessage::new(NetworkMessage::Verack).header_hashes(), None);
     }
 
-    /// Zero is what the sync layer acts on, so the count must fall as well as rise.
-    #[tokio::test]
-    async fn losing_a_peer_announces_the_new_count() {
+    enum Departure {
+        Drop,
+        Kick,
+        Stop,
+    }
+
+    /// Subscribers mirror the peer set from these events, so every departure is
+    /// announced exactly once and the count falls to zero, which is what the sync
+    /// layer acts on. A connection's own disconnect arriving after it left the set
+    /// stays silent.
+    #[test_case(Departure::Drop; "the peers drop")]
+    #[test_case(Departure::Kick; "the timeout monitor kicks them")]
+    #[test_case(Departure::Stop; "the network stops")]
+    #[tokio::test(start_paused = true)]
+    async fn a_departed_peer_is_announced_once(departure: Departure) {
         let net = broker().await;
+        let peers = [conn(1, 0), conn(2, 0)];
+        for (start, id) in peers.into_iter().enumerate() {
+            let peer = ConnectedPeer::for_test(id, &net.state).await;
+            net.state.connected.lock().await.push(peer);
+            net.state.broker.mark_on_wire(&get_cfilters(start as u32), id).await;
+        }
         let mut events = net.events();
-
-        net.state.inbound.send(PeerEvent::Disconnected(conn(1, 0))).expect("the pump is running");
-
-        let mut next = async || {
-            tokio::time::timeout(Duration::from_secs(2), events.recv())
-                .await
-                .expect("the pump must report the departure")
-                .expect("channel open")
+        let disconnect_all = || {
+            for id in peers {
+                net.state.inbound.send(PeerEvent::Disconnected(id)).expect("the pump is running");
+            }
         };
-        let event = next().await;
-        assert!(matches!(event, NetworkEvent::PeerDisconnected(_)), "got {event:?}");
-        let event = next().await;
+
+        match departure {
+            Departure::Drop => disconnect_all(),
+            Departure::Kick => tokio::time::advance(REQUEST_TIMEOUT + TIMEOUT_CHECK * 2).await,
+            Departure::Stop => net.stop().await,
+        }
+        let received = drain(&mut events).await;
+        let mut departed: Vec<_> = received
+            .iter()
+            .filter_map(|event| match event {
+                NetworkEvent::PeerDisconnected(addr) => Some(*addr),
+                _ => None,
+            })
+            .collect();
+        departed.sort();
+        assert_eq!(departed, peers.map(|id| id.addr()), "got {received:?}");
         assert!(
             matches!(
-                event,
-                NetworkEvent::PeersUpdated {
+                received.last(),
+                Some(NetworkEvent::PeersUpdated {
                     connected_count: 0,
                     ..
-                }
+                })
             ),
-            "got {event:?}"
+            "got {received:?}"
         );
+
+        disconnect_all();
+        let late = drain(&mut events).await;
+        assert!(late.is_empty(), "late disconnects were announced again: {late:?}");
+        assert_eq!(net.connected_count().await, 0);
     }
 
     #[test_case(None, true; "a silent request")]

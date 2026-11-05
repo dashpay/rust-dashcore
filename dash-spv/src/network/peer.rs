@@ -18,6 +18,8 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(test)]
+use tokio::net::TcpListener;
 use tokio::{
     io::{AsyncRead, AsyncWriteExt, ReadBuf},
     net::{
@@ -358,6 +360,29 @@ impl ConnectedPeer {
 
     pub fn set_serving_rate(&self, bytes_per_sec: u64) {
         self.handle.serving_rate.store(bytes_per_sec, Ordering::Relaxed);
+    }
+
+    /// A handshaken connection `id` over a loopback socket, with no reader running.
+    #[cfg(test)]
+    pub async fn for_test(id: PeerId, state: &NetworkState) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+        let addr = listener.local_addr().expect("bound address");
+        let stream = TcpStream::connect(addr).await.expect("connect loopback");
+        let link = Link::v1(stream, Network::Regtest.magic());
+        ConnectedPeer {
+            handle: PeerHandle {
+                id,
+                writer: Arc::new(Mutex::new(link.writer)),
+                ledger: Arc::new(Ledger::new(state.costs.clone())),
+                cap: Arc::new(AtomicU64::new(INITIAL_CAP_BYTES)),
+                serving_rate: Arc::new(AtomicU64::new(0)),
+                headers2: false,
+                token: CancellationToken::new(),
+            },
+            version: build_version(id.addr(), "test"),
+            lag_ms: AtomicU32::new(1),
+            bytes: Arc::new(AtomicU64::new(0)),
+        }
     }
 }
 
