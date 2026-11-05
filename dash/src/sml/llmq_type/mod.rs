@@ -483,36 +483,70 @@ mod tests {
         assert!(LLMQType::LlmqtypeUnknown(7) < LLMQType::LlmqtypeTest);
     }
 
+    /// Every named type, with the position bincode and serde write for it and
+    /// the name serde writes.
+    #[cfg(any(feature = "bincode", feature = "serde"))]
+    const NAMED_TYPES: [(LLMQType, u8, &str); 14] = [
+        (LLMQType::Llmqtype50_60, 1, "Llmqtype50_60"),
+        (LLMQType::Llmqtype400_60, 2, "Llmqtype400_60"),
+        (LLMQType::Llmqtype400_85, 3, "Llmqtype400_85"),
+        (LLMQType::Llmqtype100_67, 4, "Llmqtype100_67"),
+        (LLMQType::Llmqtype60_75, 5, "Llmqtype60_75"),
+        (LLMQType::Llmqtype25_67, 6, "Llmqtype25_67"),
+        (LLMQType::LlmqtypeTest, 7, "LlmqtypeTest"),
+        (LLMQType::LlmqtypeDevnet, 8, "LlmqtypeDevnet"),
+        (LLMQType::LlmqtypeTestV17, 9, "LlmqtypeTestV17"),
+        (LLMQType::LlmqtypeTestDIP0024, 10, "LlmqtypeTestDIP0024"),
+        (LLMQType::LlmqtypeTestInstantSend, 11, "LlmqtypeTestInstantSend"),
+        (LLMQType::LlmqtypeDevnetDIP0024, 12, "LlmqtypeDevnetDIP0024"),
+        (LLMQType::LlmqtypeTestnetPlatform, 13, "LlmqtypeTestnetPlatform"),
+        (LLMQType::LlmqtypeDevnetPlatform, 14, "LlmqtypeDevnetPlatform"),
+    ];
+
     /// Bincode writes a variant's position, and stored masternode engine
     /// snapshots hold those bytes, so every named type keeps its position, and
     /// a type without a name writes the first position and its byte.
     #[cfg(feature = "bincode")]
     #[test]
     fn bincode_writes_every_type_at_its_position() {
-        let named = [
-            LLMQType::Llmqtype50_60,
-            LLMQType::Llmqtype400_60,
-            LLMQType::Llmqtype400_85,
-            LLMQType::Llmqtype100_67,
-            LLMQType::Llmqtype60_75,
-            LLMQType::Llmqtype25_67,
-            LLMQType::LlmqtypeTest,
-            LLMQType::LlmqtypeDevnet,
-            LLMQType::LlmqtypeTestV17,
-            LLMQType::LlmqtypeTestDIP0024,
-            LLMQType::LlmqtypeTestInstantSend,
-            LLMQType::LlmqtypeDevnetDIP0024,
-            LLMQType::LlmqtypeTestnetPlatform,
-            LLMQType::LlmqtypeDevnetPlatform,
-        ];
         let config = bincode::config::standard();
-        for (position, llmq_type) in (1u8..).zip(named) {
+        let unknown = (LLMQType::LlmqtypeUnknown(200), vec![0, 200]);
+        let named = NAMED_TYPES.map(|(llmq_type, position, _)| (llmq_type, vec![position]));
+        for (llmq_type, bytes) in named.into_iter().chain([unknown]) {
             let encoded = bincode::encode_to_vec(llmq_type, config).expect("encodes");
-            assert_eq!(encoded, [position], "{llmq_type}");
+            assert_eq!(encoded, bytes, "{llmq_type}");
+            let (decoded, _): (LLMQType, usize) =
+                bincode::decode_from_slice(&bytes, config).expect("decodes");
+            assert_eq!(decoded.index(), llmq_type.index(), "{llmq_type}");
         }
-        let encoded =
-            bincode::encode_to_vec(LLMQType::LlmqtypeUnknown(200), config).expect("encodes");
-        assert_eq!(encoded, [0, 200]);
+    }
+
+    /// Serde writes every named type under its variant name, and a type
+    /// without a name as `LlmqtypeUnknown` with its byte.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_names_every_type() {
+        use serde_test::{Token, assert_tokens};
+
+        for (llmq_type, _, variant) in NAMED_TYPES {
+            assert_tokens(
+                &llmq_type,
+                &[Token::UnitVariant {
+                    name: "LLMQType",
+                    variant,
+                }],
+            );
+        }
+        assert_tokens(
+            &LLMQType::LlmqtypeUnknown(200),
+            &[
+                Token::NewtypeVariant {
+                    name: "LLMQType",
+                    variant: "LlmqtypeUnknown",
+                },
+                Token::U8(200),
+            ],
+        );
     }
 
     #[test]
