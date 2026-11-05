@@ -79,6 +79,14 @@ mod tests {
         assert!(!network.should_skip_quorum_type(&LLMQType::Llmqtype400_60, 1_888_887));
     }
 
+    /// A type is its byte, so a Platform type held as `LlmqtypeUnknown` with
+    /// its byte is skipped before activation like its named form.
+    #[test]
+    fn a_platform_type_held_as_its_byte_is_skipped_before_activation() {
+        assert!(Network::Mainnet.should_skip_quorum_type(&LLMQType::LlmqtypeUnknown(4), 1_888_887));
+        assert!(Network::Testnet.should_skip_quorum_type(&LLMQType::LlmqtypeUnknown(6), 1_289_519));
+    }
+
     #[test]
     fn test_should_skip_the_retired_instant_send_quorum() {
         let quorums_height = |network: Network| {
