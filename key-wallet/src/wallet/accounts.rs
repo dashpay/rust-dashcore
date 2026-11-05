@@ -62,7 +62,11 @@ impl Wallet {
             )));
         }
 
-        if self.accounts.all_accounts().iter().any(|a| a.account_xpub == account.account_xpub) {
+        let xpub = &account.account_xpub;
+        if self.accounts.all_accounts().iter().any(|a| {
+            a.account_xpub.public_key == xpub.public_key
+                && a.account_xpub.chain_code == xpub.chain_code
+        }) {
             return Err(Error::InvalidParameter(format!(
                 "Extended public key of {:?} is already used by another account",
                 account_type

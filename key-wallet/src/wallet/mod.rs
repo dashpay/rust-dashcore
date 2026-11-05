@@ -243,7 +243,9 @@ mod tests {
     use super::*;
     use crate::account::account_collection::AccountCollection;
     use crate::account::{AccountType, StandardAccountType};
+    use crate::bip32::{ChildNumber, ExtendedPubKey};
     use crate::Error;
+    use test_case::test_case;
 
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
@@ -569,14 +571,18 @@ mod tests {
         assert!(wallet.accounts.count() >= 2);
     }
 
-    #[test]
-    fn test_add_account_rejects_imported_xpub_in_use() {
+    #[test_case(|_| {} ; "same xpub")]
+    #[test_case(|x| x.depth += 1 ; "different depth")]
+    #[test_case(|x| x.parent_fingerprint = Default::default() ; "different parent fingerprint")]
+    #[test_case(|x| x.child_number = ChildNumber::from(7) ; "different child number")]
+    fn test_add_account_rejects_imported_xpub_in_use(alter: fn(&mut ExtendedPubKey)) {
         let mut wallet = Wallet::new_random(
             Network::Testnet,
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
-        let xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let mut xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        alter(&mut xpub);
         let count = wallet.accounts.count();
 
         let result = wallet.add_account(
