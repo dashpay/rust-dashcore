@@ -2,7 +2,7 @@
 
 use dash_spv::test_utils::{InstantLockFixture, MockNetworkManager};
 use dash_spv::{ClientConfig, DashSpvClient, InstantLockVerificationError, VerifiedInstantLock};
-use dashcore::InstantLock;
+use dashcore::{InstantLock, Network};
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use key_wallet_manager::test_utils::MockWallet;
 use std::sync::Arc;
@@ -126,4 +126,42 @@ async fn should_defer_instant_lock_until_selected_quorum_arrives() {
         .unwrap()
         .unwrap()
         .matches_transaction(&transaction));
+}
+
+#[tokio::test]
+async fn should_bind_instant_lock_evidence_to_the_verifying_network() {
+    let transaction = Transaction {
+        version: 1,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(Txid::from_byte_array([3; 32]), 0),
+            ..Default::default()
+        }],
+        output: vec![],
+        special_transaction_payload: None,
+    };
+    let fixture = InstantLockFixture::new(&transaction).unwrap();
+    for network in [Network::Mainnet, Network::Testnet] {
+        let directory = TempDir::new().unwrap();
+        let config =
+            ClientConfig::new(network).without_filters().with_storage_path(directory.path());
+        let client = DashSpvClient::new(
+            config,
+            MockNetworkManager::new(),
+            Arc::new(RwLock::new(MockWallet::new())),
+            vec![],
+        )
+        .await
+        .unwrap();
+        fixture.install(&client).await.unwrap();
+        let proof = client.verify_instant_lock(fixture.instant_lock()).await.unwrap().unwrap();
+        assert!(proof.matches_transaction(&transaction));
+        assert_eq!(proof.network(), network);
+        let other_network = if network == Network::Mainnet {
+            Network::Testnet
+        } else {
+            Network::Mainnet
+        };
+        assert_ne!(proof.network(), other_network);
+    }
 }
