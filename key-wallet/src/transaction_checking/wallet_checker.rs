@@ -437,6 +437,11 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 result.state_modified = true;
             } else {
                 let existed_before = account.has_transaction(&tx.txid());
+                // A finalized record may be pruned, so a coin this delivery
+                // credits can come with no record to report.
+                let finalized_revision = account
+                    .transaction_is_finalized(&tx.txid())
+                    .then(|| account.monitor_revision());
                 if let Some(record) = account.confirm_transaction_with_observed_spends(
                     tx,
                     &account_match,
@@ -452,6 +457,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     } else {
                         result.new_records.push(record);
                     }
+                } else if finalized_revision.is_some_and(|r| r != account.monitor_revision()) {
+                    result.state_modified = true;
                 }
             }
         }
@@ -4230,6 +4237,7 @@ mod tests {
         let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == early.txid()).count();
         assert_eq!(credited, 2);
         assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
+        assert!(again.state_modified, "the credit is a state change in both configs");
         #[cfg(feature = "keep-finalized-transactions")]
         {
             assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
@@ -4242,6 +4250,7 @@ mod tests {
 
         let settled = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
         assert!(settled.updated_records.is_empty());
+        assert!(!settled.state_modified);
         assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
     }
 

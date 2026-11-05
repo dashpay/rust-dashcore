@@ -753,8 +753,9 @@ impl ManagedCoreFundsAccount {
     /// was chainlock-finalized keeps only its txid, so `has_transaction` stays
     /// true and re-delivery is not a new sighting — `confirm_transaction`
     /// returns before `update_utxos` and credits only outputs paying
-    /// addresses derived since, and the coin does not come back. Recovering it needs a rescan deep enough to
-    /// re-fetch the block, which is above this layer. Since Dash chainlocks
+    /// addresses derived since, and the coin does not come back. Recovering
+    /// it needs a rescan deep enough to re-fetch the block, which is above
+    /// this layer. Since Dash chainlocks
     /// within a block or two, that is the normal posture for older coins.
     ///
     /// Scope: account-local. A loser recorded here has its outputs dropped
