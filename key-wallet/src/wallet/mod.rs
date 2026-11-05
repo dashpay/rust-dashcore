@@ -628,6 +628,39 @@ mod tests {
         assert_eq!(wallet.accounts.count(), count);
     }
 
+    #[test]
+    fn test_add_account_rejects_reverse_external_sharing_receiving_xpub() {
+        let mut wallet = Wallet::new_random(
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+        let (us, them) = ([0xaa; 32], [0xbb; 32]);
+        wallet
+            .add_account(
+                AccountType::DashpayReceivingFunds {
+                    index: 0,
+                    user_identity_id: us,
+                    friend_identity_id: them,
+                },
+                None,
+            )
+            .unwrap();
+        let count = wallet.accounts.count();
+
+        let result = wallet.add_account(
+            AccountType::DashpayExternalAccount {
+                index: 0,
+                user_identity_id: them,
+                friend_identity_id: us,
+            },
+            None,
+        );
+
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+        assert_eq!(wallet.accounts.count(), count);
+    }
+
     // ✓ Test wallet ID generation
     #[test]
     fn test_wallet_id_generation() {
