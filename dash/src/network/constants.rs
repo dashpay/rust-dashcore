@@ -114,7 +114,7 @@ impl ServiceFlags {
     /// P2P_V2 means the node supports the BIP324 v2 transport.
     pub const P2P_V2: ServiceFlags = ServiceFlags(1 << 12);
 
-    // NOTE: When adding new flags, remember to update the Display impl accordingly.
+    // NOTE: When adding new flags, remember to update `service_flag_name` accordingly.
 
     /// Add [ServiceFlags] together.
     ///
@@ -143,6 +143,20 @@ impl ServiceFlags {
     }
 }
 
+/// Dash Core's `serviceFlagToStr` name for the flag `1 << bit`, or `None` for a bit that is not
+/// a Dash flag (Core names it `UNKNOWN[2^N]`).
+fn service_flag_name(bit: u32) -> Option<&'static str> {
+    match ServiceFlags(1u64 << bit) {
+        ServiceFlags::NETWORK => Some("NETWORK"),
+        ServiceFlags::BLOOM => Some("BLOOM"),
+        ServiceFlags::COMPACT_FILTERS => Some("COMPACT_FILTERS"),
+        ServiceFlags::NETWORK_LIMITED => Some("NETWORK_LIMITED"),
+        ServiceFlags::NODE_HEADERS_COMPRESSED => Some("HEADERS_COMPRESSED"),
+        ServiceFlags::P2P_V2 => Some("P2P_V2"),
+        _ => None,
+    }
+}
+
 impl fmt::LowerHex for ServiceFlags {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::LowerHex::fmt(&self.0, f)
@@ -155,40 +169,25 @@ impl fmt::UpperHex for ServiceFlags {
     }
 }
 
+/// `ServiceFlags(` and one name per set bit from the lowest, joined with `|`, as Dash Core's
+/// `serviceFlagsToStr` names them; `ServiceFlags(NONE)` when no bit is set.
 impl fmt::Display for ServiceFlags {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut flags = *self;
-        if flags == ServiceFlags::NONE {
+        if *self == ServiceFlags::NONE {
             return write!(f, "ServiceFlags(NONE)");
         }
-        let mut first = true;
-        macro_rules! write_flag {
-            ($f:ident) => {
-                if flags.has(ServiceFlags::$f) {
-                    if !first {
-                        write!(f, "|")?;
-                    }
-                    first = false;
-                    write!(f, stringify!($f))?;
-                    flags.remove(ServiceFlags::$f);
-                }
-            };
-        }
-        write!(f, "ServiceFlags(")?;
-        write_flag!(NETWORK);
-        write_flag!(BLOOM);
-        write_flag!(COMPACT_FILTERS);
-        write_flag!(NETWORK_LIMITED);
-        write_flag!(NODE_HEADERS_COMPRESSED);
-        write_flag!(P2P_V2);
-        // If there are unknown flags left, we append them in hex.
-        if flags != ServiceFlags::NONE {
-            if !first {
-                write!(f, "|")?;
+        f.write_str("ServiceFlags(")?;
+        let set_bits = (0..u64::BITS).filter(|bit| self.0 & (1u64 << bit) != 0);
+        for (i, bit) in set_bits.enumerate() {
+            if i > 0 {
+                f.write_str("|")?;
             }
-            write!(f, "0x{:x}", flags)?;
+            match service_flag_name(bit) {
+                Some(name) => f.write_str(name)?,
+                None => write!(f, "UNKNOWN[2^{}]", bit)?,
+            }
         }
-        write!(f, ")")
+        f.write_str(")")
     }
 }
 
@@ -281,13 +280,23 @@ mod tests {
         flags2 ^= ServiceFlags::P2P_V2;
         assert_eq!(flags2, ServiceFlags::COMPACT_FILTERS);
 
-        // Test formatting.
+        // Core's names, in bit order; bits that are not Dash flags are UNKNOWN[2^N].
         assert_eq!("ServiceFlags(NONE)", ServiceFlags::NONE.to_string());
         assert_eq!("ServiceFlags(BLOOM)", ServiceFlags::BLOOM.to_string());
+        let flag =
+            ServiceFlags::BLOOM | ServiceFlags::NETWORK | ServiceFlags::NODE_HEADERS_COMPRESSED;
+        assert_eq!("ServiceFlags(NETWORK|BLOOM|HEADERS_COMPRESSED)", flag.to_string());
         let flag = ServiceFlags::P2P_V2 | ServiceFlags::BLOOM | ServiceFlags::NETWORK;
         assert_eq!("ServiceFlags(NETWORK|BLOOM|P2P_V2)", flag.to_string());
         let flag = ServiceFlags::NETWORK | 0xf0.into();
-        assert_eq!("ServiceFlags(NETWORK|COMPACT_FILTERS|0xb0)", flag.to_string());
+        assert_eq!(
+            "ServiceFlags(NETWORK|UNKNOWN[2^4]|UNKNOWN[2^5]|COMPACT_FILTERS|UNKNOWN[2^7])",
+            flag.to_string()
+        );
+        // Every Dash flag has a Core name.
+        for f in all.iter() {
+            assert!(!f.to_string().contains("UNKNOWN"), "{:x} has no name", f);
+        }
     }
 
     /// The flags of Dash Core's `ServiceFlags` (`src/protocol.h`): bit 12 is `NODE_P2P_V2`, and
@@ -295,6 +304,9 @@ mod tests {
     #[test]
     fn service_flags_are_dash_cores() {
         assert_eq!(ServiceFlags::from(1 << 12).to_string(), "ServiceFlags(P2P_V2)");
-        assert_eq!(ServiceFlags::from(0b1010).to_string(), "ServiceFlags(0xa)");
+        assert_eq!(
+            ServiceFlags::from(0b1010).to_string(),
+            "ServiceFlags(UNKNOWN[2^1]|UNKNOWN[2^3])"
+        );
     }
 }
