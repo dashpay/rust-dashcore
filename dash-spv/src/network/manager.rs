@@ -296,7 +296,13 @@ impl NetworkManager for PeerNetworkManager {
     async fn stop(&self) {
         tracing::info!(target: "dash_spv::network", "network manager stopping: cancelling peers");
         self.session.lock().await.cancel();
-        self.state.connected.clear().await;
+        let disconnected = self.state.connected.clear().await;
+        tracing::info!(
+            target: "dash_spv::network",
+            "network manager stopping: disconnected {} peer(s) {:?}",
+            disconnected.len(),
+            disconnected,
+        );
         self.state.broker.clear().await;
     }
 
