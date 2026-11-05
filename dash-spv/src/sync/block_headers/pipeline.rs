@@ -217,9 +217,11 @@ impl HeadersPipeline {
             }
 
             let segment = &mut self.segments[self.next_to_store];
-            let start_height = segment.start_height + 1; // +1 because we store headers after start
             let segment_id = segment.segment_id;
             let headers = segment.take_buffered();
+            // A segment drains many times while it downloads, and each drained batch
+            // ends at `current_height`.
+            let start_height = segment.current_height + 1 - headers.len() as u32;
             let is_complete = segment.complete;
             let is_empty = segment.buffered_headers.is_empty();
 
@@ -499,6 +501,16 @@ mod tests {
         assert_eq!(pipeline.segments[0].current_height, 1002);
         assert_eq!(pipeline.segments[0].buffered_headers, headers);
         assert_eq!(pipeline.next_to_store, 0);
+        assert_eq!(pipeline.take_ready_to_store(), vec![(1001, headers.clone())]);
+
+        // The next batch starts above the stored one, not at the segment start.
+        pipeline.mark_tip_complete();
+        let next: Vec<HashedBlockHeader> = Header::dummy_chain(1, *headers[1].hash())
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        assert_eq!(pipeline.receive_headers(&next).unwrap(), Some(0));
+        assert_eq!(pipeline.take_ready_to_store(), vec![(1003, next)]);
     }
 
     #[tokio::test]

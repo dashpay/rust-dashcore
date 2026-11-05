@@ -9,8 +9,6 @@ use std::sync::Arc;
 pub(super) struct SegmentState {
     /// Unique segment identifier (index in segments array).
     pub(super) segment_id: usize,
-    /// Starting height of this segment.
-    pub(super) start_height: u32,
     /// Target height (None for tip segment).
     pub(super) target_height: Option<u32>,
     /// Target hash (next checkpoint hash for validation).
@@ -36,7 +34,6 @@ impl SegmentState {
     ) -> Self {
         Self {
             segment_id,
-            start_height,
             target_height,
             target_hash,
             current_tip_hash: start_hash,
@@ -174,7 +171,6 @@ mod tests {
         let segment = SegmentState::new(0, 0, hash, Some(500_000), None);
 
         assert_eq!(segment.segment_id, 0);
-        assert_eq!(segment.start_height, 0);
         assert_eq!(segment.current_height, 0);
         assert!(!segment.complete);
         assert!(segment.buffered_headers.is_empty());
