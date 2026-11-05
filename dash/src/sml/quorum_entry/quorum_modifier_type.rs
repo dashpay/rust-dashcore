@@ -5,7 +5,6 @@ use hashes::sha256d;
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::Encodable;
-use crate::consensus::encode::VarInt;
 use crate::hash_types::QuorumModifierHash;
 use crate::prelude::CoreBlockHeight;
 use crate::sml::llmq_type::LLMQType;
@@ -47,10 +46,10 @@ impl LLMQModifierType {
     /// # Notes
     ///
     /// * For pre-Core v20 quorums, the hash consists of:
-    ///   - LLMQ type (encoded as a `VarInt`).
+    ///   - LLMQ type (as its one byte).
     ///   - Block hash (as raw bytes).
     /// * For Core v20+ quorums, the hash consists of:
-    ///   - LLMQ type (encoded as a `VarInt`).
+    ///   - LLMQ type (as its one byte).
     ///   - Block height.
     ///   - Chain lock signature (as raw bytes).
     pub fn build_llmq_hash(&self) -> QuorumModifierHash {
@@ -58,14 +57,14 @@ impl LLMQModifierType {
 
         match self {
             LLMQModifierType::PreCoreV20(llmq_type, block_hash) => {
-                // Encode LLMQ type as VarInt
-                VarInt(u64::from(llmq_type.index())).consensus_encode(&mut writer).unwrap();
+                // Encode LLMQ type as its one byte
+                llmq_type.consensus_encode(&mut writer).unwrap();
                 // Encode block hash as raw bytes
                 writer.write_all(&block_hash.to_byte_array()).unwrap();
             }
             LLMQModifierType::CoreV20(llmq_type, block_height, cl_signature) => {
-                // Encode LLMQ type as VarInt
-                VarInt(u64::from(llmq_type.index())).consensus_encode(&mut writer).unwrap();
+                // Encode LLMQ type as its one byte
+                llmq_type.consensus_encode(&mut writer).unwrap();
                 // Encode block height
                 block_height.consensus_encode(&mut writer).unwrap();
                 // Encode the signature
