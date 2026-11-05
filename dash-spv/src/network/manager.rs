@@ -1012,8 +1012,9 @@ fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 /// A culprit is kicked immediately and ALL its on-wire requests are re-queued for
 /// other peers; leaving it connected would just route the freed work back to it.
 /// When half or more of the connected peers are culprits in the same tick, only the
-/// one silent the longest is kicked. The last peer is kicked only once it has stalled
-/// for another timeout. The supervisor refills the set.
+/// one silent the longest is kicked, and at most one per timeout while that lasts.
+/// The last peer is kicked only once it has stalled for another timeout. The
+/// supervisor refills the set.
 fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
@@ -1029,6 +1030,7 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
         let mut progress: HashMap<PeerId, (u64, Instant)> = HashMap::new();
         // The last connected peer kept through its stall, and since when.
         let mut held_last: Option<(PeerId, Instant)> = None;
+        let mut last_shared_kick: Option<Instant> = None;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -1077,6 +1079,7 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             if culprits.is_empty() {
                 held_last = None;
+                last_shared_kick = None;
                 continue;
             }
 
@@ -1092,14 +1095,9 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                         (silent_since, p.addr(), p.id())
                     })
                     .collect();
-                let mut spared: Vec<PeerId> = if stalled.len() * 2 < peers.len() {
-                    Vec::new()
-                } else {
-                    stalled.sort_by_key(|&(since, addr, _)| (since, addr));
-                    stalled.into_iter().skip(1).map(|(_, _, id)| id).collect()
-                };
-                // Holding the last peer keeps a short outage from emptying the set.
+                stalled.sort_by_key(|&(since, addr, _)| (since, addr));
                 match &*peers {
+                    // Holding the last peer keeps a short outage from emptying the set.
                     [last] if culprits.contains(&last.id()) => {
                         let since = match held_last {
                             Some((id, since)) if id == last.id() => since,
@@ -1107,14 +1105,35 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                         };
                         if now.duration_since(since) <= request_timeout(last.lag_ms()) {
                             held_last = Some((last.id(), since));
-                            spared.push(last.id());
+                            vec![last.id()]
                         } else {
                             held_last = None;
+                            Vec::new()
                         }
                     }
-                    _ => held_last = None,
+                    _ if stalled.len() * 2 < peers.len() => {
+                        held_last = None;
+                        last_shared_kick = None;
+                        Vec::new()
+                    }
+                    // One kick per timeout lets an outage about that long cost a single peer.
+                    _ => {
+                        held_last = None;
+                        let due = match (last_shared_kick, stalled.first()) {
+                            (Some(at), Some(&(_, _, worst))) => {
+                                let timeout =
+                                    timeouts.get(&worst).copied().unwrap_or(REQUEST_TIMEOUT);
+                                now.duration_since(at) > timeout
+                            }
+                            _ => true,
+                        };
+                        if due && !stalled.is_empty() {
+                            stalled.remove(0);
+                            last_shared_kick = Some(now);
+                        }
+                        stalled.into_iter().map(|(_, _, id)| id).collect()
+                    }
                 }
-                spared
             };
             for id in &spared {
                 culprits.remove(id);
@@ -1573,16 +1592,19 @@ mod tests {
     }
 
     /// Peers stall on a request the registry tracks (`registered`) or with bytes owed
-    /// and none arriving (`charged`). All of them cross the timeout in the same tick.
-    #[test_case(3, &[1, 2, 3], &[], &[2, 3]; "a stall of every peer kicks one")]
-    #[test_case(3, &[1], &[3], &[1, 2]; "a shared stall kicks the peer silent the longest")]
-    #[test_case(3, &[2], &[], &[1, 3]; "a lone stall among healthy peers is kicked")]
-    #[test_case(1, &[1], &[], &[1]; "the last peer stays")]
+    /// and none arriving (`charged`). All of them cross the timeout in the same tick and
+    /// stay silent for `silent_secs`.
+    #[test_case(3, &[1, 2, 3], &[], 11, &[2, 3]; "a stall of every peer kicks one")]
+    #[test_case(3, &[], &[1, 2, 3], 15, &[2, 3]; "a longer stall of every peer still kicks one")]
+    #[test_case(3, &[1], &[3], 11, &[1, 2]; "a shared stall kicks the peer silent the longest")]
+    #[test_case(3, &[2], &[], 11, &[1, 3]; "a lone stall among healthy peers is kicked")]
+    #[test_case(1, &[1], &[], 11, &[1]; "the last peer stays")]
     #[tokio::test(start_paused = true)]
     async fn the_timeout_monitor_kicks_one_peer_per_shared_stall(
         joined: u8,
         registered: &[u8],
         charged: &[u8],
+        silent_secs: u64,
         kept: &[u8],
     ) {
         let net = broker().await;
@@ -1605,8 +1627,12 @@ mod tests {
 
         tokio::time::advance(REQUEST_TIMEOUT).await;
         settle().await;
-        tokio::time::advance(TIMEOUT_CHECK).await;
-        settle().await;
+        let mut silent = REQUEST_TIMEOUT;
+        while silent < Duration::from_secs(silent_secs) {
+            tokio::time::advance(TIMEOUT_CHECK).await;
+            settle().await;
+            silent += TIMEOUT_CHECK;
+        }
 
         let left: Vec<SocketAddr> =
             net.state.connected.read().await.iter().map(|p| p.addr()).collect();
