@@ -45,7 +45,7 @@ impl NetworkLLMQExt for Network {
 
     /// Check if a quorum type should be skipped at the given height
     fn should_skip_quorum_type(&self, llmq_type: &LLMQType, height: u32) -> bool {
-        match (self, llmq_type) {
+        match (self, LLMQType::from(llmq_type.index())) {
             (Network::Mainnet, LLMQType::Llmqtype100_67) => height < 1_888_888, // Platform activation on mainnet
             (Network::Testnet, LLMQType::Llmqtype25_67) => height < 1_289_520, // Platform activation on testnet
             // DIP24 retires the old InstantSend type unless ChainLocks use it.
