@@ -241,7 +241,7 @@ pub struct PeerHandle {
     /// bandwidth-delay product), sized by the controller from its byte rate and
     /// service time.
     cap: Arc<AtomicU64>,
-    /// Bytes/s this peer serves while it has work, 0 until measured.
+    /// Bytes/s this peer serves while bandwidth bound, 0 until measured.
     serving_rate: Arc<AtomicU64>,
     headers2: bool,
     /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
