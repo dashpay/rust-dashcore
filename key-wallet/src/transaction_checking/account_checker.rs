@@ -72,8 +72,9 @@ pub struct TransactionCheckResult {
     /// its owning [`AccountType`] on `record.account_type`, so consumers can
     /// recover it without an external pairing.
     pub new_records: Vec<TransactionRecord>,
-    /// Transaction records updated by this check (confirmation or IS-lock
-    /// applied to a previously stored record). Each record carries its owning
+    /// Transaction records updated by this check: a confirmation or IS-lock
+    /// applied to a previously stored record, or a correction of one
+    /// (late-discovered inputs or outputs). Each record carries its owning
     /// `AccountType` on `record.account_type`.
     pub updated_records: Vec<TransactionRecord>,
     /// Transactions this check *removed*: a recorded spend that the arriving

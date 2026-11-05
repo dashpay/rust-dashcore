@@ -911,7 +911,9 @@ impl ManagedCoreFundsAccount {
     /// from gap limit rescans.
     ///
     /// Returns `Some(record)` when the call results in a state change the
-    /// caller should surface (record newly inserted or context updated).
+    /// caller should surface: the record was newly inserted, its context was
+    /// updated, or it was corrected: it owns outputs whose addresses were
+    /// derived since it was recorded.
     /// The record is cloned BEFORE any chainlock-driven pruning, so the
     /// caller can always include it in an event even when the
     /// `keep-finalized-transactions` Cargo feature is off and the record
@@ -920,8 +922,8 @@ impl ManagedCoreFundsAccount {
     /// Returns `None` when:
     /// - the tx is already finalized in a chainlocked block (record is
     ///   immutable; further events are redundant), or
-    /// - the existing record's context already matches and confirmation
-    ///   status didn't change.
+    /// - the existing record's context already matches, confirmation status
+    ///   didn't change, and it owns no new output.
     #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn confirm_transaction(
         &mut self,
@@ -957,6 +959,7 @@ impl ManagedCoreFundsAccount {
         }
 
         let mut changed = false;
+        let network = self.keys.network();
         if let Some(tx_record) = self.keys.transactions_mut().get_mut(&txid) {
             debug_assert_eq!(
                 tx_record.transaction_type,
@@ -974,6 +977,13 @@ impl ManagedCoreFundsAccount {
                 // ChainLockProcessed event.
                 changed = !was_confirmed;
             }
+            // A re-applied transaction can own outputs its first recording
+            // could not see: their addresses were derived since, by a
+            // gap-window extension (its own or a later transaction's) whose
+            // filter rescan re-delivers this block. `update_utxos` below
+            // credits them, so the record must own them too
+            // (dashpay/rust-dashcore#714).
+            changed |= adopt_owned_outputs(tx_record, account_match, network);
         }
 
         // Capture the (possibly updated) record before any pruning so the
@@ -1574,6 +1584,51 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             reservations: ReservationSet::default(),
         })
     }
+}
+
+/// File every output of `record` that pays one of `account_match`'s receive
+/// or change addresses as ours, and re-derive the record's flow when that
+/// changed anything. Returns whether it did.
+fn adopt_owned_outputs(
+    record: &mut TransactionRecord,
+    account_match: &AccountMatch,
+    network: Network,
+) -> bool {
+    let involved = &account_match.account_type_match;
+    let receive: HashSet<_> =
+        involved.involved_receive_addresses().iter().map(|info| &info.address).collect();
+    let change: HashSet<_> =
+        involved.involved_change_addresses().iter().map(|info| &info.address).collect();
+    let mut adopted = false;
+    for (index, output) in record.transaction.output.iter().enumerate() {
+        let Ok(address) = Address::from_script(&output.script_pubkey, network) else {
+            continue;
+        };
+        let role = if receive.contains(&address) {
+            OutputRole::Received
+        } else if change.contains(&address) {
+            OutputRole::Change
+        } else {
+            continue;
+        };
+        let index = index as u32;
+        match record.output_details.iter_mut().find(|d| d.index == index) {
+            Some(detail) if detail.role == role => continue,
+            Some(detail) => detail.role = role,
+            None => record.output_details.push(OutputDetail {
+                index,
+                role,
+                address: Some(address),
+                value: output.value,
+            }),
+        }
+        adopted = true;
+    }
+    if adopted {
+        record.output_details.sort_by_key(|d| d.index);
+        record.recompute_net_and_direction();
+    }
+    adopted
 }
 
 /// Test-only visit counter for the descendant walk in

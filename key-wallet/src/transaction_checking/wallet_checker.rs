@@ -475,6 +475,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
+    use crate::account::{ECDSAAddressDerivation, TransactionRecord};
+    use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
     use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
     use crate::test_utils::TestWalletContext;
@@ -4022,5 +4024,135 @@ mod tests {
             .unwrap()
             .utxos
             .contains_key(&outpoint));
+    }
+
+    /// The first `count` receive addresses of the wallet's BIP44 account,
+    /// derived from its xpub, past the window the wallet itself watches.
+    fn bip44_receive_addresses(ctx: &TestWalletContext, count: u32) -> Vec<Address> {
+        ctx.wallet
+            .get_bip44_account(0)
+            .expect("Should have BIP44 account")
+            .derive_receive_addresses(0, count)
+            .expect("Should derive")
+    }
+
+    /// A foreign-funded transaction paying `value` to each of `addresses`,
+    /// spending a foreign outpoint unique to `seed`.
+    fn paying(seed: u8, addresses: &[&Address], value: u64) -> Transaction {
+        let mut tx = Transaction::dummy(addresses[0], seed..seed + 1, &[]);
+        tx.output = addresses
+            .iter()
+            .map(|address| TxOut {
+                value,
+                script_pubkey: address.script_pubkey(),
+            })
+            .collect();
+        tx
+    }
+
+    fn in_block(height: u32, byte: u8) -> TransactionContext {
+        TransactionContext::InBlock(BlockInfo::new(
+            height,
+            BlockHash::from_slice(&[byte; 32]).unwrap(),
+            1_700_000_000,
+        ))
+    }
+
+    fn owned_output_count(record: &TransactionRecord) -> usize {
+        record
+            .output_details
+            .iter()
+            .filter(|d| matches!(d.role, OutputRole::Received | OutputRole::Change))
+            .count()
+    }
+
+    /// A transaction can own an output only a LATER transaction's window
+    /// extension reveals. Re-applying it (a filter rescan re-delivers its
+    /// block) credits the coin; the record must be corrected and reported as
+    /// updated too, or every store built from emitted records drops the coin
+    /// on its next load (dashpay/rust-dashcore#714).
+    #[tokio::test]
+    async fn test_redelivered_transaction_owning_a_newly_derived_output_is_updated() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+
+        // Pays index 1 and index 2*gap: the second is past the window even
+        // after the first extends it to 1+gap.
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+        let first = ctx.check_transaction(&early, in_block(100, 1)).await;
+        assert_eq!(first.total_received, 40_000, "only index 1 is visible yet");
+
+        // Uses index gap, which extends the window over index 2*gap.
+        let later = paying(2, &[&addresses[gap]], 7_000);
+        ctx.check_transaction(&later, in_block(101, 2)).await;
+
+        let again = ctx.check_transaction(&early, in_block(100, 1)).await;
+        assert!(!again.is_new_transaction);
+        assert_eq!(again.total_received, 80_000);
+        assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
+        let updated = &again.updated_records[0];
+        assert_eq!(owned_output_count(updated), 2);
+        assert_eq!(updated.net_amount, 80_000);
+        assert_eq!(updated.direction, TransactionDirection::Incoming);
+        assert_eq!(ctx.transaction(&early.txid()).net_amount, 80_000, "stored record");
+        let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == early.txid()).count();
+        assert_eq!(credited, 2);
+
+        // Nothing new to learn the third time: no event.
+        let settled = ctx.check_transaction(&early, in_block(100, 1)).await;
+        assert!(settled.updated_records.is_empty());
+    }
+
+    /// The transaction's own window extension can reveal its far output too:
+    /// it pays index 1 and index 1+gap, and recording it derives up to 1+gap.
+    /// The rescan that re-delivers its block must correct the record.
+    #[tokio::test]
+    async fn test_redelivered_transaction_owning_an_output_its_own_extension_derived_is_updated() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, gap as u32 + 2);
+        let tx = paying(1, &[&addresses[1], &addresses[gap + 1]], 40_000);
+        let first = ctx.check_transaction(&tx, in_block(100, 1)).await;
+        assert_eq!(first.total_received, 40_000, "only index 1 is visible yet");
+
+        let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
+        assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
+        assert_eq!(owned_output_count(&again.updated_records[0]), 2);
+        assert_eq!(again.updated_records[0].net_amount, 80_000);
+    }
+
+    /// The same late recognition on a transaction we funded: its first record
+    /// filed the far output as a payment to someone else (`Sent`), so the
+    /// correction flips the role, and the record turns from a payment into
+    /// a transfer between our own addresses.
+    #[tokio::test]
+    async fn test_redelivered_spend_whose_far_output_is_ours_becomes_internal() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let funding = paying(1, &[&addresses[0]], 100_000);
+        ctx.check_transaction(&funding, in_block(100, 1)).await;
+
+        let mut spend = paying(0, &[&addresses[2 * gap]], 60_000);
+        spend.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+        spend.output.push(TxOut {
+            value: 39_000,
+            script_pubkey: addresses[1].script_pubkey(),
+        });
+        let first = ctx.check_transaction(&spend, in_block(101, 2)).await;
+        let record = &first.new_records[0];
+        assert_eq!(record.direction, TransactionDirection::Outgoing);
+        assert_eq!(record.net_amount, -61_000);
+
+        ctx.check_transaction(&paying(3, &[&addresses[gap]], 7_000), in_block(102, 3)).await;
+        let again = ctx.check_transaction(&spend, in_block(101, 2)).await;
+
+        assert_eq!(again.updated_records.len(), 1);
+        let updated = &again.updated_records[0];
+        assert_eq!(updated.output_details[0].role, OutputRole::Received);
+        assert_eq!(updated.direction, TransactionDirection::Internal);
+        assert_eq!(updated.net_amount, -1_000);
+        assert!(ctx.bip44_account().utxos.contains_key(&OutPoint::new(spend.txid(), 0)));
     }
 }
