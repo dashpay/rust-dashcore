@@ -69,7 +69,7 @@ async fn test_sync_follows_reorg() {
     let mut tracker = PeerTracker::default();
     tracker.update(&mut client_handle.network_event_receiver);
     assert_eq!(tracker.peers, HashSet::from([ctx.dashd.addr]));
-    tracker.reset_emptied();
+    tracker.reset_counts();
 
     // Replace it with a branch of 3 blocks that leave the spend out.
     let mut events = wallet.read().await.subscribe_events();

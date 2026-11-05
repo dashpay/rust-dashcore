@@ -95,7 +95,13 @@ where
                     loop {
                         match receiver.try_recv() {
                             Ok(event) => dispatch(event),
-                            Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                                tracing::warn!(
+                                    "{} monitor lagged while stopping, missed {} events",
+                                    name,
+                                    n
+                                );
+                            }
                             Err(_) => break,
                         }
                     }

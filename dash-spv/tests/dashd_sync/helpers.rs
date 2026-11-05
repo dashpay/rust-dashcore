@@ -225,7 +225,7 @@ pub(super) async fn wait_for_network_event(
 pub(super) struct PeerTracker {
     pub(super) peers: HashSet<SocketAddr>,
     pub(super) connected_count: Option<u32>,
-    /// Whether a `PeersUpdated` with no peers arrived since the last `reset_emptied`.
+    /// Whether a `PeersUpdated` with no peers arrived since the last `reset_counts`.
     pub(super) emptied: bool,
 }
 
@@ -253,7 +253,9 @@ impl PeerTracker {
         }
     }
 
-    pub(super) fn reset_emptied(&mut self) {
+    /// Forgets the counts received so far, so later checks only see new ones.
+    pub(super) fn reset_counts(&mut self) {
+        self.connected_count = None;
         self.emptied = false;
     }
 }
