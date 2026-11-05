@@ -113,8 +113,16 @@ impl ResponseCosts {
         }
     }
 
+    /// What the router budgets for `msg`. A `getheaders` counts as `getheaders2`: the
+    /// router prices it before picking a peer, and nearly every peer gets it upgraded.
     pub fn cost(&self, msg: &NetworkMessage) -> u64 {
-        Reply::awaited(msg).iter().map(|reply| self.expected(reply)).sum()
+        Reply::awaited(msg)
+            .iter()
+            .map(|reply| match reply {
+                Reply::Headers => self.expected(&Reply::Headers2),
+                reply => self.expected(reply),
+            })
+            .sum()
     }
 
     pub fn expected_kb(&self) -> [u64; REPLY_KINDS] {
@@ -254,27 +262,29 @@ mod tests {
         })
     }
 
-    #[test_case(NetworkMessage::GetHeaders(locator()) => 2000 * 81; "plain headers")]
-    #[test_case(NetworkMessage::GetHeaders2(locator()) => 8000 * 43; "compressed headers")]
-    fn a_header_request_costs_a_full_reply(request: NetworkMessage) -> u64 {
-        ResponseCosts::new().cost(&request)
+    /// The router costs a request before it picks the peer that may upgrade it.
+    #[test_case(NetworkMessage::GetHeaders(locator()); "plain headers")]
+    #[test_case(NetworkMessage::GetHeaders2(locator()); "compressed headers")]
+    fn a_header_request_is_routed_at_the_compressed_reply_cost(request: NetworkMessage) {
+        assert_eq!(ResponseCosts::new().cost(&request), 8000 * 43);
     }
 
-    /// Charges a `getheaders2` and settles it with `reply`, a full reply in size.
-    #[test_case(headers2(), 0; "a headers2 reply settles it")]
-    #[test_case(NetworkMessage::Headers(Vec::new()), 8000 * 43; "a plain headers announcement does not")]
+    /// Charges `request` on a peer's ledger and settles it with `reply`.
+    #[test_case(NetworkMessage::GetHeaders2(locator()), headers2(), 8000 * 43, 0; "a headers2 reply settles a getheaders2")]
+    #[test_case(NetworkMessage::GetHeaders2(locator()), NetworkMessage::Headers(Vec::new()), 8000 * 43, 8000 * 43; "a plain headers announcement does not")]
+    #[test_case(NetworkMessage::GetHeaders(locator()), NetworkMessage::Headers(Vec::new()), 2000 * 81, 0; "a peer without headers2 owes a plain reply")]
     #[tokio::test]
-    async fn a_compressed_header_request_is_settled_by_its_reply(
+    async fn a_header_request_is_charged_and_settled_by_its_reply(
+        request: NetworkMessage,
         reply: NetworkMessage,
+        charged: u64,
         in_flight: u64,
     ) {
-        let costs = Arc::new(ResponseCosts::new());
-        let ledger = Ledger::new(costs.clone());
-        ledger.charge(&NetworkMessage::GetHeaders2(locator())).await;
-        assert_eq!(ledger.in_flight_bytes(), 8000 * 43);
+        let ledger = Ledger::new(Arc::new(ResponseCosts::new()));
+        ledger.charge(&request).await;
+        assert_eq!(ledger.in_flight_bytes(), charged);
 
-        ledger.settle(&reply, 8000 * 43).await;
+        ledger.settle(&reply, charged).await;
         assert_eq!(ledger.in_flight_bytes(), in_flight);
-        assert_eq!(costs.cost(&NetworkMessage::GetHeaders2(locator())), 8000 * 43);
     }
 }
