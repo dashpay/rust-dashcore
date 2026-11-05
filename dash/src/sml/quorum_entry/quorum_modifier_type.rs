@@ -167,4 +167,32 @@ mod tests {
             "pre-v20 must use the block-hash form"
         );
     }
+
+    /// Dash Core hashes the quorum type into the modifier as the one byte of
+    /// its `uint8_t` enum (`GetHashModifierFromWorkBlock`, src/llmq/utils.cpp),
+    /// whatever the byte. A CompactSize writes a byte from 253 on as three, so
+    /// it would pick the members of such a type by another modifier than Core.
+    #[test]
+    fn the_modifier_hashes_the_type_as_one_byte() {
+        let block_hash = BlockHash::from_byte_array([7; 32]);
+        let height: CoreBlockHeight = 0x0102_0304;
+        for byte in 0..=u8::MAX {
+            let llmq_type = LLMQType::from(byte);
+
+            let by_block_hash = [&[byte][..], &[7; 32]].concat();
+            assert_eq!(
+                LLMQModifierType::PreCoreV20(llmq_type, block_hash).build_llmq_hash(),
+                QuorumModifierHash::from_raw_hash(sha256d::Hash::hash(&by_block_hash)),
+                "type byte {byte}, block hash form"
+            );
+
+            let by_signature = [&[byte][..], &[4, 3, 2, 1], &[9; 96]].concat();
+            let signature = BLSSignature::from([9; 96]);
+            assert_eq!(
+                LLMQModifierType::CoreV20(llmq_type, height, signature).build_llmq_hash(),
+                QuorumModifierHash::from_raw_hash(sha256d::Hash::hash(&by_signature)),
+                "type byte {byte}, signature form"
+            );
+        }
+    }
 }
