@@ -204,7 +204,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         if was_syncing || !tip_was_complete {
             let sent = self.pipeline.send_pending(network).await?;
             if sent > 0 {
-                tracing::debug!("Pipeline sent {} more requests", sent);
+                tracing::debug!("Pipeline declared {} new request(s)", sent);
             }
         }
 

@@ -117,7 +117,7 @@ impl HeadersPipeline {
     }
 
     /// Declare each non-complete segment's `getheaders`. Safe to call freely since the
-    /// broker de-duplicates; returns the number of segments declared.
+    /// broker de-duplicates. Returns the number of segments with a new request.
     pub async fn send_pending(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<usize> {
         let mut sent = 0;
         let window_end = (self.next_to_store + ACTIVE_SEGMENT_WINDOW).min(self.segments.len());
@@ -126,8 +126,9 @@ impl HeadersPipeline {
             if !segment.can_send() {
                 continue;
             }
-            segment.send_request(network).await;
-            sent += 1;
+            if segment.send_request(network).await {
+                sent += 1;
+            }
         }
         Ok(sent)
     }
@@ -289,6 +290,14 @@ impl HeadersPipeline {
         }
     }
 
+    /// Treats every segment's next request as new, for a sync that starts again after
+    /// losing its peers, when queued requests may have been dropped.
+    pub(super) fn forget_declared(&mut self) {
+        for segment in &mut self.segments {
+            segment.forget_declared();
+        }
+    }
+
     /// Reset the tip segment for continued syncing after initial sync completes.
     /// This allows the pipeline to be reused for post-sync header updates.
     /// Returns true if the tip segment was reset, false if not found or not complete.
@@ -418,9 +427,9 @@ mod tests {
             pipeline.segments[0].complete = true;
             pipeline.next_to_store = 1;
 
-            // A tick re-declares the whole window; what matters is that draining the
-            // head exposed the next segment.
-            assert_eq!(pipeline.send_pending(&network).await.unwrap(), ACTIVE_SEGMENT_WINDOW);
+            // A tick re-declares the whole window, but only the segment exposed by
+            // draining the head has a new request.
+            assert_eq!(pipeline.send_pending(&network).await.unwrap(), 1);
             assert!(declared_locators(&mock)
                 .await
                 .contains(&pipeline.segments[ACTIVE_SEGMENT_WINDOW].current_tip_hash));
@@ -549,6 +558,13 @@ mod tests {
             vec![BlockHash::dummy(ACTIVE_SEGMENT_WINDOW as u32)],
             "newly exposed segment was not requested"
         );
+
+        // Re-declaring an unanswered request is not new. After an empty reply, the same
+        // locator is a new request again.
+        assert_eq!(pipeline.send_pending(&network).await.unwrap(), 0);
+        assert_eq!(pipeline.receive_headers(&[]).unwrap(), Some(ACTIVE_SEGMENT_WINDOW));
+        assert!(pipeline.reset_tip_segment());
+        assert_eq!(pipeline.send_pending(&network).await.unwrap(), 1);
     }
 
     #[test]
