@@ -3,8 +3,8 @@
 //! This module provides methods on ManagedWalletInfo for checking
 //! if transactions belong to the wallet.
 
-use super::account_checker::AccountMatch;
 pub(crate) use super::account_checker::TransactionCheckResult;
+use super::account_checker::{AccountMatch, DerivedAddressInfo};
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
@@ -115,6 +115,59 @@ impl ManagedWalletInfo {
                 }
             }
         }
+    }
+
+    /// Mark every address `affected` involves as used and extend the address
+    /// windows of each account it names. Returns whether any address was
+    /// derived.
+    fn use_involved_addresses(
+        &mut self,
+        wallet: &Wallet,
+        affected: &[AccountMatch],
+        new_addresses: &mut Vec<DerivedAddressInfo>,
+    ) -> bool {
+        let derived_before = new_addresses.len();
+        for account_match in affected {
+            let Some(mut account) =
+                self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
+            else {
+                continue;
+            };
+            for address_info in account_match.account_type_match.all_involved_addresses() {
+                account.mark_address_used(&address_info.address);
+            }
+
+            let owning_account_type = account.managed_account_type().to_account_type();
+            let key_source = wallet.key_source_for_account(owning_account_type);
+            if matches!(key_source, KeySource::NoKeySource) {
+                continue;
+            }
+            let rev_before = new_addresses.len();
+            for pool in account.managed_account_type_mut().address_pools_mut() {
+                let pool_type = pool.pool_type;
+                match pool.maintain_gap_limit(&key_source) {
+                    Ok(infos) => {
+                        new_addresses.extend(infos.into_iter().map(|info| DerivedAddressInfo {
+                            account_type: owning_account_type,
+                            pool_type,
+                            info,
+                        }))
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            account_index = ?account_match.account_type_match.account_index(),
+                            pool_type = ?pool_type,
+                            error = %e,
+                            "Failed to maintain gap limit for address pool"
+                        );
+                    }
+                }
+            }
+            if new_addresses.len() > rev_before {
+                account.bump_monitor_revision();
+            }
+        }
+        new_addresses.len() > derived_before
     }
 
     /// Promote records whose first sighting already consumed the live UTXO
@@ -341,6 +394,27 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             }
         }
 
+        if is_new {
+            // Marking the addresses a transaction pays as used can extend the
+            // window over its own further outputs. Extend before recording and
+            // check again until nothing new is derived, so it is recorded
+            // whole. After the first round, a round derives only when it
+            // marked a further address of this transaction used, and the
+            // transaction has finitely many.
+            while self.use_involved_addresses(
+                wallet,
+                &result.affected_accounts,
+                &mut result.new_addresses,
+            ) {
+                let rechecked = self.accounts.check_transaction(tx, &relevant_types);
+                result.affected_accounts = rechecked.affected_accounts;
+                result.total_received = rechecked.total_received;
+                result.total_sent = rechecked.total_sent;
+                result.total_received_for_credit_conversion =
+                    rechecked.total_received_for_credit_conversion;
+            }
+        }
+
         // Process each affected account
         for account_match in result.affected_accounts.clone() {
             let Some(mut account) =
@@ -380,41 +454,8 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                     }
                 }
             }
-
-            for address_info in account_match.account_type_match.all_involved_addresses() {
-                account.mark_address_used(&address_info.address);
-            }
-
-            let owning_account_type = account.managed_account_type().to_account_type();
-            let key_source = wallet.key_source_for_account(owning_account_type);
-            if matches!(key_source, KeySource::NoKeySource) {
-                continue;
-            }
-            let rev_before = result.new_addresses.len();
-            for pool in account.managed_account_type_mut().address_pools_mut() {
-                let pool_type = pool.pool_type;
-                match pool.maintain_gap_limit(&key_source) {
-                    Ok(infos) => result.new_addresses.extend(infos.into_iter().map(|info| {
-                        super::account_checker::DerivedAddressInfo {
-                            account_type: owning_account_type,
-                            pool_type,
-                            info,
-                        }
-                    })),
-                    Err(e) => {
-                        tracing::error!(
-                            account_index = ?account_match.account_type_match.account_index(),
-                            pool_type = ?pool_type,
-                            error = %e,
-                            "Failed to maintain gap limit for address pool"
-                        );
-                    }
-                }
-            }
-            if result.new_addresses.len() > rev_before {
-                account.bump_monitor_revision();
-            }
         }
+        self.use_involved_addresses(wallet, &result.affected_accounts, &mut result.new_addresses);
 
         self.attribute_late_inputs(tx, &mut result);
 
@@ -3956,7 +3997,7 @@ mod tests {
         let account = ctx.managed_wallet.bip44_managed_account_at_index_mut(1).unwrap();
         assert!(account.contains_address(&addresses[30]));
         let original = account.transactions_mut().get_mut(&spender.txid()).unwrap();
-        assert_eq!(original.net_amount, 40_000);
+        assert_eq!(original.net_amount, 45_000);
         original.set_fee(5_000);
         original.set_label("retained child".into()).unwrap();
         let original_output = original.output_details[0].clone();
@@ -4080,27 +4121,33 @@ mod tests {
         assert!(settled.updated_records.is_empty());
     }
 
-    /// The transaction's own window extension can reveal its far output too:
-    /// it pays index 1 and index 1+gap, and recording it derives up to 1+gap.
-    /// The rescan that re-delivers its block must correct the record.
+    /// A transaction's own window extension can reveal its further outputs:
+    /// it pays index 1, 1+gap and 1+2*gap, and each owned output extends the
+    /// window over the next. It is recorded whole on first sight, and the
+    /// rescan that re-delivers its block finds nothing to correct.
     #[tokio::test]
-    async fn test_redelivered_transaction_owning_an_output_its_own_extension_derived_is_updated() {
+    async fn test_transaction_owning_outputs_its_own_extension_derives_is_recorded_whole() {
         let mut ctx = TestWalletContext::new_random();
         let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
-        let addresses = bip44_receive_addresses(&ctx, gap as u32 + 2);
-        let tx = paying(1, &[&addresses[1], &addresses[gap + 1]], 40_000);
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 2);
+        let tx = paying(1, &[&addresses[1], &addresses[1 + gap], &addresses[1 + 2 * gap]], 40_000);
+
         let first = ctx.check_transaction(&tx, in_block(100, 1)).await;
-        assert_eq!(first.total_received, 40_000, "only index 1 is visible yet");
+        assert_eq!(first.total_received, 120_000);
+        assert_eq!(first.new_records.len(), 1);
+        assert_eq!(first.new_records[0].net_amount, 120_000);
+        assert_eq!(owned_output_count(&first.new_records[0]), 3);
+        assert_eq!(ctx.transaction(&tx.txid()).net_amount, 120_000, "stored record");
+        let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == tx.txid()).count();
+        assert_eq!(credited, 3);
 
         let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
-        assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
-        assert_eq!(owned_output_count(&again.updated_records[0]), 2);
-        assert_eq!(again.updated_records[0].net_amount, 80_000);
+        assert!(again.updated_records.is_empty());
     }
 
-    /// The same on the change chain: the late output is recorded as `Change`.
+    /// The same on the change chain: the far output is recorded as `Change`.
     #[tokio::test]
-    async fn test_redelivered_transaction_owning_a_late_change_output_records_it_as_change() {
+    async fn test_change_output_its_own_extension_derives_is_recorded_as_change() {
         let mut ctx = TestWalletContext::new_random();
         let gap = DEFAULT_INTERNAL_GAP_LIMIT as usize;
         let change = ctx
@@ -4110,14 +4157,15 @@ mod tests {
             .derive_change_addresses(0, gap as u32 + 2)
             .expect("Should derive");
         let tx = paying(1, &[&change[1], &change[gap + 1]], 40_000);
+
         let first = ctx.check_transaction(&tx, in_block(100, 1)).await;
-        assert_eq!(first.total_received, 40_000, "only index 1 is visible yet");
+        assert_eq!(first.total_received, 80_000);
+        assert_eq!(first.new_records.len(), 1);
+        let roles: Vec<_> = first.new_records[0].output_details.iter().map(|d| d.role).collect();
+        assert_eq!(roles, [OutputRole::Change, OutputRole::Change]);
 
         let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
-        assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
-        let roles: Vec<_> =
-            again.updated_records[0].output_details.iter().map(|d| d.role).collect();
-        assert_eq!(roles, [OutputRole::Change, OutputRole::Change]);
+        assert!(again.updated_records.is_empty());
     }
 
     /// The same late recognition on a transaction we funded: its first record

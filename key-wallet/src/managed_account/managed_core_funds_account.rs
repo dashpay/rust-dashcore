@@ -986,9 +986,9 @@ impl ManagedCoreFundsAccount {
                 changed = !was_confirmed;
             }
             // A re-applied transaction can own outputs its first recording
-            // could not see: their addresses were derived since, by a
-            // gap-window extension (its own or a later transaction's) whose
-            // filter rescan re-delivers this block. `update_utxos` below
+            // could not see: their addresses were derived since, by a later
+            // transaction's gap-window extension whose filter rescan
+            // re-delivers this block. `update_utxos` below
             // credits them, so the record must own them too
             // (dashpay/rust-dashcore#714).
             changed |= adopt_owned_outputs(tx_record, account_match, network);
