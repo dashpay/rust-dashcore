@@ -1198,10 +1198,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     }
 
     fn observe_coinbase_if_higher(&mut self, coinbase_tx: Option<Transaction>) {
-        let Some(payload) = coinbase_tx
-            .and_then(|tx| tx.special_transaction_payload)
-            .and_then(|payload| payload.to_coinbase_payload().ok())
-        else {
+        let Some(payload) = coinbase_tx.as_ref().and_then(CoinbasePayload::from_coinbase_tx) else {
             return;
         };
 
@@ -1964,6 +1961,10 @@ mod tests {
 
         engine.observe_coinbase_if_higher(coinbase(30));
         assert_eq!(engine.latest_coinbase, Some(CoinbasePayload::dummy(30)));
+
+        engine.observe_coinbase_if_higher(coinbase(40).map(|tx| tx.with_newer_coinbase_payload()));
+        let latest = engine.latest_coinbase.as_ref().expect("a coinbase");
+        assert_eq!((latest.height, latest.version), (40, 5));
     }
 
     /// Core sends a snapshot for every diff of `mn_list_diff_list`. A diff

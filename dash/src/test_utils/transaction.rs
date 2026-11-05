@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::serialize;
 use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::transaction::special_transaction::coinbase::CoinbasePayload;
@@ -116,9 +117,9 @@ impl CoinbasePayload {
             height,
             merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
             merkle_root_quorums: MerkleRootQuorums::all_zeros(),
-            best_cl_height: None,
-            best_cl_signature: None,
-            asset_locked_amount: None,
+            best_cl_height: Some(0),
+            best_cl_signature: Some(BLSSignature::from([0; 96])),
+            asset_locked_amount: Some(0),
             merkle_root_asset_unlocks: None,
         }
     }
