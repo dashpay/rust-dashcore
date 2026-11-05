@@ -720,8 +720,9 @@ mod tests {
         let ready = manager.pipeline.take_ready_to_store();
         assert!(!ready.is_empty(), "precondition: the forward batch is ready");
 
-        let _ = manager.store_ready_batches(ready).await;
+        assert!(manager.store_ready_batches(ready).await.is_err());
 
+        assert!(!manager.pipeline.is_syncing_below());
         assert_eq!(manager.tip().await.unwrap().height(), tip.height() + 2);
     }
 
