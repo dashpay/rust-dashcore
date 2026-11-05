@@ -10,6 +10,7 @@ use key_wallet::wallet::managed_wallet_info::transaction_builder::{
 };
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::ChildIndex;
 use key_wallet_manager::WalletEvent;
 use key_wallet_manager::{WalletId, WalletManager};
 use std::collections::HashSet;
@@ -495,8 +496,9 @@ pub(super) async fn build_and_sign(
 
     let height = info.last_processed_height();
     let network = w.network;
-    let account = w.get_bip44_account(0).expect("account 0").clone();
-    let funds_account = info.accounts.standard_bip44_accounts.get_mut(&0).expect("account 0");
+    let account = w.get_bip44_account(ChildIndex::ZERO).expect("account 0").clone();
+    let funds_account =
+        info.accounts.standard_bip44_accounts.get_mut(&ChildIndex::ZERO).expect("account 0");
     let dest = dest_unchecked.require_network(network).expect("destination network");
 
     TransactionBuilder::new()

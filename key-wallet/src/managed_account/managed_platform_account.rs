@@ -9,6 +9,7 @@
 //!
 //! The derivation path follows DIP-17: `m/9'/coin_type'/17'/account'/key_class'/index`
 
+use crate::ChildIndex;
 use std::collections::BTreeMap;
 
 use super::address_pool::{AddressInfo, AddressPool, KeySource};
@@ -35,10 +36,10 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ManagedPlatformAccount {
     /// Account index (hardened) - DIP-17 `account'` level
-    pub account: u32,
+    pub account: ChildIndex,
     /// Key class (hardened) - DIP-17 `key_class'` level
     /// 0' is default, 1' is reserved for change-like segregation
-    pub key_class: u32,
+    pub key_class: ChildIndex,
     /// Network this account belongs to
     pub network: Network,
     /// Total balance in credits (1000 credits = 1 duff)
@@ -55,7 +56,12 @@ impl ManagedPlatformAccount {
     /// Create a new managed platform account
     ///
     /// The network is derived from the AddressPool to ensure consistency.
-    pub fn new(account: u32, key_class: u32, addresses: AddressPool, is_watch_only: bool) -> Self {
+    pub fn new(
+        account: ChildIndex,
+        key_class: ChildIndex,
+        addresses: AddressPool,
+        is_watch_only: bool,
+    ) -> Self {
         let network = addresses.network;
         Self {
             account,
@@ -381,11 +387,11 @@ mod tests {
 
     fn create_test_pool() -> AddressPool {
         let base_path = DerivationPath::from(vec![
-            ChildNumber::from_hardened_idx(9).unwrap(),
-            ChildNumber::from_hardened_idx(1).unwrap(),
-            ChildNumber::from_hardened_idx(17).unwrap(),
-            ChildNumber::from_hardened_idx(0).unwrap(),
-            ChildNumber::from_hardened_idx(0).unwrap(),
+            ChildNumber::Hardened(ChildIndex::new_const(9)),
+            ChildNumber::Hardened(ChildIndex::new_const(1)),
+            ChildNumber::Hardened(ChildIndex::new_const(17)),
+            ChildNumber::Hardened(ChildIndex::ZERO),
+            ChildNumber::Hardened(ChildIndex::ZERO),
         ]);
         AddressPool::new_without_generation(
             base_path,
@@ -398,10 +404,10 @@ mod tests {
     #[test]
     fn test_new_account() {
         let pool = create_test_pool();
-        let account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let account = ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
-        assert_eq!(account.account, 0);
-        assert_eq!(account.key_class, 0);
+        assert_eq!(account.account, ChildIndex::ZERO);
+        assert_eq!(account.key_class, ChildIndex::ZERO);
         assert_eq!(account.network, Network::Testnet);
         assert_eq!(account.credit_balance, 0);
         assert!(account.address_balances.is_empty());
@@ -411,7 +417,8 @@ mod tests {
     #[test]
     fn test_balance_operations() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
         // Set address credit balance (this also updates total)
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
@@ -445,7 +452,8 @@ mod tests {
     #[test]
     fn test_set_credit_balance_directly() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
         // set_credit_balance is for direct manipulation (e.g., deserialization)
         // When used alone (no address balances), it just sets the total
@@ -461,7 +469,8 @@ mod tests {
     #[test]
     fn test_duff_balance_conversion() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
         // Test various credit to duff conversions
         account.set_credit_balance(0);
@@ -486,7 +495,8 @@ mod tests {
     #[test]
     fn test_multiple_address_balances() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
         let addr1 = PlatformP2PKHAddress::new([0x11; 20]);
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
@@ -508,7 +518,8 @@ mod tests {
     #[test]
     fn test_clear_balances() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 1000, None);
@@ -521,7 +532,8 @@ mod tests {
     #[test]
     fn test_funded_addresses() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
         let addr1 = PlatformP2PKHAddress::new([0x11; 20]);
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
@@ -541,7 +553,8 @@ mod tests {
     #[test]
     fn test_contains_platform_address() {
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
 

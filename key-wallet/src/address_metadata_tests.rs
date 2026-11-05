@@ -4,6 +4,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::ChildIndex;
     use crate::{
         account::{AccountType, StandardAccountType},
         Network, Wallet,
@@ -33,14 +34,14 @@ mod tests {
         .unwrap();
 
         // Verify wallet has a default account
-        assert!(wallet.get_bip44_account(0).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::ZERO).is_some());
 
-        let account = wallet.get_bip44_account(0).unwrap();
+        let account = wallet.get_bip44_account(ChildIndex::ZERO).unwrap();
         match &account.account_type {
             AccountType::Standard {
                 index,
                 ..
-            } => assert_eq!(*index, 0),
+            } => assert_eq!(*index, ChildIndex::ZERO),
             _ => panic!("Expected Standard account type"),
         }
     }
@@ -57,7 +58,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -66,7 +67,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 2,
+                    index: ChildIndex::new_const(2),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -74,18 +75,18 @@ mod tests {
             .unwrap();
 
         // Verify accounts exist
-        assert!(wallet.get_bip44_account(0).is_some());
-        assert!(wallet.get_bip44_account(1).is_some());
-        assert!(wallet.get_bip44_account(2).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::ZERO).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::new_const(1)).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::new_const(2)).is_some());
 
         // Verify account indices
         for i in 0..3 {
-            let account = wallet.get_bip44_account(i).unwrap();
+            let account = wallet.get_bip44_account(ChildIndex::new_const(i)).unwrap();
             match &account.account_type {
                 AccountType::Standard {
                     index,
                     ..
-                } => assert_eq!(*index, i),
+                } => assert_eq!(*index, ChildIndex::new_const(i)),
                 _ => panic!("Expected Standard account type"),
             }
         }

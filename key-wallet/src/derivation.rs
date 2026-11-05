@@ -1,11 +1,9 @@
 //! Key derivation functionality
 //!
-//! This module provides key derivation functionality with a builder pattern
-//! for flexible path construction and derivation strategies.
+//! This module provides key derivation functionality and derivation strategies.
 
-use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+use crate::bip32::{ChildIndex, ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
-use crate::{AccountType, Network};
 
 /// Key derivation interface
 pub trait KeyDerivation {
@@ -24,167 +22,6 @@ impl KeyDerivation for ExtendedPrivKey {
     fn derive_pub(&self, path: &DerivationPath) -> Result<ExtendedPubKey> {
         let priv_key = self.derive_priv(path)?;
         Ok(ExtendedPubKey::from_priv(&priv_key))
-    }
-}
-
-/// Builder for constructing derivation paths
-#[derive(Debug, Clone)]
-pub struct DerivationPathBuilder {
-    components: Vec<ChildNumber>,
-    purpose: Option<u32>,
-    coin_type: Option<u32>,
-    account: Option<u32>,
-    change: Option<u32>,
-    address_index: Option<u32>,
-}
-
-impl DerivationPathBuilder {
-    /// Create a new derivation path builder
-    pub fn new() -> Self {
-        Self {
-            components: Vec::new(),
-            purpose: None,
-            coin_type: None,
-            account: None,
-            change: None,
-            address_index: None,
-        }
-    }
-
-    /// Set purpose (BIP44 = 44', BIP32 = 0, etc.)
-    pub fn purpose(mut self, purpose: u32) -> Self {
-        self.purpose = Some(purpose);
-        self
-    }
-
-    /// Set coin type (5' for Dash)
-    pub fn coin_type(mut self, coin_type: u32) -> Self {
-        self.coin_type = Some(coin_type);
-        self
-    }
-
-    /// Set account index
-    pub fn account(mut self, account: u32) -> Self {
-        self.account = Some(account);
-        self
-    }
-
-    /// Set change (0 for external, 1 for internal)
-    pub fn change(mut self, change: u32) -> Self {
-        self.change = Some(change);
-        self
-    }
-
-    /// Set address index
-    pub fn address_index(mut self, index: u32) -> Self {
-        self.address_index = Some(index);
-        self
-    }
-
-    /// Add a hardened child number
-    pub fn hardened(mut self, index: u32) -> Self {
-        if let Ok(child) = ChildNumber::from_hardened_idx(index) {
-            self.components.push(child);
-        }
-        self
-    }
-
-    /// Add a normal (non-hardened) child number
-    pub fn normal(mut self, index: u32) -> Self {
-        if let Ok(child) = ChildNumber::from_normal_idx(index) {
-            self.components.push(child);
-        }
-        self
-    }
-
-    /// Add a child number
-    pub fn child(mut self, child: ChildNumber) -> Self {
-        self.components.push(child);
-        self
-    }
-
-    /// Build a BIP44 path: m/44'/coin_type'/account'/change/address_index
-    pub fn bip44(self) -> Result<DerivationPath> {
-        let mut path = Vec::new();
-
-        // Purpose (44' for BIP44)
-        path.push(ChildNumber::from_hardened_idx(44).map_err(Error::Bip32)?);
-
-        // Coin type (default to 5' for Dash)
-        let coin_type = self.coin_type.unwrap_or(5);
-        path.push(ChildNumber::from_hardened_idx(coin_type).map_err(Error::Bip32)?);
-
-        // Account (default to 0')
-        let account = self.account.unwrap_or(0);
-        path.push(ChildNumber::from_hardened_idx(account).map_err(Error::Bip32)?);
-
-        // Change (optional)
-        if let Some(change) = self.change {
-            path.push(ChildNumber::from_normal_idx(change).map_err(Error::Bip32)?);
-
-            // Address index (optional, requires change to be set)
-            if let Some(index) = self.address_index {
-                path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
-            }
-        }
-
-        Ok(DerivationPath::from(path))
-    }
-
-    /// Build a BIP32 path from the components
-    pub fn build(self) -> Result<DerivationPath> {
-        // If components were added directly, use them
-        if !self.components.is_empty() {
-            return Ok(DerivationPath::from(self.components));
-        }
-
-        // Otherwise, build from purpose/coin_type/account/change/index
-        let mut path = Vec::new();
-
-        if let Some(purpose) = self.purpose {
-            path.push(ChildNumber::from_hardened_idx(purpose).map_err(Error::Bip32)?);
-        }
-
-        if let Some(coin_type) = self.coin_type {
-            path.push(ChildNumber::from_hardened_idx(coin_type).map_err(Error::Bip32)?);
-        }
-
-        if let Some(account) = self.account {
-            path.push(ChildNumber::from_hardened_idx(account).map_err(Error::Bip32)?);
-        }
-
-        if let Some(change) = self.change {
-            path.push(ChildNumber::from_normal_idx(change).map_err(Error::Bip32)?);
-        }
-
-        if let Some(index) = self.address_index {
-            path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
-        }
-
-        Ok(DerivationPath::from(path))
-    }
-
-    /// Build path for a specific network and account type
-    pub fn for_network_and_type(
-        self,
-        network: Network,
-        _account_type: AccountType,
-        account_index: u32,
-    ) -> Result<DerivationPath> {
-        // For now, just use BIP44 derivation
-        // m/44'/coin_type'/account'/0/0
-        self.purpose(44)
-            .coin_type(network.addr_params().bip44_idx)
-            .account(account_index)
-            .change(0)
-            .address_index(0)
-            .bip44()
-    }
-}
-
-impl Default for DerivationPathBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -222,7 +59,7 @@ impl DerivationStrategy {
 
         for i in start_index..(start_index + count) {
             let mut path = self.base_path.clone();
-            path.push(ChildNumber::from_normal_idx(i).map_err(Error::Bip32)?);
+            path.push(ChildNumber::Normal(ChildIndex::new(i).map_err(Error::Bip32)?));
 
             let derived = key.derive_priv(&path).map_err(Error::Bip32)?;
             keys.push(ExtendedPubKey::from_priv(&derived));
@@ -242,7 +79,7 @@ impl DerivationStrategy {
 
         loop {
             let mut path = self.base_path.clone();
-            path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
+            path.push(ChildNumber::Normal(ChildIndex::new(index).map_err(Error::Bip32)?));
 
             let derived = key.derive_priv(&path).map_err(Error::Bip32)?;
             let pubkey = ExtendedPubKey::from_priv(&derived);
@@ -268,6 +105,7 @@ impl DerivationStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bip32::ChildIndex;
     use crate::mnemonic::Mnemonic;
     use dashcore::ecdsa::EcdsaPublicKey;
 
@@ -282,15 +120,9 @@ mod tests {
 
         // Test m/0'/1/2' path (from DashSync test)
         let path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 0,
-            },
-            ChildNumber::Normal {
-                index: 1,
-            },
-            ChildNumber::Hardened {
-                index: 2,
-            },
+            ChildNumber::Hardened(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::new_const(1)),
+            ChildNumber::Hardened(ChildIndex::new_const(2)),
         ]);
 
         let derived_key = master_key.derive_priv(&path).unwrap();
@@ -307,15 +139,9 @@ mod tests {
 
         // Test m/0'/0/97 path for zero padding test (from DashSync)
         let path_zero_padding = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 0,
-            },
-            ChildNumber::Normal {
-                index: 0,
-            },
-            ChildNumber::Normal {
-                index: 97,
-            },
+            ChildNumber::Hardened(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::new_const(97)),
         ]);
 
         let derived_key_zero = master_key.derive_priv(&path_zero_padding).unwrap();
@@ -343,9 +169,7 @@ mod tests {
         assert_eq!(master_xprv, "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi");
 
         // Test m/0' (account 0)
-        let path_m_0h = DerivationPath::from(vec![ChildNumber::Hardened {
-            index: 0,
-        }]);
+        let path_m_0h = DerivationPath::from(vec![ChildNumber::Hardened(ChildIndex::ZERO)]);
         let key_m_0h = master_key.derive_priv(&path_m_0h).unwrap();
         let xprv_m_0h = key_m_0h.to_string();
         let xpub_m_0h = ExtendedPubKey::from_priv(&key_m_0h).to_string();
@@ -356,12 +180,8 @@ mod tests {
 
         // Test m/0'/1
         let path_m_0h_1 = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 0,
-            },
-            ChildNumber::Normal {
-                index: 1,
-            },
+            ChildNumber::Hardened(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::new_const(1)),
         ]);
         let key_m_0h_1 = master_key.derive_priv(&path_m_0h_1).unwrap();
         let xprv_m_0h_1 = key_m_0h_1.to_string();
@@ -373,15 +193,9 @@ mod tests {
 
         // Test m/0'/1/2'
         let path_m_0h_1_2h = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 0,
-            },
-            ChildNumber::Normal {
-                index: 1,
-            },
-            ChildNumber::Hardened {
-                index: 2,
-            },
+            ChildNumber::Hardened(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::new_const(1)),
+            ChildNumber::Hardened(ChildIndex::new_const(2)),
         ]);
         let key_m_0h_1_2h = master_key.derive_priv(&path_m_0h_1_2h).unwrap();
         let xprv_m_0h_1_2h = key_m_0h_1_2h.to_string();
@@ -403,18 +217,10 @@ mod tests {
         // Test identity authentication derivation (purpose 9' for Dash Platform)
         // m/9'/5'/1'/0 (DIP-9: Identity Authentication)
         let identity_auth_path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 9,
-            }, // DIP-9 purpose
-            ChildNumber::Hardened {
-                index: 5,
-            }, // Dash coin type
-            ChildNumber::Hardened {
-                index: 1,
-            }, // Identity index
-            ChildNumber::Normal {
-                index: 0,
-            }, // Key index
+            ChildNumber::Hardened(ChildIndex::new_const(9)), // DIP-9 purpose
+            ChildNumber::Hardened(ChildIndex::new_const(5)), // Dash coin type
+            ChildNumber::Hardened(ChildIndex::new_const(1)), // Identity index
+            ChildNumber::Normal(ChildIndex::ZERO),           // Key index
         ]);
 
         let identity_key = master_key.derive_priv(&identity_auth_path).unwrap();
@@ -426,18 +232,10 @@ mod tests {
         // Test identity registration derivation
         // m/9'/5'/1'/1 (DIP-9: Identity Registration)
         let identity_reg_path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 9,
-            },
-            ChildNumber::Hardened {
-                index: 5,
-            },
-            ChildNumber::Hardened {
-                index: 1,
-            },
-            ChildNumber::Normal {
-                index: 1,
-            },
+            ChildNumber::Hardened(ChildIndex::new_const(9)),
+            ChildNumber::Hardened(ChildIndex::new_const(5)),
+            ChildNumber::Hardened(ChildIndex::new_const(1)),
+            ChildNumber::Normal(ChildIndex::new_const(1)),
         ]);
 
         let reg_key = master_key.derive_priv(&identity_reg_path).unwrap();
@@ -446,18 +244,10 @@ mod tests {
         // Test identity top-up derivation
         // m/9'/5'/1'/2 (DIP-9: Identity Top-up)
         let identity_topup_path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 9,
-            },
-            ChildNumber::Hardened {
-                index: 5,
-            },
-            ChildNumber::Hardened {
-                index: 1,
-            },
-            ChildNumber::Normal {
-                index: 2,
-            },
+            ChildNumber::Hardened(ChildIndex::new_const(9)),
+            ChildNumber::Hardened(ChildIndex::new_const(5)),
+            ChildNumber::Hardened(ChildIndex::new_const(1)),
+            ChildNumber::Normal(ChildIndex::new_const(2)),
         ]);
 
         let topup_key = master_key.derive_priv(&identity_topup_path).unwrap();
@@ -467,15 +257,9 @@ mod tests {
         // Test provider voting derivation (masternode voting)
         // m/3'/1'/0' (Provider voting)
         let provider_voting_path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 3,
-            }, // Provider purpose
-            ChildNumber::Hardened {
-                index: 1,
-            }, // Voting type
-            ChildNumber::Hardened {
-                index: 0,
-            }, // Provider index
+            ChildNumber::Hardened(ChildIndex::new_const(3)), // Provider purpose
+            ChildNumber::Hardened(ChildIndex::new_const(1)), // Voting type
+            ChildNumber::Hardened(ChildIndex::ZERO),         // Provider index
         ]);
 
         let voting_key = master_key.derive_priv(&provider_voting_path).unwrap();
@@ -484,15 +268,9 @@ mod tests {
         // Test provider operator derivation
         // m/3'/0'/0' (Provider operator)
         let provider_op_path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 3,
-            }, // Provider purpose
-            ChildNumber::Hardened {
-                index: 0,
-            }, // Operator type
-            ChildNumber::Hardened {
-                index: 0,
-            }, // Provider index
+            ChildNumber::Hardened(ChildIndex::new_const(3)), // Provider purpose
+            ChildNumber::Hardened(ChildIndex::ZERO),         // Operator type
+            ChildNumber::Hardened(ChildIndex::ZERO),         // Provider index
         ]);
 
         let operator_key = master_key.derive_priv(&provider_op_path).unwrap();
@@ -500,49 +278,6 @@ mod tests {
             &operator_key.private_key.to_bytes()[..],
             &voting_key.private_key.to_bytes()[..]
         );
-    }
-
-    // ✓ Test derivation path builder pattern
-    #[test]
-    fn test_derivation_path_builder() {
-        let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-
-        let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
-
-        // Test builder for BIP44 path
-        let bip44_path = DerivationPathBuilder::new()
-            .coin_type(1) // Testnet
-            .account(0)
-            .change(0) // External
-            .address_index(0)
-            .bip44()
-            .unwrap();
-
-        // Should create m/44'/1'/0'/0/0
-        let expected_path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 44,
-            },
-            ChildNumber::Hardened {
-                index: 1,
-            },
-            ChildNumber::Hardened {
-                index: 0,
-            },
-            ChildNumber::Normal {
-                index: 0,
-            },
-            ChildNumber::Normal {
-                index: 0,
-            },
-        ]);
-
-        assert_eq!(bip44_path, expected_path);
-
-        // Test derivation with the built path
-        let derived = master_key.derive_priv(&bip44_path).unwrap();
-        assert_ne!(&derived.private_key.to_bytes()[..], &master_key.private_key.to_bytes()[..]);
     }
 
     // ✓ Test key signing and verification
@@ -554,9 +289,7 @@ mod tests {
         let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Derive a key for signing
-        let path = DerivationPath::from(vec![ChildNumber::Hardened {
-            index: 0,
-        }]);
+        let path = DerivationPath::from(vec![ChildNumber::Hardened(ChildIndex::ZERO)]);
         let signing_key = master_key.derive_priv(&path).unwrap();
 
         // Test message
@@ -585,9 +318,7 @@ mod tests {
         let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Derive a key for signing
-        let path = DerivationPath::from(vec![ChildNumber::Normal {
-            index: 0,
-        }]);
+        let path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let signing_key = master_key.derive_priv(&path).unwrap();
         let public_key = ExtendedPubKey::from_priv(&signing_key);
 
@@ -624,18 +355,10 @@ mod tests {
         // Test DashPay contact derivation path: m/9'/5'/15'/0'
         // This is used for master identity contacts in DashPay
         let dashpay_path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 9,
-            }, // FEATURE_PURPOSE
-            ChildNumber::Hardened {
-                index: 5,
-            }, // testnet coin type
-            ChildNumber::Hardened {
-                index: 15,
-            }, // FEATURE_PURPOSE_DASHPAY
-            ChildNumber::Hardened {
-                index: 0,
-            }, // account 0
+            ChildNumber::Hardened(ChildIndex::new_const(9)), // FEATURE_PURPOSE
+            ChildNumber::Hardened(ChildIndex::new_const(5)), // testnet coin type
+            ChildNumber::Hardened(ChildIndex::new_const(15)), // FEATURE_PURPOSE_DASHPAY
+            ChildNumber::Hardened(ChildIndex::ZERO),         // account 0
         ]);
 
         let dashpay_key = master_key.derive_priv(&dashpay_path).unwrap();
@@ -644,18 +367,10 @@ mod tests {
         // Verify this produces a different key than other special paths
         // Test against identity authentication path
         let auth_path = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 9,
-            },
-            ChildNumber::Hardened {
-                index: 5,
-            },
-            ChildNumber::Hardened {
-                index: 1,
-            },
-            ChildNumber::Hardened {
-                index: 0,
-            },
+            ChildNumber::Hardened(ChildIndex::new_const(9)),
+            ChildNumber::Hardened(ChildIndex::new_const(5)),
+            ChildNumber::Hardened(ChildIndex::new_const(1)),
+            ChildNumber::Hardened(ChildIndex::ZERO),
         ]);
         let auth_key = master_key.derive_priv(&auth_path).unwrap();
 
@@ -665,18 +380,10 @@ mod tests {
 
         // Test multiple DashPay accounts
         let dashpay_account_1 = DerivationPath::from(vec![
-            ChildNumber::Hardened {
-                index: 9,
-            },
-            ChildNumber::Hardened {
-                index: 5,
-            },
-            ChildNumber::Hardened {
-                index: 15,
-            },
-            ChildNumber::Hardened {
-                index: 1,
-            }, // account 1
+            ChildNumber::Hardened(ChildIndex::new_const(9)),
+            ChildNumber::Hardened(ChildIndex::new_const(5)),
+            ChildNumber::Hardened(ChildIndex::new_const(15)),
+            ChildNumber::Hardened(ChildIndex::new_const(1)), // account 1
         ]);
 
         let dashpay_key_1 = master_key.derive_priv(&dashpay_account_1).unwrap();
@@ -688,17 +395,13 @@ mod tests {
         // In DashPay, contact keys are derived further from the account key
         let contact_0 = dashpay_key
             .derive_priv(&DerivationPath::from(vec![
-                ChildNumber::Normal {
-                    index: 0,
-                }, // First contact
+                ChildNumber::Normal(ChildIndex::ZERO), // First contact
             ]))
             .unwrap();
 
         let contact_1 = dashpay_key
             .derive_priv(&DerivationPath::from(vec![
-                ChildNumber::Normal {
-                    index: 1,
-                }, // Second contact
+                ChildNumber::Normal(ChildIndex::new_const(1)), // Second contact
             ]))
             .unwrap();
 

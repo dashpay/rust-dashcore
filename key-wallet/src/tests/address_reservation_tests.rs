@@ -11,6 +11,7 @@ use crate::mnemonic::Mnemonic;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::ChildIndex;
 use crate::{ExtendedPrivKey, Network};
 use dashcore::{Address, Transaction};
 use std::str::FromStr;
@@ -95,9 +96,9 @@ fn test_reserve_receive_on_non_standard_account_errors() {
     let master = ExtendedPrivKey::new_master(network, &seed[..]).unwrap();
 
     let account_type = AccountType::CoinJoin {
-        index: 0,
+        index: ChildIndex::ZERO,
     };
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
 

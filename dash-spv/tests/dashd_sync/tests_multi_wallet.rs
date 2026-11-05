@@ -1,6 +1,7 @@
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::ChildIndex;
 use key_wallet_manager::WalletManager;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -25,8 +26,11 @@ async fn reserve_first_address(mnemonic: &str) -> Address {
     let (temp_mgr, temp_id) = create_test_wallet(mnemonic, Network::Regtest);
     let reader = temp_mgr.read().await;
     let info = reader.get_wallet_info(&temp_id).expect("temp wallet info");
-    let account =
-        info.accounts().standard_bip44_accounts.get(&0).expect("temp wallet BIP44 account 0");
+    let account = info
+        .accounts()
+        .standard_bip44_accounts
+        .get(&ChildIndex::ZERO)
+        .expect("temp wallet BIP44 account 0");
     let ManagedAccountType::Standard {
         external_addresses,
         ..
@@ -189,7 +193,11 @@ async fn test_wallet_added_at_runtime_catches_up() {
     let w3_address = {
         let reader = client_handle.client.wallet().read().await;
         let info = reader.get_wallet_info(&w3_id).expect("W3 info");
-        let account = info.accounts().standard_bip44_accounts.get(&0).expect("W3 BIP44 account 0");
+        let account = info
+            .accounts()
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("W3 BIP44 account 0");
         let ManagedAccountType::Standard {
             external_addresses,
             ..

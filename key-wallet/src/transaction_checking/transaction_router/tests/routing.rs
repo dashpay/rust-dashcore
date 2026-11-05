@@ -12,6 +12,7 @@ use crate::transaction_checking::transaction_router::{
 use crate::transaction_checking::{TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
+use crate::ChildIndex;
 use crate::Network;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::TxOut;
@@ -76,7 +77,7 @@ async fn test_transaction_routing_to_bip32_account() {
 
     // Add a BIP32 account
     let account_type = AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP32Account,
     };
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
@@ -88,7 +89,7 @@ async fn test_transaction_routing_to_bip32_account() {
     let account = wallet
         .accounts
         .standard_bip32_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("Expected BIP32 account at index 0 to exist");
     let xpub = account.account_xpub;
 
@@ -159,7 +160,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
         .expect("Failed to create wallet without default accounts");
 
     let account_type = AccountType::CoinJoin {
-        index: 0,
+        index: ChildIndex::ZERO,
     };
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
@@ -170,7 +171,7 @@ async fn test_transaction_routing_to_coinjoin_account() {
     let account = wallet
         .accounts
         .coinjoin_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("Expected CoinJoin account at index 0 to exist");
     let xpub = account.account_xpub;
 
@@ -236,14 +237,14 @@ async fn test_transaction_affects_multiple_accounts() {
 
     // Add another BIP44 account
     let account_type = AccountType::Standard {
-        index: 1,
+        index: ChildIndex::new_const(1),
         standard_account_type: StandardAccountType::BIP44Account,
     };
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
 
     // Add another BIP32 account
     let account_type = AccountType::Standard {
-        index: 1,
+        index: ChildIndex::new_const(1),
         standard_account_type: StandardAccountType::BIP32Account,
     };
     wallet.add_account(account_type, None).expect("Failed to add account to wallet");
@@ -257,11 +258,11 @@ async fn test_transaction_affects_multiple_accounts() {
     let account0 = wallet
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("Expected BIP44 account at index 0 to exist");
     let xpub0 = account0.account_xpub;
     let managed_account0 = managed_wallet_info
-        .bip44_managed_account_at_index_mut(0)
+        .bip44_managed_account_at_index_mut(ChildIndex::ZERO)
         .expect("Failed to get BIP44 managed account at index 0");
     let address0 = managed_account0
         .next_receive_address(Some(&xpub0), true)
@@ -271,11 +272,11 @@ async fn test_transaction_affects_multiple_accounts() {
     let account1 = wallet
         .accounts
         .standard_bip44_accounts
-        .get(&1)
+        .get(&ChildIndex::new_const(1))
         .expect("Expected BIP44 account at index 1 to exist");
     let xpub1 = account1.account_xpub;
     let managed_account1 = managed_wallet_info
-        .bip44_managed_account_at_index_mut(1)
+        .bip44_managed_account_at_index_mut(ChildIndex::new_const(1))
         .expect("Failed to get BIP44 managed account at index 1");
     let address1 = managed_account1
         .next_receive_address(Some(&xpub1), true)
@@ -285,7 +286,7 @@ async fn test_transaction_affects_multiple_accounts() {
     let account2 = wallet
         .accounts
         .standard_bip32_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("Expected BIP32 account at index 0 to exist");
     let xpub2 = account2.account_xpub;
     let managed_account2 = managed_wallet_info
@@ -360,7 +361,7 @@ fn test_next_address_method_restrictions() {
         let bip44_account = wallet
             .accounts
             .standard_bip44_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("Expected BIP44 account at index 0 to exist");
         let xpub = bip44_account.account_xpub;
         let managed_account = managed_wallet_info
@@ -380,7 +381,7 @@ fn test_next_address_method_restrictions() {
     }
 
     // Test that standard BIP32 accounts reject next_address (if present)
-    if let Some(bip32_account) = wallet.accounts.standard_bip32_accounts.get(&0) {
+    if let Some(bip32_account) = wallet.accounts.standard_bip32_accounts.get(&ChildIndex::ZERO) {
         let xpub = bip32_account.account_xpub;
         if let Some(managed_account) = managed_wallet_info.first_bip32_managed_account_mut() {
             let result = managed_account.next_address(Some(&xpub), true);

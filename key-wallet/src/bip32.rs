@@ -351,9 +351,7 @@ impl zeroize::Zeroize for ExtendedPrivKey {
         // Derivation metadata — cleared too so the whole value is wiped.
         self.depth.zeroize();
         self.parent_fingerprint.0.zeroize();
-        self.child_number = ChildNumber::Normal {
-            index: 0,
-        };
+        self.child_number = ChildNumber::Normal(ChildIndex::ZERO);
         self.network = Network::Mainnet; // repr(u8)=0 discriminant, the "zero" value
     }
 }
@@ -541,96 +539,111 @@ impl<'de> serde::Deserialize<'de> for ExtendedPubKey {
     }
 }
 
+/// A BIP-32 child index, within [0, 2^31 - 1]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "bincode", derive(Encode))]
+pub struct ChildIndex(u32);
+
+impl ChildIndex {
+    /// The index 0.
+    pub const ZERO: Self = ChildIndex(0);
+
+    /// Returns an error if `index` is not within [0, 2^31 - 1].
+    pub const fn new(index: u32) -> Result<Self, Error> {
+        if index & (1 << 31) == 0 {
+            Ok(ChildIndex(index))
+        } else {
+            Err(Error::InvalidChildNumber(index))
+        }
+    }
+
+    /// Panics if `index` is not within [0, 2^31 - 1], at compile time in a const context.
+    pub const fn new_const(index: u32) -> Self {
+        assert!(index & (1 << 31) == 0, "child index must be below 2^31");
+        ChildIndex(index)
+    }
+
+    /// The index as a number.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl fmt::Display for ChildIndex {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for ChildIndex {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ChildIndex {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        ChildIndex::new(u32::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<C> bincode::Decode<C> for ChildIndex {
+    fn decode<D: bincode::de::Decoder<Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        ChildIndex::new(u32::decode(decoder)?)
+            .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))
+    }
+}
+
+#[cfg(feature = "bincode")]
+impl<'de, C> bincode::BorrowDecode<'de, C> for ChildIndex {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
+        decoder: &mut D,
+    ) -> Result<Self, bincode::error::DecodeError> {
+        <Self as bincode::Decode<C>>::decode(decoder)
+    }
+}
+
 /// A child number for a derived key
 #[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub enum ChildNumber {
     /// Non-hardened key
-    Normal {
-        /// Key index, within [0, 2^31 - 1]
-        index: u32,
-    },
+    Normal(ChildIndex),
     /// Hardened key
-    Hardened {
-        /// Key index, within [0, 2^31 - 1]
-        index: u32,
-    },
-
-    /// Non-hardened key
-    Normal256 {
-        /// Key index, within [0, 2^256 - 1]
-        index: [u8; 32],
-    },
-
-    /// Hardened key
-    Hardened256 {
-        /// Key index, within [0, 2^256 - 1]
-        index: [u8; 32],
-    },
+    Hardened(ChildIndex),
+    /// Non-hardened key, within [0, 2^256 - 1]
+    Normal256([u8; 32]),
+    /// Hardened key, within [0, 2^256 - 1]
+    Hardened256([u8; 32]),
 }
 
 impl ChildNumber {
-    /// Create a [`Normal`] from an index, returns an error if the index is not within
-    /// [0, 2^31 - 1].
-    ///
-    /// [`Normal`]: #variant.Normal
-    pub fn from_normal_idx(index: u32) -> Result<Self, Error> {
-        if index & (1 << 31) == 0 {
-            Ok(ChildNumber::Normal {
-                index,
-            })
-        } else {
-            Err(Error::InvalidChildNumber(index))
-        }
-    }
-
-    /// Create a [`Hardened`] from an index, returns an error if the index is not within
-    /// [0, 2^31 - 1].
-    ///
-    /// [`Hardened`]: #variant.Hardened
-    pub fn from_hardened_idx(index: u32) -> Result<Self, Error> {
-        if index & (1 << 31) == 0 {
-            Ok(ChildNumber::Hardened {
-                index,
-            })
-        } else {
-            Err(Error::InvalidChildNumber(index))
-        }
-    }
-
-    /// Create a [`Normal`] or [`Hardened`] from an index, returns an error if the index is not within
-    /// [0, 2^31 - 1].
+    /// Create a [`Normal`] or [`Hardened`] from an index.
     ///
     /// [`Normal`]: #variant.Normal
     /// [`Hardened`]: #variant.Hardened
-    pub fn from_idx(index: u32, hardened: bool) -> Result<Self, Error> {
-        if index & (1 << 31) != 0 {
-            return Err(Error::InvalidChildNumber(index));
-        }
-
+    pub fn from_idx(index: ChildIndex, hardened: bool) -> Self {
         if hardened {
-            Ok(ChildNumber::Hardened {
-                index,
-            })
+            ChildNumber::Hardened(index)
         } else {
-            Ok(ChildNumber::Normal {
-                index,
-            })
+            ChildNumber::Normal(index)
         }
     }
 
     /// Create a non-hardened `ChildNumber` from a 256-bit index.
     pub fn from_normal_idx_256(index: [u8; 32]) -> ChildNumber {
-        ChildNumber::Normal256 {
-            index,
-        }
+        ChildNumber::Normal256(index)
     }
 
     /// Create a hardened `ChildNumber` from a 256-bit index.
     pub fn from_hardened_idx_256(index: [u8; 32]) -> ChildNumber {
-        ChildNumber::Hardened256 {
-            index,
-        }
+        ChildNumber::Hardened256(index)
     }
 
     /// Returns `true` if the child number is a [`Normal`] value.
@@ -644,52 +657,20 @@ impl ChildNumber {
     ///
     /// [`Hardened`]: #variant.Hardened
     pub fn is_hardened(&self) -> bool {
-        match self {
-            ChildNumber::Hardened {
-                ..
-            } => true,
-            ChildNumber::Normal {
-                ..
-            } => false,
-            ChildNumber::Normal256 {
-                ..
-            } => false,
-            ChildNumber::Hardened256 {
-                ..
-            } => true,
-        }
+        matches!(self, ChildNumber::Hardened(_) | ChildNumber::Hardened256(_))
     }
 
     /// Returns `true` if the child number is a 256 bit value.
     pub fn is_256_bits(&self) -> bool {
-        match self {
-            ChildNumber::Hardened {
-                ..
-            } => false,
-            ChildNumber::Normal {
-                ..
-            } => false,
-            ChildNumber::Normal256 {
-                ..
-            } => true,
-            ChildNumber::Hardened256 {
-                ..
-            } => true,
-        }
+        matches!(self, ChildNumber::Normal256(_) | ChildNumber::Hardened256(_))
     }
 
     /// Returns the child number that is a single increment from this one.
     pub fn increment(self) -> Result<ChildNumber, Error> {
         match self {
-            ChildNumber::Normal {
-                index: idx,
-            } => ChildNumber::from_normal_idx(idx + 1),
-            ChildNumber::Hardened {
-                index: idx,
-            } => ChildNumber::from_hardened_idx(idx + 1),
-            ChildNumber::Normal256 {
-                mut index,
-            } => {
+            ChildNumber::Normal(idx) => ChildIndex::new(idx.get() + 1).map(ChildNumber::Normal),
+            ChildNumber::Hardened(idx) => ChildIndex::new(idx.get() + 1).map(ChildNumber::Hardened),
+            ChildNumber::Normal256(mut index) => {
                 // Increment the 256-bit big-endian number represented by index
                 let mut carry = 1u8;
                 for byte in index.iter_mut().rev() {
@@ -708,13 +689,9 @@ impl ChildNumber {
                     // Overflow occurred
                     return Err(Error::InvalidChildNumber(0)); // Or define a suitable error
                 }
-                Ok(ChildNumber::Normal256 {
-                    index,
-                })
+                Ok(ChildNumber::Normal256(index))
             }
-            ChildNumber::Hardened256 {
-                mut index,
-            } => {
+            ChildNumber::Hardened256(mut index) => {
                 // Increment the 256-bit big-endian number represented by index
                 let mut carry = 1u8;
                 for byte in index.iter_mut().rev() {
@@ -733,9 +710,7 @@ impl ChildNumber {
                     // Overflow occurred
                     return Err(Error::InvalidChildNumber(0)); // Or define a suitable error
                 }
-                Ok(ChildNumber::Hardened256 {
-                    index,
-                })
+                Ok(ChildNumber::Hardened256(index))
             }
         }
     }
@@ -743,14 +718,11 @@ impl ChildNumber {
 
 impl From<u32> for ChildNumber {
     fn from(number: u32) -> Self {
+        let index = ChildIndex(number & !(1 << 31));
         if number & (1 << 31) != 0 {
-            ChildNumber::Hardened {
-                index: number ^ (1 << 31),
-            }
+            ChildNumber::Hardened(index)
         } else {
-            ChildNumber::Normal {
-                index: number,
-            }
+            ChildNumber::Normal(index)
         }
     }
 }
@@ -758,18 +730,9 @@ impl From<u32> for ChildNumber {
 impl From<ChildNumber> for u32 {
     fn from(cnum: ChildNumber) -> Self {
         match cnum {
-            ChildNumber::Normal {
-                index,
-            } => index,
-            ChildNumber::Hardened {
-                index,
-            } => index | (1 << 31),
-            ChildNumber::Normal256 {
-                ..
-            } => u32::MAX,
-            ChildNumber::Hardened256 {
-                ..
-            } => u32::MAX,
+            ChildNumber::Normal(index) => index.get(),
+            ChildNumber::Hardened(index) => index.get() | (1 << 31),
+            ChildNumber::Normal256(_) | ChildNumber::Hardened256(_) => u32::MAX,
         }
     }
 }
@@ -777,10 +740,8 @@ impl From<ChildNumber> for u32 {
 impl fmt::Display for ChildNumber {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            ChildNumber::Hardened {
-                index,
-            } => {
-                fmt::Display::fmt(&index, f)?;
+            ChildNumber::Hardened(index) => {
+                fmt::Display::fmt(&index.get(), f)?;
                 let alt = f.alternate();
                 f.write_str(if alt {
                     "h"
@@ -788,12 +749,8 @@ impl fmt::Display for ChildNumber {
                     "'"
                 })
             }
-            ChildNumber::Normal {
-                index,
-            } => fmt::Display::fmt(&index, f),
-            ChildNumber::Hardened256 {
-                index,
-            } => {
+            ChildNumber::Normal(index) => fmt::Display::fmt(&index.get(), f),
+            ChildNumber::Hardened256(index) => {
                 write!(f, "0x{:x}", index.as_hex())?;
                 write!(
                     f,
@@ -805,9 +762,7 @@ impl fmt::Display for ChildNumber {
                     }
                 )
             }
-            ChildNumber::Normal256 {
-                index,
-            } => {
+            ChildNumber::Normal256(index) => {
                 write!(f, "0x{:x}", index.as_hex())
             }
         }
@@ -831,22 +786,14 @@ impl FromStr for ChildNumber {
             let index_bytes = hex_conservative::decode_to_array::<32>(hex_str)
                 .map_err(|_| Error::InvalidChildNumberFormat)?;
             if is_hardened {
-                Ok(ChildNumber::Hardened256 {
-                    index: index_bytes,
-                })
+                Ok(ChildNumber::Hardened256(index_bytes))
             } else {
-                Ok(ChildNumber::Normal256 {
-                    index: index_bytes,
-                })
+                Ok(ChildNumber::Normal256(index_bytes))
             }
         } else {
             // Parse as a u32 number
             let index = index_str.parse::<u32>().map_err(|_| Error::InvalidChildNumberFormat)?;
-            if is_hardened {
-                ChildNumber::from_hardened_idx(index)
-            } else {
-                ChildNumber::from_normal_idx(index)
-            }
+            Ok(ChildNumber::from_idx(ChildIndex::new(index)?, is_hardened))
         }
     }
 }
@@ -1124,36 +1071,26 @@ impl DerivationPath {
 
     /// Get an [Iterator] over the unhardened children of this [DerivationPath].
     pub fn normal_children(&self) -> DerivationPathIterator<'_> {
-        DerivationPathIterator::start_from(
-            self,
-            ChildNumber::Normal {
-                index: 0,
-            },
-        )
+        DerivationPathIterator::start_from(self, ChildNumber::Normal(ChildIndex::ZERO))
     }
 
     /// Get an [Iterator] over the hardened children of this [DerivationPath].
     pub fn hardened_children(&self) -> DerivationPathIterator<'_> {
-        DerivationPathIterator::start_from(
-            self,
-            ChildNumber::Hardened {
-                index: 0,
-            },
-        )
+        DerivationPathIterator::start_from(self, ChildNumber::Hardened(ChildIndex::ZERO))
     }
 
     /// Concatenate `self` with `path` and return the resulting new path.
     ///
     /// ```
-    /// use key_wallet::{DerivationPath, ChildNumber};
+    /// use key_wallet::{ChildIndex, ChildNumber, DerivationPath};
     /// use std::str::FromStr;
     ///
     /// let base = DerivationPath::from_str("m/42").unwrap();
     ///
     /// let deriv_1 = base.extend(DerivationPath::from_str("m/0/1").unwrap());
     /// let deriv_2 = base.extend(&[
-    ///     ChildNumber::from_normal_idx(0).unwrap(),
-    ///     ChildNumber::from_normal_idx(1).unwrap()
+    ///     ChildNumber::Normal(ChildIndex::ZERO),
+    ///     ChildNumber::Normal(ChildIndex::new_const(1))
     /// ]);
     ///
     /// assert_eq!(deriv_1, deriv_2);
@@ -1285,7 +1222,7 @@ impl ExtendedPrivKey {
             network,
             depth: 0,
             parent_fingerprint: Default::default(),
-            child_number: ChildNumber::from_normal_idx(0)?,
+            child_number: ChildNumber::Normal(ChildIndex::ZERO),
             private_key: EcdsaSecretKey::from_bytes(&hmac_secret_half(&hmac_result))?,
             chain_code: ChainCode::from_hmac(hmac_result),
         })
@@ -1312,31 +1249,23 @@ impl ExtendedPrivKey {
     pub fn ckd_priv(&self, i: ChildNumber) -> Result<ExtendedPrivKey, Error> {
         let mut hmac_engine: HmacEngine<sha512::HashEngine> = HmacEngine::new(&self.chain_code[..]);
         match i {
-            ChildNumber::Normal {
-                index,
-            } => {
+            ChildNumber::Normal(index) => {
                 // Non-hardened key: compute public data and use that
                 hmac_engine.input(&self.private_key.public_key().to_compressed()[..]);
-                hmac_engine.input(&index.to_be_bytes());
+                hmac_engine.input(&index.get().to_be_bytes());
             }
-            ChildNumber::Hardened {
-                index,
-            } => {
+            ChildNumber::Hardened(index) => {
                 // Hardened key: use only secret data to prevent public derivation
                 hmac_engine.input(&[0u8]);
                 hmac_engine.input(&self.private_key.to_bytes()[..]);
-                hmac_engine.input(&(index | (1 << 31)).to_be_bytes());
+                hmac_engine.input(&(index.get() | (1 << 31)).to_be_bytes());
             }
-            ChildNumber::Normal256 {
-                index,
-            } => {
+            ChildNumber::Normal256(index) => {
                 // Non-hardened key with 256-bit index
                 hmac_engine.input(&self.private_key.public_key().to_compressed()[..]);
                 hmac_engine.input(&index);
             }
-            ChildNumber::Hardened256 {
-                index,
-            } => {
+            ChildNumber::Hardened256(index) => {
                 // Hardened key with 256-bit index
                 hmac_engine.input(&[0u8]);
                 hmac_engine.input(&self.private_key.to_bytes()[..]);
@@ -1443,13 +1372,9 @@ impl ExtendedPrivKey {
 
         let child_number_bytes = data[10..42].try_into().expect("32 bytes for child number");
         let child_number = if is_hardened {
-            ChildNumber::Hardened256 {
-                index: child_number_bytes,
-            }
+            ChildNumber::Hardened256(child_number_bytes)
         } else {
-            ChildNumber::Normal256 {
-                index: child_number_bytes,
-            }
+            ChildNumber::Normal256(child_number_bytes)
         };
 
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
@@ -1486,24 +1411,15 @@ impl ExtendedPrivKey {
 
         // Hardening byte
         let hardening_byte = match self.child_number {
-            ChildNumber::Normal256 {
-                ..
-            } => 0x00,
-            ChildNumber::Hardened256 {
-                ..
-            } => 0x01,
+            ChildNumber::Normal256(_) => 0x00,
+            ChildNumber::Hardened256(_) => 0x01,
             _ => panic!("Invalid child number for 256-bit format"),
         };
         ret[9] = hardening_byte;
 
         // Child number (32 bytes)
         let child_number_bytes = match self.child_number {
-            ChildNumber::Normal256 {
-                index,
-            }
-            | ChildNumber::Hardened256 {
-                index,
-            } => index,
+            ChildNumber::Normal256(index) | ChildNumber::Hardened256(index) => index,
             _ => panic!("Invalid child number for 256-bit format"),
         };
         ret[10..42].copy_from_slice(&child_number_bytes);
@@ -1574,19 +1490,14 @@ impl ExtendedPubKey {
     /// Compute the scalar tweak added to this key to get a child key
     pub fn ckd_pub_tweak(&self, i: ChildNumber) -> Result<(EcdsaSecretKey, ChainCode), Error> {
         match i {
-            ChildNumber::Hardened {
-                ..
+            ChildNumber::Hardened(_) | ChildNumber::Hardened256(_) => {
+                Err(Error::CannotDeriveFromHardenedKey)
             }
-            | ChildNumber::Hardened256 {
-                ..
-            } => Err(Error::CannotDeriveFromHardenedKey),
-            ChildNumber::Normal {
-                index: n,
-            } => {
+            ChildNumber::Normal(n) => {
                 let mut hmac_engine: HmacEngine<sha512::HashEngine> =
                     HmacEngine::new(&self.chain_code[..]);
                 hmac_engine.input(&self.public_key.to_compressed()[..]);
-                hmac_engine.input(&n.to_be_bytes());
+                hmac_engine.input(&n.get().to_be_bytes());
 
                 let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
 
@@ -1594,9 +1505,7 @@ impl ExtendedPubKey {
                 let chain_code = ChainCode::from_hmac(hmac_result);
                 Ok((private_key, chain_code))
             }
-            ChildNumber::Normal256 {
-                index: idx,
-            } => {
+            ChildNumber::Normal256(idx) => {
                 // UInt256 mode (index >= 2^32)
                 let mut hmac_engine: HmacEngine<sha512::HashEngine> =
                     HmacEngine::new(&self.chain_code[..]);
@@ -1707,24 +1616,15 @@ impl ExtendedPubKey {
 
         // Hardening byte
         let hardening_byte = match self.child_number {
-            ChildNumber::Normal256 {
-                ..
-            } => 0x00,
-            ChildNumber::Hardened256 {
-                ..
-            } => 0x01,
+            ChildNumber::Normal256(_) => 0x00,
+            ChildNumber::Hardened256(_) => 0x01,
             _ => panic!("Invalid child number for 256-bit format"),
         };
         ret[9] = hardening_byte;
 
         // Child number (32 bytes)
         let child_number_bytes = match self.child_number {
-            ChildNumber::Normal256 {
-                index,
-            }
-            | ChildNumber::Hardened256 {
-                index,
-            } => index,
+            ChildNumber::Normal256(index) | ChildNumber::Hardened256(index) => index,
             _ => panic!("Invalid child number for 256-bit format"),
         };
         ret[10..42].copy_from_slice(&child_number_bytes);
@@ -1760,13 +1660,9 @@ impl ExtendedPubKey {
 
         let child_number_bytes = data[10..42].try_into().expect("32 bytes for child number");
         let child_number = if is_hardened {
-            ChildNumber::Hardened256 {
-                index: child_number_bytes,
-            }
+            ChildNumber::Hardened256(child_number_bytes)
         } else {
-            ChildNumber::Normal256 {
-                index: child_number_bytes,
-            }
+            ChildNumber::Normal256(child_number_bytes)
         };
 
         let chain_code = data[42..74].try_into().expect("32 bytes for chain code");
@@ -1896,43 +1792,43 @@ mod tests {
         assert_eq!(DerivationPath::from_str("m"), Ok(Vec::new().into()));
         assert_eq!(
             DerivationPath::from_str("m/0'"),
-            Ok(vec![ChildNumber::from_hardened_idx(0).unwrap()].into())
+            Ok(vec![ChildNumber::Hardened(ChildIndex::ZERO)].into())
         );
         assert_eq!(
             DerivationPath::from_str("m/0'/1"),
             Ok(vec![
-                ChildNumber::from_hardened_idx(0).unwrap(),
-                ChildNumber::from_normal_idx(1).unwrap()
+                ChildNumber::Hardened(ChildIndex::ZERO),
+                ChildNumber::Normal(ChildIndex::new_const(1))
             ]
             .into())
         );
         assert_eq!(
             DerivationPath::from_str("m/0h/1/2'"),
             Ok(vec![
-                ChildNumber::from_hardened_idx(0).unwrap(),
-                ChildNumber::from_normal_idx(1).unwrap(),
-                ChildNumber::from_hardened_idx(2).unwrap(),
+                ChildNumber::Hardened(ChildIndex::ZERO),
+                ChildNumber::Normal(ChildIndex::new_const(1)),
+                ChildNumber::Hardened(ChildIndex::new_const(2)),
             ]
             .into())
         );
         assert_eq!(
             DerivationPath::from_str("m/0'/1/2h/2"),
             Ok(vec![
-                ChildNumber::from_hardened_idx(0).unwrap(),
-                ChildNumber::from_normal_idx(1).unwrap(),
-                ChildNumber::from_hardened_idx(2).unwrap(),
-                ChildNumber::from_normal_idx(2).unwrap(),
+                ChildNumber::Hardened(ChildIndex::ZERO),
+                ChildNumber::Normal(ChildIndex::new_const(1)),
+                ChildNumber::Hardened(ChildIndex::new_const(2)),
+                ChildNumber::Normal(ChildIndex::new_const(2)),
             ]
             .into())
         );
         assert_eq!(
             DerivationPath::from_str("m/0'/1/2'/2/1000000000"),
             Ok(vec![
-                ChildNumber::from_hardened_idx(0).unwrap(),
-                ChildNumber::from_normal_idx(1).unwrap(),
-                ChildNumber::from_hardened_idx(2).unwrap(),
-                ChildNumber::from_normal_idx(2).unwrap(),
-                ChildNumber::from_normal_idx(1000000000).unwrap(),
+                ChildNumber::Hardened(ChildIndex::ZERO),
+                ChildNumber::Normal(ChildIndex::new_const(1)),
+                ChildNumber::Hardened(ChildIndex::new_const(2)),
+                ChildNumber::Normal(ChildIndex::new_const(2)),
+                ChildNumber::Normal(ChildIndex::new_const(1000000000)),
             ]
             .into())
         );
@@ -1949,11 +1845,14 @@ mod tests {
         assert_eq!(path, path2);
         assert_eq!(
             &path[..2],
-            &[ChildNumber::from_hardened_idx(0).unwrap(), ChildNumber::from_normal_idx(1).unwrap()]
+            &[
+                ChildNumber::Hardened(ChildIndex::ZERO),
+                ChildNumber::Normal(ChildIndex::new_const(1))
+            ]
         );
         let indexed: DerivationPath = path[..2].into();
         assert_eq!(indexed, DerivationPath::from_str("m/0h/1").unwrap());
-        assert_eq!(indexed.child(ChildNumber::from_hardened_idx(2).unwrap()), path);
+        assert_eq!(indexed.child(ChildNumber::Hardened(ChildIndex::new_const(2))), path);
     }
 
     fn test_path(
@@ -1981,22 +1880,12 @@ mod tests {
         for &num in path.0.iter() {
             sk = sk.ckd_priv(num).unwrap();
             match num {
-                Normal {
-                    ..
-                }
-                | ChildNumber::Normal256 {
-                    ..
-                } => {
+                Normal(_) | ChildNumber::Normal256(_) => {
                     let pk2 = pk.ckd_pub(num).unwrap();
                     pk = ExtendedPubKey::from_priv(&sk);
                     assert_eq!(pk, pk2);
                 }
-                Hardened {
-                    ..
-                }
-                | ChildNumber::Hardened256 {
-                    ..
-                } => {
+                Hardened(_) | ChildNumber::Hardened256(_) => {
                     assert_eq!(pk.ckd_pub(num), Err(Error::CannotDeriveFromHardenedKey));
                     pk = ExtendedPubKey::from_priv(&sk);
                 }
@@ -2016,18 +1905,24 @@ mod tests {
     #[test]
     fn test_increment() {
         let idx = 9345497; // randomly generated, I promise
-        let cn = ChildNumber::from_normal_idx(idx).unwrap();
-        assert_eq!(cn.increment().ok(), Some(ChildNumber::from_normal_idx(idx + 1).unwrap()));
-        let cn = ChildNumber::from_hardened_idx(idx).unwrap();
-        assert_eq!(cn.increment().ok(), Some(ChildNumber::from_hardened_idx(idx + 1).unwrap()));
+        let cn = ChildNumber::Normal(ChildIndex::new(idx).unwrap());
+        assert_eq!(
+            cn.increment().ok(),
+            Some(ChildNumber::Normal(ChildIndex::new(idx + 1).unwrap()))
+        );
+        let cn = ChildNumber::Hardened(ChildIndex::new(idx).unwrap());
+        assert_eq!(
+            cn.increment().ok(),
+            Some(ChildNumber::Hardened(ChildIndex::new(idx + 1).unwrap()))
+        );
 
         let max = (1 << 31) - 1;
-        let cn = ChildNumber::from_normal_idx(max).unwrap();
+        let cn = ChildNumber::Normal(ChildIndex::new(max).unwrap());
         assert_eq!(cn.increment().err(), Some(Error::InvalidChildNumber(1 << 31)));
-        let cn = ChildNumber::from_hardened_idx(max).unwrap();
+        let cn = ChildNumber::Hardened(ChildIndex::new(max).unwrap());
         assert_eq!(cn.increment().err(), Some(Error::InvalidChildNumber(1 << 31)));
 
-        let cn = ChildNumber::from_normal_idx(350).unwrap();
+        let cn = ChildNumber::Normal(ChildIndex::new_const(350));
         let path = DerivationPath::from_str("m/42'").unwrap();
         let mut iter = path.children_from(cn);
         assert_eq!(iter.next(), Some("m/42'/350".parse().unwrap()));
@@ -2043,13 +1938,13 @@ mod tests {
         assert_eq!(iter.next(), Some("m/42'/350'/0'".parse().unwrap()));
         assert_eq!(iter.next(), Some("m/42'/350'/1'".parse().unwrap()));
 
-        let cn = ChildNumber::from_hardened_idx(42350).unwrap();
+        let cn = ChildNumber::Hardened(ChildIndex::new_const(42350));
         let path = DerivationPath::from_str("m/42'").unwrap();
         let mut iter = path.children_from(cn);
         assert_eq!(iter.next(), Some("m/42'/42350'".parse().unwrap()));
         assert_eq!(iter.next(), Some("m/42'/42351'".parse().unwrap()));
 
-        let cn = ChildNumber::from_hardened_idx(max).unwrap();
+        let cn = ChildNumber::Hardened(ChildIndex::new(max).unwrap());
         let path = DerivationPath::from_str("m/42'").unwrap();
         let mut iter = path.children_from(cn);
         assert!(iter.next().is_some());
@@ -2200,12 +2095,12 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     pub fn encode_decode_childnumber() {
-        serde_round_trip!(ChildNumber::from_normal_idx(0).unwrap());
-        serde_round_trip!(ChildNumber::from_normal_idx(1).unwrap());
-        serde_round_trip!(ChildNumber::from_normal_idx((1 << 31) - 1).unwrap());
-        serde_round_trip!(ChildNumber::from_hardened_idx(0).unwrap());
-        serde_round_trip!(ChildNumber::from_hardened_idx(1).unwrap());
-        serde_round_trip!(ChildNumber::from_hardened_idx((1 << 31) - 1).unwrap());
+        serde_round_trip!(ChildNumber::Normal(ChildIndex::ZERO));
+        serde_round_trip!(ChildNumber::Normal(ChildIndex::new_const(1)));
+        serde_round_trip!(ChildNumber::Normal(ChildIndex::new_const((1 << 31) - 1)));
+        serde_round_trip!(ChildNumber::Hardened(ChildIndex::ZERO));
+        serde_round_trip!(ChildNumber::Hardened(ChildIndex::new_const(1)));
+        serde_round_trip!(ChildNumber::Hardened(ChildIndex::new_const((1 << 31) - 1)));
     }
 
     #[test]
@@ -2235,12 +2130,12 @@ mod tests {
 
     #[test]
     fn fmt_child_number() {
-        assert_eq!("000005h", &format!("{:#06}", ChildNumber::from_hardened_idx(5).unwrap()));
-        assert_eq!("5h", &format!("{:#}", ChildNumber::from_hardened_idx(5).unwrap()));
-        assert_eq!("000005'", &format!("{:06}", ChildNumber::from_hardened_idx(5).unwrap()));
-        assert_eq!("5'", &format!("{}", ChildNumber::from_hardened_idx(5).unwrap()));
-        assert_eq!("42", &format!("{}", ChildNumber::from_normal_idx(42).unwrap()));
-        assert_eq!("000042", &format!("{:06}", ChildNumber::from_normal_idx(42).unwrap()));
+        assert_eq!("000005h", &format!("{:#06}", ChildNumber::Hardened(ChildIndex::new_const(5))));
+        assert_eq!("5h", &format!("{:#}", ChildNumber::Hardened(ChildIndex::new_const(5))));
+        assert_eq!("000005'", &format!("{:06}", ChildNumber::Hardened(ChildIndex::new_const(5))));
+        assert_eq!("5'", &format!("{}", ChildNumber::Hardened(ChildIndex::new_const(5))));
+        assert_eq!("42", &format!("{}", ChildNumber::Normal(ChildIndex::new_const(42))));
+        assert_eq!("000042", &format!("{:06}", ChildNumber::Normal(ChildIndex::new_const(42))));
     }
 
     #[test]
@@ -2258,7 +2153,7 @@ mod tests {
             network: Network::Mainnet,
             depth: 0,
             parent_fingerprint: Default::default(),
-            child_number: ChildNumber::Normal { index: 0 },
+            child_number: ChildNumber::Normal(ChildIndex::ZERO),
             private_key: sk,
             chain_code: ChainCode::from(&[0u8; 32][..])
         };
@@ -2350,79 +2245,101 @@ mod tests {
 
     #[test]
     fn test_bip_44_account_path() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
+        let path = DerivationPath::bip_44_account(Network::Mainnet, ChildIndex::ZERO);
         assert_eq!(path.to_string(), "m/44'/5'/0'");
     }
 
     #[test]
     fn test_bip_44_payment_path() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 0).unwrap();
+        let path = DerivationPath::bip_44_payment_path(
+            Network::Mainnet,
+            ChildIndex::ZERO,
+            true,
+            ChildIndex::ZERO,
+        );
         assert_eq!(path.to_string(), "m/44'/5'/0'/1/0");
 
-        let path = DerivationPath::bip_44_payment_path(Network::Testnet, 1, false, 42).unwrap();
+        let path = DerivationPath::bip_44_payment_path(
+            Network::Testnet,
+            ChildIndex::new_const(1),
+            false,
+            ChildIndex::new_const(42),
+        );
         assert_eq!(path.to_string(), "m/44'/1'/1'/0/42");
     }
 
     #[test]
-    fn bip_44_payment_path_rejects_indexes_past_31_bits() {
-        let max = 0x7fff_ffff;
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, max, false, max).unwrap();
-        assert_eq!(path.to_string(), "m/44'/5'/2147483647'/0/2147483647");
+    fn child_index_deserialization_rejects_values_past_31_bits() {
+        let cfg = bincode::config::standard();
+        let decode = |n: u32| {
+            let bytes = bincode::encode_to_vec(n, cfg).unwrap();
+            bincode::decode_from_slice::<ChildIndex, _>(&bytes, cfg).map(|(i, _)| i.get())
+        };
+        assert_eq!(decode(0x7fff_ffff).unwrap(), 0x7fff_ffff);
+        assert!(decode(0x8000_0000).is_err());
 
-        assert_eq!(
-            DerivationPath::bip_44_payment_path(Network::Mainnet, max + 1, false, 0),
-            Err(Error::InvalidChildNumber(max + 1))
-        );
-        assert_eq!(
-            DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, max + 1),
-            Err(Error::InvalidChildNumber(max + 1))
-        );
+        assert_eq!(serde_json::from_str::<ChildIndex>("2147483647").unwrap().get(), 0x7fff_ffff);
+        assert!(serde_json::from_str::<ChildIndex>("2147483648").is_err());
     }
 
     #[test]
     fn test_coinjoin_path() {
-        let path = DerivationPath::coinjoin_path(Network::Mainnet, 0).unwrap();
+        let path = DerivationPath::coinjoin_path(Network::Mainnet, ChildIndex::ZERO);
         assert_eq!(path.to_string(), "m/9'/5'/4'/0'");
 
-        let path = DerivationPath::coinjoin_path(Network::Testnet, 1).unwrap();
+        let path = DerivationPath::coinjoin_path(Network::Testnet, ChildIndex::new_const(1));
         assert_eq!(path.to_string(), "m/9'/1'/4'/1'");
     }
 
     #[test]
     fn test_identity_registration_path() {
-        let path = DerivationPath::identity_registration_path(Network::Mainnet, 10).unwrap();
+        let path =
+            DerivationPath::identity_registration_path(Network::Mainnet, ChildIndex::new_const(10));
         assert_eq!(path.to_string(), "m/9'/5'/5'/1'/10'");
     }
 
     #[test]
     fn test_identity_top_up_path() {
-        let path = DerivationPath::identity_top_up_path(Network::Testnet, 2, 3).unwrap();
+        let path = DerivationPath::identity_top_up_path(
+            Network::Testnet,
+            ChildIndex::new_const(2),
+            ChildIndex::new_const(3),
+        );
         assert_eq!(path.to_string(), "m/9'/1'/5'/2'/2'/3");
     }
 
     #[test]
     fn test_identity_invitation_path() {
-        let path = DerivationPath::identity_invitation_path(Network::Mainnet, 15).unwrap();
+        let path =
+            DerivationPath::identity_invitation_path(Network::Mainnet, ChildIndex::new_const(15));
         assert_eq!(path.to_string(), "m/9'/5'/5'/3'/15'");
     }
 
     #[test]
     fn test_asset_lock_address_top_up_path() {
-        let path = DerivationPath::asset_lock_address_top_up_path(Network::Mainnet, 7).unwrap();
+        let path = DerivationPath::asset_lock_address_top_up_path(
+            Network::Mainnet,
+            ChildIndex::new_const(7),
+        );
         assert_eq!(path.to_string(), "m/9'/5'/5'/4'/7'");
 
-        let path = DerivationPath::asset_lock_address_top_up_path(Network::Testnet, 0).unwrap();
+        let path =
+            DerivationPath::asset_lock_address_top_up_path(Network::Testnet, ChildIndex::ZERO);
         assert_eq!(path.to_string(), "m/9'/1'/5'/4'/0'");
     }
 
     #[test]
     fn test_asset_lock_shielded_address_top_up_path() {
-        let path =
-            DerivationPath::asset_lock_shielded_address_top_up_path(Network::Mainnet, 3).unwrap();
+        let path = DerivationPath::asset_lock_shielded_address_top_up_path(
+            Network::Mainnet,
+            ChildIndex::new_const(3),
+        );
         assert_eq!(path.to_string(), "m/9'/5'/5'/5'/3'");
 
-        let path =
-            DerivationPath::asset_lock_shielded_address_top_up_path(Network::Testnet, 1).unwrap();
+        let path = DerivationPath::asset_lock_shielded_address_top_up_path(
+            Network::Testnet,
+            ChildIndex::new_const(1),
+        );
         assert_eq!(path.to_string(), "m/9'/1'/5'/5'/1'");
     }
 
@@ -2431,19 +2348,17 @@ mod tests {
         let path = DerivationPath::identity_authentication_path(
             Network::Mainnet,
             KeyDerivationType::ECDSA,
-            1,
-            2,
-        )
-        .unwrap();
+            ChildIndex::new_const(1),
+            ChildIndex::new_const(2),
+        );
         assert_eq!(path.to_string(), "m/9'/5'/5'/0'/0'/1'/2'");
 
         let path = DerivationPath::identity_authentication_path(
             Network::Testnet,
             KeyDerivationType::BLS,
-            2,
-            3,
-        )
-        .unwrap();
+            ChildIndex::new_const(2),
+            ChildIndex::new_const(3),
+        );
         assert_eq!(path.to_string(), "m/9'/1'/5'/0'/1'/2'/3'");
     }
 
@@ -2477,9 +2392,8 @@ mod tests {
             [0x01; 32],
             [0x02; 32],
             ApplicationKeyPurpose::Encryption,
-            0,
-        )
-        .unwrap();
+            ChildIndex::ZERO,
+        );
         assert_eq!(
             path.to_string(),
             format!("m/9'/5'/5'/7'/0'/0x{}'/0x{}'/1'/0'", "01".repeat(32), "02".repeat(32))
@@ -2490,42 +2404,22 @@ mod tests {
             [0x01; 32],
             [0x02; 32],
             ApplicationKeyPurpose::Decryption,
-            7,
-        )
-        .unwrap();
+            ChildIndex::new_const(7),
+        );
         assert_eq!(
             path.to_string(),
             format!("m/9'/1'/5'/7'/0'/0x{}'/0x{}'/2'/7'", "01".repeat(32), "02".repeat(32))
         );
 
-        // The largest rotation fits in 31 bits; anything with the hardened bit set is rejected.
         let max = (1u32 << 31) - 1;
         let path = DerivationPath::application_encryption_path(
             Network::Mainnet,
             [0x01; 32],
             [0x02; 32],
             ApplicationKeyPurpose::Encryption,
-            max,
-        )
-        .unwrap();
-        assert_eq!(
-            path[path.len() - 1],
-            ChildNumber::Hardened {
-                index: max
-            }
+            ChildIndex::new_const(max),
         );
-        for rotation in [1u32 << 31, u32::MAX] {
-            assert_eq!(
-                DerivationPath::application_encryption_path(
-                    Network::Mainnet,
-                    [0x01; 32],
-                    [0x02; 32],
-                    ApplicationKeyPurpose::Encryption,
-                    rotation,
-                ),
-                Err(Error::InvalidChildNumber(rotation))
-            );
-        }
+        assert_eq!(path[path.len() - 1], ChildNumber::Hardened(ChildIndex::new_const(max)));
     }
 
     #[test]
@@ -2591,8 +2485,7 @@ mod tests {
                     contract_id,
                     key_purpose,
                     rotation,
-                )
-                .unwrap(),
+                ),
                 Network::Mainnet,
             )
         };
@@ -2619,23 +2512,33 @@ mod tests {
 
         // Keys under the DIP-13 layout, which ends with the hardened rotation level.
         assert_eq!(
-            encryption([0x35; 32], [0x6B; 32], ApplicationKeyPurpose::Encryption, 0),
+            encryption([0x35; 32], [0x6B; 32], ApplicationKeyPurpose::Encryption, ChildIndex::ZERO),
             "031a882c119e2b1f8e0349b444d877afa2599efeef49a26930fd25518cb6e9d57a"
         );
         assert_eq!(
-            encryption([0x35; 32], [0x6B; 32], ApplicationKeyPurpose::Encryption, 1),
+            encryption(
+                [0x35; 32],
+                [0x6B; 32],
+                ApplicationKeyPurpose::Encryption,
+                ChildIndex::new_const(1)
+            ),
             "03d0f6f0f48d968b9554d8e7fe467d7135bacf29d5c4994ca593bd10ebeed696f6"
         );
         assert_eq!(
-            encryption(ascending, descending, ApplicationKeyPurpose::Encryption, 0),
+            encryption(ascending, descending, ApplicationKeyPurpose::Encryption, ChildIndex::ZERO),
             "02dfed57ddaaea8c0758e8da44513520038eb8d6b0b92109953c14d6ab1087259b"
         );
         assert_eq!(
-            encryption(ascending, descending, ApplicationKeyPurpose::Decryption, 0),
+            encryption(ascending, descending, ApplicationKeyPurpose::Decryption, ChildIndex::ZERO),
             "020bcde800f41ad1f924477a9502f111445224cc9ab70114ae4e5099ba02bdd034"
         );
         assert_eq!(
-            encryption(ascending, descending, ApplicationKeyPurpose::Decryption, 1),
+            encryption(
+                ascending,
+                descending,
+                ApplicationKeyPurpose::Decryption,
+                ChildIndex::new_const(1)
+            ),
             "021b97869c21933673076a938337c28848c8bf8094bbe6883e3a4acbf33c639072"
         );
 
@@ -2683,15 +2586,14 @@ mod tests {
                 ascending,
                 descending,
                 ApplicationKeyPurpose::Decryption,
-                1,
+                ChildIndex::new_const(1),
             )
-            .unwrap()
         );
     }
 
     #[test]
     fn test_derive_priv_ecdsa_for_master_seed() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
+        let path = DerivationPath::bip_44_account(Network::Mainnet, ChildIndex::ZERO);
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2707,7 +2609,7 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_for_master_seed() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
+        let path = DerivationPath::bip_44_account(Network::Mainnet, ChildIndex::ZERO);
         let pk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2723,7 +2625,12 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_payment_change_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3).unwrap();
+        let path = DerivationPath::bip_44_payment_path(
+            Network::Mainnet,
+            ChildIndex::ZERO,
+            true,
+            ChildIndex::new_const(3),
+        );
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2736,7 +2643,12 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_payment_main_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3).unwrap();
+        let path = DerivationPath::bip_44_payment_path(
+            Network::Mainnet,
+            ChildIndex::ZERO,
+            false,
+            ChildIndex::new_const(3),
+        );
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2749,7 +2661,12 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_payment_change_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3).unwrap();
+        let path = DerivationPath::bip_44_payment_path(
+            Network::Mainnet,
+            ChildIndex::ZERO,
+            true,
+            ChildIndex::new_const(3),
+        );
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2764,7 +2681,12 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_payment_external_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3).unwrap();
+        let path = DerivationPath::bip_44_payment_path(
+            Network::Mainnet,
+            ChildIndex::ZERO,
+            false,
+            ChildIndex::new_const(3),
+        );
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),

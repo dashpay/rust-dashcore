@@ -20,7 +20,7 @@ use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use crate::transaction_checking::account_checker::CoreAccountTypeMatch;
 use crate::KeySource;
-use crate::{Account, AccountCollection, AccountType};
+use crate::{Account, AccountCollection, AccountType, ChildIndex};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -41,15 +41,15 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ManagedAccountCollection {
     /// Standard BIP44 accounts by index
-    pub standard_bip44_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
+    pub standard_bip44_accounts: BTreeMap<ChildIndex, ManagedCoreFundsAccount>,
     /// Standard BIP32 accounts by index
-    pub standard_bip32_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
+    pub standard_bip32_accounts: BTreeMap<ChildIndex, ManagedCoreFundsAccount>,
     /// CoinJoin accounts by index
-    pub coinjoin_accounts: BTreeMap<u32, ManagedCoreFundsAccount>,
+    pub coinjoin_accounts: BTreeMap<ChildIndex, ManagedCoreFundsAccount>,
     /// Identity registration account (optional)
     pub identity_registration: Option<ManagedCoreKeysAccount>,
     /// Identity top-up accounts by registration index
-    pub identity_topup: BTreeMap<u32, ManagedCoreKeysAccount>,
+    pub identity_topup: BTreeMap<ChildIndex, ManagedCoreKeysAccount>,
     /// Identity top-up not bound to identity (optional)
     pub identity_topup_not_bound: Option<ManagedCoreKeysAccount>,
     /// Identity invitation account (optional)
@@ -650,7 +650,7 @@ impl ManagedAccountCollection {
     /// (identity / asset-lock / provider) are not reachable via this index
     /// lookup. Use [`Self::funds_account`], [`Self::get_by_account_type_match`]
     /// or direct field access for those.
-    pub fn get(&self, index: u32) -> Option<&ManagedCoreFundsAccount> {
+    pub fn get(&self, index: ChildIndex) -> Option<&ManagedCoreFundsAccount> {
         if let Some(account) = self.standard_bip44_accounts.get(&index) {
             return Some(account);
         }
@@ -665,7 +665,7 @@ impl ManagedAccountCollection {
 
     /// Get a mutable funds-bearing account by primary index. See [`Self::get`]
     /// for which account types are reachable.
-    pub fn get_mut(&mut self, index: u32) -> Option<&mut ManagedCoreFundsAccount> {
+    pub fn get_mut(&mut self, index: ChildIndex) -> Option<&mut ManagedCoreFundsAccount> {
         if let Some(account) = self.standard_bip44_accounts.get_mut(&index) {
             return Some(account);
         }
@@ -873,7 +873,7 @@ impl ManagedAccountCollection {
     /// Remove a funds-bearing account by primary index. Mirrors [`Self::get`]
     /// in scope: only Standard BIP44, Standard BIP32, and CoinJoin accounts
     /// are removable through this method.
-    pub fn remove(&mut self, index: u32) -> Option<ManagedCoreFundsAccount> {
+    pub fn remove(&mut self, index: ChildIndex) -> Option<ManagedCoreFundsAccount> {
         if let Some(account) = self.standard_bip44_accounts.remove(&index) {
             return Some(account);
         }
@@ -888,7 +888,7 @@ impl ManagedAccountCollection {
 
     /// Whether a funds-bearing account exists at this primary index. Mirrors
     /// [`Self::get`] in scope.
-    pub fn contains_key(&self, index: u32) -> bool {
+    pub fn contains_key(&self, index: ChildIndex) -> bool {
         self.standard_bip44_accounts.contains_key(&index)
             || self.standard_bip32_accounts.contains_key(&index)
             || self.coinjoin_accounts.contains_key(&index)
@@ -1060,7 +1060,7 @@ impl ManagedAccountCollection {
     }
 
     /// Get all account indices
-    pub fn all_indices(&self) -> Vec<u32> {
+    pub fn all_indices(&self) -> Vec<ChildIndex> {
         let mut indices = Vec::new();
 
         // Add standard BIP44 indices
@@ -1183,20 +1183,20 @@ mod dashpay_funding_scope_tests {
         let mut collection = ManagedAccountCollection::default();
         collection
             .insert_funds_bearing_account(managed(AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             }))
             .expect("standard");
         collection
             .insert_funds_bearing_account(managed(AccountType::DashpayReceivingFunds {
-                index: 0,
+                index: ChildIndex::ZERO,
                 user_identity_id: [0xAA; 32],
                 friend_identity_id: [0xBB; 32],
             }))
             .expect("receival");
         collection
             .insert_funds_bearing_account(managed(AccountType::DashpayExternalAccount {
-                index: 0,
+                index: ChildIndex::ZERO,
                 user_identity_id: [0xAA; 32],
                 friend_identity_id: [0xBB; 32],
             }))

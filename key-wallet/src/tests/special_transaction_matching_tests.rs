@@ -25,6 +25,7 @@ use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccou
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::managed_wallet_info::ManagedWalletInfo;
 use crate::wallet::Wallet;
+use crate::ChildIndex;
 use crate::Network;
 
 use dashcore::blockdata::script::ScriptBuf;
@@ -156,7 +157,7 @@ async fn asset_lock_regular_output_to_identity_topup_address_matches() {
     wallet
         .add_account(
             crate::AccountType::IdentityTopUp {
-                registration_index,
+                registration_index: ChildIndex::new_const(registration_index),
             },
             None,
         )
@@ -164,18 +165,18 @@ async fn asset_lock_regular_output_to_identity_topup_address_matches() {
     info.add_managed_account(
         &wallet,
         crate::AccountType::IdentityTopUp {
-            registration_index,
+            registration_index: ChildIndex::new_const(registration_index),
         },
     )
     .expect("attach managed IdentityTopUp");
     let xpub = wallet
         .accounts
         .identity_topup
-        .get(&registration_index)
+        .get(&ChildIndex::new_const(registration_index))
         .expect("identity_topup[0]")
         .account_xpub;
     let address = info
-        .topup_managed_account_at_registration_index_mut(registration_index)
+        .topup_managed_account_at_registration_index_mut(ChildIndex::new_const(registration_index))
         .expect("identity_topup[0] managed")
         .next_address(Some(&xpub), true)
         .expect("derive address");
@@ -525,7 +526,7 @@ async fn provider_registration_extends_operator_key_gap_limit() {
     assert!(!new_operator_keys.is_empty(), "gap maintenance must derive new operator keys");
     for derived in new_operator_keys {
         let expected = bls_account
-            .operator_public_key_at(derived.info.index)
+            .operator_public_key_at(ChildIndex::new_const(derived.info.index))
             .expect("gate-free public derivation")
             .to_bytes()
             .to_vec();
@@ -746,7 +747,12 @@ async fn keys_account_record_is_thin_marker_internal_with_no_details() {
 // ---------------------------------------------------------------------------
 
 fn next_bip44_receive_script(wallet: &Wallet, info: &mut ManagedWalletInfo) -> ScriptBuf {
-    let xpub = wallet.accounts.standard_bip44_accounts.get(&0).expect("bip44 account").account_xpub;
+    let xpub = wallet
+        .accounts
+        .standard_bip44_accounts
+        .get(&ChildIndex::ZERO)
+        .expect("bip44 account")
+        .account_xpub;
     info.first_bip44_managed_account_mut()
         .expect("bip44 managed")
         .next_receive_address(Some(&xpub), true)
@@ -894,7 +900,12 @@ async fn provider_update_share_reward_to_bip44_address_matches() {
 #[tokio::test]
 async fn provider_update_service_payout_to_bip44_change_address_matches() {
     let (mut wallet, mut info) = make_wallet();
-    let xpub = wallet.accounts.standard_bip44_accounts.get(&0).expect("bip44 account").account_xpub;
+    let xpub = wallet
+        .accounts
+        .standard_bip44_accounts
+        .get(&ChildIndex::ZERO)
+        .expect("bip44 account")
+        .account_xpub;
     let script = info
         .first_bip44_managed_account_mut()
         .expect("bip44 managed")

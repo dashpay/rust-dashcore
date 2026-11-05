@@ -11,6 +11,7 @@ use crate::error::Error;
 use crate::mnemonic::Mnemonic;
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{Wallet, WalletType};
+use crate::ChildIndex;
 use crate::Network;
 
 const TEST_MNEMONIC: &str =
@@ -169,7 +170,7 @@ fn derive_extended_public_key_error_points_to_per_account_xpub() {
 fn add_account_none_on_keyless_wallet_returns_typed_error() {
     let full = built_full_wallet();
     let account_type = AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
     };
 

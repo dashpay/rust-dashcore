@@ -10,7 +10,7 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+use crate::bip32::{ChildIndex, ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
 use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 use crate::Network;
@@ -491,29 +491,28 @@ impl AddressPool {
 
         // Build the full path for record keeping
         let mut full_path = self.base_path.clone();
-        full_path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
+        full_path.push(ChildNumber::Normal(ChildIndex::new(index).map_err(Error::Bip32)?));
 
         // For derivation, we need the relative path from where the key_source is
         // The key_source xpub is at account level (e.g., m/44'/1'/0')
         // For standard accounts: [0, index] for external or [1, index] for internal
         // For special accounts (Absent): just [index] with no branch distinction
-        let relative_path =
-            match self.pool_type {
-                AddressPoolType::External => DerivationPath::from(vec![
-                    ChildNumber::from_normal_idx(0).map_err(Error::Bip32)?,
-                    ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
-                ]),
-                AddressPoolType::Internal => DerivationPath::from(vec![
-                    ChildNumber::from_normal_idx(1).map_err(Error::Bip32)?,
-                    ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
-                ]),
-                AddressPoolType::Absent => DerivationPath::from(vec![
-                    ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?,
-                ]),
-                AddressPoolType::AbsentHardened => DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(index).map_err(Error::Bip32)?,
-                ]),
-            };
+        let relative_path = match self.pool_type {
+            AddressPoolType::External => DerivationPath::from(vec![
+                ChildNumber::Normal(ChildIndex::ZERO),
+                ChildNumber::Normal(ChildIndex::new(index).map_err(Error::Bip32)?),
+            ]),
+            AddressPoolType::Internal => DerivationPath::from(vec![
+                ChildNumber::Normal(ChildIndex::new_const(1)),
+                ChildNumber::Normal(ChildIndex::new(index).map_err(Error::Bip32)?),
+            ]),
+            AddressPoolType::Absent => DerivationPath::from(vec![ChildNumber::Normal(
+                ChildIndex::new(index).map_err(Error::Bip32)?,
+            )]),
+            AddressPoolType::AbsentHardened => DerivationPath::from(vec![ChildNumber::Hardened(
+                ChildIndex::new(index).map_err(Error::Bip32)?,
+            )]),
+        };
 
         // Derive the key using the relative path
         let derived_key = key_source.derive_at_path(&relative_path)?;
@@ -1343,9 +1342,9 @@ mod tests {
         let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
         let path = DerivationPath::from(vec![
-            ChildNumber::from_hardened_idx(44).unwrap(),
-            ChildNumber::from_hardened_idx(1).unwrap(),
-            ChildNumber::from_hardened_idx(0).unwrap(),
+            ChildNumber::Hardened(ChildIndex::new_const(44)),
+            ChildNumber::Hardened(ChildIndex::new_const(1)),
+            ChildNumber::Hardened(ChildIndex::ZERO),
         ]);
         let account_key = master.derive_priv(&path).unwrap();
 
@@ -1354,7 +1353,7 @@ mod tests {
 
     #[test]
     fn test_address_pool_generation() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1371,7 +1370,7 @@ mod tests {
 
     #[test]
     fn test_generate_up_to() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let key_source = test_key_source();
         let mut pool = AddressPool::new(
             base_path,
@@ -1392,7 +1391,7 @@ mod tests {
 
     #[test]
     fn test_address_usage() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1415,7 +1414,7 @@ mod tests {
 
     #[test]
     fn test_next_unused() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1435,7 +1434,7 @@ mod tests {
 
     #[test]
     fn test_set_gap_limit_widens_and_generates() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let key_source = test_key_source();
 
         // Start with a small gap limit (5 pre-generated addresses).
@@ -1465,7 +1464,7 @@ mod tests {
 
     #[test]
     fn test_reserve_returns_distinct_addresses() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1493,7 +1492,7 @@ mod tests {
 
     #[test]
     fn test_release_returns_address_to_pool() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1517,7 +1516,7 @@ mod tests {
 
     #[test]
     fn test_release_is_idempotent() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1542,7 +1541,7 @@ mod tests {
 
     #[test]
     fn test_reserved_promoted_to_used_clears_reservation() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1569,7 +1568,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn test_reservation_survives_serde_round_trip() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1597,7 +1596,7 @@ mod tests {
     #[cfg(feature = "bincode")]
     #[test]
     fn test_reservation_survives_bincode_round_trip() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1625,7 +1624,7 @@ mod tests {
 
     #[test]
     fn test_sweep_expired_reservations() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1664,7 +1663,7 @@ mod tests {
 
     #[test]
     fn test_reset_usage_clears_reservations() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,
@@ -1688,7 +1687,7 @@ mod tests {
 
     #[test]
     fn test_prune_never_drops_reserved() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let gap_limit = 5;
         let mut pool = AddressPool::new_without_generation(
             base_path,
@@ -1725,7 +1724,7 @@ mod tests {
 
     #[test]
     fn test_gap_limit_maintenance() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let key_source = test_key_source();
         let gap_limit = 5;
 
@@ -1776,7 +1775,7 @@ mod tests {
 
     #[test]
     fn test_reserved_addresses_count_against_gap_limit() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let key_source = test_key_source();
         let gap_limit = 5;
 
@@ -1800,7 +1799,7 @@ mod tests {
     #[test]
     fn test_address_pool_builder() {
         let pool = AddressPoolBuilder::new()
-            .base_path(DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]))
+            .base_path(DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]))
             .internal(true)
             .gap_limit(10)
             .network(Network::Testnet)
@@ -1815,7 +1814,7 @@ mod tests {
 
     #[test]
     fn test_scan_for_usage() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
         let mut pool = AddressPool::new_without_generation(
             base_path,
             AddressPoolType::External,

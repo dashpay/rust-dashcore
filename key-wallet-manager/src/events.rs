@@ -626,6 +626,7 @@ mod project_derived_addresses_tests {
     use key_wallet::account::StandardAccountType;
     use key_wallet::bip32::{ChildNumber, DerivationPath};
     use key_wallet::managed_account::address_pool::{AddressInfo, AddressState};
+    use key_wallet::ChildIndex;
     use std::collections::BTreeMap;
 
     /// Compressed encoding of the secp256k1 generator point (G).
@@ -662,8 +663,8 @@ mod project_derived_addresses_tests {
         let address = dashcore::Address::p2pkh(&pubkey, key_wallet::Network::Testnet);
         let script_pubkey = address.script_pubkey();
         let path = DerivationPath::from(vec![
-            ChildNumber::from_normal_idx(0).unwrap(),
-            ChildNumber::from_normal_idx(index).unwrap(),
+            ChildNumber::Normal(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::new(index).unwrap()),
         ]);
         let pubkey_bytes = if alt_key {
             TEST_PUBKEY_2G.to_vec()
@@ -692,7 +693,7 @@ mod project_derived_addresses_tests {
 
     fn standard_account_0() -> AccountType {
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         }
     }
