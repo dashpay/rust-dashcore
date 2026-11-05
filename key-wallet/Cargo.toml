@@ -48,6 +48,7 @@ hex-conservative = { workspace = true }
 zeroize = { workspace = true }
 tracing = "0.1"
 async-trait = "0.1"
+thiserror = "1.0"
 
 [dev-dependencies]
 bincode = { workspace = true, features = ["serde"] }

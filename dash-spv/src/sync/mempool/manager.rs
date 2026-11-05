@@ -1353,6 +1353,79 @@ mod tests {
         assert_eq!(locks[0], (txid, Some(dummy_instant_lock(txid))));
     }
 
+    #[test_case::test_case(true, false; "known pending")]
+    #[test_case::test_case(true, true; "known uncertain")]
+    #[test_case::test_case(false, false; "early pending")]
+    #[test_case::test_case(false, true; "early uncertain")]
+    #[tokio::test]
+    async fn should_ignore_unverified_instant_lock(known: bool, uncertain: bool) {
+        use crate::sync::SyncManager;
+        let (mut manager, requests, _rx) = create_test_manager();
+        let tx = dashcore::Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+        assert!(manager.start_broadcast(&tx, &requests).is_empty());
+        if known {
+            manager.transactions.insert(
+                txid,
+                crate::types::UnconfirmedTransaction::new(
+                    tx.clone(),
+                    dashcore::Amount::from_sat(0),
+                    false,
+                    false,
+                    Vec::new(),
+                    0,
+                ),
+            );
+        }
+        let status = if uncertain {
+            BroadcastStatus::Uncertain
+        } else {
+            BroadcastStatus::Pending
+        };
+        manager.broadcasts.get_mut(&txid).unwrap().status = status;
+        let mut lock = dashcore::InstantLock::dummy(0..1);
+        lock.txid = txid;
+        let events = manager
+            .handle_sync_event(
+                &SyncEvent::InstantLockReceived {
+                    instant_lock: lock.clone(),
+                    validated: false,
+                },
+                &requests,
+            )
+            .await
+            .unwrap();
+        assert!(events.is_empty(), "unverified locks cannot accept broadcasts");
+        assert_eq!(manager.broadcasts.get(&txid).unwrap().status, status);
+        assert!(manager.pending_is_locks.is_empty());
+        assert!(!manager.transactions.get(&txid).is_some_and(|tx| tx.is_instant_send));
+        assert!(manager.wallet.read().await.processed_instant_locks.lock().await.is_empty());
+
+        let events = manager
+            .handle_sync_event(
+                &SyncEvent::InstantLockReceived {
+                    instant_lock: lock.clone(),
+                    validated: true,
+                },
+                &requests,
+            )
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1, "later verification must still accept the broadcast");
+        if known {
+            assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
+            assert!(!manager.wallet.read().await.processed_instant_locks.lock().await.is_empty());
+        } else {
+            assert_eq!(manager.pending_is_locks.get(&txid).unwrap().0, lock);
+        }
+    }
+
     #[tokio::test]
     async fn test_mark_instant_send_stores_pending_for_unknown() {
         let (mut manager, _requests, _rx) = create_test_manager();

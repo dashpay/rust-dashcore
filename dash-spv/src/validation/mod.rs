@@ -10,7 +10,10 @@ pub use block::BlockValidator;
 pub use chainlock::ChainLockValidator;
 pub use filter::{FilterValidationInput, FilterValidator};
 pub use header::BlockHeaderValidator;
-pub use instantlock::{InstantLockStructureValidator, InstantLockValidator};
+pub use instantlock::{
+    InstantLockStructureValidator, InstantLockValidator, InstantLockVerificationError,
+    VerifiedInstantLock,
+};
 
 use crate::error::ValidationResult;
 
