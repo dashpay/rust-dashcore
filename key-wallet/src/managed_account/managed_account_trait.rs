@@ -5,6 +5,7 @@
 //! depend on funds bookkeeping (balance / UTXOs / spent outpoints) lives here
 //! as default-method implementations so it is written exactly once.
 
+use crate::ChildIndex;
 use std::collections::BTreeMap;
 
 #[cfg(feature = "bls")]
@@ -85,12 +86,12 @@ pub trait ManagedAccountTrait {
     // ----- Provided: defaults built on the primitives above -----
 
     /// Get the account index
-    fn index(&self) -> Option<u32> {
+    fn index(&self) -> Option<ChildIndex> {
         self.managed_account_type().index()
     }
 
     /// Get the account index or 0 if none exists
-    fn index_or_default(&self) -> u32 {
+    fn index_or_default(&self) -> ChildIndex {
         self.managed_account_type().index_or_default()
     }
 

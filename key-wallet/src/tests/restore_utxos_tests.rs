@@ -1,6 +1,7 @@
 //! `ManagedWalletInfo::restore_utxos` places each UTXO in the account that
 //! owns its address (#1294).
 
+use crate::ChildIndex;
 use dashcore::{Address, BlockHash, OutPoint, Transaction};
 use test_case::test_case;
 
@@ -15,7 +16,7 @@ use crate::{KeySource, ManagedAccountType, Utxo};
 
 /// The external pool of CoinJoin account 0.
 fn coinjoin_pool(ctx: &TestWalletContext) -> &AddressPool {
-    match ctx.managed_wallet.accounts.coinjoin_accounts[&0].managed_account_type() {
+    match ctx.managed_wallet.accounts.coinjoin_accounts[&ChildIndex::ZERO].managed_account_type() {
         ManagedAccountType::CoinJoin {
             external_addresses,
             ..
@@ -27,7 +28,8 @@ fn coinjoin_pool(ctx: &TestWalletContext) -> &AddressPool {
 /// The CoinJoin account 0 external address at `index`, derived on a copy of
 /// the pool so the wallet's own pool stays as it is.
 fn coinjoin_address(ctx: &TestWalletContext, index: u32) -> Address {
-    let xpub = ctx.wallet.get_coinjoin_account(0).expect("CoinJoin account").account_xpub;
+    let xpub =
+        ctx.wallet.get_coinjoin_account(ChildIndex::ZERO).expect("CoinJoin account").account_xpub;
     let mut pool = coinjoin_pool(ctx).clone();
     pool.generate_up_to(index, &KeySource::Public(xpub)).expect("derives");
     pool.address_at_index(index).expect("derived")
@@ -48,12 +50,12 @@ fn funded(address: &Address, input: u8, value: u64) -> (Transaction, Utxo) {
 fn befriend_both_ways(ctx: &mut TestWalletContext) -> (AccountType, AccountType) {
     let (us, them) = ([0xaa; 32], [0xbb; 32]);
     let receiving = AccountType::DashpayReceivingFunds {
-        index: 0,
+        index: ChildIndex::ZERO,
         user_identity_id: us,
         friend_identity_id: them,
     };
     let reverse_external = AccountType::DashpayExternalAccount {
-        index: 0,
+        index: ChildIndex::ZERO,
         user_identity_id: them,
         friend_identity_id: us,
     };
@@ -109,8 +111,10 @@ async fn a_coinjoin_utxo_past_the_stored_window_restores_into_coinjoin() {
     assert!(unmatched.is_empty());
     let accounts = &ctx.managed_wallet.accounts;
     for utxo in [&inside, &beyond] {
-        assert!(accounts.coinjoin_accounts[&0].utxos.contains_key(&utxo.outpoint));
-        assert!(!accounts.standard_bip44_accounts[&0].utxos.contains_key(&utxo.outpoint));
+        assert!(accounts.coinjoin_accounts[&ChildIndex::ZERO].utxos.contains_key(&utxo.outpoint));
+        assert!(!accounts.standard_bip44_accounts[&ChildIndex::ZERO]
+            .utxos
+            .contains_key(&utxo.outpoint));
     }
 
     let block = TransactionContext::InBlock(BlockInfo::new(
@@ -210,14 +214,21 @@ fn a_pool_restored_as_used_is_extended_before_matching() {
     let mut ctx = TestWalletContext::new_random();
     let gap = coinjoin_pool(&ctx).gap_limit;
     let used = coinjoin_address(&ctx, gap - 1);
-    ctx.managed_wallet.accounts.coinjoin_accounts.get_mut(&0).unwrap().mark_address_used(&used);
+    ctx.managed_wallet
+        .accounts
+        .coinjoin_accounts
+        .get_mut(&ChildIndex::ZERO)
+        .unwrap()
+        .mark_address_used(&used);
     let (_, utxo) = funded(&coinjoin_address(&ctx, 2 * gap - 1), 0, 100_000);
 
     let unmatched =
         ctx.managed_wallet.restore_utxos(&ctx.wallet, [utxo.clone()]).expect("restores");
 
     assert!(unmatched.is_empty());
-    assert!(ctx.managed_wallet.accounts.coinjoin_accounts[&0].utxos.contains_key(&utxo.outpoint));
+    assert!(ctx.managed_wallet.accounts.coinjoin_accounts[&ChildIndex::ZERO]
+        .utxos
+        .contains_key(&utxo.outpoint));
 }
 
 /// A copy BIP44 already holds of a CoinJoin UTXO, as an earlier restore into
@@ -227,7 +238,8 @@ fn a_pool_restored_as_used_is_extended_before_matching() {
 fn a_copy_another_account_holds_is_taken_out_on_restore() {
     let mut ctx = TestWalletContext::new_random();
     let (_, utxo) = funded(&coinjoin_address(&ctx, 0), 0, 100_000);
-    let bip44 = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
+    let bip44 =
+        ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&ChildIndex::ZERO).unwrap();
     bip44.utxos.insert(utxo.outpoint, utxo.clone());
     let bip44_revision = bip44.monitor_revision();
 
@@ -236,9 +248,13 @@ fn a_copy_another_account_holds_is_taken_out_on_restore() {
 
     assert!(unmatched.is_empty());
     let accounts = &ctx.managed_wallet.accounts;
-    assert!(accounts.coinjoin_accounts[&0].utxos.contains_key(&utxo.outpoint));
-    assert!(!accounts.standard_bip44_accounts[&0].utxos.contains_key(&utxo.outpoint));
-    assert!(accounts.standard_bip44_accounts[&0].monitor_revision() > bip44_revision);
+    assert!(accounts.coinjoin_accounts[&ChildIndex::ZERO].utxos.contains_key(&utxo.outpoint));
+    assert!(!accounts.standard_bip44_accounts[&ChildIndex::ZERO]
+        .utxos
+        .contains_key(&utxo.outpoint));
+    assert!(
+        accounts.standard_bip44_accounts[&ChildIndex::ZERO].monitor_revision() > bip44_revision
+    );
     ctx.managed_wallet.update_balance();
     assert_eq!(ctx.managed_wallet.balance.total(), 100_000);
 }
@@ -260,17 +276,28 @@ fn a_restored_utxo_keeps_the_flags_of_the_copies_it_replaces(
     let accounts = &mut ctx.managed_wallet.accounts;
     let mut held = utxo.clone();
     held.is_locked = held_locked;
-    accounts.coinjoin_accounts.get_mut(&0).unwrap().utxos.insert(utxo.outpoint, held);
+    accounts
+        .coinjoin_accounts
+        .get_mut(&ChildIndex::ZERO)
+        .unwrap()
+        .utxos
+        .insert(utxo.outpoint, held);
     let mut misplaced = utxo.clone();
     misplaced.is_instantlocked = true;
     misplaced.is_trusted = true;
     misplaced.is_locked = misplaced_locked;
-    accounts.standard_bip44_accounts.get_mut(&0).unwrap().utxos.insert(utxo.outpoint, misplaced);
+    accounts
+        .standard_bip44_accounts
+        .get_mut(&ChildIndex::ZERO)
+        .unwrap()
+        .utxos
+        .insert(utxo.outpoint, misplaced);
     utxo.is_locked = !(held_locked || misplaced_locked);
 
     ctx.managed_wallet.restore_utxos(&ctx.wallet, [utxo.clone()]).expect("restores");
 
-    let restored = &ctx.managed_wallet.accounts.coinjoin_accounts[&0].utxos[&utxo.outpoint];
+    let restored =
+        &ctx.managed_wallet.accounts.coinjoin_accounts[&ChildIndex::ZERO].utxos[&utxo.outpoint];
     assert_eq!(restored.is_locked, expected_locked);
     assert!(restored.is_instantlocked);
     assert!(restored.is_trusted);
@@ -305,7 +332,8 @@ async fn an_outpoint_already_seen_spent_is_not_credited(
             ctx.managed_wallet.observed_spent_outpoints.insert(outpoint, 1_001);
         }
         SeenSpent::BeforeFunded => {
-            let coinjoin = ctx.managed_wallet.accounts.coinjoin_accounts.get_mut(&0).unwrap();
+            let coinjoin =
+                ctx.managed_wallet.accounts.coinjoin_accounts.get_mut(&ChildIndex::ZERO).unwrap();
             coinjoin.spent_before_funded.insert(outpoint, utxo.clone());
         }
         SeenSpent::ByTheAccount => {
@@ -332,7 +360,7 @@ async fn an_outpoint_already_seen_spent_is_not_credited(
 
     assert!(unmatched.is_empty());
     assert_eq!(held_by_any_funds_account(&ctx, &outpoint), credited);
-    let coinjoin = &ctx.managed_wallet.accounts.coinjoin_accounts[&0];
+    let coinjoin = &ctx.managed_wallet.accounts.coinjoin_accounts[&ChildIndex::ZERO];
     assert_eq!(coinjoin.spent_before_funded.contains_key(&outpoint), held_as_spent_before_funded);
 }
 
@@ -343,7 +371,7 @@ async fn an_outpoint_already_seen_spent_is_not_credited(
 async fn a_restored_coin_whose_recorded_spend_a_fork_drops_comes_back() {
     let mut ctx = TestWalletContext::new_random();
     let (_, coin) = funded(&ctx.receive_address, 0, 1_000_000);
-    let second_receive = ctx.managed_wallet.accounts.standard_bip44_accounts[&0]
+    let second_receive = ctx.managed_wallet.accounts.standard_bip44_accounts[&ChildIndex::ZERO]
         .managed_account_type()
         .address_pools()[0]
         .address_at_index(1)

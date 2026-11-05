@@ -6,7 +6,7 @@ use crate::gap_limit::{
 };
 
 use crate::managed_account::address_pool::AddressPoolType;
-use crate::{AccountType, AddressPool, DerivationPath};
+use crate::{AccountType, AddressPool, ChildIndex, DerivationPath};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use dashcore::ScriptBuf;
@@ -22,7 +22,7 @@ pub enum ManagedAccountType {
     /// Standard BIP44 account for regular transactions
     Standard {
         /// Account index
-        index: u32,
+        index: ChildIndex,
         /// Standard account type (BIP44 or BIP32)
         standard_account_type: StandardAccountType,
         /// External (receive) address pool
@@ -37,7 +37,7 @@ pub enum ManagedAccountType {
     /// (.../1/index) for mixing-change, so both chains must be watched to see all funds.
     CoinJoin {
         /// Account index
-        index: u32,
+        index: ChildIndex,
         /// External (mixed-coin receive) address pool — .../0/index
         external_addresses: AddressPool,
         /// Internal (mixing-change) address pool — .../1/index
@@ -51,7 +51,7 @@ pub enum ManagedAccountType {
     /// Identity top-up funding
     IdentityTopUp {
         /// Registration index (which identity this is topping up)
-        registration_index: u32,
+        registration_index: ChildIndex,
         /// Identity top-up address pool
         addresses: AddressPool,
     },
@@ -104,7 +104,7 @@ pub enum ManagedAccountType {
     /// DashPay receiving funds account (single-pool)
     DashpayReceivingFunds {
         /// Account index
-        index: u32,
+        index: ChildIndex,
         /// Our identity id
         user_identity_id: DashpayOurUserIdentityId,
         /// Contact identity id
@@ -115,7 +115,7 @@ pub enum ManagedAccountType {
     /// DashPay external (watch-only) account (single-pool)
     DashpayExternalAccount {
         /// Account index
-        index: u32,
+        index: ChildIndex,
         /// Our identity id
         user_identity_id: DashpayOurUserIdentityId,
         /// Contact identity id
@@ -128,9 +128,9 @@ pub enum ManagedAccountType {
     /// Address encoding (DIP-18 bech32m) is handled by the Platform repo.
     PlatformPayment {
         /// Account index (hardened)
-        account: u32,
+        account: ChildIndex,
         /// Key class (hardened)
-        key_class: u32,
+        key_class: ChildIndex,
         /// Platform payment address pool (single pool, non-hardened leaf index)
         addresses: AddressPool,
     },
@@ -139,7 +139,7 @@ pub enum ManagedAccountType {
 impl ManagedAccountType {
     /// Get the primary index for this account type
     /// Returns None for provider key types and identity types that don't have account indices
-    pub fn index(&self) -> Option<u32> {
+    pub fn index(&self) -> Option<ChildIndex> {
         match self {
             Self::Standard {
                 index,
@@ -196,12 +196,12 @@ impl ManagedAccountType {
     }
 
     /// Get the primary index for this account type, returning 0 if none exists
-    pub fn index_or_default(&self) -> u32 {
-        self.index().unwrap_or(0)
+    pub fn index_or_default(&self) -> ChildIndex {
+        self.index().unwrap_or(ChildIndex::ZERO)
     }
 
     /// Get the registration index for identity top-up accounts
-    pub fn registration_index(&self) -> Option<u32> {
+    pub fn registration_index(&self) -> Option<ChildIndex> {
         match self {
             Self::IdentityTopUp {
                 registration_index,
@@ -505,8 +505,7 @@ impl ManagedAccountType {
         network: crate::Network,
         key_source: &crate::KeySource,
     ) -> Result<AddressPool, crate::error::Error> {
-        let path =
-            account_type.derivation_path(network).unwrap_or_else(|_| DerivationPath::master());
+        let path = account_type.derivation_path(network);
 
         AddressPool::new(path, pool_type, gap_limit, network, key_source)
     }
@@ -520,11 +519,10 @@ impl ManagedAccountType {
         network: crate::Network,
         key_source: &crate::KeySource,
     ) -> Result<(AddressPool, AddressPool), crate::error::Error> {
-        let base_path =
-            account_type.derivation_path(network).unwrap_or_else(|_| DerivationPath::master());
+        let base_path = account_type.derivation_path(network);
 
         let mut external_path = base_path.clone();
-        external_path.push(crate::bip32::ChildNumber::from_normal_idx(0)?);
+        external_path.push(crate::bip32::ChildNumber::Normal(ChildIndex::ZERO));
         let external = AddressPool::new(
             external_path,
             AddressPoolType::External,
@@ -534,7 +532,7 @@ impl ManagedAccountType {
         )?;
 
         let mut internal_path = base_path;
-        internal_path.push(crate::bip32::ChildNumber::from_normal_idx(1)?);
+        internal_path.push(crate::bip32::ChildNumber::Normal(ChildIndex::new_const(1)));
         let internal = AddressPool::new(
             internal_path,
             AddressPoolType::Internal,

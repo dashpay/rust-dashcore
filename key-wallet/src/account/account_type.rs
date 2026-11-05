@@ -4,7 +4,7 @@
 
 use core::fmt::{self, Display, Formatter};
 
-use crate::bip32::{ChildNumber, DerivationPath};
+use crate::bip32::{ChildIndex, ChildNumber, DerivationPath};
 use crate::dip9::DerivationPathReference;
 use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, PlatformAccountConversionError,
@@ -35,21 +35,21 @@ pub enum AccountType {
     /// Standard BIP44 account for regular transactions
     Standard {
         /// Account index
-        index: u32,
+        index: ChildIndex,
         /// StandardAccountType
         standard_account_type: StandardAccountType,
     },
     /// CoinJoin account for private transactions
     CoinJoin {
         /// Account index
-        index: u32,
+        index: ChildIndex,
     },
     /// Identity registration funding
     IdentityRegistration,
     /// Identity top-up funding
     IdentityTopUp {
         /// Registration index (which identity this is topping up)
-        registration_index: u32,
+        registration_index: ChildIndex,
     },
     /// Identity top-up funding not bound to a specific identity
     IdentityTopUpNotBoundToIdentity,
@@ -77,7 +77,7 @@ pub enum AccountType {
     /// The derivation path used is user_identity_id/friend_identity_id
     DashpayReceivingFunds {
         /// Account index (account-level selection)
-        index: u32,
+        index: ChildIndex,
         /// Our identity id (32 bytes)
         user_identity_id: [u8; 32],
         /// Our contact's identity id (32 bytes)
@@ -87,7 +87,7 @@ pub enum AccountType {
     /// The derivation path used is friend_identity_id/user_identity_id
     DashpayExternalAccount {
         /// Account index (account-level selection)
-        index: u32,
+        index: ChildIndex,
         /// Our identity id (32 bytes)
         user_identity_id: [u8; 32],
         /// Our contact's identity id (32 bytes)
@@ -98,9 +98,9 @@ pub enum AccountType {
     /// Address encoding (DIP-18 bech32m) is handled by the Platform repo.
     PlatformPayment {
         /// Account index (hardened) - default 0'
-        account: u32,
+        account: ChildIndex,
         /// Key class (hardened) - default 0', 1' reserved for change-like segregation
-        key_class: u32,
+        key_class: ChildIndex,
     },
 }
 
@@ -206,7 +206,7 @@ impl TryFrom<AccountType> for AccountTypeToCheck {
 impl AccountType {
     /// Get the primary index for this account type
     /// Returns None for provider key types and identity types that don't have account indices
-    pub fn index(&self) -> Option<u32> {
+    pub fn index(&self) -> Option<ChildIndex> {
         match self {
             Self::Standard {
                 index,
@@ -244,7 +244,7 @@ impl AccountType {
     }
 
     /// Get the registration index for identity top-up accounts
-    pub fn registration_index(&self) -> Option<u32> {
+    pub fn registration_index(&self) -> Option<ChildIndex> {
         match self {
             Self::IdentityTopUp {
                 registration_index,
@@ -371,12 +371,12 @@ impl AccountType {
     }
 
     /// Get the derivation path for this account type
-    pub fn derivation_path(&self, network: Network) -> Result<DerivationPath, crate::error::Error> {
-        let coin_type = if network == Network::Mainnet {
+    pub fn derivation_path(&self, network: Network) -> DerivationPath {
+        let coin_type = ChildIndex::new_const(if network == Network::Mainnet {
             5
         } else {
             1
-        };
+        });
 
         match self {
             Self::Standard {
@@ -386,19 +386,15 @@ impl AccountType {
                 match standard_account_type {
                     StandardAccountType::BIP44Account => {
                         // m/44'/coin_type'/account'
-                        Ok(DerivationPath::from(vec![
-                            ChildNumber::from_hardened_idx(44)
-                                .map_err(crate::error::Error::Bip32)?,
-                            ChildNumber::from_hardened_idx(coin_type)
-                                .map_err(crate::error::Error::Bip32)?,
-                            ChildNumber::from_hardened_idx(*index)
-                                .map_err(crate::error::Error::Bip32)?,
-                        ]))
+                        DerivationPath::from(vec![
+                            ChildNumber::Hardened(ChildIndex::new_const(44)),
+                            ChildNumber::Hardened(coin_type),
+                            ChildNumber::Hardened(*index),
+                        ])
                     }
                     StandardAccountType::BIP32Account => {
                         // m/account'
-                        Ok(DerivationPath::from(vec![ChildNumber::from_hardened_idx(*index)
-                            .map_err(crate::error::Error::Bip32)?]))
+                        DerivationPath::from(vec![ChildNumber::Hardened(*index)])
                     }
                 }
             }
@@ -406,24 +402,23 @@ impl AccountType {
                 index,
             } => {
                 // m/9'/coin_type'/4'/account'
-                Ok(DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(crate::dip9::FEATURE_PURPOSE)
-                        .map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(coin_type)
-                        .map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(crate::dip9::FEATURE_PURPOSE_COINJOIN)
-                        .map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(*index).map_err(crate::error::Error::Bip32)?,
-                ]))
+                DerivationPath::from(vec![
+                    ChildNumber::Hardened(ChildIndex::new_const(crate::dip9::FEATURE_PURPOSE)),
+                    ChildNumber::Hardened(coin_type),
+                    ChildNumber::Hardened(ChildIndex::new_const(
+                        crate::dip9::FEATURE_PURPOSE_COINJOIN,
+                    )),
+                    ChildNumber::Hardened(*index),
+                ])
             }
             Self::IdentityRegistration => {
                 // Base path without index - actual key index added when deriving
                 match network {
                     Network::Mainnet => {
-                        Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_MAINNET))
+                        DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_MAINNET)
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
-                        Ok(DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_TESTNET))
+                        DerivationPath::from(crate::dip9::IDENTITY_REGISTRATION_PATH_TESTNET)
                     }
                 }
             }
@@ -438,20 +433,17 @@ impl AccountType {
                     }
                 };
                 let mut path = DerivationPath::from(base_path);
-                path.push(
-                    ChildNumber::from_hardened_idx(*registration_index)
-                        .map_err(crate::error::Error::Bip32)?,
-                );
-                Ok(path)
+                path.push(ChildNumber::Hardened(*registration_index));
+                path
             }
             Self::IdentityTopUpNotBoundToIdentity => {
                 // Base path without registration index - actual key index added when deriving
                 match network {
                     Network::Mainnet => {
-                        Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_MAINNET))
+                        DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_MAINNET)
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
-                        Ok(DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_TESTNET))
+                        DerivationPath::from(crate::dip9::IDENTITY_TOPUP_PATH_TESTNET)
                     }
                 }
             }
@@ -459,10 +451,10 @@ impl AccountType {
                 // Base path without index - actual key index added when deriving
                 match network {
                     Network::Mainnet => {
-                        Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_MAINNET))
+                        DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_MAINNET)
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
-                        Ok(DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_TESTNET))
+                        DerivationPath::from(crate::dip9::IDENTITY_INVITATION_PATH_TESTNET)
                     }
                 }
             }
@@ -470,65 +462,59 @@ impl AccountType {
                 // Base path without index - actual key index added when deriving
                 match network {
                     Network::Mainnet => {
-                        Ok(DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET))
+                        DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET)
                     }
                     Network::Testnet | Network::Devnet | Network::Regtest => {
-                        Ok(DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET))
+                        DerivationPath::from(crate::dip9::ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET)
                     }
                 }
             }
             Self::AssetLockShieldedAddressTopUp => {
                 // Base path without index - actual key index added when deriving
                 match network {
-                    Network::Mainnet => Ok(DerivationPath::from(
+                    Network::Mainnet => DerivationPath::from(
                         crate::dip9::ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
-                    )),
-                    Network::Testnet | Network::Devnet | Network::Regtest => {
-                        Ok(DerivationPath::from(
-                            crate::dip9::ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
-                        ))
-                    }
+                    ),
+                    Network::Testnet | Network::Devnet | Network::Regtest => DerivationPath::from(
+                        crate::dip9::ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
+                    ),
                 }
             }
             Self::ProviderVotingKeys => {
                 // DIP-3: m/9'/5'/3'/1' (base path, actual key index added when deriving)
-                Ok(DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(9).map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(coin_type)
-                        .map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(3).map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(1).map_err(crate::error::Error::Bip32)?,
-                ]))
+                DerivationPath::from(vec![
+                    ChildNumber::Hardened(ChildIndex::new_const(9)),
+                    ChildNumber::Hardened(coin_type),
+                    ChildNumber::Hardened(ChildIndex::new_const(3)),
+                    ChildNumber::Hardened(ChildIndex::new_const(1)),
+                ])
             }
             Self::ProviderOwnerKeys => {
                 // DIP-3: m/9'/5'/3'/2' (base path, actual key index added when deriving)
-                Ok(DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(9).map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(coin_type)
-                        .map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(3).map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(2).map_err(crate::error::Error::Bip32)?,
-                ]))
+                DerivationPath::from(vec![
+                    ChildNumber::Hardened(ChildIndex::new_const(9)),
+                    ChildNumber::Hardened(coin_type),
+                    ChildNumber::Hardened(ChildIndex::new_const(3)),
+                    ChildNumber::Hardened(ChildIndex::new_const(2)),
+                ])
             }
             Self::ProviderOperatorKeys => {
                 // DIP-3: m/9'/5'/3'/3' (base path, actual key index added when deriving)
-                Ok(DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(9).map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(coin_type)
-                        .map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(3).map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(3).map_err(crate::error::Error::Bip32)?,
-                ]))
+                DerivationPath::from(vec![
+                    ChildNumber::Hardened(ChildIndex::new_const(9)),
+                    ChildNumber::Hardened(coin_type),
+                    ChildNumber::Hardened(ChildIndex::new_const(3)),
+                    ChildNumber::Hardened(ChildIndex::new_const(3)),
+                ])
             }
             Self::ProviderPlatformKeys => {
                 // DIP-3: m/9'/5'/3'/4' (base path, actual key index added when deriving)
-                Ok(DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(9).map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(coin_type)
-                        .map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(3).map_err(crate::error::Error::Bip32)?,
-                    ChildNumber::from_hardened_idx(4).map_err(crate::error::Error::Bip32)?,
-                ]))
+                DerivationPath::from(vec![
+                    ChildNumber::Hardened(ChildIndex::new_const(9)),
+                    ChildNumber::Hardened(coin_type),
+                    ChildNumber::Hardened(ChildIndex::new_const(3)),
+                    ChildNumber::Hardened(ChildIndex::new_const(4)),
+                ])
             }
             Self::DashpayReceivingFunds {
                 index: account_index,
@@ -546,17 +532,10 @@ impl AccountType {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
                 };
-                path.push(
-                    ChildNumber::from_hardened_idx(*account_index)
-                        .map_err(crate::error::Error::Bip32)?,
-                );
-                path.push(ChildNumber::Normal256 {
-                    index: *user_identity_id,
-                });
-                path.push(ChildNumber::Normal256 {
-                    index: *friend_identity_id,
-                });
-                Ok(path)
+                path.push(ChildNumber::Hardened(*account_index));
+                path.push(ChildNumber::Normal256(*user_identity_id));
+                path.push(ChildNumber::Normal256(*friend_identity_id));
+                path
             }
             Self::DashpayExternalAccount {
                 index: account_index,
@@ -574,17 +553,10 @@ impl AccountType {
                         DerivationPath::from(crate::dip9::DASHPAY_ROOT_PATH_TESTNET)
                     }
                 };
-                path.push(
-                    ChildNumber::from_hardened_idx(*account_index)
-                        .map_err(crate::error::Error::Bip32)?,
-                );
-                path.push(ChildNumber::Normal256 {
-                    index: *friend_identity_id,
-                });
-                path.push(ChildNumber::Normal256 {
-                    index: *user_identity_id,
-                });
-                Ok(path)
+                path.push(ChildNumber::Hardened(*account_index));
+                path.push(ChildNumber::Normal256(*friend_identity_id));
+                path.push(ChildNumber::Normal256(*user_identity_id));
+                path
             }
             Self::PlatformPayment {
                 account,
@@ -600,14 +572,9 @@ impl AccountType {
                         DerivationPath::from(crate::dip9::PLATFORM_PAYMENT_ROOT_PATH_TESTNET)
                     }
                 };
-                path.push(
-                    ChildNumber::from_hardened_idx(*account).map_err(crate::error::Error::Bip32)?,
-                );
-                path.push(
-                    ChildNumber::from_hardened_idx(*key_class)
-                        .map_err(crate::error::Error::Bip32)?,
-                );
-                Ok(path)
+                path.push(ChildNumber::Hardened(*account));
+                path.push(ChildNumber::Hardened(*key_class));
+                path
             }
         }
     }
@@ -624,7 +591,7 @@ mod contact_owned_tests {
     #[test]
     fn only_the_dashpay_external_account_is_contact_owned() {
         let external = AccountType::DashpayExternalAccount {
-            index: 0,
+            index: ChildIndex::ZERO,
             user_identity_id: [0xAA; 32],
             friend_identity_id: [0xBB; 32],
         };
@@ -632,19 +599,19 @@ mod contact_owned_tests {
 
         let ours = [
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP32Account,
             },
             AccountType::CoinJoin {
-                index: 0,
+                index: ChildIndex::ZERO,
             },
             AccountType::IdentityRegistration,
             AccountType::IdentityTopUp {
-                registration_index: 0,
+                registration_index: ChildIndex::ZERO,
             },
             AccountType::IdentityTopUpNotBoundToIdentity,
             AccountType::IdentityInvitation,
@@ -655,13 +622,13 @@ mod contact_owned_tests {
             AccountType::ProviderOperatorKeys,
             AccountType::ProviderPlatformKeys,
             AccountType::DashpayReceivingFunds {
-                index: 0,
+                index: ChildIndex::ZERO,
                 user_identity_id: [0xAA; 32],
                 friend_identity_id: [0xBB; 32],
             },
             AccountType::PlatformPayment {
-                account: 0,
-                key_class: 0,
+                account: ChildIndex::ZERO,
+                key_class: ChildIndex::ZERO,
             },
         ];
         for account_type in ours {

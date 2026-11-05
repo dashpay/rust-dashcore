@@ -40,7 +40,7 @@ impl Wallet {
             Account::new(Some(wallet_id), account_type, xpub, self.network)?
         } else {
             // Derive from wallet's private key
-            let derivation_path = account_type.derivation_path(self.network)?;
+            let derivation_path = account_type.derivation_path(self.network);
 
             let root_key = self.root_extended_priv_key().map_err(|_| {
                 Error::KeylessWalletRequiresAccountKey {

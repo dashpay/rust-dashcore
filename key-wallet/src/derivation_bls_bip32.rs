@@ -50,7 +50,7 @@ use dashcore::Network;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
 
-use crate::bip32::{ChainCode, ChildNumber, DerivationPath, Fingerprint};
+use crate::bip32::{ChainCode, ChildIndex, ChildNumber, DerivationPath, Fingerprint};
 use hex_conservative::DisplayHex;
 
 /// The HMAC key used for generating the master key.
@@ -122,9 +122,7 @@ impl zeroize::Zeroize for ExtendedBLSPrivKey {
         // Derivation metadata — cleared too so the whole value is wiped.
         self.depth.zeroize();
         self.parent_fingerprint.zeroize();
-        self.child_number = ChildNumber::Normal {
-            index: 0,
-        };
+        self.child_number = ChildNumber::Normal(ChildIndex::ZERO);
         self.network = Network::Mainnet; // repr(u8)=0 discriminant, the "zero" value
     }
 }
@@ -190,7 +188,7 @@ impl ExtendedBLSPrivKey {
             network,
             depth: 0,
             parent_fingerprint: Default::default(),
-            child_number: ChildNumber::from_normal_idx(0).unwrap(),
+            child_number: ChildNumber::Normal(ChildIndex::ZERO),
             private_key,
             chain_code: ChainCode::from(chain_code_bytes),
         })
@@ -829,13 +827,12 @@ mod tests {
         let master = ExtendedBLSPrivKey::new_master(Network::Testnet, seed).unwrap();
 
         // Test hardened derivation
-        let child_hardened =
-            master.derive_priv(ChildNumber::from_hardened_idx(0).unwrap()).unwrap();
+        let child_hardened = master.derive_priv(ChildNumber::Hardened(ChildIndex::ZERO)).unwrap();
         assert_eq!(child_hardened.depth, 1);
         assert_eq!(child_hardened.parent_fingerprint, master.fingerprint().unwrap());
 
         // Test non-hardened derivation
-        let child_normal = master.derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+        let child_normal = master.derive_priv(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
         assert_eq!(child_normal.depth, 1);
         assert_eq!(child_normal.parent_fingerprint, master.fingerprint().unwrap());
     }
@@ -847,11 +844,11 @@ mod tests {
         let master_pub = master.to_extended_pub_key().unwrap();
 
         // Should be able to derive non-hardened child
-        let child_pub = master_pub.derive_pub(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+        let child_pub = master_pub.derive_pub(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
         assert_eq!(child_pub.depth, 1);
 
         // Should fail for hardened derivation
-        let hardened_result = master_pub.derive_pub(ChildNumber::from_hardened_idx(0).unwrap());
+        let hardened_result = master_pub.derive_pub(ChildNumber::Hardened(ChildIndex::ZERO));
         assert!(hardened_result.is_err());
     }
 
@@ -869,13 +866,15 @@ mod tests {
         let child_index = 238757;
 
         // Derive public key through private key
-        let child_priv =
-            master_priv.derive_priv(ChildNumber::from_normal_idx(child_index).unwrap()).unwrap();
+        let child_priv = master_priv
+            .derive_priv(ChildNumber::Normal(ChildIndex::new(child_index).unwrap()))
+            .unwrap();
         let pk1 = child_priv.to_extended_pub_key().unwrap().public_key;
 
         // Derive public key directly from parent public key
-        let child_pub =
-            master_pub.derive_pub(ChildNumber::from_normal_idx(child_index).unwrap()).unwrap();
+        let child_pub = master_pub
+            .derive_pub(ChildNumber::Normal(ChildIndex::new(child_index).unwrap()))
+            .unwrap();
         let pk2 = child_pub.public_key;
 
         // They should be equal
@@ -897,26 +896,26 @@ mod tests {
 
         // Derive through private keys
         let derived_priv = master_priv
-            .derive_priv(ChildNumber::from_normal_idx(0).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::ZERO))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(3).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(3)))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(8).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(8)))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(1).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(1)))
             .unwrap();
 
         let pk_from_priv = derived_priv.to_extended_pub_key().unwrap().public_key;
 
         // Derive through public keys
         let derived_pub = master_pub
-            .derive_pub(ChildNumber::from_normal_idx(0).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::ZERO))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(3).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(3)))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(8).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(8)))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(1).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(1)))
             .unwrap();
 
         let pk_from_pub = derived_pub.public_key;
@@ -943,14 +942,15 @@ mod tests {
 
         // Get public key from private derivation
         let pk1 = master_priv
-            .derive_priv(ChildNumber::from_normal_idx(child_index).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new(child_index).unwrap()))
             .unwrap()
             .to_extended_pub_key()
             .unwrap();
 
         // Get public key from public derivation
-        let pk2 =
-            master_pub.derive_pub(ChildNumber::from_normal_idx(child_index).unwrap()).unwrap();
+        let pk2 = master_pub
+            .derive_pub(ChildNumber::Normal(ChildIndex::new(child_index).unwrap()))
+            .unwrap();
 
         // They should be equal
         assert_eq!(
@@ -996,9 +996,10 @@ mod tests {
         let master_pub = master.to_extended_pub_key().unwrap();
 
         // Test with child 42
-        let child_priv_42 = master.derive_priv(ChildNumber::from_normal_idx(42).unwrap()).unwrap();
+        let child_priv_42 =
+            master.derive_priv(ChildNumber::Normal(ChildIndex::new_const(42))).unwrap();
         let child_pub_42 =
-            master_pub.derive_pub(ChildNumber::from_normal_idx(42).unwrap()).unwrap();
+            master_pub.derive_pub(ChildNumber::Normal(ChildIndex::new_const(42))).unwrap();
 
         assert_eq!(
             child_priv_42.to_extended_pub_key().unwrap().public_key.to_bytes(),
@@ -1007,9 +1008,9 @@ mod tests {
 
         // Test grandchild derivation (42 -> 12142)
         let grandchild_priv =
-            child_priv_42.derive_priv(ChildNumber::from_normal_idx(12142).unwrap()).unwrap();
+            child_priv_42.derive_priv(ChildNumber::Normal(ChildIndex::new_const(12142))).unwrap();
         let grandchild_pub =
-            child_pub_42.derive_pub(ChildNumber::from_normal_idx(12142).unwrap()).unwrap();
+            child_pub_42.derive_pub(ChildNumber::Normal(ChildIndex::new_const(12142))).unwrap();
 
         assert_eq!(
             grandchild_priv.to_extended_pub_key().unwrap().public_key.to_bytes(),
@@ -1027,10 +1028,10 @@ mod tests {
 
         // Create a non-hardened path
         let path = DerivationPath::from(vec![
-            ChildNumber::from_normal_idx(0).unwrap(),
-            ChildNumber::from_normal_idx(3).unwrap(),
-            ChildNumber::from_normal_idx(8).unwrap(),
-            ChildNumber::from_normal_idx(1).unwrap(),
+            ChildNumber::Normal(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::new_const(3)),
+            ChildNumber::Normal(ChildIndex::new_const(8)),
+            ChildNumber::Normal(ChildIndex::new_const(1)),
         ]);
 
         // Derive using path method on private key
@@ -1055,17 +1056,17 @@ mod tests {
 
         // Build the long derivation path: m/(2^31+5)/0/0/(2^31+56)/70/4
         let derived = master
-            .derive_priv(ChildNumber::from_hardened_idx(5).unwrap())
+            .derive_priv(ChildNumber::Hardened(ChildIndex::new_const(5)))
             .unwrap() // Hardened (2^31+5)
-            .derive_priv(ChildNumber::from_normal_idx(0).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::ZERO))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(0).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::ZERO))
             .unwrap()
-            .derive_priv(ChildNumber::from_hardened_idx(56).unwrap())
+            .derive_priv(ChildNumber::Hardened(ChildIndex::new_const(56)))
             .unwrap() // Hardened (2^31+56)
-            .derive_priv(ChildNumber::from_normal_idx(70).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(70)))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(4).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(4)))
             .unwrap();
 
         // Verify depth is correct
@@ -1075,7 +1076,7 @@ mod tests {
         assert_ne!(derived.chain_code, master.chain_code);
 
         // Verify the key can still derive children
-        let child = derived.derive_priv(ChildNumber::from_normal_idx(100).unwrap()).unwrap();
+        let child = derived.derive_priv(ChildNumber::Normal(ChildIndex::new_const(100))).unwrap();
         assert_eq!(child.depth, 7);
     }
 
@@ -1153,36 +1154,37 @@ mod tests {
 
         // Derive child 238757 through private key
         let pk1 = esk
-            .derive_priv(ChildNumber::from_normal_idx(238757).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(238757)))
             .unwrap()
             .to_extended_pub_key()
             .unwrap()
             .public_key;
 
         // Derive child 238757 through public key
-        let pk2 = epk.derive_pub(ChildNumber::from_normal_idx(238757).unwrap()).unwrap().public_key;
+        let pk2 =
+            epk.derive_pub(ChildNumber::Normal(ChildIndex::new_const(238757))).unwrap().public_key;
 
         assert_eq!(pk1.to_bytes(), pk2.to_bytes());
 
         // Test path m/0/3/8/1
         let sk3 = esk
-            .derive_priv(ChildNumber::from_normal_idx(0).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::ZERO))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(3).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(3)))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(8).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(8)))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(1).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(1)))
             .unwrap();
 
         let pk4 = epk
-            .derive_pub(ChildNumber::from_normal_idx(0).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::ZERO))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(3).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(3)))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(8).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(8)))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(1).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(1)))
             .unwrap();
 
         assert_eq!(
@@ -1200,9 +1202,10 @@ mod tests {
         let esk1 = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed1).unwrap();
 
         // Test hardened child derivation
-        let esk77_hardened = esk1.derive_priv(ChildNumber::from_hardened_idx(77).unwrap()).unwrap();
+        let esk77_hardened =
+            esk1.derive_priv(ChildNumber::Hardened(ChildIndex::new_const(77))).unwrap();
         let esk77_hardened_copy =
-            esk1.derive_priv(ChildNumber::from_hardened_idx(77).unwrap()).unwrap();
+            esk1.derive_priv(ChildNumber::Hardened(ChildIndex::new_const(77))).unwrap();
 
         // Keys derived with same index should be equal
         assert_eq!(
@@ -1212,7 +1215,8 @@ mod tests {
         assert_eq!(esk77_hardened.chain_code, esk77_hardened_copy.chain_code);
 
         // Test non-hardened derivation
-        let esk77_normal = esk1.derive_priv(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
+        let esk77_normal =
+            esk1.derive_priv(ChildNumber::Normal(ChildIndex::new_const(77))).unwrap();
 
         // Hardened and non-hardened should be different
         assert_ne!(esk77_hardened.private_key.to_bytes(), esk77_normal.private_key.to_bytes());
@@ -1224,11 +1228,11 @@ mod tests {
 
         // Test public child derivation
         let pk1 = esk2
-            .derive_priv(ChildNumber::from_normal_idx(13).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(13)))
             .unwrap()
             .to_extended_pub_key()
             .unwrap();
-        let pk2 = epk2.derive_pub(ChildNumber::from_normal_idx(13).unwrap()).unwrap();
+        let pk2 = epk2.derive_pub(ChildNumber::Normal(ChildIndex::new_const(13))).unwrap();
 
         assert_eq!(pk1.public_key.to_bytes(), pk2.public_key.to_bytes());
         assert_eq!(pk1.chain_code, pk2.chain_code);
@@ -1245,11 +1249,11 @@ mod tests {
 
         // Test PublicChild(13) derivation
         let pk1 = esk
-            .derive_priv(ChildNumber::from_normal_idx(13).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(13)))
             .unwrap()
             .to_extended_pub_key()
             .unwrap();
-        let pk2 = epk.derive_pub(ChildNumber::from_normal_idx(13).unwrap()).unwrap();
+        let pk2 = epk.derive_pub(ChildNumber::Normal(ChildIndex::new_const(13))).unwrap();
 
         // Public keys should match whether derived through private or public path
         assert_eq!(pk1.public_key.to_bytes(), pk2.public_key.to_bytes());
@@ -1264,34 +1268,34 @@ mod tests {
 
         // Test child 238757 derivation
         let pk1_238757 = esk2
-            .derive_priv(ChildNumber::from_normal_idx(238757).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(238757)))
             .unwrap()
             .public_key()
             .unwrap();
         let pk2_238757 =
-            epk2.derive_pub(ChildNumber::from_normal_idx(238757).unwrap()).unwrap().public_key;
+            epk2.derive_pub(ChildNumber::Normal(ChildIndex::new_const(238757))).unwrap().public_key;
 
         assert_eq!(pk1_238757.to_bytes(), pk2_238757.to_bytes());
 
         // Test path m/0/3/8/1
         let sk3 = esk2
-            .derive_priv(ChildNumber::from_normal_idx(0).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::ZERO))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(3).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(3)))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(8).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(8)))
             .unwrap()
-            .derive_priv(ChildNumber::from_normal_idx(1).unwrap())
+            .derive_priv(ChildNumber::Normal(ChildIndex::new_const(1)))
             .unwrap();
 
         let pk4 = epk2
-            .derive_pub(ChildNumber::from_normal_idx(0).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::ZERO))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(3).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(3)))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(8).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(8)))
             .unwrap()
-            .derive_pub(ChildNumber::from_normal_idx(1).unwrap())
+            .derive_pub(ChildNumber::Normal(ChildIndex::new_const(1)))
             .unwrap();
 
         assert_eq!(sk3.public_key().unwrap().to_bytes(), pk4.public_key.to_bytes());
@@ -1309,8 +1313,9 @@ mod tests {
         let master1_pub = master1.to_extended_pub_key().unwrap();
 
         // Test child 42 unhardened
-        let child_sk = master1.derive_priv(ChildNumber::from_normal_idx(42).unwrap()).unwrap();
-        let child_pk = master1_pub.derive_pub(ChildNumber::from_normal_idx(42).unwrap()).unwrap();
+        let child_sk = master1.derive_priv(ChildNumber::Normal(ChildIndex::new_const(42))).unwrap();
+        let child_pk =
+            master1_pub.derive_pub(ChildNumber::Normal(ChildIndex::new_const(42))).unwrap();
 
         assert_eq!(
             child_sk.to_extended_pub_key().unwrap().public_key.to_bytes(),
@@ -1319,9 +1324,9 @@ mod tests {
 
         // Test grandchild 12142
         let grandchild_sk =
-            child_sk.derive_priv(ChildNumber::from_normal_idx(12142).unwrap()).unwrap();
+            child_sk.derive_priv(ChildNumber::Normal(ChildIndex::new_const(12142))).unwrap();
         let grandchild_pk =
-            child_pk.derive_pub(ChildNumber::from_normal_idx(12142).unwrap()).unwrap();
+            child_pk.derive_pub(ChildNumber::Normal(ChildIndex::new_const(12142))).unwrap();
 
         assert_eq!(
             grandchild_sk.to_extended_pub_key().unwrap().public_key.to_bytes(),
@@ -1339,13 +1344,13 @@ mod tests {
 
         // Test unhardened child 42
         let child_sk_unhardened =
-            master2.derive_priv(ChildNumber::from_normal_idx(42).unwrap()).unwrap();
+            master2.derive_priv(ChildNumber::Normal(ChildIndex::new_const(42))).unwrap();
         let child_pk_unhardened =
-            master2_pub.derive_pub(ChildNumber::from_normal_idx(42).unwrap()).unwrap();
+            master2_pub.derive_pub(ChildNumber::Normal(ChildIndex::new_const(42))).unwrap();
 
         // Test hardened child 42
         let child_sk_hardened =
-            master2.derive_priv(ChildNumber::from_hardened_idx(42).unwrap()).unwrap();
+            master2.derive_priv(ChildNumber::Hardened(ChildIndex::new_const(42))).unwrap();
 
         // Verify unhardened derivation consistency
         assert_eq!(
@@ -1375,13 +1380,14 @@ mod tests {
 
         // Derive hardened child
         let child_hardened =
-            master.derive_priv(ChildNumber::from_hardened_idx(77).unwrap()).unwrap();
+            master.derive_priv(ChildNumber::Hardened(ChildIndex::new_const(77))).unwrap();
         let child_hardened_copy =
-            master.derive_priv(ChildNumber::from_hardened_idx(77).unwrap()).unwrap();
+            master.derive_priv(ChildNumber::Hardened(ChildIndex::new_const(77))).unwrap();
 
         // Derive unhardened child
-        let child_unhardened =
-            master.derive_priv(ChildNumber::from_normal_idx(unhardened_index).unwrap()).unwrap();
+        let child_unhardened = master
+            .derive_priv(ChildNumber::Normal(ChildIndex::new(unhardened_index).unwrap()))
+            .unwrap();
 
         // Hardened derivation should be deterministic
         assert_eq!(
@@ -1420,7 +1426,7 @@ mod tests {
         use super::*;
 
         fn hardened(idx: u32) -> ChildNumber {
-            ChildNumber::from_hardened_idx(idx).unwrap()
+            ChildNumber::Hardened(ChildIndex::new(idx).unwrap())
         }
 
         #[test]
@@ -1488,7 +1494,7 @@ mod tests {
             ];
             for (i, (sk, pk_legacy, pk_modern)) in expected.iter().enumerate() {
                 let child = account
-                    .derive_priv_legacy(ChildNumber::from_normal_idx(i as u32).unwrap())
+                    .derive_priv_legacy(ChildNumber::Normal(ChildIndex::new(i as u32).unwrap()))
                     .unwrap();
                 assert_eq!(child.private_key.to_bytes().to_lower_hex_string(), *sk, "sk {}", i);
                 assert_eq!(
@@ -1508,7 +1514,7 @@ mod tests {
             // Watch-only path: same child 0 via public derivation.
             let account_pub = account.to_extended_pub_key().unwrap();
             let child0_pub =
-                account_pub.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+                account_pub.derive_pub_legacy(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
             assert_eq!(child0_pub.to_bytes_legacy().unwrap().to_lower_hex_string(), expected[0].1);
         }
 
@@ -1529,8 +1535,7 @@ mod tests {
                 account.private_key.to_bytes().to_lower_hex_string(),
                 "05e18aebbe5c73f4dde3dd6a4a204da46c6efa38a38ff4fa5548b1c171154bda"
             );
-            let child0 =
-                account.derive_priv_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+            let child0 = account.derive_priv_legacy(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
             assert_eq!(
                 child0.private_key.to_bytes().to_lower_hex_string(),
                 "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
@@ -1567,7 +1572,8 @@ mod tests {
             );
 
             // Non-hardened child 77 (legacy serialization in HMAC input)
-            let c77 = master.derive_priv_legacy(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
+            let c77 =
+                master.derive_priv_legacy(ChildNumber::Normal(ChildIndex::new_const(77))).unwrap();
             assert_eq!(
                 c77.private_key.to_bytes().to_lower_hex_string(),
                 "3ef4f8b4d262fb8981665532b531c7889798044f7cbe4d5fae5e30435f746044"
@@ -1584,7 +1590,7 @@ mod tests {
             // the mode used by `derive_priv`/`derive_pub` without suffix.
             let seed = [1u8, 50, 6, 244, 24, 199, 1, 25];
             let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed).unwrap();
-            let c77 = master.derive_priv(ChildNumber::from_normal_idx(77).unwrap()).unwrap();
+            let c77 = master.derive_priv(ChildNumber::Normal(ChildIndex::new_const(77))).unwrap();
             assert_eq!(
                 c77.private_key.to_bytes().to_lower_hex_string(),
                 "0f9b101b475e449c9995032e138b432a330738b6401f675f0632385fe8d349bf"
@@ -1610,8 +1616,7 @@ mod tests {
                 .unwrap()
                 .derive_priv(hardened(3))
                 .unwrap();
-            let child0_modern =
-                account.derive_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+            let child0_modern = account.derive_priv(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
             assert_eq!(
                 child0_modern.private_key.to_bytes().to_lower_hex_string(),
                 "1669d6cc8ac08fa377d63dafcf83f1fa6aee09e2df58c490b1b1a0b0999417ec"
@@ -1623,14 +1628,14 @@ mod tests {
 
             // Same leaf via legacy mode is a different key entirely.
             let child0_legacy =
-                account.derive_priv_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+                account.derive_priv_legacy(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
             assert_ne!(child0_modern.private_key.to_bytes(), child0_legacy.private_key.to_bytes());
 
             // Private/public derivation stays consistent in modern mode too.
             let child0_pub = account
                 .to_extended_pub_key()
                 .unwrap()
-                .derive_pub(ChildNumber::from_normal_idx(0).unwrap())
+                .derive_pub(ChildNumber::Normal(ChildIndex::ZERO))
                 .unwrap();
             assert_eq!(child0_pub.to_bytes(), child0_modern.public_key_bytes().unwrap());
         }
@@ -1692,14 +1697,18 @@ mod tests {
             // Hardened child index 1 lands above r, would be reduced.
             let mut input = master.private_key.to_bytes().to_vec();
             input.extend_from_slice(
-                &u32::from(ChildNumber::from_hardened_idx(1).unwrap()).to_be_bytes(),
+                &u32::from(ChildNumber::Hardened(ChildIndex::new_const(1))).to_be_bytes(),
             );
             assert!(derivation_hmac(&master.chain_code[..], &input, 0) >= parse_bytes_32(R));
 
             // Iterate through the first 64, hardened and normal; 128 chances to land above r.
             for i in 0..64u32 {
-                assert!(master.derive_priv(ChildNumber::from_normal_idx(i).unwrap()).is_ok());
-                assert!(master.derive_priv(ChildNumber::from_hardened_idx(i).unwrap()).is_ok());
+                assert!(master
+                    .derive_priv(ChildNumber::Normal(ChildIndex::new(i).unwrap()))
+                    .is_ok());
+                assert!(master
+                    .derive_priv(ChildNumber::Hardened(ChildIndex::new(i).unwrap()))
+                    .is_ok());
             }
         }
 
@@ -1774,7 +1783,8 @@ mod tests {
             master.to_extended_pub_key().unwrap().derive_pub(normal),
             Err(Error::InvalidDerivationPath)
         ));
-        let path = DerivationPath::from(vec![ChildNumber::from_hardened_idx(9).unwrap(), hardened]);
+        let path =
+            DerivationPath::from(vec![ChildNumber::Hardened(ChildIndex::new_const(9)), hardened]);
         assert!(matches!(master.derive_path(&path), Err(Error::InvalidDerivationPath)));
     }
 }

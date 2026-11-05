@@ -8,6 +8,7 @@ mod tests {
     };
     use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
     use crate::mnemonic::Mnemonic;
+    use crate::ChildIndex;
     use crate::Network;
 
     #[test]
@@ -24,7 +25,7 @@ mod tests {
         let ecdsa_account = Account::new(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             xpub,
@@ -34,7 +35,7 @@ mod tests {
 
         assert!(collection.insert(ecdsa_account.clone()).is_ok());
         assert!(collection.contains_account_type(&AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         }));
 
@@ -76,7 +77,7 @@ mod tests {
         // 5. Verify retrieval
         // ECDSA account should be retrievable via account_of_type
         let retrieved_ecdsa = collection.account_of_type(AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         });
         assert!(retrieved_ecdsa.is_some());

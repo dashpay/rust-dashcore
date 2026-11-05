@@ -8,7 +8,8 @@ use std::hint::black_box;
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use key_wallet::managed_account::address_pool::AddressPoolType;
 use key_wallet::{
-    AddressPool, ChildNumber, DerivationPath, ExtendedPrivKey, KeySource, Mnemonic, Network,
+    AddressPool, ChildIndex, ChildNumber, DerivationPath, ExtendedPrivKey, KeySource, Mnemonic,
+    Network,
 };
 
 const GAP_LIMIT: u32 = 20;
@@ -20,12 +21,12 @@ fn bench_address_generation(c: &mut Criterion) {
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
     let account_path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(44).unwrap(),
-        ChildNumber::from_hardened_idx(5).unwrap(),
-        ChildNumber::from_hardened_idx(0).unwrap(),
+        ChildNumber::Hardened(ChildIndex::new_const(44)),
+        ChildNumber::Hardened(ChildIndex::new_const(5)),
+        ChildNumber::Hardened(ChildIndex::ZERO),
     ]);
     let key_source = KeySource::Private(master.derive_priv(&account_path).unwrap());
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
     let pool = AddressPool::new(
         base_path,
         AddressPoolType::External,

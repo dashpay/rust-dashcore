@@ -7,6 +7,7 @@ use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
 use crate::managed_account::address_pool::KeySource;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::mnemonic::Mnemonic;
+use crate::ChildIndex;
 use crate::Network;
 
 /// Helper function to create a test wallet with deterministic mnemonic
@@ -29,11 +30,11 @@ fn test_bip44_account_creation() {
     // Create multiple BIP44 accounts with different indices
     for index in 0..10 {
         let account_type = AccountType::Standard {
-            index,
+            index: ChildIndex::new_const(index),
             standard_account_type: StandardAccountType::BIP44Account,
         };
 
-        let derivation_path = account_type.derivation_path(network).unwrap();
+        let derivation_path = account_type.derivation_path(network);
         let account_key = master.derive_priv(&derivation_path).unwrap();
 
         let account = Account::from_xpriv(
@@ -50,7 +51,7 @@ fn test_bip44_account_creation() {
                 index: acc_index,
                 standard_account_type,
             } => {
-                assert_eq!(*acc_index, index);
+                assert_eq!(*acc_index, ChildIndex::new_const(index));
                 assert_eq!(*standard_account_type, StandardAccountType::BIP44Account);
             }
             _ => panic!("Expected Standard account type"),
@@ -69,11 +70,11 @@ fn test_bip32_account_creation() {
     // Create multiple BIP32 accounts with different indices
     for index in 0..5 {
         let account_type = AccountType::Standard {
-            index,
+            index: ChildIndex::new_const(index),
             standard_account_type: StandardAccountType::BIP32Account,
         };
 
-        let derivation_path = account_type.derivation_path(network).unwrap();
+        let derivation_path = account_type.derivation_path(network);
         let account_key = master.derive_priv(&derivation_path).unwrap();
 
         let account =
@@ -85,7 +86,7 @@ fn test_bip32_account_creation() {
                 index: acc_index,
                 standard_account_type,
             } => {
-                assert_eq!(*acc_index, index);
+                assert_eq!(*acc_index, ChildIndex::new_const(index));
                 assert_eq!(*standard_account_type, StandardAccountType::BIP32Account);
             }
             _ => panic!("Expected Standard account type"),
@@ -104,10 +105,10 @@ fn test_coinjoin_account_creation() {
     // Create CoinJoin accounts
     for index in 0..3 {
         let account_type = AccountType::CoinJoin {
-            index,
+            index: ChildIndex::new_const(index),
         };
 
-        let derivation_path = account_type.derivation_path(network).unwrap();
+        let derivation_path = account_type.derivation_path(network);
         let account_key = master.derive_priv(&derivation_path).unwrap();
 
         let account =
@@ -118,7 +119,7 @@ fn test_coinjoin_account_creation() {
             AccountType::CoinJoin {
                 index: acc_index,
             } => {
-                assert_eq!(*acc_index, index);
+                assert_eq!(*acc_index, ChildIndex::new_const(index));
             }
             _ => panic!("Expected CoinJoin account type"),
         }
@@ -155,7 +156,7 @@ fn test_identity_registration_account() {
 
     let account_type = AccountType::IdentityRegistration;
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -175,10 +176,10 @@ fn test_identity_topup_account() {
     // Test multiple identity topup accounts with different registration indices
     for registration_index in 0..3 {
         let account_type = AccountType::IdentityTopUp {
-            registration_index,
+            registration_index: ChildIndex::new_const(registration_index),
         };
 
-        let derivation_path = account_type.derivation_path(network).unwrap();
+        let derivation_path = account_type.derivation_path(network);
         let account_key = master.derive_priv(&derivation_path).unwrap();
 
         let account =
@@ -189,7 +190,7 @@ fn test_identity_topup_account() {
             AccountType::IdentityTopUp {
                 registration_index: reg_idx,
             } => {
-                assert_eq!(*reg_idx, registration_index);
+                assert_eq!(*reg_idx, ChildIndex::new_const(registration_index));
             }
             _ => panic!("Expected IdentityTopUp account type"),
         }
@@ -206,7 +207,7 @@ fn test_identity_topup_not_bound_account() {
 
     let account_type = AccountType::IdentityTopUpNotBoundToIdentity;
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -225,7 +226,7 @@ fn test_identity_invitation_account() {
 
     let account_type = AccountType::IdentityInvitation;
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -244,7 +245,7 @@ fn test_provider_voting_keys_account() {
 
     let account_type = AccountType::ProviderVotingKeys;
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -263,7 +264,7 @@ fn test_provider_owner_keys_account() {
 
     let account_type = AccountType::ProviderOwnerKeys;
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -282,7 +283,7 @@ fn test_provider_operator_keys_account() {
 
     let account_type = AccountType::ProviderOperatorKeys;
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -301,7 +302,7 @@ fn test_provider_platform_keys_account() {
 
     let account_type = AccountType::ProviderPlatformKeys;
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let account = Account::from_xpriv(Some([0u8; 32]), account_type, account_key, network).unwrap();
@@ -319,11 +320,11 @@ fn test_account_extended_key_generation() {
     let master = create_test_extended_priv_key(network);
 
     let account_type = AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
     };
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let expected_xpub = ExtendedPubKey::from_priv(&account_key);
@@ -346,7 +347,7 @@ fn test_watch_only_account_creation() {
     let xpub = ExtendedPubKey::from_priv(&master);
 
     let account_type = AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
     };
 
@@ -362,7 +363,7 @@ fn test_watch_only_account_creation() {
             index,
             standard_account_type,
         } => {
-            assert_eq!(*index, 0);
+            assert_eq!(*index, ChildIndex::ZERO);
             assert_eq!(*standard_account_type, StandardAccountType::BIP44Account);
         }
         _ => panic!("Expected Standard account type"),
@@ -375,11 +376,11 @@ fn test_account_network_consistency() {
     let master = create_test_extended_priv_key(network);
 
     let account_type = AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
     };
 
-    let derivation_path = account_type.derivation_path(network).unwrap();
+    let derivation_path = account_type.derivation_path(network);
     let account_key = master.derive_priv(&derivation_path).unwrap();
 
     let account =
@@ -393,8 +394,8 @@ fn test_account_network_consistency() {
 
     // Derive a child key for address generation (m/44'/1'/0'/0/0 for first receive address)
     let receive_path = [
-        crate::bip32::ChildNumber::from_normal_idx(0).unwrap(), // receive chain
-        crate::bip32::ChildNumber::from_normal_idx(0).unwrap(), // first address
+        crate::bip32::ChildNumber::Normal(ChildIndex::ZERO), // receive chain
+        crate::bip32::ChildNumber::Normal(ChildIndex::ZERO), // first address
     ];
 
     let address_xpub = account.account_xpub.derive_pub(&receive_path).unwrap();
@@ -426,19 +427,19 @@ fn test_multiple_account_types_same_wallet() {
     // Create one of each account type
     let account_types = vec![
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         },
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP32Account,
         },
         AccountType::CoinJoin {
-            index: 0,
+            index: ChildIndex::ZERO,
         },
         AccountType::IdentityRegistration,
         AccountType::IdentityTopUp {
-            registration_index: 0,
+            registration_index: ChildIndex::ZERO,
         },
         AccountType::IdentityTopUpNotBoundToIdentity,
         AccountType::IdentityInvitation,
@@ -451,7 +452,7 @@ fn test_multiple_account_types_same_wallet() {
     let mut accounts = Vec::new();
 
     for account_type in account_types {
-        let derivation_path = account_type.derivation_path(network).unwrap();
+        let derivation_path = account_type.derivation_path(network);
         let account_key = master.derive_priv(&derivation_path).unwrap();
 
         let account =
@@ -479,35 +480,35 @@ fn test_account_derivation_path_uniqueness() {
     let account_types = vec![
         (
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             "m/44'/1'/0'".to_string(),
         ),
         (
             AccountType::Standard {
-                index: 1,
+                index: ChildIndex::new_const(1),
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             "m/44'/1'/1'".to_string(),
         ),
         (
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP32Account,
             },
             "m/0'".to_string(),
         ),
         (
             AccountType::CoinJoin {
-                index: 0,
+                index: ChildIndex::ZERO,
             },
             "m/9'/1'/4'/0'".to_string(),
         ),
         (AccountType::IdentityRegistration, "m/9'/1'/5'/1'".to_string()),
         (
             AccountType::IdentityTopUp {
-                registration_index: 0,
+                registration_index: ChildIndex::ZERO,
             },
             "m/9'/1'/5'/2'/0'".to_string(),
         ),
@@ -522,7 +523,7 @@ fn test_account_derivation_path_uniqueness() {
     let mut paths = Vec::new();
 
     for (account_type, expected_path) in account_types {
-        let derivation_path = account_type.derivation_path(network).unwrap();
+        let derivation_path = account_type.derivation_path(network);
         let path_str = derivation_path.to_string();
 
         assert_eq!(path_str, expected_path, "Unexpected derivation path for {:?}", account_type);
@@ -534,7 +535,7 @@ fn test_account_derivation_path_uniqueness() {
 
 #[test]
 fn test_dashpay_account_index_in_derivation_path() {
-    use crate::bip32::ChildNumber;
+    use crate::bip32::{ChildIndex, ChildNumber};
 
     // The DashPay friendship path is m/9'/coin'/15'/account'/<id>/<id> (DIP-15 "Account
     // Reference" + DIP-14 256-bit indices). The account segment is the sender's DashPay
@@ -549,32 +550,20 @@ fn test_dashpay_account_index_in_derivation_path() {
     for account in [0u32, 1, 7, 42] {
         // Receiving funds: identity ids ordered user/friend.
         let recv = AccountType::DashpayReceivingFunds {
-            index: account,
+            index: ChildIndex::new_const(account),
             user_identity_id: user_id,
             friend_identity_id: friend_id,
         };
-        let recv_path = recv.derivation_path(network).unwrap();
+        let recv_path = recv.derivation_path(network);
         let recv_comps: Vec<ChildNumber> = recv_path.clone().into();
         assert_eq!(recv_comps.len(), 6, "root(3) + account' + two 256-bit ids");
         assert_eq!(
             recv_comps[3],
-            ChildNumber::Hardened {
-                index: account
-            },
+            ChildNumber::Hardened(ChildIndex::new_const(account)),
             "receiving account segment must honor the account index"
         );
-        assert_eq!(
-            recv_comps[4],
-            ChildNumber::Normal256 {
-                index: user_id
-            }
-        );
-        assert_eq!(
-            recv_comps[5],
-            ChildNumber::Normal256 {
-                index: friend_id
-            }
-        );
+        assert_eq!(recv_comps[4], ChildNumber::Normal256(user_id));
+        assert_eq!(recv_comps[5], ChildNumber::Normal256(friend_id));
         assert!(
             recv_path.to_string().starts_with(&format!("m/9'/1'/15'/{}'/", account)),
             "receiving path should carry account {}': got {}",
@@ -584,29 +573,17 @@ fn test_dashpay_account_index_in_derivation_path() {
 
         // External account: the reverse channel, ids ordered friend/user.
         let ext = AccountType::DashpayExternalAccount {
-            index: account,
+            index: ChildIndex::new_const(account),
             user_identity_id: user_id,
             friend_identity_id: friend_id,
         };
-        let ext_comps: Vec<ChildNumber> = ext.derivation_path(network).unwrap().into();
+        let ext_comps: Vec<ChildNumber> = ext.derivation_path(network).into();
         assert_eq!(
             ext_comps[3],
-            ChildNumber::Hardened {
-                index: account
-            },
+            ChildNumber::Hardened(ChildIndex::new_const(account)),
             "external account segment must honor the account index"
         );
-        assert_eq!(
-            ext_comps[4],
-            ChildNumber::Normal256 {
-                index: friend_id
-            }
-        );
-        assert_eq!(
-            ext_comps[5],
-            ChildNumber::Normal256 {
-                index: user_id
-            }
-        );
+        assert_eq!(ext_comps[4], ChildNumber::Normal256(friend_id));
+        assert_eq!(ext_comps[5], ChildNumber::Normal256(user_id));
     }
 }

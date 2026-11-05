@@ -4,6 +4,7 @@
 
 use crate::account::{AccountType, StandardAccountType};
 use crate::wallet::Wallet;
+use crate::ChildIndex;
 use crate::Network;
 use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 use std::collections::{BTreeMap, HashMap};
@@ -23,7 +24,7 @@ fn test_multi_account_transaction() {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,

@@ -8,6 +8,7 @@ use key_wallet::account::{
 use key_wallet::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use key_wallet::managed_account::address_pool::AddressPoolType;
 use key_wallet::mnemonic::Mnemonic;
+use key_wallet::ChildIndex;
 use key_wallet::Network;
 
 #[cfg(feature = "bls")]
@@ -26,9 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Standard ECDSA Account (traditional HD wallet)
     println!("=== ECDSA Account (Standard HD Wallet) ===");
     let path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(44)?,
-        ChildNumber::from_hardened_idx(1)?,
-        ChildNumber::from_hardened_idx(0)?,
+        ChildNumber::Hardened(ChildIndex::new_const(44)),
+        ChildNumber::Hardened(ChildIndex::new_const(1)),
+        ChildNumber::Hardened(ChildIndex::ZERO),
     ]);
     let account_xpriv = master.derive_priv(&path)?;
     let account_xpub = ExtendedPubKey::from_priv(&account_xpriv);
@@ -36,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ecdsa_account = Account::new(
         None,
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         },
         account_xpub,

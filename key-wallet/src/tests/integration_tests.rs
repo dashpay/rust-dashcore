@@ -5,6 +5,7 @@
 use crate::account::{AccountType, StandardAccountType};
 use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
+use crate::ChildIndex;
 use crate::Network;
 
 #[test]
@@ -25,7 +26,7 @@ fn test_wallet_multiple_accounts() {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -70,7 +71,7 @@ fn test_separate_wallets_per_network() {
         testnet_wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -82,7 +83,7 @@ fn test_separate_wallets_per_network() {
         mainnet_wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -91,7 +92,7 @@ fn test_separate_wallets_per_network() {
         devnet_wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -121,10 +122,10 @@ fn test_wallet_with_all_account_types() {
     let wallet = Wallet::new_random(
         Network::Testnet,
         crate::wallet::initialization::WalletAccountCreationOptions::AllAccounts(
-            [0, 1].into(),
-            [0].into(),
-            [0, 1].into(),
-            [0, 1].into(),
+            [ChildIndex::ZERO, ChildIndex::new_const(1)].into(),
+            [ChildIndex::ZERO].into(),
+            [ChildIndex::ZERO, ChildIndex::new_const(1)].into(),
+            [ChildIndex::ZERO, ChildIndex::new_const(1)].into(),
             std::collections::BTreeSet::new(), // PlatformPayment accounts
         ),
     )

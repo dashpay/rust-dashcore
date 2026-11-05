@@ -6,7 +6,7 @@ use super::root_extended_keys::{RootExtendedPrivKey, RootExtendedPubKey};
 use super::{Wallet, WalletType};
 use crate::account::account_collection::AccountCollection;
 use crate::account::AccountType;
-use crate::bip32::{ExtendedPrivKey, ExtendedPubKey};
+use crate::bip32::{ChildIndex, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::Result;
 use crate::mnemonic::{Language, Mnemonic};
 use crate::seed::Seed;
@@ -14,16 +14,16 @@ use crate::Network;
 use std::collections::BTreeSet;
 
 /// Set of BIP44 account indices to create
-pub type WalletAccountCreationBIP44Accounts = BTreeSet<u32>;
+pub type WalletAccountCreationBIP44Accounts = BTreeSet<ChildIndex>;
 
 /// Set of BIP32 account indices to create
-pub type WalletAccountCreationBIP32Accounts = BTreeSet<u32>;
+pub type WalletAccountCreationBIP32Accounts = BTreeSet<ChildIndex>;
 
 /// Set of CoinJoin account indices to create
-pub type WalletAccountCreationCoinjoinAccounts = BTreeSet<u32>;
+pub type WalletAccountCreationCoinjoinAccounts = BTreeSet<ChildIndex>;
 
 /// Set of identity top-up account registration indices to create
-pub type WalletAccountCreationTopUpAccounts = BTreeSet<u32>;
+pub type WalletAccountCreationTopUpAccounts = BTreeSet<ChildIndex>;
 
 /// Specification for a PlatformPayment account to create
 ///
@@ -32,9 +32,9 @@ pub type WalletAccountCreationTopUpAccounts = BTreeSet<u32>;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PlatformPaymentAccountSpec {
     /// Account index (hardened) - the account' level in the derivation path
-    pub account: u32,
+    pub account: ChildIndex,
     /// Key class (hardened) - defaults to 0', 1' is reserved for change-like segregation
-    pub key_class: u32,
+    pub key_class: ChildIndex,
 }
 
 /// Set of PlatformPayment account specs to create

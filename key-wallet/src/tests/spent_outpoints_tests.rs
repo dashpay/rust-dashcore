@@ -1,5 +1,6 @@
 //! Tests for spent_outpoints deserialization and tracking.
 
+use crate::ChildIndex;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -21,7 +22,11 @@ use crate::wallet::{ManagedWalletInfo, Wallet};
 use crate::Network;
 
 /// The next receive address of BIP44 account `index`.
-fn receive_address(wallet: &Wallet, info: &mut ManagedWalletInfo, index: u32) -> dashcore::Address {
+fn receive_address(
+    wallet: &Wallet,
+    info: &mut ManagedWalletInfo,
+    index: ChildIndex,
+) -> dashcore::Address {
     let xpub = wallet.accounts.standard_bip44_accounts[&index].account_xpub;
     let account = info.accounts.standard_bip44_accounts.get_mut(&index).unwrap();
     account.next_receive_address(Some(&xpub), true).unwrap()
@@ -32,13 +37,16 @@ fn context_with_accounts(count: u32) -> (TestWalletContext, Vec<dashcore::Addres
     let wallet = Wallet::from_seed_bytes(
         [42; 64],
         Network::Testnet,
-        WalletAccountCreationOptions::BIP44AccountsOnly((0..count).collect()),
+        WalletAccountCreationOptions::BIP44AccountsOnly(
+            (0..count).map(ChildIndex::new_const).collect(),
+        ),
     )
     .unwrap();
     let mut managed_wallet = ManagedWalletInfo::from_wallet(&wallet, 0);
-    let addresses: Vec<_> =
-        (0..count).map(|index| receive_address(&wallet, &mut managed_wallet, index)).collect();
-    let xpub = wallet.accounts.standard_bip44_accounts[&0].account_xpub;
+    let addresses: Vec<_> = (0..count)
+        .map(|index| receive_address(&wallet, &mut managed_wallet, ChildIndex::new_const(index)))
+        .collect();
+    let xpub = wallet.accounts.standard_bip44_accounts[&ChildIndex::ZERO].account_xpub;
     (
         TestWalletContext {
             wallet,
@@ -62,7 +70,7 @@ fn claim_on(ctx: &TestWalletContext, outpoint: &OutPoint) -> Option<Option<Txid>
 }
 
 fn second_account(ctx: &TestWalletContext) -> &ManagedCoreFundsAccount {
-    &ctx.managed_wallet.accounts.standard_bip44_accounts[&1]
+    &ctx.managed_wallet.accounts.standard_bip44_accounts[&ChildIndex::new_const(1)]
 }
 
 fn in_block(height: u32) -> TransactionContext {
@@ -353,12 +361,15 @@ async fn account_added_after_the_restore_is_guarded() {
     ctx.managed_wallet.restore_spent_outpoints(&[(coin, None)]);
 
     let account_type = AccountType::Standard {
-        index: 1,
+        index: ChildIndex::new_const(1),
         standard_account_type: StandardAccountType::BIP44Account,
     };
     ctx.wallet.add_account(account_type, None).unwrap();
     ctx.managed_wallet.add_managed_account(&ctx.wallet, account_type).unwrap();
-    assert_eq!(receive_address(&ctx.wallet, &mut ctx.managed_wallet, 1), address);
+    assert_eq!(
+        receive_address(&ctx.wallet, &mut ctx.managed_wallet, ChildIndex::new_const(1)),
+        address
+    );
 
     ctx.check_transaction(&funding, TransactionContext::Mempool).await;
 
@@ -371,7 +382,7 @@ async fn account_added_after_the_restore_is_guarded() {
 fn contact_context() -> (TestWalletContext, dashcore::Address) {
     let (mut ctx, _) = context_with_accounts(1);
     let contact = AccountType::DashpayExternalAccount {
-        index: 0,
+        index: ChildIndex::ZERO,
         user_identity_id: [0xaa; 32],
         friend_identity_id: [0xbb; 32],
     };
@@ -503,7 +514,12 @@ async fn deliver_funding_then_spender(
     }
     ctx.check_transaction(&funding, delivery.context(90)).await;
     if matches!(restore, Restore::AfterFundingWasRecorded) {
-        let account = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&1).unwrap();
+        let account = ctx
+            .managed_wallet
+            .accounts
+            .standard_bip44_accounts
+            .get_mut(&ChildIndex::new_const(1))
+            .unwrap();
         account.utxos.remove(&coin);
         assert!(ctx.managed_wallet.restore_spent_outpoints(&claim).is_empty());
     }
@@ -771,7 +787,7 @@ fn record_from_tx(tx: &Transaction) -> TransactionRecord {
     TransactionRecord::new(
         tx.clone(),
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         },
         TransactionContext::Mempool,

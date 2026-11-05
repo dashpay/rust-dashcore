@@ -7,6 +7,7 @@ use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::ChildIndex;
 use key_wallet::{mnemonic::Language, Mnemonic, Network};
 use key_wallet_manager::WalletInterface;
 use key_wallet_manager::WalletManager;
@@ -78,7 +79,7 @@ fn test_account_management() {
     let result = manager.create_account(
         &wallet_id,
         key_wallet::AccountType::Standard {
-            index: 1,
+            index: ChildIndex::new_const(1),
             standard_account_type: key_wallet::account::StandardAccountType::BIP44Account,
         },
         None,
@@ -105,10 +106,20 @@ fn test_address_generation() {
     // The wallet should already have account 0 from creation
 
     // Test address generation - it may be missing if accounts aren't initialized
-    let address1 = manager.next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
+    let address1 = manager.next_receive_address(
+        &wallet_id,
+        ChildIndex::ZERO,
+        AccountTypePreference::BIP44,
+        false,
+    );
     assert!(address1.is_some(), "Failed to generate receive address: {:?}", address1);
 
-    let change = manager.next_change_address(&wallet_id, 0, AccountTypePreference::BIP44, false);
+    let change = manager.next_change_address(
+        &wallet_id,
+        ChildIndex::ZERO,
+        AccountTypePreference::BIP44,
+        false,
+    );
     assert!(change.is_some(), "Failed to generate change: {:?}", change);
 }
 

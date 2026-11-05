@@ -686,6 +686,7 @@ mod tests {
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet::ChildIndex;
     use key_wallet::{AccountType, Mnemonic};
     use std::collections::HashMap;
 
@@ -698,7 +699,7 @@ mod tests {
             .expect("wallet info")
             .accounts
             .coinjoin_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("CoinJoin account 0")
     }
 
@@ -1122,7 +1123,7 @@ mod tests {
             .create_account(
                 &wallet_id,
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -1132,16 +1133,24 @@ mod tests {
         assert_eq!(manager.monitor_revision(), expected_rev, "after create_account");
 
         // get_receive_address bumps (when address is generated)
-        let address =
-            manager.next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, true);
+        let address = manager.next_receive_address(
+            &wallet_id,
+            ChildIndex::ZERO,
+            AccountTypePreference::BIP44,
+            true,
+        );
         if address.is_some() {
             expected_rev += 1;
             assert_eq!(manager.monitor_revision(), expected_rev, "after get_receive_address");
         }
 
         // get_change_address bumps (when address is generated)
-        let address =
-            manager.next_change_address(&wallet_id, 0, AccountTypePreference::BIP44, true);
+        let address = manager.next_change_address(
+            &wallet_id,
+            ChildIndex::ZERO,
+            AccountTypePreference::BIP44,
+            true,
+        );
         if address.is_some() {
             expected_rev += 1;
             assert_eq!(manager.monitor_revision(), expected_rev, "after get_change_address");

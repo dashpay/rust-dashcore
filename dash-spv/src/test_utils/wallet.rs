@@ -1,5 +1,6 @@
 //! Shared wallet/logging helpers for integration tests.
 
+use key_wallet::ChildIndex;
 use std::collections::BTreeSet;
 use std::env;
 use std::path::PathBuf;
@@ -20,7 +21,7 @@ use crate::Network;
 /// Account creation options for tests: a single standard BIP44 account 0.
 pub fn default_test_account_options() -> WalletAccountCreationOptions {
     WalletAccountCreationOptions::SpecificAccounts(
-        BTreeSet::from([0]),
+        BTreeSet::from([ChildIndex::ZERO]),
         BTreeSet::new(),
         BTreeSet::new(),
         BTreeSet::new(),
@@ -48,8 +49,11 @@ pub async fn next_unused_receive_address(
 ) -> dashcore::Address {
     let wallet_read = wallet.read().await;
     let wallet_info = wallet_read.get_wallet_info(wallet_id).expect("Wallet info not found");
-    let account =
-        wallet_info.accounts().standard_bip44_accounts.get(&0).expect("BIP44 account 0 not found");
+    let account = wallet_info
+        .accounts()
+        .standard_bip44_accounts
+        .get(&ChildIndex::ZERO)
+        .expect("BIP44 account 0 not found");
     let ManagedAccountType::Standard {
         external_addresses,
         ..

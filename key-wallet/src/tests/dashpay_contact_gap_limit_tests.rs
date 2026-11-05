@@ -1,5 +1,6 @@
 //! Regression test for DIP-15 contact address pool maintenance (issue #1032).
 
+use crate::ChildIndex;
 use dashcore::{Address, BlockHash, Transaction};
 
 use crate::account::AccountType;
@@ -17,12 +18,12 @@ const THEM: [u8; 32] = [0xbb; 32];
 /// collections, so each reaches gap maintenance by its own route.
 const CONTACT_CHAINS: [AccountType; 2] = [
     AccountType::DashpayReceivingFunds {
-        index: 0,
+        index: ChildIndex::ZERO,
         user_identity_id: US,
         friend_identity_id: THEM,
     },
     AccountType::DashpayExternalAccount {
-        index: 0,
+        index: ChildIndex::ZERO,
         user_identity_id: US,
         friend_identity_id: THEM,
     },

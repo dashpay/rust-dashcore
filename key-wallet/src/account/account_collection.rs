@@ -14,7 +14,7 @@ use crate::account::Account;
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
-use crate::AccountType;
+use crate::{AccountType, ChildIndex};
 
 pub type DashpayOurUserIdentityId = [u8; 32];
 pub type DashpayContactIdentityId = [u8; 32];
@@ -23,7 +23,7 @@ pub type DashpayContactIdentityId = [u8; 32];
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct DashpayAccountKey {
-    pub index: u32,
+    pub index: ChildIndex,
     pub user_identity_id: DashpayOurUserIdentityId,
     pub friend_identity_id: DashpayContactIdentityId,
 }
@@ -34,9 +34,9 @@ pub struct DashpayAccountKey {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct PlatformPaymentAccountKey {
     /// Account index (hardened)
-    pub account: u32,
+    pub account: ChildIndex,
     /// Key class (hardened)
-    pub key_class: u32,
+    pub key_class: ChildIndex,
 }
 
 /// Collection of accounts organized by type
@@ -45,15 +45,15 @@ pub struct PlatformPaymentAccountKey {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AccountCollection {
     /// Standard BIP44 accounts by index
-    pub standard_bip44_accounts: BTreeMap<u32, Account>,
+    pub standard_bip44_accounts: BTreeMap<ChildIndex, Account>,
     /// Standard BIP32 accounts by index
-    pub standard_bip32_accounts: BTreeMap<u32, Account>,
+    pub standard_bip32_accounts: BTreeMap<ChildIndex, Account>,
     /// CoinJoin accounts by index
-    pub coinjoin_accounts: BTreeMap<u32, Account>,
+    pub coinjoin_accounts: BTreeMap<ChildIndex, Account>,
     /// Identity registration account (optional)
     pub identity_registration: Option<Account>,
     /// Identity top-up accounts by registration index
-    pub identity_topup: BTreeMap<u32, Account>,
+    pub identity_topup: BTreeMap<ChildIndex, Account>,
     /// Identity top-up not bound to identity (optional)
     pub identity_topup_not_bound: Option<Account>,
     /// Identity invitation account (optional)
@@ -584,7 +584,7 @@ impl AccountCollection {
     }
 
     /// Get all account indices
-    pub fn all_indices(&self) -> Vec<u32> {
+    pub fn all_indices(&self) -> Vec<ChildIndex> {
         let mut indices = Vec::new();
 
         indices.extend(self.standard_bip44_accounts.keys().copied());
