@@ -1012,7 +1012,8 @@ fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 /// A culprit is kicked immediately and ALL its on-wire requests are re-queued for
 /// other peers; leaving it connected would just route the freed work back to it.
 /// When half or more of the connected peers are culprits in the same tick, only the
-/// one silent the longest is kicked. The supervisor refills the set.
+/// one silent the longest is kicked. The last peer is kicked only once it has stalled
+/// for another timeout. The supervisor refills the set.
 fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
@@ -1026,6 +1027,8 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
         let mut ticker = tokio::time::interval(TIMEOUT_CHECK);
         // Per-peer liveness: (bytes read, when the peer last sent bytes or was idle).
         let mut progress: HashMap<PeerId, (u64, Instant)> = HashMap::new();
+        // The last connected peer kept through its stall, and since when.
+        let mut held_last: Option<(PeerId, Instant)> = None;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -1073,6 +1076,7 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             );
 
             if culprits.is_empty() {
+                held_last = None;
                 continue;
             }
 
@@ -1088,12 +1092,29 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                         (silent_since, p.addr(), p.id())
                     })
                     .collect();
-                if stalled.len() * 2 < peers.len() {
+                let mut spared: Vec<PeerId> = if stalled.len() * 2 < peers.len() {
                     Vec::new()
                 } else {
                     stalled.sort_by_key(|&(since, addr, _)| (since, addr));
                     stalled.into_iter().skip(1).map(|(_, _, id)| id).collect()
+                };
+                // Holding the last peer keeps a short outage from emptying the set.
+                match &*peers {
+                    [last] if culprits.contains(&last.id()) => {
+                        let since = match held_last {
+                            Some((id, since)) if id == last.id() => since,
+                            _ => now,
+                        };
+                        if now.duration_since(since) <= request_timeout(last.lag_ms()) {
+                            held_last = Some((last.id(), since));
+                            spared.push(last.id());
+                        } else {
+                            held_last = None;
+                        }
+                    }
+                    _ => held_last = None,
                 }
+                spared
             };
             for id in &spared {
                 culprits.remove(id);
@@ -1357,6 +1378,13 @@ mod tests {
         PeerNetworkManager::new(&config).await
     }
 
+    /// Lets the spawned tasks run what the last time advance made due.
+    async fn settle() {
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+    }
+
     /// The events received until none arrives for a while.
     async fn drain(events: &mut broadcast::Receiver<NetworkEvent>) -> Vec<NetworkEvent> {
         let mut received = Vec::new();
@@ -1414,7 +1442,13 @@ mod tests {
         let mut late = None;
         match departure {
             Departure::Drop => disconnect_all(),
-            Departure::Kick => tokio::time::advance(REQUEST_TIMEOUT + TIMEOUT_CHECK * 2).await,
+            Departure::Kick => {
+                // The last peer is held for one more timeout before it goes too.
+                for _ in 0..2 {
+                    tokio::time::advance(REQUEST_TIMEOUT + TIMEOUT_CHECK * 2).await;
+                    settle().await;
+                }
+            }
             Departure::Stop => {
                 net.stop().await;
                 // A handshake that completed while `stop` ran.
@@ -1512,11 +1546,14 @@ mod tests {
     async fn the_timeout_monitor_times_an_idle_peer_from_its_first_request() {
         let net = broker().await;
         let session = net.session.lock().await.clone();
-        let id = conn(1, 0);
-        let peer = ConnectedPeer::for_test(id).await;
+        let peer = ConnectedPeer::for_test(conn(1, 0)).await;
         let handle = peer.handle();
-        let admitted = net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
-        assert!(matches!(admitted, Admission::Joined));
+        // An idle second peer, so the stalled one is not the last peer.
+        for peer in [peer, ConnectedPeer::for_test(conn(2, 0)).await] {
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+        }
 
         for _ in 0..3 {
             tokio::time::advance(REQUEST_TIMEOUT).await;
@@ -1528,27 +1565,29 @@ mod tests {
 
         tokio::time::advance(TIMEOUT_CHECK * 2).await;
         tokio::task::yield_now().await;
-        assert_eq!(net.connected_count().await, 1, "kicked right after its first request");
+        assert_eq!(net.connected_count().await, 2, "kicked right after its first request");
 
         tokio::time::advance(REQUEST_TIMEOUT).await;
         tokio::task::yield_now().await;
-        assert_eq!(net.connected_count().await, 0, "a peer silent with work stays connected");
+        assert_eq!(net.connected_count().await, 1, "a peer silent with work stays connected");
     }
 
     /// Peers stall on a request the registry tracks (`registered`) or with bytes owed
     /// and none arriving (`charged`). All of them cross the timeout in the same tick.
-    #[test_case(&[1, 2, 3], &[], &[2, 3]; "a stall of every peer kicks one")]
-    #[test_case(&[1], &[3], &[1, 2]; "a shared stall kicks the peer silent the longest")]
-    #[test_case(&[2], &[], &[1, 3]; "a lone stall among healthy peers is kicked")]
+    #[test_case(3, &[1, 2, 3], &[], &[2, 3]; "a stall of every peer kicks one")]
+    #[test_case(3, &[1], &[3], &[1, 2]; "a shared stall kicks the peer silent the longest")]
+    #[test_case(3, &[2], &[], &[1, 3]; "a lone stall among healthy peers is kicked")]
+    #[test_case(1, &[1], &[], &[1]; "the last peer stays")]
     #[tokio::test(start_paused = true)]
     async fn the_timeout_monitor_kicks_one_peer_per_shared_stall(
+        joined: u8,
         registered: &[u8],
         charged: &[u8],
         kept: &[u8],
     ) {
         let net = broker().await;
         let session = net.session.lock().await.clone();
-        for n in 1..=3 {
+        for n in 1..=joined {
             let peer = ConnectedPeer::for_test(conn(n, 0)).await;
             if charged.contains(&n) {
                 // Only the charge matters here: the loopback has no reader to answer it.
@@ -1559,15 +1598,15 @@ mod tests {
         }
         // The monitor times a charged peer from the first tick that sees it.
         tokio::time::advance(TIMEOUT_CHECK).await;
-        tokio::task::yield_now().await;
+        settle().await;
         for &n in registered {
             net.state.broker.mark_on_wire(&get_cfilters(n.into()), conn(n, 0)).await;
         }
 
         tokio::time::advance(REQUEST_TIMEOUT).await;
-        tokio::task::yield_now().await;
+        settle().await;
         tokio::time::advance(TIMEOUT_CHECK).await;
-        tokio::task::yield_now().await;
+        settle().await;
 
         let left: Vec<SocketAddr> =
             net.state.connected.read().await.iter().map(|p| p.addr()).collect();
