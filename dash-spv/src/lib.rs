@@ -86,6 +86,7 @@ pub use storage::BlockHeaderTip;
 pub use sync::{BroadcastHoldout, BroadcastResult};
 pub use tracing::level_filters::LevelFilter;
 pub use types::{FilterMatch, ValidationMode};
+pub use validation::{InstantLockVerificationError, VerifiedInstantLock};
 
 // Re-export commonly used dashcore types
 pub use dashcore::{Address, BlockHash, Network, OutPoint, QuorumHash, ScriptBuf};
