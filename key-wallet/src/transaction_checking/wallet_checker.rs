@@ -476,7 +476,7 @@ mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
     use crate::account::{ECDSAAddressDerivation, TransactionRecord};
-    use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
+    use crate::gap_limit::{DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT};
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
     use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
     use crate::test_utils::TestWalletContext;
@@ -4120,6 +4120,28 @@ mod tests {
         assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
         assert_eq!(owned_output_count(&again.updated_records[0]), 2);
         assert_eq!(again.updated_records[0].net_amount, 80_000);
+    }
+
+    /// The same on the change chain: the late output is recorded as `Change`.
+    #[tokio::test]
+    async fn test_redelivered_transaction_owning_a_late_change_output_records_it_as_change() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_INTERNAL_GAP_LIMIT as usize;
+        let change = ctx
+            .wallet
+            .get_bip44_account(0)
+            .expect("Should have BIP44 account")
+            .derive_change_addresses(0, gap as u32 + 2)
+            .expect("Should derive");
+        let tx = paying(1, &[&change[1], &change[gap + 1]], 40_000);
+        let first = ctx.check_transaction(&tx, in_block(100, 1)).await;
+        assert_eq!(first.total_received, 40_000, "only index 1 is visible yet");
+
+        let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
+        assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
+        let roles: Vec<_> =
+            again.updated_records[0].output_details.iter().map(|d| d.role).collect();
+        assert_eq!(roles, [OutputRole::Change, OutputRole::Change]);
     }
 
     /// The same late recognition on a transaction we funded: its first record
