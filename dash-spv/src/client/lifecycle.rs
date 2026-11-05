@@ -302,6 +302,8 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             id: _,
             task,
             shutdown,
+            monitors,
+            monitor_shutdown,
         }: SyncLoop,
     ) {
         // Stop the sync loop before tearing anything down so it cannot lock the
@@ -321,6 +323,14 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
         // Stop the network
         self.network.stop().await;
+
+        // Only now, so the handlers hear the peers the network just dropped.
+        monitor_shutdown.cancel();
+        for monitor in monitors {
+            if let Err(e) = monitor.await {
+                tracing::warn!("Event monitor task failed: {}", e);
+            }
+        }
 
         // Stop storage to ensure all data is persisted
         {

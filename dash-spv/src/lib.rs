@@ -63,6 +63,7 @@
 mod sml_engine;
 mod storage;
 mod sync;
+mod validation;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -74,7 +75,6 @@ pub mod error;
 pub mod logging;
 pub mod network;
 pub mod types;
-pub mod validation;
 
 // Re-export main types for convenience
 pub use client::config::MempoolStrategy;

@@ -4,7 +4,6 @@
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
-use dashcore::hashes::Hash;
 use dashcore::{BlockHash, OutPoint, Transaction, TxIn, TxOut};
 use test_case::test_case;
 

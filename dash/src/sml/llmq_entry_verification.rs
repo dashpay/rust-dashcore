@@ -131,7 +131,6 @@ impl Display for LLMQEntryVerificationStatus {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use super::*;
 

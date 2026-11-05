@@ -1,7 +1,5 @@
 use std::net::SocketAddr;
 
-use hashes::Hash;
-
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::hash_types::{MerkleRootMasternodeList, ProTxHash};
 use crate::network::message_qrinfo::{MNSkipListMode, QRInfo, QuorumSnapshot};

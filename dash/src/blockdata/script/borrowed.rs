@@ -4,7 +4,7 @@
 use core::fmt;
 use core::ops::{Index, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive};
 
-use hashes::Hash;
+use hashes::hash160;
 
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
@@ -123,7 +123,7 @@ impl Script {
     /// Returns 160-bit hash of the script.
     #[inline]
     pub fn script_hash(&self) -> ScriptHash {
-        ScriptHash::hash(self.as_bytes())
+        ScriptHash::from_raw_hash(hash160::Hash::hash(self.as_bytes()))
     }
 
     /// Returns the length in bytes of the script.

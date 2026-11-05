@@ -24,7 +24,7 @@
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::Hash;
+use hashes::{HashEngine, sha256d};
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
@@ -88,9 +88,9 @@ impl SpecialTransactionBasePayloadEncodable for AssetUnlockPayload {
     }
 
     fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
-        let mut engine = SpecialTransactionPayloadHash::engine();
+        let mut engine = sha256d::Hash::engine();
         self.base_payload_data_encode(&mut engine).expect("engines don't error");
-        SpecialTransactionPayloadHash::from_engine(engine)
+        SpecialTransactionPayloadHash::from_raw_hash(engine.finalize())
     }
 }
 
@@ -151,7 +151,7 @@ impl Decodable for AssetUnlockPayload {
 mod tests {
     use core::str::FromStr;
 
-    use hashes::Hash;
+    use hashes::sha256d;
     use hex_conservative::{Case, DisplayHex};
 
     use crate::bls_sig_utils::BLSSignature;
@@ -331,7 +331,10 @@ mod tests {
         let resigned = unlock_tx(2, 101, 700, 1);
         assert_eq!(resigned.txid(), tx.txid());
         assert_ne!(resigned.instance_hash(), tx.instance_hash());
-        assert_eq!(tx.instance_hash(), Txid::hash(&consensus::serialize(&tx)));
+        assert_eq!(
+            tx.instance_hash(),
+            Txid::from_raw_hash(sha256d::Hash::hash(&consensus::serialize(&tx)))
+        );
 
         let v1 = unlock_tx(1, 101, 500, 0);
         assert_eq!(v1.txid(), v1.instance_hash());

@@ -3667,7 +3667,6 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
 
-    use dashcore::hashes::Hash;
     use dashcore::{PubkeyHash, ScriptBuf, ScriptHash};
     use serde::{Deserialize, Serialize};
     use serde_json::json;

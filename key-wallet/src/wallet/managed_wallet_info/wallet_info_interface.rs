@@ -719,7 +719,6 @@ mod tests {
     use crate::test_utils::TestWalletContext;
     use crate::transaction_checking::BlockInfo;
     use crate::wallet::initialization::WalletAccountCreationOptions;
-    use dashcore::hashes::Hash;
     use dashcore::BlockHash;
 
     /// An IS lock for a transaction the wallet already holds as mined must not

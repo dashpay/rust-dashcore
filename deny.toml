@@ -44,7 +44,7 @@ deny = [
     { crate = "hex-literal", reason = "use `hex!` from `hex-conservative` 1.x instead" },
 ]
 skip = [
-    # Older releases still come in through upstream crates (`bitcoin_hashes` 0.14 via `bip39`),
+    # Older releases still come in through upstream crates (`bitcoin_hashes` 0.14 via `bip39`, 0.16 via `bip324`).
     { crate = "hex-conservative:<1.0.0", reason = "depended on by rust-bitcoin crates" },
 ]
 

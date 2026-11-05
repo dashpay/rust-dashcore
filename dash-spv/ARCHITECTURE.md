@@ -1177,7 +1177,7 @@ The `seen_txids` map provides a 180-second deduplication window to handle the ca
 | `InstantLockReceived` | Mark transaction as IS-locked, or store in pending_is_locks if TX not yet received |
 | `PeerConnected` | Activate on new peer immediately if already synced |
 | `PeerDisconnected` | Remove peer; redistribute its queued txids to a random activated peer |
-| `PeersUpdated(0)` | All peers lost: call `stop_sync()`, transition to `WaitingForConnections` |
+| `PeersUpdated` with no addresses | All peers lost: call `stop_sync()`, transition to `WaitingForConnections` |
 
 **InstantSend lock handling:**
 
@@ -1208,7 +1208,7 @@ The rebuild sequence on each activated peer is: `filterclear` → `filterload` (
 Each peer has its own txid queue (`None` = connected but inactive, `Some(VecDeque)` = activated). On disconnect:
 - Peer with queued txids: redistribute to a random activated peer
 - No activated peers remaining: queued items dropped with warning
-- All peers lost (`PeersUpdated` with count 0): manager transitions to `WaitingForConnections`, then re-activates via `start_sync()` when peers return
+- All peers lost (`PeersUpdated` with no addresses): manager transitions to `WaitingForConnections`, then re-activates via `start_sync()` when peers return
 
 **Wallet integration:**
 

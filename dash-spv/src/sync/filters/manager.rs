@@ -1238,7 +1238,6 @@ mod tests {
     use dashcore::network::message_filter::CFilter;
     use dashcore::{Address, Header};
     use dashcore::{Block, Network, Transaction};
-    use dashcore_hashes::Hash;
     use key_wallet_manager::test_utils::{
         MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };

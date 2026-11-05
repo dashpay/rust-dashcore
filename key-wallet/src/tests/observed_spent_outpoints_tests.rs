@@ -22,7 +22,6 @@
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
-use dashcore::hashes::Hash;
 use dashcore::{BlockHash, TxIn, Txid};
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;

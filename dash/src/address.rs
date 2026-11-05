@@ -45,7 +45,6 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
 
-use hashes::Hash;
 use internals::write_err;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -278,6 +277,7 @@ impl<'a> fmt::Display for AddressEncoding<'a> {
 }
 
 mod sealed {
+    #[allow(unnameable_types)] // Sealed: consumers must not name or implement it.
     pub trait NetworkValidation {}
     impl NetworkValidation for super::NetworkChecked {}
     impl NetworkValidation for super::NetworkUnchecked {}

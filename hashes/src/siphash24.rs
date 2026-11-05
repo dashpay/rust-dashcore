@@ -25,7 +25,7 @@ use core::arch::aarch64::uint64x2_t;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::__m256i;
 
-pub use bitcoin_hashes::siphash24::{Hash, HashEngine, State};
+pub use bitcoin_hashes::siphash24::{Hash, HashEngine};
 
 /// One scalar SipRound over the four state words. The reference the SIMD kernels
 /// ([`sip_round_avx2`], [`sip_round_neon`]) reproduce lane-for-lane.
@@ -502,7 +502,7 @@ unsafe fn hash_many_wide_avx2<const LEN: usize, const R: usize>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{Hash as _, HashEngine as _};
+    use crate::HashEngine as _;
     use test_case::test_case;
 
     use super::*;
@@ -584,7 +584,7 @@ mod tests {
 
         for i in 0..64 {
             vin[i] = i as u8;
-            let vec = Hash::from_slice(&vecs[i][..]).unwrap();
+            let vec = Hash::from_byte_array(vecs[i]);
             let out = Hash::hash_with_keys(k0, k1, &vin[0..i]);
             assert_eq!(vec, out, "vec #{}", i);
 

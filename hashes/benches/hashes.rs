@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use dashcore_hashes::cmp::fixed_time_eq;
 use dashcore_hashes::{hash160, ripemd160, sha1, sha256, sha256d, sha512, sha512_256};
-use dashcore_hashes::{hmac, Hash, HashEngine};
+use dashcore_hashes::{hmac, HashEngine};
 use std::hint::black_box;
 
 fn bench_sha256(c: &mut Criterion) {
@@ -131,7 +132,7 @@ fn bench_hmac_sha256(c: &mut Criterion) {
             let key = [99u8; 32];
             let bytes = vec![1u8; size];
             b.iter(|| {
-                let mut engine = hmac::HmacEngine::<sha256::Hash>::new(&key);
+                let mut engine = hmac::HmacEngine::<sha256::HashEngine>::new(&key);
                 engine.input(&bytes);
                 black_box(&engine);
             });
@@ -149,7 +150,7 @@ fn bench_hmac_sha512(c: &mut Criterion) {
             let key = [99u8; 64];
             let bytes = vec![1u8; size];
             b.iter(|| {
-                let mut engine = hmac::HmacEngine::<sha512::Hash>::new(&key);
+                let mut engine = hmac::HmacEngine::<sha512::HashEngine>::new(&key);
                 engine.input(&bytes);
                 black_box(&engine);
             });
@@ -159,34 +160,32 @@ fn bench_hmac_sha512(c: &mut Criterion) {
 }
 
 fn bench_constant_time_comparisons(c: &mut Criterion) {
-    use dashcore_hashes::cmp::fixed_time_eq;
-
     let mut group = c.benchmark_group("constant_time_cmp");
 
     // 32-byte comparisons (SHA256)
     group.bench_function("32b_ne", |b| {
         let hash_a = sha256::Hash::hash(&[0; 1]);
         let hash_b = sha256::Hash::hash(&[1; 1]);
-        b.iter(|| fixed_time_eq(&hash_a[..], &hash_b[..]));
+        b.iter(|| fixed_time_eq(hash_a.as_byte_array(), hash_b.as_byte_array()));
     });
 
     group.bench_function("32b_eq", |b| {
         let hash_a = sha256::Hash::hash(&[0; 1]);
         let hash_b = sha256::Hash::hash(&[0; 1]);
-        b.iter(|| fixed_time_eq(&hash_a[..], &hash_b[..]));
+        b.iter(|| fixed_time_eq(hash_a.as_byte_array(), hash_b.as_byte_array()));
     });
 
     // 64-byte comparisons (SHA512)
     group.bench_function("64b_ne", |b| {
         let hash_a = sha512::Hash::hash(&[0; 1]);
         let hash_b = sha512::Hash::hash(&[1; 1]);
-        b.iter(|| fixed_time_eq(&hash_a[..], &hash_b[..]));
+        b.iter(|| fixed_time_eq(hash_a.as_byte_array(), hash_b.as_byte_array()));
     });
 
     group.bench_function("64b_eq", |b| {
         let hash_a = sha512::Hash::hash(&[0; 1]);
         let hash_b = sha512::Hash::hash(&[0; 1]);
-        b.iter(|| fixed_time_eq(&hash_a[..], &hash_b[..]));
+        b.iter(|| fixed_time_eq(hash_a.as_byte_array(), hash_b.as_byte_array()));
     });
 
     group.finish();
@@ -199,26 +198,26 @@ fn bench_slice_comparisons(c: &mut Criterion) {
     group.bench_function("32b_ne", |b| {
         let hash_a = sha256::Hash::hash(&[0; 1]);
         let hash_b = sha256::Hash::hash(&[1; 1]);
-        b.iter(|| hash_a[..] == hash_b[..]);
+        b.iter(|| hash_a.as_byte_array() == hash_b.as_byte_array());
     });
 
     group.bench_function("32b_eq", |b| {
         let hash_a = sha256::Hash::hash(&[0; 1]);
         let hash_b = sha256::Hash::hash(&[0; 1]);
-        b.iter(|| hash_a[..] == hash_b[..]);
+        b.iter(|| hash_a.as_byte_array() == hash_b.as_byte_array());
     });
 
     // 64-byte comparisons (SHA512)
     group.bench_function("64b_ne", |b| {
         let hash_a = sha512::Hash::hash(&[0; 1]);
         let hash_b = sha512::Hash::hash(&[1; 1]);
-        b.iter(|| hash_a[..] == hash_b[..]);
+        b.iter(|| hash_a.as_byte_array() == hash_b.as_byte_array());
     });
 
     group.bench_function("64b_eq", |b| {
         let hash_a = sha512::Hash::hash(&[0; 1]);
         let hash_b = sha512::Hash::hash(&[0; 1]);
-        b.iter(|| hash_a[..] == hash_b[..]);
+        b.iter(|| hash_a.as_byte_array() == hash_b.as_byte_array());
     });
 
     group.finish();

@@ -36,7 +36,7 @@ use core::default::Default;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{Hash, sha256d};
+use hashes::{HashEngine, sha256d};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
 use crate::blockdata::script::Script;
@@ -77,10 +77,10 @@ impl<E> EncodeSigningDataResult<E> {
     ///
     /// ```rust
     /// # use dashcore::consensus::deserialize;
-    /// # use dashcore::hashes::Hash;
-    /// # use dashcore::sighash::{LegacySighash, SighashCache};
+    /// # use dashcore::hashes::sha256d;
+    /// # use dashcore::sighash::SighashCache;
     /// # use dashcore::Transaction;
-    /// # let mut writer = LegacySighash::engine();
+    /// # let mut writer = sha256d::Hash::engine();
     /// # let input_index = 0;
     /// # let script_pubkey = dashcore::ScriptBuf::new();
     /// # let sighash_u32 = 0u32;
@@ -246,15 +246,15 @@ impl Transaction {
         self.encode_txid_data(&mut bytes).expect("vecs don't error");
         let quorum_info_start = bytes.len() - AssetUnlockPayload::QUORUM_INFO_SIZE;
         bytes[quorum_info_start..].fill(0);
-        Txid::hash(&bytes)
+        Txid::from_raw_hash(sha256d::Hash::hash(&bytes))
     }
 
     /// The hash of the full serialization, without witnesses. It equals [`Self::txid`] except
     /// for asset unlocks with payload version 2 or higher, which are relayed by this hash.
     pub fn instance_hash(&self) -> Txid {
-        let mut enc = Txid::engine();
+        let mut enc = sha256d::Hash::engine();
         self.encode_txid_data(&mut enc).expect("engines don't error");
-        Txid::from_engine(enc)
+        Txid::from_raw_hash(enc.finalize())
     }
 
     /// Whether the txid excludes the quorum signing info of an asset unlock payload.
@@ -388,11 +388,11 @@ impl Transaction {
 
     /// This will hash all input outpoints
     pub fn hash_inputs(&self) -> InputsHash {
-        let mut enc = InputsHash::engine();
+        let mut enc = sha256d::Hash::engine();
         for input in self.input.iter() {
             input.previous_output.consensus_encode(&mut enc).expect("engines don't error");
         }
-        InputsHash::from_engine(enc)
+        InputsHash::from_raw_hash(enc.finalize())
     }
 
     /// Returns the "weight" of this transaction, as defined by BIP141.
@@ -1080,7 +1080,11 @@ mod tests {
         // The txid must match the txid computed from the original on-wire bytes
         // (double-SHA256 of the serialized transaction). Since the encoder now
         // reproduces the input bytes exactly, the txid is the hash of those bytes.
-        assert_eq!(tx.txid(), Txid::hash(&tx_bytes), "txid must hash the original bytes");
+        assert_eq!(
+            tx.txid(),
+            Txid::from_raw_hash(sha256d::Hash::hash(&tx_bytes)),
+            "txid must hash the original bytes"
+        );
         assert_eq!(tx.txid(), core_txid.parse::<Txid>().unwrap());
 
         // The txid must differ from the same transaction with type bytes zeroed —
@@ -1125,7 +1129,7 @@ mod tests {
         assert_eq!(decoded.tx_type(), TransactionType::Unknown(UNASSIGNED_SPECIAL_TX_TYPE));
         assert_eq!(decoded, tx);
         assert_eq!(serialize(&decoded), bytes);
-        assert_eq!(decoded.txid(), Txid::hash(&bytes));
+        assert_eq!(decoded.txid(), Txid::from_raw_hash(sha256d::Hash::hash(&bytes)));
         assert_eq!(decoded.size(), bytes.len());
     }
 
@@ -1185,7 +1189,7 @@ mod tests {
     #[test_case(TransactionType::ProviderUpdateRevocation, [revocation_bytes(), vec![0]].concat(), true ; "trailing byte")]
     #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes()[..100].to_vec(), true ; "truncated")]
     #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(1), false ; "known llmq type")]
-    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), true ; "unknown llmq type re-encodes differently")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), false ; "unknown llmq type")]
     fn known_type_payload_decodes_typed_or_stays_raw(
         tx_type: TransactionType,
         payload: Vec<u8>,
@@ -1316,13 +1320,13 @@ mod tests {
         assert_eq!(bytes, expected);
         assert_eq!(v2.size(), bytes.len());
         assert_eq!(v2.special_transaction_len(), 0);
-        assert_eq!(v2.txid(), Txid::hash(&bytes));
+        assert_eq!(v2.txid(), Txid::from_raw_hash(sha256d::Hash::hash(&bytes)));
 
         // From version 3 the payload follows with its length prefix.
         let bytes = serialize(&v3);
         assert_eq!(bytes.len(), expected.len() + v3.special_transaction_len());
         assert_eq!(v3.size(), bytes.len());
-        assert_eq!(v3.txid(), Txid::hash(&bytes));
+        assert_eq!(v3.txid(), Txid::from_raw_hash(sha256d::Hash::hash(&bytes)));
     }
 
     #[test]

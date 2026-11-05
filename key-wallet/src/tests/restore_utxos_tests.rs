@@ -1,7 +1,6 @@
 //! `ManagedWalletInfo::restore_utxos` places each UTXO in the account that
 //! owns its address (#1294).
 
-use dashcore::hashes::Hash;
 use dashcore::{Address, BlockHash, OutPoint, Transaction};
 use test_case::test_case;
 

@@ -653,7 +653,6 @@ mod tests {
     use crate::{Network, Utxo};
     use dashcore::ecdsa::EcdsaSignature;
     use dashcore::{OutPoint, ScriptBuf, Txid};
-    use dashcore_hashes::Hash;
     use std::collections::HashSet;
     use test_case::test_case;
 

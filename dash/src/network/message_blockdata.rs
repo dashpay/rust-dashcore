@@ -27,7 +27,6 @@ use hashes::sha256d;
 
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::{BlockHash, ChainLockHash, InstantSendLockHash, Txid};
-use crate::hashes::Hash;
 use crate::internal_macros::impl_consensus_encoding;
 use crate::network::constants;
 use crate::prelude::*;
@@ -72,7 +71,7 @@ impl Encodable for Inventory {
             };
         }
         Ok(match *self {
-            Inventory::Error => encode_inv!(0, sha256d::Hash::all_zeros()),
+            Inventory::Error => encode_inv!(0, sha256d::Hash::from_byte_array([0; 32])),
             Inventory::Transaction(ref t) => encode_inv!(1, t),
             Inventory::Block(ref b) => encode_inv!(2, b),
             Inventory::FilteredBlock(ref b) => encode_inv!(3, b),
@@ -167,7 +166,6 @@ impl_consensus_encoding!(GetHeadersMessage, version, locator_hashes, stop_hash);
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use super::{GetBlocksMessage, GetHeadersMessage, Inventory, Vec};
     use crate::consensus::encode::{deserialize, serialize};
@@ -231,7 +229,7 @@ mod tests {
         assert_eq!(real_decode.version, 70002);
         assert_eq!(real_decode.locator_hashes.len(), 1);
         assert_eq!(serialize(&real_decode.locator_hashes[0]), genhash);
-        assert_eq!(real_decode.stop_hash, Hash::all_zeros());
+        assert_eq!(real_decode.stop_hash, BlockHash::all_zeros());
 
         assert_eq!(serialize(&real_decode), from_sat);
     }
@@ -249,7 +247,7 @@ mod tests {
         assert_eq!(real_decode.version, 70002);
         assert_eq!(real_decode.locator_hashes.len(), 1);
         assert_eq!(serialize(&real_decode.locator_hashes[0]), genhash);
-        assert_eq!(real_decode.stop_hash, Hash::all_zeros());
+        assert_eq!(real_decode.stop_hash, BlockHash::all_zeros());
 
         assert_eq!(serialize(&real_decode), from_sat);
     }

@@ -10,7 +10,7 @@
 use core::borrow::Borrow;
 use core::fmt;
 
-use hashes::Hash;
+use hashes::{HashEngine, sha256d};
 
 pub use dashcore_crypto::sighash::SplitAnyoneCanPay;
 pub use dashcore_crypto::sighash::{
@@ -280,14 +280,14 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
         script_pubkey: &Script,
         sighash_type: u32,
     ) -> Result<LegacySighash, Error> {
-        let mut enc = LegacySighash::engine();
+        let mut enc = sha256d::Hash::engine();
         if self
             .legacy_encode_signing_data_to(&mut enc, input_index, script_pubkey, sighash_type)
             .is_sighash_single_bug()?
         {
             Ok(LegacySighash::from_byte_array(UINT256_ONE))
         } else {
-            Ok(LegacySighash::from_engine(enc))
+            Ok(LegacySighash::from_raw_hash(enc.finalize()))
         }
     }
 }

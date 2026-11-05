@@ -17,7 +17,7 @@ use crate::Network;
 use dashcore::address::Payload;
 #[cfg(feature = "eddsa")]
 use dashcore::eddsa::{EddsaPkBytes, EddsaPkHash};
-use dashcore::hashes::{hash160, Hash};
+use dashcore::hashes::hash160;
 use dashcore::{Address, AddressType, ScriptBuf};
 
 /// Types of public keys used in the address pool

@@ -38,7 +38,7 @@ use std::net::SocketAddr;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::Hash;
+use hashes::{HashEngine, sha256d};
 use hex_conservative::Case::Lower;
 
 use crate::address::Payload;
@@ -467,9 +467,9 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
     }
 
     fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
-        let mut engine = SpecialTransactionPayloadHash::engine();
+        let mut engine = sha256d::Hash::engine();
         self.base_payload_data_encode(&mut engine).expect("engines don't error");
-        SpecialTransactionPayloadHash::from_engine(engine)
+        SpecialTransactionPayloadHash::from_raw_hash(engine.finalize())
     }
 }
 
@@ -901,7 +901,6 @@ mod tests {
 
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64;
-    use hashes::Hash;
 
     use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::{Encodable, deserialize};

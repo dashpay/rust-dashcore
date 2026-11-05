@@ -1,4 +1,4 @@
-use hashes::Hash;
+use hashes::sha256d;
 
 use crate::consensus::Encodable;
 use crate::consensus::encode::{write_compact_size, write_fixed_bitset};
@@ -19,7 +19,7 @@ impl QuorumEntry {
         let mut writer = Vec::new();
 
         self.consensus_encode(&mut writer).expect("encoding failed");
-        QuorumEntryHash::hash(&writer)
+        QuorumEntryHash::from_raw_hash(sha256d::Hash::hash(&writer))
     }
 
     /// Constructs the commitment data required for computing the quorum commitment hash.
@@ -66,6 +66,6 @@ impl QuorumEntry {
     /// * `QuorumCommitmentHash` - A hash representing the commitment data.
     pub fn calculate_commitment_hash(&self) -> QuorumCommitmentHash {
         let commitment_data = self.commitment_data();
-        QuorumCommitmentHash::hash(&commitment_data)
+        QuorumCommitmentHash::from_raw_hash(sha256d::Hash::hash(&commitment_data))
     }
 }

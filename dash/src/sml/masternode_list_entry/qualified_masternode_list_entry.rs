@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::Hash;
 
 use crate::hash_types::{ConfirmedHashHashedWithProRegTx, Sha256dHash};
 use crate::sml::masternode_list_entry::MasternodeListEntry;
@@ -38,15 +37,10 @@ impl From<MasternodeListEntry> for QualifiedMasternodeListEntry {
     fn from(masternode_list_entry: MasternodeListEntry) -> Self {
         let entry_hash = Sha256dHash::from_raw_hash(masternode_list_entry.calculate_entry_hash());
         let confirmed_hash_hashed_with_pro_reg_tx =
-            masternode_list_entry.confirmed_hash.map(|confirmed_hash| {
-                ConfirmedHashHashedWithProRegTx::hash(
-                    &[
-                        masternode_list_entry.pro_reg_tx_hash.to_byte_array(),
-                        confirmed_hash.to_byte_array(),
-                    ]
-                    .concat(),
-                )
-            });
+            ConfirmedHashHashedWithProRegTx::hash_members_confirmed_hash_optional(
+                &masternode_list_entry.pro_reg_tx_hash,
+                masternode_list_entry.confirmed_hash.as_ref(),
+            );
         QualifiedMasternodeListEntry {
             masternode_list_entry,
             entry_hash,

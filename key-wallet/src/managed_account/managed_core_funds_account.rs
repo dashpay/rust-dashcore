@@ -1614,7 +1614,6 @@ mod conflict_sweep_walk_tests {
     use crate::managed_account::transaction_record::TransactionDirection;
     use crate::transaction_checking::BlockInfo;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
-    use dashcore::hashes::Hash;
     use dashcore::ScriptBuf;
     use dashcore::{BlockHash, TxIn, TxOut, Witness};
 

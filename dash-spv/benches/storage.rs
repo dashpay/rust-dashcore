@@ -3,7 +3,7 @@ use std::time::Duration;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use dash_spv::{
     test_utils::{BlockHeaderStorage, DiskStorageManager, StorageManager},
-    ClientConfig, Hash,
+    ClientConfig,
 };
 use dashcore::{block::Version, BlockHash, CompactTarget, Header};
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -14,7 +14,7 @@ fn create_test_header(height: u32) -> Header {
     Header {
         version: Version::from_consensus(1),
         prev_blockhash: BlockHash::all_zeros(),
-        merkle_root: dashcore_hashes::sha256d::Hash::all_zeros().into(),
+        merkle_root: dashcore_hashes::sha256d::Hash::from_byte_array([0; 32]).into(),
         time: height,
         bits: CompactTarget::from_consensus(0x207fffff),
         nonce: height,

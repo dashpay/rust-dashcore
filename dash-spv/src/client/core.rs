@@ -123,8 +123,13 @@ pub(super) struct SyncLoop {
     /// Tells this loop apart from the ones `run` starts after it.
     pub(super) id: u64,
     pub(super) task: JoinHandle<()>,
-    /// Stops the loop and the event monitors it runs.
+    /// Stops the loop and the tasks that act on its events.
     pub(super) shutdown: CancellationToken,
+    /// The tasks delivering events to the handlers. They outlive the loop, so the
+    /// handlers also hear the peers the network drops while it stops.
+    pub(super) monitors: Vec<JoinHandle<()>>,
+    /// Stops `monitors`.
+    pub(super) monitor_shutdown: CancellationToken,
 }
 
 impl<W: WalletInterface, N: NetworkManager> Clone for DashSpvClient<W, N> {
