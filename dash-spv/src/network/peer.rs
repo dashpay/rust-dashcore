@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(test)]
-use tokio::net::TcpListener;
+use tokio::{io, net::TcpListener};
 use tokio::{
     io::{AsyncRead, AsyncWriteExt, ReadBuf},
     net::{
@@ -365,11 +365,14 @@ impl ConnectedPeer {
     }
 
     /// A handshaken connection `id` over a loopback socket, with no reader running.
+    /// The far end discards what it reads, so sends succeed.
     #[cfg(test)]
     pub(crate) async fn for_test(id: PeerId) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
         let addr = listener.local_addr().expect("bound address");
         let stream = TcpStream::connect(addr).await.expect("connect loopback");
+        let (mut far, _) = listener.accept().await.expect("accept loopback");
+        tokio::spawn(async move { io::copy(&mut far, &mut io::sink()).await });
         let link = Link::v1(stream, Network::Regtest.magic());
         ConnectedPeer {
             handle: PeerHandle {
