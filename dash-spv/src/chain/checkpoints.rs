@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use std::sync::LazyLock;
 
 use dashcore::block::Header;
+use dashcore::blockdata::constants::genesis_block;
 use dashcore::consensus::{encode, Decodable, Encodable};
 use dashcore::{BlockHash, Network};
 
@@ -73,6 +74,14 @@ impl Checkpoint {
         })
     }
 
+    /// The genesis block of `network`, alone.
+    pub fn genesis(network: Network) -> Self {
+        Self {
+            height: 0,
+            headers: vec![genesis_block(network).header.into()],
+        }
+    }
+
     /// Height of the checkpoint block.
     pub fn height(&self) -> u32 {
         self.height
@@ -85,7 +94,7 @@ impl Checkpoint {
 
     /// Header of the checkpoint block.
     pub fn header(&self) -> &HashedBlockHeader {
-        &self.headers[CHECKPOINT_HEADERS - 1]
+        self.headers.last().expect("a checkpoint holds headers")
     }
 
     /// All the headers of the checkpoint, oldest first, from [`Self::start_height`].
@@ -95,7 +104,7 @@ impl Checkpoint {
 
     /// Height of the first of [`Self::headers`].
     pub fn start_height(&self) -> u32 {
-        self.height - (CHECKPOINT_HEADERS as u32 - 1)
+        self.height + 1 - self.headers.len() as u32
     }
 }
 

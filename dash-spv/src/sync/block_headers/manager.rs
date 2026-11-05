@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::chain::CheckpointManager;
+use crate::chain::{Checkpoint, CheckpointManager};
 use crate::error::{SyncError, SyncResult};
 use crate::network::{NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip, MetadataStorage};
@@ -24,7 +24,6 @@ use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
 #[cfg(test)]
 use dashcore::block::Header;
-use dashcore::blockdata::constants::genesis_block;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::pow::DGW_PAST_BLOCKS;
@@ -141,24 +140,22 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             .prev_blockhash;
         drop(storage);
 
-        let (anchor_start, anchor) = self.anchor_below(start);
-        let anchor_height = anchor_start + anchor.len() as u32 - 1;
-        if anchor_height + 1 == start {
+        let anchor = self.anchor_below(start);
+        if anchor.height() + 1 == start {
             return self.store_below(start, &[]).await;
         }
-        tracing::info!("Syncing headers {}..{} below the stored ones", anchor_height + 1, start);
-        let anchor_hash = *anchor.last().expect("an anchor holds headers").hash();
-        self.pipeline.sync_below(anchor_height, anchor_hash, start - 1, join);
+        tracing::info!("Syncing headers {}..{} below the stored ones", anchor.height() + 1, start);
+        self.pipeline.sync_below(anchor.height(), *anchor.hash(), start - 1, join);
         self.progress.set_state(SyncState::Syncing);
         Ok(())
     }
 
-    /// The checkpoint below `start`, or genesis, as its first height and headers.
-    fn anchor_below(&self, start: u32) -> (u32, Vec<HashedBlockHeader>) {
-        match self.checkpoint_manager.last_checkpoint_before_height(start - 1) {
-            Some(checkpoint) => (checkpoint.start_height(), checkpoint.headers().to_vec()),
-            None => (0, vec![genesis_block(self.network).header.into()]),
-        }
+    /// The checkpoint below `start`, or genesis.
+    fn anchor_below(&self, start: u32) -> Checkpoint {
+        self.checkpoint_manager
+            .last_checkpoint_before_height(start - 1)
+            .cloned()
+            .unwrap_or_else(|| Checkpoint::genesis(self.network))
     }
 
     /// Store the anchor below `start` and the `downloaded` headers joining it to `start`.
@@ -167,13 +164,13 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         start: u32,
         downloaded: &[HashedBlockHeader],
     ) -> SyncResult<()> {
-        let (anchor_start, mut headers) = self.anchor_below(start);
-        let anchor_height = anchor_start + headers.len() as u32 - 1;
+        let anchor = self.anchor_below(start);
         if !downloaded.is_empty() {
-            let ancestors = headers.iter().map(|header| *header.header()).collect();
-            BlockHeaderValidator::new(self.network, ancestors, anchor_height)
+            let ancestors = anchor.headers().iter().map(|header| *header.header()).collect();
+            BlockHeaderValidator::new(self.network, ancestors, anchor.height())
                 .validate(downloaded)?;
         }
+        let mut headers = anchor.headers().to_vec();
         headers.extend_from_slice(downloaded);
         let mut storage = self.header_storage.write().await;
         let joins = storage.get_header(start).await?.map(|header| header.header().prev_blockhash)
@@ -181,8 +178,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         if !joins {
             return Err(SyncError::Validation(format!("headers below {start} do not join it")));
         }
-        storage.store_headers_at_height(&headers, anchor_start).await?;
-        tracing::info!("Headers synced down to {}", anchor_start);
+        storage.store_headers_at_height(&headers, anchor.start_height()).await?;
+        tracing::info!("Headers synced down to {}", anchor.start_height());
         Ok(())
     }
 
