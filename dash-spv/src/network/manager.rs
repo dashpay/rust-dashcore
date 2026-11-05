@@ -1011,7 +1011,8 @@ fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 ///
 /// A culprit is kicked immediately and ALL its on-wire requests are re-queued for
 /// other peers; leaving it connected would just route the freed work back to it.
-/// The supervisor refills the set.
+/// When half or more of the connected peers are culprits in the same tick, only the
+/// one silent the longest is kicked. The supervisor refills the set.
 fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
@@ -1075,6 +1076,29 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 continue;
             }
 
+            // Half or more of the set stalling at once points at our own link rather than
+            // at the peers, so only the peer silent the longest goes.
+            let spared = {
+                let peers = connected.read().await;
+                let mut stalled: Vec<(Instant, SocketAddr, PeerId)> = peers
+                    .iter()
+                    .filter(|p| culprits.contains(&p.id()))
+                    .map(|p| {
+                        let silent_since = progress.get(&p.id()).map_or(now, |&(_, since)| since);
+                        (silent_since, p.addr(), p.id())
+                    })
+                    .collect();
+                if stalled.len() * 2 < peers.len() {
+                    Vec::new()
+                } else {
+                    stalled.sort_by_key(|&(since, addr, _)| (since, addr));
+                    stalled.into_iter().skip(1).map(|(_, _, id)| id).collect()
+                }
+            };
+            for id in &spared {
+                culprits.remove(id);
+            }
+
             // Drop culprits still in the set (some may already be gone) before their work
             // is re-queued, so the router cannot hand it back to them.
             let (kicked, remaining) = connected.remove(&culprits).await;
@@ -1095,9 +1119,10 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             tracing::warn!(
                 target: "dash_spv::network",
-                "request timeout: kicked {} peer(s) {:?}, retried {} request(s)",
+                "request timeout: kicked {} peer(s) {:?}, spared {}, retried {} request(s)",
                 dropped,
                 culprits,
+                spared.len(),
                 retried,
             );
             broker.wake();
@@ -1508,6 +1533,46 @@ mod tests {
         tokio::time::advance(REQUEST_TIMEOUT).await;
         tokio::task::yield_now().await;
         assert_eq!(net.connected_count().await, 0, "a peer silent with work stays connected");
+    }
+
+    /// Peers stall on a request the registry tracks (`registered`) or with bytes owed
+    /// and none arriving (`charged`). All of them cross the timeout in the same tick.
+    #[test_case(&[1, 2, 3], &[], &[2, 3]; "a stall of every peer kicks one")]
+    #[test_case(&[1], &[3], &[1, 2]; "a shared stall kicks the peer silent the longest")]
+    #[test_case(&[2], &[], &[1, 3]; "a lone stall among healthy peers is kicked")]
+    #[tokio::test(start_paused = true)]
+    async fn the_timeout_monitor_kicks_one_peer_per_shared_stall(
+        registered: &[u8],
+        charged: &[u8],
+        kept: &[u8],
+    ) {
+        let net = broker().await;
+        let session = net.session.lock().await.clone();
+        for n in 1..=3 {
+            let peer = ConnectedPeer::for_test(conn(n, 0)).await;
+            if charged.contains(&n) {
+                // Only the charge matters here: the loopback has no reader to answer it.
+                let _ = peer.handle().send(&get_cfilters(n.into())).await;
+            }
+            let admitted = net.state.connected.admit(peer, &session, 3, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+        }
+        // The monitor times a charged peer from the first tick that sees it.
+        tokio::time::advance(TIMEOUT_CHECK).await;
+        tokio::task::yield_now().await;
+        for &n in registered {
+            net.state.broker.mark_on_wire(&get_cfilters(n.into()), conn(n, 0)).await;
+        }
+
+        tokio::time::advance(REQUEST_TIMEOUT).await;
+        tokio::task::yield_now().await;
+        tokio::time::advance(TIMEOUT_CHECK).await;
+        tokio::task::yield_now().await;
+
+        let left: Vec<SocketAddr> =
+            net.state.connected.read().await.iter().map(|p| p.addr()).collect();
+        let kept: Vec<SocketAddr> = kept.iter().map(|&n| test_socket_address(n)).collect();
+        assert_eq!(left, kept);
     }
 
     #[test_case(&[&[MessageType::Inv], &[MessageType::Inv]], 0, &[1, 1]; "every subscriber of the type")]
