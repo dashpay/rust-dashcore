@@ -2336,8 +2336,9 @@ mod tests {
 
     /// The rescan recovery above has a boundary: a funding transaction that
     /// was chainlock-finalized keeps only its txid, so re-delivering it is not
-    /// a new sighting and never reaches the only production UTXO insert site.
-    /// The coin stays absent. Documented rather than fixed — recovering it
+    /// a new sighting, and it credits only outputs paying addresses derived
+    /// since it was recorded. This coin's address was already used, so the
+    /// coin stays absent. Documented rather than fixed — recovering it
     /// needs a rescan deep enough to re-fetch the block, which is above this
     /// layer.
     #[tokio::test]
@@ -4151,6 +4152,100 @@ mod tests {
         assert_eq!(updated.direction, TransactionDirection::Internal);
         assert_eq!(updated.net_amount, -1_000);
         assert!(ctx.bip44_account().utxos.contains_key(&OutPoint::new(spend.txid(), 0)));
+    }
+
+    fn in_chain_locked_block(height: u32, byte: u8) -> TransactionContext {
+        TransactionContext::InChainLockedBlock(BlockInfo::new(
+            height,
+            BlockHash::from_slice(&[byte; 32]).unwrap(),
+            1_700_000_000,
+        ))
+    }
+
+    /// A rescan of a block below the wallet's last ChainLock re-delivers a
+    /// finalized transaction. The output a later extension revealed must
+    /// still be credited, and the record corrected and reported while it is
+    /// retained.
+    #[tokio::test]
+    async fn test_redelivered_finalized_transaction_owning_a_newly_derived_output_is_credited() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+        let first = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        assert_eq!(first.total_received, 40_000, "only index 1 is visible yet");
+        let later = paying(2, &[&addresses[gap]], 7_000);
+        ctx.check_transaction(&later, in_chain_locked_block(101, 2)).await;
+
+        let again = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == early.txid()).count();
+        assert_eq!(credited, 2);
+        assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
+        #[cfg(feature = "keep-finalized-transactions")]
+        {
+            assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
+            assert_eq!(owned_output_count(&again.updated_records[0]), 2);
+            assert_eq!(again.updated_records[0].net_amount, 80_000);
+            assert_eq!(ctx.transaction(&early.txid()).net_amount, 80_000, "stored record");
+        }
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        assert!(again.updated_records.is_empty(), "the pruned record cannot be rebuilt");
+
+        let settled = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        assert!(settled.updated_records.is_empty());
+        assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
+    }
+
+    /// A reload rebuilds the spent marks from the records it holds, so a
+    /// pruned spender's are gone, and finality has pruned its observed spend.
+    /// A rescan re-delivering the funding transaction credits its late output
+    /// again; re-delivering the finalized spender must spend it again.
+    #[tokio::test]
+    async fn test_redelivered_finalized_spender_spends_a_late_output_a_reload_forgot() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let early = paying(1, &[&addresses[1], &addresses[2 * gap]], 40_000);
+        ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        let far = OutPoint::new(early.txid(), 1);
+        let mut spend = paying(0, &[&addresses[2]], 39_000);
+        spend.input[0].previous_output = far;
+        ctx.check_transaction(&spend, in_chain_locked_block(101, 2)).await;
+        ctx.managed_wallet.note_chain_lock_height(101);
+        ctx.managed_wallet.update_synced_height(101);
+        let snapshot = serde_json::to_string(ctx.bip44_account()).unwrap();
+        *ctx.managed_wallet.first_bip44_managed_account_mut().unwrap() =
+            serde_json::from_str(&snapshot).unwrap();
+
+        let later = paying(3, &[&addresses[gap]], 7_000);
+        ctx.check_transaction(&later, in_chain_locked_block(102, 3)).await;
+        ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+        ctx.check_transaction(&spend, in_chain_locked_block(101, 2)).await;
+
+        assert!(!ctx.bip44_account().utxos.contains_key(&far));
+        assert_eq!(ctx.managed_wallet.balance.total(), 40_000 + 39_000 + 7_000);
+    }
+
+    /// A late input can file a finalized spender's late-derived output as
+    /// ours before any re-delivery: the re-delivery that follows must still
+    /// credit its coin, though the roles no longer change.
+    #[tokio::test]
+    async fn test_redelivered_finalized_spender_credits_an_output_its_late_input_relabelled() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let funding = paying(4, &[&addresses[3]], 100_000);
+        let mut spend = paying(0, &[&addresses[1], &addresses[2 * gap]], 30_000);
+        spend.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+        ctx.check_transaction(&spend, in_chain_locked_block(101, 2)).await;
+        let later = paying(3, &[&addresses[gap]], 7_000);
+        ctx.check_transaction(&later, in_chain_locked_block(102, 3)).await;
+        ctx.check_transaction(&funding, in_chain_locked_block(100, 1)).await;
+
+        ctx.check_transaction(&spend, in_chain_locked_block(101, 2)).await;
+        assert!(ctx.bip44_account().utxos.contains_key(&OutPoint::new(spend.txid(), 1)));
+        assert_eq!(ctx.managed_wallet.balance.total(), 30_000 + 30_000 + 7_000);
     }
 
     /// A late input's correction and a rescan's re-delivery must give a
