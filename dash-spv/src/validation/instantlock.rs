@@ -48,12 +48,12 @@ impl VerifiedInstantLock {
         self.instant_lock.txid
     }
 
-    /// Binds the evidence to the complete transaction and its ordered inputs.
+    /// Binds the evidence to the wallet's network, the complete transaction and its ordered inputs.
     ///
     /// No wallet arithmetic or transaction consensus validation is performed.
-    /// Consumers must also match `network()` to the wallet receiving the evidence.
-    pub fn matches_transaction(&self, transaction: &Transaction) -> bool {
-        self.txid() == transaction.txid()
+    pub fn matches_transaction(&self, network: Network, transaction: &Transaction) -> bool {
+        self.network == network
+            && self.txid() == transaction.txid()
             && self
                 .instant_lock
                 .inputs
@@ -305,13 +305,14 @@ mod tests {
             instant_lock: lock,
             network: Network::Mainnet,
         };
-        assert!(verified.matches_transaction(&transaction));
+        assert!(verified.matches_transaction(Network::Mainnet, &transaction));
+        assert!(!verified.matches_transaction(Network::Testnet, &transaction));
         let mut changed = transaction.clone();
         changed.output[0].value -= 1;
-        assert!(!verified.matches_transaction(&changed));
+        assert!(!verified.matches_transaction(Network::Mainnet, &changed));
         let mut wrong_inputs = verified.clone();
         wrong_inputs.instant_lock.inputs[0].vout += 1;
-        assert!(!wrong_inputs.matches_transaction(&transaction));
+        assert!(!wrong_inputs.matches_transaction(Network::Mainnet, &transaction));
     }
 
     #[test]

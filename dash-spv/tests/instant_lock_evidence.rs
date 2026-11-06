@@ -47,7 +47,7 @@ async fn should_verify_instant_lock_after_cycle_arrives_without_wallet_arithmeti
     assert!(client.verify_instant_lock(lock).await.unwrap().is_none());
     fixture.install(&client).await.unwrap();
     let proof: VerifiedInstantLock = client.verify_instant_lock(lock).await.unwrap().unwrap();
-    assert!(proof.matches_transaction(&transaction));
+    assert!(proof.matches_transaction(Network::Mainnet, &transaction));
     assert_eq!(proof.instant_lock(), lock);
     assert!(wallet.read().await.processed_instant_locks.lock().await.is_empty());
     assert!(matches!(
@@ -78,7 +78,7 @@ async fn should_defer_instant_lock_until_selected_quorum_arrives() {
         fixture.clone().without_quorum(index).install(&client).await.unwrap();
         match client.verify_instant_lock(lock).await {
             Ok(None) => missing += 1,
-            Ok(Some(proof)) => assert!(proof.matches_transaction(&transaction)),
+            Ok(Some(proof)) => assert!(proof.matches_transaction(Network::Regtest, &transaction)),
             Err(error) => panic!("incomplete quorum data is unavailable, not invalid: {error}"),
         }
         assert!(
@@ -102,6 +102,10 @@ async fn should_bind_instant_lock_evidence_to_the_verifying_network() {
         fixture.install(&client).await.unwrap();
         let proof = client.verify_instant_lock(fixture.instant_lock()).await.unwrap().unwrap();
         assert_eq!(proof.network(), network);
+        assert!(proof.matches_transaction(network, &transaction));
+        for other in [Network::Mainnet, Network::Testnet].into_iter().filter(|n| *n != network) {
+            assert!(!proof.matches_transaction(other, &transaction));
+        }
     }
 }
 
