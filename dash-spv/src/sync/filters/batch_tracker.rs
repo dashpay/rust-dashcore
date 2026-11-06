@@ -45,7 +45,10 @@ impl BatchTracker {
         if start_height > self.end_height {
             return false;
         }
-        (start_height..=self.end_height).all(|h| self.received.contains(&h))
+        // Counting first keeps the check cheap while the batch is incomplete.
+        // The scan still rejects heights outside the batch.
+        self.received.len() as u32 > self.end_height - start_height
+            && (start_height..=self.end_height).all(|h| self.received.contains(&h))
     }
     /// Ending height of this batch (inclusive).
     pub(super) fn end_height(&self) -> u32 {
@@ -123,6 +126,12 @@ mod tests {
         // Has 3 entries in received, which would pass the old count-based check
         // for start_height=0..=2 (expected 3), but none are in range
         assert!(!tracker.is_complete(0));
+
+        // Out-of-range entries do not block completion once every in-range height arrived.
+        for h in 0..=2 {
+            tracker.insert_filter(h, Header::dummy(h).block_hash(), &dummy_filter_data(h));
+        }
+        assert!(tracker.is_complete(0));
     }
 
     #[test]
