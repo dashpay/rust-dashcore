@@ -6,6 +6,7 @@ use std::{
     io::{BufReader, Seek, SeekFrom},
     ops::Range,
     path::{Path, PathBuf},
+    sync::LazyLock,
     time::Instant,
 };
 
@@ -50,16 +51,20 @@ impl Persistable for HashedBlockHeader {
     const ENCODED_SIZE: Option<u64> = Some(112);
 
     fn sentinel() -> Self {
-        let header = BlockHeader {
-            version: Version::from_consensus(i32::MAX), // Invalid version
-            prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
-            merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
-            time: u32::MAX,                                  // Far future timestamp
-            bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
-            nonce: u32::MAX,
-        };
+        // Built once, since building it X11-hashes the header and reads compare against it.
+        static SENTINEL: LazyLock<HashedBlockHeader> = LazyLock::new(|| {
+            let header = BlockHeader {
+                version: Version::from_consensus(i32::MAX), // Invalid version
+                prev_blockhash: BlockHash::from_byte_array([0xFF; 32]), // All 0xFF pattern
+                merkle_root: dashcore::hashes::sha256d::Hash::from_byte_array([0xFF; 32]).into(),
+                time: u32::MAX, // Far future timestamp
+                bits: CompactTarget::from_consensus(0xFFFFFFFF), // Invalid difficulty
+                nonce: u32::MAX,
+            };
+            HashedBlockHeader::from(header)
+        });
 
-        Self::from(header)
+        SENTINEL.clone()
     }
 }
 
@@ -76,11 +81,15 @@ impl Persistable for HashedBlock {
     const ITEMS_PER_SEGMENT: u32 = 1_000;
 
     fn sentinel() -> Self {
-        let block = Block {
-            header: *HashedBlockHeader::sentinel().header(),
-            txdata: Vec::new(),
-        };
-        Self::from(block)
+        // Built once, since building it X11-hashes the header.
+        static SENTINEL: LazyLock<HashedBlock> = LazyLock::new(|| {
+            HashedBlock::from(Block {
+                header: *HashedBlockHeader::sentinel().header(),
+                txdata: Vec::new(),
+            })
+        });
+
+        SENTINEL.clone()
     }
 }
 
@@ -1271,6 +1280,19 @@ mod tests {
             SegmentCache::<Vec<u8>>::parse_segment_id(&<Vec<u8>>::segment_file_name(7)),
             Some(7)
         );
+    }
+
+    #[test]
+    fn test_cached_sentinels_carry_their_header_hash() {
+        // Equality ignores the cached hash, so a wrong one would only show in persisted segments.
+        let header = HashedBlockHeader::sentinel();
+        assert_eq!(*header.hash(), header.header().block_hash());
+        assert_eq!(header, HashedBlockHeader::sentinel());
+
+        let block = HashedBlock::sentinel();
+        assert_eq!(*block.hash(), block.block().block_hash());
+        assert_eq!(block.block().header, *header.header());
+        assert_eq!(block, HashedBlock::sentinel());
     }
 
     #[test]
