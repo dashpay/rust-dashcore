@@ -106,12 +106,7 @@ pub trait ManagedAccountTrait {
             ..
         } = self.managed_account_type()
         {
-            if let Some(addr) = external_addresses.unused_addresses().first() {
-                external_addresses.address_index(addr)
-            } else {
-                let stats = external_addresses.stats();
-                Some(stats.highest_generated.map(|h| h + 1).unwrap_or(0))
-            }
+            next_index(external_addresses)
         } else {
             None
         }
@@ -124,12 +119,7 @@ pub trait ManagedAccountTrait {
             ..
         } = self.managed_account_type()
         {
-            if let Some(addr) = internal_addresses.unused_addresses().first() {
-                internal_addresses.address_index(addr)
-            } else {
-                let stats = internal_addresses.stats();
-                Some(stats.highest_generated.map(|h| h + 1).unwrap_or(0))
-            }
+            next_index(internal_addresses)
         } else {
             None
         }
@@ -196,9 +186,7 @@ pub trait ManagedAccountTrait {
             | ManagedAccountType::PlatformPayment {
                 addresses,
                 ..
-            } => {
-                addresses.unused_addresses().first().and_then(|addr| addresses.address_index(addr))
-            }
+            } => next_index(addresses),
         }
     }
 
@@ -655,5 +643,12 @@ pub trait ManagedAccountTrait {
                 ..
             } => Some(addresses.gap_limit),
         }
+    }
+}
+
+fn next_index(pool: &address_pool::AddressPool) -> Option<u32> {
+    match pool.unused_addresses().first() {
+        Some(addr) => pool.address_index(addr),
+        None => Some(pool.stats().highest_generated.map_or(0, |h| h + 1)),
     }
 }
