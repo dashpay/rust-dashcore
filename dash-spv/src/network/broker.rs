@@ -64,7 +64,6 @@ struct OnWire {
     last_progress: Instant,
     msg: NetworkMessage,
     height: u32,
-    sent: Instant,
     hedge: Option<PeerId>,
     attempts: u32,
 }
@@ -301,7 +300,6 @@ impl Broker {
                             msg: msg.clone(),
                             height,
                             last_progress: Instant::now(),
-                            sent: Instant::now(),
                             hedge: None,
                             attempts: attempts + 1,
                         }));
@@ -322,9 +320,9 @@ impl Broker {
         sent
     }
 
-    /// Endgame: asks a second peer for the lowest block on the wire once it has waited
-    /// [`HEDGE_AFTER`], and returns its height. Blocks are processed in height order, so
-    /// only the lowest one holds up progress and a second copy of any other is wasted.
+    /// Endgame: asks a second peer for the lowest block on the wire once its peer delivered
+    /// nothing for [`HEDGE_AFTER`], and returns its height. Blocks are processed in height
+    /// order, so only the lowest one holds up progress and a second copy of any other is wasted.
     pub async fn hedge(&self, peers: &[PeerHandle]) -> Option<u32> {
         let (key, msg, height, peer) = {
             let reqs = self.requests.lock().await;
@@ -337,7 +335,7 @@ impl Broker {
                     _ => None,
                 })
                 .min_by_key(|(_, o)| o.height)?;
-            if o.hedge.is_some() || o.sent.elapsed() < HEDGE_AFTER {
+            if o.hedge.is_some() || o.last_progress.elapsed() < HEDGE_AFTER {
                 return None;
             }
             let peer = peers
@@ -365,7 +363,6 @@ impl Broker {
                 last_progress: Instant::now(),
                 msg: msg.clone(),
                 height: 0,
-                sent: Instant::now(),
                 hedge: None,
                 attempts: 1,
             };
@@ -673,8 +670,8 @@ mod tests {
         assert_eq!(broker.len(), 1);
     }
 
-    /// Blocks are processed in height order, so a stalled block at a slow peer only gets
-    /// a second copy from another peer once it is the lowest block on the wire.
+    /// A block at a slow peer gets a second copy only once it is the lowest on the wire and
+    /// its peer stopped delivering.
     #[tokio::test(start_paused = true)]
     async fn hedge_asks_another_peer_only_for_the_lowest_stalled_block() {
         let broker = Broker::new();
@@ -709,7 +706,12 @@ mod tests {
         assert_eq!(broker.route(slow, u64::MAX, &costs).await, 1);
         assert_eq!(broker.hedge(&peers).await, None, "the lowest block has not waited long enough");
 
-        tokio::time::advance(HEDGE_AFTER).await;
+        tokio::time::advance(HEDGE_AFTER / 2).await;
+        broker.progress(slow[0].id()).await;
+        tokio::time::advance(HEDGE_AFTER / 2).await;
+        assert_eq!(broker.hedge(&peers).await, None, "the slow peer is still delivering");
+
+        tokio::time::advance(HEDGE_AFTER / 2).await;
         assert_eq!(broker.hedge(&peers).await, Some(10));
         assert_eq!(broker.hedge(&peers).await, None, "later blocks wait for the lowest");
         assert_eq!(hedged_blocks().await, [10]);
