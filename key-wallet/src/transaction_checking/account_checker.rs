@@ -3,14 +3,14 @@
 //! This module provides methods for checking if transactions belong to
 //! specific accounts within a ManagedAccountCollection.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use super::transaction_router::AccountTypeToCheck;
 use crate::account::{AccountType, ManagedAccountCollection, ManagedCoreFundsAccount};
 use crate::managed_account::address_pool::{AddressInfo, AddressPoolType, PublicKeyType};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
-use crate::managed_account::transaction_record::TransactionRecord;
+use crate::managed_account::transaction_record::{OutputRole, TransactionRecord};
 use crate::Address;
 use dashcore::address::Payload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
@@ -72,8 +72,9 @@ pub struct TransactionCheckResult {
     /// its owning [`AccountType`] on `record.account_type`, so consumers can
     /// recover it without an external pairing.
     pub new_records: Vec<TransactionRecord>,
-    /// Transaction records updated by this check (confirmation or IS-lock
-    /// applied to a previously stored record). Each record carries its owning
+    /// Transaction records updated by this check: a confirmation or IS-lock
+    /// applied to a previously stored record, or a correction of one
+    /// (late-discovered inputs or outputs). Each record carries its owning
     /// `AccountType` on `record.account_type`.
     pub updated_records: Vec<TransactionRecord>,
     /// Transactions this check *removed*: a recorded spend that the arriving
@@ -406,6 +407,35 @@ pub struct AccountMatch {
     pub sent: u64,
     /// Value received for Platform credit conversion (e.g., from AssetLock credit_outputs)
     pub received_for_credit_conversion: u64,
+}
+
+impl AccountMatch {
+    /// The role of an output paying `address` for this account: `Received`
+    /// on a receive address, `Change` on a change address, `None` when the
+    /// address is not one this match found.
+    pub(crate) fn output_role_lookup(&self) -> impl Fn(&Address) -> Option<OutputRole> + '_ {
+        let receive: HashSet<_> = self
+            .account_type_match
+            .involved_receive_addresses()
+            .iter()
+            .map(|info| &info.address)
+            .collect();
+        let change: HashSet<_> = self
+            .account_type_match
+            .involved_change_addresses()
+            .iter()
+            .map(|info| &info.address)
+            .collect();
+        move |address| {
+            if receive.contains(address) {
+                Some(OutputRole::Received)
+            } else if change.contains(address) {
+                Some(OutputRole::Change)
+            } else {
+                None
+            }
+        }
+    }
 }
 
 impl ManagedAccountCollection {

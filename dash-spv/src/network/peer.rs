@@ -532,11 +532,11 @@ impl DisconnectedPeer {
         if !version.services.has(required_services) {
             tracing::warn!(
                 target: "dash_spv::network",
-                "dropping {}: lacks required services {:?} (advertises {:?})",
+                "dropping {}: lacks required services {} (advertises {})",
                 self.addr, required_services, version.services
             );
             return Err(NetworkError::ConnectionFailed(format!(
-                "peer {} lacks required services {:?}",
+                "peer {} lacks required services {}",
                 self.addr, required_services
             )));
         }
@@ -637,8 +637,7 @@ fn spawn_reader(
                         break;
                     }
                     last_ping = Some(tokio::time::Instant::now());
-                    let ping = NetworkMessage::Ping(rand::random());
-                    if writer.lock().await.write_message(&ping).await.is_err() {
+                    if !reader_write(&writer, &NetworkMessage::Ping(rand::random())).await {
                         break;
                     }
                     continue;
@@ -662,8 +661,7 @@ fn spawn_reader(
                     ledger.settle(&raw.payload, size).await;
                     match raw.payload {
                         NetworkMessage::Ping(nonce) => {
-                            let pong = NetworkMessage::Pong(nonce);
-                            if writer.lock().await.write_message(&pong).await.is_err() {
+                            if !reader_write(&writer, &NetworkMessage::Pong(nonce)).await {
                                 break;
                             }
                         }
@@ -730,6 +728,11 @@ fn normalize_user_agent(user_agent: &str) -> String {
         end -= 1;
     }
     format!("/{}/", &body[..end])
+}
+
+async fn reader_write(writer: &Mutex<PeerWriter>, msg: &NetworkMessage) -> bool {
+    let write = async { writer.lock().await.write_message(msg).await };
+    matches!(tokio::time::timeout(WRITE_TIMEOUT, write).await, Ok(Ok(())))
 }
 
 async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> NetworkResult<()> {

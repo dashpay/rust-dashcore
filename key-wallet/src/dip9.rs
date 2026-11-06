@@ -633,120 +633,108 @@ impl From<ApplicationKeyPurpose> for u32 {
 }
 
 impl DerivationPath {
-    pub fn bip_44_account(network: Network, account: u32) -> Self {
+    pub fn bip_44_account(network: Network, account: u32) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => DASH_BIP44_PATH_MAINNET,
             _ => DASH_BIP44_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([ChildNumber::Hardened {
-            index: account,
-        }])
+        Ok(root_derivation_path.extend([ChildNumber::from_hardened_idx(account)?]))
     }
     pub fn bip_44_payment_path(
         network: Network,
         account: u32,
         change: bool,
         address_index: u32,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => DASH_BIP44_PATH_MAINNET,
             _ => DASH_BIP44_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([
-            ChildNumber::Hardened {
-                index: account,
-            },
+        Ok(root_derivation_path.extend([
+            ChildNumber::from_hardened_idx(account)?,
             ChildNumber::Normal {
                 index: change.into(),
             },
-            ChildNumber::Normal {
-                index: address_index,
-            },
-        ])
+            ChildNumber::from_normal_idx(address_index)?,
+        ]))
     }
-    pub fn coinjoin_path(network: Network, account: u32) -> Self {
+    pub fn coinjoin_path(network: Network, account: u32) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => COINJOIN_PATH_MAINNET,
             _ => COINJOIN_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([ChildNumber::Hardened {
-            index: account,
-        }])
+        Ok(root_derivation_path.extend([ChildNumber::from_hardened_idx(account)?]))
     }
 
     /// This might have been used in the past
-    pub fn identity_registration_path_child_non_hardened(network: Network, index: u32) -> Self {
+    pub fn identity_registration_path_child_non_hardened(
+        network: Network,
+        index: u32,
+    ) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => IDENTITY_REGISTRATION_PATH_MAINNET,
             _ => IDENTITY_REGISTRATION_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([ChildNumber::Normal {
-            index,
-        }])
+        Ok(root_derivation_path.extend([ChildNumber::from_normal_idx(index)?]))
     }
 
-    pub fn identity_registration_path(network: Network, index: u32) -> Self {
+    pub fn identity_registration_path(network: Network, index: u32) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => IDENTITY_REGISTRATION_PATH_MAINNET,
             _ => IDENTITY_REGISTRATION_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([ChildNumber::Hardened {
-            index,
-        }])
+        Ok(root_derivation_path.extend([ChildNumber::from_hardened_idx(index)?]))
     }
 
-    pub fn identity_top_up_path(network: Network, identity_index: u32, top_up_index: u32) -> Self {
+    pub fn identity_top_up_path(
+        network: Network,
+        identity_index: u32,
+        top_up_index: u32,
+    ) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => IDENTITY_TOPUP_PATH_MAINNET,
             _ => IDENTITY_TOPUP_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([
-            ChildNumber::Hardened {
-                index: identity_index,
-            },
-            ChildNumber::Normal {
-                index: top_up_index,
-            },
-        ])
+        Ok(root_derivation_path.extend([
+            ChildNumber::from_hardened_idx(identity_index)?,
+            ChildNumber::from_normal_idx(top_up_index)?,
+        ]))
     }
 
-    pub fn identity_invitation_path(network: Network, index: u32) -> Self {
+    pub fn identity_invitation_path(network: Network, index: u32) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => IDENTITY_INVITATION_PATH_MAINNET,
             _ => IDENTITY_INVITATION_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([ChildNumber::Hardened {
-            index,
-        }])
+        Ok(root_derivation_path.extend([ChildNumber::from_hardened_idx(index)?]))
     }
 
-    pub fn asset_lock_address_top_up_path(network: Network, index: u32) -> Self {
+    pub fn asset_lock_address_top_up_path(network: Network, index: u32) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => ASSET_LOCK_ADDRESS_TOPUP_PATH_MAINNET,
             _ => ASSET_LOCK_ADDRESS_TOPUP_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([ChildNumber::Hardened {
-            index,
-        }])
+        Ok(root_derivation_path.extend([ChildNumber::from_hardened_idx(index)?]))
     }
 
-    pub fn asset_lock_shielded_address_top_up_path(network: Network, index: u32) -> Self {
+    pub fn asset_lock_shielded_address_top_up_path(
+        network: Network,
+        index: u32,
+    ) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_MAINNET,
             _ => ASSET_LOCK_SHIELDED_ADDRESS_TOPUP_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([ChildNumber::Hardened {
-            index,
-        }])
+        Ok(root_derivation_path.extend([ChildNumber::from_hardened_idx(index)?]))
     }
 
     pub fn identity_authentication_path(
@@ -754,23 +742,19 @@ impl DerivationPath {
         key_type: KeyDerivationType,
         identity_index: u32,
         key_index: u32,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let root_derivation_path: DerivationPath = match network {
             Network::Mainnet => IDENTITY_AUTHENTICATION_PATH_MAINNET,
             _ => IDENTITY_AUTHENTICATION_PATH_TESTNET,
         }
         .into();
-        root_derivation_path.extend([
+        Ok(root_derivation_path.extend([
             ChildNumber::Hardened {
                 index: key_type.into(),
             },
-            ChildNumber::Hardened {
-                index: identity_index,
-            },
-            ChildNumber::Hardened {
-                index: key_index,
-            },
-        ])
+            ChildNumber::from_hardened_idx(identity_index)?,
+            ChildNumber::from_hardened_idx(key_index)?,
+        ]))
     }
 
     /// DIP-13 application session authentication key path,
