@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use dashcore::bls_sig_utils::BlsScheme;
+use dashcore::constants::MAX_BLOCK_SIZE;
 use dashcore::sml::message_verification_error::MessageVerificationError;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{InstantLock, Network, QuorumSigningRequestId, Transaction, Txid};
@@ -94,6 +95,10 @@ impl VerifiedInstantLock {
     }
 }
 
+/// The most inputs a valid InstantLock can carry, as Dash Core caps them.
+/// Its transaction fits in a block, and every input takes at least 41 bytes.
+const MAX_INSTANT_LOCK_INPUTS: usize = MAX_BLOCK_SIZE as usize / 41;
+
 /// Rejects malformed InstantLocks. Needs no quorum data, so it runs before a
 /// lock is looked up, queued or cached.
 ///
@@ -118,6 +123,12 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
             return Err(ValidationError::InvalidInstantLock(
                 "InstantLock must have at least one input".to_string(),
             ));
+        }
+
+        if instant_lock.inputs.len() > MAX_INSTANT_LOCK_INPUTS {
+            return Err(ValidationError::InvalidInstantLock(format!(
+                "InstantLock has more than {MAX_INSTANT_LOCK_INPUTS} inputs"
+            )));
         }
 
         if let Some(idx) =
@@ -311,12 +322,16 @@ mod tests {
     #[test]
     fn a_well_formed_lock_passes_the_structure_check() {
         assert!(InstantLockStructureValidator.validate(&InstantLock::dummy(0..3)).is_ok());
+        let mut largest = InstantLock::dummy(0..1);
+        largest.inputs = vec![largest.inputs[0]; MAX_INSTANT_LOCK_INPUTS];
+        assert!(InstantLockStructureValidator.validate(&largest).is_ok());
     }
 
     #[test_case(|lock| lock.inputs.clear(), "at least one input"; "no inputs")]
     #[test_case(|lock| lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]), "signature cannot be zero"; "zero signature")]
     #[test_case(|lock| lock.txid = dashcore::Txid::all_zeros(), "transaction ID cannot be zero"; "null txid")]
     #[test_case(|lock| lock.inputs[1].txid = dashcore::Txid::all_zeros(), "input 1 has null transaction ID"; "null input txid")]
+    #[test_case(|lock| lock.inputs = vec![lock.inputs[0]; MAX_INSTANT_LOCK_INPUTS + 1], "more than 48780 inputs"; "too many inputs")]
     fn a_malformed_lock_fails_the_structure_check(malform: fn(&mut InstantLock), reason: &str) {
         let mut is_lock = InstantLock::dummy(0..3);
         malform(&mut is_lock);

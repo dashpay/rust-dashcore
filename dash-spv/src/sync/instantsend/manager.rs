@@ -9,8 +9,11 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
+use dashcore::consensus::encode;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::hash_types::InstantSendLockHash;
 use dashcore::Txid;
+use dashcore_hashes::sha256d;
 use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
@@ -42,11 +45,18 @@ pub struct InstantLockEntry {
     pub validated: bool,
 }
 
+/// The hash of the serialized lock, as its inventory announces it.
+fn lock_hash(instant_lock: &InstantLock) -> InstantSendLockHash {
+    InstantSendLockHash::from_raw_hash(sha256d::Hash::hash(&encode::serialize(instant_lock)))
+}
+
 /// Pending InstantLock awaiting the quorum data required to verify it.
 #[derive(Debug, Clone)]
 pub(super) struct PendingInstantLock {
     /// The InstantLock data.
     instant_lock: InstantLock,
+    /// Hash of the serialized lock, which tells distinct locks of one txid apart.
+    hash: InstantSendLockHash,
     /// When the lock was first received, used to expire locks that never
     /// become verifiable. Uses a monotonic `Instant` so the elapsed-time TTL
     /// check is unaffected by wall-clock adjustments.
@@ -54,6 +64,14 @@ pub(super) struct PendingInstantLock {
 }
 
 impl PendingInstantLock {
+    fn new(instant_lock: InstantLock, hash: InstantSendLockHash) -> Self {
+        Self {
+            instant_lock,
+            hash,
+            first_seen: Instant::now(),
+        }
+    }
+
     /// Whether this pending lock has outlived [`PENDING_TTL`] as of `now`.
     ///
     /// Uses [`Instant::saturating_duration_since`], which clamps to zero
@@ -141,10 +159,13 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
         // Only a verified lock settles its txid: an unverified one, possibly forged,
         // must not shadow the genuine lock for the same transaction.
-        if self.instantlocks.get(&txid).is_some_and(|entry| entry.validated)
-            || self.pending_instantlocks.iter().any(|pending| pending.instant_lock == *instantlock)
-        {
-            tracing::debug!("Already have InstantLock for txid {}", txid);
+        if self.instantlocks.get(&txid).is_some_and(|entry| entry.validated) {
+            tracing::debug!("Already have a verified InstantLock for txid {}", txid);
+            return Ok(vec![]);
+        }
+        let hash = lock_hash(instantlock);
+        if self.pending_instantlocks.iter().any(|pending| pending.hash == hash) {
+            tracing::debug!("The same InstantLock for txid {} is already pending", txid);
             return Ok(vec![]);
         }
 
@@ -174,10 +195,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 self.transition_synced_if_idle();
             }
         } else {
-            self.queue_pending(PendingInstantLock {
-                instant_lock: instantlock.clone(),
-                first_seen: Instant::now(),
-            });
+            self.queue_pending(PendingInstantLock::new(instantlock.clone(), hash));
         }
         self.progress.update_pending(self.pending_instantlocks.len());
 
@@ -404,10 +422,9 @@ mod tests {
     /// driven by the `now` passed to `tick_at`/`expire_pending`, not by
     /// back-dating this field — see [`past_ttl`].
     fn fresh_pending(txid: Txid) -> PendingInstantLock {
-        PendingInstantLock {
-            instant_lock: create_test_instantlock(txid),
-            first_seen: Instant::now(),
-        }
+        let instant_lock = create_test_instantlock(txid);
+        let hash = lock_hash(&instant_lock);
+        PendingInstantLock::new(instant_lock, hash)
     }
 
     /// An injected "now" far enough past a [`fresh_pending`] lock's `first_seen`
