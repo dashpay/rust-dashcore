@@ -15,7 +15,7 @@ use crate::client::DashSpvClient;
 use crate::error::SpvError;
 use crate::network::NetworkManager;
 
-/// Failure to build a deterministic signed test fixture.
+/// Failure to build a signed test fixture.
 #[derive(Debug, thiserror::Error)]
 pub enum InstantLockFixtureError {
     /// The fixture key could not sign.
@@ -26,7 +26,7 @@ pub enum InstantLockFixtureError {
     Encoding(#[from] std::io::Error),
 }
 
-/// A lock signed by a constant, public test key, and a synthetic quorum cycle for it.
+/// A lock signed by a random key of its own, and a synthetic quorum cycle for it.
 ///
 /// `install` makes every lock signed by that key verify on the client it is installed
 /// into, so use it only on throwaway test clients. It is never a network proof.
@@ -43,7 +43,8 @@ impl InstantLockFixture {
         network: Network,
         transaction: &Transaction,
     ) -> Result<Self, InstantLockFixtureError> {
-        let secret = BlsSkBytes::from_bytes([1; 32]);
+        let secret =
+            BlsSkBytes::from_bytes(rand::random()).as_scheme(BlsScheme::Modern).canonicalize()?;
         let key = secret.as_scheme(BlsScheme::Modern);
         let llmq_type = network.isd_llmq_type();
         let quorum_hash = QuorumHash::from_byte_array([9; 32]);
