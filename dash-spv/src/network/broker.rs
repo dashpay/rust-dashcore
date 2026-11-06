@@ -417,14 +417,15 @@ fn classify(msg: &NetworkMessage) -> MsgClass {
     }
 }
 
-/// Picks the peer among `open` for a message of `class`. A header request goes to the
-/// peer that will answer it soonest. Anything else goes to the peer least loaded relative
-/// to its own cap, and so does a header request while a busy peer has no serving rate yet.
+/// Picks the peer among `open` for a message of `class`. A header or block request goes to
+/// the peer that will answer it soonest, since sync waits on each of them in height order.
+/// Bulk filter traffic goes to the peer least loaded relative to its own cap, and so does
+/// any request while a busy peer has no serving rate yet.
 fn choose_peer<'a>(
     open: impl Iterator<Item = &'a PeerHandle> + Clone,
     class: MsgClass,
 ) -> Option<&'a PeerHandle> {
-    if class == MsgClass::Headers {
+    if matches!(class, MsgClass::Headers | MsgClass::Blocks) {
         let waits: Option<Vec<(f64, &PeerHandle)>> =
             open.clone().map(|p| Some((queued_secs(p)?, p))).collect();
         if let Some(waits) = waits {
@@ -834,6 +835,8 @@ mod tests {
     /// 256 KB at `fast_rate`, half its cap. Returns which of them `msg` is routed to.
     #[test_case(get_headers(1), 1 << 20 => "fast"; "a header request goes to the shortest queue")]
     #[test_case(get_headers(1), 0 => "slow"; "a header request falls back to the cap ratio while a busy peer is unmeasured")]
+    #[test_case(NetworkMessage::GetData(vec![block(1)]), 1 << 20 => "fast"; "a block request goes to the shortest queue")]
+    #[test_case(NetworkMessage::GetData(vec![block(1)]), 0 => "slow"; "a block request falls back to the cap ratio while a busy peer is unmeasured")]
     #[test_case(get_cfilters(0), 1 << 20 => "slow"; "bulk requests keep the cap ratio")]
     #[tokio::test]
     async fn route_picks_the_peer_by_class(msg: NetworkMessage, fast_rate: u64) -> &'static str {
