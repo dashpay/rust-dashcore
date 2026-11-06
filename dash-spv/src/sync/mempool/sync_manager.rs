@@ -193,6 +193,7 @@ mod tests {
     use key_wallet_manager::test_utils::MockWallet;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
+    use test_case::test_case;
     use tokio::sync::RwLock;
 
     fn create_test_manager() -> (MempoolManager<MockWallet>, Arc<dyn NetworkManager>) {
@@ -641,10 +642,10 @@ mod tests {
         ));
     }
 
-    #[test_case::test_case(true, false; "known pending")]
-    #[test_case::test_case(true, true; "known uncertain")]
-    #[test_case::test_case(false, false; "early pending")]
-    #[test_case::test_case(false, true; "early uncertain")]
+    #[test_case(true, false; "known pending")]
+    #[test_case(true, true; "known uncertain")]
+    #[test_case(false, false; "early pending")]
+    #[test_case(false, true; "early uncertain")]
     #[tokio::test]
     async fn should_accept_broadcast_on_verified_instant_lock(known: bool, uncertain: bool) {
         let (mut manager, network) = create_test_manager();

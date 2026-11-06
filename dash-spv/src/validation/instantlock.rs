@@ -239,8 +239,10 @@ impl<'a> InstantLockValidator<'a> {
 mod tests {
     use super::*;
     use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
+    use crate::test_utils::MockHeaderStorage;
+    use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::sml::llmq_type::LLMQType;
-    use dashcore::QuorumHash;
+    use dashcore::{BlockHash, OutPoint, QuorumHash, ScriptBuf, TxIn, TxOut};
     use hex_conservative::DisplayHex;
     use test_case::test_case;
 
@@ -248,19 +250,17 @@ mod tests {
     fn should_authenticate_stored_lock_only_with_available_cycle() {
         let engine = TestEngine::mainnet_fixture();
         let lock = mainnet_fixture_is_lock();
-        assert!(VerifiedInstantLock::verify::<crate::test_utils::MockHeaderStorage>(&lock, None,)
-            .unwrap()
-            .is_none());
-        let empty = TestEngine::empty(dashcore::Network::Mainnet);
+        assert!(VerifiedInstantLock::verify::<MockHeaderStorage>(&lock, None,).unwrap().is_none());
+        let empty = TestEngine::empty(Network::Mainnet);
         assert!(VerifiedInstantLock::verify(&lock, Some(&empty)).unwrap().is_none());
         let verified = VerifiedInstantLock::verify(&lock, Some(&engine)).unwrap().unwrap();
         assert_eq!(verified.txid(), lock.txid);
         assert_eq!(verified.instant_lock(), &lock);
         let mut unknown_cycle = lock.clone();
-        unknown_cycle.cyclehash = dashcore::BlockHash::all_zeros();
+        unknown_cycle.cyclehash = BlockHash::all_zeros();
         assert!(VerifiedInstantLock::verify(&unknown_cycle, Some(&engine)).unwrap().is_none());
         let mut invalid = lock.clone();
-        invalid.txid = dashcore::Txid::from_byte_array([7; 32]);
+        invalid.txid = Txid::from_byte_array([7; 32]);
         assert!(matches!(
             VerifiedInstantLock::verify(&invalid, Some(&engine)),
             Err(InstantLockVerificationError::InvalidSignature(_))
@@ -272,7 +272,7 @@ mod tests {
             Err(InstantLockVerificationError::InvalidSignature(_))
         ));
         let mut changed_signature = lock.clone();
-        changed_signature.signature = dashcore::bls_sig_utils::BLSSignature::from([1; 96]);
+        changed_signature.signature = BLSSignature::from([1; 96]);
         assert!(matches!(
             VerifiedInstantLock::verify(&changed_signature, Some(&engine)),
             Err(InstantLockVerificationError::InvalidSignature(_))
@@ -290,14 +290,14 @@ mod tests {
         let transaction = Transaction {
             version: 1,
             lock_time: 0,
-            input: vec![dashcore::TxIn {
-                previous_output: dashcore::OutPoint::new(Txid::from_byte_array([3; 32]), 0),
+            input: vec![TxIn {
+                previous_output: OutPoint::new(Txid::from_byte_array([3; 32]), 0),
                 ..Default::default()
             }],
             output: vec![
-                dashcore::TxOut {
+                TxOut {
                     value: u64::MAX,
-                    script_pubkey: dashcore::ScriptBuf::new(),
+                    script_pubkey: ScriptBuf::new(),
                 };
                 2
             ],
