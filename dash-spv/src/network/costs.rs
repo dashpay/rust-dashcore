@@ -75,6 +75,13 @@ impl Reply {
         }
     }
 
+    /// Whether a peer sends this reply for every such request it serves and never unasked.
+    /// Peers answer in request order, so a reply of this kind proves that every earlier
+    /// request of this kind still awaited was skipped.
+    fn in_order(&self) -> bool {
+        matches!(self, Reply::CfHeaders(_) | Reply::CFilters(_) | Reply::Block(_))
+    }
+
     fn of_item(item: &Inventory) -> Option<Reply> {
         match item {
             Inventory::Block(hash) => Some(Reply::Block(*hash)),
@@ -224,9 +231,10 @@ impl Ledger {
                     return;
                 };
                 awaited[i].bytes += size;
-                if awaited[i].reply != Reply::CFilters(filter.block_hash) {
+                let stop = Reply::CFilters(filter.block_hash);
+                let Some(i) = awaited.iter().position(|a| a.reply == stop) else {
                     return;
-                }
+                };
                 i
             }
             msg => {
@@ -240,7 +248,22 @@ impl Ledger {
                 i
             }
         };
-        let a = awaited.remove(i);
+        let mut a = awaited.remove(i);
+        if a.reply.in_order() {
+            let mut idx = 0;
+            awaited.retain(|earlier| {
+                let skipped = idx < i && earlier.reply.in_order();
+                idx += 1;
+                if skipped {
+                    self.release(earlier.cost);
+                    // A skipped batch got the bytes of the batch streamed after it.
+                    if matches!(earlier.reply, Reply::CFilters(_)) {
+                        a.bytes += earlier.bytes;
+                    }
+                }
+                !skipped
+            });
+        }
         self.release(a.cost);
         self.costs.record(&a.reply, a.bytes);
         let ns = a.sent.elapsed().as_nanos() as u64;
@@ -259,12 +282,56 @@ impl Ledger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dashcore::hash_types::FilterHeader;
     use dashcore::network::message_blockdata::GetHeadersMessage;
+    use dashcore::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
     use dashcore::network::message_headers2::Headers2Message;
+    use dashcore::{Block, Header};
     use test_case::test_case;
 
     fn locator() -> GetHeadersMessage {
         GetHeadersMessage::new(vec![BlockHash::dummy(1)], BlockHash::dummy(0))
+    }
+
+    fn get_cfheaders(stop: u32) -> NetworkMessage {
+        NetworkMessage::GetCFHeaders(GetCFHeaders {
+            filter_type: 0,
+            start_height: 0,
+            stop_hash: BlockHash::dummy(stop),
+        })
+    }
+
+    fn cfheaders(stop: u32) -> NetworkMessage {
+        NetworkMessage::CFHeaders(CFHeaders {
+            filter_type: 0,
+            stop_hash: BlockHash::dummy(stop),
+            previous_filter_header: FilterHeader::all_zeros(),
+            filter_hashes: Vec::new(),
+        })
+    }
+
+    fn get_cfilters(stop: u32) -> NetworkMessage {
+        NetworkMessage::GetCFilters(GetCFilters {
+            filter_type: 0,
+            start_height: 0,
+            stop_hash: BlockHash::dummy(stop),
+        })
+    }
+
+    fn cfilter(block: u32) -> NetworkMessage {
+        NetworkMessage::CFilter(CFilter {
+            filter_type: 0,
+            block_hash: BlockHash::dummy(block),
+            filter: Vec::new(),
+        })
+    }
+
+    fn get_block(n: u32) -> NetworkMessage {
+        NetworkMessage::GetData(vec![Inventory::Block(Header::dummy(n).block_hash())])
+    }
+
+    fn block(n: u32) -> NetworkMessage {
+        NetworkMessage::Block(Block::dummy(n, Vec::new()))
     }
 
     fn headers2() -> NetworkMessage {
@@ -297,5 +364,27 @@ mod tests {
 
         ledger.settle(&reply, charged).await;
         assert_eq!(ledger.in_flight_bytes(), in_flight);
+    }
+
+    /// The peer skipped the first request of each kind, so the reply to the second settles
+    /// both. The header request is not of a kind always answered in order, so it stays.
+    #[test_case(get_cfheaders(1), get_cfheaders(2), cfheaders(2); "filter headers")]
+    #[test_case(get_cfilters(1), get_cfilters(2), cfilter(2); "filters")]
+    #[test_case(get_block(1), get_block(2), block(2); "blocks")]
+    #[tokio::test]
+    async fn a_reply_settles_the_requests_its_peer_skipped(
+        skipped: NetworkMessage,
+        served: NetworkMessage,
+        reply: NetworkMessage,
+    ) {
+        let costs = Arc::new(ResponseCosts::new());
+        let ledger = Ledger::new(costs.clone());
+        let headers = NetworkMessage::GetHeaders2(locator());
+        ledger.charge(&headers).await;
+        ledger.charge(&skipped).await;
+        ledger.charge(&served).await;
+
+        ledger.settle(&reply, 100).await;
+        assert_eq!(ledger.in_flight_bytes(), costs.cost(&headers));
     }
 }
