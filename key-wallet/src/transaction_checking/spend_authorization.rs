@@ -265,6 +265,28 @@ mod tests {
     }
 
     #[test]
+    fn should_never_authorize_the_sighash_single_bug_digest() {
+        let (mut tx, prevout) = signed(false);
+        let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
+        // Input 0 has no matching output, so SINGLE signs the constant digest 1,
+        // which commits to nothing in the transaction.
+        tx.output.clear();
+        for mode in [3, 0x83] {
+            sign(&mut tx, &prevout, &key, &key.public_key().to_compressed(), mode);
+            assert_eq!(
+                verify_input_authorization(&tx, 0, &prevout),
+                Err(SpendAuthorizationError::UnsupportedSighash(mode))
+            );
+            let mut replayed = tx.clone();
+            replayed.lock_time += 1;
+            assert_eq!(
+                verify_input_authorization(&replayed, 0, &prevout),
+                Err(SpendAuthorizationError::UnsupportedSighash(mode))
+            );
+        }
+    }
+
+    #[test]
     fn should_preserve_unsupported_authorization_as_an_error() {
         let (mut tx, prevout) = signed(false);
         let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
