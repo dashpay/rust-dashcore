@@ -17,6 +17,14 @@ const KICKING_ATTEMPTS: u32 = 2;
 /// at 6 KB/s, while a peer sending only unrelated traffic is caught.
 pub(super) const ANSWER_DEADLINE_TIMEOUTS: u32 = 6;
 const HEDGE_AFTER: Duration = Duration::from_secs(2);
+/// A request on the wire this long gets a second copy even while its peer delivers other
+/// replies, unless [`HEDGE_QUEUE_FACTOR`] gives it longer.
+const HEDGE_OVERDUE: Duration = Duration::from_secs(10);
+/// A request may wait this many times its peer's queue at send before a second copy is sent
+/// to a peer still delivering, so it is hedged only once its peer serves at under half the
+/// rate the request was routed by. A peer's queue can hold many seconds of work, and a copy
+/// sent while the batch merely waits in it is downloaded twice.
+const HEDGE_QUEUE_FACTOR: f64 = 2.0;
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
 const DRAIN_PRIORITY: [MsgClass; MSG_CLASSES] =
@@ -71,6 +79,9 @@ struct OnWire {
     last_progress: Instant,
     /// Refreshed only by complete answers, see [`ANSWER_DEADLINE_TIMEOUTS`].
     last_answer: Instant,
+    sent: Instant,
+    /// How long after `sent` the request is overdue although its peer keeps delivering.
+    overdue_after: Duration,
     msg: NetworkMessage,
     height: u32,
     hedge: Option<PeerId>,
@@ -279,21 +290,13 @@ impl Broker {
         culprits
     }
 
-    /// Sends what fits in both the peers' and the global byte caps, each message to
-    /// the peer [`choose_peer`] picks.
-    pub async fn route(
-        &self,
-        peers: &[PeerHandle],
-        global_cap: u64,
-        costs: &ResponseCosts,
-    ) -> usize {
+    /// Sends what fits in the peers' byte caps, each message to the peer [`choose_peer`]
+    /// picks.
+    pub async fn route(&self, peers: &[PeerHandle], costs: &ResponseCosts) -> usize {
         if peers.is_empty() {
             return 0;
         }
-        let total_in_flight: u64 = peers.iter().map(PeerHandle::in_flight_bytes).sum();
-        let per_peer_room: u64 =
-            peers.iter().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
-        let budget = per_peer_room.min(global_cap.saturating_sub(total_in_flight));
+        let budget: u64 = peers.iter().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
         if budget == 0 {
             return 0;
         }
@@ -312,7 +315,7 @@ impl Broker {
         // Popped but unsent goes back: its key is registered, so a dropped message
         // would stall its pipeline.
         let mut unsent: Vec<(u32, NetworkMessage)> = Vec::new();
-        let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle)> = Vec::new();
+        let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle, Duration)> = Vec::new();
         let mut msgs = msgs.into_iter();
         for (height, msg) in msgs.by_ref() {
             // `peers` can be a snapshot taken before the timeout monitor closed one of them.
@@ -323,7 +326,9 @@ impl Broker {
             };
             if peer.send(&msg).await.is_ok() {
                 sent += 1;
-                on_wire.push((height, msg, peer.clone()));
+                // Before the next send, which queues behind this request.
+                let overdue_after = overdue_after(peer);
+                on_wire.push((height, msg, peer.clone(), overdue_after));
             } else {
                 tracing::warn!(target: "dash_spv::network", "router: send to {} failed", peer.addr());
                 unsent.push((height, msg));
@@ -334,7 +339,7 @@ impl Broker {
 
         if !on_wire.is_empty() {
             let mut reqs = self.requests.lock().await;
-            for (height, msg, peer) in on_wire {
+            for (height, msg, peer, overdue_after) in on_wire {
                 for key in request_keys(&msg) {
                     if let Some(slot) = reqs.get_mut(&key) {
                         let attempts = match slot {
@@ -349,6 +354,8 @@ impl Broker {
                             height,
                             last_progress: Instant::now(),
                             last_answer: Instant::now(),
+                            sent: Instant::now(),
+                            overdue_after,
                             hedge: None,
                             attempts: attempts + 1,
                         }));
@@ -369,43 +376,40 @@ impl Broker {
         sent
     }
 
-    /// Endgame: asks a second peer for the lowest block on the wire once its peer delivered
-    /// nothing for [`HEDGE_AFTER`], and returns its height. Blocks are processed in height
+    /// Endgame: asks a second peer for the lowest block on the wire once it is
+    /// [`OnWire::overdue`], and returns its height. Blocks are processed in height
     /// order, so only the lowest one holds up progress and a second copy of any other is wasted.
     pub async fn hedge(&self, peers: &[PeerHandle]) -> Option<u32> {
         let (key, msg, height, peer) = {
             let reqs = self.requests.lock().await;
             let (key, o) = lowest_on_wire(&reqs, |key| matches!(key, RequestKey::Block(_)))?;
-            if o.hedge.is_some() || o.last_progress.elapsed() < HEDGE_AFTER {
+            if o.hedge.is_some() || !o.overdue() {
                 return None;
             }
-            let peer = peers
-                .iter()
-                .filter(|p| p.id() != o.peer && p.in_flight_bytes() < p.cap())
-                .max_by_key(|p| p.cap().saturating_sub(p.in_flight_bytes()))?;
+            let others = peers.iter().filter(|p| p.id() != o.peer && p.in_flight_bytes() < p.cap());
+            let peer = hedge_peer(others)?;
             (key.clone(), o.msg.clone(), o.height, peer.clone())
         };
         self.send_hedge(key, msg, height, peer).await
     }
 
-    /// Asks a second peer for the lowest filter batch not yet delivered once its peer has
-    /// delivered nothing for [`HEDGE_AFTER`], and returns its height. Filters are stored in
-    /// height order, so that batch holds back everything above it however much is downloaded.
-    /// One queued lower goes out next, so it is no reason to hedge the batch above it.
+    /// Asks a second peer for the lowest filter batch not yet delivered once it is
+    /// [`OnWire::overdue`], and returns its height. Filters are stored in height order, so
+    /// that batch holds back everything above it however much is downloaded. One queued
+    /// lower goes out next, so it is no reason to hedge the batch above it.
     pub async fn hedge_filters(&self, peers: &[PeerHandle]) -> Option<u32> {
         let (key, msg, height, peer) = {
             let reqs = self.requests.lock().await;
             let (key, o) = lowest_on_wire(&reqs, |key| matches!(key, RequestKey::CFilters(_)))?;
             if o.hedge.is_some()
-                || o.last_progress.elapsed() < HEDGE_AFTER
+                || !o.overdue()
                 || self.queue.lowest_height(MsgClass::CFilters).await.is_some_and(|h| h < o.height)
             {
                 return None;
             }
             // Bulk download keeps every peer at its cap, so a cap would rule out all of them.
-            // Like a header request, the second copy goes where it is answered soonest.
             let others = peers.iter().filter(|p| p.id() != o.peer && !p.is_closed());
-            let peer = choose_peer(others, MsgClass::Headers)?;
+            let peer = hedge_peer(others)?;
             (key.clone(), o.msg.clone(), o.height, peer.clone())
         };
         self.send_hedge(key, msg, height, peer).await
@@ -422,6 +426,16 @@ impl Broker {
         match self.requests.lock().await.get_mut(&key) {
             Some(ReqState::OnWire(o)) if o.hedge.is_none() => {
                 o.hedge = Some(peer.id());
+                tracing::debug!(
+                    target: "dash_spv::network",
+                    "hedge at {}: on the wire {:.1}s at {} (overdue after {:.1}s, silent {:.1}s), copy to {}",
+                    height,
+                    o.sent.elapsed().as_secs_f64(),
+                    o.peer.addr(),
+                    o.overdue_after.as_secs_f64(),
+                    o.last_progress.elapsed().as_secs_f64(),
+                    peer.addr(),
+                );
                 Some(height)
             }
             _ => None,
@@ -436,6 +450,8 @@ impl Broker {
                 peer,
                 last_progress: Instant::now(),
                 last_answer: Instant::now(),
+                sent: Instant::now(),
+                overdue_after: HEDGE_OVERDUE,
                 msg: msg.clone(),
                 height: 0,
                 hedge: None,
@@ -460,6 +476,14 @@ impl Broker {
             ReqState::OnWire(_) => "on_wire",
             ReqState::Arrived => "arrived",
         })
+    }
+}
+
+impl OnWire {
+    /// Whether the request waited long enough for a second copy: its peer delivered nothing
+    /// for [`HEDGE_AFTER`], or the request has been on the wire for `overdue_after`.
+    fn overdue(&self) -> bool {
+        self.last_progress.elapsed() >= HEDGE_AFTER || self.sent.elapsed() >= self.overdue_after
     }
 }
 
@@ -502,17 +526,15 @@ fn classify(msg: &NetworkMessage) -> MsgClass {
 /// Picks the peer among `open` for a message of `class`. A header or block request goes to
 /// the peer that will answer it soonest, since sync waits on each of them in height order.
 /// Bulk filter traffic goes to the peer least loaded relative to its own cap, and so does
-/// any request while a busy peer has no serving rate yet.
+/// any request while no peer has a rate yet.
 fn choose_peer<'a>(
     open: impl Iterator<Item = &'a PeerHandle> + Clone,
     class: MsgClass,
 ) -> Option<&'a PeerHandle> {
-    if matches!(class, MsgClass::Headers | MsgClass::Blocks) {
-        let waits: Option<Vec<(f64, &PeerHandle)>> =
-            open.clone().map(|p| Some((queued_secs(p)?, p))).collect();
-        if let Some(waits) = waits {
-            return waits.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, p)| p);
-        }
+    if matches!(class, MsgClass::Headers | MsgClass::Blocks) && open.clone().any(|p| rate(p) > 0) {
+        // A busy peer that has not delivered anything yet has no known queue, so it goes last.
+        let wait = |p: &PeerHandle| queued_secs(p).unwrap_or(f64::INFINITY);
+        return open.min_by(|a, b| wait(a).total_cmp(&wait(b)));
     }
     open.min_by(|a, b| {
         (a.in_flight_bytes() as u128 * b.cap() as u128)
@@ -520,10 +542,39 @@ fn choose_peer<'a>(
     })
 }
 
+/// Picks the peer among `others` for the second copy of a request: the one that answers it
+/// soonest. A peer without a serving rate looks idle before it gets work and may be slow, so
+/// it is asked only when no peer with a serving rate is among `others`.
+fn hedge_peer<'a>(others: impl Iterator<Item = &'a PeerHandle> + Clone) -> Option<&'a PeerHandle> {
+    let measured = others.clone().filter(|p| p.serving_rate() > 0);
+    if measured.clone().next().is_some() {
+        return choose_peer(measured, MsgClass::Headers);
+    }
+    choose_peer(others, MsgClass::Headers)
+}
+
+/// Bytes/s the peer serves: its serving rate once measured, its last two seconds before.
+fn rate(peer: &PeerHandle) -> u64 {
+    match peer.serving_rate() {
+        0 => peer.served(),
+        rate => rate,
+    }
+}
+
+/// Returns how long a request just sent to `peer` may stay on the wire while `peer` keeps
+/// delivering: [`HEDGE_QUEUE_FACTOR`] times the queue it waits behind, at least
+/// [`HEDGE_OVERDUE`]. The queue is taken at send. Requests sent later wait behind this one,
+/// and a rate taken later would give a peer that slowed down the more time the slower it got.
+fn overdue_after(peer: &PeerHandle) -> Duration {
+    queued_secs(peer)
+        .and_then(|secs| Duration::try_from_secs_f64(secs * HEDGE_QUEUE_FACTOR).ok())
+        .map_or(HEDGE_OVERDUE, |queued| queued.max(HEDGE_OVERDUE))
+}
+
 /// Seconds the peer needs to serve what it already holds, `None` while it holds work
-/// but has no measured serving rate. Peers answer in order, so a new request waits that long.
+/// but has no rate. Peers answer in order, so a new request waits that long.
 fn queued_secs(peer: &PeerHandle) -> Option<f64> {
-    match (peer.in_flight_bytes(), peer.serving_rate()) {
+    match (peer.in_flight_bytes(), rate(peer)) {
         (0, _) => Some(0.0),
         (_, 0) => None,
         (bytes, rate) => Some(bytes as f64 / rate as f64),
@@ -697,6 +748,10 @@ mod tests {
         Inventory::Block(BlockHash::dummy(n))
     }
 
+    fn get_block(n: u32) -> NetworkMessage {
+        NetworkMessage::GetData(vec![block(n)])
+    }
+
     fn tx(n: u8) -> Inventory {
         Inventory::Transaction(Txid::from_byte_array([n; 32]))
     }
@@ -767,7 +822,7 @@ mod tests {
         broker.requeue_from(&HashSet::from([gone.id()])).await;
 
         // Only the charge matters here: the loopback has no reader to answer it.
-        broker.route(&[gone.handle(), other.handle()], u64::MAX, &ResponseCosts::new()).await;
+        broker.route(&[gone.handle(), other.handle()], &ResponseCosts::new()).await;
 
         assert_eq!(gone.in_flight_bytes(), 0);
         assert!(other.in_flight_bytes() > 0);
@@ -805,7 +860,6 @@ mod tests {
             ConnectedPeer::for_test(conn(2, 0)).await.handle(),
         ];
         let (slow, idle) = (&peers[..1], peers[1].id());
-        let get_block = |n: u32| NetworkMessage::GetData(vec![block(n)]);
         let hedged_blocks = || async {
             let mut hedged: Vec<u32> = broker
                 .requests
@@ -824,10 +878,10 @@ mod tests {
         for n in [11, 12] {
             broker.enqueue(n, get_block(n)).await;
         }
-        assert_eq!(broker.route(slow, u64::MAX, &costs).await, 2);
+        assert_eq!(broker.route(slow, &costs).await, 2);
         tokio::time::advance(HEDGE_AFTER).await;
         broker.enqueue(10, get_block(10)).await;
-        assert_eq!(broker.route(slow, u64::MAX, &costs).await, 1);
+        assert_eq!(broker.route(slow, &costs).await, 1);
         assert_eq!(broker.hedge(&peers).await, None, "the lowest block has not waited long enough");
 
         tokio::time::advance(HEDGE_AFTER / 2).await;
@@ -846,6 +900,18 @@ mod tests {
         assert_eq!(broker.hedge(slow).await, None, "no other peer to ask");
     }
 
+    #[tokio::test]
+    async fn a_new_peer_holds_two_header_requests() {
+        let broker = Broker::new();
+        let peer = ConnectedPeer::for_test(conn(1, 0)).await;
+        for n in 0..3 {
+            broker.enqueue(n, get_headers(n)).await;
+        }
+
+        assert_eq!(broker.route(&[peer.handle()], &ResponseCosts::new()).await, 2);
+        assert_eq!(broker.len(), 1);
+    }
+
     #[test_case(NetworkMessage::GetData(vec![block(1)]), RequestKey::Block(BlockHash::dummy(1)); "a block")]
     #[test_case(get_cfilters(1), RequestKey::CFilters(BlockHash::dummy(1)); "a filter batch")]
     #[test_case(get_cfheaders(1), RequestKey::CfHeaders(BlockHash::dummy(1)); "a filter header batch")]
@@ -856,7 +922,7 @@ mod tests {
         let peer = ConnectedPeer::for_test(id).await;
 
         broker.enqueue(0, request.clone()).await;
-        assert_eq!(broker.route(&[peer.handle()], u64::MAX, &ResponseCosts::new()).await, 1);
+        assert_eq!(broker.route(&[peer.handle()], &ResponseCosts::new()).await, 1);
         broker.arrived(conn(2, 0), key.clone()).await;
         assert_eq!(broker.state_of(&key).await, Some("on_wire"), "only its carrier settles it");
         broker.arrived(id, key.clone()).await;
@@ -911,9 +977,9 @@ mod tests {
         for start in [1000, 2000] {
             broker.enqueue(start, get_cfilters(start)).await;
         }
-        assert_eq!(broker.route(&peers[..1], u64::MAX, &costs).await, 2);
+        assert_eq!(broker.route(&peers[..1], &costs).await, 2);
         broker.enqueue(3000, get_cfilters(3000)).await;
-        assert_eq!(broker.route(&peers[1..], u64::MAX, &costs).await, 1);
+        assert_eq!(broker.route(&peers[1..], &costs).await, 1);
         broker.arrived(idle.id(), RequestKey::CFilters(BlockHash::dummy(3000))).await;
         idle.set_cap(idle.in_flight_bytes().max(1));
 
@@ -935,6 +1001,85 @@ mod tests {
         assert_eq!(broker.hedge_filters(&peers[..1]).await, None, "no other peer to ask");
     }
 
+    /// Peer 2 is idle and unmeasured, peer 3 measured and busy. Returns the peer asked for
+    /// the second copy.
+    #[test_case(get_cfilters(0), false => Some(3); "a filter batch goes to the measured peer")]
+    #[test_case(get_cfilters(0), true => Some(3); "a filter batch goes to the measured peer at its cap")]
+    #[test_case(get_block(0), false => Some(3); "a block goes to the measured peer")]
+    #[test_case(get_block(0), true => Some(2); "a block goes to an unmeasured peer while the measured one is full")]
+    #[tokio::test(start_paused = true)]
+    async fn a_hedge_prefers_a_measured_peer(request: NetworkMessage, full: bool) -> Option<u8> {
+        let broker = Broker::new();
+        let holder = ConnectedPeer::for_test(conn(1, 0)).await;
+        let unmeasured = ConnectedPeer::for_test(conn(2, 0)).await;
+        let measured = ConnectedPeer::for_test(conn(3, 0)).await;
+        measured.handle().send(&get_cfilters(5000)).await.expect("loopback send");
+        measured.set_serving_rate(100 << 10);
+        if full {
+            measured.set_cap(measured.in_flight_bytes());
+        }
+        broker.mark_on_wire(&request, holder.id()).await;
+        tokio::time::advance(HEDGE_AFTER).await;
+
+        let peers = [holder.handle(), unmeasured.handle(), measured.handle()];
+        let hedged = match request {
+            NetworkMessage::GetCFilters(_) => broker.hedge_filters(&peers).await,
+            _ => broker.hedge(&peers).await,
+        };
+        assert_eq!(hedged, Some(0));
+        let hedge = broker.requests.lock().await.values().find_map(|state| match state {
+            ReqState::OnWire(o) => o.hedge,
+            _ => None,
+        });
+        [2, 3].into_iter().find(|n| hedge == Some(conn(*n, 0)))
+    }
+
+    /// The holder keeps delivering a 20 s queue it took the request behind, so a second copy
+    /// waits for twice that rather than for `HEDGE_OVERDUE`.
+    #[test_case(get_cfilters(1000); "a filter batch")]
+    #[test_case(get_block(1); "a block")]
+    #[tokio::test(start_paused = true)]
+    async fn a_request_queued_at_a_steady_peer_is_hedged_only_past_twice_its_queue(
+        request: NetworkMessage,
+    ) {
+        let broker = Broker::new();
+        let costs = ResponseCosts::new();
+        let holder = ConnectedPeer::for_test(conn(1, 0)).await;
+        let other = ConnectedPeer::for_test(conn(2, 0)).await;
+        for start in [0, 1, 2, 3] {
+            holder.handle().send(&get_cfilters(start)).await.expect("loopback send");
+        }
+        holder.set_cap(1 << 30);
+        let queued = holder.in_flight_bytes() + costs.cost(&request);
+        holder.set_serving_rate(queued / 20);
+        broker.enqueue(1000, request.clone()).await;
+        assert_eq!(broker.route(&[holder.handle()], &costs).await, 1);
+
+        let peers = [holder.handle(), other.handle()];
+        let hedge = || async {
+            match request {
+                NetworkMessage::GetCFilters(_) => broker.hedge_filters(&peers).await,
+                _ => broker.hedge(&peers).await,
+            }
+        };
+        let step = HEDGE_AFTER / 2;
+        let mut waited = Duration::ZERO;
+        // The integer rate rounds the queue up a little, so the copy goes just after 40 s.
+        for deadline in [HEDGE_OVERDUE, Duration::from_secs(39), Duration::from_secs(41)] {
+            while waited < deadline {
+                tokio::time::advance(step).await;
+                broker.progress(holder.id()).await;
+                waited += step;
+            }
+            let hedged = if deadline < Duration::from_secs(40) {
+                None
+            } else {
+                Some(1000)
+            };
+            assert_eq!(hedge().await, hedged, "after {deadline:?}");
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_hedge_lost_with_its_peer_is_sent_again() {
         let broker = Broker::new();
@@ -953,25 +1098,37 @@ mod tests {
         assert_eq!(broker.hedge_filters(&[holder, second]).await, Some(0));
     }
 
-    #[test_case(false, Some(0); "a silent peer")]
-    #[test_case(true, None; "a peer still delivering")]
+    #[test_case(get_cfilters(0), false, HEDGE_AFTER => Some(0); "a batch at a silent peer")]
+    #[test_case(get_cfilters(0), true, HEDGE_AFTER => None; "a batch at a peer still delivering")]
+    #[test_case(get_cfilters(0), true, HEDGE_OVERDUE - HEDGE_AFTER => None; "a batch at a peer still delivering, short of the deadline")]
+    #[test_case(get_cfilters(0), true, HEDGE_OVERDUE => Some(0); "a batch at a peer still delivering, past the deadline")]
+    #[test_case(get_block(0), false, HEDGE_AFTER => Some(0); "a block at a silent peer")]
+    #[test_case(get_block(0), true, HEDGE_OVERDUE - HEDGE_AFTER => None; "a block at a peer still delivering, short of the deadline")]
+    #[test_case(get_block(0), true, HEDGE_OVERDUE => Some(0); "a block at a peer still delivering, past the deadline")]
     #[tokio::test(start_paused = true)]
-    async fn hedge_filters_asks_another_peer_only_for_a_batch_stuck_at_a_silent_one(
+    async fn hedge_asks_another_peer_only_for_a_request_stuck_at_a_silent_or_slow_one(
+        request: NetworkMessage,
         delivering: bool,
-        hedged: Option<u32>,
-    ) {
+        waited: Duration,
+    ) -> Option<u32> {
         let broker = Broker::new();
         let slow = ConnectedPeer::for_test(conn(1, 0)).await;
         let idle = ConnectedPeer::for_test(conn(2, 0)).await;
-        broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
+        broker.mark_on_wire(&request, conn(1, 0)).await;
 
-        tokio::time::advance(HEDGE_AFTER / 2).await;
-        if delivering {
-            broker.progress(conn(1, 0)).await;
+        let step = HEDGE_AFTER / 2;
+        for _ in 0..waited.as_millis() / step.as_millis() {
+            tokio::time::advance(step).await;
+            if delivering {
+                broker.progress(conn(1, 0)).await;
+            }
         }
-        tokio::time::advance(HEDGE_AFTER / 2).await;
 
-        assert_eq!(broker.hedge_filters(&[slow.handle(), idle.handle()]).await, hedged);
+        let peers = [slow.handle(), idle.handle()];
+        match request {
+            NetworkMessage::GetCFilters(_) => broker.hedge_filters(&peers).await,
+            _ => broker.hedge(&peers).await,
+        }
     }
 
     #[test_case(get_mnlistdiff(3), vec![RequestKey::MnListDiff(BlockHash::dummy(4))], 0; "its only key")]
@@ -1021,15 +1178,23 @@ mod tests {
         assert_eq!(broker.requests.lock().await.len(), tracked);
     }
 
-    /// `slow` holds 1 MB at 100 KB/s, a 10 s queue at a tenth of its cap. `fast` holds
-    /// 256 KB at `fast_rate`, half its cap. Returns which of them `msg` is routed to.
-    #[test_case(get_headers(1), 1 << 20 => "fast"; "a header request goes to the shortest queue")]
-    #[test_case(get_headers(1), 0 => "slow"; "a header request falls back to the cap ratio while a busy peer is unmeasured")]
-    #[test_case(NetworkMessage::GetData(vec![block(1)]), 1 << 20 => "fast"; "a block request goes to the shortest queue")]
-    #[test_case(NetworkMessage::GetData(vec![block(1)]), 0 => "slow"; "a block request falls back to the cap ratio while a busy peer is unmeasured")]
-    #[test_case(get_cfilters(0), 1 << 20 => "slow"; "bulk requests keep the cap ratio")]
+    /// `slow` holds 1 MB, a tenth of its cap, served at `slow_rate`. `fast` holds 256 KB, half
+    /// its cap, served at `fast_rate`, or at `fast_served` over the last two seconds while its
+    /// serving rate is unmeasured. Returns which of them `msg` is routed to.
+    #[test_case(get_headers(1), 100 << 10, 1 << 20, 0 => "fast"; "a header request goes to the shortest queue")]
+    #[test_case(get_headers(1), 100 << 10, 0, 1 << 20 => "fast"; "a peer still being measured is timed by its last two seconds")]
+    #[test_case(get_headers(1), 0, 1 << 20, 0 => "fast"; "a busy peer that delivered nothing yet goes last")]
+    #[test_case(get_headers(1), 0, 0, 0 => "slow"; "the cap ratio while no peer has a rate")]
+    #[test_case(get_block(1), 100 << 10, 1 << 20, 0 => "fast"; "a block request goes to the shortest queue")]
+    #[test_case(get_block(1), 100 << 10, 0, 1 << 20 => "fast"; "a block request times a peer by its last two seconds")]
+    #[test_case(get_cfilters(0), 100 << 10, 1 << 20, 0 => "slow"; "bulk requests keep the cap ratio")]
     #[tokio::test]
-    async fn route_picks_the_peer_by_class(msg: NetworkMessage, fast_rate: u64) -> &'static str {
+    async fn route_picks_the_peer_by_class(
+        msg: NetworkMessage,
+        slow_rate: u64,
+        fast_rate: u64,
+        fast_served: u64,
+    ) -> &'static str {
         let costs = ResponseCosts::new();
         let slow = ConnectedPeer::for_test(conn(1, 0)).await;
         let fast = ConnectedPeer::for_test(conn(2, 0)).await;
@@ -1039,13 +1204,14 @@ mod tests {
         fast.handle().send(&get_cfilters(4000)).await.expect("loopback send");
         slow.set_cap(slow.in_flight_bytes() * 10);
         fast.set_cap(fast.in_flight_bytes() * 2);
-        slow.set_serving_rate(100 << 10);
+        slow.set_serving_rate(slow_rate);
         fast.set_serving_rate(fast_rate);
+        fast.set_served(fast_served);
         let before = (slow.in_flight_bytes(), fast.in_flight_bytes());
 
         let broker = Broker::new();
         broker.enqueue(0, msg).await;
-        assert_eq!(broker.route(&[slow.handle(), fast.handle()], u64::MAX, &costs).await, 1);
+        assert_eq!(broker.route(&[slow.handle(), fast.handle()], &costs).await, 1);
 
         match (slow.in_flight_bytes() > before.0, fast.in_flight_bytes() > before.1) {
             (true, false) => "slow",

@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 const HEADERS_RESP_BYTES: u64 = 2000 * 81;
 /// Dash Core sends up to 8000 compressed headers, about 43 bytes each on testnet.
-const HEADERS2_RESP_BYTES: u64 = 8000 * 43;
+pub(super) const HEADERS2_RESP_BYTES: u64 = 8000 * 43;
 const CFHEADERS_RESP_BYTES: u64 = 2000 * 32 + 65;
 const RESP_BYTES_ALPHA: f64 = 0.3;
 const REPLY_KINDS: usize = 10;
