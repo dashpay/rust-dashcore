@@ -1199,7 +1199,10 @@ fn test_create_wallet(cl: &Client) {
 }
 
 fn test_get_tx_out_set_info(cl: &Client) {
-    cl.get_tx_out_set_info().unwrap();
+    let info = cl.get_tx_out_set_info().unwrap();
+    // The node's default hash type: `hash_serialized_2` up to v24.0.x, `hash_serialized_3` after.
+    assert_ne!(info.hash_serialized_2.is_some(), info.hash_serialized_3.is_some());
+    assert_eq!(info.muhash, None);
 }
 
 fn test_get_chain_tips(cl: &Client) {

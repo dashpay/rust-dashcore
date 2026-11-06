@@ -37,6 +37,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking:** `GetTxOutSetInfoResult` in `dashcore-rpc-json` reads `gettxoutsetinfo`
+  from Dash Core before and after its switch to `hash_serialized_3`. `hash_serialized_2`
+  is an `Option<sha256d::Hash>`, beside the new `hash_serialized_3`
+  (`Option<sha256d::Hash>`) and `muhash` (`Option<TxOutSetMuHash>`). The two serialized
+  hashes are different hashes and are never equal. `transactions` and `disk_size` are
+  `Option`s, absent when Core uses its coinstatsindex. `hash_serialized_2` was a
+  `sha256::Hash`, which kept Core's hex but held the digest bytes reversed
 - **Breaking:** `LLMQType::params` returns `LlmqParams`, whose DKG fields are
   flat `u16`s (`dkg_interval`, `dkg_mining_window_start`, …), and
   `LlmqDevnetParams` takes `u16`s

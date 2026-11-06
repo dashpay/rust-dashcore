@@ -31,7 +31,7 @@ use dashcore::address;
 use dashcore::address::NetworkUnchecked;
 use dashcore::block::Version;
 use dashcore::consensus::encode;
-use dashcore::hashes::sha256;
+use dashcore::hashes::{hash_newtype, sha256, sha256d};
 use dashcore::{
     Address, Amount, BlockHash, PrivateKey, ProTxHash, PublicKey, QuorumHash, Script, ScriptBuf,
     SignedAmount, Transaction, TxMerkleNode, Txid, bip158,
@@ -1798,24 +1798,49 @@ pub struct SignRawTransactionInput {
     pub amount: Option<Amount>,
 }
 
+hash_newtype! {
+    /// The `muhash` of `gettxoutsetinfo`: the SHA256 of the UTXO set's MuHash3072 digest, in
+    /// Dash Core's byte order.
+    #[hash_newtype(backward)]
+    pub struct TxOutSetMuHash(sha256::Hash);
+}
+
+/// Result of `gettxoutsetinfo`.
+///
+/// Dash Core v24.0.x and earlier report the serialized hash as `hash_serialized_2`. Newer Dash
+/// Core reports `hash_serialized_3` instead and refuses `hash_serialized_2` as a hash type. They
+/// are different hashes of the same set and are never equal, so each has its own field. At most
+/// one of `hash_serialized_2`, `hash_serialized_3` and `muhash` is present: the one for the hash
+/// type asked for, or the node's default when none was given.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct GetTxOutSetInfoResult {
-    /// The current block height (index)
+    /// The block height of the returned statistics
     pub height: u64,
-    /// The hash of the block at the tip of the chain
+    /// The hash of the block at which the statistics are calculated
     #[serde(rename = "bestblock")]
     pub best_block: BlockHash,
-    /// The number of transactions with unspent outputs
-    pub transactions: u64,
+    /// The number of transactions with unspent outputs; absent when the coinstatsindex is used
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transactions: Option<u64>,
     /// The number of unspent transaction outputs
     #[serde(rename = "txouts")]
     pub tx_outs: u64,
     /// A meaningless metric for UTXO set size
     pub bogosize: u64,
-    /// The serialized hash
-    pub hash_serialized_2: sha256::Hash,
-    /// The estimated size of the chainstate on disk
-    pub disk_size: u64,
+    /// The SHA256d hash of the serialized UTXO set, as Dash Core v24.0.x and earlier compute it.
+    /// Present for the `hash_serialized_2` hash type, their default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash_serialized_2: Option<sha256d::Hash>,
+    /// The SHA256d hash of the UTXO set's coins in outpoint order, as newer Dash Core computes it.
+    /// Present for the `hash_serialized_3` hash type, their default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash_serialized_3: Option<sha256d::Hash>,
+    /// The MuHash of the UTXO set. Present for the `muhash` hash type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muhash: Option<TxOutSetMuHash>,
+    /// The estimated size of the chainstate on disk; absent when the coinstatsindex is used
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_size: Option<u64>,
     /// The total amount
     #[serde(with = "dashcore::amount::serde::as_btc")]
     pub total_amount: Amount,
