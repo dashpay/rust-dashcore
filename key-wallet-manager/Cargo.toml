@@ -43,6 +43,7 @@ bincode = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
+bincode = { workspace = true, features = ["serde"] }
 key-wallet = { workspace = true, features = ["test-utils", "bincode"] }
 dashcore = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
