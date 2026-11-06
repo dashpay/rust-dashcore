@@ -239,7 +239,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                 self.progress.update_target_height(*best_height);
                 {
                     let mut metadata_storage = self.metadata_storage.write().await;
-                    metadata_storage.store_last_target_height(*best_height).await?;
+                    metadata_storage
+                        .store_last_target_height(self.progress.target_height())
+                        .await?;
                 }
                 if addresses.is_empty() {
                     self.stop_sync();

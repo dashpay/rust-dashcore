@@ -17,8 +17,7 @@ use crate::network::{NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip, MetadataStorage};
 use crate::sync::block_headers::HeadersPipeline;
 use crate::sync::{
-    BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState,
-    BEST_CHAINLOCK_METADATA_STORAGE_KEY,
+    BlockHeadersProgress, SyncEvent, SyncManager, SyncState, BEST_CHAINLOCK_METADATA_STORAGE_KEY,
 };
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
@@ -317,10 +316,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 }
 
                 let new_tip = self.store_headers(&batch_headers).await?;
-                // Update target if we've exceeded it (post-sync case)
-                if new_tip.height() > self.progress.target_height() {
-                    self.progress.update_target_height(new_tip.height());
-                }
                 events.push(SyncEvent::BlockHeadersStored {
                     tip_height: new_tip.height(),
                 });
@@ -410,7 +405,7 @@ mod tests {
     };
     use crate::sync::block_headers::pipeline::ACTIVE_SEGMENT_WINDOW;
     use crate::sync::block_headers::segment_state::SegmentState;
-    use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
+    use crate::sync::{ManagerIdentifier, ProgressPercentage, SyncManager, SyncManagerProgress};
     use crate::test_utils::{test_socket_address, MockNetworkManager};
     use dashcore::network::message::NetworkMessage;
     use test_case::test_case;
@@ -629,6 +624,37 @@ mod tests {
         } else {
             panic!("Expected SyncManagerProgress::BlockHeaders");
         }
+    }
+
+    /// A target restored from storage or reported by peers can lag the stored tip,
+    /// since peers report their height only when they connect.
+    #[tokio::test]
+    async fn test_target_height_never_below_tip() {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let stored = Header::dummy_batch(0..10);
+        storage
+            .store_headers(&stored.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        storage.store_last_target_height(5).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        assert_eq!(manager.progress.target_height(), 9);
+
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let lagging = NetworkEvent::PeersUpdated {
+            addresses: vec![],
+            best_height: 3,
+        };
+        manager.handle_network_event(&lagging, &network).await.unwrap();
+        assert_eq!(manager.progress.target_height(), 9);
+        assert_eq!(storage.load_last_target_height().await.unwrap(), 9);
     }
 
     #[tokio::test]
