@@ -52,6 +52,13 @@ deny = [
     { crate = "bitcoin-units", deny-multiple-versions = true },
     { crate = "bitcoin_hashes", deny-multiple-versions = true },
     { crate = "hex-conservative", deny-multiple-versions = true },
+    # base-sdk crates should never desync or tear between versions
+    { crate = "dash-num", deny-multiple-versions = true },
+    { crate = "dash-params", deny-multiple-versions = true },
+    { crate = "dash-pkc", deny-multiple-versions = true },
+    { crate = "dash-pow", deny-multiple-versions = true },
+    { crate = "dash-types", deny-multiple-versions = true },
+    { crate = "dash-types-marker", deny-multiple-versions = true },
 ]
 skip = [
     { crate = "bitcoin-internals", reason = "rust-bitcoin's latest releases have version tear" },
