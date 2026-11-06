@@ -874,9 +874,7 @@ mod tests {
     }
 
     /// A lock re-announced with the same txid after a disconnect must be
-    /// processed fresh, not silently dropped as a duplicate. `on_disconnect` has
-    /// to evict the unvalidated cache entry that `process_instantlock` dedupes
-    /// against, otherwise the re-announced lock is never re-queued/re-validated.
+    /// processed fresh, not dropped as a duplicate of the cleared pending queue.
     #[tokio::test]
     async fn test_reannounce_after_disconnect_is_not_duplicate() {
         let mut manager = create_test_manager();

@@ -155,22 +155,12 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
     }
 }
 
-/// Verifies an InstantLock's signature against the rotated quorums of its
-/// cycle. It does not check the lock's structure: run
-/// [`InstantLockStructureValidator`] first. Never accept InstantLocks from the
-/// network without both.
-///
-/// A lock whose signature does not verify, or whose quorum is not in the
-/// cycle, fails with [`ValidationError::InvalidSignature`].
+/// Verifies an InstantLock's signature against the rotated quorums of its cycle.
+/// It does not check the lock's structure or the cycle's eligibility: use
+/// [`VerifiedInstantLock::verify`], which does both.
 pub struct InstantLockValidator<'a> {
     /// The rotated quorums of the lock's cycle, by quorum index.
     cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
-}
-
-impl Validator<&InstantLock> for InstantLockValidator<'_> {
-    fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
-        self.validate_signature(instant_lock).map_err(signature_error)
-    }
 }
 
 fn signature_error(error: MessageVerificationError) -> ValidationError {
@@ -384,7 +374,7 @@ mod tests {
             sign_id.as_byte_array().to_lower_hex_string(),
             "6fcbf58004b118d865a448bf89d9299c64d4ecedd754dabec655090224de91cd"
         );
-        validator.validate(&lock).expect("expected to verify is lock");
+        validator.validate_signature(&lock).expect("expected to verify is lock");
 
         // Without its quorum index in the cycle, the lock cannot be resolved.
         let mut quorums = engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap().clone();
