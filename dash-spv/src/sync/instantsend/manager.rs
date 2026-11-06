@@ -504,6 +504,37 @@ mod tests {
         assert_eq!(manager.pending_count(), 1);
     }
 
+    /// A peer-forged, well-formed lock must not shadow the genuine lock for the
+    /// same txid: the mempool only acts on validated locks.
+    #[tokio::test]
+    async fn should_accept_genuine_lock_after_forged_lock_for_same_txid() {
+        let engine = TestEngine::mainnet_fixture();
+        let mut manager = InstantSendManager::new(Arc::new(RwLock::new(engine)));
+        // An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
+        let genuine: InstantLock = dashcore::consensus::deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap();
+        let mut forged = genuine.clone();
+        forged.signature = BLSSignature::from([1u8; 96]);
+
+        let events = manager.process_instantlock(&forged).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived {
+                validated: false,
+                ..
+            }]
+        ));
+
+        let events = manager.process_instantlock(&genuine).await.unwrap();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::InstantLockReceived { instant_lock, validated: true }]
+                    if instant_lock == &genuine
+            ),
+            "genuine lock was shadowed by the forged one: {events:?}"
+        );
+    }
+
     #[tokio::test]
     async fn test_instantsend_pending_queue() {
         let mut manager = create_test_manager();
