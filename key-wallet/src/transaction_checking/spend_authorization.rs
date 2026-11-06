@@ -44,9 +44,9 @@ pub fn verify_input_authorization(
     {
         return Ok(false);
     }
-    if !prevout.script_pubkey.is_p2pkh() {
+    let Some(public_key_hash) = prevout.script_pubkey.p2pkh_public_key_hash_bytes() else {
         return Err(SpendAuthorizationError::UnsupportedScript);
-    }
+    };
     let mut instructions = input.script_sig.instructions();
     let (Some(Ok(Instruction::PushBytes(signature))), Some(Ok(Instruction::PushBytes(public_key)))) =
         (instructions.next(), instructions.next())
@@ -57,9 +57,7 @@ pub fn verify_input_authorization(
         return Ok(false);
     }
     let public_key_bytes = public_key.as_bytes();
-    if hash160::Hash::hash(public_key_bytes).as_byte_array().as_slice()
-        != &prevout.script_pubkey.as_bytes()[3..23]
-    {
+    if hash160::Hash::hash(public_key_bytes).as_byte_array().as_slice() != public_key_hash {
         return Ok(false);
     }
     let Ok(public_key) = EcdsaPublicKey::from_bytes(public_key_bytes) else {
@@ -95,6 +93,9 @@ pub fn verify_input_authorization(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+    use crate::test_utils::TestWalletContext;
+    use crate::wallet::managed_wallet_info::transaction_builder::TransactionSigner;
     use dashcore::blockdata::transaction::special_transaction::{
         asset_lock::AssetLockPayload, TransactionPayload,
     };
@@ -157,6 +158,28 @@ mod tests {
             let (tx, prevout) = signed(uncompressed);
             assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(true));
         }
+    }
+
+    #[tokio::test]
+    async fn should_accept_what_the_wallet_signer_produces() {
+        let (ctx, _) = TestWalletContext::new_random().with_mempool_funding(100_000).await;
+        let utxo = ctx.first_utxo().clone();
+        let path = ctx.bip44_account().address_derivation_path(&utxo.address).unwrap();
+        let mut unsigned = Transaction::dummy_empty();
+        unsigned.input.push(TxIn {
+            previous_output: utxo.outpoint,
+            ..Default::default()
+        });
+        unsigned.output.push(TxOut {
+            value: 90_000,
+            script_pubkey: utxo.txout.script_pubkey.clone(),
+        });
+        let signed = ctx
+            .wallet
+            .sign_tx(unsigned, vec![utxo.clone()], move |_| Some(path.clone()))
+            .await
+            .unwrap();
+        assert_eq!(verify_input_authorization(&signed, 0, &utxo.txout), Ok(true));
     }
 
     #[test]
