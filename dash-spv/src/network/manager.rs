@@ -110,7 +110,7 @@ const LINK_STALL_TIMEOUTS: u32 = 6;
 
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::bans::{Ban, Bans};
-use crate::network::broker::{Broker, RequestKey};
+use crate::network::broker::{Broker, RequestKey, HEDGE_AFTER};
 use crate::network::peer_set::{Admission, PeerSet};
 use crate::network::NetworkManager;
 use crate::network::TransportPreference;
@@ -523,6 +523,10 @@ const MIN_CAP_BYTES: u64 = INITIAL_CAP_BYTES;
 /// the round trip, or a peer limited by its cap cannot show it could serve more.
 const TARGET_QUEUE_SECS: f64 = 2.0;
 
+/// A peer owing replies that delivers less than this for [`HEDGE_AFTER`] is stalled. Pings
+/// and announcements stay well below it, any reply streaming in rises above it.
+const STALLED_BELOW_BYTES_PER_SEC: f64 = 8.0 * 1024.0;
+
 /// Horizon of the served rate. A burst of `n` bytes raises the cap by about `n`.
 const SERVED_RATE_SECS: f64 = 2.0;
 
@@ -532,7 +536,7 @@ const CAP_PROBE_BYTES_PER_SEC: f64 = 32.0 * 1024.0;
 /// Share per second of its excess over the target that a bound peer's cap gives back.
 const CAP_DECAY_PER_SEC: f64 = 0.5;
 
-/// Ticks a peer must have been bandwidth bound before its rate is compared (30 s), and
+/// Ticks a peer must have served all it can before its rate is compared (30 s), and
 /// the span its serving rate is averaged over, so a momentary dip never condemns it. A
 /// fast mainnet peer serves only 40 to 60% of its later rate in its first 15 s, and 70
 /// to 100% by 30 s, so a newcomer judged sooner looks slow while it ramps.
@@ -617,11 +621,13 @@ impl ByteLimiter {
     }
 }
 
-/// A peer's limiter plus how fast it serves while bandwidth bound, for eviction.
+/// A peer's limiter plus how fast it serves while serving all it can, for eviction.
 struct PeerFlow {
     limiter: ByteLimiter,
     serving_rate: f64,
     serving_ticks: u32,
+    /// Consecutive ticks in which the peer owed replies and delivered nearly nothing.
+    stalled_ticks: u32,
 }
 
 impl PeerFlow {
@@ -630,16 +636,57 @@ impl PeerFlow {
             limiter: ByteLimiter::new(bytes),
             serving_rate: 0.0,
             serving_ticks: 0,
+            stalled_ticks: 0,
         }
     }
 
     /// One tick with the peer's cumulative bytes received, its bytes in flight now and
     /// whether our link is stalled. Returns its new cap.
     fn tick(&mut self, bytes: u64, in_flight: u64, link_stalled: bool) -> u64 {
-        let bound = self.limiter.bound(in_flight);
+        let serving_all = self.limiter.serving_all(in_flight);
+        let got = bytes.saturating_sub(self.limiter.last_bytes);
         let cap = self.limiter.tick(bytes, in_flight, link_stalled);
-        self.sample(self.limiter.rate, bound, link_stalled);
+        self.sample(self.limiter.rate, serving_all, link_stalled);
+        let stalling = (got as f64) < STALLED_BELOW_BYTES_PER_SEC * FLOW_TICK.as_secs_f64();
+        if in_flight == 0 || !stalling {
+            self.stalled_ticks = 0;
+        } else if !link_stalled {
+            self.stalled_ticks += 1;
+        }
         cap
+    }
+
+    /// Whether the peer owed replies and delivered nearly nothing for [`HEDGE_AFTER`].
+    fn stalled(&self) -> bool {
+        FLOW_TICK * self.stalled_ticks >= HEDGE_AFTER
+    }
+
+    /// Ticks the flow of `peer` with `in_flight` bytes owed and publishes its cap and rates.
+    fn update(&mut self, peer: &ConnectedPeer, in_flight: u64, link_stalled: bool) {
+        let (was_stalled, stalled_for) = (self.stalled(), FLOW_TICK * self.stalled_ticks);
+        peer.set_cap(self.tick(peer.bytes_read(), in_flight, link_stalled));
+        peer.set_serving_rate(self.serving_rate());
+        peer.set_served(self.limiter.served as u64);
+        let stalled = self.stalled();
+        peer.set_stalled(stalled);
+        if stalled && !was_stalled {
+            tracing::debug!(
+                target: "dash_spv::network",
+                "{} stalled: owes {} KB and delivered under {} KB/s for {:.1}s",
+                peer.addr(),
+                in_flight >> 10,
+                STALLED_BELOW_BYTES_PER_SEC as u64 >> 10,
+                (FLOW_TICK * self.stalled_ticks).as_secs_f64(),
+            );
+        } else if was_stalled && !stalled {
+            tracing::debug!(
+                target: "dash_spv::network",
+                "{} no longer stalled after {:.1}s, owes {} KB",
+                peer.addr(),
+                stalled_for.as_secs_f64(),
+                in_flight >> 10,
+            );
+        }
     }
 
     /// Folds `rate` into the serving rate if the peer had work. A stall of our own link
@@ -665,7 +712,7 @@ impl PeerFlow {
 
 /// Sizes the byte cap of every peer with a [`ByteLimiter`] on its own throughput. Each cap
 /// follows its peer's share of the client's link, so a full link needs no cap of its own.
-/// Also reports how fast each peer serves while bandwidth bound, for [`underserving_peer`].
+/// Also reports how fast each peer serves while serving all it can, for [`underserving_peer`].
 fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
@@ -704,9 +751,7 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             let stalled = link_stalled.load(Ordering::Relaxed);
             for (p, &in_flight) in g.iter().zip(&in_flights) {
                 let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
-                p.set_cap(flow.tick(p.bytes_read(), in_flight, stalled));
-                p.set_serving_rate(flow.serving_rate());
-                p.set_served(flow.limiter.served as u64);
+                flow.update(p, in_flight, stalled);
             }
 
             if ticks.is_multiple_of(2) {
@@ -1276,7 +1321,7 @@ struct SlowPeer {
 }
 
 /// The connected peer clearly underserving the rest, if any: serving bytes at a small
-/// fraction of the best connected peer's rate while bandwidth bound. Relative, so a slow
+/// fraction of the best connected peer's rate while serving all it can. Relative, so a slow
 /// client link (every peer slow alike) never condemns anyone. None while our own link
 /// is stalled, since the stall drags every rate down unevenly.
 fn underserving_peer(peers: &[ConnectedPeer], link_stalled: bool) -> Option<SlowPeer> {
@@ -1807,7 +1852,7 @@ mod tests {
     use dashcore::consensus::encode::serialize;
     use dashcore::network::address::Address;
     use dashcore::network::message::{RawNetworkMessage, RawNetworkMessageCodec};
-    use dashcore::network::message_blockdata::Inventory;
+    use dashcore::network::message_blockdata::{GetHeadersMessage, Inventory};
     use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::network::message_network::VersionMessage;
     use dashcore::{BlockHash, Network};
@@ -2816,6 +2861,70 @@ mod tests {
         assert_eq!(warnings.load(Ordering::SeqCst), roles.len() - kept.len());
     }
 
+    /// Peer 1 serves 1 MB/s and owes a `headers2` reply, peer 2 serves 50 KB/s and owes a
+    /// block, so a new block goes to peer 1 unless it stalled. Then peer 1 delivers
+    /// `per_tick` bytes for `ticks` ticks. Returns which peer the next block goes to.
+    #[test_case(8, 64 => 2; "a peer owing replies that delivers only pings ranks last")]
+    #[test_case(7, 64 => 1; "a reply in the making for less than the hedge delay keeps its rank")]
+    #[test_case(40, 4096 => 1; "a reply streaming in slowly keeps its rank")]
+    #[tokio::test]
+    async fn a_stalled_peer_gets_no_new_blocks(ticks: u32, per_tick: u64) -> u8 {
+        let peers =
+            [ConnectedPeer::for_test(conn(1, 0)).await, ConnectedPeer::for_test(conn(2, 0)).await];
+        let locator = GetHeadersMessage::new(vec![BlockHash::dummy(1)], BlockHash::dummy(0));
+        peers[0].handle().send(&NetworkMessage::GetHeaders2(locator)).await.expect("loopback send");
+        peers[1]
+            .handle()
+            .send(&NetworkMessage::GetData(vec![block(1)]))
+            .await
+            .expect("loopback send");
+        let mut flows = peers.each_ref().map(|p| PeerFlow::new(p.bytes_read()));
+        let tick_s = FLOW_TICK.as_secs_f64();
+        let mut tick = |deliveries: [u64; 2]| {
+            for ((peer, flow), bytes) in peers.iter().zip(&mut flows).zip(deliveries) {
+                peer.receive_for_test(bytes);
+                flow.update(peer, peer.in_flight_bytes(), false);
+            }
+        };
+        for _ in 0..40 {
+            tick([(1e6 * tick_s) as u64, (50e3 * tick_s) as u64]);
+        }
+        for _ in 0..ticks {
+            tick([per_tick, (50e3 * tick_s) as u64]);
+        }
+
+        let broker = Broker::new();
+        broker.enqueue(0, NetworkMessage::GetData(vec![block(2)])).await;
+        let before = peers.each_ref().map(|p| p.in_flight_bytes());
+        let handles = peers.each_ref().map(|p| p.handle());
+        assert_eq!(broker.route(&handles, &ResponseCosts::new()).await, 1);
+        let routed = peers.iter().zip(before).position(|(p, b)| p.in_flight_bytes() > b);
+        routed.map_or(0, |i| i as u8 + 1)
+    }
+
+    /// A burst at 5 MB/s lifts the peer's cap, then it serves 100 KB/s of a 1 MB backlog
+    /// below that cap. Its serving rate is measured while it is backlogged, not only once the
+    /// cap has fallen enough to bind it.
+    #[test]
+    fn a_backlogged_peer_is_measured_below_its_cap() {
+        let tick_s = FLOW_TICK.as_secs_f64();
+        let mut flow = PeerFlow::new(0);
+        let mut bytes = 0;
+        for _ in 0..8 {
+            bytes += (5e6 * tick_s) as u64;
+            flow.tick(bytes, 64 * 1024, false);
+        }
+        // The cap falls below the backlog after about 34 ticks, so a peer sampled only while
+        // bound misses those. The 1 s rate average needs about 9 to read the backlog.
+        for _ in 0..SERVING_SAMPLE_TICKS + 20 {
+            bytes += (100e3 * tick_s) as u64;
+            flow.tick(bytes, 1 << 20, false);
+        }
+
+        let rate = flow.serving_rate();
+        assert!(rate > 0 && rate < 300_000, "{rate} after {} samples", flow.serving_ticks);
+    }
+
     /// A peer serves 1 MB/s with work for three ticks, then nothing for one.
     #[test_case(false, true => 750_000; "a stall of its own drags its serving rate")]
     #[test_case(true, true => 1_000_000; "a stall of our link does not")]
@@ -2825,6 +2934,7 @@ mod tests {
             limiter: ByteLimiter::new(0),
             serving_rate: 0.0,
             serving_ticks: 0,
+            stalled_ticks: 0,
         };
         for _ in 0..3 {
             flow.sample(1e6, true, false);
