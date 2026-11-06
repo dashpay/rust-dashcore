@@ -604,6 +604,74 @@ mod tests {
         assert!(manager.process_instantlock(&other_cycle).await.unwrap().is_empty());
     }
 
+    /// A pending lock refuted once its cycle completes is dropped on replay without
+    /// an event, and the drained queue lets the manager leave `Syncing`.
+    #[tokio::test]
+    async fn should_drop_pending_lock_refuted_once_its_cycle_completes() {
+        let mut manager = InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(
+            dashcore::Network::Mainnet,
+        ))));
+        manager.set_state(SyncState::Syncing);
+        let genuine = mainnet_fixture_is_lock();
+        let mut forged = genuine.clone();
+        forged.signature = BLSSignature::from([1; 96]);
+        let events = manager.process_instantlock(&forged).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived {
+                validated: false,
+                ..
+            }]
+        ));
+        assert_eq!(manager.pending_count(), 1);
+
+        *manager.engine.write().await = TestEngine::mainnet_fixture();
+        let event = SyncEvent::MasternodeStateUpdated {
+            height: 1,
+            qr_info_result: None,
+        };
+        let events = manager.handle_sync_event(&event, &no_op_network()).await.unwrap();
+
+        assert!(events.is_empty(), "a refuted lock emits no event: {events:?}");
+        assert_eq!(manager.pending_count(), 0);
+        assert_eq!(manager.progress.invalid(), 1);
+        assert_eq!(manager.progress.valid(), 0);
+        assert_eq!(manager.state(), SyncState::Synced);
+        let events = manager.process_instantlock(&genuine).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived { instant_lock, validated: true }]
+                if instant_lock == &genuine
+        ));
+    }
+
+    /// A lock queued behind the one that verifies for its txid is superseded:
+    /// it emits nothing and leaves no pending entry.
+    #[tokio::test]
+    async fn should_supersede_locks_queued_after_the_verified_lock_of_a_txid() {
+        let mut manager = InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(
+            dashcore::Network::Mainnet,
+        ))));
+        let genuine = mainnet_fixture_is_lock();
+        let mut forged = genuine.clone();
+        forged.signature = BLSSignature::from([1; 96]);
+        for lock in [&genuine, &forged] {
+            manager.process_instantlock(lock).await.unwrap();
+        }
+        assert_eq!(manager.pending_count(), 2);
+
+        *manager.engine.write().await = TestEngine::mainnet_fixture();
+        let events = manager.validate_pending(Instant::now()).await.unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived { instant_lock, validated: true }]
+                if instant_lock == &genuine
+        ));
+        assert_eq!(manager.pending_count(), 0);
+        assert!(manager.process_instantlock(&forged).await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn should_leave_syncing_when_a_direct_verification_drains_the_pending_queue() {
         let mut manager =
