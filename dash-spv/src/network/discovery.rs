@@ -15,6 +15,7 @@
 //! Most masternodes of a network can sit in one address block, so [`PeerDiscoverer::get`]
 //! spreads its picks across [`NetGroup`]s instead of sampling addresses uniformly.
 
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -29,7 +30,18 @@ const DNS_LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5
 const MAX_LEARNED: usize = 2000;
 const MAX_ADDR_AGE: u32 = 7 * 24 * 60 * 60;
 const MAX_ADDR_FUTURE: u32 = 10 * 60;
-const MAX_PROBED: usize = 32;
+const MAX_SERVED: usize = 64;
+
+/// Which addresses [`PeerDiscoverer::get`] may return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pick {
+    /// Any address, to fill the set.
+    Any,
+    /// Only addresses of network groups no connected peer is in.
+    NewGroups,
+    /// Only addresses not known to serve at or below the slowest connected peer.
+    Faster,
+}
 
 /// The address block a peer belongs to, a /16 for IPv4 and a /32 for IPv6. Peers of one
 /// block tend to share an operator and an uplink, so they slow down together.
@@ -64,8 +76,8 @@ pub struct PeerDiscoverer {
     /// on every drop, and a drained pool would leave the client nothing to reconnect to.
     discovered: Option<Vec<SocketAddr>>,
     learned: HashMap<SocketAddr, u32>,
-    /// Handshake ping of peers probed but not kept, tried first next time.
-    probed: HashMap<SocketAddr, u32>,
+    /// Bytes/s each address served while bandwidth bound, on its last connection.
+    served: HashMap<SocketAddr, u64>,
 }
 
 impl PeerDiscoverer {
@@ -76,7 +88,7 @@ impl PeerDiscoverer {
             exclusive: config.exclusive_peers(),
             discovered: None,
             learned: HashMap::new(),
-            probed: HashMap::new(),
+            served: HashMap::new(),
         }
     }
 
@@ -107,34 +119,37 @@ impl PeerDiscoverer {
         added
     }
 
-    pub fn probed(&mut self, addr: SocketAddr, lag_ms: u32) {
-        let lag_ms = if lag_ms == 0 {
-            u32::MAX
-        } else {
-            lag_ms
-        };
-        let best = self.probed.entry(addr).or_insert(lag_ms);
-        *best = (*best).min(lag_ms);
-        if self.probed.len() > MAX_PROBED {
-            let worst = self.probed.iter().max_by_key(|(_, lag)| **lag).map(|(addr, _)| *addr);
-            worst.map(|addr| self.probed.remove(&addr));
+    /// Remembers what `addr` served on a connection that ended. 0 means it was never
+    /// measured and leaves the record as it was.
+    pub(crate) fn served(&mut self, addr: SocketAddr, bytes_per_sec: u64) {
+        if self.exclusive || bytes_per_sec == 0 {
+            return;
+        }
+        self.served.insert(addr, bytes_per_sec);
+        if self.served.len() > MAX_SERVED {
+            let slowest = self.served.iter().min_by_key(|(_, rate)| **rate).map(|(addr, _)| *addr);
+            slowest.map(|addr| self.served.remove(&addr));
         }
     }
 
-    /// Up to `count` addresses to dial, none of them `connected` or `banned`. The best
-    /// probed come first, then a random sample. Unless the peers are exclusive, this order
-    /// spreads across network groups, see [`spread_across_groups`]. With `new_groups_only`
-    /// no address from a group of the `connected` peers is returned, and no configured one.
-    pub async fn get(
+    /// Up to `count` addresses to dial, none of them `connected` or `banned`, as `pick`
+    /// allows. `connected` maps each connected peer to its serving rate, 0 if unmeasured.
+    /// Untried addresses come first, then the known ones by what they served, the fastest
+    /// first, so a peer swapped out by mistake can come back. Within that the order is
+    /// random. Unless the peers are exclusive, the order then
+    /// spreads across network groups, see [`spread_across_groups`]. Exclusive peers are
+    /// only ever returned for [`Pick::Any`].
+    pub(crate) async fn get(
         &mut self,
         count: usize,
-        connected: &HashSet<SocketAddr>,
+        connected: &HashMap<SocketAddr, u64>,
         banned: &HashSet<SocketAddr>,
-        new_groups_only: bool,
+        pick: Pick,
     ) -> Vec<DisconnectedPeer> {
-        if self.exclusive && new_groups_only {
+        if self.exclusive && pick != Pick::Any {
             return Vec::new();
         }
+        let slowest = connected.values().copied().filter(|rate| *rate > 0).min().unwrap_or(0);
         let mut pool = if self.exclusive {
             self.fixed.clone()
         } else {
@@ -146,19 +161,22 @@ impl PeerDiscoverer {
             pool.extend(self.learned.keys());
             pool
         };
-        pool.extend(self.probed.keys());
         pool.sort();
         pool.dedup();
-        pool.retain(|addr| !connected.contains(addr) && !banned.contains(addr));
+        pool.retain(|addr| !connected.contains_key(addr) && !banned.contains(addr));
+        let class = |addr: &SocketAddr| match self.served.get(addr) {
+            None => (0, Reverse(0)),
+            Some(&rate) => (1, Reverse(rate)),
+        };
+        if pick == Pick::Faster {
+            pool.retain(|addr| self.served.get(addr).is_none_or(|rate| *rate > slowest));
+        }
         pool.shuffle(&mut rand::rng());
-        pool.sort_by_key(|addr| self.probed.get(addr).copied().unwrap_or(u32::MAX));
+        pool.sort_by_key(class);
         if !self.exclusive {
-            pool = spread_across_groups(pool, connected, new_groups_only);
+            pool = spread_across_groups(pool, connected, pick == Pick::NewGroups);
         }
         pool.truncate(count);
-        for addr in &pool {
-            self.probed.remove(addr);
-        }
         pool.into_iter().map(|addr| DisconnectedPeer::new(addr, self.network)).collect()
     }
 
@@ -205,10 +223,10 @@ impl PeerDiscoverer {
 /// `new_groups_only` drops them.
 fn spread_across_groups(
     pool: Vec<SocketAddr>,
-    connected: &HashSet<SocketAddr>,
+    connected: &HashMap<SocketAddr, u64>,
     new_groups_only: bool,
 ) -> Vec<SocketAddr> {
-    let covered: HashSet<NetGroup> = connected.iter().map(|addr| NetGroup::of(*addr)).collect();
+    let covered: HashSet<NetGroup> = connected.keys().map(|addr| NetGroup::of(*addr)).collect();
     let mut turns: HashMap<NetGroup, usize> = HashMap::new();
     let mut ranked: Vec<(bool, usize, SocketAddr)> = pool
         .into_iter()
@@ -249,14 +267,19 @@ mod tests {
         addresses.iter().copied().collect()
     }
 
+    /// The connected peers, each serving `rate` bytes/s.
+    fn rates(addresses: &[&str], rate: u64) -> HashMap<SocketAddr, u64> {
+        addresses.iter().map(|a| (addr(a), rate)).collect()
+    }
+
     async fn picks(
         discoverer: &mut PeerDiscoverer,
         count: usize,
         connected: &[&str],
-        new_groups_only: bool,
+        pick: Pick,
     ) -> Vec<SocketAddr> {
-        let connected = set(connected);
-        let peers = discoverer.get(count, &connected, &HashSet::new(), new_groups_only).await;
+        let connected = rates(connected, 0);
+        let peers = discoverer.get(count, &connected, &HashSet::new(), pick).await;
         peers.iter().map(|p| p.addr()).collect()
     }
 
@@ -278,7 +301,7 @@ mod tests {
         addresses.push("206.245.167.63:1");
         let mut discoverer = discoverer(&addresses);
 
-        let got = picks(&mut discoverer, 1, &["68.67.122.1:1"], false).await;
+        let got = picks(&mut discoverer, 1, &["68.67.122.1:1"], Pick::Any).await;
 
         assert_eq!(got, [addr("206.245.167.63:1")]);
     }
@@ -294,7 +317,7 @@ mod tests {
             "85.209.243.1:1",
         ]);
 
-        let got = picks(&mut discoverer, 3, &[], false).await;
+        let got = picks(&mut discoverer, 3, &[], Pick::Any).await;
 
         let groups: HashSet<NetGroup> = got.iter().map(|a| NetGroup::of(*a)).collect();
         assert_eq!(groups.len(), 3, "got {got:?}");
@@ -305,7 +328,7 @@ mod tests {
     async fn falls_back_to_a_connected_group() {
         let mut discoverer = discoverer(&["127.0.0.1:1", "127.0.0.1:2", "127.0.0.1:3"]);
 
-        let got = picks(&mut discoverer, 2, &["127.0.0.1:1"], false).await;
+        let got = picks(&mut discoverer, 2, &["127.0.0.1:1"], Pick::Any).await;
 
         assert_eq!(set_of(&got), set(&["127.0.0.1:2", "127.0.0.1:3"]));
     }
@@ -314,51 +337,67 @@ mod tests {
     async fn new_groups_only_never_falls_back() {
         let mut discoverer = discoverer(&["68.67.122.1:1", "68.67.122.2:1"]);
 
-        assert!(picks(&mut discoverer, 2, &["68.67.122.1:1"], true).await.is_empty());
-    }
-
-    /// A probed address waits its group's turn, but goes first within that turn. One not
-    /// returned stays remembered.
-    #[tokio::test]
-    async fn a_probed_address_keeps_its_priority_within_the_groups() {
-        let mut discoverer =
-            discoverer(&["68.67.122.2:1", "68.67.122.3:1", "206.245.167.63:1", "206.245.167.64:1"]);
-        discoverer.probed(addr("68.67.122.2:1"), 10);
-        discoverer.probed(addr("206.245.167.64:1"), 50);
-
-        let got = picks(&mut discoverer, 1, &["68.67.122.1:1"], false).await;
-        assert_eq!(got, [addr("206.245.167.64:1")]);
-        assert!(discoverer.probed.contains_key(&addr("68.67.122.2:1")));
-        assert!(!discoverer.probed.contains_key(&addr("206.245.167.64:1")));
-
-        let got = picks(&mut discoverer, 1, &["206.245.167.63:1"], false).await;
-        assert_eq!(got, [addr("68.67.122.2:1")]);
+        assert!(picks(&mut discoverer, 2, &["68.67.122.1:1"], Pick::NewGroups).await.is_empty());
     }
 
     #[tokio::test]
     async fn skips_connected_and_banned_addresses() {
         let mut discoverer = discoverer(&["68.67.122.1:1", "206.245.167.63:1", "85.209.243.1:1"]);
 
-        let got =
-            discoverer.get(3, &set(&["68.67.122.1:1"]), &set(&["206.245.167.63:1"]), false).await;
+        let got = discoverer
+            .get(3, &rates(&["68.67.122.1:1"], 0), &set(&["206.245.167.63:1"]), Pick::Any)
+            .await;
 
         let got: Vec<SocketAddr> = got.iter().map(|p| p.addr()).collect();
         assert_eq!(got, [addr("85.209.243.1:1")]);
     }
 
-    /// Configured peers are dialed whatever their groups, the best probed first, and
-    /// never offered in place of a connected peer for its group.
+    /// Configured peers are dialed whatever their groups, and never offered in place of a
+    /// connected peer.
     #[tokio::test]
     async fn exclusive_peers_are_not_grouped() {
         let mut config = ClientConfig::regtest();
         config.peers = vec![addr("68.67.122.1:1"), addr("68.67.122.2:1"), addr("206.245.167.63:1")];
         let mut discoverer = PeerDiscoverer::new(&config);
-        discoverer.probed(addr("68.67.122.2:1"), 10);
 
-        let got = picks(&mut discoverer, 1, &["206.245.167.64:1"], false).await;
-        assert_eq!(got, [addr("68.67.122.2:1")]);
+        let got = picks(&mut discoverer, 3, &["206.245.167.64:1"], Pick::Any).await;
+        assert_eq!(set_of(&got), set_of(&config.peers));
 
-        assert!(picks(&mut discoverer, 3, &["206.245.167.64:1"], true).await.is_empty());
+        for pick in [Pick::NewGroups, Pick::Faster] {
+            assert!(picks(&mut discoverer, 3, &["206.245.167.64:1"], pick).await.is_empty());
+        }
+        discoverer.served(addr("68.67.122.1:1"), 1_000);
+        assert!(discoverer.served.is_empty(), "configured peers are not rated");
+    }
+
+    /// Untried addresses lead, then the known ones by what they served, the fastest first.
+    /// One that served no faster than the slowest connected peer is no candidate to
+    /// replace a peer for speed. One group, so only the rates decide the order.
+    #[tokio::test]
+    async fn served_rates_order_the_candidates() {
+        let mut discoverer =
+            discoverer(&["68.67.122.2:1", "68.67.122.3:1", "68.67.122.4:1", "68.67.122.5:1"]);
+        discoverer.served(addr("68.67.122.2:1"), 50_000);
+        discoverer.served(addr("68.67.122.3:1"), 300_000);
+        discoverer.served(addr("68.67.122.4:1"), 900_000);
+        discoverer.served(addr("68.67.122.5:1"), 0);
+        let connected = rates(&["68.67.122.1:1"], 100_000);
+        let order = |peers: Vec<DisconnectedPeer>| -> Vec<SocketAddr> {
+            peers.iter().map(|p| p.addr()).collect()
+        };
+
+        let any = order(discoverer.get(4, &connected, &HashSet::new(), Pick::Any).await);
+        assert_eq!(
+            any,
+            [
+                addr("68.67.122.5:1"),
+                addr("68.67.122.4:1"),
+                addr("68.67.122.3:1"),
+                addr("68.67.122.2:1")
+            ]
+        );
+        let faster = order(discoverer.get(4, &connected, &HashSet::new(), Pick::Faster).await);
+        assert_eq!(faster, [addr("68.67.122.5:1"), addr("68.67.122.4:1"), addr("68.67.122.3:1")]);
     }
 
     #[tokio::test]

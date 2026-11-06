@@ -346,6 +346,11 @@ impl ConnectedPeer {
         self.handle.ledger.latency_stats()
     }
 
+    /// How long the peer has held its oldest request, if it never answered one.
+    pub(crate) async fn unanswered_for(&self) -> Option<Duration> {
+        self.handle.ledger.unanswered_for().await
+    }
+
     /// Handshake round-trip latency in ms (0 if unmeasured).
     pub fn lag_ms(&self) -> u32 {
         self.lag_ms.load(Ordering::Relaxed)
@@ -564,7 +569,7 @@ impl DisconnectedPeer {
                 "dropping {}: lacks required services {} (advertises {})",
                 self.addr, required_services, version.services
             );
-            state.bans.ban(self.addr, Ban::MissingServices).await;
+            state.bans.ban(self.addr, Ban::Unusable).await;
             return Err(NetworkError::ConnectionFailed(format!(
                 "peer {} lacks required services {}",
                 self.addr, required_services
