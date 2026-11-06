@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use dashcore::bls_sig_utils::BlsScheme;
-use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::message_verification_error::MessageVerificationError;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{InstantLock, Network, QuorumSigningRequestId, Transaction, Txid};
@@ -76,16 +75,10 @@ impl VerifiedInstantLock {
         let Some(engine) = engine else {
             return Ok(None);
         };
-        let Some(quorums) = engine.rotated_quorums_of_cycle(&instant_lock.cyclehash) else {
+        let Some(cycle) = engine.instant_send_cycle(&instant_lock.cyclehash) else {
             return Ok(None);
         };
-        if quorums.values().any(|quorum| {
-            quorum.verified != LLMQEntryVerificationStatus::Verified
-                || !engine.signs_instant_locks(quorum.quorum_entry.llmq_type)
-        }) {
-            return Ok(None);
-        }
-        match InstantLockValidator::new(quorums).validate_signature(instant_lock) {
+        match InstantLockValidator::new(cycle.quorums).validate_signature(instant_lock) {
             Ok(()) => Ok(Some(Self {
                 instant_lock: instant_lock.clone(),
                 network: engine.network(),
@@ -95,7 +88,7 @@ impl VerifiedInstantLock {
                 | MessageVerificationError::QuorumIndexNotFound(..),
             ) => Ok(None),
             // A later QRInfo can still replace the quorums of a partial cycle.
-            Err(_) if !engine.is_cycle_fully_verified(&instant_lock.cyclehash) => Ok(None),
+            Err(_) if !cycle.complete => Ok(None),
             Err(e) => Err(InstantLockVerificationError::InvalidSignature(signature_error(e))),
         }
     }

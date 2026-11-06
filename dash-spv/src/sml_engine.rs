@@ -57,6 +57,15 @@ impl QRInfoFeedResult {
     }
 }
 
+/// A stored cycle whose quorums may sign this network's InstantSend locks.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InstantSendCycle<'a> {
+    /// The cycle's quorums, by quorum index.
+    pub(crate) quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
+    /// Whether no later QRInfo can replace the cycle's quorums, so it can refute a lock.
+    pub(crate) complete: bool,
+}
+
 /// Why the engine did not take a diff or a QRInfo.
 #[derive(Debug, thiserror::Error)]
 pub enum FeedError<E> {
@@ -427,6 +436,29 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.rotated_quorums_per_cycle.get(cycle_hash)
     }
 
+    /// The cycle `cycle_hash` when every quorum of it is verified and of a type that
+    /// signs this network's InstantSend locks.
+    pub(crate) fn instant_send_cycle(
+        &self,
+        cycle_hash: &BlockHash,
+    ) -> Option<InstantSendCycle<'_>> {
+        let quorums = self.rotated_quorums_per_cycle.get(cycle_hash)?;
+        if quorums.values().any(|quorum| {
+            quorum.verified != LLMQEntryVerificationStatus::Verified
+                || !self.signs_instant_locks(quorum.quorum_entry.llmq_type)
+        }) {
+            return None;
+        }
+        // Storage stops merging into a cycle only once it fills every slot of the configured type.
+        let isd_type = self.network.isd_llmq_type();
+        let complete = self.is_cycle_fully_verified(cycle_hash)
+            && quorums.values().all(|quorum| quorum.quorum_entry.llmq_type == isd_type);
+        Some(InstantSendCycle {
+            quorums,
+            complete,
+        })
+    }
+
     #[cfg(feature = "test-utils")]
     pub(crate) fn install_test_instant_lock_cycle(
         &mut self,
@@ -705,7 +737,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// `true` when the stored cycle has a `Verified` quorum for every active
     /// slot. A partial cycle stays open so a later QRInfo can complete it.
-    pub(crate) fn is_cycle_fully_verified(&self, cycle_hash: &BlockHash) -> bool {
+    fn is_cycle_fully_verified(&self, cycle_hash: &BlockHash) -> bool {
         let expected = self.network.isd_llmq_type().active_quorum_count() as usize;
         self.rotated_quorums_per_cycle.get(cycle_hash).is_some_and(|existing| {
             existing.len() == expected
@@ -905,7 +937,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// Whether a quorum of `llmq_type` can sign this network's IS locks: the
     /// configured rotation type, or on a devnet without an override, any rotating type.
-    pub(crate) fn signs_instant_locks(&self, llmq_type: LLMQType) -> bool {
+    fn signs_instant_locks(&self, llmq_type: LLMQType) -> bool {
         if self.reads_served_rotation_type() {
             return llmq_type.is_rotating_quorum_type();
         }
@@ -1537,14 +1569,14 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{fixture_heights, quorum_entry, TestEngine};
+    use super::test_support::{fixture_heights, mainnet_fixture_is_lock, quorum_entry, TestEngine};
     use super::{build_cycle_quorum_map, qr_info_diffs, valid_coinbase_chain_lock};
     use super::{FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
-    use crate::validation::MasternodeListValidator;
+    use crate::validation::{MasternodeListValidator, VerifiedInstantLock};
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -3455,5 +3487,36 @@ mod tests {
             "the tip's coinbase ChainLock is recorded, got {:?}",
             restored.coinbase_chain_locks.get(&tip_height)
         );
+    }
+
+    /// On a devnet the signing cycle can be of another rotating type than the configured
+    /// one. Holding as many quorums as the configured type has slots does not complete
+    /// it, so a lock it does not verify is deferred, not refuted.
+    #[test]
+    fn should_defer_lock_on_a_partial_devnet_cycle_of_another_rotating_type() {
+        // Another test in this binary may set the process-wide override, which pins the type.
+        if devnet_isd_type_override().is_some() {
+            return;
+        }
+        let lock = mainnet_fixture_is_lock();
+        let cycle =
+            TestEngine::mainnet_fixture().rotated_quorums_per_cycle[&lock.cyclehash].clone();
+        let slots = Network::Devnet.isd_llmq_type().active_quorum_count() as usize;
+        assert!(slots < cycle.len(), "the mainnet cycle has more slots than a devnet one");
+        // Index 23 signs the lock; the other kept slots only fill the count.
+        let mut partial = BTreeMap::from([(23, cycle[&23].clone())]);
+        for (index, quorum) in cycle {
+            if partial.len() == slots {
+                break;
+            }
+            partial.insert(index, quorum);
+        }
+        let mut engine = TestEngine::empty(Network::Devnet);
+        engine.rotated_quorums_per_cycle.insert(lock.cyclehash, partial);
+
+        let mut forged = lock.clone();
+        forged.signature = BLSSignature::from([1; 96]);
+        assert!(VerifiedInstantLock::verify(&forged, Some(&engine)).unwrap().is_none());
+        assert!(VerifiedInstantLock::verify(&lock, Some(&engine)).unwrap().is_some());
     }
 }
