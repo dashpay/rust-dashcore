@@ -13,8 +13,8 @@ use dashcore::ScriptBuf;
 use super::batch::FiltersBatch;
 use super::block_match_tracker::{BlockMatchTracker, BlockTrackResult};
 use super::pipeline::FiltersPipeline;
-use crate::error::SyncResult;
-use crate::network::NetworkManager;
+use crate::error::{SyncError, SyncResult};
+use crate::network::{NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
 use crate::sync::filters::util::get_prev_filter_header;
 use crate::sync::{FiltersProgress, SyncEvent, SyncManager, SyncState};
@@ -205,11 +205,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     /// rolled-back `committed_height`. Used by the wallet-rescan trigger in
     /// `tick` when a wallet's `synced_height` falls below the manager's
     /// current scan progress. Distinct from `on_disconnect`, which keeps
-    /// in-progress work intact.
-    pub(super) fn reset_for_rescan(&mut self) {
+    /// in-progress work intact. Releases the wanted batches, since their
+    /// replies will not reach a tracker to do it.
+    pub(super) async fn reset_for_rescan(&mut self, network: &Arc<dyn NetworkManager>) {
         self.active_batches.clear();
         self.tracker.clear();
         self.pending_batches.clear();
+        for stop_hash in self.filter_pipeline.wanted_stops() {
+            network.release_request(RequestKey::CFilters(*stop_hash)).await;
+        }
         self.filter_pipeline = FiltersPipeline::new();
     }
 
@@ -433,6 +437,43 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
     }
 
+    /// Verifies `batch` against the stored filter headers and stores its filters.
+    async fn verify_and_store(&self, batch: &FiltersBatch) -> SyncResult<()> {
+        // Load filter headers for verification
+        let filter_headers = self
+            .filter_header_storage
+            .read()
+            .await
+            .load_filter_headers(batch.start_height()..batch.end_height() + 1)
+            .await?;
+
+        let filter_headers_map: HashMap<u32, FilterHeader> = filter_headers
+            .into_iter()
+            .enumerate()
+            .map(|(idx, header)| (batch.start_height() + idx as u32, header))
+            .collect();
+
+        let filter_header_storage = self.filter_header_storage.read().await;
+        let prev_filter_header =
+            get_prev_filter_header(&*filter_header_storage, batch.start_height()).await?;
+        drop(filter_header_storage);
+
+        let validator = FilterValidator::new();
+        let validation_input = FilterValidationInput {
+            filters: batch.filters(),
+            expected_headers: &filter_headers_map,
+            prev_filter_header,
+        };
+        validator.validate(validation_input)?;
+
+        // Store verified filters to disk
+        let mut filter_storage = self.filter_storage.write().await;
+        for (key, filter) in batch.filters() {
+            filter_storage.store_filter(key.height(), &filter.content).await?;
+        }
+        Ok(())
+    }
+
     /// Store completed filter batches to disk and do speculative matching.
     /// This is decoupled from block processing - we store and match as fast as possible.
     pub(super) async fn store_and_match_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
@@ -477,44 +518,27 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
             // Verify and store filters
             if !batch.verified() {
-                // Load filter headers for verification
-                let filter_headers = self
-                    .filter_header_storage
-                    .read()
-                    .await
-                    .load_filter_headers(batch.start_height()..batch.end_height() + 1)
-                    .await?;
-
-                let filter_headers_map: HashMap<u32, FilterHeader> = filter_headers
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, header)| (batch.start_height() + idx as u32, header))
-                    .collect();
-
-                let filter_header_storage = self.filter_header_storage.read().await;
-                let prev_filter_header =
-                    get_prev_filter_header(&*filter_header_storage, batch.start_height()).await?;
-                drop(filter_header_storage);
-
-                let validator = FilterValidator::new();
-                let validation_input = FilterValidationInput {
-                    filters: batch.filters(),
-                    expected_headers: &filter_headers_map,
-                    prev_filter_header,
-                };
-                validator.validate(validation_input)?;
-
-                // Store verified filters to disk
-                let mut filter_storage = self.filter_storage.write().await;
-                for (key, filter) in batch.filters() {
-                    filter_storage.store_filter(key.height(), &filter.content).await?;
+                let (start, end) = (batch.start_height(), batch.end_height());
+                match self.verify_and_store(&batch).await {
+                    Ok(()) => events.push(SyncEvent::FiltersStored {
+                        start_height: start,
+                        end_height: end,
+                    }),
+                    Err(SyncError::Validation(reason)) => {
+                        tracing::warn!(
+                            "Rejected filter batch {}-{}, requesting it again: {}",
+                            start,
+                            end,
+                            reason
+                        );
+                        self.filter_pipeline.requeue_rejected(start, end);
+                        break;
+                    }
+                    Err(e) => {
+                        self.filter_pipeline.requeue_rejected(start, end);
+                        return Err(e);
+                    }
                 }
-                drop(filter_storage);
-
-                events.push(SyncEvent::FiltersStored {
-                    start_height: batch.start_height(),
-                    end_height: batch.end_height(),
-                });
             }
 
             // === Load filters into all active batches that overlap ===
@@ -1265,6 +1289,7 @@ mod tests {
         MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };
     use std::net::SocketAddr;
+    use test_case::test_case;
 
     type TestFiltersManager = FiltersManager<
         PersistentBlockHeaderStorage,
@@ -2960,7 +2985,8 @@ mod tests {
         manager.filter_pipeline.init(2000, 2999);
         assert!(!manager.is_idle());
 
-        manager.reset_for_rescan();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        manager.reset_for_rescan(&requests).await;
         assert!(manager.is_idle());
     }
 
@@ -3637,8 +3663,10 @@ mod tests {
     /// block makes `extend_target` re-request every filter from height 1 and
     /// wedges the in-order store loop on a `next_batch_to_store` of 0, freezing
     /// `committed_height` one below tip.
+    #[test_case(false; "the first copy is valid")]
+    #[test_case(true; "a rejected copy is requested again")]
     #[tokio::test]
-    async fn test_synced_boot_then_boundary_block_commits() {
+    async fn test_synced_boot_then_boundary_block_commits(rejected_first: bool) {
         let (mut manager, headers, boundary_filter) = setup_synced_manager_at_tip().await;
 
         // Fully-synced boot leaves the manager in its default state.
@@ -3695,6 +3723,19 @@ mod tests {
             block_hash: headers[101].block_hash(),
             filter: boundary_filter.content.clone(),
         };
+        if rejected_first {
+            let corrupt = CFilter {
+                filter: vec![0xFF; 4],
+                ..cfilter.clone()
+            };
+            manager
+                .handle_message(peer, NetworkMessage::CFilter(corrupt).into(), &requests)
+                .await
+                .unwrap();
+            mock.clear_sent().await;
+            manager.tick(&requests).await.unwrap();
+            assert_eq!(drain_getcfilters(&mock).await, 1, "the rejected batch must return");
+        }
         manager
             .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
             .await
@@ -3846,7 +3887,14 @@ mod tests {
         // MockWallet defaults to synced_height=0, so wallets_behind(100) = {MOCK_WALLET_ID}.
         assert_eq!(manager.wallet.read().await.synced_height(), 0);
 
-        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        let header_storage = manager.header_storage.clone();
+        manager
+            .filter_pipeline
+            .send_pending(&requests, &*header_storage.read().await)
+            .await
+            .unwrap();
 
         // Sanity: the pre-populated stale processed record is present, so
         // `track` for the same wallet would short-circuit to AlreadyProcessed.
@@ -3864,6 +3912,11 @@ mod tests {
         // Old in-flight state was cleared and a fresh batch was created at scan_start=0.
         assert!(!manager.active_batches.contains_key(&101));
         assert!(manager.active_batches.contains_key(&0));
+        assert_eq!(
+            mock.released_keys().await,
+            vec![RequestKey::CFilters(headers[200].block_hash())],
+            "a dropped batch must not leave its request registered"
+        );
         // The stale pre-populated record was wiped by `reset_for_rescan`:
         // a fresh `track` for the same wallet now returns `NewlyTracked`.
         assert!(matches!(
@@ -4020,9 +4073,46 @@ mod tests {
                 *headers[10].hash(),
                 &filter.content
             ),
-            Some(200_000),
+            Some(*headers[10].hash()),
             "a tick re-requested filters that were still in flight"
         );
+    }
+
+    /// The broker settles a request when the last filter of its reply arrives, so
+    /// only the manager can tell that the reply was not enough.
+    #[tokio::test]
+    async fn a_reply_that_leaves_its_batch_incomplete_is_requested_again() {
+        let mut manager = create_anchored_test_manager(200_000, 10).await;
+        manager.filter_storage.write().await.clear_filters().await.unwrap();
+        manager.progress.update_stored_height(0);
+
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
+        assert_eq!(drain_getcfilters(&mock).await, 1);
+
+        let stop_hash =
+            *manager.header_storage.read().await.get_header(200_010).await.unwrap().unwrap().hash();
+        let last_filter = |block_hash| {
+            NetworkMessage::CFilter(CFilter {
+                filter_type: 0,
+                block_hash,
+                filter: vec![0; 4],
+            })
+            .into()
+        };
+        let peer: SocketAddr = "127.0.0.1:19999".parse().unwrap();
+
+        manager.handle_message(peer, last_filter(stop_hash), &requests).await.unwrap();
+        assert_eq!(mock.released_keys().await, vec![RequestKey::CFilters(stop_hash)]);
+
+        manager.tick(&requests).await.unwrap();
+        assert_eq!(drain_getcfilters(&mock).await, 1, "the incomplete batch must return");
+
+        // A stop hash that no stored header resolves cannot reach the pipeline.
+        let unknown = dashcore::BlockHash::dummy(7);
+        assert!(manager.handle_message(peer, last_filter(unknown), &requests).await.is_err());
+        assert_eq!(mock.released_keys().await.last(), Some(&RequestKey::CFilters(unknown)));
     }
 
     /// A wallet added at runtime reports `synced_height = 0` regardless of what
@@ -4154,7 +4244,8 @@ mod tests {
 
         // Sanity check: the full-reset path (`reset_for_rescan`) does wipe
         // everything — the two paths must remain distinct.
-        manager.reset_for_rescan();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        manager.reset_for_rescan(&requests).await;
         assert!(manager.active_batches.is_empty());
         assert!(manager.pending_batches.is_empty());
         assert!(manager.tracker.is_empty());

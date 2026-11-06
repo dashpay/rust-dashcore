@@ -303,7 +303,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> std::fmt::Debug
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::MessageType;
+    use crate::network::{MessageType, RequestKey};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentFilterHeaderStorage,
         StorageManager,
@@ -315,6 +315,7 @@ mod tests {
     use dashcore::network::message::NetworkMessage;
     use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
     use dashcore_hashes::sha256d;
+    use test_case::test_case;
 
     type TestFilterHeadersManager =
         FilterHeadersManager<PersistentBlockHeaderStorage, PersistentFilterHeaderStorage>;
@@ -676,6 +677,29 @@ mod tests {
         let right = cfheaders(stored_prev, hashes[3999], 2000);
         assert_eq!(deliver(&mut manager, &network, right).await.0, vec![(2000, 3999)]);
         assert_eq!(filter_tip(&storage).await, Some(3999));
+    }
+
+    /// The broker settles a request when its reply arrives, so a reply the pipeline does
+    /// not take must still release the key or a later declaration of the batch sends nothing.
+    #[test_case(0, false; "an empty reply")]
+    #[test_case(2000, true; "a reply reaching a pipeline dropped by a disconnect")]
+    #[tokio::test]
+    async fn test_cfheaders_reply_matching_nothing_releases_its_key(
+        count: u32,
+        disconnected: bool,
+    ) {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let hashes = store_block_headers(&storage, 0, 2000).await;
+        let (mut manager, network) = start_sync(&storage, 1999).await;
+        if disconnected {
+            manager.on_disconnect();
+        }
+
+        let reply = cfheaders(FilterHeader::all_zeros(), hashes[1999], count);
+        let (stored, _) = deliver(&mut manager, &network, reply).await;
+
+        assert!(stored.is_empty());
+        assert_eq!(network.released_keys().await, vec![RequestKey::CfHeaders(hashes[1999])]);
     }
 
     #[tokio::test]

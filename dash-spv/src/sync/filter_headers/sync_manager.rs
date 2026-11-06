@@ -8,6 +8,7 @@ use crate::sync::{
 };
 use crate::SyncError;
 use async_trait::async_trait;
+use dashcore::network::message::NetworkMessage;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -45,6 +46,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
+        // Released whatever comes of the reply: a reply that matches nothing must not leave
+        // its key settled, and a batch still wanted is declared again.
+        if let NetworkMessage::CFHeaders(cfheaders) = &*msg {
+            network.release_request(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
+        }
+
         // Match response to get start height
         let Some((start_height, cfheaders)) = self.pipeline.match_response(&msg) else {
             if self.pipeline.is_complete() {
@@ -54,8 +61,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             }
             return Ok(vec![]);
         };
-
-        network.release_request(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
 
         let mut events = Vec::new();
 
