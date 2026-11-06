@@ -705,7 +705,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// `true` when the stored cycle has a `Verified` quorum for every active
     /// slot. A partial cycle stays open so a later QRInfo can complete it.
-    fn is_cycle_fully_verified(&self, cycle_hash: &BlockHash) -> bool {
+    pub(crate) fn is_cycle_fully_verified(&self, cycle_hash: &BlockHash) -> bool {
         let expected = self.network.isd_llmq_type().active_quorum_count() as usize;
         self.rotated_quorums_per_cycle.get(cycle_hash).is_some_and(|existing| {
             existing.len() == expected
@@ -893,7 +893,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// rotating type the peer serves.
     fn rotation_quorum_type(&self, served: &[QuorumEntry]) -> LLMQType {
         let configured = self.network.isd_llmq_type();
-        if self.network != Network::Devnet || devnet_isd_type_override().is_some() {
+        if !self.reads_served_rotation_type() {
             return configured;
         }
         served
@@ -901,6 +901,19 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .map(|quorum| quorum.llmq_type)
             .find(|llmq_type| llmq_type.is_rotating_quorum_type())
             .unwrap_or(configured)
+    }
+
+    /// Whether a quorum of `llmq_type` can sign this network's IS locks: the
+    /// configured rotation type, or on a devnet without an override, any rotating type.
+    pub(crate) fn signs_instant_locks(&self, llmq_type: LLMQType) -> bool {
+        if self.reads_served_rotation_type() {
+            return llmq_type.is_rotating_quorum_type();
+        }
+        llmq_type == self.network.isd_llmq_type()
+    }
+
+    fn reads_served_rotation_type(&self) -> bool {
+        self.network == Network::Devnet && devnet_isd_type_override().is_none()
     }
 
     /// The hash of the newest cycle base in an active set. A failed DKG leaves
@@ -1258,7 +1271,7 @@ pub(crate) mod test_support {
     use dashcore::consensus::deserialize;
     use dashcore::hash_types::QuorumVVecHash;
     use dashcore::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
-    use dashcore::ProTxHash;
+    use dashcore::{InstantLock, ProTxHash};
 
     pub(crate) type TestEngine = MasternodeListEngine<MockHeaderStorage>;
 
@@ -1292,6 +1305,11 @@ pub(crate) mod test_support {
             ..
         } = container;
         block_hashes.into_iter().map(|(height, block_hash)| (block_hash, height)).collect()
+    }
+
+    /// An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
+    pub(crate) fn mainnet_fixture_is_lock() -> InstantLock {
+        deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
     }
 
     /// A commitment with one signer and zeroed keys and signatures.

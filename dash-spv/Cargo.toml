@@ -70,7 +70,6 @@ hex-conservative = { workspace = true }
 bincode = { workspace = true }
 
 # Test utilities (optional)
-dash-pkc = { workspace = true, features = ["bls", "std", "portable"], optional = true }
 tempfile = { workspace = true, optional = true }
 dashcore-rpc = { workspace = true, optional = true }
 
@@ -128,7 +127,6 @@ test-utils = [
     "key-wallet-manager/test-utils",
     "dep:tempfile",
     "dep:dashcore-rpc",
-    "dep:dash-pkc",
 ]
 
 [lints]

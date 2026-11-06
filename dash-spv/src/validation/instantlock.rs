@@ -62,6 +62,10 @@ impl VerifiedInstantLock {
                 .eq(transaction.input.iter().map(|input| input.previous_output))
     }
 
+    /// Authenticates a lock, or returns `None` while the engine lacks the quorum data to decide.
+    ///
+    /// Fails for a malformed lock, or one whose signature a complete, verified cycle of
+    /// the network's InstantSend quorum type refutes.
     pub(crate) fn verify<H: BlockHeaderStorage>(
         instant_lock: &InstantLock,
         engine: Option<&MasternodeListEngine<H>>,
@@ -75,22 +79,25 @@ impl VerifiedInstantLock {
         let Some(quorums) = engine.rotated_quorums_of_cycle(&instant_lock.cyclehash) else {
             return Ok(None);
         };
-        if quorums.values().any(|quorum| quorum.verified != LLMQEntryVerificationStatus::Verified) {
+        if quorums.values().any(|quorum| {
+            quorum.verified != LLMQEntryVerificationStatus::Verified
+                || !engine.signs_instant_locks(quorum.quorum_entry.llmq_type)
+        }) {
             return Ok(None);
         }
-        let validator = InstantLockValidator::new(quorums);
-        if matches!(
-            validator.signing_quorum(instant_lock),
-            Err(MessageVerificationError::CycleHashNotPresent(_)
-                | MessageVerificationError::QuorumIndexNotFound(..))
-        ) {
-            return Ok(None);
+        match InstantLockValidator::new(quorums).validate_signature(instant_lock) {
+            Ok(()) => Ok(Some(Self {
+                instant_lock: instant_lock.clone(),
+                network: engine.network(),
+            })),
+            Err(
+                MessageVerificationError::CycleHashNotPresent(_)
+                | MessageVerificationError::QuorumIndexNotFound(..),
+            ) => Ok(None),
+            // A later QRInfo can still replace the quorums of a partial cycle.
+            Err(_) if !engine.is_cycle_fully_verified(&instant_lock.cyclehash) => Ok(None),
+            Err(e) => Err(InstantLockVerificationError::InvalidSignature(signature_error(e))),
         }
-        validator.validate(instant_lock).map_err(InstantLockVerificationError::InvalidSignature)?;
-        Ok(Some(Self {
-            instant_lock: instant_lock.clone(),
-            network: engine.network(),
-        }))
     }
 }
 
@@ -146,12 +153,14 @@ pub struct InstantLockValidator<'a> {
 
 impl Validator<&InstantLock> for InstantLockValidator<'_> {
     fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
-        self.validate_signature(instant_lock).map_err(|e| {
-            ValidationError::InvalidSignature(format!(
-                "InstantLock BLS signature verification failed: {e}"
-            ))
-        })
+        self.validate_signature(instant_lock).map_err(signature_error)
     }
+}
+
+fn signature_error(error: MessageVerificationError) -> ValidationError {
+    ValidationError::InvalidSignature(format!(
+        "InstantLock BLS signature verification failed: {error}"
+    ))
 }
 
 impl<'a> InstantLockValidator<'a> {
@@ -207,11 +216,11 @@ impl<'a> InstantLockValidator<'a> {
             BlsScheme::Modern,
         );
         match &result {
-            Ok(()) => tracing::info!(
+            Ok(()) => tracing::trace!(
                 "IS lock {} verified by quorum {quorum_hash} (index {quorum_index})",
                 instant_lock.txid
             ),
-            Err(e) => tracing::warn!(
+            Err(e) => tracing::debug!(
                 "IS lock {} failed against quorum {quorum_hash} (index {quorum_index}): {e}",
                 instant_lock.txid
             ),
@@ -223,22 +232,16 @@ impl<'a> InstantLockValidator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sml_engine::test_support::TestEngine;
-    use dashcore::consensus::deserialize;
+    use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
     use dashcore::sml::llmq_type::LLMQType;
     use dashcore::QuorumHash;
     use hex_conservative::DisplayHex;
     use test_case::test_case;
 
-    /// An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
-    fn fixture_is_lock() -> InstantLock {
-        deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
-    }
-
     #[test]
     fn should_authenticate_stored_lock_only_with_available_cycle() {
         let engine = TestEngine::mainnet_fixture();
-        let lock = fixture_is_lock();
+        let lock = mainnet_fixture_is_lock();
         assert!(VerifiedInstantLock::verify::<crate::test_utils::MockHeaderStorage>(&lock, None,)
             .unwrap()
             .is_none());
@@ -295,7 +298,7 @@ mod tests {
             special_transaction_payload: None,
         };
         // This unit tests binding only; authentication is exercised with the signed fixture.
-        let mut lock = fixture_is_lock();
+        let mut lock = mainnet_fixture_is_lock();
         lock.txid = transaction.txid();
         lock.inputs = transaction.input.iter().map(|input| input.previous_output).collect();
         let verified = VerifiedInstantLock {
@@ -333,7 +336,7 @@ mod tests {
     #[test]
     fn a_lock_verifies_against_the_quorum_its_request_id_selects() {
         let engine = TestEngine::mainnet_fixture();
-        let lock = fixture_is_lock();
+        let lock = mainnet_fixture_is_lock();
         let validator =
             InstantLockValidator::new(engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap());
 

@@ -3,7 +3,7 @@
 //! Handles InstantSendLock messages (islock) from the network. Validates locks
 //! when masternode data is available, queues them when not.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
-use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Validator};
+use crate::validation::VerifiedInstantLock;
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -139,48 +139,43 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
         tracing::info!("Processing InstantLock for txid {}", txid);
 
-        // Check for duplicates
-        if self.instantlocks.contains_key(&txid) {
+        // Only a verified lock settles its txid: an unverified one, possibly forged,
+        // must not shadow the genuine lock for the same transaction.
+        if self.instantlocks.get(&txid).is_some_and(|entry| entry.validated)
+            || self.pending_instantlocks.iter().any(|pending| pending.instant_lock == *instantlock)
+        {
             tracing::debug!("Already have InstantLock for txid {}", txid);
             return Ok(vec![]);
         }
 
-        // A malformed lock is dropped before it is queued or cached, so it can
+        // A rejected lock is dropped before it is queued or cached, so it can
         // neither stay pending nor shadow the genuine lock for its txid.
-        if let Err(e) = InstantLockStructureValidator.validate(instantlock) {
-            tracing::warn!("Invalid InstantLock for txid {}: {}", txid, e);
-            self.progress.add_invalid(1);
-            return Ok(vec![]);
-        }
-
-        // Until the engine knows the lock's cycle, or when its signature does not
-        // verify, the engine may only lack its quorum yet: the lock is kept pending.
         let engine = self.engine.read().await;
-        let result = engine
-            .rotated_quorums_of_cycle(&instantlock.cyclehash)
-            .map(|quorums| InstantLockValidator::new(quorums).validate(instantlock));
+        let result = VerifiedInstantLock::verify(instantlock, Some(&*engine));
         drop(engine);
         let validated = match result {
-            Some(Ok(())) => true,
-            Some(Err(e)) => {
-                tracing::warn!("InstantLock for txid {} not verified yet: {}", txid, e);
+            Ok(Some(_)) => true,
+            Ok(None) => {
+                tracing::debug!("InstantLock for txid {} awaits quorum data", txid);
                 false
             }
-            None => {
-                tracing::debug!("InstantLock for txid {} is of a cycle not known yet", txid);
-                false
+            Err(e) => {
+                tracing::warn!("Rejected InstantLock for txid {}: {}", txid, e);
+                self.progress.add_invalid(1);
+                return Ok(vec![]);
             }
         };
 
         if validated {
             self.progress.add_valid(1);
+            self.pending_instantlocks.retain(|pending| pending.instant_lock.txid != txid);
         } else {
             self.queue_pending(PendingInstantLock {
                 instant_lock: instantlock.clone(),
                 first_seen: Instant::now(),
             });
-            self.progress.update_pending(self.pending_instantlocks.len());
         }
+        self.progress.update_pending(self.pending_instantlocks.len());
 
         // Store in cache
         let entry = InstantLockEntry {
@@ -247,6 +242,8 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
         let pending = std::mem::take(&mut self.pending_instantlocks);
         let mut events = Vec::new();
+        let mut validated_txids = HashSet::new();
+        let mut rejected = 0;
 
         for pending_lock in pending {
             let txid = pending_lock.instant_lock.txid;
@@ -256,29 +253,41 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 self.progress.add_invalid(1);
                 continue;
             }
+            if validated_txids.contains(&txid) {
+                continue;
+            }
 
-            let lock = &pending_lock.instant_lock;
-            let validated =
-                self.engine.read().await.rotated_quorums_of_cycle(&lock.cyclehash).is_some_and(
-                    |quorums| InstantLockValidator::new(quorums).validate(lock).is_ok(),
-                );
-
-            if validated {
-                self.progress.add_valid(1);
-                // Update the cached entry
-                if let Some(entry) = self.instantlocks.get_mut(&txid) {
-                    entry.validated = true;
+            let result = VerifiedInstantLock::verify(
+                &pending_lock.instant_lock,
+                Some(&*self.engine.read().await),
+            );
+            match result {
+                Ok(Some(_)) => {
+                    self.progress.add_valid(1);
+                    validated_txids.insert(txid);
+                    if let Some(entry) = self.instantlocks.get_mut(&txid) {
+                        entry.validated = true;
+                    }
+                    events.push(SyncEvent::InstantLockReceived {
+                        instant_lock: pending_lock.instant_lock,
+                        validated: true,
+                    });
                 }
-                events.push(SyncEvent::InstantLockReceived {
-                    instant_lock: pending_lock.instant_lock.clone(),
-                    validated: true,
-                });
-            } else {
-                // Still can't validate, re-queue
-                self.queue_pending(pending_lock);
+                Ok(None) => self.queue_pending(pending_lock),
+                Err(_) => rejected += 1,
             }
         }
 
+        // Other locks for a txid that just verified are superseded, not pending.
+        self.pending_instantlocks
+            .retain(|pending| !validated_txids.contains(&pending.instant_lock.txid));
+        if rejected > 0 {
+            tracing::warn!(
+                "Dropped {} pending InstantLocks refuted by their complete cycle",
+                rejected
+            );
+            self.progress.add_invalid(rejected);
+        }
         self.last_validated_engine_height = engine_height;
         self.progress.update_pending(self.pending_instantlocks.len());
         Ok(events)
@@ -295,11 +304,8 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
     /// Drop cached InstantLock entries that were never BLS-validated, and clear
     /// the queued locks that fed them.
     ///
-    /// Called on disconnect. The `instantlocks` cache is what
-    /// [`process_instantlock`](Self::process_instantlock) dedupes against, so if
-    /// an unvalidated entry survived a disconnect the same lock re-announced
-    /// after reconnect would be treated as a duplicate and never re-queued or
-    /// re-validated. Validated entries are kept — their locks are already final.
+    /// Called on disconnect, so a lock re-announced after reconnect is processed
+    /// fresh. Validated entries are kept — their locks are already final.
     pub(super) fn clear_unvalidated_on_disconnect(&mut self) {
         self.pending_instantlocks.clear();
         self.instantlocks.retain(|_, entry| entry.validated);
@@ -365,7 +371,7 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for InstantSendManager<H> {
 mod tests {
     use super::*;
     use crate::network::{MessageType, NetworkManager};
-    use crate::sml_engine::test_support::TestEngine;
+    use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
     use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSSignature;
@@ -510,10 +516,9 @@ mod tests {
     async fn should_accept_genuine_lock_after_forged_lock_for_same_txid() {
         let engine = TestEngine::mainnet_fixture();
         let mut manager = InstantSendManager::new(Arc::new(RwLock::new(engine)));
-        // An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
-        let genuine: InstantLock = dashcore::consensus::deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap();
+        let genuine = mainnet_fixture_is_lock();
         let mut forged = genuine.clone();
-        forged.signature = BLSSignature::from([1u8; 96]);
+        forged.cyclehash = CycleHash::from_byte_array([7; 32]);
 
         let events = manager.process_instantlock(&forged).await.unwrap();
         assert!(matches!(
@@ -533,6 +538,66 @@ mod tests {
             ),
             "genuine lock was shadowed by the forged one: {events:?}"
         );
+        assert_eq!(manager.pending_count(), 0, "the forged lock no longer awaits quorum data");
+        assert!(manager.process_instantlock(&genuine).await.unwrap().is_empty());
+        assert!(manager.process_instantlock(&forged).await.unwrap().is_empty());
+    }
+
+    /// A lock its complete, verified cycle refutes is rejected, not kept pending.
+    #[tokio::test]
+    async fn should_reject_lock_refuted_by_its_complete_cycle() {
+        let engine = TestEngine::mainnet_fixture();
+        let mut manager = InstantSendManager::new(Arc::new(RwLock::new(engine)));
+        let genuine = mainnet_fixture_is_lock();
+        let mut forged = genuine.clone();
+        forged.signature = BLSSignature::from([1; 96]);
+
+        assert!(manager.process_instantlock(&forged).await.unwrap().is_empty());
+        assert_eq!(manager.pending_count(), 0);
+        assert!(manager.instantlocks.is_empty(), "a rejected lock is not cached");
+        assert_eq!(manager.progress.invalid(), 1);
+
+        let events = manager.process_instantlock(&genuine).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived {
+                validated: true,
+                ..
+            }]
+        ));
+    }
+
+    /// Once one lock for a txid verifies, its other pending locks never emit.
+    #[tokio::test]
+    async fn should_drop_other_pending_locks_of_a_txid_once_one_verifies() {
+        let mut manager = InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(
+            dashcore::Network::Mainnet,
+        ))));
+        let genuine = mainnet_fixture_is_lock();
+        let mut other_cycle = genuine.clone();
+        other_cycle.cyclehash = CycleHash::from_byte_array([7; 32]);
+        for lock in [&other_cycle, &genuine] {
+            let events = manager.process_instantlock(lock).await.unwrap();
+            assert!(matches!(
+                events.as_slice(),
+                [SyncEvent::InstantLockReceived {
+                    validated: false,
+                    ..
+                }]
+            ));
+        }
+        assert_eq!(manager.pending_count(), 2);
+
+        *manager.engine.write().await = TestEngine::mainnet_fixture();
+        let events = manager.validate_pending(Instant::now()).await.unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::InstantLockReceived { instant_lock, validated: true }]
+                if instant_lock == &genuine
+        ));
+        assert_eq!(manager.pending_count(), 0);
+        assert!(manager.validate_pending(Instant::now()).await.unwrap().is_empty());
+        assert!(manager.process_instantlock(&other_cycle).await.unwrap().is_empty());
     }
 
     #[tokio::test]

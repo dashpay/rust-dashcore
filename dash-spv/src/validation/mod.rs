@@ -11,10 +11,7 @@ pub use block::BlockValidator;
 pub use chainlock::ChainLockValidator;
 pub use filter::{FilterValidationInput, FilterValidator};
 pub use header::BlockHeaderValidator;
-pub use instantlock::{
-    InstantLockStructureValidator, InstantLockValidator, InstantLockVerificationError,
-    VerifiedInstantLock,
-};
+pub use instantlock::{InstantLockVerificationError, VerifiedInstantLock};
 pub use masternode_list::MasternodeListValidator;
 
 use crate::error::ValidationResult;

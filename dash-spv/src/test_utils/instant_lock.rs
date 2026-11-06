@@ -2,14 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use dash_pkc::bls::{BlsError, BlsScIetf, BlsSecretKey};
-use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature, BlsError, BlsScheme, BlsSkBytes};
 use dashcore::hash_types::QuorumVVecHash;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use dashcore::sml::llmq_type::LLMQType;
+use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use dashcore::{BlockHash, InstantLock, QuorumHash, Transaction};
+use dashcore::{BlockHash, InstantLock, Network, QuorumHash, Transaction};
 use key_wallet_manager::WalletInterface;
 
 use crate::client::DashSpvClient;
@@ -19,7 +18,7 @@ use crate::network::NetworkManager;
 /// Failure to build a deterministic signed test fixture.
 #[derive(Debug, thiserror::Error)]
 pub enum InstantLockFixtureError {
-    /// The fixture key could not be constructed.
+    /// The fixture key could not sign.
     #[error("invalid fixture BLS key: {0}")]
     Key(#[from] BlsError),
     /// The lock signing digest could not be encoded.
@@ -27,10 +26,10 @@ pub enum InstantLockFixtureError {
     Encoding(#[from] std::io::Error),
 }
 
-/// A signed lock and synthetic quorum for isolated tests, never a network proof.
+/// A lock signed by a constant, public test key, and a synthetic quorum cycle for it.
 ///
-/// Install into a temporary test client's engine, then call the client's public
-/// `verify_instant_lock` query. This fixture cannot construct a verified token.
+/// `install` makes every lock signed by that key verify on the client it is installed
+/// into, so use it only on throwaway test clients. It is never a network proof.
 #[derive(Debug, Clone)]
 pub struct InstantLockFixture {
     instant_lock: InstantLock,
@@ -38,10 +37,15 @@ pub struct InstantLockFixture {
 }
 
 impl InstantLockFixture {
-    /// Signs the transaction's ID and ordered inputs using a deterministic test key.
-    pub fn new(transaction: &Transaction) -> Result<Self, InstantLockFixtureError> {
-        let key = BlsSecretKey::<BlsScIetf>::from_bytes(&[1; 32])?;
-        let llmq_type = LLMQType::LlmqtypeTestDIP0024;
+    /// Signs the transaction's ID and ordered inputs with a quorum of `network`'s
+    /// InstantSend quorum type.
+    pub fn new(
+        network: Network,
+        transaction: &Transaction,
+    ) -> Result<Self, InstantLockFixtureError> {
+        let secret = BlsSkBytes::from_bytes([1; 32]);
+        let key = secret.as_scheme(BlsScheme::Modern);
+        let llmq_type = network.isd_llmq_type();
         let quorum_hash = QuorumHash::from_byte_array([9; 32]);
         let mut instant_lock = InstantLock {
             version: 1,
@@ -51,8 +55,8 @@ impl InstantLockFixture {
             signature: BLSSignature::from([0; 96]),
         };
         let digest = instant_lock.sign_id(llmq_type, quorum_hash, None)?;
-        instant_lock.signature =
-            BLSSignature::from(key.sign_digest(digest.as_byte_array()).to_bytes());
+        instant_lock.signature = key.sign_digest(digest.as_byte_array())?;
+        let quorum_public_key = BLSPublicKey::from(key.public_key()?);
         let quorums = (0..llmq_type.active_quorum_count() as u16)
             .map(|index| {
                 let entry = QuorumEntry {
@@ -62,7 +66,7 @@ impl InstantLockFixture {
                     quorum_index: Some(index as i16),
                     signers: vec![true; 4],
                     valid_members: vec![true; 4],
-                    quorum_public_key: BLSPublicKey::from(key.public_key().to_bytes()),
+                    quorum_public_key,
                     quorum_vvec_hash: QuorumVVecHash::all_zeros(),
                     threshold_sig: instant_lock.signature,
                     all_commitment_aggregated_signature: instant_lock.signature,
@@ -89,7 +93,7 @@ impl InstantLockFixture {
         &self.instant_lock
     }
 
-    /// Installs this synthetic quorum into an isolated test client's engine.
+    /// Installs this synthetic quorum cycle into the client's engine.
     pub async fn install<W: WalletInterface, N: NetworkManager>(
         &self,
         client: &DashSpvClient<W, N>,
