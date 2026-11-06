@@ -1174,7 +1174,7 @@ The `seen_txids` map provides a 180-second deduplication window to handle the ca
 |-------|--------|
 | `SyncComplete` | Activate mempool relay on all connected peers (transitions to `Synced`) |
 | `BlockProcessed` | Remove confirmed txids from mempool state; immediately rebuild bloom filter if new addresses |
-| `InstantLockReceived` | Mark transaction as IS-locked, or store in pending_is_locks if TX not yet received |
+| `InstantLockReceived` | Only `validated: true`: mark transaction as IS-locked, or store in pending_is_locks if TX not yet received; unverified locks are ignored |
 | `PeerConnected` | Activate on new peer immediately if already synced |
 | `PeerDisconnected` | Remove peer; redistribute its queued txids to a random activated peer |
 | `PeersUpdated` with no addresses | All peers lost: call `stop_sync()`, transition to `WaitingForConnections` |

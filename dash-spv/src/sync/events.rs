@@ -154,12 +154,16 @@ pub enum SyncEvent {
 
     /// InstantSend lock received and processed.
     ///
+    /// `validated: false` means verification is deferred until quorum data
+    /// arrives: it is never final and may repeat for distinct locks of one txid.
+    /// Locks refuted by a complete, verified cycle emit no event.
+    ///
     /// Emitted by: `InstantSendManager`
-    /// Consumed by: External listeners, mempool state updates
+    /// Consumed by: External listeners, mempool state updates (validated locks only)
     InstantLockReceived {
         /// The complete InstantLock data
         instant_lock: InstantLock,
-        /// Whether the BLS signature was validated
+        /// Whether the BLS signature was verified against its signing quorum
         validated: bool,
     },
 
