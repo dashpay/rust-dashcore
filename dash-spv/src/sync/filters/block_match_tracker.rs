@@ -72,12 +72,19 @@ pub(super) struct BlockMatchTracker {
     /// Number of the last pass given to `record_processed`. Never reset, so a
     /// record that outlives a `clear` can't look newer than a later pass.
     passes: u64,
+    /// Whether the wallet checks a block against the addresses it derives
+    /// while applying it, so the deriving pass already saw its own scripts.
+    checks_derived_addresses: bool,
 }
 
 impl BlockMatchTracker {
-    /// Create an empty tracker.
-    pub(super) fn new() -> Self {
-        Self::default()
+    /// Create an empty tracker for a wallet that does or does not check a block
+    /// against the addresses it derives, see `WalletInterface::checks_derived_addresses`.
+    pub(super) fn new(checks_derived_addresses: bool) -> Self {
+        Self {
+            checks_derived_addresses,
+            ..Self::default()
+        }
     }
 
     /// Track a filter match for a block against a candidate wallet set,
@@ -110,7 +117,8 @@ impl BlockMatchTracker {
     /// Like [`Self::track`], but for matches on newly derived scripts. Each
     /// candidate wallet maps to the pass that derived its matching scripts. A
     /// wallet whose last pass of this block ran later already saw them and is
-    /// skipped, and so is a wallet the block is already queued for.
+    /// skipped, and so is a wallet the block is already queued for. The deriving
+    /// pass itself saw them only if the wallet checks derived addresses.
     pub(super) fn track_for_new_scripts(
         &mut self,
         key: &FilterMatchKey,
@@ -121,7 +129,13 @@ impl BlockMatchTracker {
         let residual: BTreeSet<WalletId> = candidate_wallets
             .into_iter()
             .filter(|(id, derived_at)| {
-                processed.and_then(|p| p.get(id)).is_none_or(|pass| pass <= derived_at)
+                processed.and_then(|p| p.get(id)).is_none_or(|pass| {
+                    if self.checks_derived_addresses {
+                        pass < derived_at
+                    } else {
+                        pass <= derived_at
+                    }
+                })
             })
             .map(|(id, _)| id)
             .collect();
@@ -233,10 +247,11 @@ mod tests {
     /// NewlyTracked again for a residual wallet after the first wallet's
     /// processing is recorded, and AlreadyProcessed once every candidate is
     /// covered. `track_for_new_scripts` re-queues the block only for wallets
-    /// whose last pass ran no later than the pass that derived the scripts.
+    /// whose last pass ran no later than the pass that derived the scripts, or
+    /// earlier than it for a wallet that checks the addresses it derives.
     #[test]
     fn track_state_machine() {
-        let mut tracker = BlockMatchTracker::new();
+        let mut tracker = BlockMatchTracker::new(false);
         let hash = hash_n(0);
         let key = FilterMatchKey::new(100, hash);
         let wallet_a: WalletId = [0xA1; 32];
@@ -302,6 +317,21 @@ mod tests {
             tracker.track_for_new_scripts(&key, 5000, derived_by_a),
             BlockTrackResult::AlreadyProcessed
         );
+
+        // A wallet that checks a block against the addresses it derives saw
+        // them in the deriving pass. Scripts of a later pass still re-queue it.
+        let mut checking = BlockMatchTracker::new(true);
+        let pass = checking.record_processed(100, hash, &BTreeSet::from([wallet_a]));
+        assert_eq!(
+            checking.track_for_new_scripts(&key, 5000, BTreeMap::from([(wallet_a, pass)])),
+            BlockTrackResult::AlreadyProcessed
+        );
+        assert_eq!(
+            checking.track_for_new_scripts(&key, 5000, BTreeMap::from([(wallet_a, pass + 1)])),
+            BlockTrackResult::NewlyTracked {
+                wallets: BTreeSet::from([wallet_a])
+            }
+        );
     }
 
     /// `prune_at_or_below` drops every entry at or below the given height
@@ -309,7 +339,7 @@ mod tests {
     /// calls with the same threshold.
     #[test]
     fn prune_at_or_below_drops_low_entries() {
-        let mut tracker = BlockMatchTracker::new();
+        let mut tracker = BlockMatchTracker::new(false);
         let wallet: WalletId = [0xFA; 32];
         let h_low = hash_n(1);
         let h_mid = hash_n(2);
@@ -338,7 +368,7 @@ mod tests {
     /// flips `is_empty`, and `clear` returns to the initial state.
     #[test]
     fn is_empty_and_clear_cover_both_maps() {
-        let mut tracker = BlockMatchTracker::new();
+        let mut tracker = BlockMatchTracker::new(false);
         let wallet: WalletId = [0xCC; 32];
         let hash = hash_n(0);
         let key = FilterMatchKey::new(100, hash);

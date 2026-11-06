@@ -23,6 +23,9 @@
 //! 3. [`coinjoin_rescan_skips_blocks_applied_after_the_scripts`] — the
 //!    rescan re-applies only blocks whose last pass predates the matching
 //!    scripts.
+//! 4. [`coinjoin_scripts_derived_in_one_batch_find_blocks_in_the_next`] —
+//!    scripts derived by the lowest batch are deferred to the next batch and
+//!    still find its blocks before it commits.
 //!
 //! Each test drives the manager exactly the way the production event loop
 //! does: `try_process_batch` → `BlocksNeeded` → (blocks-manager stand-in)
@@ -188,7 +191,8 @@ fn block_paying(height: u32, addresses: &[Address]) -> (Block, BlockFilter, Filt
 /// job), feed the resulting `BlockProcessed` events (carrying the wallet's
 /// freshly derived scripts) back into the filters manager, and repeat until
 /// no more blocks are requested. Blocks are processed in height order, like
-/// the real `BlocksPipeline`. Returns how often each block was applied.
+/// the real `BlocksPipeline`, and the manager ticks once per round. Returns how
+/// often each block was applied.
 async fn drive_to_quiescence(
     manager: &mut CjFiltersManager,
     wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
@@ -200,6 +204,7 @@ async fn drive_to_quiescence(
     let mut passes: HashMap<BlockHash, usize> = HashMap::new();
     let mut events = initial_events;
     for _round in 0..64 {
+        events.extend(manager.tick(&network).await.expect("tick"));
         let mut pending: BTreeMap<(u32, BlockHash), BTreeSet<WalletId>> = BTreeMap::new();
         for event in events.drain(..) {
             if let SyncEvent::BlocksNeeded {
@@ -317,17 +322,20 @@ async fn coinjoin_gap_limit_inversion_within_batch_recovers() {
     );
 }
 
-/// Block A pays index 5 and G+2 in one transaction. Its first pass only sees
-/// index 5, and only then derives G+2, so A must be applied again. Block B
-/// pays index 1 and G+3 and is applied after A derived G+3, so its first pass
-/// already credited G+3 and the rescan must not apply it again.
+/// Block A pays G+2 in its first transaction and index 5 in its second. Using
+/// index 5 derives G+2, and the same application checks the block again, so A
+/// is applied once. Block B pays index 1 and G+3 and is applied after A derived
+/// G+3, so its first pass already credited G+3 and the rescan must not apply it again.
 #[tokio::test]
 async fn coinjoin_rescan_skips_blocks_applied_after_the_scripts() {
     let (mut manager, wallet, wallet_id) = setup().await;
     let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 4) as u32).await;
 
-    let (block_a, filter_a, key_a) =
-        block_paying(10, &[addresses[5].clone(), addresses[G + 2].clone()]);
+    let (pays_g2, _, _) = block_paying(10, &[addresses[G + 2].clone()]);
+    let (pays_5, _, _) = block_paying(11, &[addresses[5].clone()]);
+    let block_a = Block::dummy(10, vec![pays_g2.txdata[0].clone(), pays_5.txdata[0].clone()]);
+    let (filter_a, key_a) =
+        (BlockFilter::dummy(&block_a), FilterMatchKey::new(10, block_a.block_hash()));
     let (block_b, filter_b, key_b) =
         block_paying(20, &[addresses[1].clone(), addresses[G + 3].clone()]);
     let (hash_a, hash_b) = (block_a.block_hash(), block_b.block_hash());
@@ -344,6 +352,46 @@ async fn coinjoin_rescan_skips_blocks_applied_after_the_scripts() {
     let (highest_used, _, used_count) = coinjoin_pool_state(&wallet, &wallet_id).await;
     assert_eq!(highest_used, Some((G + 3) as u32));
     assert_eq!(used_count, 4, "indices 1, 5, G+2 and G+3 must all be credited");
-    assert_eq!(passes.get(&hash_a), Some(&2), "A predates the scripts it derived");
+    let balance = wallet.read().await.get_wallet_balance(&wallet_id).expect("balance");
+    assert_eq!(balance.confirmed(), 4 * DENOMINATION);
+    assert_eq!(passes.get(&hash_a), Some(&1), "A credits the scripts it derived itself");
     assert_eq!(passes.get(&hash_b), Some(&1), "B was applied after G+3 was derived");
+}
+
+/// Block A in the first batch pays index 5 and G+4, which derives the window
+/// up to 2G+4. The next batch was scanned before that, and its blocks pay G+2
+/// and G+6. Both are found by the deferred rescan, and every block is applied once.
+#[tokio::test]
+async fn coinjoin_scripts_derived_in_one_batch_find_blocks_in_the_next() {
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 7) as u32).await;
+
+    let (block_a, filter_a, key_a) =
+        block_paying(10, &[addresses[5].clone(), addresses[G + 4].clone()]);
+    let (block_b, filter_b, key_b) = block_paying(120, &[addresses[G + 6].clone()]);
+    let (block_c, filter_c, key_c) = block_paying(150, &[addresses[G + 2].clone()]);
+    let blocks: HashMap<BlockHash, Block> =
+        [block_a, block_b, block_c].into_iter().map(|block| (block.block_hash(), block)).collect();
+
+    let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key_a, filter_a)]));
+    batch.mark_verified();
+    manager.active_batches.insert(0, batch);
+    let mut batch =
+        FiltersBatch::new(100, 199, HashMap::from([(key_b, filter_b), (key_c, filter_c)]));
+    batch.mark_verified();
+    manager.active_batches.insert(100, batch);
+    manager.progress.update_stored_height(199);
+
+    let initial_events = manager.try_process_batch().await.unwrap();
+    let passes = drive_to_quiescence(&mut manager, &wallet, &blocks, initial_events).await;
+
+    let (highest_used, _, used_count) = coinjoin_pool_state(&wallet, &wallet_id).await;
+    assert_eq!(highest_used, Some((G + 6) as u32));
+    assert_eq!(used_count, 4, "indices 5, G+2, G+4 and G+6 must all be credited");
+    let balance = wallet.read().await.get_wallet_balance(&wallet_id).expect("balance");
+    assert_eq!(balance.confirmed(), 4 * DENOMINATION);
+    assert_eq!(passes.len(), 3);
+    assert!(passes.values().all(|count| *count == 1), "each block is applied once: {passes:?}");
+    assert!(manager.active_batches.is_empty(), "both batches commit");
+    assert_eq!(manager.progress.committed_height(), 199);
 }
