@@ -9,14 +9,14 @@ use std::sync::Arc;
 pub(super) struct SegmentState {
     /// Unique segment identifier (index in segments array).
     pub(super) segment_id: usize,
-    /// Starting height of this segment.
-    pub(super) start_height: u32,
     /// Target height (None for tip segment).
     pub(super) target_height: Option<u32>,
     /// Target hash (next checkpoint hash for validation).
     target_hash: Option<BlockHash>,
     /// Current tip hash for GetHeaders locator.
     pub(super) current_tip_hash: BlockHash,
+    /// Locator of the last declared GetHeaders that is still unanswered.
+    declared: Option<BlockHash>,
     /// Current height reached in this segment.
     pub(super) current_height: u32,
     /// Buffered headers waiting to be stored.
@@ -36,10 +36,10 @@ impl SegmentState {
     ) -> Self {
         Self {
             segment_id,
-            start_height,
             target_height,
             target_hash,
             current_tip_hash: start_hash,
+            declared: None,
             current_height: start_height,
             buffered_headers: Vec::new(),
             complete: false,
@@ -51,20 +51,30 @@ impl SegmentState {
         !self.complete
     }
 
-    /// No-op if `RequestKey::Headers(current_tip_hash)` is already in play.
-    pub(super) async fn send_request(&mut self, network: &Arc<dyn NetworkManager>) {
+    /// No-op if `RequestKey::Headers(current_tip_hash)` is already in play. Returns
+    /// whether the request is new, meaning its locator was not declared since the last reply.
+    pub(super) async fn send_request(&mut self, network: &Arc<dyn NetworkManager>) -> bool {
         network
             .send(HeadersRequest {
                 height: self.current_height,
                 locator: self.current_tip_hash,
             })
             .await;
+        if self.declared == Some(self.current_tip_hash) {
+            return false;
+        }
+        self.declared = Some(self.current_tip_hash);
         tracing::debug!(
             "Segment {}: declared GetHeaders from height {} hash {}",
             self.segment_id,
             self.current_height,
             self.current_tip_hash
         );
+        true
+    }
+
+    pub(super) fn forget_declared(&mut self) {
+        self.declared = None;
     }
 
     /// Try to match incoming headers to this segment.
@@ -77,6 +87,9 @@ impl SegmentState {
     /// Process received headers for this segment.
     /// Returns the number of headers processed, or an error if checkpoint validation fails.
     pub(super) fn receive_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<usize> {
+        // Any reply answers the declared request. An empty one leaves the locator
+        // unchanged, so the next request from it is new.
+        self.declared = None;
         if headers.is_empty() {
             // Empty response means we've reached the peer's tip for this segment
             self.complete = true;
@@ -174,7 +187,6 @@ mod tests {
         let segment = SegmentState::new(0, 0, hash, Some(500_000), None);
 
         assert_eq!(segment.segment_id, 0);
-        assert_eq!(segment.start_height, 0);
         assert_eq!(segment.current_height, 0);
         assert!(!segment.complete);
         assert!(segment.buffered_headers.is_empty());

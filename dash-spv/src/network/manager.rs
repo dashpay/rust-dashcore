@@ -296,7 +296,13 @@ impl NetworkManager for PeerNetworkManager {
     async fn stop(&self) {
         tracing::info!(target: "dash_spv::network", "network manager stopping: cancelling peers");
         self.session.lock().await.cancel();
-        self.state.connected.clear().await;
+        let disconnected = self.state.connected.clear().await;
+        tracing::info!(
+            target: "dash_spv::network",
+            "network manager stopping: disconnected {} peer(s) {:?}",
+            disconnected.len(),
+            disconnected,
+        );
         self.state.broker.clear().await;
     }
 
@@ -647,6 +653,10 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
         let mut global = ByteLimiter::new(MIN_CAP_BYTES, bytes.load(Ordering::Relaxed));
         let mut peers: HashMap<PeerId, PeerFlow> = HashMap::new();
         let mut last_underserving: Option<SocketAddr> = None;
+        // Bytes read, in flight and cap at each peer's last `peer_speed` line. A peer is
+        // reported again only once one of them changes, so an idle client stays quiet.
+        let mut reported: HashMap<PeerId, (u64, u64, u64)> = HashMap::new();
+        let mut reported_bandwidth = None;
         let mut ticks = 0u64;
         let mut ticker = tokio::time::interval(FLOW_TICK);
         loop {
@@ -680,8 +690,15 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             if ticks.is_multiple_of(2) {
                 let caps: u64 = g.iter().map(|p| p.cap()).sum();
+                reported.retain(|id, _| live.contains(id));
+                let mut any_reported = false;
                 for p in g.iter() {
                     let flow = &peers[&p.id()];
+                    let snapshot = (p.bytes_read(), p.in_flight_bytes(), p.cap());
+                    if reported.insert(p.id(), snapshot) == Some(snapshot) {
+                        continue;
+                    }
+                    any_reported = true;
                     tracing::debug!(
                         target: "peer_speed",
                         "peer {}: cap={} KB in_flight={} KB rate={:.2} MB/s rtt={:.0}ms base={:.0}ms lag={}ms total={:.1} MB",
@@ -704,19 +721,24 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 } else {
                     "work"
                 };
-                tracing::debug!(
-                    target: "peer_speed",
-                    "bandwidth: {:.1} MB/s bind={} | global_cap={} sum_peer_cap={} in_flight={} KB | rtt={:.0}ms base={:.0}ms | peers={} | resp KB {:?}",
-                    global.rate / 1e6,
-                    bind,
-                    cap >> 10,
-                    caps >> 10,
-                    total_in_flight >> 10,
-                    global.rtt() * 1e3,
-                    global.base_rtt * 1e3,
-                    g.len(),
-                    costs.expected_kb(),
-                );
+                let snapshot =
+                    Some((bytes.load(Ordering::Relaxed), total_in_flight, cap, caps, g.len()));
+                if any_reported || reported_bandwidth != snapshot {
+                    reported_bandwidth = snapshot;
+                    tracing::debug!(
+                        target: "peer_speed",
+                        "bandwidth: {:.1} MB/s bind={} | global_cap={} sum_peer_cap={} in_flight={} KB | rtt={:.0}ms base={:.0}ms | peers={} | resp KB {:?}",
+                        global.rate / 1e6,
+                        bind,
+                        cap >> 10,
+                        caps >> 10,
+                        total_in_flight >> 10,
+                        global.rtt() * 1e3,
+                        global.base_rtt * 1e3,
+                        g.len(),
+                        costs.expected_kb(),
+                    );
+                }
             }
 
             // Only the transition wakes the supervisor, so a peer with no replacement
@@ -730,10 +752,17 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                     tracing::debug!(target: "dash_spv::network", "endgame: hedged {} block request(s)", hedged);
                 }
             }
-            if underserving.is_some() && underserving != last_underserving {
+            if let Some(slow) = underserving.filter(|slow| Some(slow.addr) != last_underserving) {
+                tracing::debug!(
+                    target: "dash_spv::network",
+                    "{} serving at {:.2} MB/s vs best {:.2} MB/s — a replacement is worth probing for",
+                    slow.addr,
+                    slow.rate as f64 / 1e6,
+                    slow.best as f64 / 1e6,
+                );
                 peer_wake.notify_one();
             }
-            last_underserving = underserving;
+            last_underserving = underserving.map(|slow| slow.addr);
         }
     })
 }
@@ -812,7 +841,10 @@ impl Supervisor {
             // Only look for a laggard once full: below cap every arrival is wanted anyway.
             // Each swap re-sends the work the old peer held, so at most one per cooldown.
             let cooled = self.last_swap.lock().await.is_none_or(|t| t.elapsed() >= SWAP_COOLDOWN);
-            let slow = (deficit == 0 && cooled).then(|| underserving_peer(&peers)).flatten();
+            let slow = (deficit == 0 && cooled)
+                .then(|| underserving_peer(&peers))
+                .flatten()
+                .map(|slow| slow.addr);
             (deficit, slow)
         };
         if deficit == 0 && slow.is_none() {
@@ -943,10 +975,18 @@ impl Supervisor {
     }
 }
 
+/// A peer underserving the rest, with its serving rate and the best one in bytes/s.
+#[derive(Clone, Copy)]
+struct SlowPeer {
+    addr: SocketAddr,
+    rate: u64,
+    best: u64,
+}
+
 /// The connected peer clearly underserving the rest, if any: serving bytes at a small
 /// fraction of the best connected peer's rate while bandwidth bound. Relative, so a slow
 /// client link (every peer slow alike) never condemns anyone.
-fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
+fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SlowPeer> {
     let measured: Vec<(SocketAddr, u64)> = peers
         .iter()
         .filter_map(|p| {
@@ -961,15 +1001,10 @@ fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
     }
     let best = measured.iter().map(|&(_, r)| r).max().expect("non-empty");
     let (addr, worst) = measured.iter().copied().min_by_key(|&(_, r)| r).expect("non-empty");
-    ((worst as f64) < best as f64 * SLOW_RATE_FRACTION).then(|| {
-        tracing::debug!(
-            target: "dash_spv::network",
-            "{} serving at {:.2} MB/s vs best {:.2} MB/s — a replacement is worth probing for",
-            addr,
-            worst as f64 / 1e6,
-            best as f64 / 1e6,
-        );
-        addr
+    ((worst as f64) < best as f64 * SLOW_RATE_FRACTION).then_some(SlowPeer {
+        addr,
+        rate: worst,
+        best,
     })
 }
 
@@ -1251,7 +1286,7 @@ fn spawn_pump(
                     // evict the live one. One that already left was announced by whoever removed
                     // it, and a probed backup never joined.
                     let departed = HashSet::from([peer]);
-                    let (_, remaining) = connected.remove(&departed).await;
+                    let (removed, remaining) = connected.remove(&departed).await;
 
                     if remaining < *max_peers {
                         peer_wake.notify_one();
@@ -1261,13 +1296,22 @@ fn spawn_pump(
                     // connected peers, so they would otherwise leak in the registry.
                     let retried = broker.requeue_from(&departed).await;
 
-                    tracing::info!(
-                        target: "dash_spv::network",
-                        "peer disconnected: {} | {} peers remaining | {} request(s) re-queued",
-                        addr,
-                        remaining,
-                        retried,
-                    );
+                    if removed.is_empty() {
+                        tracing::debug!(
+                            target: "dash_spv::network",
+                            "connection to {} closed outside the peer set | {} request(s) re-queued",
+                            addr,
+                            retried,
+                        );
+                    } else {
+                        tracing::info!(
+                            target: "dash_spv::network",
+                            "peer disconnected: {} | {} peers remaining | {} request(s) re-queued",
+                            addr,
+                            remaining,
+                            retried,
+                        );
+                    }
                     broker.wake();
                 }
             }
@@ -1395,7 +1439,7 @@ mod tests {
             peers.push(peer);
         }
         let slow = underserving_peer(&peers)?;
-        peers.iter().position(|p| p.addr() == slow)
+        peers.iter().position(|p| p.addr() == slow.addr)
     }
 
     #[test]
