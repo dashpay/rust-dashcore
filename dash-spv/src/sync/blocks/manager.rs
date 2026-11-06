@@ -209,9 +209,14 @@ mod tests {
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentBlockStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncManagerProgress};
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
     use crate::types::HashedBlock;
 
+    use dashcore::network::message::NetworkMessage;
+    use dashcore::network::message_blockdata::Inventory;
+    use dashcore::{Block, BlockHash};
     use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
+    use key_wallet_manager::FilterMatchKey;
     use std::collections::BTreeSet;
 
     type TestBlocksManager =
@@ -248,36 +253,59 @@ mod tests {
         }
     }
 
+    fn blocks_needed(height: u32, hash: BlockHash) -> SyncEvent {
+        SyncEvent::BlocksNeeded {
+            blocks: BTreeMap::from([(
+                FilterMatchKey::new(height, hash),
+                BTreeSet::from([MOCK_WALLET_ID]),
+            )]),
+        }
+    }
+
+    fn getdata(hash: BlockHash) -> NetworkMessage {
+        NetworkMessage::GetData(vec![Inventory::Block(hash)])
+    }
+
     #[tokio::test]
     async fn test_blocks_manager_handle_blocks_needed_event() {
-        use crate::network::NetworkManager;
-        use crate::test_utils::MockNetworkManager;
-        use key_wallet_manager::FilterMatchKey;
-        use std::collections::BTreeMap;
-
         let mut manager = create_test_manager().await;
         manager.progress.set_state(SyncState::Synced);
 
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
 
-        let block_hash = dashcore::block::Header::dummy(0).block_hash();
-        let mut blocks = BTreeMap::new();
-        blocks.insert(FilterMatchKey::new(100, block_hash), BTreeSet::from([MOCK_WALLET_ID]));
-        let event = SyncEvent::BlocksNeeded {
-            blocks,
-        };
-
-        let events = manager.handle_sync_event(&event, &network).await.unwrap();
+        let block_hash = BlockHash::dummy(0);
+        let events =
+            manager.handle_sync_event(&blocks_needed(100, block_hash), &network).await.unwrap();
 
         // Should queue the block
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(events.is_empty());
+        assert_eq!(mock.sent_messages().await, vec![getdata(block_hash)]);
 
-        assert!(
-            !mock.sent_messages().await.is_empty(),
-            "expected a getdata to be declared for the needed block"
-        );
+        // The first key is not released yet, as for a block that arrived but is not handled.
+        let other_hash = BlockHash::dummy(1);
+        manager.handle_sync_event(&blocks_needed(101, other_hash), &network).await.unwrap();
+        assert_eq!(mock.sent_messages().await, vec![getdata(block_hash), getdata(other_hash)]);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_block_bans_its_peer_and_is_requested_again() {
+        let mut manager = create_test_manager().await;
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+
+        let invalid = Block::dummy(100, vec![]);
+        let hash = invalid.block_hash();
+        manager.handle_sync_event(&blocks_needed(100, hash), &network).await.unwrap();
+        assert_eq!(mock.sent_messages().await, vec![getdata(hash)]);
+
+        let peer = test_socket_address(1);
+        let result =
+            manager.handle_message(peer, NetworkMessage::Block(invalid).into(), &network).await;
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(mock.banned_peers().await, vec![peer]);
+        assert_eq!(mock.sent_messages().await, vec![getdata(hash), getdata(hash)]);
     }
 
     /// `process_buffered_blocks` must call `process_block_for_wallets` with
