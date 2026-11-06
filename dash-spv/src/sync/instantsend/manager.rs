@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
-use crate::validation::VerifiedInstantLock;
+use crate::validation::{InstantLockStructureValidator, Validator, VerifiedInstantLock};
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -161,6 +161,12 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         // must not shadow the genuine lock for the same transaction.
         if self.instantlocks.get(&txid).is_some_and(|entry| entry.validated) {
             tracing::debug!("Already have a verified InstantLock for txid {}", txid);
+            return Ok(vec![]);
+        }
+        // Checked before hashing, so an oversized lock is dropped without serializing it.
+        if let Err(e) = InstantLockStructureValidator.validate(instantlock) {
+            tracing::warn!("Malformed InstantLock for txid {}: {}", txid, e);
+            self.progress.add_invalid(1);
             return Ok(vec![]);
         }
         let hash = lock_hash(instantlock);
