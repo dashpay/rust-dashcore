@@ -168,7 +168,11 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
         if validated {
             self.progress.add_valid(1);
+            let queued = self.pending_instantlocks.len();
             self.pending_instantlocks.retain(|pending| pending.instant_lock.txid != txid);
+            if self.pending_instantlocks.len() < queued {
+                self.transition_synced_if_idle();
+            }
         } else {
             self.queue_pending(PendingInstantLock {
                 instant_lock: instantlock.clone(),
@@ -598,6 +602,23 @@ mod tests {
         assert_eq!(manager.pending_count(), 0);
         assert!(manager.validate_pending(Instant::now()).await.unwrap().is_empty());
         assert!(manager.process_instantlock(&other_cycle).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn should_leave_syncing_when_a_direct_verification_drains_the_pending_queue() {
+        let mut manager =
+            InstantSendManager::new(Arc::new(RwLock::new(TestEngine::mainnet_fixture())));
+        manager.set_state(SyncState::Syncing);
+        let genuine = mainnet_fixture_is_lock();
+        let mut unknown_cycle = genuine.clone();
+        unknown_cycle.cyclehash = CycleHash::from_byte_array([7; 32]);
+        manager.process_instantlock(&unknown_cycle).await.unwrap();
+        assert_eq!(manager.pending_count(), 1);
+
+        manager.process_instantlock(&genuine).await.unwrap();
+
+        assert_eq!(manager.pending_count(), 0);
+        assert_eq!(manager.state(), SyncState::Synced);
     }
 
     #[tokio::test]
