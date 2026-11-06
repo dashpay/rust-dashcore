@@ -512,6 +512,7 @@ mod tests {
     #[test_case(|lock| lock.signature = BLSSignature::from([0; 96]); "zero signature")]
     #[test_case(|lock| lock.inputs.clear(); "no inputs")]
     #[test_case(|lock| lock.inputs[0].txid = Txid::all_zeros(); "null input txid")]
+    #[test_case(|lock| lock.inputs = vec![lock.inputs[0]; dashcore::constants::MAX_BLOCK_SIZE as usize / 41 + 1]; "too many inputs")]
     #[tokio::test]
     async fn a_malformed_lock_of_an_unknown_cycle_is_dropped(malform: fn(&mut InstantLock)) {
         let mut manager = create_test_manager();
