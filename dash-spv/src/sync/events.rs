@@ -1,8 +1,8 @@
 use crate::sml_engine::QRInfoFeedResult;
 use crate::sync::mempool::BroadcastResult;
 use crate::sync::ManagerIdentifier;
+use crate::validation::VerifiedInstantLock;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
-use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::{BlockHash, ScriptBuf, Txid};
 use key_wallet_manager::{FilterMatchKey, WalletId};
 use std::collections::{BTreeMap, BTreeSet};
@@ -152,19 +152,16 @@ pub enum SyncEvent {
         validated: bool,
     },
 
-    /// InstantSend lock received and processed.
+    /// InstantSend lock verified against its signing quorum.
     ///
-    /// `validated: false` means verification is deferred until quorum data
-    /// arrives: it is never final and may repeat for distinct locks of one txid.
-    /// Locks refuted by a complete, verified cycle emit no event.
+    /// A lock awaiting quorum data emits this event once it verifies. Malformed
+    /// locks and locks a complete, verified cycle refutes emit no event.
     ///
     /// Emitted by: `InstantSendManager`
-    /// Consumed by: External listeners, mempool state updates (validated locks only)
+    /// Consumed by: External listeners, mempool state updates
     InstantLockReceived {
-        /// The complete InstantLock data
-        instant_lock: InstantLock,
-        /// Whether the BLS signature was verified against its signing quorum
-        validated: bool,
+        /// The verified lock
+        instant_lock: VerifiedInstantLock,
     },
 
     /// The network-level outcome of a self-broadcast transaction was
@@ -277,12 +274,7 @@ impl fmt::Display for SyncEvent {
             ),
             SyncEvent::InstantLockReceived {
                 instant_lock,
-                validated,
-            } => write!(
-                f,
-                "InstantLockReceived(txid={}, validated={})",
-                instant_lock.txid, validated
-            ),
+            } => write!(f, "InstantLockReceived(txid={})", instant_lock.txid()),
             SyncEvent::TransactionBroadcastResult {
                 txid,
                 result,

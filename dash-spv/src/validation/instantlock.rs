@@ -14,11 +14,23 @@ use crate::validation::Validator;
 /// An InstantLock authenticated against the client's synchronized quorum state.
 ///
 /// This evidence is process-local: persisted locks must be verified again on load.
-/// Obtain it with `DashSpvClient::verify_instant_lock`; a stored context is not proof.
+/// Obtain it with `DashSpvClient::verify_instant_lock` or from `SyncEvent::InstantLockReceived`;
+/// a stored context is not proof.
 #[derive(Debug, Clone)]
 pub struct VerifiedInstantLock {
     instant_lock: InstantLock,
     network: Network,
+}
+
+#[cfg(test)]
+impl VerifiedInstantLock {
+    /// Evidence for `instant_lock` without authenticating it, for unit tests of its consumers.
+    pub(crate) fn assume_verified(instant_lock: InstantLock) -> Self {
+        Self {
+            instant_lock,
+            network: Network::Testnet,
+        }
+    }
 }
 
 /// A stored or received InstantLock failed authentication.

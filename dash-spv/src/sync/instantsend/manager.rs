@@ -115,7 +115,7 @@ impl PendingInstantLock {
 /// - Subscribes to ISLock messages from the network
 /// - Validates InstantLocks when masternode engine is available
 /// - Queues InstantLocks for later validation when engine not ready
-/// - Emits InstantLockReceived events
+/// - Emits InstantLockReceived events for verified locks
 pub struct InstantSendManager<H: BlockHeaderStorage> {
     /// Current progress of the manager.
     pub(super) progress: InstantSendProgress,
@@ -174,11 +174,11 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         let engine = self.engine.read().await;
         let result = VerifiedInstantLock::verify(instantlock, Some(&*engine));
         drop(engine);
-        let validated = match result {
-            Ok(Some(_)) => true,
+        let verified = match result {
+            Ok(Some(verified)) => Some(verified),
             Ok(None) => {
                 tracing::debug!("InstantLock for txid {} awaits quorum data", txid);
-                false
+                None
             }
             Err(e) => {
                 tracing::warn!("Rejected InstantLock for txid {}: {}", txid, e);
@@ -187,7 +187,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             }
         };
 
-        if validated {
+        if verified.is_some() {
             self.progress.add_valid(1);
             let queued = self.pending_instantlocks.len();
             self.pending_instantlocks.retain(|pending| pending.instant_lock.txid != txid);
@@ -202,14 +202,16 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         // Store in cache
         let entry = InstantLockEntry {
             received_at: SystemTime::now(),
-            validated,
+            validated: verified.is_some(),
         };
         self.store_instantlock(txid, entry);
 
-        Ok(vec![SyncEvent::InstantLockReceived {
-            instant_lock: instantlock.clone(),
-            validated,
-        }])
+        Ok(verified
+            .map(|instant_lock| SyncEvent::InstantLockReceived {
+                instant_lock,
+            })
+            .into_iter()
+            .collect())
     }
 
     /// Queue an InstantLock for later validation.
@@ -249,7 +251,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
     /// Re-validate every pending InstantLock against the current engine state.
     ///
     /// Called both when a `MasternodeStateUpdated` event arrives and from `tick`
-    /// once the engine has advanced. Locks that verify are emitted as validated
+    /// once the engine has advanced. Locks that verify are emitted as
     /// `InstantLockReceived` events; locks that still can't be verified are
     /// re-queued until they either become verifiable or exceed [`PENDING_TTL`].
     ///
@@ -284,15 +286,14 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 Some(&*self.engine.read().await),
             );
             match result {
-                Ok(Some(_)) => {
+                Ok(Some(instant_lock)) => {
                     self.progress.add_valid(1);
                     validated_txids.insert(txid);
                     if let Some(entry) = self.instantlocks.get_mut(&txid) {
                         entry.validated = true;
                     }
                     events.push(SyncEvent::InstantLockReceived {
-                        instant_lock: pending_lock.instant_lock,
-                        validated: true,
+                        instant_lock,
                     });
                 }
                 Ok(None) => self.queue_pending(pending_lock),
@@ -498,13 +499,13 @@ mod tests {
         let islock1 = create_test_instantlock(txid);
         let islock2 = create_test_instantlock(txid);
 
-        // First should process
-        let events1 = manager.process_instantlock(&islock1).await.unwrap();
-        assert_eq!(events1.len(), 1);
+        // First is queued until quorum data arrives
+        assert!(manager.process_instantlock(&islock1).await.unwrap().is_empty());
+        assert_eq!(manager.pending_count(), 1);
 
         // Second should be ignored as duplicate
-        let events2 = manager.process_instantlock(&islock2).await.unwrap();
-        assert_eq!(events2.len(), 0);
+        assert!(manager.process_instantlock(&islock2).await.unwrap().is_empty());
+        assert_eq!(manager.pending_count(), 1);
     }
 
     #[test_case(|lock| lock.txid = Txid::all_zeros(); "null txid")]
@@ -526,8 +527,7 @@ mod tests {
         assert_eq!(manager.progress.invalid(), 1);
 
         // Not cached, so the well-formed lock for the transaction still gets in.
-        let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
-        assert_eq!(events.len(), 1);
+        manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
         assert_eq!(manager.pending_count(), 1);
     }
 
@@ -542,20 +542,14 @@ mod tests {
         forged.cyclehash = CycleHash::from_byte_array([7; 32]);
 
         let events = manager.process_instantlock(&forged).await.unwrap();
-        assert!(matches!(
-            events.as_slice(),
-            [SyncEvent::InstantLockReceived {
-                validated: false,
-                ..
-            }]
-        ));
+        assert!(events.is_empty(), "a lock awaiting quorum data emits no event");
 
         let events = manager.process_instantlock(&genuine).await.unwrap();
         assert!(
             matches!(
                 events.as_slice(),
-                [SyncEvent::InstantLockReceived { instant_lock, validated: true }]
-                    if instant_lock == &genuine
+                [SyncEvent::InstantLockReceived { instant_lock }]
+                    if instant_lock.instant_lock() == &genuine
             ),
             "genuine lock was shadowed by the forged one: {events:?}"
         );
@@ -579,13 +573,7 @@ mod tests {
         assert_eq!(manager.progress.invalid(), 1);
 
         let events = manager.process_instantlock(&genuine).await.unwrap();
-        assert!(matches!(
-            events.as_slice(),
-            [SyncEvent::InstantLockReceived {
-                validated: true,
-                ..
-            }]
-        ));
+        assert!(matches!(events.as_slice(), [SyncEvent::InstantLockReceived { .. }]));
     }
 
     /// Once one lock for a txid verifies, its other pending locks never emit.
@@ -599,13 +587,7 @@ mod tests {
         other_cycle.cyclehash = CycleHash::from_byte_array([7; 32]);
         for lock in [&other_cycle, &genuine] {
             let events = manager.process_instantlock(lock).await.unwrap();
-            assert!(matches!(
-                events.as_slice(),
-                [SyncEvent::InstantLockReceived {
-                    validated: false,
-                    ..
-                }]
-            ));
+            assert!(events.is_empty(), "a lock awaiting quorum data emits no event");
         }
         assert_eq!(manager.pending_count(), 2);
 
@@ -613,8 +595,8 @@ mod tests {
         let events = manager.validate_pending(Instant::now()).await.unwrap();
         assert!(matches!(
             events.as_slice(),
-            [SyncEvent::InstantLockReceived { instant_lock, validated: true }]
-                if instant_lock == &genuine
+            [SyncEvent::InstantLockReceived { instant_lock }]
+                if instant_lock.instant_lock() == &genuine
         ));
         assert_eq!(manager.pending_count(), 0);
         assert!(manager.validate_pending(Instant::now()).await.unwrap().is_empty());
@@ -633,13 +615,7 @@ mod tests {
         let mut forged = genuine.clone();
         forged.signature = BLSSignature::from([1; 96]);
         let events = manager.process_instantlock(&forged).await.unwrap();
-        assert!(matches!(
-            events.as_slice(),
-            [SyncEvent::InstantLockReceived {
-                validated: false,
-                ..
-            }]
-        ));
+        assert!(events.is_empty(), "a lock awaiting quorum data emits no event");
         assert_eq!(manager.pending_count(), 1);
 
         *manager.engine.write().await = TestEngine::mainnet_fixture();
@@ -657,8 +633,8 @@ mod tests {
         let events = manager.process_instantlock(&genuine).await.unwrap();
         assert!(matches!(
             events.as_slice(),
-            [SyncEvent::InstantLockReceived { instant_lock, validated: true }]
-                if instant_lock == &genuine
+            [SyncEvent::InstantLockReceived { instant_lock }]
+                if instant_lock.instant_lock() == &genuine
         ));
     }
 
@@ -682,8 +658,8 @@ mod tests {
 
         assert!(matches!(
             events.as_slice(),
-            [SyncEvent::InstantLockReceived { instant_lock, validated: true }]
-                if instant_lock == &genuine
+            [SyncEvent::InstantLockReceived { instant_lock }]
+                if instant_lock.instant_lock() == &genuine
         ));
         assert_eq!(manager.pending_count(), 0);
         assert!(manager.process_instantlock(&forged).await.unwrap().is_empty());
@@ -909,8 +885,7 @@ mod tests {
 
         // First announcement: the empty engine can't verify it, so it is queued
         // and cached as an unvalidated entry.
-        let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
-        assert_eq!(events.len(), 1);
+        manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
         assert_eq!(manager.pending_count(), 1);
         assert!(manager.instantlocks.contains_key(&txid));
 
@@ -920,8 +895,7 @@ mod tests {
         assert!(!manager.instantlocks.contains_key(&txid));
 
         // Re-announcement of the same txid is processed fresh, not deduped away.
-        let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
-        assert_eq!(events.len(), 1);
+        manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
         assert_eq!(manager.pending_count(), 1);
     }
 

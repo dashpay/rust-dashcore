@@ -131,7 +131,6 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
             }
             SyncEvent::InstantLockReceived {
                 instant_lock,
-                validated: true,
             } => Ok(self.process_instant_send(instant_lock.clone()).await),
             _ => Ok(vec![]),
         }
@@ -185,8 +184,12 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
 mod tests {
     use super::*;
     use crate::client::config::MempoolStrategy;
+    use crate::sync::mempool::broadcast::{BroadcastResult, BroadcastStatus};
     use crate::sync::BroadcastConfig;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
+    use crate::types::UnconfirmedTransaction;
+    use crate::validation::VerifiedInstantLock;
+    use dashcore::{Amount, InstantLock};
     use key_wallet_manager::test_utils::MockWallet;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
@@ -427,8 +430,7 @@ mod tests {
         is_lock.txid = txid;
 
         let event = SyncEvent::InstantLockReceived {
-            instant_lock: is_lock,
-            validated: true,
+            instant_lock: VerifiedInstantLock::assume_verified(is_lock),
         };
         let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(events.is_empty());
@@ -497,8 +499,7 @@ mod tests {
             ..InstantLock::default()
         };
         let event = SyncEvent::InstantLockReceived {
-            instant_lock: lock,
-            validated: true,
+            instant_lock: VerifiedInstantLock::assume_verified(lock),
         };
         manager.handle_sync_event(&event, &network).await.unwrap();
         let mut corrections = Vec::new();
@@ -577,11 +578,10 @@ mod tests {
             }
             while rx.try_recv().is_ok() {}
             let event = SyncEvent::InstantLockReceived {
-                instant_lock: InstantLock {
+                instant_lock: VerifiedInstantLock::assume_verified(InstantLock {
                     txid: tx.txid(),
                     ..InstantLock::default()
-                },
-                validated: true,
+                }),
             };
             manager.handle_sync_event(&event, &network).await.unwrap();
             let mut locks = 0;
@@ -622,11 +622,10 @@ mod tests {
             .unwrap();
         while rx.try_recv().is_ok() {}
         let event = SyncEvent::InstantLockReceived {
-            instant_lock: InstantLock {
+            instant_lock: VerifiedInstantLock::assume_verified(InstantLock {
                 txid: outgoing.txid(),
                 ..InstantLock::default()
-            },
-            validated: true,
+            }),
         };
         manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(
@@ -640,6 +639,62 @@ mod tests {
             account.transactions()[&outgoing.txid()].context,
             TransactionContext::InstantSend(_)
         ));
+    }
+
+    #[test_case::test_case(true, false; "known pending")]
+    #[test_case::test_case(true, true; "known uncertain")]
+    #[test_case::test_case(false, false; "early pending")]
+    #[test_case::test_case(false, true; "early uncertain")]
+    #[tokio::test]
+    async fn should_accept_broadcast_on_verified_instant_lock(known: bool, uncertain: bool) {
+        let (mut manager, network) = create_test_manager();
+        let tx = dashcore::Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        let txid = tx.txid();
+        assert!(manager.start_broadcast(&tx, &network).await.is_empty());
+        if known {
+            manager.transactions.insert(
+                txid,
+                UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
+            );
+        }
+        let status = if uncertain {
+            BroadcastStatus::Uncertain
+        } else {
+            BroadcastStatus::Pending
+        };
+        manager.broadcasts.get_mut(&txid).unwrap().status = status;
+        let lock = InstantLock {
+            txid,
+            ..InstantLock::default()
+        };
+        let event = SyncEvent::InstantLockReceived {
+            instant_lock: VerifiedInstantLock::assume_verified(lock.clone()),
+        };
+
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
+
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::TransactionBroadcastResult {
+                txid: accepted,
+                result: BroadcastResult::Accepted { .. },
+            }] if *accepted == txid
+        ));
+        assert!(!manager.broadcasts.contains_key(&txid));
+        let processed = manager.wallet.read().await.processed_instant_locks.lock().await.clone();
+        if known {
+            assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
+            assert_eq!(processed, vec![(txid, Some(lock))]);
+        } else {
+            assert_eq!(manager.pending_is_locks.get(&txid).unwrap().0.instant_lock(), &lock);
+            assert!(processed.is_empty());
+        }
     }
 
     #[tokio::test]
