@@ -461,14 +461,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.masternode_lists.last_key_value().map(|(_, list)| list)
     }
 
-    /// The rotated quorums of the cycle `cycle_hash`, by quorum index.
-    pub fn rotated_quorums_of_cycle(
-        &self,
-        cycle_hash: &BlockHash,
-    ) -> Option<&BTreeMap<u16, QualifiedQuorumEntry>> {
-        self.rotated_quorums_per_cycle.get(cycle_hash)
-    }
-
     /// The cycle `cycle_hash` when every quorum of it is verified and of a type that
     /// signs this network's InstantSend locks.
     pub(crate) fn instant_send_cycle(

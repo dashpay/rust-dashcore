@@ -349,7 +349,7 @@ mod tests {
         let engine = TestEngine::mainnet_fixture();
         let lock = mainnet_fixture_is_lock();
         let validator =
-            InstantLockValidator::new(engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap());
+            InstantLockValidator::new(&engine.rotated_quorums_per_cycle()[&lock.cyclehash]);
 
         let request_id = lock.request_id().expect("expected to make request id");
         assert_eq!(
@@ -377,7 +377,7 @@ mod tests {
         validator.validate_signature(&lock).expect("expected to verify is lock");
 
         // Without its quorum index in the cycle, the lock cannot be resolved.
-        let mut quorums = engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap().clone();
+        let mut quorums = engine.rotated_quorums_per_cycle()[&lock.cyclehash].clone();
         quorums.remove(&23);
         match InstantLockValidator::new(&quorums).signing_quorum(&lock) {
             Err(MessageVerificationError::QuorumIndexNotFound(23, hash)) => {
