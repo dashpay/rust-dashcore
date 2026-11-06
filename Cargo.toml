@@ -67,6 +67,7 @@ dash-types = { git = "https://github.com/dashpay/base-sdk", rev = "89828032b6be3
 # Packages from `rust-bitcoin/rust-bitcoin`, `bitcoin-crypto` uses revision due to `secp256k1`.
 # `bitcoin_hashes` follows the same revision so its hash types unify with the ones these crates and
 # `base-sdk` use.
+base58ck = { version = "0.5.0" }
 bip324 = "0.11.1"
 bitcoin-crypto = { git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "7ba35c7c1dd63892bfb9c9395bbd80e2ab5df516", default-features = false }
 bitcoin_hashes = { git = "https://github.com/rust-bitcoin/rust-bitcoin", rev = "7ba35c7c1dd63892bfb9c9395bbd80e2ab5df516", default-features = false }
