@@ -12,6 +12,10 @@ use crate::network::costs::ResponseCosts;
 use crate::network::peer::{PeerHandle, PeerId};
 
 const KICKING_ATTEMPTS: u32 = 2;
+/// A request stalls after this many request timeouts without a complete answer from its
+/// peer, even while bytes keep arriving. One `headers2` reply (about 344 KB) still fits
+/// at 6 KB/s, while a peer sending only unrelated traffic is caught.
+pub(super) const ANSWER_DEADLINE_TIMEOUTS: u32 = 6;
 const HEDGE_AFTER: Duration = Duration::from_secs(2);
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
@@ -62,8 +66,11 @@ struct OnWire {
     /// The connection, not the address: a late close of an old connection must not
     /// pull back the work of a new one to the same address.
     peer: PeerId,
-    /// Refreshed by every piece of a streaming response.
+    /// Refreshed by every answer and by any bytes arriving from the peer, since a big
+    /// answer can take longer than a timeout to arrive.
     last_progress: Instant,
+    /// Refreshed only by complete answers, see [`ANSWER_DEADLINE_TIMEOUTS`].
+    last_answer: Instant,
     msg: NetworkMessage,
     height: u32,
     hedge: Option<PeerId>,
@@ -205,31 +212,48 @@ impl Broker {
 
     /// Peers answer in order, so any answer is progress on all of its requests.
     pub async fn progress(&self, peer: PeerId) {
+        self.refresh(peer, true).await;
+    }
+
+    /// Bytes arriving from `peer` are progress on its requests, though no answer is complete.
+    pub async fn receiving(&self, peer: PeerId) {
+        self.refresh(peer, false).await;
+    }
+
+    async fn refresh(&self, peer: PeerId, answered: bool) {
         let now = Instant::now();
         for state in self.requests.lock().await.values_mut() {
             if let ReqState::OnWire(o) = state {
                 if o.peer == peer {
                     o.last_progress = now;
+                    if answered {
+                        o.last_answer = now;
+                    }
                 }
             }
         }
     }
 
-    /// Returns the peers to kick for a stalled request. A request that already
-    /// stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
-    pub async fn expire(&self, timeout: impl Fn(&PeerId) -> Duration) -> HashSet<PeerId> {
+    /// Returns the peers to kick for a stalled request, each with the oldest last
+    /// progress of its stalled requests. A request that already stalled
+    /// [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
+    pub async fn expire(&self, timeout: impl Fn(&PeerId) -> Duration) -> HashMap<PeerId, Instant> {
         let now = Instant::now();
-        let mut culprits = HashSet::new();
+        let mut culprits: HashMap<PeerId, Instant> = HashMap::new();
         let mut unanswerable = HashSet::new();
         for (key, state) in self.requests.lock().await.iter() {
             let ReqState::OnWire(o) = state else {
                 continue;
             };
-            if now.duration_since(o.last_progress) <= timeout(&o.peer) {
+            let timeout = timeout(&o.peer);
+            if now.duration_since(o.last_progress) <= timeout
+                && now.duration_since(o.last_answer) <= timeout * ANSWER_DEADLINE_TIMEOUTS
+            {
                 continue;
             }
             if o.attempts < KICKING_ATTEMPTS {
-                culprits.insert(o.peer);
+                let since = culprits.entry(o.peer).or_insert(o.last_progress);
+                *since = (*since).min(o.last_progress);
             } else {
                 tracing::debug!(
                     target: "dash_spv::network",
@@ -282,7 +306,8 @@ impl Broker {
         let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle)> = Vec::new();
         let mut msgs = msgs.into_iter();
         for (height, msg) in msgs.by_ref() {
-            let open = peers.iter().filter(|p| p.in_flight_bytes() < p.cap());
+            // `peers` can be a snapshot taken before the timeout monitor closed one of them.
+            let open = peers.iter().filter(|p| !p.is_closed() && p.in_flight_bytes() < p.cap());
             let Some(peer) = choose_peer(open, classify(&msg)) else {
                 unsent.push((height, msg));
                 break;
@@ -314,6 +339,7 @@ impl Broker {
                             msg: msg.clone(),
                             height,
                             last_progress: Instant::now(),
+                            last_answer: Instant::now(),
                             hedge: None,
                             attempts: attempts + 1,
                         }));
@@ -375,12 +401,21 @@ impl Broker {
             let on_wire = OnWire {
                 peer,
                 last_progress: Instant::now(),
+                last_answer: Instant::now(),
                 msg: msg.clone(),
                 height: 0,
                 hedge: None,
                 attempts: 1,
             };
             reqs.insert(key, ReqState::OnWire(Box::new(on_wire)));
+        }
+    }
+
+    #[cfg(test)]
+    pub async fn carrier_of(&self, key: &RequestKey) -> Option<PeerId> {
+        match self.requests.lock().await.get(key) {
+            Some(ReqState::OnWire(o)) => Some(o.peer),
+            _ => None,
         }
     }
 
@@ -666,6 +701,22 @@ mod tests {
             };
             assert_eq!(broker.state_of(&RequestKey::CFilters(height)).await, Some(want));
         }
+    }
+
+    #[tokio::test]
+    async fn requeued_work_skips_a_closed_peer_still_listed() {
+        let broker = Broker::new();
+        let gone = ConnectedPeer::for_test(conn(1, 0)).await;
+        let other = ConnectedPeer::for_test(conn(2, 0)).await;
+        broker.mark_on_wire(&get_cfilters(0), gone.id()).await;
+        gone.close();
+        broker.requeue_from(&HashSet::from([gone.id()])).await;
+
+        // Only the charge matters here: the loopback has no reader to answer it.
+        broker.route(&[gone.handle(), other.handle()], u64::MAX, &ResponseCosts::new()).await;
+
+        assert_eq!(gone.in_flight_bytes(), 0);
+        assert!(other.in_flight_bytes() > 0);
     }
 
     #[tokio::test]

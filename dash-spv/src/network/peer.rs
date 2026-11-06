@@ -269,6 +269,10 @@ impl PeerHandle {
         self.cap.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn is_closed(&self) -> bool {
+        self.token.is_cancelled()
+    }
+
     pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
         // The sync layer always declares plain `getheaders` since it doesn't know
         // the peer; upgrade here. The reader decompresses `Headers2` back to `Headers`.
@@ -392,6 +396,12 @@ impl ConnectedPeer {
             lag_ms: AtomicU32::new(1),
             bytes: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Counts `n` bytes as read from the socket, as the reader does for every read.
+    #[cfg(test)]
+    pub(crate) fn receive_for_test(&self, n: u64) {
+        self.bytes.fetch_add(n, Ordering::Relaxed);
     }
 }
 
