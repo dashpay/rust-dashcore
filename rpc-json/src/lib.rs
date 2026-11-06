@@ -1799,17 +1799,18 @@ pub struct SignRawTransactionInput {
 }
 
 hash_newtype! {
-    /// The `muhash` of `gettxoutsetinfo`: the SHA256 of the UTXO set's MuHash3072 digest, in
-    /// Dash Core's byte order.
+    /// The `muhash` of `gettxoutsetinfo`: the SHA256 of the UTXO set's 3072-bit MuHash value
+    /// (`MuHash3072::Finalize`), in Dash Core's byte order.
     #[hash_newtype(backward)]
     pub struct TxOutSetMuHash(sha256::Hash);
 }
 
 /// Result of `gettxoutsetinfo`.
 ///
-/// Dash Core v24.0.x and earlier report the serialized hash as `hash_serialized_2`. Newer Dash
-/// Core reports `hash_serialized_3` instead and refuses `hash_serialized_2` as a hash type. They
-/// are different hashes of the same set and are never equal, so each has its own field. At most
+/// Dash Core v24.0.x and earlier report the serialized hash as `hash_serialized_2`. A Dash Core
+/// with the `hash_serialized_3` change (the bitcoin#28685 backport) reports `hash_serialized_3`
+/// instead and refuses `hash_serialized_2` as a hash type. They are different hashes of the same
+/// set and are never equal, so each has its own field. At most
 /// one of `hash_serialized_2`, `hash_serialized_3` and `muhash` is present: the one for the hash
 /// type asked for, or the node's default when none was given.
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -1827,12 +1828,14 @@ pub struct GetTxOutSetInfoResult {
     pub tx_outs: u64,
     /// A meaningless metric for UTXO set size
     pub bogosize: u64,
-    /// The SHA256d hash of the serialized UTXO set, as Dash Core v24.0.x and earlier compute it.
-    /// Present for the `hash_serialized_2` hash type, their default.
+    /// The SHA256d of the best block hash followed by the UTXO set in Dash Core's legacy
+    /// serialization, as v24.0.x and earlier compute it. Present for the `hash_serialized_2` hash
+    /// type, their default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hash_serialized_2: Option<sha256d::Hash>,
-    /// The SHA256d hash of the UTXO set's coins in outpoint order, as newer Dash Core computes it.
-    /// Present for the `hash_serialized_3` hash type, their default.
+    /// The SHA256d of the UTXO set's coins in outpoint order, as Dash Core computes it with the
+    /// `hash_serialized_3` change. Present for the `hash_serialized_3` hash type, its default
+    /// there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hash_serialized_3: Option<sha256d::Hash>,
     /// The MuHash of the UTXO set. Present for the `muhash` hash type.
