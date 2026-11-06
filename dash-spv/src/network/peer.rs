@@ -505,11 +505,11 @@ impl DisconnectedPeer {
         if !version.services.has(required_services) {
             tracing::warn!(
                 target: "dash_spv::network",
-                "dropping {}: lacks required services {:?} (advertises {:?})",
+                "dropping {}: lacks required services {} (advertises {})",
                 self.addr, required_services, version.services
             );
             return Err(NetworkError::ConnectionFailed(format!(
-                "peer {} lacks required services {:?}",
+                "peer {} lacks required services {}",
                 self.addr, required_services
             )));
         }

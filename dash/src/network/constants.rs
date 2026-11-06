@@ -146,7 +146,7 @@ impl ServiceFlags {
 /// Dash Core's `serviceFlagToStr` name for the flag `1 << bit`, or `None` for a bit that is not
 /// a Dash flag (Core names it `UNKNOWN[2^N]`).
 fn service_flag_name(bit: u32) -> Option<&'static str> {
-    match ServiceFlags(1u64 << bit) {
+    match ServiceFlags(1 << bit) {
         ServiceFlags::NETWORK => Some("NETWORK"),
         ServiceFlags::BLOOM => Some("BLOOM"),
         ServiceFlags::COMPACT_FILTERS => Some("COMPACT_FILTERS"),
@@ -169,15 +169,15 @@ impl fmt::UpperHex for ServiceFlags {
     }
 }
 
-/// `ServiceFlags(` and one name per set bit from the lowest, joined with `|`, as Dash Core's
-/// `serviceFlagsToStr` names them; `ServiceFlags(NONE)` when no bit is set.
+/// Writes `ServiceFlags(`, then the Dash Core name of each set bit, lowest first, joined with
+/// `|`, then `)`. Writes `ServiceFlags(NONE)` when no bit is set.
 impl fmt::Display for ServiceFlags {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if *self == ServiceFlags::NONE {
             return write!(f, "ServiceFlags(NONE)");
         }
         f.write_str("ServiceFlags(")?;
-        let set_bits = (0..u64::BITS).filter(|bit| self.0 & (1u64 << bit) != 0);
+        let set_bits = (0..u64::BITS).filter(|bit| self.0 & (1 << bit) != 0);
         for (i, bit) in set_bits.enumerate() {
             if i > 0 {
                 f.write_str("|")?;
@@ -293,6 +293,9 @@ mod tests {
             "ServiceFlags(NETWORK|UNKNOWN[2^4]|UNKNOWN[2^5]|COMPACT_FILTERS|UNKNOWN[2^7])",
             flag.to_string()
         );
+        let flag =
+            ServiceFlags::NETWORK | ServiceFlags::from(1 << 40) | ServiceFlags::from(1 << 63);
+        assert_eq!("ServiceFlags(NETWORK|UNKNOWN[2^40]|UNKNOWN[2^63])", flag.to_string());
         // Every Dash flag has a Core name.
         for f in all.iter() {
             assert!(!f.to_string().contains("UNKNOWN"), "{:x} has no name", f);
