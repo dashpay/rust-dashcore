@@ -37,7 +37,9 @@ test-utils = ["dashcore/test-utils"]
 # of chainlocked transactions are dropped from the map and a per-account
 # `finalized_txids: HashSet<Txid>` retains only their txids so
 # `has_transaction` / `transaction_is_finalized` still answer
-# correctly. An InstantSend lock alone does NOT trigger record dropping
+# correctly, plus a summary of each (owned output indices and input
+# details) from which a rescan rebuilds a record it finds owning more
+# outputs. An InstantSend lock alone does NOT trigger record dropping
 # — we keep the record around so the surrounding block confirmation can
 # still write its height / block hash before the chainlock arrives.
 keep-finalized-transactions = []
