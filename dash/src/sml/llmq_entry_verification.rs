@@ -24,18 +24,9 @@ pub enum LLMQEntryVerificationSkipStatus {
     /// retry logic can dispatch to a chain-lock fetch instead of a block
     /// fetch.
     MissingChainLock(CoreBlockHeight, BlockHash),
-    /// The quorum entry came through without an attached
-    /// `VerifyingChainLockSignaturesType::Rotating`. Each of the four quarter
-    /// signatures is looked up by the work height of its quarter in the
-    /// `quorumsCLSigs` mapping the QRInfo's diffs carry, so a QRInfo that
-    /// covers none of a quorum's quarter work blocks, or whose quorum hash
-    /// heights are unknown, leaves the 4-sig tuple unpopulated.
+    /// No longer produced; kept so persisted statuses still decode.
     MissingRotationChainLockSigs(QuorumHash),
-    /// At least one of the quarter chain-lock signatures used to reconstruct
-    /// this quorum was keyed by elimination rather than by a known quorum
-    /// height, so a verification failure says nothing about the quorum data
-    /// itself. Retry logic can resolve it by feeding the heights of the
-    /// rotated quorum hashes the QRInfo carries.
+    /// No longer produced; kept so persisted statuses still decode.
     InferredRotationChainLockSigs(QuorumHash),
 }
 

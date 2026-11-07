@@ -12,10 +12,9 @@ use crate::validation::MasternodeListValidator;
 use dashcore::bls_sig_utils::{BLSSignature, BlsScheme};
 use dashcore::network::constants::NetworkExt;
 use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot};
-use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
+use dashcore::network::message_sml::MnListDiff;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::sml::error::SmlError;
-use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationSkipStatus;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::devnet_isd_type_override;
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
@@ -185,22 +184,6 @@ fn valid_coinbase_chain_lock(
     signature.as_scheme(BlsScheme::Modern).is_valid().then_some(signature)
 }
 
-/// Every masternode list diff a QRInfo carries.
-pub fn qr_info_diffs(qr_info: &QRInfo) -> Vec<&MnListDiff> {
-    let mut diffs: Vec<&MnListDiff> = vec![
-        &qr_info.mn_list_diff_tip,
-        &qr_info.mn_list_diff_h,
-        &qr_info.mn_list_diff_at_h_minus_c,
-        &qr_info.mn_list_diff_at_h_minus_2c,
-        &qr_info.mn_list_diff_at_h_minus_3c,
-    ];
-    if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
-        diffs.push(diff);
-    }
-    diffs.extend(&qr_info.mn_list_diff_list);
-    diffs
-}
-
 /// Cycle base (the height of quorum index 0) of a rotated quorum mined at
 /// `quorum_block_height`. The index comes from the wire, so it is accepted only
 /// while it names an active slot and lands the base on a DKG interval boundary.
@@ -214,18 +197,6 @@ fn rotated_cycle_base_height(
     }
     let cycle_base = quorum_block_height.checked_sub(quorum_index)?;
     (quorum.llmq_type.get_cycle_base_height(cycle_base) == cycle_base).then_some(cycle_base)
-}
-
-/// The rotated quorums a `quorumsCLSigs` group of `diff` signs for.
-fn signed_rotated_quorums<'a>(
-    diff: &'a MnListDiff,
-    group: &'a QuorumCLSigObject,
-) -> impl Iterator<Item = &'a QuorumEntry> {
-    group
-        .index_set
-        .iter()
-        .filter_map(|index| diff.new_quorums.get(*index as usize))
-        .filter(|quorum| quorum.llmq_type.is_rotating_quorum_type())
 }
 
 /// The quarter work block heights of the `llmq_type` cycle based at `B`, whose
@@ -334,8 +305,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         bincode::encode_to_vec(self, snapshot_codec::config())
     }
 
-    /// An engine holding the lists, rotated cycles and latest coinbase
-    /// [`Self::snapshot`] encoded.
+    /// An engine holding the lists and latest coinbase [`Self::snapshot`]
+    /// encoded. The encoded rotated cycles are read and dropped: every cycle
+    /// the engine holds is stored by a QRInfo this engine fed, from
+    /// coinbase-checked lists, so none is used before the first QRInfo after
+    /// a start.
     pub fn from_snapshot(
         network: Network,
         headers: Arc<RwLock<H>>,
@@ -616,20 +590,55 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .map(|(_, chain_lock)| *chain_lock)
     }
 
-    /// The stored rotated quorum `quorum_entry` commits to, if any.
+    /// The stored rotated quorum with the type, quorum hash and entry hash of
+    /// `listed`, if any.
     fn known_qualified_quorum_entry(
         &self,
-        quorum_entry: &QuorumEntry,
+        listed: &QualifiedQuorumEntry,
     ) -> Option<QualifiedQuorumEntry> {
         self.rotated_quorums_per_cycle
             .values()
             .find_map(|qualified_entries| {
                 qualified_entries.values().find(|qualified_entry| {
-                    qualified_entry.quorum_entry.quorum_hash == quorum_entry.quorum_hash
-                        && qualified_entry.quorum_entry.llmq_type == quorum_entry.llmq_type
+                    qualified_entry.quorum_entry.quorum_hash == listed.quorum_entry.quorum_hash
+                        && qualified_entry.quorum_entry.llmq_type == listed.quorum_entry.llmq_type
+                        && qualified_entry.entry_hash == listed.entry_hash
                 })
             })
             .cloned()
+    }
+
+    /// The served active set as the list at the QRInfo's tip holds it. Dash
+    /// Core takes `lastCommitmentPerIndex` at the requested block
+    /// (`src/llmq/snapshot.cpp:141-146`, `195-200`), and that block's list
+    /// holds the same commitments for a rotating type
+    /// (`src/llmq/blockprocessor.cpp:818-832`, used by `src/evo/smldiff.cpp:34-35`).
+    /// The list's coinbase commits to each one's entry hash
+    /// (`src/evo/cbtx.cpp:75`, `104`; `src/llmq/blockprocessor.cpp:470-472`,
+    /// `504`). Each served entry must be in the list with the same entry hash,
+    /// or the QRInfo is refused with
+    /// [`QuorumValidationError::CommitmentNotInList`]. The entries are the
+    /// list's copies, not the served ones.
+    fn active_set_from_tip_list(
+        &self,
+        served: Vec<QuorumEntry>,
+        tip_block_hash: BlockHash,
+    ) -> Result<Vec<QualifiedQuorumEntry>, QuorumValidationError> {
+        let tip_list =
+            self.masternode_lists.values().rev().find(|list| list.block_hash == tip_block_hash);
+        served
+            .into_iter()
+            .map(|entry| {
+                tip_list
+                    .and_then(|list| list.quorums.get(&entry.llmq_type)?.get(&entry.quorum_hash))
+                    .filter(|listed| listed.entry_hash == entry.calculate_entry_hash())
+                    .map(|listed| (**listed).clone())
+                    .ok_or(QuorumValidationError::CommitmentNotInList {
+                        quorum_hash: entry.quorum_hash,
+                        block_hash: tip_block_hash,
+                    })
+            })
+            .collect()
     }
 
     /// Stores the previous cycle, the active set of the list at the h work
@@ -640,8 +649,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     async fn validate_and_store_previous_cycle_quorums(
         &mut self,
         work_height: CoreBlockHeight,
-        sigs_by_work_height: &BTreeMap<CoreBlockHeight, BLSSignature>,
-        inferred_work_heights: &BTreeSet<CoreBlockHeight>,
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
     ) -> StorageResult<()> {
         let isd_type = self.network.isd_llmq_type();
@@ -661,12 +668,11 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         let mut entries = Vec::with_capacity(quorums_of_type.len());
         for quorum in quorums_of_type.values() {
             let mut entry = (**quorum).clone();
-            entry.verifying_chain_lock_signature =
-                self.quarter_sigs(sigs_by_work_height, &entry.quorum_entry).await?;
+            entry.verifying_chain_lock_signature = self.quarter_sigs(&entry.quorum_entry).await?;
             entries.push(entry);
         }
 
-        self.settle_rotated_quorums(&mut entries, inferred_work_heights, snapshots).await?;
+        self.settle_rotated_quorums(&mut entries, snapshots).await;
         entries.retain(|entry| {
             let verified = entry.verified == LLMQEntryVerificationStatus::Verified;
             if !verified {
@@ -726,111 +732,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         Ok(height)
     }
 
-    /// The ChainLock signature of each rotation work block, from the
-    /// `quorumsCLSigs` of every diff. Core keys a rotated quorum's signature to
-    /// its own work block, so one diff can carry several cycles' signatures.
-    ///
-    /// A group whose quorum heights are all unknown is keyed by elimination:
-    /// walking diffs oldest first, a non-zero signature already keying an older
-    /// work block belongs to it, and a single remaining group is the diff's
-    /// newest cycle. Exact keys win. The work heights keyed this way are
-    /// returned too, see [`Self::settle_rotated_quorums`].
-    async fn rotation_cl_sigs_by_work_height(
-        &self,
-        diffs: Vec<&MnListDiff>,
-    ) -> StorageResult<(BTreeMap<CoreBlockHeight, BLSSignature>, BTreeSet<CoreBlockHeight>)> {
-        let mut diffs_by_end_height = Vec::new();
-        for diff in diffs {
-            diffs_by_end_height.push((self.height_of(&diff.block_hash).await?, diff));
-        }
-        diffs_by_end_height.sort_by_key(|(end_height, _)| *end_height);
-
-        let mut sigs_by_work_height = BTreeMap::new();
-        for (_, diff) in &diffs_by_end_height {
-            for sig_obj in &diff.quorums_chainlock_signatures {
-                for quorum in signed_rotated_quorums(diff, sig_obj) {
-                    if let Some(work_height) = self
-                        .rotated_quorum_cycle_base(quorum)
-                        .await?
-                        .and_then(|cycle_base| cycle_base.checked_sub(WORK_DIFF_DEPTH))
-                    {
-                        sigs_by_work_height.insert(work_height, sig_obj.signature);
-                    }
-                }
-            }
-        }
-
-        let mut inferred_work_heights = BTreeSet::new();
-        for (end_height, diff) in &diffs_by_end_height {
-            let Some(newest_work_height) =
-                end_height.and_then(|end_height| self.diff_newest_work_height(end_height))
-            else {
-                continue;
-            };
-            if sigs_by_work_height.contains_key(&newest_work_height) {
-                continue;
-            }
-            let mut candidate_sigs: Vec<&BLSSignature> = Vec::new();
-            for sig_obj in &diff.quorums_chainlock_signatures {
-                let mut group_resolved = false;
-                let mut group_has_unresolved_rotated = false;
-                let mut hypothesis_mismatch = false;
-                for quorum in signed_rotated_quorums(diff, sig_obj) {
-                    if self.rotated_quorum_cycle_base(quorum).await?.is_some() {
-                        group_resolved = true;
-                        continue;
-                    }
-                    group_has_unresolved_rotated = true;
-                    // A known block at the presumed height disproves the
-                    // newest-cycle presumption when it is another block.
-                    let Some(quorum_index) =
-                        quorum.quorum_index.and_then(|i| u32::try_from(i).ok())
-                    else {
-                        continue;
-                    };
-                    let Some(presumed_height) = WORK_DIFF_DEPTH
-                        .checked_add(quorum_index)
-                        .and_then(|offset| newest_work_height.checked_add(offset))
-                    else {
-                        continue;
-                    };
-                    if self
-                        .hash_at(presumed_height)
-                        .await?
-                        .is_some_and(|block_hash| block_hash != quorum.quorum_hash)
-                    {
-                        hypothesis_mismatch = true;
-                    }
-                }
-                if group_resolved || !group_has_unresolved_rotated || hypothesis_mismatch {
-                    continue;
-                }
-                // A zeroed signature stands for every work block without a
-                // ChainLock, so only a non-zero repeat identifies a cycle.
-                if !sig_obj.signature.is_zeroed()
-                    && sigs_by_work_height.values().any(|sig| *sig == sig_obj.signature)
-                {
-                    continue;
-                }
-                candidate_sigs.push(&sig_obj.signature);
-            }
-            if let [only_group_sig] = candidate_sigs.as_slice() {
-                sigs_by_work_height.insert(newest_work_height, **only_group_sig);
-                inferred_work_heights.insert(newest_work_height);
-            }
-        }
-        Ok((sigs_by_work_height, inferred_work_heights))
-    }
-
-    /// For a diff ending at a work block, the work block of the newest cycle
-    /// whose commitments it can carry: one interval below its end.
-    fn diff_newest_work_height(&self, end_height: CoreBlockHeight) -> Option<CoreBlockHeight> {
-        let interval = self.network.isd_llmq_type().dkg_interval();
-        (end_height % interval == interval - WORK_DIFF_DEPTH)
-            .then(|| end_height.checked_sub(interval))
-            .flatten()
-    }
-
     async fn rotated_quorum_cycle_base(
         &self,
         quorum: &QuorumEntry,
@@ -854,30 +755,27 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         Ok(Some([h3, h2, h1, h0]))
     }
 
+    /// The coinbase ChainLocks of a rotated quorum's quarter work blocks,
+    /// oldest first, as the stored entry carries them: all-zero for a work
+    /// block whose coinbase carries none, as `quorumsCLSigs` serves it
+    /// (`src/evo/smldiff.cpp:96-102`). `None` unless every quarter's list is
+    /// held with its coinbase ChainLock recorded. Validation does not read
+    /// it; see [`Self::find_rotated_masternodes_for_quorums`].
     async fn quarter_sigs(
         &self,
-        sigs_by_work_height: &BTreeMap<CoreBlockHeight, BLSSignature>,
         quorum: &QuorumEntry,
     ) -> StorageResult<Option<VerifyingChainLockSignaturesType>> {
         let Some(work_heights) = self.quarter_work_heights(quorum).await? else {
             return Ok(None);
         };
-        let [Some(h3), Some(h2), Some(h1), Some(h0)] =
-            work_heights.map(|work_height| sigs_by_work_height.get(&work_height).copied())
-        else {
+        let [Some(h3), Some(h2), Some(h1), Some(h0)] = work_heights.map(|work_height| {
+            let list = self.masternode_lists.get(&work_height)?;
+            let chain_lock = self.coinbase_chain_lock(work_height, &list.block_hash)?;
+            Some(chain_lock.unwrap_or(BLSSignature::from([0; 96])))
+        }) else {
             return Ok(None);
         };
         Ok(Some(VerifyingChainLockSignaturesType::Rotating([h3, h2, h1, h0])))
-    }
-
-    async fn quarter_sigs_are_inferred(
-        &self,
-        inferred_work_heights: &BTreeSet<CoreBlockHeight>,
-        quorum: &QuorumEntry,
-    ) -> StorageResult<bool> {
-        Ok(self.quarter_work_heights(quorum).await?.is_some_and(|work_heights| {
-            work_heights.iter().any(|work_height| inferred_work_heights.contains(work_height))
-        }))
     }
 
     /// The configured rotation type, or on a devnet without an override, the
@@ -912,40 +810,27 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
     }
 
-    /// Sets each rotated quorum's status. A quarter signature keyed by
-    /// elimination may be another cycle's, so a quorum failing under one is
-    /// skipped rather than invalid. Fails when the header storage cannot be
-    /// read, which would otherwise leave such a quorum invalid.
+    /// Sets each rotated quorum's status.
     async fn settle_rotated_quorums(
         &self,
         quorums: &mut [QualifiedQuorumEntry],
-        inferred_work_heights: &BTreeSet<CoreBlockHeight>,
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
-    ) -> StorageResult<()> {
+    ) {
         let statuses =
             self.rotated_quorum_statuses(&quorums.iter().collect::<Vec<_>>(), snapshots).await;
         for quorum in quorums.iter_mut() {
-            let quorum_hash = quorum.quorum_entry.quorum_hash;
-            quorum.verified = statuses.get(&quorum_hash).cloned().unwrap_or_default();
-            if matches!(quorum.verified, LLMQEntryVerificationStatus::Invalid(_))
-                && self
-                    .quarter_sigs_are_inferred(inferred_work_heights, &quorum.quorum_entry)
-                    .await?
-            {
-                tracing::warn!(
-                    "Rotated quorum {quorum_hash} failed validation ({}) under inferred quarter signatures, skipping it",
-                    quorum.verified
-                );
-                quorum.verified = LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(quorum_hash),
-                );
-            }
+            quorum.verified =
+                statuses.get(&quorum.quorum_entry.quorum_hash).cloned().unwrap_or_default();
         }
-        Ok(())
     }
 
     /// Applies a QRInfo's diffs, then validates and stores its active rotation
     /// set and the previous cycle's. An invalid current-cycle quorum fails it.
+    ///
+    /// The QRInfo's tip (`mn_list_diff_tip`) must end at the block it was
+    /// requested for (`block_request_hash`), as the masternode sync manager
+    /// requires before it feeds one: the active set is taken from the list at
+    /// the tip.
     ///
     /// A QRInfo that fails, or whose feed is dropped part way as an aborted
     /// task drops it, leaves the engine as it was: its retry starts from the
@@ -967,9 +852,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         &mut self,
         qr_info: QRInfo,
     ) -> Result<QRInfoFeedResult, FeedError<QuorumValidationError>> {
-        let (rotation_sigs_by_work_height, inferred_work_heights) =
-            self.rotation_cl_sigs_by_work_height(qr_info_diffs(&qr_info)).await?;
-
         let QRInfo {
             quorum_snapshot_at_h_minus_c,
             quorum_snapshot_at_h_minus_2c,
@@ -1013,33 +895,27 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             self.apply_and_prune(diff).await?;
         }
         self.apply_and_prune(mn_list_diff_h).await?;
+        let tip_block_hash = mn_list_diff_tip.block_hash;
         self.apply_and_prune(mn_list_diff_tip).await?;
+        let listed_last_commitment_per_index =
+            self.active_set_from_tip_list(last_commitment_per_index, tip_block_hash)?;
 
         // Only the h-4c share brings the oldest quarters of the list at h.
         if can_verify_previous {
             if let Some(h_height) = self.height_of(&h_block_hash).await? {
-                self.validate_and_store_previous_cycle_quorums(
-                    h_height,
-                    &rotation_sigs_by_work_height,
-                    &inferred_work_heights,
-                    &snapshots,
-                )
-                .await?;
+                self.validate_and_store_previous_cycle_quorums(h_height, &snapshots).await?;
             }
         }
 
         let mut qualified_last_commitment_per_index =
-            Vec::with_capacity(last_commitment_per_index.len());
-        for quorum_entry in last_commitment_per_index {
-            if let Some(qualified_quorum_entry) = self.known_qualified_quorum_entry(&quorum_entry) {
-                qualified_last_commitment_per_index.push(qualified_quorum_entry);
+            Vec::with_capacity(listed_last_commitment_per_index.len());
+        for mut listed in listed_last_commitment_per_index {
+            if let Some(stored) = self.known_qualified_quorum_entry(&listed) {
+                qualified_last_commitment_per_index.push(stored);
                 continue;
             }
-            let quarter_sigs =
-                self.quarter_sigs(&rotation_sigs_by_work_height, &quorum_entry).await?;
-            let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
-            qualified_quorum_entry.verifying_chain_lock_signature = quarter_sigs;
-            qualified_last_commitment_per_index.push(qualified_quorum_entry);
+            listed.verifying_chain_lock_signature = self.quarter_sigs(&listed.quorum_entry).await?;
+            qualified_last_commitment_per_index.push(listed);
         }
 
         let cycle_key = self
@@ -1052,12 +928,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             );
         }
 
-        self.settle_rotated_quorums(
-            &mut qualified_last_commitment_per_index,
-            &inferred_work_heights,
-            &snapshots,
-        )
-        .await?;
+        self.settle_rotated_quorums(&mut qualified_last_commitment_per_index, &snapshots).await;
         if let Some(LLMQEntryVerificationStatus::Invalid(e)) = qualified_last_commitment_per_index
             .iter()
             .map(|quorum| &quorum.verified)
@@ -1510,9 +1381,10 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::build_cycle_quorum_map;
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
-    use super::{build_cycle_quorum_map, qr_info_diffs, valid_coinbase_chain_lock};
-    use super::{FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH};
+    use super::valid_coinbase_chain_lock;
+    use super::{FeedError, MasternodeListEngine, QRInfoFeedResult};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
@@ -1548,6 +1420,22 @@ mod tests {
     use test_case::test_case;
     use tokio::sync::RwLock;
 
+    /// Every masternode list diff a QRInfo carries.
+    fn qr_info_diffs(qr_info: &QRInfo) -> Vec<&MnListDiff> {
+        let mut diffs: Vec<&MnListDiff> = vec![
+            &qr_info.mn_list_diff_tip,
+            &qr_info.mn_list_diff_h,
+            &qr_info.mn_list_diff_at_h_minus_c,
+            &qr_info.mn_list_diff_at_h_minus_2c,
+            &qr_info.mn_list_diff_at_h_minus_3c,
+        ];
+        if let Some((_, diff)) = &qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
+            diffs.push(diff);
+        }
+        diffs.extend(&qr_info.mn_list_diff_list);
+        diffs
+    }
+
     fn make_qualified_quorum_entry(
         llmq_type: LLMQType,
         quorum_index: Option<i16>,
@@ -1555,178 +1443,11 @@ mod tests {
         quorum_entry(llmq_type, QuorumHash::all_zeros(), quorum_index).into()
     }
 
-    /// A diff carrying only what the rotation signature keying reads: its end
-    /// block, its rotating commitments, and its `quorumsCLSigs` groups.
-    fn make_cl_sig_diff(
-        end_hash: BlockHash,
-        new_quorums: Vec<QuorumEntry>,
-        groups: Vec<(BLSSignature, Vec<u16>)>,
-    ) -> MnListDiff {
-        let diff_bytes: &[u8] =
-            include_bytes!("../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin");
-        let mut diff: MnListDiff = deserialize(diff_bytes).expect("expected to deserialize");
-        diff.block_hash = end_hash;
-        diff.new_quorums = new_quorums;
-        diff.quorums_chainlock_signatures = groups
-            .into_iter()
-            .map(|(signature, index_set)| QuorumCLSigObject {
-                signature,
-                index_set,
-            })
-            .collect();
-        diff
-    }
-
     fn engine_knowing_blocks(blocks: &[(CoreBlockHeight, BlockHash)]) -> TestEngine {
         TestEngine::knowing(
             Network::Mainnet,
             blocks.iter().map(|(height, block_hash)| (*block_hash, *height)).collect(),
         )
-    }
-
-    /// Core keys every rotated quorum's ChainLock signature to that quorum's
-    /// own work block and merges work blocks that share a signature, so the
-    /// keying has to survive unknown quorum heights, ambiguity, and a
-    /// signature that legitimately covers more than one cycle.
-    #[tokio::test]
-    async fn rotation_cl_sigs_by_work_height_keys_each_cycle_to_its_own_work_block() {
-        let isd_type = Network::Mainnet.isd_llmq_type();
-        let interval = isd_type.dkg_interval();
-        assert_eq!(interval, 288, "the heights below assume the mainnet DKG interval");
-
-        let cycle_base = interval * 100;
-        let diff_end = cycle_base + interval - WORK_DIFF_DEPTH;
-        let older_diff_end = diff_end - interval;
-        let work_height = cycle_base - WORK_DIFF_DEPTH;
-        let older_work_height = work_height - interval;
-
-        let end_hash = BlockHash::from_byte_array([1; 32]);
-        let older_end_hash = BlockHash::from_byte_array([2; 32]);
-        let quorum_hash = QuorumHash::from_byte_array([3; 32]);
-        let other_quorum_hash = QuorumHash::from_byte_array([4; 32]);
-        let older_quorum_hash = QuorumHash::from_byte_array([5; 32]);
-        let sig = BLSSignature::from([7; 96]);
-        let other_sig = BLSSignature::from([8; 96]);
-        let zero_sig = BLSSignature::from([0; 96]);
-
-        let diff = make_cl_sig_diff(
-            end_hash,
-            vec![quorum_entry(isd_type, quorum_hash, Some(3))],
-            vec![(sig, vec![0])],
-        );
-
-        // A known quorum height keys the signature exactly, no inference.
-        let engine = engine_knowing_blocks(&[(diff_end, end_hash), (cycle_base + 3, quorum_hash)]);
-        let (sigs, inferred) =
-            engine.rotation_cl_sigs_by_work_height(vec![&diff]).await.expect("the headers read");
-        assert_eq!(sigs, BTreeMap::from([(work_height, sig)]));
-        assert!(inferred.is_empty(), "a known quorum height must key exactly");
-
-        // Nothing on the wire ties a `quorum_index` to the block its
-        // commitment was mined in. Index 4 moves the base one block off the
-        // cycle boundary, index 3 + c moves it a whole cycle back onto the
-        // older cycle's work block, and either one exactly-keying would
-        // replace a genuine signature with this group's.
-        for shifted_index in [4, 3 + interval as i16] {
-            let shifted = make_cl_sig_diff(
-                end_hash,
-                vec![quorum_entry(isd_type, quorum_hash, Some(shifted_index))],
-                vec![(sig, vec![0])],
-            );
-            let (sigs, inferred) = engine
-                .rotation_cl_sigs_by_work_height(vec![&shifted])
-                .await
-                .expect("the headers read");
-            assert_eq!(
-                sigs,
-                BTreeMap::from([(work_height, sig)]),
-                "index {} must not key a work block of its own choosing",
-                shifted_index
-            );
-            assert_eq!(
-                inferred,
-                BTreeSet::from([work_height]),
-                "a rejected index leaves only the diff's own cycle to key by elimination"
-            );
-        }
-
-        // Without that height the only remaining group is keyed by
-        // elimination, and the caller is told the key was inferred.
-        let engine = engine_knowing_blocks(&[(diff_end, end_hash)]);
-        let (sigs, inferred) =
-            engine.rotation_cl_sigs_by_work_height(vec![&diff]).await.expect("the headers read");
-        assert_eq!(sigs, BTreeMap::from([(work_height, sig)]));
-        assert_eq!(inferred, BTreeSet::from([work_height]));
-
-        // Two unresolved groups leave the cycle ambiguous, so nothing is keyed.
-        let ambiguous = make_cl_sig_diff(
-            end_hash,
-            vec![
-                quorum_entry(isd_type, quorum_hash, Some(3)),
-                quorum_entry(isd_type, other_quorum_hash, Some(5)),
-            ],
-            vec![(sig, vec![0]), (other_sig, vec![1])],
-        );
-        let (sigs, inferred) = engine
-            .rotation_cl_sigs_by_work_height(vec![&ambiguous])
-            .await
-            .expect("the headers read");
-        assert!(
-            sigs.is_empty() && inferred.is_empty(),
-            "two unresolved groups must resolve to nothing"
-        );
-
-        let engine =
-            engine_knowing_blocks(&[(diff_end, end_hash), (older_diff_end, older_end_hash)]);
-
-        // Work blocks without a ChainLock all carry the zeroed signature, so
-        // its reappearance in a later diff says nothing about which cycle the
-        // group belongs to and both work blocks must still be keyed.
-        let older_zeroed = make_cl_sig_diff(
-            older_end_hash,
-            vec![quorum_entry(isd_type, older_quorum_hash, Some(3))],
-            vec![(zero_sig, vec![0])],
-        );
-        let newer_zeroed = make_cl_sig_diff(
-            end_hash,
-            vec![quorum_entry(isd_type, quorum_hash, Some(3))],
-            vec![(zero_sig, vec![0])],
-        );
-        let (sigs, inferred) = engine
-            .rotation_cl_sigs_by_work_height(vec![&older_zeroed, &newer_zeroed])
-            .await
-            .expect("the headers read");
-        assert_eq!(
-            sigs,
-            BTreeMap::from([(older_work_height, zero_sig), (work_height, zero_sig)]),
-            "a zeroed signature repeated across cycles must key both work blocks"
-        );
-        assert_eq!(inferred, BTreeSet::from([older_work_height, work_height]));
-
-        // A real ChainLock signature signs one block, so its reappearance does
-        // identify the older cycle and the remaining group wins the newer one.
-        let older = make_cl_sig_diff(
-            older_end_hash,
-            vec![quorum_entry(isd_type, older_quorum_hash, Some(3))],
-            vec![(sig, vec![0])],
-        );
-        let newer = make_cl_sig_diff(
-            end_hash,
-            vec![
-                quorum_entry(isd_type, quorum_hash, Some(3)),
-                quorum_entry(isd_type, other_quorum_hash, Some(5)),
-            ],
-            vec![(sig, vec![0]), (other_sig, vec![1])],
-        );
-        let (sigs, _) = engine
-            .rotation_cl_sigs_by_work_height(vec![&older, &newer])
-            .await
-            .expect("the headers read");
-        assert_eq!(
-            sigs,
-            BTreeMap::from([(older_work_height, sig), (work_height, other_sig)]),
-            "a repeated non-zero signature belongs to the cycle it already keys"
-        );
     }
 
     /// Which rotation type an active set is keyed by decides which quorum
@@ -2123,6 +1844,289 @@ mod tests {
         );
     }
 
+    /// Every `quorumsCLSigs` signature of the diffs a QRInfo carries.
+    fn quorums_cl_sigs_mut(qr_info: &mut QRInfo) -> Vec<&mut BLSSignature> {
+        let QRInfo {
+            mn_list_diff_tip,
+            mn_list_diff_h,
+            mn_list_diff_at_h_minus_c,
+            mn_list_diff_at_h_minus_2c,
+            mn_list_diff_at_h_minus_3c,
+            quorum_snapshot_and_mn_list_diff_at_h_minus_4c,
+            mn_list_diff_list,
+            ..
+        } = qr_info;
+        let mut diffs = vec![
+            mn_list_diff_tip,
+            mn_list_diff_h,
+            mn_list_diff_at_h_minus_c,
+            mn_list_diff_at_h_minus_2c,
+            mn_list_diff_at_h_minus_3c,
+        ];
+        diffs.extend(quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_mut().map(|(_, diff)| diff));
+        diffs.extend(mn_list_diff_list.iter_mut());
+        diffs
+            .into_iter()
+            .flat_map(|diff| diff.quorums_chainlock_signatures.iter_mut())
+            .map(|group| &mut group.signature)
+            .collect()
+    }
+
+    /// A rotated active set verifies whatever `quorumsCLSigs` the QRInfo's
+    /// diffs serve: each quarter's ChainLock is read from the coinbase of its
+    /// work block, as Dash Core reads it (`src/llmq/utils.cpp:87-97`), and no
+    /// coinbase commits to `quorumsCLSigs`, so the diffs' coinbase proofs pass
+    /// either way. The cycles stored, with the quarter ChainLocks on their
+    /// entries, are those of the QRInfo as served.
+    #[test_case(true; "zero signatures")]
+    #[test_case(false; "signatures moved one group on")]
+    #[tokio::test]
+    async fn a_rotated_active_set_verifies_whatever_quorums_cl_sigs_serves(zero: bool) {
+        let (mut served, qr_info) = load_qrinfo_2518986_fixture();
+        served.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        let mut signatures = quorums_cl_sigs_mut(&mut qr_info);
+        let originals: Vec<BLSSignature> = signatures.iter().map(|signature| **signature).collect();
+        for (index, signature) in signatures.iter_mut().enumerate() {
+            **signature = if zero {
+                BLSSignature::from([0; 96])
+            } else {
+                originals[(index + 1) % originals.len()]
+            };
+        }
+
+        let feed_result = engine
+            .feed_qr_info(qr_info)
+            .await
+            .expect("quorumsCLSigs must not decide whether the QRInfo feeds");
+
+        assert_eq!(feed_result.fully_verified_count, 32);
+        assert_eq!(feed_result.stored_cycle_height, Some(2518848));
+        assert!(
+            engine.rotated_quorums_per_cycle == served.rotated_quorums_per_cycle,
+            "the cycles stored must be those of the QRInfo as served"
+        );
+        assert!(
+            engine.rotated_quorums_per_cycle.values().flat_map(|cycle| cycle.values()).all(
+                |quorum| matches!(
+                    quorum.verifying_chain_lock_signature,
+                    Some(VerifyingChainLockSignaturesType::Rotating(_))
+                )
+            ),
+            "every stored entry carries its quarter ChainLocks"
+        );
+    }
+
+    /// Feeds `qr_info`, expects it refused with `CommitmentNotInList` for
+    /// `quorum_hash` at the QRInfo's tip, and expects the engine as it was.
+    async fn assert_refused_as_not_in_list(
+        engine: &mut TestEngine,
+        qr_info: QRInfo,
+        quorum_hash: QuorumHash,
+    ) {
+        let tip_hash = qr_info.mn_list_diff_tip.block_hash;
+        let lists = engine.masternode_lists.clone();
+        let cycles = engine.rotated_quorums_per_cycle.clone();
+        let chain_locks = engine.coinbase_chain_locks.clone();
+
+        let result = engine.feed_qr_info(qr_info).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(FeedError::Refused(QuorumValidationError::CommitmentNotInList {
+                    quorum_hash: refused,
+                    block_hash,
+                })) if refused == quorum_hash && block_hash == tip_hash
+            ),
+            "expected {quorum_hash} refused as not in the list at {tip_hash}, got {result:?}"
+        );
+        assert!(engine.masternode_lists == lists, "a refused QRInfo leaves the lists as they were");
+        assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
+        assert_eq!(engine.coinbase_chain_locks, chain_locks, "and the coinbase ChainLocks");
+    }
+
+    /// The current-cycle quorum index the 2518986 fixture's tests alter: not
+    /// index 0, whose commitment is from the previous cycle.
+    const ALTERED_INDEX: usize = 1;
+
+    /// A real, mined commitment that the list at the QRInfo's tip does not
+    /// hold is refused, see `active_set_from_tip_list`. The replacement is the
+    /// previous cycle's commitment at the same index, from the list at the h
+    /// work block. Its quarter lists come with the QRInfo (`extraShare`), so
+    /// on its own it verifies.
+    #[tokio::test]
+    async fn a_mined_commitment_the_tip_list_does_not_hold_is_refused() {
+        let (mut served, qr_info) = load_qrinfo_2518986_fixture();
+        let h_hash = qr_info.mn_list_diff_h.block_hash;
+        served.feed_qr_info(qr_info).await.expect("the fixture feeds");
+        let h_height = served.block_height(&h_hash).expect("the fixture knows h");
+        let isd_type = served.network.isd_llmq_type();
+
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        let current = &qr_info.last_commitment_per_index[ALTERED_INDEX];
+        let previous = served.masternode_lists[&h_height].quorums[&isd_type]
+            .values()
+            .find(|quorum| quorum.quorum_entry.quorum_index == current.quorum_index)
+            .expect("the list at h holds the previous cycle's commitment at that index")
+            .quorum_entry
+            .clone();
+        assert_ne!(previous.quorum_hash, current.quorum_hash, "a commitment of another cycle");
+        assert_eq!(
+            served.masternode_lists[&h_height].quorums[&isd_type][&previous.quorum_hash].verified,
+            LLMQEntryVerificationStatus::Verified,
+            "the replacement verifies on its own"
+        );
+        let quorum_hash = previous.quorum_hash;
+        qr_info.last_commitment_per_index[ALTERED_INDEX] = previous;
+
+        assert_refused_as_not_in_list(&mut engine, qr_info, quorum_hash).await;
+    }
+
+    /// A served entry that differs from the listed one is refused for not
+    /// being the commitment the tip block's coinbase commits to, before any
+    /// signature check. An entry for a quorum of a stored cycle is checked
+    /// too, instead of being swapped for the stored copy, which is reused
+    /// only for the same entry.
+    #[test_case(false; "fresh engine")]
+    #[test_case(true; "after the cycle is stored")]
+    #[tokio::test]
+    async fn an_altered_served_entry_is_refused_as_not_in_the_tip_list(stored: bool) {
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        let quorum_hash = qr_info.last_commitment_per_index[ALTERED_INDEX].quorum_hash;
+        if stored {
+            let first = engine.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+            assert_eq!(first.stored_cycle_height, Some(2518848));
+            let cycles = engine.rotated_quorums_per_cycle.clone();
+            let again =
+                engine.feed_qr_info(qr_info.clone()).await.expect("the same QRInfo feeds again");
+            assert_eq!(again.fully_verified_count, 32);
+            assert!(
+                engine.rotated_quorums_per_cycle == cycles,
+                "and leaves the stored cycles alone"
+            );
+            assert!(
+                engine.rotated_quorums_per_cycle.values().any(|cycle| cycle
+                    .values()
+                    .any(|entry| entry.quorum_entry.quorum_hash == quorum_hash)),
+                "a quorum of a stored cycle"
+            );
+        }
+        qr_info.last_commitment_per_index[ALTERED_INDEX].quorum_vvec_hash =
+            dashcore::hash_types::QuorumVVecHash::all_zeros();
+
+        assert_refused_as_not_in_list(&mut engine, qr_info, quorum_hash).await;
+    }
+
+    /// A stored entry replaced by a commitment no list holds, with the type
+    /// and quorum hash of a listed one, is not used. Marked `Verified`, it
+    /// does not survive a restart: the snapshot cannot say whether the build
+    /// that wrote the cycles checked them against the list at a QRInfo's tip.
+    /// Left open, it is passed over, as a stored copy is reused only for the
+    /// entry the tip list holds. Either way the clean QRInfo stores the cycle
+    /// from the list at its tip.
+    #[test_case(true; "a restart drops the stored cycles")]
+    #[test_case(false; "a stored copy of another entry is not reused")]
+    #[tokio::test]
+    async fn a_stored_entry_the_tip_list_does_not_hold_is_not_used(restart: bool) {
+        let (mut served, qr_info) = load_qrinfo_2518986_fixture();
+        served.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+
+        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+        engine.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+        let cycle_hash = engine.block_hash_at(2518848).expect("the cycle base is known");
+        let stored = engine
+            .rotated_quorums_per_cycle
+            .get_mut(&cycle_hash)
+            .and_then(|cycle| cycle.get_mut(&(ALTERED_INDEX as u16)))
+            .expect("the cycle is stored");
+        let mut unlisted = stored.quorum_entry.clone();
+        unlisted.quorum_vvec_hash = dashcore::hash_types::QuorumVVecHash::all_zeros();
+        *stored = unlisted.into();
+        if restart {
+            stored.verified = LLMQEntryVerificationStatus::Verified;
+            assert!(engine.is_cycle_fully_verified(&cycle_hash), "it reads as a complete cycle");
+            let bytes = engine.snapshot().expect("encodes");
+            let restored = TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes)
+                .expect("decodes");
+            assert!(restored.masternode_lists == engine.masternode_lists, "the lists are restored");
+            assert!(restored.rotated_quorums_of_cycle(&cycle_hash).is_none(), "the cycle is not");
+            assert!(restored.rotated_quorums_per_cycle.is_empty(), "nor any other");
+            engine = restored;
+        } else {
+            assert!(!engine.is_cycle_fully_verified(&cycle_hash));
+        }
+
+        let fed = engine.feed_qr_info(qr_info).await.expect("the clean QRInfo feeds");
+
+        assert_eq!(fed.fully_verified_count, 32);
+        assert_eq!(fed.stored_cycle_height, Some(2518848));
+        assert!(
+            engine.rotated_quorums_per_cycle == served.rotated_quorums_per_cycle,
+            "the cycle is stored from the list at the QRInfo's tip"
+        );
+    }
+
+    /// Captured from dashd v23.1.8 on regtest at H=597 (cycle 576): the
+    /// `qrinfo` reply to a cold-start request, and the block heights. The
+    /// active `llmq_test_dip0024` set holds a straggler: index 1's last
+    /// commitment is from cycle 456, because its later DKGs failed after a
+    /// network cut of one member. Dash Core ends the reply's diffs at the work
+    /// blocks of the cycles relative to H (`src/llmq/snapshot.cpp:175-192`) and
+    /// of the older quarters of every served entry
+    /// (`src/llmq/snapshot.cpp:194-231`), so it has no diff ending at 448, the
+    /// straggler's own work block B-8. The engine validates, over the blocks'
+    /// merkle roots, as at a cold start.
+    fn load_qrinfo_597_regtest_fixture() -> (TestEngine, QRInfo) {
+        let heights = fixture_heights(include_bytes!(
+            "../../dash/tests/data/test_DML_diffs/block_container_597.dat"
+        ));
+        let mut engine = TestEngine::new(
+            Network::Regtest,
+            Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
+        );
+        let qr_info: QRInfo =
+            decode_fixture(include_bytes!("../../dash/tests/data/test_DML_diffs/qrinfo_597.dat"));
+        engine.feed_merkle_roots(qr_info_diffs(&qr_info));
+        (engine, qr_info)
+    }
+
+    /// A straggler's quarters take their ChainLocks from the coinbases of the
+    /// work blocks whose lists the engine holds, so it no longer waits on a
+    /// `quorumsCLSigs` value: what it lacks are lists. It is skipped for the
+    /// oldest missing list, and the cycle is not stored.
+    #[tokio::test]
+    async fn a_straggler_without_its_quarter_lists_is_skipped_for_them() {
+        let (mut engine, qr_info) = load_qrinfo_597_regtest_fixture();
+        let straggler = qr_info
+            .last_commitment_per_index
+            .iter()
+            .find(|quorum| quorum.quorum_index == Some(1))
+            .expect("the fixture serves index 1")
+            .clone();
+
+        let feed_result = engine.feed_qr_info(qr_info).await.expect("the QRInfo feeds");
+
+        assert_eq!(feed_result.rotated_quorum_count, 2);
+        assert_eq!(feed_result.fully_verified_count, 1);
+        assert_eq!(feed_result.stored_cycle_height, None);
+        let list_424 = &engine.masternode_lists[&424];
+        assert!(
+            matches!(engine.coinbase_chain_lock(424, &list_424.block_hash), Some(Some(_))),
+            "the held quarter's ChainLock is read from its coinbase"
+        );
+        let status = engine.latest_masternode_list().expect("a newest list").quorums
+            [&straggler.llmq_type][&straggler.quorum_hash]
+            .verified
+            .clone();
+        // The tip diff prunes 376 and 400 before validation; 448 is not served.
+        assert_eq!(
+            status,
+            LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(376))
+        );
+    }
+
     #[tokio::test]
     async fn validate_from_qr_info_and_mn_list_diffs() {
         let (mut engine, qr_info) = load_qrinfo_2240504_fixture().await;
@@ -2170,50 +2174,6 @@ mod tests {
         }
     }
 
-    /// Storage gate: when a QRInfo carries no rotation chain-lock signatures
-    /// and rotated quorums in `last_commitment_per_index` would need fresh
-    /// validation, the cycle must NOT enter `rotated_quorums_per_cycle`.
-    #[tokio::test]
-    async fn feed_qr_info_does_not_store_cycle_when_rotation_sigs_missing() {
-        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture().await;
-
-        // The post-V20 strict check requires every `new_quorums` slot to have
-        // a matching `quorums_chainlock_signatures` entry, so clearing both
-        // keeps `apply_diff` happy while leaving no signature that could be
-        // keyed to a quarter work height.
-        let strip = |diff: &mut MnListDiff| {
-            diff.new_quorums.clear();
-            diff.quorums_chainlock_signatures.clear();
-        };
-        strip(&mut qr_info.mn_list_diff_tip);
-        strip(&mut qr_info.mn_list_diff_h);
-        strip(&mut qr_info.mn_list_diff_at_h_minus_c);
-        strip(&mut qr_info.mn_list_diff_at_h_minus_2c);
-        strip(&mut qr_info.mn_list_diff_at_h_minus_3c);
-        if let Some((_, ref mut diff)) = qr_info.quorum_snapshot_and_mn_list_diff_at_h_minus_4c {
-            strip(diff);
-        }
-        for diff in qr_info.mn_list_diff_list.iter_mut() {
-            strip(diff);
-        }
-
-        let expected_cycle_key = served_cycle_key(&engine, &qr_info).await;
-
-        let feed_result = engine
-            .feed_qr_info(qr_info)
-            .await
-            .expect("feed_qr_info should succeed even when rotation sigs are missing");
-
-        assert_eq!(feed_result.fully_verified_count, 0, "no entry can verify without its sigs");
-        assert_eq!(feed_result.stored_cycle_height, None);
-        assert!(
-            !engine.rotated_quorums_per_cycle.contains_key(&expected_cycle_key),
-            "Cycle {} must not be stored when rotation sigs are missing; current keys: {:?}",
-            expected_cycle_key,
-            engine.rotated_quorums_per_cycle.keys().collect::<Vec<_>>()
-        );
-    }
-
     /// An active set whose cycle base no entry resolves cannot be stored under
     /// any key, however well it verified, and must not abort the feed either.
     #[tokio::test]
@@ -2247,6 +2207,23 @@ mod tests {
             .all_commitment_aggregated_signature
     }
 
+    /// Applies `edit` to the served entry at `index` and to the same quorum
+    /// in the tip diff, so the list at the tip holds the edited entry and it
+    /// passes the tip-list check on to validation. The 2240504 fixture's
+    /// engine does not check coinbases, so the edited tip list is taken.
+    fn edit_served_and_listed(qr_info: &mut QRInfo, index: usize, edit: impl Fn(&mut QuorumEntry)) {
+        let served = &mut qr_info.last_commitment_per_index[index];
+        let (llmq_type, quorum_hash) = (served.llmq_type, served.quorum_hash);
+        edit(served);
+        let listed = qr_info
+            .mn_list_diff_tip
+            .new_quorums
+            .iter_mut()
+            .find(|quorum| quorum.llmq_type == llmq_type && quorum.quorum_hash == quorum_hash)
+            .expect("the tip diff brings the served quorum");
+        edit(listed);
+    }
+
     /// A QRInfo whose rotated quorum carries a corrupt
     /// `all_commitment_aggregated_signature` must be rejected rather than
     /// stored: a fully-Verified entry with an invalid aggregate signature
@@ -2262,8 +2239,10 @@ mod tests {
 
         let cycle_key = served_cycle_key(&engine, &qr_info).await;
 
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        let foreign = foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        edit_served_and_listed(&mut qr_info, 0, |quorum| {
+            quorum.all_commitment_aggregated_signature = foreign;
+        });
 
         let err = engine.feed_qr_info(qr_info).await.expect_err("corrupt signature must reject");
         assert!(
@@ -2290,8 +2269,10 @@ mod tests {
     async fn a_qr_info_refused_after_its_diffs_applied_leaves_the_engine_as_it_was() {
         let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture().await;
         let target = qr_info.last_commitment_per_index[0].quorum_hash;
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        let foreign = foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        edit_served_and_listed(&mut qr_info, 0, |quorum| {
+            quorum.all_commitment_aggregated_signature = foreign;
+        });
         let lists = engine.masternode_lists.clone();
         let cycles = engine.rotated_quorums_per_cycle.clone();
         let chain_locks = engine.coinbase_chain_locks.clone();
@@ -2313,55 +2294,6 @@ mod tests {
         );
         assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
         assert_eq!(engine.coinbase_chain_locks, chain_locks, "and the coinbase ChainLocks");
-    }
-
-    /// A quarter signature keyed by elimination can belong to another cycle,
-    /// so a current-cycle quorum resting on one must settle as `Skipped` when
-    /// it fails to verify. Aborting the feed there would turn a gap in the
-    /// caller's context into a permanent sync stall.
-    #[tokio::test]
-    async fn feed_qr_info_skips_a_current_cycle_quorum_resting_on_an_inferred_signature() {
-        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture().await;
-
-        // The quorums of the cycle based at 2239488 are what exactly key the
-        // current cycle's oldest quarter. Dropping their heights leaves that
-        // quarter reachable only by elimination.
-        for height in 2239488..2239488 + 32 {
-            if let Some(block_hash) = engine.block_hash_at(height) {
-                engine.forget_block(&block_hash);
-            }
-        }
-
-        let target = qr_info.last_commitment_per_index[0].quorum_hash;
-        let llmq_type = qr_info.last_commitment_per_index[0].llmq_type;
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
-
-        let feed_result = engine
-            .feed_qr_info(qr_info)
-            .await
-            .expect("an inferred quarter signature must not abort the feed");
-
-        let status = engine
-            .masternode_lists
-            .values()
-            .rev()
-            .find_map(|list| list.quorums.get(&llmq_type)?.get(&target))
-            .map(|quorum| quorum.verified.clone())
-            .expect("a list must hold the corrupted quorum");
-        assert!(
-            matches!(
-                status,
-                LLMQEntryVerificationStatus::Skipped(
-                    LLMQEntryVerificationSkipStatus::InferredRotationChainLockSigs(hash)
-                ) if hash == target
-            ),
-            "a failure under an inferred quarter signature must settle as Skipped, got {status}"
-        );
-        assert!(
-            feed_result.stored_cycle_height.is_none(),
-            "a cycle holding a skipped entry must not be stored"
-        );
     }
 
     /// Header storage answering from `inner`, except that reading the block
@@ -2486,21 +2418,12 @@ mod tests {
     /// Our header storage failing, at whichever read of a QRInfo's feed, never
     /// refuses the QRInfo, which would pass our failure off as the message's:
     /// the feed fails with `HeaderStorage`, or the read only informed
-    /// and the feed goes on without it. That holds on the path a rotated
-    /// quorum takes when it fails under a quarter signature keyed by
-    /// elimination, which is skipped rather than invalid, and for the blocks
-    /// a diff is applied from and to.
+    /// and the feed goes on without it. That holds for a rotated quorum's
+    /// block and for the blocks a diff is applied from and to.
     #[tokio::test]
     async fn a_header_storage_failure_never_refuses_a_qr_info() {
-        let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture().await;
-        for height in 2239488..2239488 + 32 {
-            if let Some(block_hash) = engine.block_hash_at(height) {
-                engine.forget_block(&block_hash);
-            }
-        }
+        let (engine, qr_info) = load_qrinfo_2240504_fixture().await;
         let target = qr_info.last_commitment_per_index[0].quorum_hash;
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
         let blocks = [
             BlockHash::from_byte_array(target.to_byte_array()),
             qr_info.mn_list_diff_h.block_hash,

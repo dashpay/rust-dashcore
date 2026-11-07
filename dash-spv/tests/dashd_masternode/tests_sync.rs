@@ -11,18 +11,19 @@ use std::time::{Duration, Instant};
 use dash_spv::{ProgressPercentage, SyncEvent, SyncState};
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
-use dashcore::QuorumHash;
+use dashcore::{Amount, QuorumHash};
 use tokio::sync::Mutex;
 
 use super::helpers::{
     assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
-    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_masternode_sync,
-    wait_for_mn_state_event, wait_for_mn_state_event_above,
+    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_instant_lock_received,
+    wait_for_masternode_sync, wait_for_mn_state_event, wait_for_mn_state_event_above,
     wait_for_mn_state_with_stored_cycle_above,
 };
 use super::setup::{
     create_and_start_client, create_client, create_dummy_wallet, create_mn_test_config,
-    TestContext, SYNC_TIMEOUT,
+    create_wallet_from_controller, receive_address, wait_for_controller_islock, TestContext,
+    SYNC_TIMEOUT,
 };
 
 /// Sync masternode list against a pre-generated regtest controller node.
@@ -114,14 +115,20 @@ async fn test_masternode_list_sync() {
 }
 
 /// Sync masternode list, stop, restart with same storage twice without new blocks,
-/// and verify each start rebuilds the first session's list from storage.
+/// and verify each start rebuilds the first session's list from storage. A
+/// start restores no rotated cycle: the start QRInfo stores them again, and an
+/// InstantSend lock sent right after the restart is accepted once it has.
 #[tokio::test]
 async fn test_masternode_list_sync_with_restart() {
-    let Some(ctx) = TestContext::new(true).await else {
+    let Some(mut ctx) = TestContext::new(false).await else {
         return;
     };
 
-    let wallet = create_dummy_wallet();
+    // A live signing quorum, so the masternodes can lock a transaction after
+    // the restart.
+    ctx.mn_ctx.mine_dkg_cycle().expect("DKG cycle should succeed");
+
+    let (wallet, wallet_id) = create_wallet_from_controller(&ctx.mn_ctx);
     let config =
         create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
 
@@ -175,11 +182,38 @@ async fn test_masternode_list_sync_with_restart() {
         "startup must rebuild the first session's masternode list from storage, \
          not default and let a fresh dashd sync cover for it"
     );
+    assert!(
+        client_handle.engine.read().await.rotated_quorums_per_cycle().is_empty(),
+        "a start must not restore rotated cycles; the start QRInfo stores them again"
+    );
 
     client_handle.run().await;
+
+    // An InstantSend lock sent right after the restart, which the client may
+    // receive before its start QRInfo has stored the lock's cycle.
+    let addr = receive_address(&wallet, &wallet_id).await;
+    let txid = ctx.mn_ctx.controller.send_to_address(&addr, Amount::from_sat(50_000_000));
+    wait_for_controller_islock(&mut ctx.mn_ctx, &txid, 60).await;
+
     let second_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let second_height = second_mn_progress.current_height();
+
+    let lock = wait_for_instant_lock_received(
+        &mut client_handle.sync_event_receiver,
+        txid,
+        true,
+        SYNC_TIMEOUT,
+    )
+    .await;
+    {
+        let engine = client_handle.engine.read().await;
+        assert!(
+            engine.rotated_quorums_of_cycle(&lock.cyclehash).is_some(),
+            "the lock is accepted against the cycle the start QRInfo stored"
+        );
+        assert_all_rotated_quorums_verified(&engine);
+    }
 
     assert_eq!(
         second_height, first_height,

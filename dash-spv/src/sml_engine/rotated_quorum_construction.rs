@@ -10,9 +10,7 @@ use dashcore::sml::llmq_type::rotation::{LLMQQuarterReconstructionType, LLMQQuar
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
-use dashcore::sml::quorum_entry::qualified_quorum_entry::{
-    QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
-};
+use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::sml::quorum_entry::quorum_modifier_type::LLMQModifierType;
 use dashcore::sml::quorum_validation_error::QuorumValidationError;
 use dashcore::BlockHash;
@@ -28,8 +26,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         quorums: &[&'a QualifiedQuorumEntry],
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
     ) -> Vec<Result<Vec<&'a QualifiedMasternodeListEntry>, QuorumValidationError>> {
-        // Quorums of a cycle share its reconstruction. Only a successful one is
-        // cached: a quorum without signatures must not fail its siblings.
+        // Quorums of a cycle share its reconstruction. A successful one is
+        // cached; a failure is recomputed for each quorum of the cycle and
+        // gives the same error.
         let mut cycles: BTreeMap<CoreBlockHeight, Vec<Vec<&QualifiedMasternodeListEntry>>> =
             BTreeMap::new();
         let mut members = Vec::with_capacity(quorums.len());
@@ -58,20 +57,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             let members_by_index = match cycles.entry(cycle_base) {
                 Entry::Occupied(cached) => cached.into_mut(),
                 Entry::Vacant(slot) => {
-                    let Some(VerifyingChainLockSignaturesType::Rotating(sigs)) =
-                        quorum.verifying_chain_lock_signature
-                    else {
-                        members.push(Err(
-                            QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(
-                                quorum_hash,
-                            ),
-                        ));
-                        continue;
-                    };
                     match self.rotated_cycle_members(
                         quorum.quorum_entry.llmq_type,
                         cycle_base,
-                        sigs,
                         snapshots,
                     ) {
                         Ok(members_by_index) => slot.insert(members_by_index),
@@ -99,30 +87,27 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         &self,
         llmq_type: LLMQType,
         cycle_base: CoreBlockHeight,
-        sigs: [BLSSignature; 4],
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
     ) -> Result<Vec<Vec<&QualifiedMasternodeListEntry>>, QuorumValidationError> {
         let [h_3c, h_2c, h_c, h] = cycle_quarter_work_heights(cycle_base, llmq_type)
             .map(|height| height.ok_or(QuorumValidationError::CycleBaseHeightTooLow(cycle_base)));
-        let snapshot_quarter = |height, sig| {
+        let snapshot_quarter = |height| {
             self.quarter_members(
                 llmq_type,
                 LLMQQuarterReconstructionType::Snapshot,
                 height,
-                sig,
                 snapshots,
             )
         };
-        let q_3c = snapshot_quarter(h_3c?, sigs[0])?;
-        let q_2c = snapshot_quarter(h_2c?, sigs[1])?;
-        let q_c = snapshot_quarter(h_c?, sigs[2])?;
+        let q_3c = snapshot_quarter(h_3c?)?;
+        let q_2c = snapshot_quarter(h_2c?)?;
+        let q_c = snapshot_quarter(h_c?)?;
         let q_h = self.quarter_members(
             llmq_type,
             LLMQQuarterReconstructionType::New {
                 previous_quarters: [&q_c, &q_2c, &q_3c],
             },
             h?,
-            sigs[3],
             snapshots,
         )?;
 
@@ -137,13 +122,18 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     }
 
     /// One quarter's members by quorum index, from the list at
-    /// `work_block_height` and that work block's ChainLock signature.
+    /// `work_block_height` under the modifier Dash Core builds from that work
+    /// block's coinbase ChainLock (`GetHashModifierFromWorkBlock`,
+    /// `src/llmq/utils.cpp:87-97`), for the snapshot quarters
+    /// (`src/llmq/utils.cpp:200-204`) and the new one (`701-704`) alike. Before
+    /// v20 Dash Core hashes the work block alone (`src/llmq/utils.cpp:110-112`),
+    /// as does a work block whose coinbase carries no ChainLock. The signature
+    /// a diff serves in `quorumsCLSigs` is not used: no coinbase commits to it.
     fn quarter_members<'a: 'b, 'b>(
         &'a self,
         llmq_type: LLMQType,
         reconstruction_type: LLMQQuarterReconstructionType<'a, 'b>,
         work_block_height: CoreBlockHeight,
-        work_block_sig: BLSSignature,
         snapshots: &BTreeMap<BlockHash, QuorumSnapshot>,
     ) -> Result<Vec<Vec<&'a QualifiedMasternodeListEntry>>, QuorumValidationError> {
         let masternode_list = self
@@ -151,13 +141,19 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .get(&work_block_height)
             .ok_or(QuorumValidationError::RequiredMasternodeListNotPresent(work_block_height))?;
         let work_block_hash = masternode_list.block_hash;
+        let chain_lock = self.coinbase_chain_lock(work_block_height, &work_block_hash).ok_or(
+            QuorumValidationError::RequiredChainLockNotPresent(work_block_height, work_block_hash),
+        )?;
         let quorum_count = llmq_type.active_quorum_count() as usize;
         let quarter_size = llmq_type.size() as usize / 4;
+        // A coinbase carries a ChainLock only from version 3, which Dash Core
+        // accepts only once v20 is active at its block (`src/evo/cbtx.cpp:40-43`),
+        // so the v20 height check below always passes for one.
         let quorum_modifier_type = LLMQModifierType::new_quorum_modifier_type(
             llmq_type,
             work_block_hash,
             work_block_height,
-            work_block_sig,
+            chain_lock.unwrap_or(BLSSignature::from([0; 96])),
             self.network,
         )?;
         let quorum_modifier = quorum_modifier_type.build_llmq_hash();
@@ -398,39 +394,53 @@ mod tests {
         }
     }
 
-    /// Every quorum of a cycle resolves the member sets from its own quarter
-    /// signatures, and one that carries none cannot stand in for the cycle.
-    /// Caching its failure would leave every sibling unverifiable on a
-    /// commitment the sibling itself has everything to verify.
+    /// Every quarter's modifier comes from the coinbase ChainLock recorded
+    /// for its work block, not from a signature the quorum entry carries: an
+    /// entry with none reaches the reconstruction, and a quarter whose work
+    /// block's coinbase was not read yet skips the whole cycle, as a missing
+    /// list does.
     #[tokio::test]
-    async fn a_quorum_without_rotating_signatures_leaves_its_cycle_open() {
-        let mut engine = TestEngine::empty(Network::Mainnet);
-        let cycle_base = LLMQType::Llmqtype60_75.dkg_interval() * 100;
-        let without_sigs_hash = QuorumHash::from_byte_array([1; 32]);
-        let with_sigs_hash = QuorumHash::from_byte_array([2; 32]);
-        engine.feed_block_height(cycle_base, without_sigs_hash);
-        engine.feed_block_height(cycle_base + 1, with_sigs_hash);
-
-        let mut with_sigs = rotated_quorum(with_sigs_hash, 1);
-        with_sigs.verifying_chain_lock_signature =
-            Some(VerifyingChainLockSignaturesType::Rotating([BLSSignature::from([1; 96]); 4]));
-        let quorums = [rotated_quorum(without_sigs_hash, 0), with_sigs];
+    async fn quarters_read_the_coinbase_chain_locks_of_their_work_blocks() {
+        let llmq_type = LLMQType::Llmqtype60_75;
+        let cycle_base = llmq_type.dkg_interval() * 100;
+        let [Some(h_3c), Some(h_2c), Some(h_c), Some(h)] =
+            cycle_quarter_work_heights(cycle_base, llmq_type)
+        else {
+            panic!("the cycle is above genesis");
+        };
+        let mut engine = TestEngine::dummy_with_lists(&[h_3c, h_2c, h_c, h]);
+        for height in [h_3c, h_c, h] {
+            engine.coinbase_chain_locks.insert(height, (BlockHash::dummy(height), None));
+        }
+        let snapshots: BTreeMap<BlockHash, QuorumSnapshot> = [h_3c, h_2c, h_c]
+            .into_iter()
+            .map(|height| (BlockHash::dummy(height), snapshot(MNSkipListMode::SkipAll, vec![])))
+            .collect();
+        let quorums = [0, 1].map(|index: u8| {
+            let quorum_hash = QuorumHash::from_byte_array([index + 1; 32]);
+            engine.feed_block_height(cycle_base + u32::from(index), quorum_hash);
+            rotated_quorum(quorum_hash, i16::from(index))
+        });
+        assert!(quorums.iter().all(|quorum| quorum.verifying_chain_lock_signature.is_none()));
         let borrowed: Vec<&QualifiedQuorumEntry> = quorums.iter().collect();
 
-        let results =
-            engine.find_rotated_masternodes_for_quorums(&borrowed, &BTreeMap::new()).await;
+        let results = engine.find_rotated_masternodes_for_quorums(&borrowed, &snapshots).await;
+        for result in &results {
+            assert!(
+                matches!(
+                    result,
+                    Err(QuorumValidationError::RequiredChainLockNotPresent(height, block_hash))
+                        if *height == h_2c && *block_hash == BlockHash::dummy(h_2c)
+                ),
+                "a quarter without its coinbase ChainLock must skip its cycle, got {result:?}"
+            );
+        }
+
+        engine.coinbase_chain_locks.insert(h_2c, (BlockHash::dummy(h_2c), None));
+        let results = engine.find_rotated_masternodes_for_quorums(&borrowed, &snapshots).await;
         assert!(
-            matches!(
-                results[0],
-                Err(QuorumValidationError::RequiredRotatedChainLockSigsNotPresent(_))
-            ),
-            "a quorum without signatures must fail on its own account, got {:?}",
-            results[0]
-        );
-        assert!(
-            matches!(results[1], Err(QuorumValidationError::RequiredMasternodeListNotPresent(_))),
-            "a sibling carrying signatures must reach the reconstruction, got {:?}",
-            results[1]
+            results.iter().all(Result::is_ok),
+            "with every quarter's coinbase ChainLock recorded the cycle resolves, got {results:?}"
         );
     }
 

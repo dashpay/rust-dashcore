@@ -20,6 +20,9 @@ pub enum QuorumValidationError {
     #[error("Required chain lock not present at block height {0}, block hash: {1}")]
     RequiredChainLockNotPresent(CoreBlockHeight, BlockHash),
 
+    /// No longer produced; kept so persisted
+    /// [`LLMQEntryVerificationStatus::Invalid`](crate::sml::llmq_entry_verification::LLMQEntryVerificationStatus::Invalid)
+    /// values still decode.
     #[error("Required rotated chain lock sigs not present for masternode diff block hash: {0}")]
     RequiredRotatedChainLockSigsNotPresent(BlockHash),
 
@@ -86,6 +89,19 @@ pub enum QuorumValidationError {
     CorruptedCodeExecution(String),
     #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]
     ExpectedOnlyRotatedQuorums(QuorumHash, LLMQType),
+
+    /// A commitment served as part of a QRInfo's active rotation set is not
+    /// held, with the same entry hash, by the list at `block_hash`, the block
+    /// the set was asked for.
+    ///
+    /// Kept last: persisted statuses encode this enum by variant index.
+    #[error(
+        "Commitment for quorum {quorum_hash} is not in the masternode list at block {block_hash}"
+    )]
+    CommitmentNotInList {
+        quorum_hash: QuorumHash,
+        block_hash: BlockHash,
+    },
 }
 
 impl From<SmlError> for QuorumValidationError {
