@@ -5,11 +5,12 @@
 //! Filters are buffered in a HashMap<FilterMatchKey, BlockFilter> until the entire batch
 //! is complete, enabling batch verification and direct wallet matching.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use dashcore::network::message_filter::GetCFilters;
 use dashcore::BlockHash;
+use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
 use crate::network::{NetworkManager, SendRequest};
@@ -24,9 +25,11 @@ const FILTER_BATCH_SIZE: u32 = 1000;
 #[derive(Debug)]
 pub(super) struct FiltersPipeline {
     /// Tracks individual filter receipts per wanted batch (start_height -> tracker).
-    batch_trackers: HashMap<u32, BatchTracker>,
+    batch_trackers: BTreeMap<u32, BatchTracker>,
     /// Cached stop hash per wanted batch, so re-declaring each tick doesn't re-read storage.
     batch_stops: HashMap<u32, BlockHash>,
+    /// Stored header heights by hash for every wanted batch that has received a filter.
+    block_heights: HashMap<BlockHash, u32>,
     /// Completed filter batches.
     completed_batches: BTreeSet<FiltersBatch>,
     /// Target height for sync.
@@ -47,8 +50,9 @@ impl FiltersPipeline {
     /// Create a new CFilters pipeline.
     pub(super) fn new() -> Self {
         Self {
-            batch_trackers: HashMap::new(),
+            batch_trackers: BTreeMap::new(),
             batch_stops: HashMap::new(),
+            block_heights: HashMap::new(),
             completed_batches: BTreeSet::new(),
             target_height: 0,
             filters_received: 0,
@@ -70,6 +74,7 @@ impl FiltersPipeline {
     pub(super) fn init(&mut self, start_height: u32, target_height: u32) {
         self.batch_trackers.clear();
         self.batch_stops.clear();
+        self.block_heights.clear();
         self.completed_batches.clear();
         self.target_height = target_height;
         self.highest_received = start_height.saturating_sub(1);
@@ -157,6 +162,35 @@ impl FiltersPipeline {
         Ok(n)
     }
 
+    /// Returns the height of the stored header with `block_hash`, or `None` if no stored header
+    /// has it. The first filter of a wanted batch reads storage once and caches the header hashes
+    /// of the whole batch, so the rest of the batch resolves without a storage read.
+    pub(super) async fn resolve_height(
+        &mut self,
+        block_hash: &BlockHash,
+        storage: &RwLock<impl BlockHeaderStorage>,
+    ) -> SyncResult<Option<u32>> {
+        if let Some(&height) = self.block_heights.get(block_hash) {
+            return Ok(Some(height));
+        }
+
+        let storage = storage.read().await;
+        let Some(height) = storage.get_header_height_by_hash(block_hash).await? else {
+            return Ok(None);
+        };
+        if let Some((start, end)) = self.find_batch_for_height(height) {
+            match storage.load_headers(start..end + 1).await {
+                Ok(headers) => self
+                    .block_heights
+                    .extend(headers.iter().zip(start..).map(|(h, i)| (*h.hash(), i))),
+                Err(e) => {
+                    tracing::warn!("Failed to cache header hashes of filter batch {}: {}", start, e)
+                }
+            }
+        }
+        Ok(Some(height))
+    }
+
     /// Handle a received CFilter message with filter data.
     ///
     /// Buffers the filter data for batch verification and wallet matching.
@@ -169,7 +203,7 @@ impl FiltersPipeline {
         filter_data: &[u8],
     ) -> Option<u32> {
         // Find which batch this filter belongs to
-        let batch_start = self.find_batch_for_height(height)?;
+        let (batch_start, _) = self.find_batch_for_height(height)?;
 
         let tracker = self.batch_trackers.get_mut(&batch_start)?;
         tracker.insert_filter(height, block_hash, filter_data);
@@ -199,6 +233,9 @@ impl FiltersPipeline {
 
         self.batch_trackers.remove(&batch_start);
         self.batch_stops.remove(&batch_start);
+        for key in filters.keys() {
+            self.block_heights.remove(key.hash());
+        }
 
         tracing::info!(
             "Filter batch {}-{} complete ({} filters)",
@@ -212,23 +249,22 @@ impl FiltersPipeline {
         Some(batch_start)
     }
 
-    /// Find which batch a filter height belongs to.
-    fn find_batch_for_height(&self, height: u32) -> Option<u32> {
-        for (&start, tracker) in &self.batch_trackers {
-            if height >= start && height <= tracker.end_height() {
-                return Some(start);
-            }
-        }
-        None
+    /// Returns the start and end height of the wanted batch that contains `height`.
+    fn find_batch_for_height(&self, height: u32) -> Option<(u32, u32)> {
+        let (&start, tracker) = self.batch_trackers.range(..=height).next_back()?;
+        (height <= tracker.end_height()).then_some((start, tracker.end_height()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::{PersistentBlockHeaderStorage, PersistentStorage};
+    use crate::types::HashedBlockHeader;
     use dashcore::block::Header;
     use dashcore::network::message::NetworkMessage;
     use key_wallet_manager::FilterMatchKey;
+    use tempfile::TempDir;
 
     /// Generate dummy filter data for testing.
     fn dummy_filter_data(height: u32) -> Vec<u8> {
@@ -425,9 +461,12 @@ mod tests {
         let mut pipeline = FiltersPipeline::new();
         pipeline.batch_trackers.insert(0, BatchTracker::new(999));
         pipeline.batch_trackers.insert(1000, BatchTracker::new(1999));
+        pipeline.batch_trackers.insert(3000, BatchTracker::new(3999));
 
-        assert_eq!(pipeline.find_batch_for_height(500), Some(0));
-        assert_eq!(pipeline.find_batch_for_height(1500), Some(1000));
+        assert_eq!(pipeline.find_batch_for_height(500), Some((0, 999)));
+        assert_eq!(pipeline.find_batch_for_height(1500), Some((1000, 1999)));
+        assert_eq!(pipeline.find_batch_for_height(2500), None);
+        assert_eq!(pipeline.find_batch_for_height(3000), Some((3000, 3999)));
         assert_eq!(pipeline.find_batch_for_height(5000), None);
     }
 
@@ -436,10 +475,51 @@ mod tests {
         let mut pipeline = FiltersPipeline::new();
         pipeline.batch_trackers.insert(100, BatchTracker::new(199));
 
-        assert_eq!(pipeline.find_batch_for_height(100), Some(100));
-        assert_eq!(pipeline.find_batch_for_height(199), Some(100));
+        assert_eq!(pipeline.find_batch_for_height(100), Some((100, 199)));
+        assert_eq!(pipeline.find_batch_for_height(199), Some((100, 199)));
         assert_eq!(pipeline.find_batch_for_height(50), None);
         assert_eq!(pipeline.find_batch_for_height(250), None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_height_caches_the_hashes_of_a_receiving_batch() {
+        let stored_dir = TempDir::new().unwrap();
+        let mut stored = PersistentBlockHeaderStorage::open(stored_dir.path()).await.unwrap();
+        let headers: Vec<HashedBlockHeader> =
+            Header::dummy_batch(0..300).into_iter().map(HashedBlockHeader::from).collect();
+        stored.store_headers(&headers).await.unwrap();
+        let stored = RwLock::new(stored);
+        // Resolving against an empty storage succeeds only from the pipeline's cache.
+        let empty_dir = TempDir::new().unwrap();
+        let empty =
+            RwLock::new(PersistentBlockHeaderStorage::open(empty_dir.path()).await.unwrap());
+
+        let mut pipeline = FiltersPipeline::new();
+        pipeline.init(100, 199);
+        let hash = |h: u32| *headers[h as usize].hash();
+
+        assert_eq!(pipeline.resolve_height(&hash(150), &empty).await.unwrap(), None);
+        assert_eq!(
+            pipeline.resolve_height(&Header::dummy(10_000).block_hash(), &stored).await.unwrap(),
+            None
+        );
+
+        // A height outside every wanted batch resolves but caches nothing.
+        assert_eq!(pipeline.resolve_height(&hash(50), &stored).await.unwrap(), Some(50));
+        assert_eq!(pipeline.resolve_height(&hash(50), &empty).await.unwrap(), None);
+
+        assert_eq!(pipeline.resolve_height(&hash(150), &stored).await.unwrap(), Some(150));
+        assert_eq!(pipeline.resolve_height(&hash(100), &empty).await.unwrap(), Some(100));
+        assert_eq!(pipeline.resolve_height(&hash(199), &empty).await.unwrap(), Some(199));
+        assert_eq!(pipeline.resolve_height(&hash(200), &empty).await.unwrap(), None);
+
+        for h in 100..=199 {
+            let height = pipeline.resolve_height(&hash(h), &empty).await.unwrap().unwrap();
+            pipeline.receive_with_data(height, hash(h), &dummy_filter_data(h));
+        }
+        assert_eq!(pipeline.completed_batches.len(), 1);
+        assert_eq!(pipeline.resolve_height(&hash(150), &empty).await.unwrap(), None);
+        assert_eq!(pipeline.resolve_height(&hash(150), &stored).await.unwrap(), Some(150));
     }
 
     #[test]
@@ -493,17 +573,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_full_batch_lifecycle() {
-        use crate::storage::{PersistentBlockHeaderStorage, PersistentStorage};
         use crate::test_utils::MockNetworkManager;
-        use tempfile::TempDir;
 
         let headers = Header::dummy_batch(0..100);
         let tmp_dir = TempDir::new().unwrap();
         let mut storage = PersistentBlockHeaderStorage::open(tmp_dir.path()).await.unwrap();
         storage
-            .store_headers(
-                &headers.iter().map(crate::types::HashedBlockHeader::from).collect::<Vec<_>>(),
-            )
+            .store_headers(&headers.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
             .await
             .unwrap();
 
