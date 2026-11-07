@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use std::sync::LazyLock;
 
 use dashcore::block::Header;
+use dashcore::blockdata::constants::genesis_block;
 use dashcore::consensus::{encode, Decodable, Encodable};
 use dashcore::{BlockHash, Network};
 
@@ -37,6 +38,21 @@ static NO_CHECKPOINTS: CheckpointManager = CheckpointManager {
     checkpoints: BTreeMap::new(),
 };
 
+#[cfg(any(test, feature = "test-utils"))]
+impl CheckpointManager {
+    /// Checkpoints at every 50th block of `chain`.
+    pub fn dummy(chain: &[HashedBlockHeader]) -> Self {
+        let checkpoints = (49..chain.len())
+            .step_by(50)
+            .map(|height| {
+                let headers = chain[height + 1 - CHECKPOINT_HEADERS..=height].to_vec();
+                Checkpoint::new(height as u32, headers).expect("dummy checkpoint must fit")
+            })
+            .collect();
+        Self::new(checkpoints)
+    }
+}
+
 /// A known block and the [`CHECKPOINT_HEADERS`] - 1 headers before it.
 #[derive(Debug, Clone)]
 pub struct Checkpoint {
@@ -58,6 +74,14 @@ impl Checkpoint {
         })
     }
 
+    /// The genesis block of `network`, alone.
+    pub fn genesis(network: Network) -> Self {
+        Self {
+            height: 0,
+            headers: vec![genesis_block(network).header.into()],
+        }
+    }
+
     /// Height of the checkpoint block.
     pub fn height(&self) -> u32 {
         self.height
@@ -70,7 +94,7 @@ impl Checkpoint {
 
     /// Header of the checkpoint block.
     pub fn header(&self) -> &HashedBlockHeader {
-        &self.headers[CHECKPOINT_HEADERS - 1]
+        self.headers.last().expect("a checkpoint holds headers")
     }
 
     /// All the headers of the checkpoint, oldest first, from [`Self::start_height`].
@@ -80,7 +104,7 @@ impl Checkpoint {
 
     /// Height of the first of [`Self::headers`].
     pub fn start_height(&self) -> u32 {
-        self.height - (CHECKPOINT_HEADERS as u32 - 1)
+        self.height + 1 - self.headers.len() as u32
     }
 }
 
