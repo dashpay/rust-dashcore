@@ -140,10 +140,6 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
     wallet_infos: BTreeMap<WalletId, T>,
-    /// Structural revision counter incremented when wallets or accounts are
-    /// added/removed. Combined with per-wallet account-level revisions to
-    /// produce the total monitor revision.
-    structural_revision: u64,
     /// Event sender for wallet events.
     ///
     /// This is a *bounded, lossy* fan-out (capacity
@@ -212,7 +208,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             network,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
-            structural_revision: 0,
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
             // Persistence delivery is opt-in; the channel is created lazily when
             // a consumer calls `take_persistence_receiver`. See that field's docs.
@@ -265,11 +260,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         let _ = self.event_sender.send(event);
     }
 
-    /// Increment the structural revision for wallet/account additions or removals.
-    fn bump_structural_revision(&mut self) {
-        self.structural_revision += 1;
-    }
-
     /// Create a new wallet from mnemonic and add it to the manager.
     /// The mnemonic may be in any supported BIP-39 language (detected
     /// automatically). Returns the computed wallet ID.
@@ -306,7 +296,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet_mut);
         self.wallet_infos.insert(wallet_id, managed_info);
-        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -389,7 +378,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, final_wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
-        self.bump_structural_revision();
 
         Ok((serialized_bytes, wallet_id))
     }
@@ -422,7 +410,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
-        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -463,7 +450,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
-        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -511,7 +497,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
-        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -559,7 +544,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
-        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -692,7 +676,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             .add_account(account_type, account_xpub)
             .map_err(|e| WalletError::AccountCreation(e.to_string()))?;
 
-        self.bump_structural_revision();
         Ok(())
     }
 }

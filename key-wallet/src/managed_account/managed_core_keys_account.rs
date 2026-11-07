@@ -80,10 +80,6 @@ pub struct ManagedCoreKeysAccount {
     #[cfg(not(feature = "keep-finalized-transactions"))]
     #[cfg_attr(feature = "serde", serde(default))]
     finalized_summaries: HashMap<Txid, FinalizedSummary>,
-    /// Revision counter incremented when the monitored address set changes
-    /// (e.g. new addresses generated). Used to detect bloom filter staleness.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    monitor_revision: u64,
 }
 
 impl ManagedCoreKeysAccount {
@@ -97,7 +93,6 @@ impl ManagedCoreKeysAccount {
             finalized_txids: HashSet::new(),
             #[cfg(not(feature = "keep-finalized-transactions"))]
             finalized_summaries: HashMap::new(),
-            monitor_revision: 0,
         }
     }
 
@@ -470,13 +465,5 @@ impl ManagedAccountTrait for ManagedCoreKeysAccount {
     #[cfg(not(feature = "keep-finalized-transactions"))]
     fn transaction_is_finalized(&self, txid: &Txid) -> bool {
         self.finalized_txids.contains(txid)
-    }
-
-    fn monitor_revision(&self) -> u64 {
-        self.monitor_revision
-    }
-
-    fn bump_monitor_revision(&mut self) {
-        self.monitor_revision += 1;
     }
 }
