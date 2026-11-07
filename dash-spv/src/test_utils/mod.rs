@@ -6,6 +6,7 @@ mod event_handler;
 mod filter;
 mod fs_helpers;
 mod header_storage;
+mod instant_lock;
 pub(crate) mod masternode_network;
 mod network;
 mod node;
@@ -21,6 +22,7 @@ pub use context::DashdTestContext;
 pub use event_handler::TestEventHandler;
 pub use fs_helpers::retain_test_dir;
 pub use header_storage::MockHeaderStorage;
+pub use instant_lock::{InstantLockFixture, InstantLockFixtureError};
 pub use masternode_network::{
     ControllerInfo, MasternodeInfo, MasternodeTestContext, NetworkMetadata,
 };

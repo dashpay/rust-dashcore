@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::{Amount, Transaction, Txid};
@@ -26,6 +25,7 @@ use crate::network::NetworkManager;
 use crate::sync::mempool::MempoolProgress;
 use crate::sync::SyncEvent;
 use crate::types::UnconfirmedTransaction;
+use crate::validation::VerifiedInstantLock;
 use key_wallet_manager::WalletInterface;
 
 /// Timeout for pruning expired mempool transactions (24 hours).
@@ -66,7 +66,7 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     /// Connected peers and their activation state.
     pub(super) peers: HashMap<SocketAddr, Option<VecDeque<Txid>>>,
     /// IS locks that arrived before their corresponding transaction, with insertion time.
-    pending_is_locks: HashMap<Txid, (InstantLock, Instant)>,
+    pub(super) pending_is_locks: HashMap<Txid, (VerifiedInstantLock, Instant)>,
     /// Txids already downloaded, with download timestamp.
     /// Prevents duplicate downloads when multiple peers announce the same transactions.
     /// Entries expire after `SEEN_TXID_EXPIRY`.
@@ -400,7 +400,8 @@ impl<W: WalletInterface> MempoolManager<W> {
         self.progress.add_received(1);
 
         // Check for a pre-arrived IS lock before wallet processing consumes it
-        let pending_lock = self.pending_is_locks.remove(&txid).map(|(lock, _)| lock);
+        let pending_lock =
+            self.pending_is_locks.remove(&txid).map(|(lock, _)| lock.instant_lock().clone());
         let is_locked = pending_lock.is_some();
 
         let result = {
@@ -605,9 +606,9 @@ impl<W: WalletInterface> MempoolManager<W> {
     /// broadcast for the txid is promoted to accepted and dropped from tracking.
     pub(super) async fn process_instant_send(
         &mut self,
-        instant_lock: InstantLock,
+        instant_lock: VerifiedInstantLock,
     ) -> Vec<SyncEvent> {
-        let txid = instant_lock.txid;
+        let txid = instant_lock.txid();
         let mut events = Vec::new();
         if let Some(state) = self.broadcasts.remove(&txid) {
             if matches!(state.status, BroadcastStatus::Pending | BroadcastStatus::Uncertain) {
@@ -639,7 +640,9 @@ impl<W: WalletInterface> MempoolManager<W> {
         if let Some(lock) = instant_lock_opt {
             let mut wallet = self.wallet.write().await;
             if let Some(tx) = self.transactions.get(&txid) {
-                wallet.process_mempool_instant_send_lock(&tx.transaction, lock).await;
+                wallet
+                    .process_mempool_instant_send_lock(&tx.transaction, lock.instant_lock().clone())
+                    .await;
             }
         }
         events
@@ -852,7 +855,7 @@ impl<W: WalletInterface> fmt::Debug for MempoolManager<W> {
 mod tests {
     use super::*;
     use dashcore::network::message::NetworkMessage;
-    use dashcore::{Address, BlockHash, Network, ScriptBuf, Transaction};
+    use dashcore::{Address, BlockHash, InstantLock, Network, ScriptBuf, Transaction};
     use key_wallet::transaction_checking::TransactionContext;
     use key_wallet_manager::test_utils::MockWallet;
 
@@ -864,6 +867,10 @@ mod tests {
             txid,
             ..InstantLock::default()
         }
+    }
+
+    fn verified_lock(txid: Txid) -> VerifiedInstantLock {
+        VerifiedInstantLock::assume_verified(dummy_instant_lock(txid))
     }
 
     fn rich_instant_lock(txid: Txid) -> InstantLock {
@@ -1333,7 +1340,7 @@ mod tests {
             UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
         );
 
-        let events = manager.process_instant_send(dummy_instant_lock(txid)).await;
+        let events = manager.process_instant_send(verified_lock(txid)).await;
 
         // Verify IS flag, broadcast promotion, and tracking cleanup
         assert!(manager.transactions.get(&txid).unwrap().is_instant_send);
@@ -1365,7 +1372,7 @@ mod tests {
         let (mut manager, _requests, _rx) = create_test_manager();
 
         let unknown_txid = Txid::from_byte_array([0xbb; 32]);
-        manager.process_instant_send(dummy_instant_lock(unknown_txid)).await;
+        manager.process_instant_send(verified_lock(unknown_txid)).await;
 
         // No immediate wallet notification
         let wallet = manager.wallet.read().await;
@@ -1477,7 +1484,7 @@ mod tests {
             .peers
             .insert(test_socket_address(1), Some(VecDeque::from([Txid::from_byte_array([2; 32])])));
         let txid3 = Txid::from_byte_array([3; 32]);
-        manager.pending_is_locks.insert(txid3, (dummy_instant_lock(txid3), Instant::now()));
+        manager.pending_is_locks.insert(txid3, (verified_lock(txid3), Instant::now()));
 
         manager.clear_pending();
 
@@ -1526,7 +1533,9 @@ mod tests {
         let txid = tx.txid();
 
         // IS lock arrives before the transaction (with a distinct cyclehash)
-        manager.process_instant_send(rich_instant_lock(txid)).await;
+        manager
+            .process_instant_send(VerifiedInstantLock::assume_verified(rich_instant_lock(txid)))
+            .await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives
@@ -1564,7 +1573,7 @@ mod tests {
         let txid = tx.txid();
 
         // IS lock arrives before the transaction
-        manager.process_instant_send(dummy_instant_lock(txid)).await;
+        manager.process_instant_send(verified_lock(txid)).await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         // Transaction arrives but wallet says it's not relevant
@@ -1586,13 +1595,13 @@ mod tests {
             let mut bytes = [0u8; 32];
             bytes[0..8].copy_from_slice(&(i as u64).to_le_bytes());
             let txid = Txid::from_byte_array(bytes);
-            manager.pending_is_locks.insert(txid, (dummy_instant_lock(txid), Instant::now()));
+            manager.pending_is_locks.insert(txid, (verified_lock(txid), Instant::now()));
         }
         assert_eq!(manager.pending_is_locks.len(), MAX_PENDING_IS_LOCKS);
 
         // Next IS lock should be dropped
         let overflow_txid = Txid::from_byte_array([0xff; 32]);
-        manager.process_instant_send(dummy_instant_lock(overflow_txid)).await;
+        manager.process_instant_send(verified_lock(overflow_txid)).await;
         assert!(!manager.pending_is_locks.contains_key(&overflow_txid));
         assert_eq!(manager.pending_is_locks.len(), MAX_PENDING_IS_LOCKS);
     }
@@ -1620,10 +1629,10 @@ mod tests {
 
         // Also store a pending IS lock for this txid and an unrelated one
         let unrelated_txid = Txid::from_byte_array([0xdd; 32]);
-        manager.pending_is_locks.insert(txid, (dummy_instant_lock(txid), Instant::now()));
+        manager.pending_is_locks.insert(txid, (verified_lock(txid), Instant::now()));
         manager
             .pending_is_locks
-            .insert(unrelated_txid, (dummy_instant_lock(unrelated_txid), Instant::now()));
+            .insert(unrelated_txid, (verified_lock(unrelated_txid), Instant::now()));
 
         manager.prune_expired(test_timeout);
 
@@ -1649,17 +1658,12 @@ mod tests {
         let stale_txid = Txid::from_byte_array([0xaa; 32]);
         manager.pending_is_locks.insert(
             stale_txid,
-            (
-                dummy_instant_lock(stale_txid),
-                Instant::now() - test_timeout - Duration::from_secs(1),
-            ),
+            (verified_lock(stale_txid), Instant::now() - test_timeout - Duration::from_secs(1)),
         );
 
         // Insert a fresh pending IS lock
         let fresh_txid = Txid::from_byte_array([0xbb; 32]);
-        manager
-            .pending_is_locks
-            .insert(fresh_txid, (dummy_instant_lock(fresh_txid), Instant::now()));
+        manager.pending_is_locks.insert(fresh_txid, (verified_lock(fresh_txid), Instant::now()));
 
         manager.prune_expired(test_timeout);
 
@@ -1961,7 +1965,7 @@ mod tests {
         // The same signed transaction reached the network by another route first (a BIP70
         // merchant broadcasting the bytes it was just paid with), so its InstantSend lock
         // arrives before this node dispatches its own copy.
-        manager.process_instant_send(dummy_instant_lock(txid)).await;
+        manager.process_instant_send(verified_lock(txid)).await;
         assert!(manager.pending_is_locks.contains_key(&txid));
 
         let events = manager.start_broadcast(&tx, &requests).await;
@@ -2063,7 +2067,7 @@ mod tests {
         let tx = test_transaction(43);
         let txid = tx.txid();
 
-        manager.process_instant_send(dummy_instant_lock(txid)).await;
+        manager.process_instant_send(verified_lock(txid)).await;
 
         let local_addr = SocketAddr::from(([0, 0, 0, 0], 0));
         let events = manager.handle_tx(tx, local_addr, &requests).await.unwrap();

@@ -30,10 +30,8 @@ impl<H: BlockHeaderStorage> SyncManager for InstantSendManager<H> {
     }
 
     fn on_disconnect(&mut self) {
-        // Clear the queue *and* drop unvalidated cache entries. Leaving the
-        // latter behind would make `process_instantlock` treat a lock
-        // re-announced after reconnect as a duplicate, so it would never be
-        // re-queued or re-validated.
+        // Clear the queue so a lock re-announced after reconnect is processed
+        // fresh, and drop unvalidated cache entries because they are not final.
         self.clear_unvalidated_on_disconnect();
         // Nothing is queued anymore, so the height at which we last validated is
         // meaningless; reset it so re-validation runs again after reconnect.

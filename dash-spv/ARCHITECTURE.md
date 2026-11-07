@@ -1112,7 +1112,7 @@ sync/<manager>/
 
 - Listens for InstantLock messages from network
 - Validates signatures
-- Emits `InstantLockReceived` events
+- Emits `InstantLockReceived` events carrying a `VerifiedInstantLock`; locks awaiting quorum data are queued without an event
 
 ##### `src/sync/mempool/` - Mempool Transaction Tracking
 
@@ -1174,7 +1174,7 @@ The `seen_txids` map provides a 180-second deduplication window to handle the ca
 |-------|--------|
 | `SyncComplete` | Activate mempool relay on all connected peers (transitions to `Synced`) |
 | `BlockProcessed` | Remove confirmed txids from mempool state; immediately rebuild bloom filter if new addresses |
-| `InstantLockReceived` | Mark transaction as IS-locked, or store in pending_is_locks if TX not yet received |
+| `InstantLockReceived` | Mark transaction as IS-locked, or store in pending_is_locks if TX not yet received. The event carries only verified locks |
 | `PeerConnected` | Activate on new peer immediately if already synced |
 | `PeerDisconnected` | Remove peer; redistribute its queued txids to a random activated peer |
 | `PeersUpdated` with no addresses | All peers lost: call `stop_sync()`, transition to `WaitingForConnections` |
