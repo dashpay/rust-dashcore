@@ -616,6 +616,18 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .map(|(_, chain_lock)| *chain_lock)
     }
 
+    /// Returns the ChainLock a quorum modifier is built from for the work block `block_hash` at
+    /// `height`: its coinbase ChainLock, or all-zero when the coinbase carries none. `None` when
+    /// no coinbase ChainLock is recorded for that block.
+    fn work_block_chain_lock(
+        &self,
+        height: CoreBlockHeight,
+        block_hash: &BlockHash,
+    ) -> Option<BLSSignature> {
+        self.coinbase_chain_lock(height, block_hash)
+            .map(|chain_lock| chain_lock.unwrap_or(BLSSignature::from([0; 96])))
+    }
+
     /// The stored rotated quorum `quorum_entry` commits to, if any.
     fn known_qualified_quorum_entry(
         &self,
