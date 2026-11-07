@@ -1439,7 +1439,7 @@ mod tests {
             peers.push(peer);
         }
         let slow = underserving_peer(&peers)?;
-        peers.iter().position(|p| p.addr() == slow)
+        peers.iter().position(|p| p.addr() == slow.addr)
     }
 
     #[test]
