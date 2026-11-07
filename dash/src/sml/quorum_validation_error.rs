@@ -7,6 +7,7 @@ use crate::sml::error::SmlError;
 use crate::sml::llmq_type::LLMQType;
 use crate::{BlockHash, QuorumHash};
 
+/// Persisted statuses encode this enum by variant index, so new variants go at the end.
 #[derive(Debug, Error, Clone, Ord, PartialOrd, PartialEq, Hash, Eq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -87,6 +88,16 @@ pub enum QuorumValidationError {
     CorruptedCodeExecution(String),
     #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]
     ExpectedOnlyRotatedQuorums(QuorumHash, LLMQType),
+
+    /// A QRInfo's active-set commitment that the list at `block_hash`, the
+    /// requested block, does not hold with the same entry hash.
+    #[error(
+        "Commitment for quorum {quorum_hash} is not in the masternode list at block {block_hash}"
+    )]
+    CommitmentNotInList {
+        quorum_hash: QuorumHash,
+        block_hash: BlockHash,
+    },
 }
 
 impl From<SmlError> for QuorumValidationError {

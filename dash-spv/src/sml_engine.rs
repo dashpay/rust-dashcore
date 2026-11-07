@@ -599,20 +599,47 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .map(|chain_lock| chain_lock.unwrap_or(BLSSignature::from([0; 96])))
     }
 
-    /// The stored rotated quorum `quorum_entry` commits to, if any.
+    /// Returns the stored rotated quorum with the type, quorum hash and entry
+    /// hash of `listed`, if any.
     fn known_qualified_quorum_entry(
         &self,
-        quorum_entry: &QuorumEntry,
+        listed: &QualifiedQuorumEntry,
     ) -> Option<QualifiedQuorumEntry> {
         self.rotated_quorums_per_cycle
             .values()
             .find_map(|qualified_entries| {
                 qualified_entries.values().find(|qualified_entry| {
-                    qualified_entry.quorum_entry.quorum_hash == quorum_entry.quorum_hash
-                        && qualified_entry.quorum_entry.llmq_type == quorum_entry.llmq_type
+                    qualified_entry.quorum_entry.quorum_hash == listed.quorum_entry.quorum_hash
+                        && qualified_entry.quorum_entry.llmq_type == listed.quorum_entry.llmq_type
+                        && qualified_entry.entry_hash == listed.entry_hash
                 })
             })
             .cloned()
+    }
+
+    /// Returns the served active set as the list at the QRInfo's tip holds it.
+    /// Refuses with [`QuorumValidationError::CommitmentNotInList`] any served
+    /// entry the list does not hold with the same entry hash.
+    fn active_set_from_tip_list(
+        &self,
+        served: Vec<QuorumEntry>,
+        tip_block_hash: BlockHash,
+    ) -> Result<Vec<QualifiedQuorumEntry>, QuorumValidationError> {
+        let tip_list =
+            self.masternode_lists.values().rev().find(|list| list.block_hash == tip_block_hash);
+        served
+            .into_iter()
+            .map(|entry| {
+                tip_list
+                    .and_then(|list| list.quorums.get(&entry.llmq_type)?.get(&entry.quorum_hash))
+                    .filter(|listed| listed.entry_hash == entry.calculate_entry_hash())
+                    .map(|listed| (**listed).clone())
+                    .ok_or(QuorumValidationError::CommitmentNotInList {
+                        quorum_hash: entry.quorum_hash,
+                        block_hash: tip_block_hash,
+                    })
+            })
+            .collect()
     }
 
     /// Stores the previous cycle, the active set of the list at the h work
@@ -797,6 +824,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// Applies a QRInfo's diffs, then validates and stores its active rotation
     /// set and the previous cycle's. An invalid current-cycle quorum fails it.
     ///
+    /// The QRInfo's tip diff must end at the requested block: the active set is
+    /// taken from the list at the tip.
+    ///
     /// A QRInfo that fails, or whose feed is dropped part way as an aborted
     /// task drops it, leaves the engine as it was: its retry starts from the
     /// same lists, and no later message builds on lists of a QRInfo that was
@@ -860,7 +890,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             self.apply_and_prune(diff).await?;
         }
         self.apply_and_prune(mn_list_diff_h).await?;
+        let tip_block_hash = mn_list_diff_tip.block_hash;
         self.apply_and_prune(mn_list_diff_tip).await?;
+        let listed_last_commitment_per_index =
+            self.active_set_from_tip_list(last_commitment_per_index, tip_block_hash)?;
 
         // Only the h-4c share brings the oldest quarters of the list at h.
         if can_verify_previous {
@@ -870,16 +903,14 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
 
         let mut qualified_last_commitment_per_index =
-            Vec::with_capacity(last_commitment_per_index.len());
-        for quorum_entry in last_commitment_per_index {
-            if let Some(qualified_quorum_entry) = self.known_qualified_quorum_entry(&quorum_entry) {
-                qualified_last_commitment_per_index.push(qualified_quorum_entry);
+            Vec::with_capacity(listed_last_commitment_per_index.len());
+        for mut listed in listed_last_commitment_per_index {
+            if let Some(stored) = self.known_qualified_quorum_entry(&listed) {
+                qualified_last_commitment_per_index.push(stored);
                 continue;
             }
-            let quarter_sigs = self.quarter_sigs(&quorum_entry).await?;
-            let mut qualified_quorum_entry: QualifiedQuorumEntry = quorum_entry.into();
-            qualified_quorum_entry.verifying_chain_lock_signature = quarter_sigs;
-            qualified_last_commitment_per_index.push(qualified_quorum_entry);
+            listed.verifying_chain_lock_signature = self.quarter_sigs(&listed.quorum_entry).await?;
+            qualified_last_commitment_per_index.push(listed);
         }
 
         let cycle_key = self
@@ -1357,6 +1388,7 @@ mod tests {
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
+    use dashcore::hash_types::QuorumVVecHash;
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
     use dashcore::prelude::CoreBlockHeight;
@@ -1870,6 +1902,131 @@ mod tests {
         );
     }
 
+    /// Feeds `qr_info`, expects it refused with `CommitmentNotInList` for
+    /// `quorum_hash` at the QRInfo's tip, and expects the engine as it was.
+    async fn assert_refused_as_not_in_list(
+        engine: &mut TestEngine,
+        qr_info: QRInfo,
+        quorum_hash: QuorumHash,
+    ) {
+        let tip_hash = qr_info.mn_list_diff_tip.block_hash;
+        let lists = engine.masternode_lists.clone();
+        let cycles = engine.rotated_quorums_per_cycle.clone();
+        let chain_locks = engine.coinbase_chain_locks.clone();
+
+        let result = engine.feed_qr_info(qr_info).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(FeedError::Refused(QuorumValidationError::CommitmentNotInList {
+                    quorum_hash: refused,
+                    block_hash,
+                })) if refused == quorum_hash && block_hash == tip_hash
+            ),
+            "expected {quorum_hash} refused as not in the list at {tip_hash}, got {result:?}"
+        );
+        assert!(engine.masternode_lists == lists, "a refused QRInfo leaves the lists as they were");
+        assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
+        assert_eq!(engine.coinbase_chain_locks, chain_locks, "and the coinbase ChainLocks");
+    }
+
+    /// The current-cycle quorum index the 2518986 fixture's tests alter. Index
+    /// 0's commitment is from the previous cycle.
+    const ALTERED_INDEX: usize = 1;
+
+    /// A mined commitment the list at the QRInfo's tip does not hold is refused, though it
+    /// verifies on its own. The test serves the previous cycle's commitment at the same index.
+    #[tokio::test]
+    async fn a_mined_commitment_the_tip_list_does_not_hold_is_refused() {
+        let (mut served, qr_info) = load_qrinfo_2518986_fixture();
+        let h_hash = qr_info.mn_list_diff_h.block_hash;
+        served.feed_qr_info(qr_info).await.expect("the fixture feeds");
+        let h_height = served.block_height(&h_hash).expect("the fixture knows h");
+        let isd_type = served.network.isd_llmq_type();
+
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        let current = &qr_info.last_commitment_per_index[ALTERED_INDEX];
+        let previous = served.masternode_lists[&h_height].quorums[&isd_type]
+            .values()
+            .find(|quorum| quorum.quorum_entry.quorum_index == current.quorum_index)
+            .expect("the list at h holds the previous cycle's commitment at that index")
+            .quorum_entry
+            .clone();
+        assert_ne!(previous.quorum_hash, current.quorum_hash, "a commitment of another cycle");
+        assert_eq!(
+            served.masternode_lists[&h_height].quorums[&isd_type][&previous.quorum_hash].verified,
+            LLMQEntryVerificationStatus::Verified,
+            "the replacement verifies on its own"
+        );
+        let quorum_hash = previous.quorum_hash;
+        qr_info.last_commitment_per_index[ALTERED_INDEX] = previous;
+
+        assert_refused_as_not_in_list(&mut engine, qr_info, quorum_hash).await;
+    }
+
+    /// A served entry that differs from the listed one is refused, also when a
+    /// stored cycle holds its quorum.
+    #[test_case(false; "fresh engine")]
+    #[test_case(true; "after the cycle is stored")]
+    #[tokio::test]
+    async fn an_altered_served_entry_is_refused_as_not_in_the_tip_list(stored: bool) {
+        let (mut engine, mut qr_info) = load_qrinfo_2518986_fixture();
+        let quorum_hash = qr_info.last_commitment_per_index[ALTERED_INDEX].quorum_hash;
+        if stored {
+            let first = engine.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+            assert_eq!(first.stored_cycle_height, Some(2518848));
+            let cycles = engine.rotated_quorums_per_cycle.clone();
+            let again =
+                engine.feed_qr_info(qr_info.clone()).await.expect("the same QRInfo feeds again");
+            assert_eq!(again.fully_verified_count, 32);
+            assert!(
+                engine.rotated_quorums_per_cycle == cycles,
+                "and leaves the stored cycles alone"
+            );
+            assert!(
+                engine.rotated_quorums_per_cycle.values().any(|cycle| cycle
+                    .values()
+                    .any(|entry| entry.quorum_entry.quorum_hash == quorum_hash)),
+                "a quorum of a stored cycle"
+            );
+        }
+        qr_info.last_commitment_per_index[ALTERED_INDEX].quorum_vvec_hash =
+            QuorumVVecHash::all_zeros();
+
+        assert_refused_as_not_in_list(&mut engine, qr_info, quorum_hash).await;
+    }
+
+    /// A stored entry with the type and quorum hash of a listed one but another
+    /// entry hash is not reused: the QRInfo stores the cycle from its tip list.
+    #[tokio::test]
+    async fn a_stored_entry_the_tip_list_does_not_hold_is_not_used() {
+        let (mut served, qr_info) = load_qrinfo_2518986_fixture();
+        served.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+
+        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+        engine.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
+        let cycle_hash = engine.block_hash_at(2518848).expect("the cycle base is known");
+        let stored = engine
+            .rotated_quorums_per_cycle
+            .get_mut(&cycle_hash)
+            .and_then(|cycle| cycle.get_mut(&(ALTERED_INDEX as u16)))
+            .expect("the cycle is stored");
+        let mut unlisted = stored.quorum_entry.clone();
+        unlisted.quorum_vvec_hash = QuorumVVecHash::all_zeros();
+        *stored = unlisted.into();
+        assert!(!engine.is_cycle_fully_verified(&cycle_hash));
+
+        let fed = engine.feed_qr_info(qr_info).await.expect("the clean QRInfo feeds");
+
+        assert_eq!(fed.fully_verified_count, 32);
+        assert_eq!(fed.stored_cycle_height, Some(2518848));
+        assert!(
+            engine.rotated_quorums_per_cycle == served.rotated_quorums_per_cycle,
+            "the cycle is stored from the list at the QRInfo's tip"
+        );
+    }
+
     /// Returns an engine and the `qrinfo` dashd v23.1.8 served at regtest H=597 to a cold start.
     /// Index 1 of `llmq_test_dip0024` is a straggler from cycle 456, and no served diff ends at
     /// 448, its own work block.
@@ -2001,6 +2158,22 @@ mod tests {
             .all_commitment_aggregated_signature
     }
 
+    /// Applies `edit` to the served entry at `index` and to the same quorum in
+    /// the tip diff, so the edited entry passes the tip-list check. The 2240504
+    /// fixture's engine does not check coinbases.
+    fn edit_served_and_listed(qr_info: &mut QRInfo, index: usize, edit: impl Fn(&mut QuorumEntry)) {
+        let served = &mut qr_info.last_commitment_per_index[index];
+        let (llmq_type, quorum_hash) = (served.llmq_type, served.quorum_hash);
+        edit(served);
+        let listed = qr_info
+            .mn_list_diff_tip
+            .new_quorums
+            .iter_mut()
+            .find(|quorum| quorum.llmq_type == llmq_type && quorum.quorum_hash == quorum_hash)
+            .expect("the tip diff brings the served quorum");
+        edit(listed);
+    }
+
     /// A QRInfo whose rotated quorum carries a corrupt
     /// `all_commitment_aggregated_signature` must be rejected rather than
     /// stored: a fully-Verified entry with an invalid aggregate signature
@@ -2016,8 +2189,10 @@ mod tests {
 
         let cycle_key = served_cycle_key(&engine, &qr_info).await;
 
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        let foreign = foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        edit_served_and_listed(&mut qr_info, 0, |quorum| {
+            quorum.all_commitment_aggregated_signature = foreign;
+        });
 
         let err = engine.feed_qr_info(qr_info).await.expect_err("corrupt signature must reject");
         assert!(
@@ -2044,8 +2219,10 @@ mod tests {
     async fn a_qr_info_refused_after_its_diffs_applied_leaves_the_engine_as_it_was() {
         let (mut engine, mut qr_info) = load_qrinfo_2240504_fixture().await;
         let target = qr_info.last_commitment_per_index[0].quorum_hash;
-        qr_info.last_commitment_per_index[0].all_commitment_aggregated_signature =
-            foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        let foreign = foreign_aggregate_signature(&qr_info.last_commitment_per_index, target);
+        edit_served_and_listed(&mut qr_info, 0, |quorum| {
+            quorum.all_commitment_aggregated_signature = foreign;
+        });
         let lists = engine.masternode_lists.clone();
         let cycles = engine.rotated_quorums_per_cycle.clone();
         let chain_locks = engine.coinbase_chain_locks.clone();
