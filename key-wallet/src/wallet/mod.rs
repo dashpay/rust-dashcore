@@ -243,6 +243,9 @@ mod tests {
     use super::*;
     use crate::account::account_collection::AccountCollection;
     use crate::account::{AccountType, StandardAccountType};
+    use crate::bip32::{ChildNumber, ExtendedPubKey};
+    use crate::Error;
+    use test_case::test_case;
 
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 
@@ -566,6 +569,96 @@ mod tests {
 
         // Default creates multiple accounts
         assert!(wallet.accounts.count() >= 2);
+    }
+
+    #[test_case(|_| {} ; "same xpub")]
+    #[test_case(|x| x.depth += 1 ; "different depth")]
+    #[test_case(|x| x.parent_fingerprint = Default::default() ; "different parent fingerprint")]
+    #[test_case(|x| x.child_number = ChildNumber::from(7) ; "different child number")]
+    fn test_add_account_rejects_imported_xpub_in_use(alter: fn(&mut ExtendedPubKey)) {
+        let mut wallet = Wallet::new_random(
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+        let mut xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        alter(&mut xpub);
+        let count = wallet.accounts.count();
+
+        let result = wallet.add_account(
+            AccountType::Standard {
+                index: 5,
+                standard_account_type: StandardAccountType::BIP32Account,
+            },
+            Some(xpub),
+        );
+
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+        assert_eq!(wallet.accounts.count(), count);
+    }
+
+    #[test]
+    fn test_add_account_rejects_derived_xpub_in_use() {
+        let mut wallet = Wallet::new_random(
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+        let bip44 = AccountType::Standard {
+            index: 5,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        let xpub = wallet
+            .derive_extended_public_key(&bip44.derivation_path(Network::Testnet).unwrap())
+            .unwrap();
+        wallet
+            .add_account(
+                AccountType::Standard {
+                    index: 5,
+                    standard_account_type: StandardAccountType::BIP32Account,
+                },
+                Some(xpub),
+            )
+            .unwrap();
+        let count = wallet.accounts.count();
+
+        let result = wallet.add_account(bip44, None);
+
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+        assert_eq!(wallet.accounts.count(), count);
+    }
+
+    #[test]
+    fn test_add_account_rejects_reverse_external_sharing_receiving_xpub() {
+        let mut wallet = Wallet::new_random(
+            Network::Testnet,
+            initialization::WalletAccountCreationOptions::Default,
+        )
+        .unwrap();
+        let (us, them) = ([0xaa; 32], [0xbb; 32]);
+        wallet
+            .add_account(
+                AccountType::DashpayReceivingFunds {
+                    index: 0,
+                    user_identity_id: us,
+                    friend_identity_id: them,
+                },
+                None,
+            )
+            .unwrap();
+        let count = wallet.accounts.count();
+
+        let result = wallet.add_account(
+            AccountType::DashpayExternalAccount {
+                index: 0,
+                user_identity_id: them,
+                friend_identity_id: us,
+            },
+            None,
+        );
+
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+        assert_eq!(wallet.accounts.count(), count);
     }
 
     // ✓ Test wallet ID generation
