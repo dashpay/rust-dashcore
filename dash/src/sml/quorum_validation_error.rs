@@ -20,6 +20,7 @@ pub enum QuorumValidationError {
     #[error("Required chain lock not present at block height {0}, block hash: {1}")]
     RequiredChainLockNotPresent(CoreBlockHeight, BlockHash),
 
+    /// Kept so persisted `Invalid` statuses still decode. Nothing produces it.
     #[error("Required rotated chain lock sigs not present for masternode diff block hash: {0}")]
     RequiredRotatedChainLockSigsNotPresent(BlockHash),
 
