@@ -166,11 +166,11 @@ impl HeadersPipeline {
                 if segment.complete && segment.target_height.is_some() {
                     continue;
                 }
-                // If tip segment was completed but receives new headers (post-sync),
-                // reset it so take_ready_to_store() can process the new headers
+                // Reopen a completed tip segment that receives new headers. The store cursor
+                // only moves back to it, since earlier segments may still be downloading.
                 if segment.complete && segment.target_height.is_none() {
                     segment.complete = false;
-                    self.next_to_store = idx;
+                    self.next_to_store = self.next_to_store.min(idx);
                     tracing::debug!(
                         "Tip segment {} receiving post-sync headers, reset for continued processing",
                         segment.segment_id
@@ -306,8 +306,8 @@ impl HeadersPipeline {
         for (idx, segment) in self.segments.iter_mut().enumerate() {
             if segment.target_height.is_none() && segment.complete {
                 segment.complete = false;
-                // Reset next_to_store so buffered headers can be processed
-                self.next_to_store = idx;
+                // Earlier segments may still be downloading, so the store cursor only moves back.
+                self.next_to_store = self.next_to_store.min(idx);
                 tracing::debug!(
                     "Reset tip segment {} at height {} for continued syncing",
                     segment.segment_id,
@@ -520,6 +520,52 @@ mod tests {
             .collect();
         assert_eq!(pipeline.receive_headers(&next).unwrap(), Some(0));
         assert_eq!(pipeline.take_ready_to_store(), vec![(1003, next)]);
+    }
+
+    #[tokio::test]
+    async fn test_reopened_tip_does_not_strand_unfinished_segments() {
+        let chain = Header::dummy_chain(6, BlockHash::dummy(0))
+            .into_iter()
+            .map(HashedBlockHeader::from)
+            .collect::<Vec<_>>();
+        let checkpoint_hash = *chain[3].hash();
+
+        for reopen_with_header in [true, false] {
+            let cm = create_test_checkpoint_manager(true);
+            let mut pipeline = HeadersPipeline::new(cm);
+            pipeline.set_segments_for_test(vec![
+                SegmentState::new(0, 0, BlockHash::dummy(0), Some(4), Some(checkpoint_hash)),
+                SegmentState::new(1, 4, checkpoint_hash, None, None),
+            ]);
+
+            // Segment 0 is half downloaded while the tip segment already reached the peer's tip.
+            assert_eq!(pipeline.receive_headers(&chain[..2]).unwrap(), Some(0));
+            assert_eq!(pipeline.receive_headers(&chain[4..5]).unwrap(), Some(1));
+            assert_eq!(pipeline.receive_headers(&[]).unwrap(), Some(1));
+            assert!(pipeline.is_tip_complete());
+
+            let tip_end = if reopen_with_header {
+                assert_eq!(pipeline.receive_headers(&chain[5..]).unwrap(), Some(1));
+                6
+            } else {
+                assert!(pipeline.reset_tip_segment());
+                5
+            };
+
+            let mock = Arc::new(MockNetworkManager::new());
+            let network: Arc<dyn NetworkManager> = mock.clone();
+            pipeline.send_pending(&network).await.unwrap();
+            assert!(
+                declared_locators(&mock).await.contains(chain[1].hash()),
+                "unfinished segment 0 stopped requesting its headers"
+            );
+
+            assert_eq!(pipeline.receive_headers(&chain[2..4]).unwrap(), Some(0));
+            assert_eq!(
+                pipeline.take_ready_to_store(),
+                vec![(1, chain[..4].to_vec()), (5, chain[4..tip_end].to_vec())]
+            );
+        }
     }
 
     #[tokio::test]
