@@ -473,7 +473,7 @@ const QUEUE_HIGH: f64 = 1.0;
 /// bandwidth-delay product must still absorb a couple.
 const QUEUE_FLOOR_BYTES: f64 = 1024.0 * 1024.0;
 
-/// Ticks a peer must have had work in flight before its rate is compared, and the
+/// Ticks a peer must have been bandwidth bound before its rate is compared, and the
 /// span its serving rate is averaged over, so a momentary dip never condemns it.
 const SERVING_SAMPLE_TICKS: u32 = 120;
 
@@ -594,16 +594,51 @@ impl ByteLimiter {
     }
 }
 
-/// A peer's limiter plus how fast it serves while it has work, for eviction.
+/// A peer's limiter plus how fast it serves while bandwidth bound, for eviction.
 struct PeerFlow {
     limiter: ByteLimiter,
     serving_rate: f64,
     serving_ticks: u32,
 }
 
+impl PeerFlow {
+    fn new(bytes: u64) -> Self {
+        Self {
+            limiter: ByteLimiter::new(MIN_CAP_BYTES, bytes),
+            serving_rate: 0.0,
+            serving_ticks: 0,
+        }
+    }
+
+    /// One tick with the peer's cumulative bytes received, its bytes in flight now and
+    /// whether the client's own cap holds back work. Returns its new cap.
+    fn tick(&mut self, bytes: u64, in_flight: u64, link_full: bool) -> u64 {
+        // The router sends a peer work until it reaches its cap or the link cap binds.
+        // Short of both, its rate shows how much it was asked for, not its bandwidth.
+        let bound = in_flight > 0 && (in_flight >= self.limiter.cap as u64 || link_full);
+        let cap = self.limiter.tick(bytes, in_flight, CAP_STEP_BYTES_PER_SEC);
+        if bound {
+            self.serving_ticks += 1;
+            let alpha = 1.0 / self.serving_ticks.min(SERVING_SAMPLE_TICKS) as f64;
+            self.serving_rate += alpha * (self.limiter.rate - self.serving_rate);
+        }
+        cap
+    }
+
+    /// Returns the peer's serving rate in bytes/s, 0 until measured.
+    fn serving_rate(&self) -> u64 {
+        let measured = self.limiter.found_ceiling && self.serving_ticks >= SERVING_SAMPLE_TICKS;
+        if measured {
+            self.serving_rate as u64
+        } else {
+            0
+        }
+    }
+}
+
 /// Sizes the byte caps of every peer and of the client's own link, each with a
 /// [`ByteLimiter`] on its own throughput: the router sends while both have room.
-/// Also reports how fast each peer serves while it has work, for [`underserving_peer`].
+/// Also reports how fast each peer serves while bandwidth bound, for [`underserving_peer`].
 fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
@@ -638,29 +673,13 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             let live: HashSet<PeerId> = g.iter().map(|p| p.id()).collect();
             peers.retain(|id, _| live.contains(id));
 
-            let mut total_in_flight = 0u64;
-            for p in g.iter() {
-                let in_flight = p.in_flight_bytes();
-                total_in_flight += in_flight;
-                let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow {
-                    limiter: ByteLimiter::new(MIN_CAP_BYTES, p.bytes_read()),
-                    serving_rate: 0.0,
-                    serving_ticks: 0,
-                });
-                let cap = flow.limiter.tick(p.bytes_read(), in_flight, CAP_STEP_BYTES_PER_SEC);
-                p.set_cap(cap);
-                if in_flight > 0 {
-                    flow.serving_ticks += 1;
-                    let alpha = 1.0 / flow.serving_ticks.min(SERVING_SAMPLE_TICKS) as f64;
-                    flow.serving_rate += alpha * (flow.limiter.rate - flow.serving_rate);
-                }
-                let measured =
-                    flow.limiter.found_ceiling && flow.serving_ticks >= SERVING_SAMPLE_TICKS;
-                p.set_serving_rate(if measured {
-                    flow.serving_rate as u64
-                } else {
-                    0
-                });
+            let in_flights: Vec<u64> = g.iter().map(ConnectedPeer::in_flight_bytes).collect();
+            let total_in_flight: u64 = in_flights.iter().sum();
+            let link_full = total_in_flight >= global_cap.load(Ordering::Relaxed);
+            for (p, &in_flight) in g.iter().zip(&in_flights) {
+                let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
+                p.set_cap(flow.tick(p.bytes_read(), in_flight, link_full));
+                p.set_serving_rate(flow.serving_rate());
             }
 
             global.min_cap = (MIN_CAP_BYTES * g.len() as u64) as f64;
@@ -965,7 +984,7 @@ struct SlowPeer {
 }
 
 /// The connected peer clearly underserving the rest, if any: serving bytes at a small
-/// fraction of the best connected peer's rate while it had work. Relative, so a slow
+/// fraction of the best connected peer's rate while bandwidth bound. Relative, so a slow
 /// client link (every peer slow alike) never condemns anyone.
 fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SlowPeer> {
     let measured: Vec<(SocketAddr, u64)> = peers
@@ -1340,6 +1359,87 @@ mod tests {
             received.push(event.expect("channel open"));
         }
         received
+    }
+
+    /// A peer's flow, driven tick by tick as the flow controller would.
+    struct Served {
+        flow: PeerFlow,
+        bytes: u64,
+        cap: u64,
+    }
+
+    impl Served {
+        fn new() -> Self {
+            Self {
+                flow: PeerFlow::new(0),
+                bytes: 0,
+                cap: MIN_CAP_BYTES,
+            }
+        }
+
+        fn tick(&mut self, delivered: u64, in_flight: u64, link_full: bool) {
+            self.bytes += delivered;
+            self.cap = self.flow.tick(self.bytes, in_flight, link_full);
+        }
+
+        /// Bulk download at `rate` bytes/s. The router keeps the peer at its own cap, or
+        /// at half of it when the client's link cap binds first.
+        fn bulk(&mut self, rate: u64, link_full: bool, ticks: u32) {
+            let delivered = (rate as f64 * FLOW_TICK.as_secs_f64()) as u64;
+            for _ in 0..ticks {
+                let in_flight = if link_full {
+                    self.cap / 2
+                } else {
+                    self.cap
+                };
+                self.tick(delivered, in_flight, link_full);
+            }
+        }
+
+        /// Small replies as at the chain tip, each answered `latency` ticks after its
+        /// request and followed by ten quiet seconds.
+        fn replies(&mut self, latency: u32, count: u32) {
+            const REPLY_BYTES: u64 = 4 * 1024;
+            for _ in 0..count {
+                for _ in 1..latency {
+                    self.tick(0, REPLY_BYTES, false);
+                }
+                self.tick(REPLY_BYTES, 0, false);
+                for _ in 0..40 {
+                    self.tick(0, 0, false);
+                }
+            }
+        }
+    }
+
+    /// Only a peer serving all the work its caps allow is compared. Small replies at the
+    /// tip measure the round trip, so a far peer must not look slow for them.
+    #[test_case(1_000_000, false, true => None; "latency bound replies at the tip")]
+    #[test_case(100_000, false, false => Some(1); "a slow peer at its own cap")]
+    #[test_case(100_000, true, false => Some(1); "a slow peer held back by the link cap")]
+    #[tokio::test]
+    async fn only_bandwidth_bound_service_condemns_a_peer(
+        second_rate: u64,
+        link_full: bool,
+        then_idle: bool,
+    ) -> Option<usize> {
+        let mut served = [Served::new(), Served::new()];
+        for (s, rate) in served.iter_mut().zip([1_000_000, second_rate]) {
+            s.bulk(rate, link_full, SERVING_SAMPLE_TICKS * 10);
+            assert!(s.flow.serving_rate() > 0, "a bandwidth bound peer is measured");
+        }
+        if then_idle {
+            served[0].replies(1, 50);
+            served[1].replies(8, 50);
+        }
+        let mut peers = Vec::new();
+        for (n, s) in served.iter().enumerate() {
+            let peer = ConnectedPeer::for_test(conn(n as u8, 0)).await;
+            peer.set_serving_rate(s.flow.serving_rate());
+            peers.push(peer);
+        }
+        let slow = underserving_peer(&peers)?;
+        peers.iter().position(|p| p.addr() == slow)
     }
 
     #[test]
