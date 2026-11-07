@@ -83,11 +83,9 @@ impl Decoder for V2Decoder {
             let packet = src.split_to(total_len);
             self.packet_len = None;
 
-            let ciphertext = &packet[NUM_LENGTH_BYTES..];
-            let mut plaintext = vec![0u8; ciphertext.len().saturating_sub(TAG_LEN)];
-            let packet_type = self
+            let (packet_type, plaintext) = self
                 .cipher
-                .decrypt(ciphertext, &mut plaintext, None)
+                .decrypt_to_vec(&packet[NUM_LENGTH_BYTES..], None)
                 .map_err(|_| encode::Error::ParseFailed("V2 packet failed authentication"))?;
             if packet_type == PacketType::Decoy {
                 continue;
@@ -101,5 +99,56 @@ impl Decoder for V2Decoder {
                 return Ok(Some((raw, total_len as u64)));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bip324::futures::handshake;
+    use bip324::Role;
+    use dashcore::network::message::CommandString;
+    use dashcore::Network;
+    use tokio::io::{duplex, split};
+
+    use super::*;
+
+    /// Returns the initiator's inbound cipher and the responder's outbound cipher of one session.
+    async fn cipher_pair(magic: [u8; 4]) -> (InboundCipher, OutboundCipher) {
+        let (initiator, responder) = duplex(4096);
+        let (initiator_read, mut initiator_write) = split(initiator);
+        let (responder_read, mut responder_write) = split(responder);
+        let ((inbound, ..), (_, outbound, ..)) = tokio::try_join!(
+            handshake(magic, Role::Initiator, None, None, initiator_read, &mut initiator_write),
+            handshake(magic, Role::Responder, None, None, responder_read, &mut responder_write),
+        )
+        .unwrap();
+        (inbound, outbound)
+    }
+
+    fn unknown(payload_len: usize) -> NetworkMessage {
+        NetworkMessage::Unknown {
+            command: CommandString::try_from_static("custom").unwrap(),
+            payload: vec![0; payload_len],
+        }
+    }
+
+    #[tokio::test]
+    async fn packets_up_to_the_maximum_size_decode() {
+        let magic = Network::Mainnet.magic();
+        let (inbound, mut outbound) = cipher_pair(magic.to_le_bytes()).await;
+        let mut decoder = V2Decoder::new(magic, inbound);
+
+        let largest = unknown(MAX_MSG_SIZE);
+        let mut src = BytesMut::from(&encrypt_message(&mut outbound, &largest)[..]);
+        assert_eq!(src.len(), NUM_LENGTH_BYTES + MAX_PACKET_LEN);
+        let (raw, _) = decoder.decode(&mut src).unwrap().unwrap();
+        assert_eq!(raw.payload, largest);
+
+        let mut src =
+            BytesMut::from(&encrypt_message(&mut outbound, &unknown(MAX_MSG_SIZE + 1))[..]);
+        assert!(matches!(
+            decoder.decode(&mut src),
+            Err(encode::Error::ParseFailed("V2 packet exceeds MAX_MSG_SIZE"))
+        ));
     }
 }
