@@ -305,8 +305,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         bincode::encode_to_vec(self, snapshot_codec::config())
     }
 
-    /// An engine holding the lists, rotated cycles and latest coinbase
-    /// [`Self::snapshot`] encoded.
+    /// Returns an engine holding the lists and latest coinbase [`Self::snapshot`]
+    /// encoded. It holds no rotated cycle until its first QRInfo.
     pub fn from_snapshot(
         network: Network,
         headers: Arc<RwLock<H>>,

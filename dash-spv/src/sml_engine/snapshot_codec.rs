@@ -340,11 +340,12 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
         if Network::decode(decoder)? != network {
             return Err(DecodeError::Other("snapshot of another network"));
         }
+        // Read to reach `latest_coinbase`, then dropped: the engine restores no rotated cycle.
         let (
             masternode_entries,
             quorum_entries,
             records,
-            rotated_quorums_per_cycle,
+            _rotated_quorums_per_cycle,
             latest_coinbase,
         ) = Decoded::decode(decoder)?;
 
@@ -384,7 +385,7 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
 
         Ok(Self {
             masternode_lists,
-            rotated_quorums_per_cycle,
+            rotated_quorums_per_cycle: BTreeMap::new(),
             latest_coinbase,
             ..Self::new(network, headers)
         })
@@ -561,7 +562,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_snapshot_restores_the_lists_cycles_and_their_sharing() {
+    async fn a_snapshot_restores_the_lists_and_their_sharing_but_not_the_cycles() {
         let mut with_coinbase = chain_engine();
         with_coinbase.latest_coinbase = Some(CoinbasePayload {
             version: 4,
@@ -572,7 +573,7 @@ mod tests {
             ..CoinbasePayload::dummy(100)
         });
 
-        for engine in
+        for mut engine in
             [TestEngine::mainnet_fixture(), chain_engine(), qr_info_engine().await, with_coinbase]
         {
             let bytes = engine.snapshot().expect("encodes");
@@ -580,12 +581,13 @@ mod tests {
                 .expect("decodes");
 
             assert_eq!(restored.masternode_lists, engine.masternode_lists);
-            assert_eq!(restored.rotated_quorums_per_cycle, engine.rotated_quorums_per_cycle);
+            assert!(restored.rotated_quorums_per_cycle.is_empty());
             assert_eq!(restored.latest_coinbase, engine.latest_coinbase);
             assert!(shares_at_least(&engine.masternode_lists, &restored.masternode_lists));
             assert!(distinct(&restored.masternode_lists) <= distinct(&engine.masternode_lists));
             assert!(entries_deduplicated(&restored.masternode_lists));
-            assert_eq!(restored.snapshot().expect("encodes"), bytes);
+            engine.rotated_quorums_per_cycle.clear();
+            assert_eq!(restored.snapshot().expect("encodes"), engine.snapshot().expect("encodes"));
         }
     }
 

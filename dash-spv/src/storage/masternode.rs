@@ -207,19 +207,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_reopened_storage_restores_the_persisted_engine() {
+    async fn a_reopened_storage_restores_the_lists_but_not_the_cycles() {
         let dir = TempDir::new().unwrap();
         let engine = TestEngine::mainnet_fixture();
+        assert!(!engine.rotated_quorums_per_cycle().is_empty(), "the fixture holds cycles");
         let headers = engine.headers();
-        let expected = engine.snapshot().unwrap();
+        let lists = engine.masternode_lists.clone();
         persist(&mut open_storage(&dir, Arc::clone(&headers)).await, engine).await;
 
         let reopened = open_storage(&dir, headers).await;
 
         let restored = reopened.engine();
         let restored = restored.read().await;
-        assert!(!restored.rotated_quorums_per_cycle().is_empty(), "the fixture holds cycles");
-        assert_eq!(restored.snapshot().unwrap(), expected);
+        assert!(restored.masternode_lists == lists, "the lists are restored");
+        assert!(restored.rotated_quorums_per_cycle().is_empty(), "the cycles are not");
     }
 
     #[tokio::test]
