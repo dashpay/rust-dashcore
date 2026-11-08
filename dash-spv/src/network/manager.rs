@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{
@@ -30,7 +31,8 @@ const CONNECT_CHUNK: usize = 16;
 const BAD_LAG_MULTIPLIER: u32 = 3;
 const BAD_LAG_FLOOR_MS: u32 = 1000;
 
-/// Shortest time between two slow-peer swaps.
+/// Shortest time between two swaps, and between two probes for a network group the
+/// set lacks.
 const SWAP_COOLDOWN: Duration = Duration::from_secs(60);
 
 /// How often the supervisor re-checks a below-cap set and probes to keep filling.
@@ -78,7 +80,7 @@ use crate::network::TransportPreference;
 use crate::{
     network::{
         costs::ResponseCosts,
-        discovery::PeerDiscoverer,
+        discovery::{NetGroup, PeerDiscoverer},
         peer::{ConnectedPeer, DisconnectedPeer, PeerEvent, PeerHandle, PeerId, INITIAL_CAP_BYTES},
     },
     ClientConfig,
@@ -228,8 +230,10 @@ impl Drop for PeerNetworkManager {
     }
 }
 
-impl PeerNetworkManager {
-    pub async fn new(config: &ClientConfig) -> Self {
+impl NetworkState {
+    /// The state of a network with no task running yet, and the receiver of its
+    /// peer events.
+    fn new(config: &ClientConfig) -> (Self, UnboundedReceiver<PeerEvent>) {
         let max_peers = config.max_peers.max(1) as usize;
         // NETWORK is unconditional: the block pipeline asks for full blocks at
         // arbitrary historical heights (and the gap-limit rescan far more so), which
@@ -248,7 +252,7 @@ impl PeerNetworkManager {
         }
 
         let (inbound, inbound_rx) = mpsc::unbounded_channel();
-        let state = Arc::new(NetworkState {
+        let state = NetworkState {
             connected: PeerSet::new(30),
             discoverer: Mutex::new(PeerDiscoverer::new(config)),
             bans: Bans::new(config.peers.iter().copied()),
@@ -263,7 +267,15 @@ impl PeerNetworkManager {
             user_agent: config.user_agent.clone(),
             transport_preference: config.transport_preference,
             link_stalled: AtomicBool::new(false),
-        });
+        };
+        (state, inbound_rx)
+    }
+}
+
+impl PeerNetworkManager {
+    pub async fn new(config: &ClientConfig) -> Self {
+        let (state, inbound_rx) = NetworkState::new(config);
+        let state = Arc::new(state);
         let shutdown = CancellationToken::new();
 
         spawn_pump(state.clone(), inbound_rx, shutdown.clone());
@@ -739,6 +751,8 @@ fn lag_key(peer: &ConnectedPeer) -> u32 {
 ///   bad peer is taken only when the set would otherwise be empty.
 /// - At cap it waits to be woken by a lost or underserving peer, then probes for a
 ///   replacement. No periodic improvement pass: each probe costs a full handshake.
+/// - While two peers share a network group and the client has work, it also probes for
+///   a group the set lacks, see [`crowded_peer`].
 /// - Probed-but-unused peers are closed and remembered in the discoverer so
 ///   later rounds reconnect the best without probing blindly.
 struct Supervisor {
@@ -748,33 +762,47 @@ struct Supervisor {
     best_lag_ms: AtomicU32,
     /// When a slow peer was last swapped out, for [`SWAP_COOLDOWN`].
     last_swap: Mutex<Option<Instant>>,
+    /// When candidates were last probed for a network group the set lacks.
+    last_spread: Mutex<Option<Instant>>,
+}
+
+/// Why a peer of a full set is to be replaced.
+#[derive(Clone, Copy)]
+enum Replace {
+    Slow(SocketAddr),
+    Crowded(SocketAddr),
 }
 
 impl Supervisor {
+    fn new(state: Arc<NetworkState>, shutdown: CancellationToken) -> Self {
+        Supervisor {
+            state,
+            shutdown,
+            best_lag_ms: AtomicU32::new(u32::MAX),
+            last_swap: Mutex::new(None),
+            last_spread: Mutex::new(None),
+        }
+    }
+
     async fn run(self) {
         loop {
             self.repair_round().await;
 
-            let short = self.state.connected.read().await.len() < self.state.max_peers;
-
+            // Also re-checked on a timer: work starting, a peer getting measured or a
+            // cooldown passing wakes nobody. A round with nothing to do probes nothing.
             tokio::select! {
                 _ = self.shutdown.cancelled() => break,
                 _ = self.state.peer_wake.notified() => {}
-                _ = tokio::time::sleep(FILL_TICK), if short => {}
+                _ = tokio::time::sleep(FILL_TICK) => {}
             }
         }
     }
 
-    async fn next_candidates(&self, want: usize) -> Vec<DisconnectedPeer> {
-        let mut out = self.state.discoverer.lock().await.get(want).await;
+    async fn next_candidates(&self, want: usize, new_groups_only: bool) -> Vec<DisconnectedPeer> {
         let live: HashSet<SocketAddr> =
             self.state.connected.read().await.iter().map(|p| p.addr()).collect();
         let banned = self.state.bans.banned().await;
-        let mut seen = HashSet::new();
-        out.retain(|p| {
-            !live.contains(&p.addr()) && !banned.contains(&p.addr()) && seen.insert(p.addr())
-        });
-        out
+        self.state.discoverer.lock().await.get(want, &live, &banned, new_groups_only).await
     }
 
     /// Closes probed-but-unused peers and remembers them for the next round.
@@ -787,32 +815,52 @@ impl Supervisor {
     }
 
     /// One pass at whatever the peer set needs: fill a deficit, replace a peer that is
-    /// underserving the rest, or both.
+    /// underserving the rest or crowding its network group, or both.
     async fn repair_round(&self) {
-        let (deficit, slow) = {
+        let (deficit, replace) = {
             let peers = self.state.connected.read().await;
             let deficit = self.state.max_peers.saturating_sub(peers.len());
             // Only look for a laggard once full: below cap every arrival is wanted anyway.
             // Each swap re-sends the work the old peer held, so at most one per cooldown.
             let cooled = self.last_swap.lock().await.is_none_or(|t| t.elapsed() >= SWAP_COOLDOWN);
+            let spread_cooled =
+                self.last_spread.lock().await.is_none_or(|t| t.elapsed() >= SWAP_COOLDOWN);
             let stalled = self.state.link_stalled.load(Ordering::Relaxed);
-            let slow = (deficit == 0 && cooled && !stalled)
-                .then(|| underserving_peer(&peers))
-                .flatten()
-                .map(|slow| slow.addr);
-            (deficit, slow)
+            // Peers of one group slow down together, so with work waiting on them a peer
+            // from another group is worth a swap even when no peer looks slow.
+            let has_work = self.state.broker.len() > 0;
+            let replace = if deficit == 0 && cooled {
+                (!stalled)
+                    .then(|| underserving_peer(&peers))
+                    .flatten()
+                    .map(|slow| Replace::Slow(slow.addr))
+                    .or_else(|| {
+                        (spread_cooled && has_work && !stalled)
+                            .then(|| crowded_peer(&peers))
+                            .flatten()
+                            .map(Replace::Crowded)
+                    })
+            } else {
+                None
+            };
+            (deficit, replace)
         };
-        if deficit == 0 && slow.is_none() {
+        if deficit == 0 && replace.is_none() {
             return;
         }
 
         // Scale the probe to the need: a few candidates to find one replacement, a
         // full chunk when several slots are open and sync is waiting on them.
         let want = (deficit.max(1) + DIAL_MARGIN).min(CONNECT_CHUNK);
-        let batch = self.next_candidates(want).await;
+        let crowded = matches!(replace, Some(Replace::Crowded(_)));
+        let batch = self.next_candidates(want, crowded).await;
         if batch.is_empty() {
             return;
         }
+        if crowded {
+            *self.last_spread.lock().await = Some(Instant::now());
+        }
+        let slow = replace.map(|(Replace::Slow(addr) | Replace::Crowded(addr))| addr);
 
         // Take each peer as soon as ITS handshake lands rather than waiting for the batch,
         // so one unreachable address doesn't delay sync. Completion order is itself a
@@ -867,9 +915,15 @@ impl Supervisor {
                 Admission::Joined => accepted += 1,
                 Admission::Swapped(old) => {
                     replaced = Some(new_addr);
+                    let reason = if crowded {
+                        "crowded"
+                    } else {
+                        "slow"
+                    };
                     tracing::info!(
                         target: "dash_spv::network",
-                        "peer supervisor: swapped out slow {} for {}",
+                        "peer supervisor: swapped out {} {} for {}",
+                        reason,
                         old.addr(),
                         new_addr,
                     );
@@ -963,16 +1017,19 @@ fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SlowPeer> {
     })
 }
 
+/// The slowest peer of the most crowded network group, if any group holds more than one
+/// peer. An unmeasured peer counts as slowest, and a higher handshake ping breaks ties.
+fn crowded_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
+    let mut groups: HashMap<NetGroup, Vec<&ConnectedPeer>> = HashMap::new();
+    for peer in peers {
+        groups.entry(NetGroup::of(peer.addr())).or_default().push(peer);
+    }
+    let crowded = groups.into_values().filter(|group| group.len() > 1).max_by_key(Vec::len)?;
+    crowded.into_iter().min_by_key(|p| (p.serving_rate(), Reverse(lag_key(p)))).map(|p| p.addr())
+}
+
 fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
-    tokio::spawn(
-        Supervisor {
-            state,
-            shutdown,
-            best_lag_ms: AtomicU32::new(u32::MAX),
-            last_swap: Mutex::new(None),
-        }
-        .run(),
-    )
+    tokio::spawn(Supervisor::new(state, shutdown).run())
 }
 
 /// What the timeout monitor reads of a connected peer each tick.
@@ -1210,6 +1267,7 @@ fn spawn_pump(
             peer_wake,
             max_peers,
             discoverer,
+            required_services,
             ..
         } = &*state;
         // Per-peer received-message counter to check load balance across peers.
@@ -1293,13 +1351,14 @@ fn spawn_pump(
                     }
                     // Addr gossip feeds the discovery pool, otherwise it stays frozen at the seeds and
                     // one DNS lookup. Both spellings: a peer that ignored `sendaddrv2` answers
-                    // `getaddr` with legacy `addr`.
+                    // `getaddr` with legacy `addr`. An address whose services lack what we need
+                    // would only be dropped after its handshake.
                     let gossiped: Option<Vec<(SocketAddr, u32)>> = match &*msg {
                         NetworkMessage::AddrV2(addrs) if addrs.len() <= MAX_ADDR_PER_MESSAGE => {
                             Some(
                                 addrs
                                     .iter()
-                                    .filter(|a| a.services.has(ServiceFlags::NETWORK))
+                                    .filter(|a| a.services.has(*required_services))
                                     .filter_map(|a| Some((a.socket_addr().ok()?, a.time)))
                                     .collect(),
                             )
@@ -1307,7 +1366,7 @@ fn spawn_pump(
                         NetworkMessage::Addr(addrs) if addrs.len() <= MAX_ADDR_PER_MESSAGE => Some(
                             addrs
                                 .iter()
-                                .filter(|(_, a)| a.services.has(ServiceFlags::NETWORK))
+                                .filter(|(_, a)| a.services.has(*required_services))
                                 .filter_map(|(time, a)| Some((a.socket_addr().ok()?, *time)))
                                 .collect(),
                         ),
@@ -1323,10 +1382,8 @@ fn spawn_pump(
                                 learned,
                                 addr
                             );
-                            // Fresh candidates are what a short set is waiting for.
-                            if connected.read().await.len() < *max_peers {
-                                peer_wake.notify_one();
-                            }
+                            // Fresh candidates are what a short or crowded set is waiting for.
+                            peer_wake.notify_one();
                         }
                     }
 
@@ -1407,10 +1464,18 @@ mod tests {
     use super::*;
     use crate::client::ClientConfig;
     use crate::test_utils::test_socket_address;
+    use dashcore::consensus::encode::serialize;
+    use dashcore::network::address::Address;
+    use dashcore::network::message::{RawNetworkMessage, RawNetworkMessageCodec};
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
-    use dashcore::BlockHash;
+    use dashcore::network::message_network::VersionMessage;
+    use dashcore::{BlockHash, Network};
+    use std::time::{SystemTime, UNIX_EPOCH};
     use test_case::test_case;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio_util::codec::FramedRead;
 
     fn get_cfilters(start: u32) -> NetworkMessage {
         NetworkMessage::GetCFilters(GetCFilters {
@@ -1522,6 +1587,222 @@ mod tests {
         }
         let slow = underserving_peer(&peers)?;
         peers.iter().position(|p| p.addr() == slow.addr)
+    }
+
+    /// A regtest node on loopback that completes the handshake and answers pings.
+    async fn mock_node() -> SocketAddr {
+        mock_node_serving(
+            ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM,
+        )
+        .await
+    }
+
+    /// A mock node that advertises `services`.
+    async fn mock_node_serving(services: ServiceFlags) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+        let addr = listener.local_addr().expect("bound address");
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(serve_handshake(stream, services));
+            }
+        });
+        addr
+    }
+
+    async fn serve_handshake(stream: TcpStream, services: ServiceFlags) {
+        let (read_half, mut write_half) = stream.into_split();
+        let mut reader = FramedRead::new(read_half, RawNetworkMessageCodec);
+        let local: SocketAddr = "127.0.0.1:0".parse().expect("an address");
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        while let Some(Ok(raw)) = reader.next().await {
+            let replies = match raw.payload {
+                NetworkMessage::Version(_) => vec![
+                    NetworkMessage::Version(VersionMessage::new(
+                        services,
+                        now as i64,
+                        Address::new(&local, ServiceFlags::NONE),
+                        Address::new(&local, services),
+                        1,
+                        "/mock/".to_owned(),
+                        0,
+                        false,
+                        [0; 32],
+                    )),
+                    NetworkMessage::Verack,
+                ],
+                NetworkMessage::Ping(nonce) => vec![NetworkMessage::Pong(nonce)],
+                _ => vec![],
+            };
+            for payload in replies {
+                let raw = RawNetworkMessage {
+                    magic: Network::Regtest.magic(),
+                    payload,
+                };
+                if write_half.write_all(&serialize(&raw)).await.is_err() {
+                    return;
+                }
+            }
+        }
+    }
+
+    enum Spread {
+        Work,
+        NoWork,
+        Stalled,
+        Exclusive,
+    }
+
+    /// A full set inside one network group swaps its slowest peer for a peer of a group
+    /// it lacks. Only while work waits and the link flows, and never for configured peers.
+    /// No network task runs, so nothing but the supervisor changes the set.
+    #[test_case(Spread::Work => Some(1); "the slowest of the crowded group goes")]
+    #[test_case(Spread::NoWork => None; "not at the tip with no work")]
+    #[test_case(Spread::Stalled => None; "not while the link is stalled")]
+    #[test_case(Spread::Exclusive => None; "configured peers are kept")]
+    #[tokio::test]
+    async fn a_crowded_set_swaps_toward_a_missing_group(spread: Spread) -> Option<usize> {
+        let node = mock_node().await;
+        let mut config =
+            ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
+        if matches!(spread, Spread::Exclusive) {
+            config.peers = vec![node];
+        }
+        let (state, _inbound) = NetworkState::new(&config);
+        let state = Arc::new(state);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        state.discoverer.lock().await.learn([(node, now as u32)]);
+        let session = CancellationToken::new();
+
+        let crowded: Vec<SocketAddr> =
+            (1..=3).map(|n| SocketAddr::from(([68, 67, 122, n], 19999))).collect();
+        for (addr, rate) in crowded.iter().zip([1_000_000, 800_000, 900_000]) {
+            let peer = ConnectedPeer::for_test(PeerId::for_test(*addr, 0)).await;
+            peer.set_serving_rate(rate);
+            let admitted = state.connected.admit(peer, &session, state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+        }
+        if !matches!(spread, Spread::NoWork) {
+            state.broker.enqueue(0, get_cfilters(0)).await;
+        }
+        if matches!(spread, Spread::Stalled) {
+            state.link_stalled.store(true, Ordering::Relaxed);
+        }
+
+        Supervisor::new(state.clone(), session.clone()).repair_round().await;
+
+        let live: Vec<SocketAddr> = state.connected.read().await.iter().map(|p| p.addr()).collect();
+        assert_eq!(live.len(), 3);
+        let gone = crowded.iter().position(|addr| !live.contains(addr));
+        assert_eq!(gone.is_some(), live.contains(&node), "got {live:?}");
+        gone
+    }
+
+    /// The supervisor swaps out a slow peer from its own loop once the rates are known,
+    /// without anything waking it. Each peer sits in its own network group, so only the
+    /// timer re-checks the full set.
+    #[tokio::test]
+    async fn a_running_supervisor_swaps_a_slow_peer_once_it_is_measured() {
+        let node = mock_node().await;
+        let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
+        let (state, _inbound) = NetworkState::new(&config);
+        let state = Arc::new(state);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        state.discoverer.lock().await.learn([(node, now as u32)]);
+        let session = CancellationToken::new();
+
+        let peers: Vec<SocketAddr> = [[68, 67, 122, 1], [206, 245, 167, 63], [85, 209, 243, 1]]
+            .into_iter()
+            .map(|ip| SocketAddr::from((ip, 19999)))
+            .collect();
+        for addr in &peers {
+            let peer = ConnectedPeer::for_test(PeerId::for_test(*addr, 0)).await;
+            let admitted = state.connected.admit(peer, &session, state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+        }
+
+        let running = tokio::spawn(Supervisor::new(state.clone(), session.clone()).run());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        for peer in state.connected.read().await.iter() {
+            let slow = peer.addr() == peers[1];
+            peer.set_serving_rate(if slow {
+                100_000
+            } else {
+                1_000_000
+            });
+        }
+        let deadline = Instant::now() + FILL_TICK * 2;
+        while Instant::now() < deadline
+            && !state.connected.read().await.iter().any(|p| p.addr() == node)
+        {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        session.cancel();
+        running.await.expect("the supervisor stops");
+
+        let live: Vec<SocketAddr> = state.connected.read().await.iter().map(|p| p.addr()).collect();
+        assert!(live.contains(&node) && !live.contains(&peers[1]), "got {live:?}");
+    }
+
+    /// Only a group of two or more peers is crowded, and its slowest peer goes, even when
+    /// a peer alone in its group is slower.
+    #[test_case(&[[68, 67, 122, 1], [206, 245, 167, 63], [85, 209, 243, 1]] => None; "one peer per group")]
+    #[test_case(&[[68, 67, 122, 1], [68, 67, 9, 2], [206, 245, 167, 63]] => Some(1); "the slower of a pair")]
+    #[tokio::test]
+    async fn crowded_peer_is_the_slowest_of_a_shared_group(ips: &[[u8; 4]]) -> Option<usize> {
+        let mut peers = Vec::new();
+        for (ip, rate) in ips.iter().zip([900_000, 800_000, 100_000]) {
+            let peer = ConnectedPeer::for_test(PeerId::for_test((*ip, 19999).into(), 0)).await;
+            peer.set_serving_rate(rate);
+            peers.push(peer);
+        }
+        let crowded = crowded_peer(&peers)?;
+        peers.iter().position(|p| p.addr() == crowded)
+    }
+
+    /// A node that cannot serve compact filters is banned on the spot, not only backed
+    /// off like a failed dial, so it does not take a candidate slot round after round.
+    #[tokio::test]
+    async fn a_node_lacking_required_services_is_banned() {
+        let node = mock_node_serving(ServiceFlags::NETWORK | ServiceFlags::BLOOM).await;
+        let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
+        let (state, _inbound) = NetworkState::new(&config);
+        let state = Arc::new(state);
+
+        let dialed = DisconnectedPeer::new(node, Network::Regtest)
+            .connect(state.clone(), CancellationToken::new())
+            .await;
+
+        assert!(dialed.is_err());
+        assert!(state.bans.banned().await.contains(&node));
+    }
+
+    /// Gossiped addresses whose service bits lack what the client needs are not learned.
+    #[tokio::test]
+    async fn gossip_without_required_services_is_not_learned() {
+        let net = PeerNetworkManager::new(&ClientConfig::regtest()).await;
+        let full = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let serves = SocketAddr::from(([62, 60, 244, 174], 19999));
+        let lacks = SocketAddr::from(([46, 224, 41, 173], 19999));
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        let addr = NetworkMessage::Addr(vec![
+            (now as u32, Address::new(&serves, full)),
+            (now as u32, Address::new(&lacks, ServiceFlags::NETWORK | ServiceFlags::BLOOM)),
+        ]);
+        net.state
+            .inbound
+            .send(PeerEvent::Message(conn(1, 0), addr.into()))
+            .expect("the pump is running");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let known = net
+            .state
+            .discoverer
+            .lock()
+            .await
+            .get(10, &HashSet::new(), &HashSet::new(), false)
+            .await;
+        let known: Vec<SocketAddr> = known.iter().map(|p| p.addr()).collect();
+        assert_eq!(known, [serves]);
     }
 
     #[test]

@@ -588,6 +588,7 @@ impl DisconnectedPeer {
                 "dropping {}: lacks required services {} (advertises {})",
                 self.addr, required_services, version.services
             );
+            state.bans.ban(self.addr, Ban::MissingServices).await;
             return Err(NetworkError::ConnectionFailed(format!(
                 "peer {} lacks required services {}",
                 self.addr, required_services

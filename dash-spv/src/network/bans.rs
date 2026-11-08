@@ -12,6 +12,8 @@ const MISBEHAVIOUR_BAN: Duration = Duration::from_secs(24 * 60 * 60);
 pub enum Ban {
     DialFailed,
     Kicked,
+    /// Lacks a service the client needs, which does not change within a session.
+    MissingServices,
     Misbehaved,
 }
 
@@ -43,6 +45,7 @@ impl Bans {
                 MAX_DIAL_BACKOFF.min(Duration::from_secs(1 << (*fails).min(6)))
             }
             Ban::Kicked => KICK_BAN,
+            Ban::MissingServices => MISBEHAVIOUR_BAN,
             Ban::Misbehaved => {
                 tracing::warn!(target: "dash_spv::network", "banning {} for misbehaving", addr);
                 MISBEHAVIOUR_BAN
@@ -64,5 +67,23 @@ impl Bans {
             .filter(|(_, (_, until))| *until > now)
             .map(|(addr, _)| *addr)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A node lacking a service the client needs stays banned past the longest dial
+    /// backoff.
+    #[tokio::test(start_paused = true)]
+    async fn missing_services_outlast_the_dial_backoff() {
+        let bans = Bans::new([]);
+        let addr: SocketAddr = "46.224.41.173:19999".parse().expect("an address");
+        bans.ban(addr, Ban::MissingServices).await;
+
+        tokio::time::advance(MAX_DIAL_BACKOFF * 10).await;
+
+        assert!(bans.banned().await.contains(&addr));
     }
 }

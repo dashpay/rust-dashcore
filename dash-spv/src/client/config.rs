@@ -170,6 +170,12 @@ impl ClientConfig {
         self
     }
 
+    /// Whether only the configured peers are dialed. Configuring any peer replaces
+    /// discovery, with or without `restrict_to_configured_peers`.
+    pub(crate) fn exclusive_peers(&self) -> bool {
+        !self.peers.is_empty() || self.restrict_to_configured_peers
+    }
+
     /// Set storage path.
     pub fn with_storage_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.storage_path = path.into();
