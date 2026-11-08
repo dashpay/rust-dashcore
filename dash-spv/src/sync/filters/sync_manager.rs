@@ -197,7 +197,7 @@ impl<
                 let mut events = Vec::new();
 
                 // Check if this block is part of our tracked blocks
-                if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash) {
+                if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash, wallets) {
                     if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                         batch.decrement_pending_blocks();
                         tracing::debug!(

@@ -23,6 +23,7 @@ use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 
 use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
+use hex_conservative::DisplayHex;
 use key_wallet_manager::WalletInterface;
 use key_wallet_manager::{check_compact_filters_shard, FilterMatchKey, WalletId};
 use tokio::sync::RwLock;
@@ -60,17 +61,46 @@ async fn match_filters(
     matches
 }
 
-/// Returns the newest pass in `by_pass` whose scripts match `filter`. A filter
-/// that fails to decode counts as `UNKNOWN_PASS`, so its block is re-applied.
-fn newest_matching_pass(
-    filter: &BlockFilter,
+/// How a rescan matched a block for one wallet.
+#[derive(Clone, Copy, Debug)]
+enum RescanMatch {
+    /// Through the scripts derived by this pass, the newest that match.
+    Scripts(u64),
+    /// Through a newly tested filter element alone.
+    Element,
+    /// The filter could not be decoded.
+    DecodeFailure,
+}
+
+impl RescanMatch {
+    /// The pass the match is compared against. Without a known pass the block
+    /// is re-applied.
+    fn pass(self) -> u64 {
+        match self {
+            RescanMatch::Scripts(pass) => pass,
+            RescanMatch::Element | RescanMatch::DecodeFailure => UNKNOWN_PASS,
+        }
+    }
+}
+
+/// Returns how `filter`, already matched by the rescan, matched `by_pass`.
+fn rescan_match(
+    filter: Option<&BlockFilter>,
     key: &FilterMatchKey,
     by_pass: &DerivedScripts,
-) -> Option<u64> {
-    by_pass.iter().rev().find_map(|(pass, scripts)| {
+) -> RescanMatch {
+    let Some(filter) = filter else {
+        return RescanMatch::DecodeFailure;
+    };
+    for (pass, scripts) in by_pass.iter().rev() {
         let query: FilterQuery = scripts.iter().map(|script| script.as_bytes()).collect();
-        filter.match_any(key.hash(), &query).map_or(Some(UNKNOWN_PASS), |hit| hit.then_some(*pass))
-    })
+        match filter.match_any(key.hash(), &query) {
+            Ok(true) => return RescanMatch::Scripts(*pass),
+            Ok(false) => {}
+            Err(_) => return RescanMatch::DecodeFailure,
+        }
+    }
+    RescanMatch::Element
 }
 
 /// Batch size for processing filters.
@@ -919,10 +949,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         let batch_filters = batch.shared_filters();
 
-        // Each matched wallet maps to the newest pass among the script groups
-        // that match the block. A match through a filter element alone has no
-        // known pass, so its block is re-applied once per element and batch.
-        let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeMap<WalletId, u64>> =
+        // A match through a filter element alone has no known pass, so its
+        // block is re-applied once per element and batch.
+        let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeMap<WalletId, RescanMatch>> =
             BTreeMap::new();
         for (wallet_id, by_pass) in new_scripts {
             let elements = filter_elements.remove(wallet_id).unwrap_or_default();
@@ -933,11 +962,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             let min_synced = synced_heights.get(wallet_id).copied().unwrap_or(0);
             let matches = match_filters(&batch_filters, scripts_vec, elements, min_synced).await;
             for key in matches {
-                let derived_at = batch_filters
-                    .get(&key)
-                    .and_then(|filter| newest_matching_pass(filter, &key, by_pass))
-                    .unwrap_or(UNKNOWN_PASS);
-                block_to_wallets.entry(key).or_default().insert(*wallet_id, derived_at);
+                let matched = rescan_match(batch_filters.get(&key), &key, by_pass);
+                block_to_wallets.entry(key).or_default().insert(*wallet_id, matched);
             }
         }
 
@@ -948,8 +974,29 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         if !block_to_wallets.is_empty() {
             self.progress.add_matched(block_to_wallets.len() as u32);
         }
-        for (key, wallets) in block_to_wallets {
-            match self.tracker.track_for_new_scripts(&key, batch_start, wallets) {
+        for (key, matched) in block_to_wallets {
+            let derived_at = matched.iter().map(|(id, m)| (*id, m.pass())).collect();
+            let result = self.tracker.track_for_new_scripts(&key, batch_start, derived_at);
+            if let BlockTrackResult::NewlyTracked {
+                wallets,
+            }
+            | BlockTrackResult::InFlight {
+                wallets,
+            } = &result
+            {
+                for (wallet_id, m) in matched.iter().filter(|(id, _)| wallets.contains(*id)) {
+                    if let Some(last_pass) = self.tracker.last_pass(&key, wallet_id) {
+                        tracing::debug!(
+                            "Re-applying block {} for wallet {}: last pass {}, matched {:?}",
+                            key.height(),
+                            wallet_id[..4].as_hex(),
+                            last_pass,
+                            m
+                        );
+                    }
+                }
+            }
+            match result {
                 BlockTrackResult::NewlyTracked {
                     wallets,
                 } => {
@@ -1258,12 +1305,12 @@ mod tests {
     use super::*;
     use crate::network::MessageType;
     use crate::storage::{
-        BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage,
+        BlockHeaderStorage, BlockStorage, DiskStorageManager, PersistentBlockHeaderStorage,
         PersistentFilterHeaderStorage, PersistentFilterStorage, StorageManager,
     };
-    use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use crate::sync::{BlocksManager, ManagerIdentifier, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
-    use crate::types::HashedBlockHeader;
+    use crate::types::{HashedBlock, HashedBlockHeader};
     use dashcore::bip158::BlockFilter;
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_filter::CFilter;
@@ -2491,6 +2538,86 @@ mod tests {
         assert!(attribution.contains(&wallet_id));
     }
 
+    /// A re-application that derives scripts reports them with its own pass.
+    /// A block applied after it already saw them, so the rescan before the
+    /// commit does not apply that block again.
+    #[tokio::test]
+    async fn test_scripts_derived_by_a_re_application_carry_its_pass() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let watched = Address::dummy(Network::Regtest, 61);
+        let derived = Address::dummy(Network::Regtest, 62);
+
+        // Applying block 30 re-applies the stored block 50, which derives
+        // `derived`. Block 60 pays both addresses and is applied afterwards.
+        let mut wallet = MockWallet::new();
+        wallet.set_addresses(vec![watched.clone()]);
+        wallet.set_reapply_heights(30, BTreeSet::from([50]));
+        wallet.set_derived_addresses(50, vec![derived.clone()]);
+        let wallet = Arc::new(RwLock::new(wallet));
+
+        let block_30 = Block::dummy(30, vec![Transaction::dummy(&watched, 0..0, &[30])]);
+        let block_50 = Block::dummy(50, vec![Transaction::dummy(&watched, 0..0, &[50])]);
+        let block_60 = Block::dummy(
+            60,
+            vec![
+                Transaction::dummy(&watched, 0..0, &[60]),
+                Transaction::dummy(&derived, 0..0, &[61]),
+            ],
+        );
+        let key_60 = FilterMatchKey::new(60, block_60.block_hash());
+        let filters = HashMap::from([
+            (FilterMatchKey::new(30, block_30.block_hash()), BlockFilter::dummy(&block_30)),
+            (key_60.clone(), BlockFilter::dummy(&block_60)),
+        ]);
+        {
+            let blocks = storage.blocks();
+            let mut blocks = blocks.write().await;
+            for (height, block) in [(30, &block_30), (50, &block_50), (60, &block_60)] {
+                blocks.store_block(height, HashedBlock::from(block)).await.unwrap();
+            }
+        }
+
+        let mut filters_manager = FiltersManager::new(
+            Arc::clone(&wallet),
+            storage.block_headers(),
+            storage.filter_headers(),
+            storage.filters(),
+        )
+        .await;
+        filters_manager.set_state(SyncState::Syncing);
+        let mut batch = FiltersBatch::new(0, 99, filters);
+        batch.mark_verified();
+        filters_manager.active_batches.insert(0, batch);
+        filters_manager.progress.update_stored_height(99);
+        filters_manager.progress.update_filter_header_tip_height(99);
+        let mut blocks_manager =
+            BlocksManager::new(Arc::clone(&wallet), storage.block_headers(), storage.blocks())
+                .await;
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+
+        let needed = filters_manager.try_process_batch().await.unwrap();
+        let mut requested_60 = 0;
+        for event in &needed {
+            for processed in blocks_manager.handle_sync_event(event, &network).await.unwrap() {
+                for event in filters_manager.handle_sync_event(&processed, &network).await.unwrap()
+                {
+                    if let SyncEvent::BlocksNeeded {
+                        blocks,
+                    } = &event
+                    {
+                        requested_60 += usize::from(blocks.contains_key(&key_60));
+                    }
+                }
+            }
+        }
+
+        assert_eq!(requested_60, 0, "block 60 was applied after `derived` existed");
+        assert!(filters_manager.active_batches.is_empty(), "the batch commits");
+        let processed = wallet.read().await.processed_blocks();
+        let heights: Vec<u32> = processed.lock().await.iter().map(|(_, height)| *height).collect();
+        assert_eq!(heights, vec![30, 50, 60]);
+    }
+
     /// The per-tick rescan does not request an in-flight block again for a
     /// wallet it is already queued for, since the queued pass sees the new
     /// scripts. It still requests the block for a wallet not yet queued.
@@ -2853,8 +2980,14 @@ mod tests {
         manager.tracker.track(&FilterMatchKey::new(5100, hash2), 5000, BTreeSet::from([wallet]));
 
         // Each block round-trips its (height, batch_start) on `finish_in_flight`.
-        assert_eq!(manager.tracker.finish_in_flight(&hash1), Some((100, 0)));
-        assert_eq!(manager.tracker.finish_in_flight(&hash2), Some((5100, 5000)));
+        assert_eq!(
+            manager.tracker.finish_in_flight(&hash1, &BTreeSet::from([wallet])),
+            Some((100, 0))
+        );
+        assert_eq!(
+            manager.tracker.finish_in_flight(&hash2, &BTreeSet::from([wallet])),
+            Some((5100, 5000))
+        );
     }
 
     #[tokio::test]
@@ -2886,7 +3019,10 @@ mod tests {
         // Block is delivered and processed for {A}. Round-trip the (height,
         // batch_start) tuple while removing the in-flight entry, then record
         // the processing.
-        assert_eq!(manager.tracker.finish_in_flight(&hash), Some((100, 0)));
+        assert_eq!(
+            manager.tracker.finish_in_flight(&hash, &BTreeSet::from([wallet_a])),
+            Some((100, 0))
+        );
         manager.tracker.record_processed(100, hash, &BTreeSet::from([wallet_a]));
 
         // Late-added wallet B's filter matches the same block. A is already
@@ -2899,7 +3035,10 @@ mod tests {
                 wallets: BTreeSet::from([wallet_b])
             }
         );
-        assert_eq!(manager.tracker.finish_in_flight(&hash), Some((100, 5000)));
+        assert_eq!(
+            manager.tracker.finish_in_flight(&hash, &BTreeSet::from([wallet_b])),
+            Some((100, 5000))
+        );
 
         // After B is also processed, a third match including only A and B
         // returns AlreadyProcessed since both are covered.
@@ -2908,7 +3047,7 @@ mod tests {
             manager.tracker.track(&key, 5000, BTreeSet::from([wallet_a, wallet_b])),
             BlockTrackResult::AlreadyProcessed
         );
-        assert!(manager.tracker.finish_in_flight(&hash).is_none());
+        assert!(manager.tracker.finish_in_flight(&hash, &BTreeSet::from([wallet_b])).is_none());
     }
 
     #[tokio::test]

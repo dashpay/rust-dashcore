@@ -5,8 +5,9 @@
 //!
 //! - `blocks_remaining`: in-flight matched blocks awaiting `BlockProcessed`,
 //!   keyed by block hash. The associated `(height, batch_start)` lets the
-//!   `BlockProcessed` handler decrement the right batch's `pending_blocks`,
-//!   and its requested wallets keep a rescan from requesting it again for them.
+//!   `BlockProcessed` handler decrement the right batch's `pending_blocks`
+//!   once every requested wallet has reported. The wallets still waiting keep
+//!   a rescan from requesting the block again for them.
 //! - `processed_blocks_per_wallet`: which wallets have already had each
 //!   processed block applied to their state, keyed by height (so commit-time
 //!   pruning is one `split_off` call) then by hash. Lets a runtime-added
@@ -53,8 +54,8 @@ pub(super) enum BlockTrackResult {
 struct InFlightBlock {
     height: u32,
     batch_start: u32,
-    /// Every wallet the block was requested for since it was tracked.
-    wallets: BTreeSet<WalletId>,
+    /// Requested wallets whose pass has not reported yet.
+    awaiting: BTreeSet<WalletId>,
 }
 
 /// Per-block tracking state for matched blocks flowing through the filter →
@@ -96,7 +97,7 @@ impl BlockMatchTracker {
             return BlockTrackResult::AlreadyProcessed;
         }
         if let Some(in_flight) = self.blocks_remaining.get_mut(key.hash()) {
-            in_flight.wallets.extend(residual.iter().copied());
+            in_flight.awaiting.extend(residual.iter().copied());
             return BlockTrackResult::InFlight {
                 wallets: residual,
             };
@@ -132,11 +133,11 @@ impl BlockMatchTracker {
             // Passes report in the order they ran and the pass that derived the
             // scripts has reported, so the queued pass runs after it and sees them.
             let added: BTreeSet<WalletId> =
-                residual.difference(&in_flight.wallets).copied().collect();
+                residual.difference(&in_flight.awaiting).copied().collect();
             if added.is_empty() {
                 return BlockTrackResult::AlreadyProcessed;
             }
-            in_flight.wallets.extend(added.iter().copied());
+            in_flight.awaiting.extend(added.iter().copied());
             return BlockTrackResult::InFlight {
                 wallets: added,
             };
@@ -169,10 +170,26 @@ impl BlockMatchTracker {
         pass
     }
 
-    /// Remove the in-flight entry for `hash`, returning its
-    /// `(height, batch_start)` if it was tracked.
-    pub(super) fn finish_in_flight(&mut self, hash: &BlockHash) -> Option<(u32, u32)> {
+    /// Marks the pass of the in-flight block `hash` for `wallets` as reported.
+    /// Returns its `(height, batch_start)` and stops tracking it once no
+    /// requested wallet is still waiting. A pass for only some of them, such as
+    /// a re-application, leaves the block in flight for the others.
+    pub(super) fn finish_in_flight(
+        &mut self,
+        hash: &BlockHash,
+        wallets: &BTreeSet<WalletId>,
+    ) -> Option<(u32, u32)> {
+        let block = self.blocks_remaining.get_mut(hash)?;
+        block.awaiting.retain(|id| !wallets.contains(id));
+        if !block.awaiting.is_empty() {
+            return None;
+        }
         self.blocks_remaining.remove(hash).map(|block| (block.height, block.batch_start))
+    }
+
+    /// The number of the last pass that applied the block at `key` to `wallet_id`.
+    pub(super) fn last_pass(&self, key: &FilterMatchKey, wallet_id: &WalletId) -> Option<u64> {
+        self.processed_passes(key).and_then(|passes| passes.get(wallet_id)).copied()
     }
 
     fn insert_in_flight(
@@ -184,7 +201,7 @@ impl BlockMatchTracker {
         let block = InFlightBlock {
             height: key.height(),
             batch_start,
-            wallets: wallets.clone(),
+            awaiting: wallets.clone(),
         };
         self.blocks_remaining.insert(*key.hash(), block);
     }
@@ -233,7 +250,8 @@ mod tests {
     /// NewlyTracked again for a residual wallet after the first wallet's
     /// processing is recorded, and AlreadyProcessed once every candidate is
     /// covered. `track_for_new_scripts` re-queues the block only for wallets
-    /// whose last pass ran no later than the pass that derived the scripts.
+    /// whose last pass ran no later than the pass that derived the scripts. A
+    /// block stays in flight until every requested wallet has reported.
     #[test]
     fn track_state_machine() {
         let mut tracker = BlockMatchTracker::new();
@@ -249,7 +267,7 @@ mod tests {
                 wallets: BTreeSet::from([wallet_a])
             }
         );
-        assert_eq!(tracker.finish_in_flight(&hash), Some((100, 0)));
+        assert_eq!(tracker.finish_in_flight(&hash, &BTreeSet::from([wallet_a])), Some((100, 0)));
         // Put it back in flight to continue the scenario.
         assert!(matches!(
             tracker.track(&key, 0, BTreeSet::from([wallet_a])),
@@ -265,7 +283,7 @@ mod tests {
         );
 
         // Block is delivered and processed for {A}.
-        assert!(tracker.finish_in_flight(&hash).is_some());
+        assert!(tracker.finish_in_flight(&hash, &BTreeSet::from([wallet_a])).is_some());
         let pass_a = tracker.record_processed(100, hash, &BTreeSet::from([wallet_a]));
 
         // Late-added B's filter matches the same block: residual is {B} and
@@ -278,7 +296,7 @@ mod tests {
         );
 
         // After B is processed, both wallets are covered: AlreadyProcessed.
-        assert!(tracker.finish_in_flight(&hash).is_some());
+        assert!(tracker.finish_in_flight(&hash, &BTreeSet::from([wallet_b])).is_some());
         tracker.record_processed(100, hash, &BTreeSet::from([wallet_b]));
         assert_eq!(
             tracker.track(&key, 5000, BTreeSet::from([wallet_a, wallet_b])),
@@ -296,12 +314,20 @@ mod tests {
         );
 
         // The re-queued pass ran after the derivation.
-        assert!(tracker.finish_in_flight(&hash).is_some());
+        assert!(tracker.finish_in_flight(&hash, &BTreeSet::from([wallet_a])).is_some());
         tracker.record_processed(100, hash, &BTreeSet::from([wallet_a]));
         assert_eq!(
             tracker.track_for_new_scripts(&key, 5000, derived_by_a),
             BlockTrackResult::AlreadyProcessed
         );
+
+        // A block queued for A and B stays in flight until both have reported.
+        // A pass for A alone, such as a re-application, leaves it waiting for B.
+        let both = BTreeSet::from([wallet_a, wallet_b]);
+        let other = hash_n(1);
+        tracker.track(&FilterMatchKey::new(200, other), 0, both.clone());
+        assert_eq!(tracker.finish_in_flight(&other, &BTreeSet::from([wallet_a])), None);
+        assert_eq!(tracker.finish_in_flight(&other, &both), Some((200, 0)));
     }
 
     /// `prune_at_or_below` drops every entry at or below the given height
