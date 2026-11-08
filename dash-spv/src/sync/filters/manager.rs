@@ -5,7 +5,6 @@
 //! Emits FiltersStored, FiltersSyncComplete and BlocksNeeded events.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::mem;
 use std::sync::Arc;
 
 use dashcore::bip158::{BlockFilter, FilterQuery};
@@ -118,7 +117,7 @@ fn rescan_match(
 const BATCH_PROCESSING_SIZE: u32 = 5000;
 
 /// One wallet's scripts to rescan, keyed by the block pass that derived them.
-type DerivedScripts = BTreeMap<u64, HashSet<ScriptBuf>>;
+pub(super) type DerivedScripts = BTreeMap<u64, HashSet<ScriptBuf>>;
 
 /// Pass for scripts of unknown origin. No pass is later, so every block they
 /// match is re-applied.
@@ -183,9 +182,6 @@ pub struct FiltersManager<
     /// `BlockProcessed` and the per-wallet record of which wallets already
     /// have a given processed block applied.
     pub(super) tracker: BlockMatchTracker,
-    /// Scripts found by processed blocks since the last rescan, rescanned
-    /// together. Grouped per wallet by the pass that derived them.
-    pub(super) pending_new_scripts: BTreeMap<WalletId, BTreeMap<u64, Vec<ScriptBuf>>>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -199,6 +195,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         filter_storage: Arc<RwLock<F>>,
     ) -> Self {
         let committed_height = wallet.read().await.synced_height();
+        let checks_derived_addresses = wallet.read().await.checks_derived_addresses();
         let stored_height = filter_storage.read().await.filter_tip_height().await.unwrap_or(0);
         let target_height =
             header_storage.read().await.get_tip().await.map(|t| t.height()).unwrap_or(0);
@@ -229,8 +226,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             // Multi-batch processing
             active_batches: BTreeMap::new(),
             processing_height: 0,
-            tracker: BlockMatchTracker::new(),
-            pending_new_scripts: BTreeMap::new(),
+            tracker: BlockMatchTracker::new(checks_derived_addresses),
         }
     }
 
@@ -670,9 +666,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 break;
             }
 
-            // Before reconciliation, which would rescan the pending scripts
-            // without the pass that derived them.
-            events.extend(self.rescan_active_batches().await?);
+            // Rescan the deferred scripts first. They carry the pass that derived
+            // them, and reconciliation would rescan them without it.
+            events.extend(self.rescan_deferred(batch_start).await?);
             events.extend(self.reconcile_untested_scripts(batch_start).await?);
             if let Some(batch) = self.active_batches.get(&batch_start) {
                 if batch.pending_blocks() > 0 {
@@ -868,33 +864,45 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         self.rescan_batch(batch_start, &untested).await
     }
 
-    /// Match `pending_new_scripts` against every already-scanned active batch now, so
-    /// their blocks are requested in parallel instead of one batch at a time at commit.
-    pub(super) async fn rescan_active_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
-        let new_scripts = mem::take(&mut self.pending_new_scripts);
-        let mut events = Vec::new();
-        let starts: Vec<u32> =
-            self.active_batches.iter().filter(|(_, b)| b.scanned()).map(|(s, _)| *s).collect();
-        for batch_start in starts {
-            let Some(batch) = self.active_batches.get(&batch_start) else {
-                continue;
-            };
-            let mut untested: HashMap<WalletId, DerivedScripts> = HashMap::new();
-            for (id, by_pass) in &new_scripts {
-                if !batch.scanned_wallets().contains_key(id) {
-                    continue;
-                }
-                for (pass, scripts) in by_pass {
-                    let missing: HashSet<ScriptBuf> =
-                        batch.untested(id, scripts).cloned().collect();
-                    if !missing.is_empty() {
-                        untested.entry(*id).or_default().insert(*pass, missing);
-                    }
-                }
-            }
-            events.extend(self.rescan_batch(batch_start, &untested).await?);
+    /// Defer `new_scripts`, derived by `pass`, to every scanned batch that has not matched them yet,
+    /// then rescan the lowest batch at once: the next commit waits on its blocks.
+    /// The other batches are rescanned by [`Self::rescan_next_deferred`].
+    pub(super) async fn defer_new_scripts(
+        &mut self,
+        new_scripts: &BTreeMap<WalletId, Vec<ScriptBuf>>,
+        pass: u64,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        if new_scripts.is_empty() {
+            return Ok(vec![]);
         }
-        Ok(events)
+        for batch in self.active_batches.values_mut() {
+            for (wallet_id, scripts) in new_scripts {
+                batch.defer(*wallet_id, pass, scripts);
+            }
+        }
+        let Some(&lowest) = self.active_batches.keys().next() else {
+            return Ok(vec![]);
+        };
+        self.rescan_deferred(lowest).await
+    }
+
+    /// Rescan the lowest batch with deferred scripts. One batch per call keeps a
+    /// tick short, so `BlockProcessed` events are not queued behind every batch.
+    pub(super) async fn rescan_next_deferred(&mut self) -> SyncResult<Vec<SyncEvent>> {
+        let next = self.active_batches.iter().find(|(_, batch)| batch.has_deferred());
+        match next.map(|(start, _)| *start) {
+            Some(batch_start) => self.rescan_deferred(batch_start).await,
+            None => Ok(vec![]),
+        }
+    }
+
+    /// Match the scripts deferred for the batch at `batch_start` against it.
+    async fn rescan_deferred(&mut self, batch_start: u32) -> SyncResult<Vec<SyncEvent>> {
+        let Some(batch) = self.active_batches.get_mut(&batch_start) else {
+            return Ok(vec![]);
+        };
+        let deferred = batch.take_deferred();
+        self.rescan_batch(batch_start, &deferred).await
     }
 
     /// Rescan a specific batch for newly discovered scriptPubKeys, attributed
@@ -2309,6 +2317,8 @@ mod tests {
 
     /// `rescan_batch` re-queues an already processed block only when its last
     /// pass ran no later than the pass that derived the newest scripts matching it.
+    /// The mock wallet keeps the default `checks_derived_addresses`, so the
+    /// deriving block itself is re-queued.
     #[tokio::test]
     async fn test_rescan_batch_reprocesses_already_processed_block() {
         let old_address = Address::dummy(Network::Regtest, 33);
@@ -2630,11 +2640,13 @@ mod tests {
         assert_eq!(heights, vec![30, 50, 60]);
     }
 
-    /// The per-tick rescan does not request an in-flight block again for a
-    /// wallet it is already queued for, since the queued pass sees the new
-    /// scripts. It still requests the block for a wallet not yet queued.
+    /// New scripts are matched against the lowest batch while their
+    /// `BlockProcessed` is handled, and against the other batches on the next
+    /// tick. An in-flight block is not requested again for a wallet it is
+    /// already queued for, since the queued pass sees the new scripts. It is
+    /// still requested for a wallet not yet queued.
     #[tokio::test]
-    async fn test_tick_rescan_requests_in_flight_block_only_for_new_wallets() {
+    async fn test_new_scripts_request_the_lowest_batch_first() {
         let wallet_a: WalletId = [0x1A; 32];
         let wallet_b: WalletId = [0x1B; 32];
         let watched = Address::dummy(Network::Regtest, 51);
@@ -2651,35 +2663,41 @@ mod tests {
         multi.insert_wallet(wallet_b, MockWalletState::default());
         let mut manager = create_multi_test_manager(Arc::new(RwLock::new(multi))).await;
         manager.set_state(SyncState::Syncing);
-        manager.progress.update_stored_height(99);
-        manager.progress.update_filter_header_tip_height(99);
+        manager.progress.update_stored_height(199);
+        manager.progress.update_filter_header_tip_height(199);
 
-        // Block 40 pays the watched address and the one derived below.
-        let block = Block::dummy(
+        // Block 40 pays the watched address and the one derived below. Block
+        // 140, in the next batch, pays only the derived one.
+        let block_40 = Block::dummy(
             40,
             vec![
                 Transaction::dummy(&watched, 0..0, &[40]),
                 Transaction::dummy(&derived, 0..0, &[41]),
             ],
         );
-        let key_40 = FilterMatchKey::new(40, block.block_hash());
-        let filter_40 = BlockFilter::dummy(&block);
+        let key_40 = FilterMatchKey::new(40, block_40.block_hash());
+        let (key_140, filter_140) = filter_for_address(140, &derived);
+        let filter_40 = BlockFilter::dummy(&block_40);
         let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key_40.clone(), filter_40)]));
         batch.mark_verified();
         manager.active_batches.insert(0, batch);
+        let mut batch = FiltersBatch::new(100, 199, HashMap::from([(key_140.clone(), filter_140)]));
+        batch.mark_verified();
+        manager.active_batches.insert(100, batch);
 
         let events = manager.scan_batch(0).await.unwrap();
         assert!(matches!(
             events.as_slice(),
             [SyncEvent::BlocksNeeded { blocks }] if blocks.get(&key_40) == Some(&BTreeSet::from([wallet_a]))
         ));
+        assert!(manager.scan_batch(100).await.unwrap().is_empty());
 
         let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
-        let requested_40 = |events: &[SyncEvent]| {
+        let requested = |events: &[SyncEvent], key: &FilterMatchKey| {
             events.iter().find_map(|e| match e {
                 SyncEvent::BlocksNeeded {
                     blocks,
-                } => blocks.get(&key_40).cloned(),
+                } => blocks.get(key).cloned(),
                 _ => None,
             })
         };
@@ -2693,18 +2711,26 @@ mod tests {
         };
 
         // Block 20 derived the script for wallet A while block 40 was queued
-        // for A: nothing is requested.
-        manager.handle_sync_event(&report(wallet_a), &network).await.unwrap();
+        // for A: nothing is requested from the lowest batch, and block 140
+        // waits for the tick.
+        let events = manager.handle_sync_event(&report(wallet_a), &network).await.unwrap();
+        assert_eq!(requested(&events, &key_40), None, "block 40 is already queued for wallet A");
+        assert_eq!(requested(&events, &key_140), None);
         let events = manager.tick(&network).await.unwrap();
-        assert_eq!(requested_40(&events), None, "block 40 is already queued for wallet A");
+        assert_eq!(requested(&events, &key_140), Some(BTreeSet::from([wallet_a])));
 
-        // The same script for wallet B adds B to the queued pass.
-        manager.handle_sync_event(&report(wallet_b), &network).await.unwrap();
+        // The same script for wallet B adds B to the queued pass of block 40
+        // at once, and requests block 140 for B on the next tick.
+        let events = manager.handle_sync_event(&report(wallet_b), &network).await.unwrap();
+        assert_eq!(requested(&events, &key_40), Some(BTreeSet::from([wallet_b])));
+        assert_eq!(requested(&events, &key_140), None);
         let events = manager.tick(&network).await.unwrap();
-        assert_eq!(requested_40(&events), Some(BTreeSet::from([wallet_b])));
+        assert_eq!(requested(&events, &key_140), Some(BTreeSet::from([wallet_b])));
+        assert!(manager.tick(&network).await.unwrap().is_empty());
 
-        // Block 40 is counted once, however often the rescan matched it.
+        // Each block is counted once, however often a rescan matched it.
         assert_eq!(manager.active_batches.get(&0).unwrap().pending_blocks(), 1);
+        assert_eq!(manager.active_batches.get(&100).unwrap().pending_blocks(), 1);
     }
 
     /// `scan_batch` `AlreadyProcessed` path: when every candidate wallet has
@@ -3130,6 +3156,72 @@ mod tests {
             0,
             "the script must not come back as untested on the next commit attempt"
         );
+    }
+
+    /// Scripts deferred for a batch are matched against it before it commits,
+    /// with the pass that derived them. A block applied by a later pass is not
+    /// requested again, and the batch waits for the other block.
+    #[tokio::test]
+    async fn test_commit_rescans_deferred_scripts_with_their_pass() {
+        let wallet_id: WalletId = [2; 32];
+        let watched = Address::dummy(Network::Testnet, 13);
+        let derived = Address::dummy(Network::Testnet, 14);
+
+        let mut multi = MultiMockWallet::new();
+        multi.insert_wallet(
+            wallet_id,
+            MockWalletState {
+                addresses: vec![watched.clone()],
+                ..MockWalletState::default()
+            },
+        );
+        let mut manager = create_multi_test_manager(Arc::new(RwLock::new(multi))).await;
+        manager.set_state(SyncState::Syncing);
+        manager.progress.update_stored_height(199);
+        manager.progress.update_filter_header_tip_height(199);
+
+        let (key_140, filter_140) = filter_for_address(140, &derived);
+        let (key_150, filter_150) = filter_for_address(150, &derived);
+        let mut batch = FiltersBatch::new(0, 99, HashMap::new());
+        batch.mark_verified();
+        manager.active_batches.insert(0, batch);
+        let filters = HashMap::from([(key_140.clone(), filter_140), (key_150.clone(), filter_150)]);
+        let mut batch = FiltersBatch::new(100, 199, filters);
+        batch.mark_verified();
+        manager.active_batches.insert(100, batch);
+        assert!(manager.scan_batch(0).await.unwrap().is_empty());
+        assert!(manager.scan_batch(100).await.unwrap().is_empty());
+
+        // The pass of block 20 derives `derived`.
+        manager.wallet.write().await.set_scan_addresses(wallet_id, vec![watched, derived.clone()]);
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let event = SyncEvent::BlockProcessed {
+            block_hash: Header::dummy(20).block_hash(),
+            height: 20,
+            wallets: BTreeSet::from([wallet_id]),
+            new_scripts: BTreeMap::from([(wallet_id, vec![derived.script_pubkey()])]),
+            confirmed_txids: vec![],
+        };
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
+        assert!(events.is_empty(), "the lowest batch has no block paying `derived`");
+        // Block 140 was applied by a later pass.
+        manager.tracker.record_processed(140, *key_140.hash(), &BTreeSet::from([wallet_id]));
+
+        // Batch 0 commits. Batch 100 matches the deferred script first.
+        let events = manager.try_process_batch().await.unwrap();
+        let requested: Vec<FilterMatchKey> = events
+            .iter()
+            .filter_map(|e| match e {
+                SyncEvent::BlocksNeeded {
+                    blocks,
+                } => Some(blocks.keys().cloned()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(requested, vec![key_150]);
+        assert_eq!(manager.progress.committed_height(), 99);
+        assert_eq!(manager.active_batches.get(&100).unwrap().pending_blocks(), 1);
     }
 
     /// Proves a batch scanned with a query missing one address — the shape of
