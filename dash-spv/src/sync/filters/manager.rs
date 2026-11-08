@@ -801,24 +801,28 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             let Some(batch) = self.active_batches.get(&batch_start) else {
                 return Ok(vec![]);
             };
+            // Every wallet is passed on, even without untested scripts, because
+            // `rescan_batch` also matches the filter elements the batch never saw.
             for wallet_id in &wallets {
                 let monitored = wallet.scan_script_pubkeys_for(wallet_id);
                 let missing: HashSet<ScriptBuf> =
                     batch.untested(wallet_id, &monitored).cloned().collect();
+                let by_pass = untested.entry(*wallet_id).or_default();
                 if !missing.is_empty() {
-                    untested.insert(*wallet_id, DerivedScripts::from([(UNKNOWN_PASS, missing)]));
+                    by_pass.insert(UNKNOWN_PASS, missing);
                 }
             }
         }
-        if untested.is_empty() {
-            return Ok(vec![]);
-        }
 
-        tracing::debug!(
-            "Reconcile batch {}: {} script(s) the wallet watches had never been matched here",
-            batch_start,
-            untested.values().flat_map(BTreeMap::values).map(HashSet::len).sum::<usize>(),
-        );
+        let missing_scripts: usize =
+            untested.values().flat_map(BTreeMap::values).map(HashSet::len).sum();
+        if missing_scripts > 0 {
+            tracing::debug!(
+                "Reconcile batch {}: {} script(s) the wallet watches had never been matched here",
+                batch_start,
+                missing_scripts,
+            );
+        }
         // Same accounting as any other newly derived script.
         self.rescan_batch(batch_start, &untested).await
     }
@@ -868,6 +872,27 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             return Ok(vec![]);
         };
 
+        // Per-wallet `synced_height` snapshot so heights below the wallet's
+        // own progress are skipped during the rescan, plus the filter elements
+        // this batch was never matched against. A block that matches an older
+        // element was already found when that element was matched.
+        let mut synced_heights: HashMap<WalletId, u32> = HashMap::new();
+        let mut filter_elements: HashMap<WalletId, Vec<Vec<u8>>> = HashMap::new();
+        {
+            let wallet = self.wallet.read().await;
+            for id in new_scripts.keys() {
+                synced_heights.insert(*id, wallet.wallet_synced_height(id));
+                let elements = wallet.monitored_filter_elements_for(id);
+                let untested: Vec<Vec<u8>> = batch.untested(id, &elements).cloned().collect();
+                if !untested.is_empty() {
+                    filter_elements.insert(*id, untested);
+                }
+            }
+        }
+        if filter_elements.is_empty() && new_scripts.values().all(BTreeMap::is_empty) {
+            return Ok(vec![]);
+        }
+
         tracing::info!(
             "Rescan filters ({}-{}) for new scripts across {} wallets",
             batch.start_height(),
@@ -879,7 +904,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         // every later commit attempt rescan the same set.
         if let Some(batch) = self.active_batches.get_mut(&batch_start) {
             for (wallet_id, by_pass) in new_scripts {
-                batch.mark_tested(*wallet_id, by_pass.values().flatten().cloned());
+                batch.mark_tested(*wallet_id, by_pass.values().flatten());
+            }
+            for (wallet_id, elements) in &filter_elements {
+                batch.mark_tested(*wallet_id, elements);
             }
         }
 
@@ -891,22 +919,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         let batch_filters = batch.shared_filters();
 
-        // Per-wallet `synced_height` snapshot so heights below the wallet's
-        // own progress are skipped during the rescan, plus the bare
-        // owner/voting filter elements a compact filter carries beyond the
-        // wallet's scriptPubKeys.
-        let mut synced_heights: HashMap<WalletId, u32> = HashMap::new();
-        let mut filter_elements: HashMap<WalletId, Vec<Vec<u8>>> = HashMap::new();
-        {
-            let wallet = self.wallet.read().await;
-            for id in new_scripts.keys() {
-                synced_heights.insert(*id, wallet.wallet_synced_height(id));
-                filter_elements.insert(*id, wallet.monitored_filter_elements_for(id));
-            }
-        }
-
         // Each matched wallet maps to the newest pass among the script groups
-        // that match the block. A match through the filter elements alone has no pass.
+        // that match the block. A match through a filter element alone has no
+        // known pass, so its block is re-applied once per element and batch.
         let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeMap<WalletId, u64>> =
             BTreeMap::new();
         for (wallet_id, by_pass) in new_scripts {
@@ -1030,7 +1045,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         if let Some(batch) = self.active_batches.get_mut(&batch_start) {
             batch.set_scanned_wallets(scanned_wallets);
             for state in &wallet_states {
-                batch.mark_tested(state.id, state.scripts.iter().cloned());
+                batch.mark_tested(state.id, &state.scripts);
+                batch.mark_tested(state.id, &state.elements);
             }
         }
 
