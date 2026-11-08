@@ -258,11 +258,13 @@ pub struct PeerHandle {
     /// bandwidth-delay product), sized by the controller from its byte rate and
     /// service time.
     cap: Arc<AtomicU64>,
-    /// Bytes/s this peer serves while bandwidth bound, 0 until measured.
+    /// Bytes/s this peer serves while serving all it can, 0 until measured.
     serving_rate: Arc<AtomicU64>,
     /// Bytes/s this peer served over the last two seconds, 0 until it delivered anything.
     /// A rough stand-in for `serving_rate` while that is still being measured.
     served: Arc<AtomicU64>,
+    /// Whether this peer delivered nearly nothing for a while although it owes replies.
+    stalled: Arc<AtomicBool>,
     headers2: bool,
     /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
     token: CancellationToken,
@@ -283,6 +285,10 @@ impl PeerHandle {
 
     pub(super) fn served(&self) -> u64 {
         self.served.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn stalled(&self) -> bool {
+        self.stalled.load(Ordering::Relaxed)
     }
 
     pub fn in_flight_bytes(&self) -> u64 {
@@ -405,6 +411,10 @@ impl ConnectedPeer {
         self.handle.served.store(bytes_per_sec, Ordering::Relaxed);
     }
 
+    pub(crate) fn set_stalled(&self, stalled: bool) {
+        self.handle.stalled.store(stalled, Ordering::Relaxed);
+    }
+
     /// A handshaken connection `id` over a loopback socket, with no reader running.
     /// The far end discards what it reads, so sends succeed.
     #[cfg(test)]
@@ -423,6 +433,7 @@ impl ConnectedPeer {
                 cap: Arc::new(AtomicU64::new(INITIAL_CAP_BYTES)),
                 serving_rate: Arc::new(AtomicU64::new(0)),
                 served: Arc::new(AtomicU64::new(0)),
+                stalled: Arc::new(AtomicBool::new(false)),
                 headers2: false,
                 token: CancellationToken::new(),
             },
@@ -663,6 +674,7 @@ impl DisconnectedPeer {
                 cap,
                 serving_rate: Arc::new(AtomicU64::new(0)),
                 served: Arc::new(AtomicU64::new(0)),
+                stalled: Arc::new(AtomicBool::new(false)),
                 headers2,
                 token,
             },
