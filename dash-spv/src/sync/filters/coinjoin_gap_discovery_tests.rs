@@ -25,6 +25,9 @@
 //!    scripts.
 //! 4. [`provider_wallet_rescans_only_untested_outpoints`] — a rescan matches a
 //!    batch only against the UTXO outpoints it was never matched against.
+//! 5. [`provider_wallet_rescan_prefers_an_untested_outpoint_over_an_older_script`]
+//!    — an untested outpoint re-applies a block even when an older script
+//!    group also matches it.
 //!
 //! Each test drives the manager exactly the way the production event loop
 //! does: `try_process_batch` → `BlocksNeeded` → (blocks-manager stand-in)
@@ -421,4 +424,24 @@ async fn provider_wallet_rescans_only_untested_outpoints() {
     let d = block_paying(220, &[addresses[6].clone()]);
     let passes = run_batch(&mut manager, &wallet, 200, vec![(block_c, filter_c, key_c), d]).await;
     assert_eq!(passes.get(&hash_c), Some(&1), "C already knew A's outpoint");
+}
+
+/// Block X pays index G+3, which block A derived in an earlier pass, so X's
+/// pass already credited it. X's filter also carries the outpoint that block Z
+/// creates after X's pass. The rescan matches both, and the outpoint must win:
+/// X is applied again, since no pass of X saw that outpoint.
+#[tokio::test]
+async fn provider_wallet_rescan_prefers_an_untested_outpoint_over_an_older_script() {
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 4) as u32).await;
+
+    let a = block_paying(10, &[addresses[5].clone()]);
+    let z = block_paying(30, &[addresses[2].clone()]);
+    let outpoint_z = serialize(&OutPoint::new(z.0.txdata[0].txid(), 0));
+    let (block_x, _, key_x) = block_paying(20, &[addresses[1].clone(), addresses[G + 3].clone()]);
+    let filter_x = filter_with_elements(&block_x, &[outpoint_z]);
+    let hash_x = block_x.block_hash();
+
+    let passes = run_batch(&mut manager, &wallet, 0, vec![a, (block_x, filter_x, key_x), z]).await;
+    assert_eq!(passes.get(&hash_x), Some(&2), "X never saw the outpoint Z created");
 }

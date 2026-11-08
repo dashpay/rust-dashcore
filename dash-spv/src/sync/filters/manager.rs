@@ -66,7 +66,7 @@ async fn match_filters(
 enum RescanMatch {
     /// Through the scripts derived by this pass, the newest that match.
     Scripts(u64),
-    /// Through a newly tested filter element alone.
+    /// Through a filter element the batch had never been matched against.
     Element,
     /// The filter could not be decoded.
     DecodeFailure,
@@ -83,15 +83,26 @@ impl RescanMatch {
     }
 }
 
-/// Returns how `filter`, already matched by the rescan, matched `by_pass`.
+/// Returns how `filter`, already matched by the rescan, matched the wallet's
+/// untested `elements` or `by_pass`. An element wins over any script group,
+/// because no earlier pass of the block can have seen it.
 fn rescan_match(
     filter: Option<&BlockFilter>,
     key: &FilterMatchKey,
     by_pass: &DerivedScripts,
+    elements: &[Vec<u8>],
 ) -> RescanMatch {
     let Some(filter) = filter else {
         return RescanMatch::DecodeFailure;
     };
+    if !elements.is_empty() {
+        let query: FilterQuery = elements.iter().map(Vec::as_slice).collect();
+        match filter.match_any(key.hash(), &query) {
+            Ok(true) => return RescanMatch::Element,
+            Ok(false) => {}
+            Err(_) => return RescanMatch::DecodeFailure,
+        }
+    }
     for (pass, scripts) in by_pass.iter().rev() {
         let query: FilterQuery = scripts.iter().map(|script| script.as_bytes()).collect();
         match filter.match_any(key.hash(), &query) {
@@ -949,8 +960,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         let batch_filters = batch.shared_filters();
 
-        // A match through a filter element alone has no known pass, so its
-        // block is re-applied once per element and batch.
+        // A match through a newly tested filter element has no known pass, so
+        // its block is re-applied once per element and batch.
         let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeMap<WalletId, RescanMatch>> =
             BTreeMap::new();
         for (wallet_id, by_pass) in new_scripts {
@@ -960,9 +971,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 continue;
             }
             let min_synced = synced_heights.get(wallet_id).copied().unwrap_or(0);
-            let matches = match_filters(&batch_filters, scripts_vec, elements, min_synced).await;
+            let matches =
+                match_filters(&batch_filters, scripts_vec, elements.clone(), min_synced).await;
             for key in matches {
-                let matched = rescan_match(batch_filters.get(&key), &key, by_pass);
+                let matched = rescan_match(batch_filters.get(&key), &key, by_pass, &elements);
                 block_to_wallets.entry(key).or_default().insert(*wallet_id, matched);
             }
         }
