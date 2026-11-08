@@ -18,7 +18,7 @@ const KICKING_ATTEMPTS: u32 = 2;
 /// answer. A big answer on a slow link must fit, but a message that never finishes must
 /// not keep its request alive forever.
 const ANSWER_TIMEOUTS: u32 = 6;
-const HEDGE_AFTER: Duration = Duration::from_secs(2);
+pub(super) const HEDGE_AFTER: Duration = Duration::from_secs(2);
 /// A request on the wire this long gets a second copy even while its peer delivers other
 /// replies, unless [`HEDGE_QUEUE_FACTOR`] gives it longer.
 const HEDGE_OVERDUE: Duration = Duration::from_secs(10);
@@ -647,11 +647,24 @@ fn classify(msg: &NetworkMessage) -> MsgClass {
     }
 }
 
+/// Picks the peer among `open` for a message of `class`. A stalled peer is picked only when
+/// every peer in `open` is stalled, since its rate and cap still describe it before the stall.
+fn choose_peer<'a>(
+    open: impl Iterator<Item = &'a PeerHandle> + Clone,
+    class: MsgClass,
+) -> Option<&'a PeerHandle> {
+    let delivering = open.clone().filter(|p| !p.stalled());
+    if delivering.clone().next().is_some() {
+        return choose_ranked(delivering, class);
+    }
+    choose_ranked(open, class)
+}
+
 /// Picks the peer among `open` for a message of `class`. A header or block request goes to
 /// the peer that will answer it soonest, since sync waits on each of them in height order.
 /// Bulk filter traffic goes to the peer least loaded relative to its own cap, and so does
 /// any request while no peer has a rate yet.
-fn choose_peer<'a>(
+fn choose_ranked<'a>(
     open: impl Iterator<Item = &'a PeerHandle> + Clone,
     class: MsgClass,
 ) -> Option<&'a PeerHandle> {
@@ -668,9 +681,9 @@ fn choose_peer<'a>(
 
 /// Picks the peer among `others` for the second copy of a request: the one that answers it
 /// soonest. A peer without a serving rate looks idle before it gets work and may be slow, so
-/// it is asked only when no peer with a serving rate is among `others`.
+/// it is asked only when no delivering peer with a serving rate is among `others`.
 fn hedge_peer<'a>(others: impl Iterator<Item = &'a PeerHandle> + Clone) -> Option<&'a PeerHandle> {
-    let measured = others.clone().filter(|p| p.serving_rate() > 0);
+    let measured = others.clone().filter(|p| p.serving_rate() > 0 && !p.stalled());
     if measured.clone().next().is_some() {
         return choose_peer(measured, MsgClass::Headers);
     }
