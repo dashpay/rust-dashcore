@@ -28,6 +28,13 @@ pub(super) struct FilterHeadersPipeline {
     next_expected: u32,
     /// Target height for sync.
     target_height: u32,
+    /// Wanted batches below the stored filter headers (stop_hash -> (start_height, end_height)).
+    below_batches: HashMap<BlockHash, (u32, u32)>,
+    /// Received batches below (end_height -> (start_height, data)), kept until the stored
+    /// filter headers reach down to their end.
+    below_buffered: HashMap<u32, (u32, CFHeaders)>,
+    /// End height of the next batch to queue below.
+    below_end: Option<u32>,
 }
 
 impl Default for FilterHeadersPipeline {
@@ -45,7 +52,52 @@ impl FilterHeadersPipeline {
             buffered: HashMap::new(),
             next_expected: 0,
             target_height: 0,
+            below_batches: HashMap::new(),
+            below_buffered: HashMap::new(),
+            below_end: None,
         }
+    }
+
+    /// Queue the batches below the stored filter headers, from the one ending at `top`,
+    /// or below the ones queued already, down to the one starting at `lowest`.
+    pub(super) async fn extend_below(
+        &mut self,
+        storage: &impl BlockHeaderStorage,
+        top: u32,
+        lowest: u32,
+    ) -> SyncResult<()> {
+        let mut end = self.below_end.unwrap_or(top);
+        while end > lowest.saturating_sub(1) {
+            let start = lowest.max(end.saturating_sub(FILTER_HEADERS_BATCH_SIZE - 1));
+            let stop_hash =
+                storage.get_header(end).await?.map(|h| *h.hash()).ok_or_else(|| {
+                    SyncError::Storage(format!("Missing header at height {}", end))
+                })?;
+            self.want_below(stop_hash, start, end);
+            end = start.saturating_sub(1);
+        }
+        self.below_end = Some(end);
+        Ok(())
+    }
+
+    /// Buffer `data` if it answers a wanted batch below. Returns whether it does.
+    pub(super) fn receive_below(&mut self, data: &CFHeaders) -> bool {
+        let Some((start, end)) = self.below_batches.remove(&data.stop_hash) else {
+            return false;
+        };
+        self.below_buffered.insert(end, (start, data.clone()));
+        true
+    }
+
+    /// Start height and data of the received batch below that ends at `end`.
+    pub(super) fn take_below(&mut self, end: u32) -> Option<(u32, CFHeaders)> {
+        self.below_buffered.remove(&end)
+    }
+
+    /// Want the batch `start..=end` below the stored filter headers, whose block at `end` is `stop_hash`.
+    pub(super) fn want_below(&mut self, stop_hash: BlockHash, start: u32, end: u32) {
+        self.below_batches.insert(stop_hash, (start, end));
+        self.undeclared = true;
     }
 
     /// Extend the pipeline to a new target height.
@@ -150,12 +202,15 @@ impl FilterHeadersPipeline {
         &mut self,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<usize> {
-        if self.batch_starts.is_empty() {
+        let batches: Vec<(BlockHash, u32)> = self
+            .batch_starts
+            .iter()
+            .map(|(stop_hash, start)| (*stop_hash, *start))
+            .chain(self.below_batches.iter().map(|(stop_hash, (start, _))| (*stop_hash, *start)))
+            .collect();
+        if batches.is_empty() {
             return Ok(0);
         }
-
-        let batches: Vec<(BlockHash, u32)> =
-            self.batch_starts.iter().map(|(stop_hash, start)| (*stop_hash, *start)).collect();
 
         for (stop_hash, start_height) in &batches {
             network

@@ -47,11 +47,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         if let NetworkMessage::CFHeaders(cfheaders) = &*msg {
-            if let Some((start, stop_hash)) =
-                self.lower_batch.filter(|(_, stop_hash)| *stop_hash == cfheaders.stop_hash)
-            {
-                network.release_request(RequestKey::CfHeaders(stop_hash)).await;
-                return self.store_lower_batch(start, cfheaders).await;
+            if self.pipeline.receive_below(cfheaders) {
+                network.release_request(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
+                return self.store_lower_batches().await;
             }
         }
 
@@ -151,7 +149,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     }
 
     async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
-        self.extend_down(network).await?;
+        self.extend_down().await?;
         self.pipeline.send_pending(network).await?;
 
         // Re-read the block-header tip and extend from here if it moved.
