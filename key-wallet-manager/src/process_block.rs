@@ -720,6 +720,7 @@ mod tests {
     use super::*;
     use crate::matching::{check_compact_filters_for_elements, FilterMatchKey};
     use crate::test_helpers::*;
+    use crate::test_utils::coinjoin_external_addresses;
     use dashcore::bip158::BlockFilter;
     use dashcore::block::{Header, Version};
     use dashcore::pow::CompactTarget;
@@ -729,7 +730,7 @@ mod tests {
     use key_wallet::account::ManagedAccountTrait as _;
     use key_wallet::account::StandardAccountType;
     use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
-    use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
+    use key_wallet::managed_account::address_pool::AddressPoolType;
     use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
@@ -748,30 +749,6 @@ mod tests {
             .coinjoin_accounts
             .get(&0)
             .expect("CoinJoin account 0")
-    }
-
-    /// The CoinJoin account's external address at `index`, derived outside
-    /// the wallet so it can lie beyond the wallet's watch window.
-    fn coinjoin_external_address(
-        manager: &WalletManager<ManagedWalletInfo>,
-        wallet_id: &WalletId,
-        index: u32,
-    ) -> Address {
-        let wallet = manager.get_wallet(wallet_id).expect("wallet");
-        let xpub =
-            wallet.accounts.coinjoin_accounts.get(&0).expect("CoinJoin account").account_xpub;
-        let account = coinjoin_account(manager, wallet_id);
-        let pools = account.managed_account_type().address_pools();
-        let live = pools.iter().find(|p| p.pool_type == AddressPoolType::External).expect("pool");
-        let pool = AddressPool::new(
-            live.base_path.clone(),
-            AddressPoolType::External,
-            index + 1,
-            Network::Testnet,
-            &KeySource::Public(xpub),
-        )
-        .expect("derive pool");
-        pool.address_at_index(index).expect("derived address")
     }
 
     fn spend_first_output_of(tx: &Transaction) -> Transaction {
@@ -1041,19 +1018,19 @@ mod tests {
     async fn test_process_block_credits_addresses_the_block_derives() {
         let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
         let gap = DEFAULT_COINJOIN_GAP_LIMIT;
-        let derived_by_late = coinjoin_external_address(&manager, &wallet_id, gap + 2);
-        let also_derived_by_late = coinjoin_external_address(&manager, &wallet_id, gap + 8);
+        let addresses = coinjoin_external_addresses(&manager, &wallet_id, gap + 9);
+        let derived_by_late = &addresses[(gap + 2) as usize];
+        let also_derived_by_late = &addresses[(gap + 8) as usize];
 
         // `late` uses index 8, which derives up to G+8. `early` pays G+2, and
         // `both` pays index 6 and G+8, past what using 6 alone derives.
-        let early = create_tx_paying_to(&derived_by_late, 0x21);
-        let mut both =
-            create_tx_paying_to(&coinjoin_external_address(&manager, &wallet_id, 6), 0x23);
+        let early = create_tx_paying_to(derived_by_late, 0x21);
+        let mut both = create_tx_paying_to(&addresses[6], 0x23);
         both.output.push(TxOut {
             value: TX_AMOUNT,
             script_pubkey: also_derived_by_late.script_pubkey(),
         });
-        let late = create_tx_paying_to(&coinjoin_external_address(&manager, &wallet_id, 8), 0x22);
+        let late = create_tx_paying_to(&addresses[8], 0x22);
         let block = make_block(vec![early.clone(), both.clone(), late.clone()]);
 
         let mut rx = manager.subscribe_events();

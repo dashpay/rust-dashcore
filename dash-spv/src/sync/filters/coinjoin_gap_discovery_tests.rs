@@ -52,9 +52,10 @@ use dashcore::{
 };
 use key_wallet::account::ManagedAccountTrait;
 use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
-use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
+use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::test_utils::coinjoin_external_addresses;
 use key_wallet_manager::WalletManager;
 
 /// Deterministic test wallet seed (standard BIP-39 test vector mnemonic).
@@ -99,43 +100,6 @@ async fn setup() -> (CjFiltersManager, Arc<RwLock<WalletManager<ManagedWalletInf
     .await;
     manager.set_state(SyncState::Syncing);
     (manager, wallet, wallet_id)
-}
-
-/// Derive the wallet's first `count` CoinJoin-account-0 External addresses
-/// OFFLINE (via a standalone pool over the same xpub + base path), so test
-/// blocks can pay indices far beyond the wallet's live watch window without
-/// touching the wallet's own state.
-async fn coinjoin_external_addresses(
-    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
-    wallet_id: &WalletId,
-    count: u32,
-) -> Vec<Address> {
-    let wm = wallet.read().await;
-    let signing_wallet = wm.get_wallet(wallet_id).expect("wallet present");
-    let xpub = signing_wallet
-        .accounts
-        .coinjoin_accounts
-        .get(&0)
-        .expect("CoinJoin account 0 (Default options)")
-        .account_xpub;
-    let info = wm.get_wallet_info(wallet_id).expect("wallet info present");
-    let live_pool = coinjoin_external_pool(info);
-    let mut pool = AddressPool::new(
-        live_pool.base_path.clone(),
-        AddressPoolType::External,
-        count,
-        Network::Regtest,
-        &KeySource::Public(xpub),
-    )
-    .expect("derive standalone CoinJoin External pool");
-    // `AddressPool::new` pre-generates `count` addresses; extend defensively
-    // in case the constructor semantics change.
-    if pool.highest_generated.map(|h| h + 1).unwrap_or(0) < count {
-        let missing = count - pool.highest_generated.map(|h| h + 1).unwrap_or(0);
-        pool.generate_addresses(missing, &KeySource::Public(xpub), true)
-            .expect("extend standalone pool");
-    }
-    (0..count).map(|i| pool.address_at_index(i).expect("address generated")).collect()
 }
 
 /// The wallet's LIVE CoinJoin-account-0 External pool.
@@ -275,7 +239,7 @@ async fn drive_to_quiescence(
 #[tokio::test]
 async fn coinjoin_gap_limit_dense_same_batch_recovers() {
     let (mut manager, wallet, wallet_id) = setup().await;
-    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 40) as u32).await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 40) as u32);
 
     let (highest_used, highest_generated, _) = coinjoin_pool_state(&wallet, &wallet_id).await;
     assert_eq!(highest_used, None, "fresh wallet must have no used CoinJoin indices");
@@ -318,7 +282,7 @@ async fn coinjoin_gap_limit_dense_same_batch_recovers() {
 #[tokio::test]
 async fn coinjoin_gap_limit_inversion_within_batch_recovers() {
     let (mut manager, wallet, wallet_id) = setup().await;
-    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 22) as u32).await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 22) as u32);
 
     let (block_a, filter_a, key_a) = block_paying(10, &addresses[(G + 10)..=(G + 21)]);
     let (block_b, filter_b, key_b) = block_paying(20, &addresses[0..=29]);
@@ -349,7 +313,7 @@ async fn coinjoin_gap_limit_inversion_within_batch_recovers() {
 #[tokio::test]
 async fn coinjoin_rescan_skips_blocks_applied_after_the_scripts() {
     let (mut manager, wallet, wallet_id) = setup().await;
-    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 4) as u32).await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 4) as u32);
 
     let (pays_g2, _, _) = block_paying(10, &[addresses[G + 2].clone()]);
     let (pays_5, _, _) = block_paying(11, &[addresses[5].clone()]);
@@ -407,7 +371,7 @@ async fn run_batch(
 #[tokio::test]
 async fn provider_wallet_rescans_only_untested_outpoints() {
     let (mut manager, wallet, wallet_id) = setup().await;
-    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, 7).await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, 7);
 
     // Batch 0: A creates the outpoint the later batches refer to.
     let (block_a, filter_a, key_a) = block_paying(10, &[addresses[5].clone()]);
@@ -443,7 +407,7 @@ async fn provider_wallet_rescans_only_untested_outpoints() {
 #[tokio::test]
 async fn provider_wallet_rescan_prefers_an_untested_outpoint_over_an_older_script() {
     let (mut manager, wallet, wallet_id) = setup().await;
-    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 4) as u32).await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 4) as u32);
 
     let a = block_paying(10, &[addresses[5].clone()]);
     let z = block_paying(30, &[addresses[2].clone()]);
@@ -462,7 +426,7 @@ async fn provider_wallet_rescan_prefers_an_untested_outpoint_over_an_older_scrip
 #[tokio::test]
 async fn coinjoin_scripts_derived_in_one_batch_find_blocks_in_the_next() {
     let (mut manager, wallet, wallet_id) = setup().await;
-    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 7) as u32).await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 7) as u32);
 
     let (block_a, filter_a, key_a) =
         block_paying(10, &[addresses[5].clone(), addresses[G + 4].clone()]);
