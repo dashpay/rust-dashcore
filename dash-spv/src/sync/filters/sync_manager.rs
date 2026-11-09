@@ -120,7 +120,7 @@ impl<
 
         // Find height for this filter
         let height =
-            self.header_storage.read().await.get_header_height_by_hash(&cfilter.block_hash).await?;
+            self.filter_pipeline.resolve_height(&cfilter.block_hash, &self.header_storage).await?;
 
         let Some(h) = height else {
             tracing::warn!(
