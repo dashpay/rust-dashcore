@@ -83,7 +83,7 @@ impl InstantLock {
     ) -> Result<QuorumSigningSignId, io::Error> {
         let mut engine = sha256d::Hash::engine();
 
-        engine.input(&[quorum_type as u8]);
+        engine.input(&[quorum_type.index()]);
         engine.input(quorum_hash.as_byte_array());
         engine.input(precomputed_request_id.unwrap_or(self.request_id()?).as_byte_array());
         engine.input(self.txid.as_byte_array());

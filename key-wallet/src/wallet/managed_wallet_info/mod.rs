@@ -565,7 +565,10 @@ impl ManagedWalletInfo {
     /// An entry `(outpoint, height)` with `height <= boundary` is safe to
     /// forget: the spend at that height is chain-locked (never reorged out) and
     /// any funding transaction for the outpoint has been delivered, so no
-    /// redelivery path can re-insert the coin (dashpay/rust-dashcore#649).
+    /// redelivery path can re-insert the coin for good
+    /// (dashpay/rust-dashcore#649). A finalized funding transaction can still
+    /// be credited with an output paying an address derived since; the
+    /// re-delivery of its finalized spender marks it spent again.
     /// No-op until a chainlock has been applied or noted — without a finality
     /// boundary nothing can be proven final.
     ///

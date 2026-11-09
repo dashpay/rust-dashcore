@@ -67,6 +67,7 @@ const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::bans::{Ban, Bans};
 use crate::network::broker::{Broker, RequestKey};
+use crate::network::peer_set::{Admission, PeerSet};
 use crate::network::NetworkManager;
 use crate::network::TransportPreference;
 use crate::{
@@ -180,10 +181,11 @@ impl MessageType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NetworkEvent {
     PeersUpdated {
-        connected_count: u32,
+        /// Addresses of every connected peer.
+        addresses: Vec<SocketAddr>,
         /// Best tip height advertised across those peers.
         best_height: u32,
     },
@@ -192,16 +194,14 @@ pub enum NetworkEvent {
 }
 
 pub struct NetworkState {
-    pub connected: Mutex<Vec<ConnectedPeer>>,
+    pub(crate) connected: PeerSet,
     pub discoverer: Mutex<PeerDiscoverer>,
     pub bans: Bans,
     pub broker: Broker,
     pub subscribers: Subscribers,
-    pub events: broadcast::Sender<NetworkEvent>,
     pub inbound: UnboundedSender<PeerEvent>,
     pub bytes: AtomicU64,
     pub global_cap: AtomicU64,
-    pub best_tip: AtomicU32,
     pub peer_wake: Notify,
     pub costs: Arc<ResponseCosts>,
     pub max_peers: usize,
@@ -243,16 +243,14 @@ impl PeerNetworkManager {
 
         let (inbound, inbound_rx) = mpsc::unbounded_channel();
         let state = Arc::new(NetworkState {
-            connected: Mutex::new(Vec::with_capacity(30)),
+            connected: PeerSet::new(30),
             discoverer: Mutex::new(PeerDiscoverer::new(config)),
             bans: Bans::new(config.peers.iter().copied()),
             broker: Broker::new(),
             subscribers: Mutex::new(HashMap::new()),
-            events: broadcast::channel(4096).0,
             inbound,
             bytes: AtomicU64::new(0),
             global_cap: AtomicU64::new(MIN_CAP_BYTES * max_peers as u64),
-            best_tip: AtomicU32::new(0),
             peer_wake: Notify::new(),
             costs: Arc::new(ResponseCosts::new()),
             max_peers,
@@ -293,19 +291,25 @@ impl NetworkManager for PeerNetworkManager {
         spawn_peer_supervisor(self.state.clone(), session);
     }
 
-    /// Disconnect every peer and forget the requests in play, so none of them
-    /// reaches the peers of the next `start()`.
+    /// Disconnect and announce every peer, and forget the requests in play, so none
+    /// of them reaches the peers of the next `start()`.
     async fn stop(&self) {
         tracing::info!(target: "dash_spv::network", "network manager stopping: cancelling peers");
         self.session.lock().await.cancel();
-        self.state.connected.lock().await.clear();
+        let disconnected = self.state.connected.clear().await;
+        tracing::info!(
+            target: "dash_spv::network",
+            "network manager stopping: disconnected {} peer(s) {:?}",
+            disconnected.len(),
+            disconnected,
+        );
         self.state.broker.clear().await;
     }
 
     /// Ask the broker to make a request. De-duplicated by [`RequestKey`]: a request already
-    /// queued or on the wire is a no-op, so pipelines can re-declare their whole wanted
-    /// set every tick. Keyless messages (tx, mempool, control `getdata`) are queued
-    /// untracked.
+    /// queued, on the wire or answered but not yet released is a no-op, so pipelines can
+    /// re-declare their whole wanted set every tick. Keyless messages (tx, mempool,
+    /// control `getdata`) are queued untracked.
     async fn enqueue(&self, height: u32, msg: NetworkMessage) {
         self.state.broker.enqueue(height, msg).await;
     }
@@ -317,7 +321,7 @@ impl NetworkManager for PeerNetworkManager {
         // Drop the peer-set lock before writing: holding it across a socket write blocks
         // the router, monitor, supervisor and bandwidth controller for up to `WRITE_TIMEOUT`.
         let handle = {
-            let peers = self.state.connected.lock().await;
+            let peers = self.state.connected.read().await;
             peers.iter().find(|p| p.addr() == addr).map(|p| p.handle())
         };
         let Some(peer) = handle else {
@@ -340,7 +344,7 @@ impl NetworkManager for PeerNetworkManager {
     /// Broadcast a message to all connected peers
     async fn broadcast(&self, msg: NetworkMessage) -> NetworkResult<()> {
         let handles: Vec<PeerHandle> =
-            self.state.connected.lock().await.iter().map(|p| p.handle()).collect();
+            self.state.connected.read().await.iter().map(|p| p.handle()).collect();
         if handles.is_empty() {
             return Err(NetworkError::ConnectionFailed("No connected peers".to_string()));
         }
@@ -376,22 +380,22 @@ impl NetworkManager for PeerNetworkManager {
     }
 
     fn tip(&self) -> u32 {
-        self.state.best_tip.load(Ordering::Relaxed)
+        self.state.connected.best_tip()
     }
 
     async fn connected_count(&self) -> u32 {
-        self.state.connected.lock().await.len() as u32
+        self.state.connected.len().await as u32
     }
 
     async fn ban_peer(&self, addr: SocketAddr) {
         self.state.bans.ban(addr, Ban::Misbehaved).await;
-        for peer in self.state.connected.lock().await.iter().filter(|p| p.addr() == addr) {
+        for peer in self.state.connected.read().await.iter().filter(|p| p.addr() == addr) {
             peer.close();
         }
     }
 
     fn events(&self) -> broadcast::Receiver<NetworkEvent> {
-        self.state.events.subscribe()
+        self.state.connected.subscribe()
     }
 }
 
@@ -418,7 +422,7 @@ fn spawn_router(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHa
             }
 
             let peers: Vec<PeerHandle> =
-                connected.lock().await.iter().map(|p| p.handle()).collect();
+                connected.read().await.iter().map(|p| p.handle()).collect();
             let sent = broker.route(&peers, global_cap.load(Ordering::Relaxed), costs).await;
             drop(peers);
 
@@ -469,7 +473,7 @@ const QUEUE_HIGH: f64 = 1.0;
 /// bandwidth-delay product must still absorb a couple.
 const QUEUE_FLOOR_BYTES: f64 = 1024.0 * 1024.0;
 
-/// Ticks a peer must have had work in flight before its rate is compared, and the
+/// Ticks a peer must have been bandwidth bound before its rate is compared, and the
 /// span its serving rate is averaged over, so a momentary dip never condemns it.
 const SERVING_SAMPLE_TICKS: u32 = 120;
 
@@ -590,16 +594,51 @@ impl ByteLimiter {
     }
 }
 
-/// A peer's limiter plus how fast it serves while it has work, for eviction.
+/// A peer's limiter plus how fast it serves while bandwidth bound, for eviction.
 struct PeerFlow {
     limiter: ByteLimiter,
     serving_rate: f64,
     serving_ticks: u32,
 }
 
+impl PeerFlow {
+    fn new(bytes: u64) -> Self {
+        Self {
+            limiter: ByteLimiter::new(MIN_CAP_BYTES, bytes),
+            serving_rate: 0.0,
+            serving_ticks: 0,
+        }
+    }
+
+    /// One tick with the peer's cumulative bytes received, its bytes in flight now and
+    /// whether the client's own cap holds back work. Returns its new cap.
+    fn tick(&mut self, bytes: u64, in_flight: u64, link_full: bool) -> u64 {
+        // The router sends a peer work until it reaches its cap or the link cap binds.
+        // Short of both, its rate shows how much it was asked for, not its bandwidth.
+        let bound = in_flight > 0 && (in_flight >= self.limiter.cap as u64 || link_full);
+        let cap = self.limiter.tick(bytes, in_flight, CAP_STEP_BYTES_PER_SEC);
+        if bound {
+            self.serving_ticks += 1;
+            let alpha = 1.0 / self.serving_ticks.min(SERVING_SAMPLE_TICKS) as f64;
+            self.serving_rate += alpha * (self.limiter.rate - self.serving_rate);
+        }
+        cap
+    }
+
+    /// Returns the peer's serving rate in bytes/s, 0 until measured.
+    fn serving_rate(&self) -> u64 {
+        let measured = self.limiter.found_ceiling && self.serving_ticks >= SERVING_SAMPLE_TICKS;
+        if measured {
+            self.serving_rate as u64
+        } else {
+            0
+        }
+    }
+}
+
 /// Sizes the byte caps of every peer and of the client's own link, each with a
 /// [`ByteLimiter`] on its own throughput: the router sends while both have room.
-/// Also reports how fast each peer serves while it has work, for [`underserving_peer`].
+/// Also reports how fast each peer serves while bandwidth bound, for [`underserving_peer`].
 fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
@@ -614,6 +653,10 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
         let mut global = ByteLimiter::new(MIN_CAP_BYTES, bytes.load(Ordering::Relaxed));
         let mut peers: HashMap<PeerId, PeerFlow> = HashMap::new();
         let mut last_underserving: Option<SocketAddr> = None;
+        // Bytes read, in flight and cap at each peer's last `peer_speed` line. A peer is
+        // reported again only once one of them changes, so an idle client stays quiet.
+        let mut reported: HashMap<PeerId, (u64, u64, u64)> = HashMap::new();
+        let mut reported_bandwidth = None;
         let mut ticks = 0u64;
         let mut ticker = tokio::time::interval(FLOW_TICK);
         loop {
@@ -623,36 +666,20 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             }
             ticks += 1;
 
-            let g = connected.lock().await;
+            let g = connected.read().await;
             if g.is_empty() {
                 continue;
             }
             let live: HashSet<PeerId> = g.iter().map(|p| p.id()).collect();
             peers.retain(|id, _| live.contains(id));
 
-            let mut total_in_flight = 0u64;
-            for p in g.iter() {
-                let in_flight = p.in_flight_bytes();
-                total_in_flight += in_flight;
-                let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow {
-                    limiter: ByteLimiter::new(MIN_CAP_BYTES, p.bytes_read()),
-                    serving_rate: 0.0,
-                    serving_ticks: 0,
-                });
-                let cap = flow.limiter.tick(p.bytes_read(), in_flight, CAP_STEP_BYTES_PER_SEC);
-                p.set_cap(cap);
-                if in_flight > 0 {
-                    flow.serving_ticks += 1;
-                    let alpha = 1.0 / flow.serving_ticks.min(SERVING_SAMPLE_TICKS) as f64;
-                    flow.serving_rate += alpha * (flow.limiter.rate - flow.serving_rate);
-                }
-                let measured =
-                    flow.limiter.found_ceiling && flow.serving_ticks >= SERVING_SAMPLE_TICKS;
-                p.set_serving_rate(if measured {
-                    flow.serving_rate as u64
-                } else {
-                    0
-                });
+            let in_flights: Vec<u64> = g.iter().map(ConnectedPeer::in_flight_bytes).collect();
+            let total_in_flight: u64 = in_flights.iter().sum();
+            let link_full = total_in_flight >= global_cap.load(Ordering::Relaxed);
+            for (p, &in_flight) in g.iter().zip(&in_flights) {
+                let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
+                p.set_cap(flow.tick(p.bytes_read(), in_flight, link_full));
+                p.set_serving_rate(flow.serving_rate());
             }
 
             global.min_cap = (MIN_CAP_BYTES * g.len() as u64) as f64;
@@ -663,8 +690,15 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             if ticks.is_multiple_of(2) {
                 let caps: u64 = g.iter().map(|p| p.cap()).sum();
+                reported.retain(|id, _| live.contains(id));
+                let mut any_reported = false;
                 for p in g.iter() {
                     let flow = &peers[&p.id()];
+                    let snapshot = (p.bytes_read(), p.in_flight_bytes(), p.cap());
+                    if reported.insert(p.id(), snapshot) == Some(snapshot) {
+                        continue;
+                    }
+                    any_reported = true;
                     tracing::debug!(
                         target: "peer_speed",
                         "peer {}: cap={} KB in_flight={} KB rate={:.2} MB/s rtt={:.0}ms base={:.0}ms lag={}ms total={:.1} MB",
@@ -687,19 +721,24 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 } else {
                     "work"
                 };
-                tracing::debug!(
-                    target: "peer_speed",
-                    "bandwidth: {:.1} MB/s bind={} | global_cap={} sum_peer_cap={} in_flight={} KB | rtt={:.0}ms base={:.0}ms | peers={} | resp KB {:?}",
-                    global.rate / 1e6,
-                    bind,
-                    cap >> 10,
-                    caps >> 10,
-                    total_in_flight >> 10,
-                    global.rtt() * 1e3,
-                    global.base_rtt * 1e3,
-                    g.len(),
-                    costs.expected_kb(),
-                );
+                let snapshot =
+                    Some((bytes.load(Ordering::Relaxed), total_in_flight, cap, caps, g.len()));
+                if any_reported || reported_bandwidth != snapshot {
+                    reported_bandwidth = snapshot;
+                    tracing::debug!(
+                        target: "peer_speed",
+                        "bandwidth: {:.1} MB/s bind={} | global_cap={} sum_peer_cap={} in_flight={} KB | rtt={:.0}ms base={:.0}ms | peers={} | resp KB {:?}",
+                        global.rate / 1e6,
+                        bind,
+                        cap >> 10,
+                        caps >> 10,
+                        total_in_flight >> 10,
+                        global.rtt() * 1e3,
+                        global.base_rtt * 1e3,
+                        g.len(),
+                        costs.expected_kb(),
+                    );
+                }
             }
 
             // Only the transition wakes the supervisor, so a peer with no replacement
@@ -708,15 +747,21 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             let handles: Vec<PeerHandle> = g.iter().map(|p| p.handle()).collect();
             drop(g);
             if broker.len() == 0 {
-                let hedged = broker.hedge(&handles, costs).await;
-                if hedged > 0 {
-                    tracing::debug!(target: "dash_spv::network", "endgame: hedged {} block request(s)", hedged);
+                if let Some(height) = broker.hedge(&handles).await {
+                    tracing::debug!(target: "dash_spv::network", "endgame: hedged block {}", height);
                 }
             }
-            if underserving.is_some() && underserving != last_underserving {
+            if let Some(slow) = underserving.filter(|slow| Some(slow.addr) != last_underserving) {
+                tracing::debug!(
+                    target: "dash_spv::network",
+                    "{} serving at {:.2} MB/s vs best {:.2} MB/s — a replacement is worth probing for",
+                    slow.addr,
+                    slow.rate as f64 / 1e6,
+                    slow.best as f64 / 1e6,
+                );
                 peer_wake.notify_one();
             }
-            last_underserving = underserving;
+            last_underserving = underserving.map(|slow| slow.addr);
         }
     })
 }
@@ -755,7 +800,7 @@ impl Supervisor {
         loop {
             self.repair_round().await;
 
-            let short = self.state.connected.lock().await.len() < self.state.max_peers;
+            let short = self.state.connected.read().await.len() < self.state.max_peers;
 
             tokio::select! {
                 _ = self.shutdown.cancelled() => break,
@@ -768,7 +813,7 @@ impl Supervisor {
     async fn next_candidates(&self, want: usize) -> Vec<DisconnectedPeer> {
         let mut out = self.state.discoverer.lock().await.get(want).await;
         let live: HashSet<SocketAddr> =
-            self.state.connected.lock().await.iter().map(|p| p.addr()).collect();
+            self.state.connected.read().await.iter().map(|p| p.addr()).collect();
         let banned = self.state.bans.banned().await;
         let mut seen = HashSet::new();
         out.retain(|p| {
@@ -786,24 +831,19 @@ impl Supervisor {
         }
     }
 
-    async fn announce_update(&self) {
-        let count = self.state.connected.lock().await.len() as u32;
-        let _ = self.state.events.send(NetworkEvent::PeersUpdated {
-            connected_count: count,
-            best_height: self.state.best_tip.load(Ordering::Relaxed),
-        });
-    }
-
     /// One pass at whatever the peer set needs: fill a deficit, replace a peer that is
     /// underserving the rest, or both.
     async fn repair_round(&self) {
         let (deficit, slow) = {
-            let peers = self.state.connected.lock().await;
+            let peers = self.state.connected.read().await;
             let deficit = self.state.max_peers.saturating_sub(peers.len());
             // Only look for a laggard once full: below cap every arrival is wanted anyway.
             // Each swap re-sends the work the old peer held, so at most one per cooldown.
             let cooled = self.last_swap.lock().await.is_none_or(|t| t.elapsed() >= SWAP_COOLDOWN);
-            let slow = (deficit == 0 && cooled).then(|| underserving_peer(&peers)).flatten();
+            let slow = (deficit == 0 && cooled)
+                .then(|| underserving_peer(&peers))
+                .flatten()
+                .map(|slow| slow.addr);
             (deficit, slow)
         };
         if deficit == 0 && slow.is_none() {
@@ -848,9 +888,7 @@ impl Supervisor {
             };
             self.state.bans.dialed(addr).await;
             let handle = peer.handle();
-            self.state
-                .best_tip
-                .fetch_max(peer.version().start_height.max(0) as u32, Ordering::Relaxed);
+            self.state.connected.raise_best_tip(peer.version().start_height.max(0) as u32);
 
             let lag = peer.lag_ms();
             if lag > 0 {
@@ -866,78 +904,61 @@ impl Supervisor {
                 continue;
             }
 
-            let mut changed = true;
-            let displaced = {
-                let mut peers = self.state.connected.lock().await;
-                if peers.len() < self.state.max_peers {
-                    let addr = peer.addr();
-                    peers.push(peer);
-                    let _ = self.state.events.send(NetworkEvent::PeerConnected(addr));
-                    accepted += 1;
-                    None
-                } else if let Some(pos) = slow
-                    .filter(|_| replaced.is_none())
-                    // Re-find by address under the lock: the set can change between
-                    // measuring and acting, and the laggard may already be gone.
-                    .and_then(|s| peers.iter().position(|p| p.addr() == s))
-                {
-                    let new_addr = peer.addr();
-                    let old = peers.swap_remove(pos);
-                    peers.push(peer);
+            let new_addr = peer.addr();
+            let slow = slow.filter(|_| replaced.is_none());
+            match self.state.connected.admit(peer, &self.shutdown, self.state.max_peers, slow).await
+            {
+                Admission::Joined => accepted += 1,
+                Admission::Swapped(old) => {
                     replaced = Some(new_addr);
-                    Some(old)
-                } else {
-                    leftover.push(peer);
-                    changed = false;
-                    None
+                    tracing::info!(
+                        target: "dash_spv::network",
+                        "peer supervisor: swapped out slow {} for {}",
+                        old.addr(),
+                        new_addr,
+                    );
+                    // Close it: the pump requeues every request routed to THIS connection, as for any
+                    // lost peer. Safe because the departure names a connection, not an address, so a
+                    // reconnection to the same peer is not disturbed.
+                    old.close();
+                    *self.last_swap.lock().await = Some(Instant::now());
                 }
-            };
-
-            if let Some(old) = displaced {
-                let old_addr = old.addr();
-                let new_addr = replaced.expect("set with the displacing peer");
-                tracing::info!(
-                    target: "dash_spv::network",
-                    "peer supervisor: swapped out slow {} for {}",
-                    old_addr,
-                    new_addr,
-                );
-                // Close it: the pump requeues every request routed to THIS connection, as for any
-                // lost peer. Safe because the departure names a connection, not an address, so a
-                // reconnection to the same peer is not disturbed.
-                old.close();
-                *self.last_swap.lock().await = Some(Instant::now());
-                let _ = self.state.events.send(NetworkEvent::PeerDisconnected(old_addr));
-                let _ = self.state.events.send(NetworkEvent::PeerConnected(new_addr));
+                Admission::Full(peer) => {
+                    leftover.push(peer);
+                    continue;
+                }
+                Admission::Stopped(peer) => {
+                    peer.close();
+                    continue;
+                }
             }
-
-            // Announce only real changes: an arrival or a swap. A candidate benched as a
-            // backup changed nothing.
-            if changed {
-                let _ = handle.send(&NetworkMessage::GetAddr).await;
-                self.announce_update().await;
-            }
+            let _ = handle.send(&NetworkMessage::GetAddr).await;
         }
 
         // Last resort: never sit at zero peers. If nothing decent connected and the
         // set is empty, take the least-bad handshake we got so sync can start; a
         // later round upgrades it once a decent peer appears.
-        if accepted == 0 && self.state.connected.lock().await.is_empty() && !leftover.is_empty() {
+        if accepted == 0 && self.state.connected.read().await.is_empty() && !leftover.is_empty() {
             leftover.sort_by_key(lag_key);
             let peer = leftover.remove(0);
-            let addr = peer.addr();
-            tracing::warn!(
-                target: "dash_spv::network",
-                "no decent peer available; accepting {} (ping {}ms) as last resort",
-                addr,
-                peer.lag_ms(),
-            );
+            let (addr, lag) = (peer.addr(), peer.lag_ms());
             let handle = peer.handle();
-            self.state.connected.lock().await.push(peer);
-            let _ = self.state.events.send(NetworkEvent::PeerConnected(addr));
-            let _ = handle.send(&NetworkMessage::GetAddr).await;
-            self.announce_update().await;
-            accepted += 1;
+            match self.state.connected.admit(peer, &self.shutdown, self.state.max_peers, None).await
+            {
+                Admission::Joined => {
+                    tracing::warn!(
+                        target: "dash_spv::network",
+                        "no decent peer available; accepting {} (ping {}ms) as last resort",
+                        addr,
+                        lag,
+                    );
+                    let _ = handle.send(&NetworkMessage::GetAddr).await;
+                    accepted += 1;
+                }
+                Admission::Full(peer) => leftover.push(peer),
+                // Nothing is swapped out without a slow peer to name.
+                Admission::Swapped(peer) | Admission::Stopped(peer) => peer.close(),
+            }
         }
 
         self.stash_backups(leftover).await;
@@ -947,16 +968,24 @@ impl Supervisor {
                 target: "dash_spv::network",
                 "peer supervisor: +{} peers -> {}",
                 accepted,
-                self.state.connected.lock().await.len(),
+                self.state.connected.read().await.len(),
             );
         }
     }
 }
 
+/// A peer underserving the rest, with its serving rate and the best one in bytes/s.
+#[derive(Clone, Copy)]
+struct SlowPeer {
+    addr: SocketAddr,
+    rate: u64,
+    best: u64,
+}
+
 /// The connected peer clearly underserving the rest, if any: serving bytes at a small
-/// fraction of the best connected peer's rate while it had work. Relative, so a slow
+/// fraction of the best connected peer's rate while bandwidth bound. Relative, so a slow
 /// client link (every peer slow alike) never condemns anyone.
-fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
+fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SlowPeer> {
     let measured: Vec<(SocketAddr, u64)> = peers
         .iter()
         .filter_map(|p| {
@@ -971,15 +1000,10 @@ fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
     }
     let best = measured.iter().map(|&(_, r)| r).max().expect("non-empty");
     let (addr, worst) = measured.iter().copied().min_by_key(|&(_, r)| r).expect("non-empty");
-    ((worst as f64) < best as f64 * SLOW_RATE_FRACTION).then(|| {
-        tracing::debug!(
-            target: "dash_spv::network",
-            "{} serving at {:.2} MB/s vs best {:.2} MB/s — a replacement is worth probing for",
-            addr,
-            worst as f64 / 1e6,
-            best as f64 / 1e6,
-        );
-        addr
+    ((worst as f64) < best as f64 * SLOW_RATE_FRACTION).then_some(SlowPeer {
+        addr,
+        rate: worst,
+        best,
     })
 }
 
@@ -998,9 +1022,10 @@ fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 /// Time requests out and evict the peers that stalled on them.
 ///
 /// A peer is a culprit when it has in-flight work and no bytes have arrived from it
-/// for a full [`REQUEST_TIMEOUT`], or when one of its requests made no progress
-/// for that long. Liveness is per peer, not per request age: a healthy peer
-/// draining a deep backlog keeps sending bytes even while its oldest request waits.
+/// for a full [`REQUEST_TIMEOUT`] since it was given that work, or when one of its
+/// requests made no progress for that long. Liveness is per peer, not per request
+/// age: a healthy peer draining a deep backlog keeps sending bytes even while its
+/// oldest request waits.
 ///
 /// A culprit is kicked immediately and ALL its on-wire requests are re-queued for
 /// other peers; leaving it connected would just route the freed work back to it.
@@ -1016,7 +1041,7 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             ..
         } = &*state;
         let mut ticker = tokio::time::interval(TIMEOUT_CHECK);
-        // Per-peer liveness: (bytes read at last progress, when it last rose).
+        // Per-peer liveness: (bytes read, when the peer last sent bytes or was idle).
         let mut progress: HashMap<PeerId, (u64, Instant)> = HashMap::new();
         loop {
             tokio::select! {
@@ -1031,19 +1056,21 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // with no registry entries. Pending work plus a byte counter
             // frozen for REQUEST_TIMEOUT means stuck, whatever the registry thinks.
             let mut culprits: HashSet<PeerId> = {
-                let peers = connected.lock().await;
+                let peers = connected.read().await;
                 let live: HashSet<PeerId> = peers.iter().map(|p| p.id()).collect();
                 progress.retain(|addr, _| live.contains(addr));
                 let mut culprits = HashSet::new();
                 for peer in peers.iter() {
                     let addr = peer.id();
                     let bytes = peer.bytes_read();
+                    let in_flight = peer.in_flight_bytes();
                     let entry = progress.entry(addr).or_insert((bytes, now));
-                    if bytes > entry.0 {
+                    // An idle peer owes no bytes, so its silence before it gets work
+                    // must not count against its first request.
+                    if bytes > entry.0 || in_flight == 0 {
                         *entry = (bytes, now);
                     }
-                    if peer.in_flight_bytes() > 0
-                        && now.duration_since(entry.1) > request_timeout(peer.lag_ms())
+                    if in_flight > 0 && now.duration_since(entry.1) > request_timeout(peer.lag_ms())
                     {
                         culprits.insert(addr);
                     }
@@ -1053,7 +1080,7 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // A request that stopped making progress also condemns its peer: the
             // per-peer byte check above sees unrelated traffic and judges it healthy.
             let timeouts: HashMap<PeerId, Duration> = connected
-                .lock()
+                .read()
                 .await
                 .iter()
                 .map(|p| (p.id(), request_timeout(p.lag_ms())))
@@ -1071,19 +1098,11 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             let retried = broker.requeue_from(&culprits).await;
 
             // Drop culprits still in the set (some may already be gone).
-            let (dropped, remaining) = {
-                let mut peers = connected.lock().await;
-                let before = peers.len();
-                peers.retain(|p| {
-                    if culprits.contains(&p.id()) {
-                        p.close();
-                        false
-                    } else {
-                        true
-                    }
-                });
-                (before - peers.len(), peers.len())
-            };
+            let (kicked, remaining) = connected.remove(&culprits).await;
+            for peer in &kicked {
+                peer.close();
+            }
+            let dropped = kicked.len();
             for peer in &culprits {
                 bans.ban(peer.addr(), Ban::Kicked).await;
             }
@@ -1113,12 +1132,10 @@ fn spawn_pump(
         let NetworkState {
             subscribers,
             connected,
-            events,
             broker,
             peer_wake,
             max_peers,
             discoverer,
-            best_tip,
             ..
         } = &*state;
         // Per-peer received-message counter to check load balance across peers.
@@ -1176,7 +1193,7 @@ fn spawn_pump(
                             dist,
                         );
                         let lat: Vec<(SocketAddr, u64, String)> = connected
-                            .lock()
+                            .read()
                             .await
                             .iter()
                             .map(|p| {
@@ -1223,7 +1240,7 @@ fn spawn_pump(
                                 addr
                             );
                             // Fresh candidates are what a short set is waiting for.
-                            if connected.lock().await.len() < *max_peers {
+                            if connected.read().await.len() < *max_peers {
                                 peer_wake.notify_one();
                             }
                         }
@@ -1265,12 +1282,10 @@ fn spawn_pump(
                     let addr = peer.addr();
                     // By CONNECTION: this event can arrive for one that already left the set while
                     // the supervisor reconnected to the same address; matching by address would
-                    // evict the live one.
-                    let (remaining, reconnected) = {
-                        let mut guard = connected.lock().await;
-                        guard.retain(|p| p.id() != peer);
-                        (guard.len(), guard.iter().any(|p| p.addr() == addr))
-                    };
+                    // evict the live one. One that already left was announced by whoever removed
+                    // it, and a probed backup never joined.
+                    let departed = HashSet::from([peer]);
+                    let (removed, remaining) = connected.remove(&departed).await;
 
                     if remaining < *max_peers {
                         peer_wake.notify_one();
@@ -1278,27 +1293,25 @@ fn spawn_pump(
 
                     // Requeue the departed peer's in-flight requests; the timeout monitor only watches
                     // connected peers, so they would otherwise leak in the registry.
-                    let retried = broker.requeue_from(&HashSet::from([peer])).await;
+                    let retried = broker.requeue_from(&departed).await;
 
-                    tracing::info!(
-                        target: "dash_spv::network",
-                        "peer disconnected: {} | {} peers remaining | {} request(s) re-queued",
-                        addr,
-                        remaining,
-                        retried,
-                    );
-                    broker.wake();
-
-                    // Subscribers know peers by address only: a late disconnect of the old
-                    // connection would make them drop the live one that replaced it.
-                    if !reconnected {
-                        let _ = events.send(NetworkEvent::PeerDisconnected(addr));
+                    if removed.is_empty() {
+                        tracing::debug!(
+                            target: "dash_spv::network",
+                            "connection to {} closed outside the peer set | {} request(s) re-queued",
+                            addr,
+                            retried,
+                        );
+                    } else {
+                        tracing::info!(
+                            target: "dash_spv::network",
+                            "peer disconnected: {} | {} peers remaining | {} request(s) re-queued",
+                            addr,
+                            remaining,
+                            retried,
+                        );
                     }
-
-                    let _ = events.send(NetworkEvent::PeersUpdated {
-                        connected_count: remaining as u32,
-                        best_height: best_tip.load(Ordering::Relaxed),
-                    });
+                    broker.wake();
                 }
             }
         }
@@ -1337,6 +1350,97 @@ mod tests {
         PeerNetworkManager::new(&config).await
     }
 
+    /// The events received until none arrives for a while.
+    async fn drain(events: &mut broadcast::Receiver<NetworkEvent>) -> Vec<NetworkEvent> {
+        let mut received = Vec::new();
+        while let Ok(event) = tokio::time::timeout(Duration::from_millis(200), events.recv()).await
+        {
+            received.push(event.expect("channel open"));
+        }
+        received
+    }
+
+    /// A peer's flow, driven tick by tick as the flow controller would.
+    struct Served {
+        flow: PeerFlow,
+        bytes: u64,
+        cap: u64,
+    }
+
+    impl Served {
+        fn new() -> Self {
+            Self {
+                flow: PeerFlow::new(0),
+                bytes: 0,
+                cap: MIN_CAP_BYTES,
+            }
+        }
+
+        fn tick(&mut self, delivered: u64, in_flight: u64, link_full: bool) {
+            self.bytes += delivered;
+            self.cap = self.flow.tick(self.bytes, in_flight, link_full);
+        }
+
+        /// Bulk download at `rate` bytes/s. The router keeps the peer at its own cap, or
+        /// at half of it when the client's link cap binds first.
+        fn bulk(&mut self, rate: u64, link_full: bool, ticks: u32) {
+            let delivered = (rate as f64 * FLOW_TICK.as_secs_f64()) as u64;
+            for _ in 0..ticks {
+                let in_flight = if link_full {
+                    self.cap / 2
+                } else {
+                    self.cap
+                };
+                self.tick(delivered, in_flight, link_full);
+            }
+        }
+
+        /// Small replies as at the chain tip, each answered `latency` ticks after its
+        /// request and followed by ten quiet seconds.
+        fn replies(&mut self, latency: u32, count: u32) {
+            const REPLY_BYTES: u64 = 4 * 1024;
+            for _ in 0..count {
+                for _ in 1..latency {
+                    self.tick(0, REPLY_BYTES, false);
+                }
+                self.tick(REPLY_BYTES, 0, false);
+                for _ in 0..40 {
+                    self.tick(0, 0, false);
+                }
+            }
+        }
+    }
+
+    /// Only a peer serving all the work its caps allow is compared. Small replies at the
+    /// tip measure the round trip, so a far peer must not look slow for them.
+    #[test_case(1_000_000, false, true => None; "latency bound replies at the tip")]
+    #[test_case(100_000, false, false => Some(1); "a slow peer at its own cap")]
+    #[test_case(100_000, true, false => Some(1); "a slow peer held back by the link cap")]
+    #[tokio::test]
+    async fn only_bandwidth_bound_service_condemns_a_peer(
+        second_rate: u64,
+        link_full: bool,
+        then_idle: bool,
+    ) -> Option<usize> {
+        let mut served = [Served::new(), Served::new()];
+        for (s, rate) in served.iter_mut().zip([1_000_000, second_rate]) {
+            s.bulk(rate, link_full, SERVING_SAMPLE_TICKS * 10);
+            assert!(s.flow.serving_rate() > 0, "a bandwidth bound peer is measured");
+        }
+        if then_idle {
+            served[0].replies(1, 50);
+            served[1].replies(8, 50);
+        }
+        let mut peers = Vec::new();
+        for (n, s) in served.iter().enumerate() {
+            let peer = ConnectedPeer::for_test(conn(n as u8, 0)).await;
+            peer.set_serving_rate(s.flow.serving_rate());
+            peers.push(peer);
+        }
+        let slow = underserving_peer(&peers)?;
+        peers.iter().position(|p| p.addr() == slow.addr)
+    }
+
     #[test]
     fn headers_carry_the_hashes_computed_while_decompressing_them() {
         let header = Header::dummy(1);
@@ -1348,33 +1452,96 @@ mod tests {
         assert_eq!(InboundMessage::new(NetworkMessage::Verack).header_hashes(), None);
     }
 
-    /// Zero is what the sync layer acts on, so the count must fall as well as rise.
-    #[tokio::test]
-    async fn losing_a_peer_announces_the_new_count() {
+    enum Departure {
+        Drop,
+        Kick,
+        Stop,
+    }
+
+    /// Subscribers mirror the peer set from these events, so every departure is
+    /// announced exactly once, every `PeersUpdated` lists the peers the other events
+    /// left, and the last list is empty, which is what the sync layer acts on. A connection's own disconnect arriving after it left the set
+    /// stays silent, and a handshake completing while `stop` runs never joins.
+    #[test_case(Departure::Drop, 2; "the peers drop")]
+    #[test_case(Departure::Kick, 2; "the timeout monitor kicks them")]
+    #[test_case(Departure::Stop, 2; "the network stops")]
+    #[test_case(Departure::Stop, 0; "the network stops while connecting its first peers")]
+    #[tokio::test(start_paused = true)]
+    async fn a_departed_peer_is_announced_once(departure: Departure, joined: u8) {
         let net = broker().await;
+        let session = net.session.lock().await.clone();
         let mut events = net.events();
-
-        net.state.inbound.send(PeerEvent::Disconnected(conn(1, 0))).expect("the pump is running");
-
-        let mut next = async || {
-            tokio::time::timeout(Duration::from_secs(2), events.recv())
-                .await
-                .expect("the pump must report the departure")
-                .expect("channel open")
+        let peers: Vec<PeerId> = (1..=joined).map(|n| conn(n, 0)).collect();
+        for (start, id) in peers.iter().enumerate() {
+            let peer = ConnectedPeer::for_test(*id).await;
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+            net.state.broker.mark_on_wire(&get_cfilters(start as u32), *id).await;
+        }
+        let disconnect_all = || {
+            for id in &peers {
+                net.state.inbound.send(PeerEvent::Disconnected(*id)).expect("the pump is running");
+            }
         };
-        let event = next().await;
-        assert!(matches!(event, NetworkEvent::PeerDisconnected(_)), "got {event:?}");
-        let event = next().await;
-        assert!(
-            matches!(
-                event,
-                NetworkEvent::PeersUpdated {
-                    connected_count: 0,
-                    ..
+
+        let mut late = None;
+        match departure {
+            Departure::Drop => disconnect_all(),
+            Departure::Kick => tokio::time::advance(REQUEST_TIMEOUT + TIMEOUT_CHECK * 2).await,
+            Departure::Stop => {
+                net.stop().await;
+                // A handshake that completed while `stop` ran.
+                let peer = ConnectedPeer::for_test(conn(9, 0)).await;
+                late = Some(
+                    net.state.connected.admit(peer, &session, net.state.max_peers, None).await,
+                );
+            }
+        }
+        let received = drain(&mut events).await;
+        let mut tracked = HashSet::new();
+        for event in &received {
+            match event {
+                NetworkEvent::PeerConnected(addr) => {
+                    tracked.insert(*addr);
                 }
-            ),
-            "got {event:?}"
-        );
+                NetworkEvent::PeerDisconnected(addr) => {
+                    tracked.remove(addr);
+                }
+                NetworkEvent::PeersUpdated {
+                    addresses,
+                    ..
+                } => {
+                    let listed: HashSet<_> = addresses.iter().copied().collect();
+                    assert_eq!(listed, tracked, "got {received:?}");
+                }
+            }
+        }
+        assert!(tracked.is_empty(), "connected peers never announced as gone: {received:?}");
+        let mut departed: Vec<_> = received
+            .iter()
+            .filter_map(|event| match event {
+                NetworkEvent::PeerDisconnected(addr) => Some(*addr),
+                _ => None,
+            })
+            .collect();
+        departed.sort();
+        let expected: Vec<_> = peers.iter().map(|id| id.addr()).collect();
+        assert_eq!(departed, expected, "got {received:?}");
+        let last_listed = received.iter().rev().find_map(|event| match event {
+            NetworkEvent::PeersUpdated {
+                addresses,
+                ..
+            } => Some(addresses.clone()),
+            _ => None,
+        });
+        assert_eq!(last_listed, (joined > 0).then(Vec::new), "got {received:?}");
+        assert!(late.is_none_or(|admitted| matches!(admitted, Admission::Stopped(_))));
+
+        disconnect_all();
+        let late = drain(&mut events).await;
+        assert!(late.is_empty(), "late disconnects were announced again: {late:?}");
+        assert_eq!(net.connected_count().await, 0);
     }
 
     #[test_case(None, true; "a silent request")]
@@ -1411,6 +1578,35 @@ mod tests {
         };
         assert_eq!(net.state.broker.state_of(&RequestKey::CFilters(0)).await, Some(want));
         assert_eq!(net.state.broker.len(), stalls as usize);
+    }
+
+    /// A peer that was silent while idle is timed from the request it is given, and
+    /// kicked only when it stays silent with that work for the full timeout.
+    #[tokio::test(start_paused = true)]
+    async fn the_timeout_monitor_times_an_idle_peer_from_its_first_request() {
+        let net = broker().await;
+        let session = net.session.lock().await.clone();
+        let id = conn(1, 0);
+        let peer = ConnectedPeer::for_test(id).await;
+        let handle = peer.handle();
+        let admitted = net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+        assert!(matches!(admitted, Admission::Joined));
+
+        for _ in 0..3 {
+            tokio::time::advance(REQUEST_TIMEOUT).await;
+            tokio::task::yield_now().await;
+        }
+        // Only the charge matters here: the loopback has no reader to answer it.
+        let _ = handle.send(&get_cfilters(0)).await;
+        assert!(handle.in_flight_bytes() > 0);
+
+        tokio::time::advance(TIMEOUT_CHECK * 2).await;
+        tokio::task::yield_now().await;
+        assert_eq!(net.connected_count().await, 1, "kicked right after its first request");
+
+        tokio::time::advance(REQUEST_TIMEOUT).await;
+        tokio::task::yield_now().await;
+        assert_eq!(net.connected_count().await, 0, "a peer silent with work stays connected");
     }
 
     #[test_case(&[&[MessageType::Inv], &[MessageType::Inv]], 0, &[1, 1]; "every subscriber of the type")]

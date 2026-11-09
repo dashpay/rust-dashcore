@@ -72,6 +72,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
             // Reset it so a fresh GetHeaders is fired from the preserved
             // `current_tip_hash`. No-op if the tip is still mid-sync.
             self.pipeline.reset_tip_segment();
+            self.pipeline.forget_declared();
             tracing::info!(
                 "Resuming parallel header sync ({} segments, {} buffered)",
                 self.pipeline.segment_count(),
@@ -81,7 +82,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
         // Send initial batch of requests
         let sent = self.pipeline.send_pending(network).await?;
-        tracing::info!("Pipeline: sent {} initial requests", sent);
+        tracing::info!("Pipeline: declared {} new request(s)", sent);
 
         Ok(vec![SyncEvent::SyncStart {
             identifier: self.identifier(),
@@ -150,7 +151,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
             let sent = self.pipeline.send_pending(network).await?;
             if sent > 0 {
-                tracing::debug!("Tick: pipeline sent {} more requests", sent);
+                tracing::debug!("Tick: pipeline declared {} new request(s)", sent);
             }
 
             // Promotion is otherwise reachable only from `handle_headers_pipeline`,
@@ -233,15 +234,17 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                 self.announced_peers.remove(address);
             }
             NetworkEvent::PeersUpdated {
-                connected_count,
+                addresses,
                 best_height,
             } => {
                 self.progress.update_target_height(*best_height);
                 {
                     let mut metadata_storage = self.metadata_storage.write().await;
-                    metadata_storage.store_last_target_height(*best_height).await?;
+                    metadata_storage
+                        .store_last_target_height(self.progress.target_height())
+                        .await?;
                 }
-                if *connected_count == 0 {
+                if addresses.is_empty() {
                     self.stop_sync();
                 } else {
                     if self.state() == SyncState::WaitingForConnections {
