@@ -149,6 +149,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         if !self.pipeline.is_initialized() {
             return Ok(vec![]);
         }
+        self.store_completed_below().await?;
+        self.pipeline.send_below(network).await;
 
         if self.state() == SyncState::Syncing {
             // Take, refill, then store — the same order `handle_headers_pipeline`
