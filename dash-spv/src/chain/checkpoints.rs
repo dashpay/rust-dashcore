@@ -60,7 +60,7 @@ impl Checkpoint {
     }
 
     /// The genesis block of `network`, alone.
-    pub fn genesis(network: Network) -> Self {
+    pub(crate) fn genesis(network: Network) -> Self {
         Self {
             height: 0,
             headers: vec![genesis_block(network).header.into()],
