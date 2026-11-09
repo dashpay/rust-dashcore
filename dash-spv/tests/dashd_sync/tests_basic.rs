@@ -25,6 +25,7 @@ async fn test_wallet_sync() {
 
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
+    assert_eq!(client_handle.client.latest_coinbase().await, None);
 }
 
 /// Verify that syncing with a wallet that has no on-chain activity results in zero

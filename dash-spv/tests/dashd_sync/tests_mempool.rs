@@ -638,7 +638,7 @@ async fn test_broadcast_transaction_network_acceptance() {
     let both_connected = wait_for_network_event(
         &mut handle.network_event_receiver,
         |event| {
-            matches!(event, NetworkEvent::PeersUpdated { connected_count, .. } if *connected_count >= 2)
+            matches!(event, NetworkEvent::PeersUpdated { addresses, .. } if addresses.len() >= 2)
         },
         MEMPOOL_TIMEOUT,
     )

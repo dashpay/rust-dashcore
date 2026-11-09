@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::network::costs::ResponseCosts;
 use bip324::futures::{handshake as v2_handshake, ProtocolSessionReader};
 use bip324::io::{ProtocolError, ProtocolFailureSuggestion};
 use bip324::{Error as Bip324Error, OutboundCipher, Role};
@@ -18,6 +20,8 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(test)]
+use tokio::{io, net::TcpListener};
 use tokio::{
     io::{AsyncRead, AsyncWriteExt, ReadBuf},
     net::{
@@ -237,7 +241,7 @@ pub struct PeerHandle {
     /// bandwidth-delay product), sized by the controller from its byte rate and
     /// service time.
     cap: Arc<AtomicU64>,
-    /// Bytes/s this peer serves while it has work, 0 until measured.
+    /// Bytes/s this peer serves while bandwidth bound, 0 until measured.
     serving_rate: Arc<AtomicU64>,
     headers2: bool,
     /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
@@ -251,6 +255,10 @@ impl PeerHandle {
 
     pub fn id(&self) -> PeerId {
         self.id
+    }
+
+    pub(super) fn serving_rate(&self) -> u64 {
+        self.serving_rate.load(Ordering::Relaxed)
     }
 
     pub fn in_flight_bytes(&self) -> u64 {
@@ -353,11 +361,37 @@ impl ConnectedPeer {
     }
 
     pub fn serving_rate(&self) -> u64 {
-        self.handle.serving_rate.load(Ordering::Relaxed)
+        self.handle.serving_rate()
     }
 
     pub fn set_serving_rate(&self, bytes_per_sec: u64) {
         self.handle.serving_rate.store(bytes_per_sec, Ordering::Relaxed);
+    }
+
+    /// A handshaken connection `id` over a loopback socket, with no reader running.
+    /// The far end discards what it reads, so sends succeed.
+    #[cfg(test)]
+    pub(crate) async fn for_test(id: PeerId) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+        let addr = listener.local_addr().expect("bound address");
+        let stream = TcpStream::connect(addr).await.expect("connect loopback");
+        let (mut far, _) = listener.accept().await.expect("accept loopback");
+        tokio::spawn(async move { io::copy(&mut far, &mut io::sink()).await });
+        let link = Link::v1(stream, Network::Regtest.magic());
+        ConnectedPeer {
+            handle: PeerHandle {
+                id,
+                writer: Arc::new(Mutex::new(link.writer)),
+                ledger: Arc::new(Ledger::new(Arc::new(ResponseCosts::new()))),
+                cap: Arc::new(AtomicU64::new(INITIAL_CAP_BYTES)),
+                serving_rate: Arc::new(AtomicU64::new(0)),
+                headers2: false,
+                token: CancellationToken::new(),
+            },
+            version: build_version(id.addr(), "test"),
+            lag_ms: AtomicU32::new(1),
+            bytes: Arc::new(AtomicU64::new(0)),
+        }
     }
 }
 
@@ -505,11 +539,11 @@ impl DisconnectedPeer {
         if !version.services.has(required_services) {
             tracing::warn!(
                 target: "dash_spv::network",
-                "dropping {}: lacks required services {:?} (advertises {:?})",
+                "dropping {}: lacks required services {} (advertises {})",
                 self.addr, required_services, version.services
             );
             return Err(NetworkError::ConnectionFailed(format!(
-                "peer {} lacks required services {:?}",
+                "peer {} lacks required services {}",
                 self.addr, required_services
             )));
         }
@@ -610,8 +644,7 @@ fn spawn_reader(
                         break;
                     }
                     last_ping = Some(tokio::time::Instant::now());
-                    let ping = NetworkMessage::Ping(rand::random());
-                    if writer.lock().await.write_message(&ping).await.is_err() {
+                    if !reader_write(&writer, &NetworkMessage::Ping(rand::random())).await {
                         break;
                     }
                     continue;
@@ -635,8 +668,7 @@ fn spawn_reader(
                     ledger.settle(&raw.payload, size).await;
                     match raw.payload {
                         NetworkMessage::Ping(nonce) => {
-                            let pong = NetworkMessage::Pong(nonce);
-                            if writer.lock().await.write_message(&pong).await.is_err() {
+                            if !reader_write(&writer, &NetworkMessage::Pong(nonce)).await {
                                 break;
                             }
                         }
@@ -672,7 +704,6 @@ fn spawn_reader(
             }
         }
 
-        tracing::info!("NETWORK: peer {} disconnected", addr);
         let _ = inbound.send(PeerEvent::Disconnected(addr));
     });
 }
@@ -703,6 +734,11 @@ fn normalize_user_agent(user_agent: &str) -> String {
         end -= 1;
     }
     format!("/{}/", &body[..end])
+}
+
+async fn reader_write(writer: &Mutex<PeerWriter>, msg: &NetworkMessage) -> bool {
+    let write = async { writer.lock().await.write_message(msg).await };
+    matches!(tokio::time::timeout(WRITE_TIMEOUT, write).await, Ok(Ok(())))
 }
 
 async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> NetworkResult<()> {

@@ -1,5 +1,4 @@
 use dashcore::bip158::BlockFilter;
-use dashcore::ScriptBuf;
 use key_wallet_manager::{FilterMatchKey, WalletId};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -32,8 +31,9 @@ pub(super) struct FiltersBatch {
     /// current account set (dashpay/rust-dashcore#649). Already-synced wallets
     /// must not be touched.
     scanned_wallets: BTreeMap<WalletId, u64>,
-    /// Every script already matched against this batch's filters, per wallet.
-    tested_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
+    /// Every script and filter element already matched against this batch's
+    /// filters, per wallet, as the bytes the filters were queried with.
+    tested: HashMap<WalletId, HashSet<Vec<u8>>>,
 }
 
 impl FiltersBatch {
@@ -51,7 +51,7 @@ impl FiltersBatch {
             scanned: false,
             pending_blocks: 0,
             scanned_wallets: BTreeMap::new(),
-            tested_scripts: HashMap::new(),
+            tested: HashMap::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -103,23 +103,26 @@ impl FiltersBatch {
         self.pending_blocks = self.pending_blocks.saturating_sub(1);
         self.pending_blocks
     }
-    /// Record that `scripts` have been matched against this batch's filters.
-    pub(super) fn mark_tested<I: IntoIterator<Item = ScriptBuf>>(
+    /// Record that `items`, scripts or filter elements, have been matched
+    /// against this batch's filters.
+    pub(super) fn mark_tested<T: AsRef<[u8]>>(
         &mut self,
         wallet_id: WalletId,
-        scripts: I,
+        items: impl IntoIterator<Item = T>,
     ) {
-        self.tested_scripts.entry(wallet_id).or_default().extend(scripts);
+        let tested = self.tested.entry(wallet_id).or_default();
+        tested.extend(items.into_iter().map(|item| item.as_ref().to_vec()));
     }
 
-    /// The wallet's scripts that this batch has never been matched against.
-    pub(super) fn untested<'a>(
+    /// The wallet's scripts or filter elements that this batch has never been
+    /// matched against.
+    pub(super) fn untested<'a, T: AsRef<[u8]>>(
         &'a self,
         wallet_id: &WalletId,
-        monitored: &'a [ScriptBuf],
-    ) -> impl Iterator<Item = &'a ScriptBuf> {
-        let tested = self.tested_scripts.get(wallet_id);
-        monitored.iter().filter(move |script| tested.is_none_or(|t| !t.contains(*script)))
+        monitored: &'a [T],
+    ) -> impl Iterator<Item = &'a T> {
+        let tested = self.tested.get(wallet_id);
+        monitored.iter().filter(move |item| tested.is_none_or(|t| !t.contains(item.as_ref())))
     }
 
     /// Record the wallets that were behind for this batch at scan time, each

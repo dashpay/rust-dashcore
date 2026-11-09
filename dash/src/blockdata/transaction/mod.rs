@@ -1189,7 +1189,7 @@ mod tests {
     #[test_case(TransactionType::ProviderUpdateRevocation, [revocation_bytes(), vec![0]].concat(), true ; "trailing byte")]
     #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes()[..100].to_vec(), true ; "truncated")]
     #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(1), false ; "known llmq type")]
-    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), true ; "unknown llmq type re-encodes differently")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), false ; "unknown llmq type")]
     fn known_type_payload_decodes_typed_or_stays_raw(
         tx_type: TransactionType,
         payload: Vec<u8>,

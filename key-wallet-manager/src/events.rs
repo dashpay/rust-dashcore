@@ -334,7 +334,8 @@ pub enum WalletEvent {
     /// A block was processed for a wallet. Carries records bucketed by what
     /// happened to them in this block, plus the post-block balance.
     /// `inserted` is records first stored in this block, `updated` is
-    /// previously-known records that just confirmed, `matured` is older
+    /// previously-known records that just confirmed or were corrected
+    /// (late-discovered inputs or outputs), `matured` is older
     /// coinbase records that crossed the maturity threshold as the scanned
     /// height advanced.
     BlockProcessed {
@@ -354,7 +355,7 @@ pub enum WalletEvent {
         chain_lock: Option<ChainLock>,
         /// Records first stored for this wallet in this block.
         inserted: Vec<TransactionRecord>,
-        /// Previously-known records confirmed by this block.
+        /// Previously-known records confirmed or corrected by this block.
         updated: Vec<TransactionRecord>,
         /// Older coinbase records whose maturity threshold was crossed by
         /// this height advance.

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use dash_spv::network::PeerNetworkManager;
@@ -8,7 +9,7 @@ use key_wallet_manager::WalletEvent;
 use serde_json::json;
 
 use super::helpers::{
-    build_and_sign, count_wallet_transactions, wait_for_sync, wait_for_wallet_synced,
+    build_and_sign, count_wallet_transactions, wait_for_sync, wait_for_wallet_synced, PeerTracker,
     EMPTY_MNEMONIC,
 };
 use super::setup::{create_and_start_client, TestContext};
@@ -65,6 +66,10 @@ async fn test_sync_follows_reorg() {
     wait_for_sync(&mut client_handle.progress_receiver, fork_height + 1).await;
     wait_for_wallet_synced(&wallet, &wallet_id, fork_height + 1).await;
     assert_eq!(count_wallet_transactions(&wallet, &wallet_id).await, 3);
+    let mut tracker = PeerTracker::default();
+    tracker.update(&mut client_handle.network_event_receiver);
+    assert_eq!(tracker.peers, HashSet::from([ctx.dashd.addr]));
+    tracker.reset_lists();
 
     // Replace it with a branch of 3 blocks that leave the spend out.
     let mut events = wallet.read().await.subscribe_events();
@@ -85,6 +90,22 @@ async fn test_sync_follows_reorg() {
     let tip = client_handle.client.tip_header().await.expect("tip");
     assert_eq!(tip.height(), new_tip);
     assert_eq!(*tip.hash(), node.get_best_block_hash());
+
+    // Following the fork restarts the client, and its handler must hear the peer
+    // leave and come back, not keep the departed connection.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            tracker.update(&mut client_handle.network_event_receiver);
+            if tracker.listed == Some(HashSet::from([ctx.dashd.addr])) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the peer was not announced again after the restart");
+    assert!(tracker.emptied, "the restart never announced zero peers");
+    assert_eq!(tracker.peers, HashSet::from([ctx.dashd.addr]));
 
     let balance = wallet.read().await.get_wallet_balance(&wallet_id).unwrap();
     assert_eq!(balance.total(), funding_amount, "only the funding coin is left, unspent");
@@ -123,6 +144,9 @@ async fn test_sync_follows_reorg() {
     // Fork recovery ran in a task of its own: once `stop` returns, it no
     // longer holds the storage, so a new client can open it.
     client_handle.stop().await;
+    tracker.update(&mut client_handle.network_event_receiver);
+    assert!(tracker.peers.is_empty(), "peers still tracked after stop: {:?}", tracker.peers);
+    assert_eq!(tracker.listed, Some(HashSet::new()));
     drop(client_handle);
     let network_manager = PeerNetworkManager::new(&config).await;
     DashSpvClient::new(config, network_manager, wallet, vec![])
