@@ -8,7 +8,6 @@ on:
       - dev
   pull_request:
     paths:
-      - 'key-wallet-ffi/**'
       - 'dash/**'
       - 'hashes/**'
       - 'crypto/**'
@@ -35,12 +34,14 @@ jobs:
     name: Address Sanitizer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
 
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2.89.1
+        with:
+          tool: just
 
       - name: Run tests with ASAN
         run: just asan
@@ -49,12 +50,14 @@ jobs:
     name: Thread Sanitizer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
 
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@v2.89.1
+        with:
+          tool: just
 
       - name: Run tests with TSAN
         run: just tsan

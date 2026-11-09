@@ -5,7 +5,6 @@
 // Note: Many transaction checking tests need ManagedAccount and proper
 // address pool integration. Simplified for now until the API stabilizes.
 
-use dashcore::hashes::Hash;
 use dashcore::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid};
 
 /// Helper to create a simple P2PKH transaction

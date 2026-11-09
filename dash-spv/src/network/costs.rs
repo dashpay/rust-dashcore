@@ -7,7 +7,7 @@ use dashcore::hash_types::{ChainLockHash, InstantSendLockHash};
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
 use dashcore::{BlockHash, Txid};
-use dashcore_hashes::Hash;
+use dashcore_hashes::sha256d;
 use tokio::sync::Mutex;
 
 const HEADERS_RESP_BYTES: u64 = 2000 * 81;
@@ -81,12 +81,12 @@ impl Reply {
             NetworkMessage::CFHeaders(m) => Reply::CfHeaders(m.stop_hash),
             NetworkMessage::Block(block) => Reply::Block(block.block_hash()),
             NetworkMessage::Tx(tx) => Reply::Tx(tx.txid()),
-            NetworkMessage::ISLock(lock) => {
-                Reply::InstantLock(InstantSendLockHash::hash(&encode::serialize(lock)))
-            }
-            NetworkMessage::CLSig(lock) => {
-                Reply::ChainLock(ChainLockHash::hash(&encode::serialize(lock)))
-            }
+            NetworkMessage::ISLock(lock) => Reply::InstantLock(InstantSendLockHash::from_raw_hash(
+                sha256d::Hash::hash(&encode::serialize(lock)),
+            )),
+            NetworkMessage::CLSig(lock) => Reply::ChainLock(ChainLockHash::from_raw_hash(
+                sha256d::Hash::hash(&encode::serialize(lock)),
+            )),
             NetworkMessage::MnListDiff(m) => Reply::MnListDiff(m.block_hash),
             NetworkMessage::QRInfo(_) => Reply::QrInfo,
             _ => return None,

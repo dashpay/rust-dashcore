@@ -1,6 +1,5 @@
 //! Regression test for DIP-15 contact address pool maintenance (issue #1032).
 
-use dashcore::hashes::Hash;
 use dashcore::{Address, BlockHash, Transaction};
 
 use crate::account::AccountType;

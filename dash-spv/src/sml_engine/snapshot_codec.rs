@@ -17,6 +17,7 @@ use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::{MasternodeList, MasternodeMap, QuorumMap};
 use dashcore::sml::masternode_list_entry::qualified_masternode_list_entry::QualifiedMasternodeListEntry;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::{BlockHash, Network, ProTxHash, QuorumHash};
 use tokio::sync::RwLock;
 
@@ -24,7 +25,7 @@ use super::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
 
 const MAGIC: [u8; 4] = *b"DMLE";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 
 /// Bounds what a corrupt length prefix can make the decoder allocate up front:
 /// bincode claims `len * size_of::<T>()` against it before preallocating.
@@ -264,7 +265,8 @@ impl<H: BlockHeaderStorage> Encode for MasternodeListEngine<H> {
         masternodes.values.encode(encoder)?;
         quorums.values.encode(encoder)?;
         records.encode(encoder)?;
-        self.rotated_quorums_per_cycle.encode(encoder)
+        self.rotated_quorums_per_cycle.encode(encoder)?;
+        self.latest_coinbase.encode(encoder)
     }
 }
 
@@ -273,6 +275,7 @@ type Decoded = (
     Vec<QualifiedQuorumEntry>,
     Vec<ListRecord>,
     BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
+    Option<CoinbasePayload>,
 );
 
 fn entry<T>(entries: &[Arc<T>], index: u32) -> Result<Arc<T>, DecodeError> {
@@ -337,8 +340,13 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
         if Network::decode(decoder)? != network {
             return Err(DecodeError::Other("snapshot of another network"));
         }
-        let (masternode_entries, quorum_entries, records, rotated_quorums_per_cycle) =
-            Decoded::decode(decoder)?;
+        let (
+            masternode_entries,
+            quorum_entries,
+            records,
+            rotated_quorums_per_cycle,
+            latest_coinbase,
+        ) = Decoded::decode(decoder)?;
 
         let masternode_entries: Vec<_> = masternode_entries.into_iter().map(Arc::new).collect();
         let quorum_entries: Vec<_> = quorum_entries.into_iter().map(Arc::new).collect();
@@ -377,6 +385,7 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
         Ok(Self {
             masternode_lists,
             rotated_quorums_per_cycle,
+            latest_coinbase,
             ..Self::new(network, headers)
         })
     }
@@ -388,7 +397,9 @@ mod tests {
     use std::sync::Arc;
 
     use bincode::error::DecodeError;
+    use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::consensus::deserialize;
+    use dashcore::hash_types::MerkleRootAssetUnlocks;
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::prelude::CoreBlockHeight;
@@ -400,6 +411,7 @@ mod tests {
     };
     use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
+    use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
     use dashcore::Network;
     use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 
@@ -550,13 +562,26 @@ mod tests {
 
     #[tokio::test]
     async fn a_snapshot_restores_the_lists_cycles_and_their_sharing() {
-        for engine in [TestEngine::mainnet_fixture(), chain_engine(), qr_info_engine().await] {
+        let mut with_coinbase = chain_engine();
+        with_coinbase.latest_coinbase = Some(CoinbasePayload {
+            version: 4,
+            best_cl_height: Some(99),
+            best_cl_signature: Some(BLSSignature::from([1; 96])),
+            asset_locked_amount: Some(5),
+            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::all_zeros()),
+            ..CoinbasePayload::dummy(100)
+        });
+
+        for engine in
+            [TestEngine::mainnet_fixture(), chain_engine(), qr_info_engine().await, with_coinbase]
+        {
             let bytes = engine.snapshot().expect("encodes");
             let restored = TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes)
                 .expect("decodes");
 
             assert_eq!(restored.masternode_lists, engine.masternode_lists);
             assert_eq!(restored.rotated_quorums_per_cycle, engine.rotated_quorums_per_cycle);
+            assert_eq!(restored.latest_coinbase, engine.latest_coinbase);
             assert!(shares_at_least(&engine.masternode_lists, &restored.masternode_lists));
             assert!(distinct(&restored.masternode_lists) <= distinct(&engine.masternode_lists));
             assert!(entries_deduplicated(&restored.masternode_lists));

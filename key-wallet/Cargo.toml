@@ -12,8 +12,19 @@ version.workspace = true
 
 [features]
 default = ["getrandom"]
-serde = ["dep:serde", "dep:serde_json", "dashcore_hashes/serde", "dashcore/serde"]
-bincode = ["serde", "dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dashcore/bincode"]
+serde = [
+    "dep:serde",
+    "dep:serde_json",
+    "dashcore_hashes/serde",
+    "dashcore/serde",
+]
+bincode = [
+    "serde",
+    "dep:bincode",
+    "dep:bincode_derive",
+    "dashcore_hashes/bincode",
+    "dashcore/bincode",
+]
 eddsa = ["dashcore/eddsa"]
 bls = ["dashcore/bls"]
 test-utils = ["dashcore/test-utils"]
@@ -26,16 +37,29 @@ test-utils = ["dashcore/test-utils"]
 # of chainlocked transactions are dropped from the map and a per-account
 # `finalized_txids: HashSet<Txid>` retains only their txids so
 # `has_transaction` / `transaction_is_finalized` still answer
-# correctly. An InstantSend lock alone does NOT trigger record dropping
+# correctly, plus a summary of each (owned output indices and input
+# details) from which a rescan rebuilds a record it finds owning more
+# outputs. An InstantSend lock alone does NOT trigger record dropping
 # — we keep the record around so the surrounding block confirmation can
 # still write its height / block hash before the chainlock arrives.
 keep-finalized-transactions = []
 
 [dependencies]
-internals = { path = "../internals", package = "dashcore-private" }
-dashcore_hashes = { path = "../hashes" }
-dashcore = { path="../dash" }
-bip39 = { version = "2.2.0", default-features = false, features = ["std", "chinese-simplified", "chinese-traditional", "czech", "french", "italian", "japanese", "korean", "portuguese", "spanish", "zeroize"] }
+dashcore_hashes = { workspace = true }
+dashcore = { workspace = true }
+bip39 = { version = "2.2.0", default-features = false, features = [
+    "std",
+    "chinese-simplified",
+    "chinese-traditional",
+    "czech",
+    "french",
+    "italian",
+    "japanese",
+    "korean",
+    "portuguese",
+    "spanish",
+    "zeroize",
+] }
 unicode-normalization = "0.1"
 serde = { workspace = true, features = ["derive"], optional = true }
 bitflags = { version = "2.6", default-features = false }
@@ -43,21 +67,30 @@ getrandom = { version = "0.4", optional = true }
 # Serialization
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
-serde_json = { version = "1.0", optional = true }
+serde_json = { workspace = true, optional = true }
 hex-conservative = { workspace = true }
 zeroize = { workspace = true }
-tracing = "0.1"
-async-trait = "0.1"
+tracing = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true, features = ["serde"] }
-criterion = "0.8.1"
-dashcore = { path="../dash", features = ["test-utils"] }
-key-wallet = { path = ".", features = ["test-utils", "serde", "bincode", "eddsa", "bls"] }
-rand = { version = "0.9", features = ["std", "std_rng", "thread_rng"] }
-test-case = "3.4"
-tokio = { version = "1", features = ["macros", "rt"] }
+criterion = { workspace = true }
+dashcore = { workspace = true, features = ["test-utils"] }
+key-wallet = { workspace = true, features = [
+    "test-utils",
+    "serde",
+    "bincode",
+    "eddsa",
+    "bls",
+] }
+rand = { workspace = true, features = ["std", "std_rng", "thread_rng"] }
+test-case = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [[bench]]
 name = "address_generation"
 harness = false
+
+[lints]
+workspace = true

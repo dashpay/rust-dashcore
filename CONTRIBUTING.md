@@ -2,38 +2,38 @@
 
 **Branching model (important)**
 
-Feature work targets the `dev` branch (development). Submit hotfixes and documentation-only changes to `main` unless maintainers direct otherwise.
+Every pull request targets the `dev` branch, including fixes and documentation changes. `master` only receives releases.
 
 :+1::tada: First off, thanks for taking the time to contribute! :tada::+1:
 
 The following is a set of guidelines for contributing to Rust Dash Core
 implementation and other Rust Dash-related projects, which are hosted in the
-[Rust Dash Core Community](https://github.com/rust-dashcore) on GitHub. These are
+[dashpay](https://github.com/dashpay) organization on GitHub. These are
 mostly guidelines, not rules. Use your best judgment, and feel free to propose
 changes to this document in a pull request.
 
 #### Table Of Contents
 
 - [General](#general)
-- [Communication channels](#communication-channels)
+- [Communication](#communication)
 - [Asking questions](#asking-questions)
 - [Contribution workflow](#contribution-workflow)
-  * [Preparing PRs](#preparing-prs)
+- [Preparing PRs](#preparing-prs)
+  * [Pre-commit Hooks](#pre-commit-hooks)
   * [Peer review](#peer-review)
   * [Repository maintainers](#repository-maintainers)
 - [Coding conventions](#coding-conventions)
-  * [Formatting](#formatting)
   * [MSRV](#msrv)
   * [Naming conventions](#naming-conventions)
   * [Unsafe code](#unsafe-code)
 - [Security](#security)
 - [Testing](#testing)
-- [Going further](#going-further)
+- [References](#references)
 
 
 ## General
 
-We welcome contributions of all kinds: bug fixes, features, tests, docs, and reviews. This codebase powers Dash protocol libraries (networking, SPV, wallet, FFI). Changes must be reviewed with security and backward‑compatibility in mind.
+We welcome contributions of all kinds: bug fixes, features, tests, docs, and reviews. This codebase powers Dash protocol libraries (networking, SPV, wallet). Changes must be reviewed with security and backward‑compatibility in mind.
 
 
 ## Communication
@@ -58,14 +58,14 @@ We use the standard fork-and-PR model:
 4. Cover new functionality with tests and docs where applicable.
 5. Open a PR early for feedback; keep the description clear and scoped.
 
-Commits should explain the why and the what. Conventional Commits are encouraged.
-PR titles must use one of the following prefixes (enforced by CI):
+Commits should explain the why and the what. Commit subjects and PR titles follow Conventional Commits, and CI enforces these PR title types:
 `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `test`.
+The PR title becomes the changelog entry. See [AGENTS.md](AGENTS.md) for title length, commit body and PR description conventions.
 
 
 ## Preparing PRs
 
-Active development happens on the `dev` branch. Feature work should target `dev`. The `main` branch is kept stable and tracks the latest tagged release. Submit hotfixes and documentation changes to `main` unless directed otherwise. Release branches (`chore/release-vX.Y.Z`) are cut from `dev` per release and merged back. All PRs must compile without errors (verified by GitHub CI).
+Active development happens on the `dev` branch, and every PR targets it. The `master` branch tracks the latest release. Maintainers prepare each release on a `chore/release-vX.Y.Z` branch, merge it into `master` and tag it `vX.Y.Z`. All PRs must compile without errors (verified by GitHub CI).
 
 Prerequisites that a PR must satisfy for merging into the target branch:
 * each commit within a PR should compile and pass unit tests with no errors, with
@@ -109,9 +109,9 @@ That's it! Hooks run automatically from now on.
 - File checks — Trailing whitespace, EOF newlines, YAML/JSON/TOML syntax (auto-fixes)
 
 **On git push** (~30-90 seconds additional):
-- `cargo clippy` — Strict linting on entire workspace
-- `verify-ffi-headers` — Ensures FFI C headers are up to date
-- `verify-ffi-docs` — Ensures FFI API documentation is current
+- `cargo clippy` — Strict linting on the entire workspace in three profiles
+
+`just check` runs all of them on every file, the push stage included.
 
 **Note:** CI runs the exact same checks, so passing locally = passing in CI.
 
@@ -122,7 +122,7 @@ Add these to your `~/.bashrc`, `~/.zshrc`, or `~/.bash_aliases`:
 ```bash
 # Pre-commit shortcuts
 alias checks='pre-commit run --all-files'
-alias checks-all='pre-commit run --all-files --hook-stage push'
+alias checks-all='pre-commit run --all-files --hook-stage pre-push'
 alias checks-on='pre-commit install && pre-commit install --hook-type pre-push'
 alias checks-off='pre-commit uninstall && pre-commit uninstall --hook-type pre-push'
 ```
@@ -167,11 +167,11 @@ Pull request merge requirements:
 
 ## Coding conventions
 
-Follow idiomatic Rust and crate‑local patterns.
+Follow idiomatic Rust and crate‑local patterns. The repo-specific rules for imports, visibility, error handling, comments and tests are in [AGENTS.md](AGENTS.md), with crate-specific notes in `dash-spv/AGENTS.md` and `key-wallet/AGENTS.md`.
 
 ### MSRV
 
-The Minimal Supported Rust Version (MSRV) is 1.89; it is enforced by CI. Crates use mixed editions (2021/2024); consult `Cargo.toml` and README for details.
+The Minimal Supported Rust Version (MSRV) is `rust-version` in the workspace `Cargo.toml`; it is enforced by CI. Crates use mixed editions (2021/2024); consult `Cargo.toml` and README for details.
 
 ### Naming conventions
 
@@ -179,7 +179,7 @@ Use Rust standards: `UpperCamelCase` for types/traits, `snake_case` for modules/
 
 ### Unsafe code
 
-Minimize `unsafe`. When required (especially across FFI boundaries), encapsulate it, document invariants, add tests, and consider Miri/sanitizers.
+Minimize `unsafe`. When required, encapsulate it, document invariants, add tests, and consider Miri/sanitizers.
 
 
 ## Security
@@ -189,12 +189,12 @@ This library is NOT suitable for consensus‑critical validation. Always validat
 
 ## Testing
 
-Testing is a priority. Keep unit tests close to code and use `tests/` for integration. Add fuzz targets under `fuzz/` when appropriate. Use deterministic test vectors and avoid network dependencies unless explicitly required (mark such tests `#[ignore]`).
+Testing is a priority. Keep unit tests close to code and use `tests/` for integration. Add fuzz targets under `fuzz/` when appropriate. Use deterministic test vectors and avoid network dependencies unless explicitly required (mark such tests `#[ignore]`). `dash-spv` changes must also pass its `dashd` integration tests: `just dash-spv::test` downloads a regtest `dashd` and runs them.
 
 
 ## References
 
 - See README for workspace overview and MSRV.
-- See CLAUDE.md and AGENTS.md for repo‑specific commands and workflows.
+- See [AGENTS.md](AGENTS.md) for repo‑specific commands and conventions.
 
 Overall, have fun and build safely.

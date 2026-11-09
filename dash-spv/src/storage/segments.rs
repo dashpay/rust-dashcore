@@ -15,7 +15,6 @@ use dashcore::{
     hash_types::FilterHeader,
     Block, BlockHash, CompactTarget,
 };
-use dashcore_hashes::Hash;
 
 use crate::{
     error::StorageResult,

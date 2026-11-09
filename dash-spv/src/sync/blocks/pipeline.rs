@@ -1,6 +1,7 @@
 //! Blocks pipeline implementation.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::mem;
 use std::sync::Arc;
 
 use crate::error::SyncResult;
@@ -17,6 +18,8 @@ pub(super) struct BlocksPipeline {
     downloaded: BTreeMap<u32, HashedBlock>,
     /// Wanted blocks (hash -> height); a block leaves this map once downloaded.
     hash_to_height: HashMap<BlockHash, u32>,
+    /// Whether a block was queued since `send_pending` last declared them all.
+    undeclared: bool,
     /// Per-block interested wallets, populated when the block is queued.
     /// Only those wallets get the block processed.
     hash_to_wallets: HashMap<BlockHash, BTreeSet<WalletId>>,
@@ -45,6 +48,7 @@ impl BlocksPipeline {
             pending_heights: BTreeSet::new(),
             downloaded: BTreeMap::new(),
             hash_to_height: HashMap::new(),
+            undeclared: false,
             hash_to_wallets: HashMap::new(),
         }
     }
@@ -64,6 +68,7 @@ impl BlocksPipeline {
             if !already_tracked {
                 self.pending_heights.insert(key.height());
                 self.hash_to_height.insert(hash, key.height());
+                self.undeclared = true;
                 newly_tracked += 1;
             }
             self.hash_to_wallets.entry(hash).or_default().extend(wallets);
@@ -101,7 +106,9 @@ impl BlocksPipeline {
                 })
                 .await;
         }
-        tracing::debug!("Declared {} wanted block(s) to the broker", wanted.len());
+        if mem::take(&mut self.undeclared) {
+            tracing::debug!("Declared {} wanted block(s) to the broker", wanted.len());
+        }
         Ok(wanted.len())
     }
 
@@ -160,7 +167,6 @@ impl BlocksPipeline {
 #[cfg(test)]
 mod tests {
     use dashcore::blockdata::block::Block;
-    use dashcore_hashes::Hash;
 
     use super::*;
 

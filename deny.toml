@@ -42,9 +42,28 @@ deny = [
     { crate = "hex", reason = "use `hex-conservative` 1.x instead" },
     { crate = "hex_lit", reason = "use `hex!` from `hex-conservative` 1.x instead" },
     { crate = "hex-literal", reason = "use `hex!` from `hex-conservative` 1.x instead" },
+    # rust-bitcoin crates should never desync or tear between versions
+    { crate = "base58ck", deny-multiple-versions = true },
+    { crate = "bip324", deny-multiple-versions = true },
+    { crate = "bitcoin-bech32", deny-multiple-versions = true },
+    { crate = "bitcoin-consensus-encoding", deny-multiple-versions = true },
+    { crate = "bitcoin-crypto", deny-multiple-versions = true },
+    { crate = "bitcoin-primitives", deny-multiple-versions = true },
+    { crate = "bitcoin-units", deny-multiple-versions = true },
+    { crate = "bitcoin_hashes", deny-multiple-versions = true },
+    { crate = "hex-conservative", deny-multiple-versions = true },
+    # base-sdk crates should never desync or tear between versions
+    { crate = "dash-num", deny-multiple-versions = true },
+    { crate = "dash-params", deny-multiple-versions = true },
+    { crate = "dash-pkc", deny-multiple-versions = true },
+    { crate = "dash-pow", deny-multiple-versions = true },
+    { crate = "dash-types", deny-multiple-versions = true },
+    { crate = "dash-types-marker", deny-multiple-versions = true },
 ]
 skip = [
-    # Older releases still come in through upstream crates (`bitcoin_hashes` 0.14 via `bip39`),
+    { crate = "bitcoin-internals", reason = "rust-bitcoin's latest releases have version tear" },
+    # Older releases still come in through upstream crates (`bitcoin_hashes` 0.14 via `bip39`, 0.16 via `bip324`).
+    { crate = "bitcoin_hashes:<1.0.0", reason = "depended on by rust-bitcoin crates" },
     { crate = "hex-conservative:<1.0.0", reason = "depended on by rust-bitcoin crates" },
 ]
 

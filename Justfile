@@ -6,7 +6,6 @@ mod gha ".github/mod.just"
 mod dash-fuzz "fuzz/mod.just"
 mod dash-spv
 mod dash-spv-bench
-mod key-wallet-ffi
 mod masternode-seeds-fetcher
 
 rust_version := replace_regex(read(root / "Cargo.toml"), '(?s).*\nrust-version = "(\d+\.\d+)[^"]*".*', '$1')
@@ -35,6 +34,7 @@ doc:
 # `rust-toolchain.toml` overrides rustup's default, so name the toolchain
 # Check that the workspace compiles on the MSRV
 msrv:
+    rustup toolchain install {{ rust_version }} --profile minimal
     cargo +{{ rust_version }} check --workspace --all-features
 
 # Audit dependencies with cargo-deny
@@ -52,11 +52,11 @@ coverage *groups:
     {{ python }} .github/scripts/ci_config.py run-group --coverage {{ groups }}
     {{ if env("GITHUB_ACTIONS", "") == "true" { "" } else { "cargo llvm-cov report --summary-only" } }}
 
-# Defaults to the FFI crates for C interop and core crypto for unsafe code
+# Defaults to the core crypto crates for their unsafe code
 # Run crates' tests under AddressSanitizer on nightly
 [script("bash")]
 [unix]
-asan *crates="key-wallet-ffi dashcore dashcore_hashes":
+asan *crates="dashcore dashcore_hashes":
     set -euo pipefail
     export RUST_BACKTRACE=1 SKIP_DASHD_TESTS=1
     export RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes"

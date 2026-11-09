@@ -12,7 +12,6 @@ use dashcore::blockdata::transaction::special_transaction::asset_unlock::unquali
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::BLSSignature;
-use dashcore::hashes::Hash;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 
 #[test]

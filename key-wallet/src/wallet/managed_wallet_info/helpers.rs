@@ -727,7 +727,6 @@ mod retain_unclaimed_tests {
     use crate::managed_account::ManagedCoreFundsAccount;
     use crate::transaction_checking::transaction_router::TransactionType;
     use crate::transaction_checking::TransactionContext;
-    use dashcore::hashes::Hash;
     use dashcore::{OutPoint, ScriptBuf, Transaction, TxIn, Txid, Witness};
 
     fn outpoint(seed: u32) -> OutPoint {

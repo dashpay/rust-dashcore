@@ -564,7 +564,6 @@ mod tests {
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::{BlockHash, Network, QuorumHash};
-    use dashcore_hashes::Hash;
     use std::collections::BTreeMap;
     use std::net::SocketAddr;
     use std::sync::Arc;

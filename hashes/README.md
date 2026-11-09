@@ -8,7 +8,7 @@ X11 hash, along with `bincode` and `serde` support for hash newtypes.
 
 ## Minimum Supported Rust Version (MSRV)
 
-This library should always compile with any combination of features on **Rust 1.89.0**.
+This library should always compile with any combination of features on the workspace MSRV; see the parent README.
 
 ## Contributions
 

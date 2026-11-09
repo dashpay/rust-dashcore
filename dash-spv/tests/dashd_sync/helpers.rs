@@ -13,6 +13,7 @@ use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletEvent;
 use key_wallet_manager::{WalletId, WalletManager};
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, watch, RwLock};
@@ -215,6 +216,50 @@ pub(super) async fn wait_for_network_event(
                 }
             }
         }
+    }
+}
+
+/// The peer set an event handler rebuilds from the connect and disconnect events
+/// it was given, checked against the list in every `PeersUpdated`.
+#[derive(Default)]
+pub(super) struct PeerTracker {
+    pub(super) peers: HashSet<SocketAddr>,
+    /// The peers in the latest `PeersUpdated` since the last `reset_lists`.
+    pub(super) listed: Option<HashSet<SocketAddr>>,
+    /// Whether a `PeersUpdated` with no peers arrived since the last `reset_lists`.
+    pub(super) emptied: bool,
+}
+
+impl PeerTracker {
+    /// Applies every event `receiver` has queued.
+    pub(super) fn update(&mut self, receiver: &mut broadcast::Receiver<NetworkEvent>) {
+        loop {
+            match receiver.try_recv() {
+                Ok(NetworkEvent::PeerConnected(addr)) => {
+                    self.peers.insert(addr);
+                }
+                Ok(NetworkEvent::PeerDisconnected(addr)) => {
+                    self.peers.remove(&addr);
+                }
+                Ok(NetworkEvent::PeersUpdated {
+                    addresses,
+                    ..
+                }) => {
+                    let listed: HashSet<_> = addresses.into_iter().collect();
+                    assert_eq!(listed, self.peers, "the list disagrees with the peer events");
+                    self.emptied |= listed.is_empty();
+                    self.listed = Some(listed);
+                }
+                Err(broadcast::error::TryRecvError::Empty) => return,
+                Err(e) => panic!("network events lost: {e}"),
+            }
+        }
+    }
+
+    /// Forgets the lists received so far, so later checks only see new ones.
+    pub(super) fn reset_lists(&mut self) {
+        self.listed = None;
+        self.emptied = false;
     }
 }
 

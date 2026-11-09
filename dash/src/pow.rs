@@ -303,7 +303,6 @@ impl Target {
     /// Proof-of-work validity for a block requires the hash of the block to be less than or equal
     /// to the target.
     pub fn is_met_by(&self, hash: BlockHash) -> bool {
-        use hashes::Hash;
         let hash = Arith256::from_lendian(hash.to_byte_array());
         hash <= self.0
     }
@@ -640,8 +639,6 @@ mod tests {
     #[test]
     fn target_is_met_by_for_target_equals_hash() {
         use std::str::FromStr;
-
-        use hashes::Hash;
 
         let hash =
             BlockHash::from_str("ef537f25c895bfa782526529a9b63d97aa631564d5d789c2b765448c8635fb6c")

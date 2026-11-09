@@ -26,6 +26,51 @@ crate::serde_impl!(Hash, 32);
 crate::bincode_impl!(Hash, 32);
 crate::borrow_slice_impl!(Hash);
 
+impl Hash {
+    /// Hashes some bytes.
+    #[allow(clippy::self_named_constructors)] // Hash is a noun and a verb.
+    pub fn hash(data: &[u8]) -> Self {
+        let mut engine = Self::engine();
+        engine.input(data);
+        engine.finalize()
+    }
+
+    /// Constructs a new engine.
+    pub fn engine() -> HashEngine {
+        HashEngine::default()
+    }
+
+    /// Finalizes a hash engine to produce a hash.
+    pub fn from_engine(e: HashEngine) -> Self {
+        Hash(e.hasher.finalize().into())
+    }
+
+    /// Constructs a new hash from the underlying byte array.
+    pub const fn from_byte_array(bytes: [u8; 32]) -> Self {
+        Hash(bytes)
+    }
+
+    /// Returns the underlying byte array.
+    pub const fn to_byte_array(self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Returns a reference to the underlying byte array.
+    pub const fn as_byte_array(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Constructs a new hash from a slice, failing unless it is 32 bytes long.
+    pub fn from_slice(sl: &[u8]) -> Result<Self, FromSliceError> {
+        crate::util::slice_to_array(sl).map(Hash)
+    }
+
+    /// Returns the hash with every byte set to zero.
+    pub const fn all_zeros() -> Self {
+        Hash([0; 32])
+    }
+}
+
 impl str::FromStr for Hash {
     type Err = hex_conservative::DecodeFixedLengthBytesError;
 
@@ -58,36 +103,20 @@ impl From<Hash> for [u8; 32] {
 }
 
 impl crate::Hash for Hash {
-    type Engine = HashEngine;
     type Bytes = [u8; 32];
 
-    const LEN: usize = 32;
     const DISPLAY_BACKWARD: bool = true;
 
-    fn from_engine(e: HashEngine) -> Self {
-        Hash(e.hasher.finalize().into())
-    }
-
-    fn from_slice(sl: &[u8]) -> Result<Self, FromSliceError> {
-        // `FromSliceError` is only constructible upstream, so a hash of the
-        // same size checks the length.
-        crate::sha256d::Hash::from_slice(sl).map(|h| Hash(h.to_byte_array()))
+    fn from_byte_array(bytes: [u8; 32]) -> Self {
+        Self::from_byte_array(bytes)
     }
 
     fn to_byte_array(self) -> [u8; 32] {
-        self.0
+        self.to_byte_array()
     }
 
     fn as_byte_array(&self) -> &[u8; 32] {
-        &self.0
-    }
-
-    fn from_byte_array(bytes: [u8; 32]) -> Self {
-        Hash(bytes)
-    }
-
-    fn all_zeros() -> Self {
-        Hash([0; 32])
+        self.as_byte_array()
     }
 }
 
@@ -95,25 +124,25 @@ impl crate::Hash for Hash {
 #[derive(Clone, Default)]
 pub struct HashEngine {
     hasher: X11,
-    length: usize,
+    length: u64,
 }
 
 impl crate::HashEngine for HashEngine {
-    type MidState = [u8; 32];
+    type Hash = Hash;
 
     const BLOCK_SIZE: usize = 32;
 
-    fn midstate(&self) -> [u8; 32] {
-        self.hasher.clone().finalize().into()
-    }
-
     fn input(&mut self, data: &[u8]) {
         self.hasher.update(data);
-        self.length += data.len();
+        self.length += data.len() as u64;
     }
 
-    fn n_bytes_hashed(&self) -> usize {
+    fn n_bytes_hashed(&self) -> u64 {
         self.length
+    }
+
+    fn finalize(self) -> Hash {
+        Hash::from_engine(self)
     }
 }
 
@@ -133,19 +162,20 @@ mod tests {
     use hex_conservative::hex;
     use test_case::test_case;
 
-    use crate::{hash_x11, Hash, HashEngine};
+    use crate::{hash_x11, HashEngine};
 
     #[test_case(&[], hex!("51b572209083576ea221c27e62b4e22063257571ccb6cc3dc3cd17eb67584eba"); "empty")]
     #[test_case(&hex!("020000002cc0081be5039a54b686d24d5d8747ee9770d9973ec1ace02e5c0500000000008d7139724b11c52995db4370284c998b9114154b120ad3486f1a360a1d4253d310d40e55b8f70a1be8e32300"), hex!("f29c0f286fd8071669286c6987eb941181134ff5f3978bf89f34070000000000"); "header")]
     #[test_case(&(0..123).collect::<Vec<u8>>(), hex!("132ead25e64bf5cda54d198b3dc77bd7032e856f724dcd39c503ef3183462b5d"); "123 bytes")]
     fn hash(data: &[u8], expected: [u8; 32]) {
         assert_eq!(hash_x11::Hash::hash(data).to_byte_array(), expected);
+        assert_eq!(hash_x11::Hash::from_slice(&expected).map(|h| h.to_byte_array()), Ok(expected));
 
         let mut engine = hash_x11::Hash::engine();
         let (head, tail) = data.split_at(data.len() / 2);
         engine.input(head);
         engine.input(tail);
-        assert_eq!(engine.n_bytes_hashed(), data.len());
-        assert_eq!(hash_x11::Hash::from_engine(engine).to_byte_array(), expected);
+        assert_eq!(engine.n_bytes_hashed(), data.len() as u64);
+        assert_eq!(engine.finalize().to_byte_array(), expected);
     }
 }

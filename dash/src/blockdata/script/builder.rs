@@ -1,8 +1,6 @@
 // Written in 2014 by Andrew Poelstra <apoelstra@wpsoftware.net>
 // SPDX-License-Identifier: CC0-1.0
 
-#[cfg(feature = "bitcoinconsensus")]
-use core::convert::From;
 use core::default::Default;
 use core::fmt;
 

@@ -13,32 +13,45 @@ version.workspace = true
 [features]
 default = []
 
-bincode = ["dep:bincode", "dep:bincode_derive", "dashcore_hashes/bincode", "dash-network/bincode"]
+bincode = [
+    "dep:bincode",
+    "dep:bincode_derive",
+    "dashcore_hashes/bincode",
+    "dash-network/bincode",
+]
 bls = ["dash-pkc/bls", "dash-pkc/portable", "dep:tracing"]
 eddsa = ["dash-pkc/eddsa"]
 rand = ["bitcoin-crypto/rand"]
-serde = ["dep:serde", "bitcoin-crypto/serde", "dash-types/serde", "dashcore_hashes/serde", "dash-network/serde", "dash-pkc/serde"]
+serde = [
+    "dep:serde",
+    "bitcoin-crypto/serde",
+    "dash-types/serde",
+    "dashcore_hashes/serde",
+    "dash-network/serde",
+    "dash-pkc/serde",
+]
 
 [dependencies]
+base58ck = { workspace = true }
 bitcoin-crypto = { workspace = true, features = ["std", "hex"] }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }
-dash-network = { path = "../dash-network" }
+dash-network = { workspace = true }
 dash-pkc = { workspace = true, features = ["ecdsa", "std"] }
 dash-types = { workspace = true }
 delegate = "0.13"
-dashcore_hashes = { path = "../hashes" }
+dashcore_hashes = { workspace = true }
 hex-conservative = { workspace = true }
-internals = { path = "../internals", package = "dashcore-private" }
+internals = { workspace = true }
 serde = { workspace = true, features = ["derive", "alloc"], optional = true }
-thiserror = "2"
-tracing = { version = "0.1", optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true, optional = true }
 zeroize = { workspace = true }
-
-[lints.rust]
-unexpected_cfgs = { level = "deny", check-cfg = ['cfg(bench)', 'cfg(fuzzing)', 'cfg(kani)'] }
 
 [dev-dependencies]
 bincode = { workspace = true, features = ["serde"] }
-serde_json = { version = "1.0" }
-test-case = "3.4"
+serde_json = { workspace = true }
+test-case = { workspace = true }
+
+[lints]
+workspace = true

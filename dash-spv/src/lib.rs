@@ -63,6 +63,7 @@
 mod sml_engine;
 mod storage;
 mod sync;
+mod validation;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -70,10 +71,10 @@ pub mod test_utils;
 pub mod chain;
 pub mod client;
 pub mod error;
+#[cfg(feature = "logging")]
 pub mod logging;
 pub mod network;
 pub mod types;
-pub mod validation;
 
 // Re-export main types for convenience
 pub use client::config::MempoolStrategy;
@@ -81,6 +82,7 @@ pub use client::{ClientConfig, DashSpvClient, DevnetConfig, EventHandler};
 pub use error::{
     LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
 };
+#[cfg(feature = "logging")]
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
 pub use sml_engine::QRInfoFeedResult;
 pub use storage::BlockHeaderTip;

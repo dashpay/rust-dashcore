@@ -9,7 +9,6 @@ use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hash_types::CycleHash;
-use dashcore::hashes::Hash;
 use dashcore::opcodes;
 use dashcore::{
     BlockHash, CompactTarget, OutPoint, PublicKey, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid,

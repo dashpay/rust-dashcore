@@ -4,8 +4,8 @@
 //! checkpoint every `--interval` blocks, each validated, to `checkpoints/<network>.json`.
 //!
 //! ```bash
-//! cargo run --release -p dash-spv --bin generate-checkpoints -- -n mainnet -d <dir>
-//! cargo run --release -p dash-spv --bin generate-checkpoints -- -n testnet -d <dir>
+//! cargo run --release -p dash-spv --features cli --bin generate-checkpoints -- -n mainnet -d <dir>
+//! cargo run --release -p dash-spv --features cli --bin generate-checkpoints -- -n testnet -d <dir>
 //! ```
 //!
 //! Running again with the same `<dir>` resumes the sync from where it stopped.
@@ -17,7 +17,6 @@ use clap::{Parser, ValueEnum};
 use dash_spv::chain::checkpoints::CHECKPOINT_HEADERS;
 use dash_spv::chain::Checkpoint;
 use dash_spv::network::PeerNetworkManager;
-use dash_spv::validation::{BlockHeaderValidator, Validator};
 use dash_spv::SyncEvent;
 use dash_spv::{
     init_console_logging, ClientConfig, DashSpvClient, EventHandler, LevelFilter, Network,
@@ -119,10 +118,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for h in height + 1 - CHECKPOINT_HEADERS as u32..=height {
             headers.push(client.header_at(h).await?.ok_or(format!("header {h} not stored"))?);
         }
-
-        BlockHeaderValidator::new(network, vec![], height - CHECKPOINT_HEADERS as u32)
-            .validate(&headers)
-            .map_err(|e| format!("checkpoint {height} is invalid: {e}"))?;
 
         let checkpoint = Checkpoint::new(height, headers)
             .ok_or(format!("checkpoint {height} does not fit its headers"))?;

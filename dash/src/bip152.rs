@@ -9,7 +9,7 @@ use core::convert::{TryFrom, TryInto};
 use core::{convert, fmt, mem};
 use std::error;
 
-use hashes::{Hash, sha256, siphash24};
+use hashes::{sha256, siphash24};
 use internals::{impl_array_newtype, impl_bytes_newtype};
 
 use crate::consensus::encode::{self, Decodable, Encodable, VarInt};
@@ -108,7 +108,7 @@ impl ShortId {
             let mut engine = sha256::Hash::engine();
             header.consensus_encode(&mut engine).expect("engines don't error");
             nonce.consensus_encode(&mut engine).expect("engines don't error");
-            sha256::Hash::from_engine(engine)
+            sha256::Hash::from_engine(engine).to_byte_array()
         };
 
         // 2. Running SipHash-2-4 with the input being the transaction ID and the keys (k0/k1)
@@ -212,7 +212,13 @@ impl HeaderAndShortIds {
                     },
                 });
             } else {
-                short_ids.push(ShortId::with_siphash_keys(&tx.txid().to_raw_hash(), siphash_keys));
+                short_ids.push(ShortId::with_siphash_keys(
+                    // Dash Core hashes the full serialization (`GetInstanceHash()`), which
+                    // differs from the txid for version 2+ asset unlocks; its mempool is
+                    // indexed the same way.
+                    &tx.instance_hash().to_raw_hash(),
+                    siphash_keys,
+                ));
             }
         }
 
@@ -369,13 +375,14 @@ mod test {
     use crate::consensus::encode::{deserialize, serialize};
     use crate::hash_types::{TxMerkleNode, Txid};
     use crate::pow::CompactTarget;
+    use hashes::sha256d;
 
     fn dummy_tx(nonce: &[u8]) -> Transaction {
         Transaction {
             version: 1,
             lock_time: absolute::LockTime::from_consensus(2).to_consensus_u32(),
             input: vec![TxIn {
-                previous_output: OutPoint::new(Txid::hash(nonce), 0),
+                previous_output: OutPoint::new(Txid::from_raw_hash(sha256d::Hash::hash(nonce)), 0),
                 script_sig: ScriptBuf::new(),
                 sequence: 1,
                 witness: Witness::new(),
@@ -393,13 +400,34 @@ mod test {
             header: block::Header {
                 version: block::Version::ONE,
                 prev_blockhash: BlockHash::from_byte_array([0; 32]),
-                merkle_root: TxMerkleNode::hash(&[1]),
+                merkle_root: TxMerkleNode::from_raw_hash(sha256d::Hash::hash(&[1])),
                 time: 2,
                 bits: CompactTarget::from_consensus(3),
                 nonce: 4,
             },
             txdata: vec![dummy_tx(&[2]), dummy_tx(&[3]), dummy_tx(&[4])],
         }
+    }
+
+    #[test]
+    fn short_ids_use_the_instance_hash() {
+        use crate::blockdata::transaction::special_transaction::TransactionPayload;
+
+        // An asset unlock with a version 2 payload: its txid leaves out the quorum signature.
+        let mut payload = vec![7u8; 145];
+        payload[0] = 2;
+        let mut unlock = dummy_tx(&[5]);
+        unlock.version = 3;
+        unlock.special_transaction_payload = Some(TransactionPayload::RawPayloadType(9, payload));
+        assert_ne!(unlock.txid(), unlock.instance_hash());
+        let mut block = dummy_block();
+        block.txdata.push(unlock.clone());
+
+        let compact = HeaderAndShortIds::from_block(&block, 42, 1, &[]).unwrap();
+        let keys = ShortId::calculate_siphash_keys(&block.header, 42);
+        let expected = ShortId::with_siphash_keys(&unlock.instance_hash().to_raw_hash(), keys);
+        assert_eq!(compact.short_ids.last(), Some(&expected));
+        assert_ne!(ShortId::with_siphash_keys(&unlock.txid().to_raw_hash(), keys), expected);
     }
 
     #[test]
@@ -447,7 +475,7 @@ mod test {
             {
                 // test serialization
                 let raw: Vec<u8> = serialize(&BlockTransactionsRequest {
-                    block_hash: Hash::all_zeros(),
+                    block_hash: BlockHash::all_zeros(),
                     indexes: testcase.1,
                 });
                 let mut expected_raw: Vec<u8> = [0u8; 32].to_vec();
@@ -469,7 +497,7 @@ mod test {
     #[should_panic] // 'attempt to add with overflow' in consensus_encode()
     fn test_getblocktx_panic_when_encoding_u64_max() {
         serialize(&BlockTransactionsRequest {
-            block_hash: Hash::all_zeros(),
+            block_hash: BlockHash::all_zeros(),
             indexes: vec![u64::MAX],
         });
     }

@@ -10,7 +10,6 @@ use crate::error::{StorageError, StorageResult};
 use crate::storage::BlockHeaderStorage;
 use crate::validation::MasternodeListValidator;
 use dashcore::bls_sig_utils::{BLSSignature, BlsScheme};
-use dashcore::hashes::Hash;
 use dashcore::network::constants::NetworkExt;
 use dashcore::network::message_qrinfo::{QRInfo, QuorumSnapshot};
 use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
@@ -25,8 +24,8 @@ use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::VerifyingChainLockSignaturesType;
 use dashcore::sml::quorum_validation_error::QuorumValidationError;
+use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
-use dashcore::transaction::special_transaction::TransactionPayload;
 use dashcore::{BlockHash, QuorumHash};
 use dashcore::{Network, Transaction};
 use tokio::sync::RwLock;
@@ -131,6 +130,7 @@ pub struct MasternodeListEngine<H: BlockHeaderStorage> {
     coinbase_chain_locks: BTreeMap<CoreBlockHeight, (BlockHash, Option<BLSSignature>)>,
     network: Network,
     validator: Option<MasternodeListValidator<H>>,
+    latest_coinbase: Option<CoinbasePayload>,
 }
 
 /// The most quorums of `llmq_type` a run of `blocks` blocks can add: one per
@@ -173,16 +173,14 @@ fn build_cycle_quorum_map(
 
 /// The ChainLock `coinbase_tx`, the coinbase of the block at `height`, carries
 /// for member selection, as Dash Core's `GetNonNullCoinbaseChainlock` reads it
-/// (`src/evo/cbtx.cpp:200-211`).
+/// (`src/evo/cbtx.cpp:200-211`). A payload of a version newer than this
+/// library decodes is read as far as it knows the layout, see
+/// [`CoinbasePayload::from_coinbase_tx`].
 fn valid_coinbase_chain_lock(
     coinbase_tx: &Transaction,
     height: CoreBlockHeight,
 ) -> Option<BLSSignature> {
-    let Some(TransactionPayload::CoinbasePayloadType(payload)) =
-        &coinbase_tx.special_transaction_payload
-    else {
-        return None;
-    };
+    let payload = CoinbasePayload::from_coinbase_tx(coinbase_tx)?;
     let signature = payload.chain_lock_candidate(height)?;
     signature.as_scheme(BlsScheme::Modern).is_valid().then_some(signature)
 }
@@ -242,17 +240,19 @@ fn cycle_quarter_work_heights(
         .map(|cycles_back: u32| cycle_base.checked_sub(cycles_back * interval + WORK_DIFF_DEPTH))
 }
 
-/// An engine's lists, rotated cycles and coinbase ChainLocks.
+/// An engine's lists, rotated cycles, coinbase ChainLocks and latest coinbase.
 type ListsAndCycles = (
     BTreeMap<CoreBlockHeight, MasternodeList>,
     BTreeMap<BlockHash, BTreeMap<u16, QualifiedQuorumEntry>>,
     BTreeMap<CoreBlockHeight, (BlockHash, Option<BLSSignature>)>,
+    Option<CoinbasePayload>,
 );
 
-/// The lists, rotated cycles and coinbase ChainLocks of an engine as a QRInfo
-/// feed found them, put back when this drops unless the feed's changes are
-/// kept: a feed that fails or is dropped part way leaves the engine as it was.
-/// The copy shares the lists' maps; the few stored cycles are copied.
+/// The lists, rotated cycles, coinbase ChainLocks and latest coinbase of an
+/// engine as a QRInfo feed found them, put back when this drops unless the
+/// feed's changes are kept: a feed that fails or is dropped part way leaves the
+/// engine as it was. The copy shares the lists' maps; the few stored cycles are
+/// copied.
 struct QRInfoRollback<'a, H: BlockHeaderStorage> {
     engine: &'a mut MasternodeListEngine<H>,
     saved: Option<ListsAndCycles>,
@@ -264,6 +264,7 @@ impl<'a, H: BlockHeaderStorage> QRInfoRollback<'a, H> {
             engine.masternode_lists.clone(),
             engine.rotated_quorums_per_cycle.clone(),
             engine.coinbase_chain_locks.clone(),
+            engine.latest_coinbase.clone(),
         );
         Self {
             engine,
@@ -279,12 +280,17 @@ impl<'a, H: BlockHeaderStorage> QRInfoRollback<'a, H> {
 
 impl<H: BlockHeaderStorage> Drop for QRInfoRollback<'_, H> {
     fn drop(&mut self) {
-        if let Some((masternode_lists, rotated_quorums_per_cycle, coinbase_chain_locks)) =
-            self.saved.take()
+        if let Some((
+            masternode_lists,
+            rotated_quorums_per_cycle,
+            coinbase_chain_locks,
+            latest_coinbase,
+        )) = self.saved.take()
         {
             self.engine.masternode_lists = masternode_lists;
             self.engine.rotated_quorums_per_cycle = rotated_quorums_per_cycle;
             self.engine.coinbase_chain_locks = coinbase_chain_locks;
+            self.engine.latest_coinbase = latest_coinbase;
         }
     }
 }
@@ -313,15 +319,23 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             coinbase_chain_locks: BTreeMap::new(),
             network,
             validator,
+            latest_coinbase: None,
         }
     }
 
-    /// The engine's lists and rotated cycles as bytes, see [`Self::from_snapshot`].
+    /// The coinbase payload of the newest block a validated diff proved it in.
+    pub fn latest_coinbase(&self) -> Option<&CoinbasePayload> {
+        self.latest_coinbase.as_ref()
+    }
+
+    /// The engine's lists, rotated cycles and latest coinbase as bytes, see
+    /// [`Self::from_snapshot`].
     pub fn snapshot(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
         bincode::encode_to_vec(self, snapshot_codec::config())
     }
 
-    /// An engine holding the lists and rotated cycles [`Self::snapshot`] encoded.
+    /// An engine holding the lists, rotated cycles and latest coinbase
+    /// [`Self::snapshot`] encoded.
     pub fn from_snapshot(
         network: Network,
         headers: Arc<RwLock<H>>,
@@ -1144,6 +1158,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
             self.masternode_lists.insert(diff_end_height, masternode_list);
             self.coinbase_chain_locks.insert(diff_end_height, chain_lock);
+            self.observe_coinbase_if_higher(coinbase_tx);
             return Ok(());
         }
 
@@ -1175,10 +1190,23 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         }
         self.masternode_lists.insert(diff_end_height, masternode_list);
         self.coinbase_chain_locks.insert(diff_end_height, chain_lock);
+        self.observe_coinbase_if_higher(coinbase_tx);
         for (quorum_type, quorum_hash, status) in changes {
             self.set_quorum_status(quorum_type, quorum_hash, &status);
         }
         Ok(())
+    }
+
+    fn observe_coinbase_if_higher(&mut self, coinbase_tx: Option<Transaction>) {
+        let Some(payload) = coinbase_tx.as_ref().and_then(CoinbasePayload::from_coinbase_tx) else {
+            return;
+        };
+
+        if self.latest_coinbase.as_ref().is_some_and(|latest| latest.height > payload.height) {
+            return;
+        }
+
+        self.latest_coinbase = Some(payload);
     }
 
     /// Verifies the newest list's unverified non-rotating quorums against their
@@ -1483,7 +1511,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::{fixture_heights, quorum_entry, TestEngine};
-    use super::{build_cycle_quorum_map, qr_info_diffs};
+    use super::{build_cycle_quorum_map, qr_info_diffs, valid_coinbase_chain_lock};
     use super::{FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
@@ -1493,7 +1521,6 @@ mod tests {
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
-    use dashcore::hashes::Hash;
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::{MnListDiff, QuorumCLSigObject};
     use dashcore::prelude::CoreBlockHeight;
@@ -1510,9 +1537,10 @@ mod tests {
         QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
     };
     use dashcore::sml::quorum_validation_error::QuorumValidationError;
+    use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
     use dashcore::transaction::special_transaction::quorum_commitment::QuorumEntry;
     use dashcore::transaction::special_transaction::TransactionPayload;
-    use dashcore::{BlockHash, Network, QuorumHash};
+    use dashcore::{BlockHash, Network, QuorumHash, Transaction};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1886,6 +1914,8 @@ mod tests {
             "diff h must bring quorums for their signatures to be required"
         );
         qr_info.mn_list_diff_h.quorums_chainlock_signatures.clear();
+        let coinbase = CoinbasePayload::dummy(1);
+        engine.latest_coinbase = Some(coinbase.clone());
         let lists = engine.masternode_lists.clone();
         let cycles = engine.rotated_quorums_per_cycle.clone();
         let chain_locks = engine.coinbase_chain_locks.clone();
@@ -1907,6 +1937,34 @@ mod tests {
         );
         assert!(engine.rotated_quorums_per_cycle == cycles, "and the stored cycles");
         assert_eq!(engine.coinbase_chain_locks, chain_locks, "and the coinbase ChainLocks");
+        assert_eq!(engine.latest_coinbase, Some(coinbase), "and the coinbase");
+    }
+
+    #[test]
+    fn a_lower_diff_leaves_the_newer_coinbase() {
+        let mut engine = TestEngine::empty(Network::Mainnet);
+        let coinbase = |height| {
+            Some(Transaction {
+                version: 3,
+                lock_time: 0,
+                input: Vec::new(),
+                output: Vec::new(),
+                special_transaction_payload: Some(TransactionPayload::CoinbasePayloadType(
+                    CoinbasePayload::dummy(height),
+                )),
+            })
+        };
+
+        engine.observe_coinbase_if_higher(coinbase(20));
+        engine.observe_coinbase_if_higher(coinbase(10));
+        assert_eq!(engine.latest_coinbase, Some(CoinbasePayload::dummy(20)));
+
+        engine.observe_coinbase_if_higher(coinbase(30));
+        assert_eq!(engine.latest_coinbase, Some(CoinbasePayload::dummy(30)));
+
+        engine.observe_coinbase_if_higher(coinbase(40).map(|tx| tx.with_newer_coinbase_payload()));
+        let latest = engine.latest_coinbase.as_ref().expect("a coinbase");
+        assert_eq!((latest.height, latest.version), (40, 5));
     }
 
     /// Core sends a snapshot for every diff of `mn_list_diff_list`. A diff
@@ -1976,6 +2034,9 @@ mod tests {
             .feed_qr_info(qr_info)
             .await
             .expect("first QRInfo on a fresh engine must feed cleanly");
+
+        let coinbase = engine.latest_coinbase().expect("observes the tip's coinbase");
+        assert_eq!((coinbase.height, coinbase.version), (2518986, 3));
 
         assert_eq!(feed_result.rotated_quorum_count, 32);
         assert_eq!(
@@ -3304,6 +3365,25 @@ mod tests {
             None,
             "an entry for another block at the height reads as missing"
         );
+    }
+
+    /// A coinbase payload of a version this library does not decode still
+    /// carries the ChainLock member selection reads: Dash Core only appends
+    /// fields in a new version, so it holds the version 3 fields where they
+    /// were.
+    #[test]
+    fn a_newer_coinbase_payload_carries_its_chain_lock() {
+        const HEIGHT: CoreBlockHeight = 2_227_096;
+        let diff: MnListDiff = deserialize(include_bytes!(
+            "../../dash/tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("diff");
+        let chain_lock = valid_coinbase_chain_lock(&diff.coinbase_tx, HEIGHT);
+        assert!(chain_lock.is_some(), "the capture's coinbase carries a ChainLock");
+
+        let newer = diff.coinbase_tx.with_newer_coinbase_payload();
+
+        assert_eq!(valid_coinbase_chain_lock(&newer, HEIGHT), chain_lock);
     }
 
     /// On an engine that checks coinbases, a restarted engine records the

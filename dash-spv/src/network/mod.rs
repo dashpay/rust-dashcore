@@ -4,6 +4,7 @@ mod costs;
 mod discovery;
 mod manager;
 mod peer;
+mod peer_set;
 mod transport;
 
 use crate::error::NetworkResult;
@@ -12,7 +13,6 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::{GetHeadersMessage, Inventory};
 use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
 use dashcore::BlockHash;
-use dashcore_hashes::Hash;
 use std::net::SocketAddr;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -20,6 +20,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 pub use broker::RequestKey;
 pub use manager::NetworkEvent;
 pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager};
+pub(crate) use peer::MAX_USER_AGENT_LEN;
 pub use transport::TransportPreference;
 // Used by the mock network manager to enforce the same de-duplication contract.
 #[cfg(any(test, feature = "test-utils"))]

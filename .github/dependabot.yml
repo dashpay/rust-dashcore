@@ -1,0 +1,31 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Let fresh releases settle before they reach CI.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"
+    ignore:
+      # Its refs are toolchain branches, not action versions.
+      - dependency-name: dtolnay/rust-toolchain
+
+  # Without a lockfile Dependabot only proposes Cargo-incompatible bumps. Those often
+  # need code changes, so each gets its own PR instead of a group.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    # Let fresh releases settle, so a hijacked release is usually yanked before we see it.
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build

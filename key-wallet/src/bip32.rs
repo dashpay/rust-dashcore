@@ -164,7 +164,7 @@ impl core::ops::Index<core::ops::RangeFull> for ChainCode {
 
 impl ChainCode {
     fn from_hmac(hmac: Hmac<sha512::Hash>) -> Self {
-        hmac[32..].try_into().expect("half of hmac is guaranteed to be 32 bytes")
+        hmac.as_byte_array()[32..].try_into().expect("half of hmac is guaranteed to be 32 bytes")
     }
 }
 
@@ -1277,9 +1277,9 @@ impl ExtendedPrivKey {
             return Err(Error::InvalidSeedLength(seed.len()));
         }
 
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"Bitcoin seed");
+        let mut hmac_engine: HmacEngine<sha512::HashEngine> = HmacEngine::new(b"Bitcoin seed");
         hmac_engine.input(seed);
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
 
         Ok(ExtendedPrivKey {
             network,
@@ -1310,7 +1310,7 @@ impl ExtendedPrivKey {
 
     /// Private->Private child key derivation
     pub fn ckd_priv(&self, i: ChildNumber) -> Result<ExtendedPrivKey, Error> {
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(&self.chain_code[..]);
+        let mut hmac_engine: HmacEngine<sha512::HashEngine> = HmacEngine::new(&self.chain_code[..]);
         match i {
             ChildNumber::Normal {
                 index,
@@ -1343,7 +1343,7 @@ impl ExtendedPrivKey {
                 hmac_engine.input(&index);
             }
         }
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
         // IL added to the parent scalar; `add_tweak` rejects IL >= n and a zero
         // sum, the two cases BIP32 declares invalid.
         let tweaked = self
@@ -1525,7 +1525,7 @@ impl ExtendedPrivKey {
 
     /// Returns the first four bytes of the identifier
     pub fn fingerprint(&self) -> Fingerprint {
-        self.identifier()[0..4].try_into().expect("4 is the fingerprint length")
+        self.identifier().as_byte_array()[0..4].try_into().expect("4 is the fingerprint length")
     }
 
     /// Convert to a PrivateKey for signing operations
@@ -1583,12 +1583,12 @@ impl ExtendedPubKey {
             ChildNumber::Normal {
                 index: n,
             } => {
-                let mut hmac_engine: HmacEngine<sha512::Hash> =
+                let mut hmac_engine: HmacEngine<sha512::HashEngine> =
                     HmacEngine::new(&self.chain_code[..]);
                 hmac_engine.input(&self.public_key.to_compressed()[..]);
                 hmac_engine.input(&n.to_be_bytes());
 
-                let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+                let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
 
                 let private_key = EcdsaSecretKey::from_bytes(&hmac_secret_half(&hmac_result))?;
                 let chain_code = ChainCode::from_hmac(hmac_result);
@@ -1598,14 +1598,14 @@ impl ExtendedPubKey {
                 index: idx,
             } => {
                 // UInt256 mode (index >= 2^32)
-                let mut hmac_engine: HmacEngine<sha512::Hash> =
+                let mut hmac_engine: HmacEngine<sha512::HashEngine> =
                     HmacEngine::new(&self.chain_code[..]);
 
                 // HMAC Input: serP(Kpar) || ser256(i)
                 hmac_engine.input(&self.public_key.to_compressed()[..]);
                 hmac_engine.input(&idx);
 
-                let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+                let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
 
                 // IL must be less than n (order of the curve)
                 let private_key = EcdsaSecretKey::from_bytes(&hmac_secret_half(&hmac_result))?;
@@ -1793,7 +1793,7 @@ impl ExtendedPubKey {
 
     /// Returns the first four bytes of the identifier
     pub fn fingerprint(&self) -> Fingerprint {
-        self.identifier()[0..4].try_into().expect("4 is the fingerprint length")
+        self.identifier().as_byte_array()[0..4].try_into().expect("4 is the fingerprint length")
     }
 
     /// Convert to a PublicKey for use in address generation
@@ -2350,61 +2350,79 @@ mod tests {
 
     #[test]
     fn test_bip_44_account_path() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
         assert_eq!(path.to_string(), "m/44'/5'/0'");
     }
 
     #[test]
     fn test_bip_44_payment_path() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 0);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 0).unwrap();
         assert_eq!(path.to_string(), "m/44'/5'/0'/1/0");
 
-        let path = DerivationPath::bip_44_payment_path(Network::Testnet, 1, false, 42);
+        let path = DerivationPath::bip_44_payment_path(Network::Testnet, 1, false, 42).unwrap();
         assert_eq!(path.to_string(), "m/44'/1'/1'/0/42");
     }
 
     #[test]
+    fn bip_44_payment_path_rejects_indexes_past_31_bits() {
+        let max = 0x7fff_ffff;
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, max, false, max).unwrap();
+        assert_eq!(path.to_string(), "m/44'/5'/2147483647'/0/2147483647");
+
+        assert_eq!(
+            DerivationPath::bip_44_payment_path(Network::Mainnet, max + 1, false, 0),
+            Err(Error::InvalidChildNumber(max + 1))
+        );
+        assert_eq!(
+            DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, max + 1),
+            Err(Error::InvalidChildNumber(max + 1))
+        );
+    }
+
+    #[test]
     fn test_coinjoin_path() {
-        let path = DerivationPath::coinjoin_path(Network::Mainnet, 0);
+        let path = DerivationPath::coinjoin_path(Network::Mainnet, 0).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/4'/0'");
 
-        let path = DerivationPath::coinjoin_path(Network::Testnet, 1);
+        let path = DerivationPath::coinjoin_path(Network::Testnet, 1).unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/4'/1'");
     }
 
     #[test]
     fn test_identity_registration_path() {
-        let path = DerivationPath::identity_registration_path(Network::Mainnet, 10);
+        let path = DerivationPath::identity_registration_path(Network::Mainnet, 10).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/1'/10'");
     }
 
     #[test]
     fn test_identity_top_up_path() {
-        let path = DerivationPath::identity_top_up_path(Network::Testnet, 2, 3);
+        let path = DerivationPath::identity_top_up_path(Network::Testnet, 2, 3).unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/5'/2'/2'/3");
     }
 
     #[test]
     fn test_identity_invitation_path() {
-        let path = DerivationPath::identity_invitation_path(Network::Mainnet, 15);
+        let path = DerivationPath::identity_invitation_path(Network::Mainnet, 15).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/3'/15'");
     }
 
     #[test]
     fn test_asset_lock_address_top_up_path() {
-        let path = DerivationPath::asset_lock_address_top_up_path(Network::Mainnet, 7);
+        let path = DerivationPath::asset_lock_address_top_up_path(Network::Mainnet, 7).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/4'/7'");
 
-        let path = DerivationPath::asset_lock_address_top_up_path(Network::Testnet, 0);
+        let path = DerivationPath::asset_lock_address_top_up_path(Network::Testnet, 0).unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/5'/4'/0'");
     }
 
     #[test]
     fn test_asset_lock_shielded_address_top_up_path() {
-        let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Mainnet, 3);
+        let path =
+            DerivationPath::asset_lock_shielded_address_top_up_path(Network::Mainnet, 3).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/5'/3'");
 
-        let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Testnet, 1);
+        let path =
+            DerivationPath::asset_lock_shielded_address_top_up_path(Network::Testnet, 1).unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/5'/5'/1'");
     }
 
@@ -2415,7 +2433,8 @@ mod tests {
             KeyDerivationType::ECDSA,
             1,
             2,
-        );
+        )
+        .unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/0'/0'/1'/2'");
 
         let path = DerivationPath::identity_authentication_path(
@@ -2423,7 +2442,8 @@ mod tests {
             KeyDerivationType::BLS,
             2,
             3,
-        );
+        )
+        .unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/5'/0'/1'/2'/3'");
     }
 
@@ -2671,7 +2691,7 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_for_master_seed() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2687,7 +2707,7 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_for_master_seed() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
         let pk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2703,7 +2723,7 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_payment_change_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3).unwrap();
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2716,7 +2736,7 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_payment_main_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3).unwrap();
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2729,7 +2749,7 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_payment_change_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3).unwrap();
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2744,7 +2764,7 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_payment_external_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3).unwrap();
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),

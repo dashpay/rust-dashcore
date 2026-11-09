@@ -20,7 +20,7 @@
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{Hash, sha256};
+use hashes::sha256;
 use internals::impl_array_newtype;
 
 use crate::consensus::{Decodable, Encodable, encode};
@@ -143,8 +143,6 @@ mod tests {
     #[cfg(feature = "bincode")]
     #[test]
     fn bincode_layout_matches_pubkey_hash() {
-        use hashes::Hash;
-
         let bytes = [0xCD; 20];
         let config = bincode::config::standard();
         let node_id_bytes = bincode::encode_to_vec(PlatformNodeId::from_byte_array(bytes), config)

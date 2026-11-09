@@ -9,7 +9,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use dash_spv::{ProgressPercentage, SyncEvent, SyncState};
-use dashcore::hashes::Hash;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
 use dashcore::QuorumHash;
@@ -41,7 +40,9 @@ async fn test_masternode_list_sync() {
     let config =
         create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
 
-    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let mut client_handle = create_client(&config, Arc::clone(&wallet)).await;
+    assert_eq!(client_handle.client.latest_coinbase().await, None);
+    client_handle.run().await;
 
     // Wait for the MasternodeStateUpdated event
     let mn_height =
@@ -92,6 +93,10 @@ async fn test_masternode_list_sync() {
                 .await
                 .expect("blocking accessor should not panic");
         assert_eq!(blocking_list, engine_list);
+
+        let engine_coinbase = client_handle.engine.read().await.latest_coinbase().cloned();
+        assert!(engine_coinbase.is_some());
+        assert_eq!(client_handle.client.latest_coinbase().await, engine_coinbase);
     }
 
     client_handle.stop().await;

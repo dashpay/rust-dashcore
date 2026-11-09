@@ -1,5 +1,5 @@
 use crate::Network;
-use hashes::{Hash, sha256};
+use hashes::sha256;
 
 use crate::ecdsa::EcdsaSecretKey;
 use crate::{Address, PrivateKey, PublicKey};
