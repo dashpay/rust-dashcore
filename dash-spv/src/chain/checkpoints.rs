@@ -2,7 +2,9 @@
 //!
 //! Each checkpoint holds its block header and the [`CHECKPOINT_HEADERS`] - 1 headers before
 //! it, so the difficulty of the blocks after it can be checked from the first one on. The
-//! checkpoints of mainnet and testnet are generated from the network by the
+//! genesis checkpoint is the exception: it holds only the genesis header and is never
+//! encoded, as decoding always reads [`CHECKPOINT_HEADERS`] headers. The checkpoints of
+//! mainnet and testnet are generated from the network by the
 //! `generate-checkpoints` binary into `checkpoints/<network>.json`, which `build.rs` encodes
 //! for embedding.
 
@@ -17,7 +19,7 @@ use dashcore::{BlockHash, Network};
 
 use crate::types::HashedBlockHeader;
 
-/// Headers each checkpoint holds, the checkpoint block last.
+/// Headers each checkpoint but genesis holds, the checkpoint block last.
 pub const CHECKPOINT_HEADERS: usize = 25;
 
 const MAINNET_CHECKPOINTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mainnet.checkpoints"));
@@ -38,7 +40,7 @@ static NO_CHECKPOINTS: CheckpointManager = CheckpointManager {
     checkpoints: BTreeMap::new(),
 };
 
-/// A known block and the [`CHECKPOINT_HEADERS`] - 1 headers before it.
+/// A known block and the [`CHECKPOINT_HEADERS`] - 1 headers before it, or the genesis block alone.
 #[derive(Debug, Clone)]
 pub struct Checkpoint {
     height: u32,
