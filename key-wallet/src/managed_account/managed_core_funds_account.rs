@@ -1781,6 +1781,7 @@ mod conflict_sweep_walk_tests {
     use crate::account::StandardAccountType;
     use crate::managed_account::transaction_record::TransactionDirection;
     use crate::transaction_checking::BlockInfo;
+    use crate::ChildIndex;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
     use dashcore::ScriptBuf;
     use dashcore::{BlockHash, TxIn, TxOut, Witness};
@@ -1832,7 +1833,7 @@ mod conflict_sweep_walk_tests {
         let record = TransactionRecord::new(
             tx.clone(),
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             context,

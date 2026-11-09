@@ -10,6 +10,7 @@ use key_wallet::account::StandardAccountType;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::ChildIndex;
 use key_wallet::{AccountType, Network};
 use key_wallet_manager::WalletInterface;
 use key_wallet_manager::WalletManager;
@@ -67,7 +68,7 @@ fn main() {
     let account_result = manager.create_account(
         &wallet_id, // Account index 1 (0 is created by default)
         AccountType::Standard {
-            index: 1,
+            index: ChildIndex::new_const(1),
             standard_account_type: StandardAccountType::BIP44Account,
         },
         None,
@@ -92,7 +93,7 @@ fn main() {
 
     let address = manager.next_receive_address(
         &wallet_id,
-        0, // Account index
+        ChildIndex::ZERO, // Account index
         AccountTypePreference::BIP44,
         false, // Don't advance index
     );

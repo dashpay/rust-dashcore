@@ -5,6 +5,7 @@ use crate::{
 };
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::TransactionRecord;
+use key_wallet::ChildIndex;
 use key_wallet::{Account, Address, Network, Utxo, Wallet};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio::sync::{broadcast, mpsc};
@@ -113,7 +114,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     pub fn get_account(
         &self,
         wallet_id: &WalletId,
-        index: u32,
+        index: ChildIndex,
     ) -> Result<Option<&Account>, WalletError> {
         let wallet = self.wallets.get(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
         Ok(wallet.get_bip44_account(index))

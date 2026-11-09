@@ -52,6 +52,7 @@ use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
 use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::ChildIndex;
 use key_wallet_manager::WalletManager;
 
 /// Deterministic test wallet seed (standard BIP-39 test vector mnemonic).
@@ -112,7 +113,7 @@ async fn coinjoin_external_addresses(
     let xpub = signing_wallet
         .accounts
         .coinjoin_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("CoinJoin account 0 (Default options)")
         .account_xpub;
     let info = wm.get_wallet_info(wallet_id).expect("wallet info present");
@@ -137,8 +138,11 @@ async fn coinjoin_external_addresses(
 
 /// The wallet's LIVE CoinJoin-account-0 External pool.
 fn coinjoin_external_pool(info: &ManagedWalletInfo) -> &AddressPool {
-    let account =
-        info.accounts.coinjoin_accounts.get(&0).expect("CoinJoin account 0 (Default options)");
+    let account = info
+        .accounts
+        .coinjoin_accounts
+        .get(&ChildIndex::ZERO)
+        .expect("CoinJoin account 0 (Default options)");
     account
         .managed_account_type()
         .address_pools()

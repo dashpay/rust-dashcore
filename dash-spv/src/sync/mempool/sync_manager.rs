@@ -187,6 +187,7 @@ mod tests {
     use crate::client::config::MempoolStrategy;
     use crate::sync::BroadcastConfig;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
+    use key_wallet::ChildIndex;
     use key_wallet_manager::test_utils::MockWallet;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
@@ -448,14 +449,14 @@ mod tests {
 
         let mut ctx = TestWalletContext::new_random();
         let account_type = AccountType::Standard {
-            index: 1,
+            index: ChildIndex::new_const(1),
             standard_account_type: StandardAccountType::BIP44Account,
         };
         ctx.wallet.add_account(account_type, None).unwrap();
         let mut preview =
             ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "preview".into(), 0);
         let address = preview
-            .bip44_managed_account_at_index_mut(1)
+            .bip44_managed_account_at_index_mut(ChildIndex::new_const(1))
             .unwrap()
             .next_receive_address(None, true)
             .unwrap();
@@ -542,7 +543,7 @@ mod tests {
             let account = wallet
                 .get_wallet_info(&wallet_id)
                 .unwrap()
-                .bip44_managed_account_at_index(1)
+                .bip44_managed_account_at_index(ChildIndex::new_const(1))
                 .unwrap();
             assert_eq!(account.transactions()[&spender.txid()].net_amount, -10_000);
             assert!(!account.utxos.contains_key(&outpoint));
@@ -598,7 +599,7 @@ mod tests {
                     let account = wallet
                         .get_wallet_info(&wallet_id)
                         .unwrap()
-                        .bip44_managed_account_at_index(index)
+                        .bip44_managed_account_at_index(ChildIndex::new_const(index))
                         .unwrap();
                     let record = &account.transactions()[&tx.txid()];
                     if confirmed {

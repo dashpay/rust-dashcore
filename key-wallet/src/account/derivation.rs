@@ -1,5 +1,5 @@
 use crate::managed_account::address_pool::AddressPoolType;
-use crate::{ChildNumber, DerivationPath, Error, Mnemonic};
+use crate::{ChildIndex, ChildNumber, DerivationPath, Error, Mnemonic};
 use dashcore::Address;
 
 /// Derivation helpers available on an account-like type.
@@ -80,24 +80,25 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType, PrivKeyType> 
     where
         Self: Sized,
     {
+        let index = ChildIndex::new(index)?;
         Ok(match address_pool_type {
             AddressPoolType::External => {
                 DerivationPath::from(vec![
-                    ChildNumber::from_idx(0, use_hardened)?, // External chain
-                    ChildNumber::from_idx(index, use_hardened)?,
+                    ChildNumber::from_idx(ChildIndex::ZERO, use_hardened), // External chain
+                    ChildNumber::from_idx(index, use_hardened),
                 ])
             }
             AddressPoolType::Internal => {
                 DerivationPath::from(vec![
-                    ChildNumber::from_idx(1, use_hardened)?, // Internal chain
-                    ChildNumber::from_idx(index, use_hardened)?,
+                    ChildNumber::from_idx(ChildIndex::new_const(1), use_hardened), // Internal chain
+                    ChildNumber::from_idx(index, use_hardened),
                 ])
             }
             AddressPoolType::Absent => {
-                DerivationPath::from(vec![ChildNumber::from_idx(index, use_hardened)?])
+                DerivationPath::from(vec![ChildNumber::from_idx(index, use_hardened)])
             }
             AddressPoolType::AbsentHardened => {
-                DerivationPath::from(vec![ChildNumber::from_idx(index, use_hardened)?])
+                DerivationPath::from(vec![ChildNumber::from_idx(index, use_hardened)])
             }
         })
     }
@@ -159,17 +160,18 @@ pub trait AccountDerivation<EPrivKeyType, EPubKeyType, PubKeyType, PrivKeyType> 
 
         // Derive account-level xpriv first
         let account_xpriv = self.derive_xpriv_from_master_xpriv(master_xpriv)?;
+        let index = ChildIndex::new(index)?;
         // Build the child derivation path relative to the account
         let child_path = if let Some(intermediate) = self.has_intermediate_derivation() {
             DerivationPath::from(vec![
                 intermediate,
-                ChildNumber::from_idx(index, self.defaults_to_hardened_derivation())?,
+                ChildNumber::from_idx(index, self.defaults_to_hardened_derivation()),
             ])
         } else {
             DerivationPath::from(vec![ChildNumber::from_idx(
                 index,
                 self.defaults_to_hardened_derivation(),
-            )?])
+            )])
         };
         // Derive the child extended private key
         self.derive_child_xpriv_from_account_xpriv(&account_xpriv, &child_path)

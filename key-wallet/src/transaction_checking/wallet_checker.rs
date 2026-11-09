@@ -526,6 +526,7 @@ mod tests {
     use crate::wallet::initialization::WalletAccountCreationOptions;
     use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use crate::wallet::{ManagedWalletInfo, Wallet};
+    use crate::ChildIndex;
     use crate::{AccountType, Network};
     use dashcore::blockdata::script::ScriptBuf;
     use dashcore::blockdata::transaction::Transaction;
@@ -585,7 +586,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                     standard_account_type: StandardAccountType::BIP32Account,
                 },
                 None,
@@ -596,7 +597,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::CoinJoin {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                 },
                 None,
             )
@@ -612,7 +613,9 @@ mod tests {
 
         // Get BIP32 account address - scope the immutable borrow
         let (bip32_xpub, bip32_address) = {
-            if let Some(bip32_account) = wallet.accounts.standard_bip32_accounts.get(&0) {
+            if let Some(bip32_account) =
+                wallet.accounts.standard_bip32_accounts.get(&ChildIndex::ZERO)
+            {
                 let xpub = bip32_account.account_xpub;
                 if let Some(managed_account) = managed_wallet.first_bip32_managed_account_mut() {
                     let address = managed_account
@@ -647,7 +650,8 @@ mod tests {
 
         // Get CoinJoin account address - scope the immutable borrow
         let (coinjoin_xpub, coinjoin_address) = {
-            if let Some(coinjoin_account) = wallet.accounts.coinjoin_accounts.get(&0) {
+            if let Some(coinjoin_account) = wallet.accounts.coinjoin_accounts.get(&ChildIndex::ZERO)
+            {
                 let xpub = coinjoin_account.account_xpub;
                 if let Some(managed_account) = managed_wallet.first_coinjoin_managed_account_mut() {
                     let address = managed_account
@@ -831,7 +835,7 @@ mod tests {
         let account = managed_wallet
             .accounts
             .standard_bip44_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("Should have managed BIP44 account");
 
         assert!(account.utxos.is_empty(), "Spent UTXO should be removed");
@@ -870,7 +874,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -879,7 +883,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::CoinJoin {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                 },
                 None,
             )
@@ -889,8 +893,12 @@ mod tests {
             ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
         // Derive a CoinJoin external address and a BIP44 change address.
-        let coinjoin_xpub =
-            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
+        let coinjoin_xpub = wallet
+            .accounts
+            .coinjoin_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("coinjoin account")
+            .account_xpub;
         let coinjoin_address = {
             let managed_account =
                 managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
@@ -906,8 +914,12 @@ mod tests {
                 panic!("Expected CoinJoin account type");
             }
         };
-        let bip44_xpub =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("bip44 account").account_xpub;
+        let bip44_xpub = wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("bip44 account")
+            .account_xpub;
         let change_address = managed_wallet
             .first_bip44_managed_account_mut()
             .expect("managed bip44")
@@ -1475,7 +1487,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -1485,17 +1497,25 @@ mod tests {
         let mut managed_wallet =
             ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
-        let xpub0 =
-            wallet.accounts.standard_bip44_accounts.get(&0).expect("account 0").account_xpub;
+        let xpub0 = wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("account 0")
+            .account_xpub;
         let address0 = managed_wallet
-            .bip44_managed_account_at_index_mut(0)
+            .bip44_managed_account_at_index_mut(ChildIndex::ZERO)
             .expect("managed account 0")
             .next_receive_address(Some(&xpub0), true)
             .expect("address for account 0");
-        let xpub1 =
-            wallet.accounts.standard_bip44_accounts.get(&1).expect("account 1").account_xpub;
+        let xpub1 = wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::new_const(1))
+            .expect("account 1")
+            .account_xpub;
         let address1 = managed_wallet
-            .bip44_managed_account_at_index_mut(1)
+            .bip44_managed_account_at_index_mut(ChildIndex::new_const(1))
             .expect("managed account 1")
             .next_receive_address(Some(&xpub1), true)
             .expect("address for account 1");
@@ -1539,14 +1559,14 @@ mod tests {
         assert_eq!(first.affected_accounts.len(), 2, "account 0 by input, account 1 by output");
 
         managed_wallet
-            .bip44_managed_account_at_index_mut(1)
+            .bip44_managed_account_at_index_mut(ChildIndex::new_const(1))
             .expect("managed account 1")
             .transactions_mut()
             .remove(&txid);
 
         assert!(
             managed_wallet
-                .bip44_managed_account_at_index(0)
+                .bip44_managed_account_at_index(ChildIndex::ZERO)
                 .expect("managed account 0")
                 .utxos
                 .is_empty(),
@@ -1554,14 +1574,14 @@ mod tests {
         );
         assert!(
             managed_wallet
-                .bip44_managed_account_at_index(0)
+                .bip44_managed_account_at_index(ChildIndex::ZERO)
                 .expect("managed account 0")
                 .has_transaction(&txid),
             "account 0 still holds the record"
         );
         assert!(
             !managed_wallet
-                .bip44_managed_account_at_index(1)
+                .bip44_managed_account_at_index(ChildIndex::new_const(1))
                 .expect("managed account 1")
                 .has_transaction(&txid),
             "account 1 does not"
@@ -1591,7 +1611,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -1604,11 +1624,11 @@ mod tests {
         let xpub0 = wallet
             .accounts
             .standard_bip44_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("Should have BIP44 account 0")
             .account_xpub;
         let address0 = managed_wallet
-            .bip44_managed_account_at_index_mut(0)
+            .bip44_managed_account_at_index_mut(ChildIndex::ZERO)
             .expect("Should have managed account 0")
             .next_receive_address(Some(&xpub0), true)
             .expect("Should generate address for account 0");
@@ -1616,11 +1636,11 @@ mod tests {
         let xpub1 = wallet
             .accounts
             .standard_bip44_accounts
-            .get(&1)
+            .get(&ChildIndex::new_const(1))
             .expect("Should have BIP44 account 1")
             .account_xpub;
         let address1 = managed_wallet
-            .bip44_managed_account_at_index_mut(1)
+            .bip44_managed_account_at_index_mut(ChildIndex::new_const(1))
             .expect("Should have managed account 1")
             .next_receive_address(Some(&xpub1), true)
             .expect("Should generate address for account 1");
@@ -1646,7 +1666,7 @@ mod tests {
         // there. Account 0 keeps the record so wallet-level `is_new` will be
         // `false` when the IS lock arrives, exercising the backfill branch.
         let account1 = managed_wallet
-            .bip44_managed_account_at_index_mut(1)
+            .bip44_managed_account_at_index_mut(ChildIndex::new_const(1))
             .expect("Should have managed account 1");
         account1.transactions_mut().remove(&txid);
         account1.utxos.clear();
@@ -1676,7 +1696,7 @@ mod tests {
         // Both accounts should now hold the record with IS context and IS-locked UTXOs.
         for account_index in 0..=1 {
             let account = managed_wallet
-                .bip44_managed_account_at_index(account_index)
+                .bip44_managed_account_at_index(ChildIndex::new_const(account_index))
                 .expect("Should have account");
             let record = account
                 .transactions()
@@ -2220,7 +2240,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::CoinJoin {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                 },
                 None,
             )
@@ -2229,8 +2249,12 @@ mod tests {
         let mut managed_wallet =
             ManagedWalletInfo::from_wallet_with_name(&wallet, "Test".to_string(), 0);
 
-        let xpub =
-            wallet.accounts.coinjoin_accounts.get(&0).expect("coinjoin account").account_xpub;
+        let xpub = wallet
+            .accounts
+            .coinjoin_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("coinjoin account")
+            .account_xpub;
 
         let managed_account =
             managed_wallet.first_coinjoin_managed_account_mut().expect("managed coinjoin");
@@ -2593,7 +2617,7 @@ mod tests {
             .wallet
             .accounts
             .standard_bip32_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("BIP32 account")
             .account_xpub;
         let bip32_address = ctx
@@ -3299,7 +3323,7 @@ mod tests {
             .wallet
             .accounts
             .standard_bip32_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("default options create BIP32 account 0")
             .account_xpub;
         let bip32_change = ctx
@@ -3792,7 +3816,7 @@ mod tests {
             .wallet
             .accounts
             .standard_bip32_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("BIP32 account")
             .account_xpub;
         let bip32_address = ctx
@@ -3977,14 +4001,15 @@ mod tests {
         use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
         let mut ctx = TestWalletContext::new_random();
         let account_type = AccountType::Standard {
-            index: 1,
+            index: ChildIndex::new_const(1),
             standard_account_type: StandardAccountType::BIP44Account,
         };
         ctx.wallet.add_account(account_type, None).unwrap();
-        let xpub = ctx.wallet.accounts.standard_bip44_accounts[&1].account_xpub;
+        let xpub =
+            ctx.wallet.accounts.standard_bip44_accounts[&ChildIndex::new_const(1)].account_xpub;
         let mut preview =
             ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "preview".into(), 0);
-        let account = preview.bip44_managed_account_at_index_mut(1).unwrap();
+        let account = preview.bip44_managed_account_at_index_mut(ChildIndex::new_const(1)).unwrap();
         let crate::ManagedAccountType::Standard {
             external_addresses,
             ..
@@ -4018,11 +4043,14 @@ mod tests {
         });
         assert!(!ctx
             .managed_wallet
-            .bip44_managed_account_at_index(1)
+            .bip44_managed_account_at_index(ChildIndex::new_const(1))
             .unwrap()
             .contains_address(&addresses[30]));
         ctx.check_transaction(&spender, TransactionContext::Mempool).await;
-        let account = ctx.managed_wallet.bip44_managed_account_at_index_mut(1).unwrap();
+        let account = ctx
+            .managed_wallet
+            .bip44_managed_account_at_index_mut(ChildIndex::new_const(1))
+            .unwrap();
         assert!(account.contains_address(&addresses[30]));
         let original = account.transactions_mut().get_mut(&spender.txid()).unwrap();
         assert_eq!(original.net_amount, 45_000);
@@ -4055,8 +4083,11 @@ mod tests {
         assert_eq!(corrected.output_details[1].role, OutputRole::Received);
         assert_eq!(corrected.fee, Some(5_000));
         assert_eq!(corrected.label, "retained child");
-        let stored = &ctx.managed_wallet.bip44_managed_account_at_index(1).unwrap().transactions()
-            [&spender.txid()];
+        let stored = &ctx
+            .managed_wallet
+            .bip44_managed_account_at_index(ChildIndex::new_const(1))
+            .unwrap()
+            .transactions()[&spender.txid()];
         assert_eq!(stored.net_amount, corrected.net_amount);
         assert_eq!(stored.direction, corrected.direction);
         assert_eq!(stored.context, corrected.context);
@@ -4065,7 +4096,7 @@ mod tests {
         assert_eq!(corrected.context, TransactionContext::Mempool);
         assert!(!ctx
             .managed_wallet
-            .bip44_managed_account_at_index(1)
+            .bip44_managed_account_at_index(ChildIndex::new_const(1))
             .unwrap()
             .utxos
             .contains_key(&outpoint));
@@ -4075,7 +4106,7 @@ mod tests {
     /// derived from its xpub, past the window the wallet itself watches.
     fn bip44_receive_addresses(ctx: &TestWalletContext, count: u32) -> Vec<Address> {
         ctx.wallet
-            .get_bip44_account(0)
+            .get_bip44_account(ChildIndex::ZERO)
             .expect("Should have BIP44 account")
             .derive_receive_addresses(0, count)
             .expect("Should derive")
@@ -4180,7 +4211,7 @@ mod tests {
         let gap = DEFAULT_INTERNAL_GAP_LIMIT as usize;
         let change = ctx
             .wallet
-            .get_bip44_account(0)
+            .get_bip44_account(ChildIndex::ZERO)
             .expect("Should have BIP44 account")
             .derive_change_addresses(0, gap as u32 + 2)
             .expect("Should derive");
@@ -4549,7 +4580,7 @@ mod tests {
     async fn test_coinjoin_internal_output_keeps_its_role_across_a_late_input_and_a_rescan() {
         let mut ctx = TestWalletContext::new_random();
         let gap = DEFAULT_COINJOIN_GAP_LIMIT;
-        let account = &ctx.wallet.accounts.coinjoin_accounts[&0];
+        let account = &ctx.wallet.accounts.coinjoin_accounts[&ChildIndex::ZERO];
         let external = account.derive_receive_addresses(0, 2).unwrap();
         let internal = account.derive_change_addresses(0, 2 * gap).unwrap();
         let (near, far) = (&internal[gap as usize - 1], &internal[2 * gap as usize - 1]);

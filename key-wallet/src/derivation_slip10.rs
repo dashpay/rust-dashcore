@@ -18,7 +18,7 @@ use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 use serde;
 
 // Re-export ChainCode, Fingerprint and ChildNumber from bip32
-use crate::bip32::{ChainCode, ChildNumber, Fingerprint};
+use crate::bip32::{ChainCode, ChildIndex, ChildNumber, Fingerprint};
 // Use DerivationPath from bip32
 pub use crate::bip32::DerivationPath;
 
@@ -65,9 +65,7 @@ impl zeroize::Zeroize for ExtendedEd25519PrivKey {
         // Derivation metadata — cleared too so the whole value is wiped.
         self.depth.zeroize();
         self.parent_fingerprint.zeroize();
-        self.child_number = ChildNumber::Normal {
-            index: 0,
-        };
+        self.child_number = ChildNumber::Normal(ChildIndex::ZERO);
         self.network = Network::Mainnet; // repr(u8)=0 discriminant, the "zero" value
     }
 }
@@ -103,7 +101,7 @@ impl ExtendedEd25519PrivKey {
             network,
             depth: 0,
             parent_fingerprint: Fingerprint::default(),
-            child_number: ChildNumber::from_hardened_idx(0)?,
+            child_number: ChildNumber::Hardened(ChildIndex::ZERO),
             private_key,
             chain_code,
         })
@@ -248,9 +246,9 @@ impl ExtendedEd25519PrivKey {
         }
 
         let child_number = if depth == 0 {
-            ChildNumber::from_hardened_idx(0)?
+            ChildNumber::Hardened(ChildIndex::ZERO)
         } else {
-            ChildNumber::from_hardened_idx(child_number_u32 & !(1 << 31))?
+            ChildNumber::from(child_number_u32)
         };
 
         let chain_code = ChainCode::from_bytes(
@@ -390,9 +388,9 @@ impl ExtendedEd25519PubKey {
         );
 
         let child_number = if depth == 0 {
-            ChildNumber::from_hardened_idx(0)?
+            ChildNumber::Hardened(ChildIndex::ZERO)
         } else {
-            ChildNumber::from_hardened_idx(child_number_u32 & !(1 << 31))?
+            ChildNumber::from(child_number_u32)
         };
 
         let chain_code = ChainCode::from_bytes(
@@ -766,10 +764,10 @@ mod test {
             // Handle both hardened (0x80000000+) and non-hardened indices
             let child_number = if index & 0x80000000 != 0 {
                 // Already has hardening bit set, remove it for from_hardened_idx
-                ChildNumber::from_hardened_idx(index & !0x80000000).unwrap()
+                ChildNumber::Hardened(ChildIndex::new(index & !0x80000000).unwrap())
             } else {
                 // Normal index, add hardening
-                ChildNumber::from_hardened_idx(index).unwrap()
+                ChildNumber::Hardened(ChildIndex::new(index).unwrap())
             };
             current = current.ckd_priv(child_number).unwrap();
         }
@@ -809,7 +807,7 @@ mod test {
 
         assert_eq!(master, master.clone());
 
-        let child = master.ckd_priv(ChildNumber::from_hardened_idx(0).unwrap()).unwrap();
+        let child = master.ckd_priv(ChildNumber::Hardened(ChildIndex::ZERO)).unwrap();
         assert_ne!(master, child);
 
         // Same secret but different metadata must not compare equal
@@ -830,7 +828,7 @@ mod test {
         let child = ChildNumber::from_hardened_idx_256([0x35; 32]);
         assert!(matches!(master.ckd_priv(child), Err(Error::InvalidChildNumberFormat)));
         assert!(matches!(
-            master.derive_priv(&[ChildNumber::from_hardened_idx(9).unwrap(), child]),
+            master.derive_priv(&[ChildNumber::Hardened(ChildIndex::new_const(9)), child]),
             Err(Error::InvalidChildNumberFormat)
         ));
     }

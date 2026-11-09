@@ -10,6 +10,7 @@ use crate::wallet::managed_wallet_info::transaction_builder::{
 };
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::wallet::ManagedWalletInfo;
+use crate::ChildIndex;
 use crate::{AccountType, DerivationPath, Wallet};
 use core::fmt;
 use dashcore::address::NetworkUnchecked;
@@ -43,7 +44,7 @@ impl AccountTypePreference {
 
     /// The single [`AccountType`] this preference selects at `index`, or `None`
     /// for a DashPay source that names a set of accounts rather than one.
-    pub fn account_type(&self, index: u32) -> Option<AccountType> {
+    pub fn account_type(&self, index: ChildIndex) -> Option<AccountType> {
         Some(match *self {
             Self::BIP44 => AccountType::Standard {
                 index,
@@ -124,7 +125,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
@@ -141,7 +142,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
@@ -159,7 +160,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
@@ -175,7 +176,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
@@ -192,7 +193,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
@@ -233,7 +234,7 @@ impl ManagedWalletInfo {
     fn account_types_for(
         &self,
         preference: AccountTypePreference,
-        source_index: u32,
+        source_index: ChildIndex,
     ) -> Vec<AccountType> {
         let (identity, friend) = match preference {
             AccountTypePreference::AllDashpayReceivingFunds => (None, None),
@@ -275,7 +276,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         mut builder: TransactionBuilder,
     ) -> Result<PooledFunding, BuilderError> {
         let preferences = if sources.is_empty() {
@@ -346,6 +347,7 @@ mod tests {
     use crate::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
     use crate::wallet::managed_wallet_info::fee::FeeRate;
     use crate::wallet::managed_wallet_info::transaction_builder::TransactionBuilder;
+    use crate::ChildIndex;
     use crate::Utxo;
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::{Address, Network, Transaction, Txid};
@@ -752,7 +754,7 @@ mod tests {
             .build_and_sign_transaction_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                99,
+                ChildIndex::new_const(99),
                 dest_outputs(100_000),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -791,7 +793,7 @@ mod tests {
             .build_and_sign_transaction_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(100_000),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -813,11 +815,11 @@ mod tests {
         // Generate a receive address on account 0 and fund it with a real
         // UTXO at that address — coin selection needs a confirmed, spendable
         // output the signer can sign for.
-        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let account_xpub = wallet.get_bip44_account(ChildIndex::ZERO).unwrap().account_xpub;
         let funding_address = info
             .accounts
             .standard_bip44_accounts
-            .get_mut(&0)
+            .get_mut(&ChildIndex::ZERO)
             .unwrap()
             .next_receive_address(Some(&account_xpub), true)
             .unwrap();
@@ -841,7 +843,7 @@ mod tests {
         };
         info.accounts
             .standard_bip44_accounts
-            .get_mut(&0)
+            .get_mut(&ChildIndex::ZERO)
             .unwrap()
             .utxos
             .insert(utxo.outpoint, utxo);
@@ -857,7 +859,7 @@ mod tests {
             .build_and_sign_transaction_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(send_amount),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -898,7 +900,7 @@ mod tests {
             .build_and_sign_transaction_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(500_000),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -932,11 +934,11 @@ mod tests {
             Wallet::new_random(Network::Mainnet, WalletAccountCreationOptions::Default).unwrap();
         let mut mainnet_info =
             ManagedWalletInfo::from_wallet_with_name(&mainnet_wallet, "Mainnet".to_string(), 0);
-        let mainnet_xpub = mainnet_wallet.get_bip44_account(0).unwrap().account_xpub;
+        let mainnet_xpub = mainnet_wallet.get_bip44_account(ChildIndex::ZERO).unwrap().account_xpub;
         let mainnet_addr = mainnet_info
             .accounts
             .standard_bip44_accounts
-            .get_mut(&0)
+            .get_mut(&ChildIndex::ZERO)
             .unwrap()
             .next_receive_address(Some(&mainnet_xpub), true)
             .unwrap();
@@ -949,7 +951,7 @@ mod tests {
             .build_and_sign_transaction_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 outputs,
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -978,7 +980,7 @@ mod tests {
         wallet: &Wallet,
         info: &mut ManagedWalletInfo,
         preference: AccountTypePreference,
-        index: u32,
+        index: ChildIndex,
         txid_byte: u8,
     ) -> OutPoint {
         let account_type = preference.account_type(index).expect("a single account");
@@ -1031,14 +1033,14 @@ mod tests {
     #[tokio::test]
     async fn naming_an_account_twice_does_not_double_its_funds() {
         let (wallet, mut info) = test_wallet_and_info();
-        fund(&wallet, &mut info, AccountTypePreference::BIP44, 0, 0x11);
+        fund(&wallet, &mut info, AccountTypePreference::BIP44, ChildIndex::ZERO, 0x11);
         info.update_last_processed_height(1100);
 
         let result = info
             .build_and_sign_transaction(
                 &wallet,
                 &[AccountTypePreference::BIP44, AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(400_000),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -1063,7 +1065,7 @@ mod tests {
     #[tokio::test]
     async fn a_pooled_list_skips_absent_sources_where_a_single_one_is_strict() {
         let (wallet, mut info) = test_wallet_and_info();
-        let bip44 = fund(&wallet, &mut info, AccountTypePreference::BIP44, 0, 0x11);
+        let bip44 = fund(&wallet, &mut info, AccountTypePreference::BIP44, ChildIndex::ZERO, 0x11);
         info.update_last_processed_height(1100);
 
         // Pooled: no contacts exist, so `AllDashpayReceivingFunds` resolves to
@@ -1076,7 +1078,7 @@ mod tests {
                     AccountTypePreference::BIP32,
                     AccountTypePreference::AllDashpayReceivingFunds,
                 ],
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(200_000),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -1091,7 +1093,7 @@ mod tests {
             .build_and_sign_transaction(
                 &wallet,
                 &[AccountTypePreference::AllDashpayReceivingFunds],
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(200_000),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -1111,15 +1113,15 @@ mod tests {
     #[tokio::test]
     async fn funding_pools_across_account_types(sources: &[AccountTypePreference]) {
         let (wallet, mut info) = test_wallet_and_info();
-        let bip44 = fund(&wallet, &mut info, AccountTypePreference::BIP44, 0, 0x11);
-        let bip32 = fund(&wallet, &mut info, AccountTypePreference::BIP32, 0, 0x22);
+        let bip44 = fund(&wallet, &mut info, AccountTypePreference::BIP44, ChildIndex::ZERO, 0x11);
+        let bip32 = fund(&wallet, &mut info, AccountTypePreference::BIP32, ChildIndex::ZERO, 0x22);
         info.update_last_processed_height(1100);
 
         let (tx, _fee) = info
             .build_and_sign_transaction(
                 &wallet,
                 sources,
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(500_000),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -1132,8 +1134,8 @@ mod tests {
 
         // Each account reserves what it contributed, in its own set, so a build
         // funded from only one of them still skips the spent-to-be UTXO.
-        let bip44_account = info.accounts.standard_bip44_accounts.get(&0).unwrap();
-        let bip32_account = info.accounts.standard_bip32_accounts.get(&0).unwrap();
+        let bip44_account = info.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
+        let bip32_account = info.accounts.standard_bip32_accounts.get(&ChildIndex::ZERO).unwrap();
         assert_eq!(bip44_account.reservations().reserved(1100), HashSet::from([bip44]));
         assert_eq!(bip32_account.reservations().reserved(1100), HashSet::from([bip32]));
     }
@@ -1154,7 +1156,7 @@ mod tests {
         info: &mut ManagedWalletInfo,
         user: u8,
         friend: u8,
-        index: u32,
+        index: ChildIndex,
         txid_byte: u8,
     ) -> OutPoint {
         let account_type = friendship(user, friend).account_type(index).unwrap();
@@ -1171,8 +1173,16 @@ mod tests {
     #[tokio::test]
     async fn dashpay_friendship_funds_a_spend_across_indices() {
         let (mut wallet, mut info) = test_wallet_and_info();
-        let contact_0 = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 0, 0x44);
-        let contact_1 = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 1, 0x55);
+        let contact_0 =
+            add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, ChildIndex::ZERO, 0x44);
+        let contact_1 = add_funded_friendship(
+            &mut wallet,
+            &mut info,
+            0xaa,
+            0xbb,
+            ChildIndex::new_const(1),
+            0x55,
+        );
         info.update_last_processed_height(1100);
 
         let send_amount = 500_000u64;
@@ -1180,7 +1190,7 @@ mod tests {
             .build_and_sign_transaction(
                 &wallet,
                 &[friendship(0xaa, 0xbb), AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(send_amount),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,
@@ -1196,7 +1206,7 @@ mod tests {
             .iter()
             .find(|out| out.value != send_amount)
             .expect("600k in against a 500k target leaves change");
-        let bip44 = info.accounts.standard_bip44_accounts.get(&0).unwrap();
+        let bip44 = info.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
         assert!(bip44.managed_account_type().all_script_pubkeys().contains(&change.script_pubkey));
     }
 
@@ -1226,15 +1236,17 @@ mod tests {
         sources: Vec<AccountTypePreference>,
     ) {
         let (mut wallet, mut info) = test_wallet_and_info();
-        let first = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 0, 0x44);
-        let second = add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xcc, 0, 0x55);
+        let first =
+            add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, ChildIndex::ZERO, 0x44);
+        let second =
+            add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xcc, ChildIndex::ZERO, 0x55);
         info.update_last_processed_height(1100);
 
         let (tx, _fee) = info
             .build_and_sign_transaction(
                 &wallet,
                 &sources,
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(400_000),
                 FeeRate::normal(),
                 SelectionStrategy::All,
@@ -1264,15 +1276,15 @@ mod tests {
         covers_target: bool,
     ) {
         let (mut wallet, mut info) = test_wallet_and_info();
-        add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, 0, 0x44);
-        add_funded_friendship(&mut wallet, &mut info, 0xcc, 0xdd, 0, 0x55);
+        add_funded_friendship(&mut wallet, &mut info, 0xaa, 0xbb, ChildIndex::ZERO, 0x44);
+        add_funded_friendship(&mut wallet, &mut info, 0xcc, 0xdd, ChildIndex::ZERO, 0x55);
         info.update_last_processed_height(1100);
 
         let result = info
             .build_and_sign_transaction(
                 &wallet,
                 &[source, AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 dest_outputs(500_000),
                 FeeRate::normal(),
                 SelectionStrategy::BranchAndBound,

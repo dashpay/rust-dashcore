@@ -22,6 +22,7 @@ use crate::account::ManagedAccountCollection;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::ChildIndex;
 use crate::{Network, Wallet};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::prelude::CoreBlockHeight;
@@ -619,7 +620,7 @@ impl ManagedWalletInfo {
     pub fn next_change_address(
         &mut self,
         wallet: &Wallet,
-        account_index: u32,
+        account_index: ChildIndex,
         account_type_pref: AccountTypePreference,
         mark_as_used: bool,
     ) -> Option<Address> {
@@ -675,7 +676,7 @@ impl ManagedWalletInfo {
     pub fn next_receive_address(
         &mut self,
         wallet: &Wallet,
-        account_index: u32,
+        account_index: ChildIndex,
         account_type_pref: AccountTypePreference,
         mark_as_used: bool,
     ) -> Option<Address> {

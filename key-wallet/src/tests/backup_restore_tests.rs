@@ -5,6 +5,7 @@
 use crate::account::{AccountType, StandardAccountType};
 use crate::mnemonic::Mnemonic;
 use crate::wallet::{Wallet, WalletType};
+use crate::ChildIndex;
 use crate::Network;
 
 #[test]
@@ -44,7 +45,7 @@ fn test_wallet_full_backup_restore() {
         original_wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -55,7 +56,7 @@ fn test_wallet_full_backup_restore() {
     original_wallet
         .add_account(
             AccountType::CoinJoin {
-                index: 0,
+                index: ChildIndex::ZERO,
             },
             None,
         )
@@ -90,7 +91,7 @@ fn test_wallet_full_backup_restore() {
         restored_wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -101,7 +102,7 @@ fn test_wallet_full_backup_restore() {
     restored_wallet
         .add_account(
             AccountType::CoinJoin {
-                index: 0,
+                index: ChildIndex::ZERO,
             },
             None,
         )
@@ -125,15 +126,15 @@ fn test_wallet_partial_backup() {
     // Add accounts including standard 0 since None doesn't create any
     let account_metadata = vec![
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         },
         AccountType::Standard {
-            index: 1,
+            index: ChildIndex::new_const(1),
             standard_account_type: StandardAccountType::BIP44Account,
         },
         AccountType::CoinJoin {
-            index: 0,
+            index: ChildIndex::ZERO,
         },
     ];
 
@@ -166,7 +167,7 @@ fn test_wallet_metadata_backup() {
     let metadata = vec![
         AccountMetadata {
             account_type: AccountType::Standard {
-                index: 1, // Use index 1 since 0 is created by default
+                index: ChildIndex::new_const(1), // Use index 1 since 0 is created by default
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             label: "Secondary Account".to_string(),
@@ -174,7 +175,7 @@ fn test_wallet_metadata_backup() {
         },
         AccountMetadata {
             account_type: AccountType::CoinJoin {
-                index: 0,
+                index: ChildIndex::ZERO,
             },
             label: "Private Account".to_string(),
             _created_at: 1234567900,
@@ -213,7 +214,7 @@ fn test_multi_network_backup_restore() {
             wallet
                 .add_account(
                     AccountType::Standard {
-                        index: i,
+                        index: ChildIndex::new_const(i),
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
                     None,
@@ -251,7 +252,7 @@ fn test_multi_network_backup_restore() {
             restored
                 .add_account(
                     AccountType::Standard {
-                        index: i as u32,
+                        index: ChildIndex::new_const(i as u32),
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
                     None,
@@ -283,7 +284,7 @@ fn test_incremental_backup() {
     wallet
         .add_account(
             AccountType::Standard {
-                index: 1,
+                index: ChildIndex::new_const(1),
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             None,
@@ -293,7 +294,7 @@ fn test_incremental_backup() {
     wallet
         .add_account(
             AccountType::CoinJoin {
-                index: 0,
+                index: ChildIndex::ZERO,
             },
             None,
         )

@@ -2,6 +2,7 @@
 //!
 //! This trait allows WalletManager to work with different wallet info implementations
 
+use crate::ChildIndex;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::managed_account_operations::ManagedAccountOperations;
@@ -160,7 +161,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn funds_account(
         &self,
         preference: AccountTypePreference,
-        index: u32,
+        index: ChildIndex,
     ) -> Option<&ManagedCoreFundsAccount> {
         let account_type = preference.account_type(index)?;
         self.accounts().funds_account(&account_type)
@@ -170,7 +171,7 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn account_balance(
         &self,
         preference: AccountTypePreference,
-        index: u32,
+        index: ChildIndex,
     ) -> Option<WalletCoreBalance> {
         self.funds_account(preference, index).map(|account| account.balance)
     }
@@ -810,7 +811,7 @@ mod tests {
     #[tokio::test]
     async fn test_funding_only_wallet_omits_collateral_outpoints() {
         let (ctx, _tx) = TestWalletContext::new_random_with_options(
-            WalletAccountCreationOptions::BIP44AccountsOnly([0].into()),
+            WalletAccountCreationOptions::BIP44AccountsOnly([ChildIndex::ZERO].into()),
         )
         .with_mempool_funding(200_000)
         .await;

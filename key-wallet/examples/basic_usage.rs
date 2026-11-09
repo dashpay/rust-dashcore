@@ -2,7 +2,7 @@
 
 use core::str::FromStr;
 use dashcore::{Address, Network as DashNetwork};
-use key_wallet::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+use key_wallet::bip32::{ChildIndex, ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use key_wallet::prelude::*;
 use key_wallet::Network;
 
@@ -29,9 +29,9 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 4. Derive BIP44 account
     println!("\n4. Deriving BIP44 account 0...");
     let path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(44)?, // Purpose
-        ChildNumber::from_hardened_idx(5)?,  // Dash coin type
-        ChildNumber::from_hardened_idx(0)?,  // Account 0
+        ChildNumber::Hardened(ChildIndex::new_const(44)), // Purpose
+        ChildNumber::Hardened(ChildIndex::new_const(5)),  // Dash coin type
+        ChildNumber::Hardened(ChildIndex::ZERO),          // Account 0
     ]);
     let account = master.derive_priv(&path)?;
     println!("   Account xprv: {}", account);
@@ -43,8 +43,8 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     println!("   Receive addresses:");
     for i in 0..5 {
         let receive_path = DerivationPath::from(vec![
-            ChildNumber::from_normal_idx(0)?, // External chain
-            ChildNumber::from_normal_idx(i)?,
+            ChildNumber::Normal(ChildIndex::ZERO), // External chain
+            ChildNumber::Normal(ChildIndex::new(i)?),
         ]);
         let addr_key = account.derive_priv(&receive_path)?;
         let addr_xpub = ExtendedPubKey::from_priv(&addr_key);
@@ -57,8 +57,8 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     println!("\n   Change addresses:");
     for i in 0..2 {
         let change_path = DerivationPath::from(vec![
-            ChildNumber::from_normal_idx(1)?, // Internal chain
-            ChildNumber::from_normal_idx(i)?,
+            ChildNumber::Normal(ChildIndex::new_const(1)), // Internal chain
+            ChildNumber::Normal(ChildIndex::new(i)?),
         ]);
         let addr_key = account.derive_priv(&change_path)?;
         let addr_xpub = ExtendedPubKey::from_priv(&addr_key);
@@ -70,9 +70,9 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 6. Demonstrate CoinJoin derivation
     println!("\n6. CoinJoin account...");
     let coinjoin_path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(9)?, // CoinJoin purpose
-        ChildNumber::from_hardened_idx(5)?, // Dash coin type
-        ChildNumber::from_hardened_idx(0)?, // Account 0
+        ChildNumber::Hardened(ChildIndex::new_const(9)), // CoinJoin purpose
+        ChildNumber::Hardened(ChildIndex::new_const(5)), // Dash coin type
+        ChildNumber::Hardened(ChildIndex::ZERO),         // Account 0
     ]);
     let coinjoin_account = master.derive_priv(&coinjoin_path)?;
     println!("   CoinJoin account depth: {}", coinjoin_account.depth);
@@ -80,11 +80,11 @@ fn main() -> core::result::Result<(), Box<dyn std::error::Error>> {
     // 7. Demonstrate identity key derivation
     println!("\n7. Identity authentication key...");
     let identity_path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(13)?, // Identity purpose
-        ChildNumber::from_hardened_idx(5)?,  // Dash coin type
-        ChildNumber::from_hardened_idx(3)?,  // Authentication feature
-        ChildNumber::from_hardened_idx(0)?,  // Identity index
-        ChildNumber::from_hardened_idx(0)?,  // Key index
+        ChildNumber::Hardened(ChildIndex::new_const(13)), // Identity purpose
+        ChildNumber::Hardened(ChildIndex::new_const(5)),  // Dash coin type
+        ChildNumber::Hardened(ChildIndex::new_const(3)),  // Authentication feature
+        ChildNumber::Hardened(ChildIndex::ZERO),          // Identity index
+        ChildNumber::Hardened(ChildIndex::ZERO),          // Key index
     ]);
     let identity_key = master.derive_priv(&identity_path)?;
     println!("   Identity key depth: {}", identity_key.depth);

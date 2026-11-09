@@ -1,6 +1,8 @@
 //! BIP32 tests
 
-use key_wallet::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey, Network};
+use key_wallet::{
+    ChildIndex, ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey, Network,
+};
 use std::str::FromStr;
 
 #[test]
@@ -10,7 +12,7 @@ fn test_extended_key_derivation() {
     let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
     // m/0'
-    let child = master.ckd_priv(ChildNumber::from_hardened_idx(0).unwrap()).unwrap();
+    let child = master.ckd_priv(ChildNumber::Hardened(ChildIndex::ZERO)).unwrap();
     assert_eq!(child.depth, 1);
 
     // m/0'/1
@@ -57,10 +59,10 @@ fn test_public_key_derivation() {
     let master_pub = ExtendedPubKey::from_priv(&master);
 
     // Can derive non-hardened child from public key
-    let child_pub = master_pub.ckd_pub(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+    let child_pub = master_pub.ckd_pub(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
 
     // Should match derivation from private key
-    let child_priv = master.ckd_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+    let child_priv = master.ckd_priv(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
     let child_pub_from_priv = ExtendedPubKey::from_priv(&child_priv);
 
     assert_eq!(child_pub.public_key, child_pub_from_priv.public_key);
@@ -71,7 +73,7 @@ fn test_fingerprint_calculation() {
     let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
     let master = ExtendedPrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
-    let child = master.ckd_priv(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+    let child = master.ckd_priv(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
     let master_fingerprint = master.fingerprint();
 
     assert_eq!(child.parent_fingerprint, master_fingerprint);
