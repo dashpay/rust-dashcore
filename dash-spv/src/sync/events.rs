@@ -94,7 +94,8 @@ pub enum SyncEvent {
         blocks: BTreeMap<FilterMatchKey, BTreeSet<WalletId>>,
     },
 
-    /// Block downloaded and processed through wallet.
+    /// Block downloaded and processed through wallet. Also emitted for each
+    /// re-application of a stored block, with the one wallet it was re-applied for.
     ///
     /// Emitted by: `BlocksManager`
     /// Consumed by: `FiltersManager` (for gap limit rescanning),

@@ -111,11 +111,12 @@ impl PeerSet {
         (removed, peers.len())
     }
 
-    /// Removes every peer.
-    pub(crate) async fn clear(&self) {
+    /// Removes every peer and returns their addresses.
+    pub(crate) async fn clear(&self) -> Vec<SocketAddr> {
         let mut peers = self.peers.lock().await;
         let removed: Vec<_> = peers.drain(..).map(|p| p.addr()).collect();
-        self.announce(&peers, removed, None);
+        self.announce(&peers, removed.iter().copied(), None);
+        removed
     }
 
     /// Announces the peers at `departed` and `arrived` against the `remaining` set,

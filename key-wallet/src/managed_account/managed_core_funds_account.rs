@@ -20,7 +20,9 @@ use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
-use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
+#[cfg(not(feature = "keep-finalized-transactions"))]
+use crate::managed_account::transaction_record::TransactionDirection;
+use crate::managed_account::transaction_record::{InputDetail, OutputDetail};
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
@@ -90,6 +92,16 @@ pub(crate) struct AbandonRemoval {
     /// Transaction records actually dropped — a txid the account never held
     /// removes nothing.
     pub records: usize,
+}
+
+/// What [`ManagedCoreFundsAccount::confirm_transaction`] changed.
+#[derive(Debug, Default)]
+pub(crate) struct Confirmation {
+    /// The record to report: newly recorded, or changed by this delivery.
+    pub record: Option<TransactionRecord>,
+    /// Whether the re-delivery of a finalized transaction credited or spent
+    /// a coin. It can do so with no record to report.
+    pub coins_changed: bool,
 }
 
 /// What [`ManagedCoreFundsAccount::drop_conflicted_transactions`] removed
@@ -750,12 +762,13 @@ impl ManagedCoreFundsAccount {
     /// absent from the balance.
     ///
     /// That recovery has a boundary worth knowing. A funding transaction that
-    /// was chainlock-finalized keeps only its txid, so `has_transaction` stays
-    /// true and re-delivery is not a new sighting — `confirm_transaction`
-    /// returns before `update_utxos`, the only production insert site, and the
-    /// coin does not come back. Recovering it needs a rescan deep enough to
-    /// re-fetch the block, which is above this layer. Since Dash chainlocks
-    /// within a block or two, that is the normal posture for older coins.
+    /// was chainlock-finalized keeps only its txid and summary, so
+    /// `has_transaction` stays true and re-delivery is not a new sighting —
+    /// `confirm_transaction` returns before `update_utxos` and credits only
+    /// outputs its record did not own, and the coin does not come back.
+    /// Recovering it needs a rescan deep enough to re-fetch the block, which
+    /// is above this layer. Since Dash chainlocks within a block or two, that
+    /// is the normal posture for older coins.
     ///
     /// Scope: account-local. A loser recorded here has its outputs dropped
     /// here; a loser whose change landed in a *different* account is not
@@ -910,18 +923,19 @@ impl ManagedCoreFundsAccount {
     /// mempool→block confirmation) and potentially new address matches
     /// from gap limit rescans.
     ///
-    /// Returns `Some(record)` when the call results in a state change the
-    /// caller should surface (record newly inserted or context updated).
+    /// The returned record is the one the caller should surface: the record
+    /// was newly inserted, its context was updated, or it was corrected: it
+    /// owns outputs whose addresses were derived since it was recorded.
     /// The record is cloned BEFORE any chainlock-driven pruning, so the
     /// caller can always include it in an event even when the
     /// `keep-finalized-transactions` Cargo feature is off and the record
     /// is dropped from `transactions` immediately after.
     ///
-    /// Returns `None` when:
-    /// - the tx is already finalized in a chainlocked block (record is
-    ///   immutable; further events are redundant), or
-    /// - the existing record's context already matches and confirmation
-    ///   status didn't change.
+    /// There is no record when:
+    /// - the tx is already finalized in a chainlocked block and owns no new
+    ///   output (see [`Self::adopt_finalized_outputs`]), or
+    /// - the existing record's context already matches, confirmation status
+    ///   didn't change, and it owns no new output.
     #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn confirm_transaction(
         &mut self,
@@ -932,13 +946,21 @@ impl ManagedCoreFundsAccount {
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
-    ) -> Option<TransactionRecord> {
+    ) -> Confirmation {
         let txid = tx.txid();
 
-        // Already finalized via a chainlock: the tx is immutable —
-        // no record update, no UTXO refresh, no event needed.
+        // Already finalized via a chainlock: no context update and no
+        // refresh of the coins it already credited. Only outputs paying
+        // addresses derived since it was recorded are taken in.
         if self.keys.transaction_is_finalized(&txid) {
-            return None;
+            return self.adopt_finalized_outputs(
+                tx,
+                account_match,
+                &context,
+                transaction_type,
+                observed_spent,
+                spent_claims,
+            );
         }
 
         if !self.keys.has_transaction(&txid) {
@@ -953,10 +975,14 @@ impl ManagedCoreFundsAccount {
                 spent_claims,
                 external_final_parents,
             );
-            return Some(record);
+            return Confirmation {
+                record: Some(record),
+                coins_changed: false,
+            };
         }
 
         let mut changed = false;
+        let network = self.keys.network();
         if let Some(tx_record) = self.keys.transactions_mut().get_mut(&txid) {
             debug_assert_eq!(
                 tx_record.transaction_type,
@@ -974,6 +1000,13 @@ impl ManagedCoreFundsAccount {
                 // ChainLockProcessed event.
                 changed = !was_confirmed;
             }
+            // A re-applied transaction can own outputs its first recording
+            // could not see: their addresses were derived since, by a later
+            // transaction's gap-window extension whose filter rescan
+            // re-delivers this block. `update_utxos` below
+            // credits them, so the record must own them too
+            // (dashpay/rust-dashcore#714).
+            changed |= adopt_owned_outputs(tx_record, account_match, network);
         }
 
         // Capture the (possibly updated) record before any pruning so the
@@ -1003,7 +1036,161 @@ impl ManagedCoreFundsAccount {
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
         }
-        record_after
+        Confirmation {
+            record: record_after,
+            coins_changed: false,
+        }
+    }
+
+    /// Credit the outputs of the finalized `tx` that pay addresses derived
+    /// since it was recorded, and return its record corrected to own them.
+    ///
+    /// An output is new when the record, or the summary kept of it once
+    /// pruned, does not own it: every output a record owns had its coin
+    /// passed through `take_in_output`. A txid finalized without a summary,
+    /// by a version that kept none, has no record to correct; its outputs
+    /// count as new while their address is unused, since recording marks every address it owns as
+    /// used.
+    ///
+    /// The inputs are marked spent again too. A reload rebuilds the spent
+    /// marks from the records it holds and finality prunes observed spends,
+    /// so without this a coin credited here for a re-delivered parent would
+    /// survive the re-delivery of its finalized spender.
+    fn adopt_finalized_outputs(
+        &mut self,
+        tx: &Transaction,
+        account_match: &AccountMatch,
+        context: &TransactionContext,
+        transaction_type: TransactionType,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
+    ) -> Confirmation {
+        let txid = tx.txid();
+        let network = self.keys.network();
+        let mut coins_changed = false;
+        for input in &tx.input {
+            self.spent_outpoints.insert(input.previous_output);
+            coins_changed |= self.utxos.remove(&input.previous_output).is_some();
+        }
+
+        let owned = TransactionRecord::owned_indices;
+        let mut record = None;
+        let mut new_outputs = None;
+        if let Some(held) = self.keys.transactions_mut().get_mut(&txid) {
+            let before = owned(&held.output_details);
+            if adopt_owned_outputs(held, account_match, network) {
+                record = Some(held.clone());
+            }
+            new_outputs = Some(&owned(&held.output_details) - &before);
+        }
+        #[cfg(not(feature = "keep-finalized-transactions"))]
+        if let Some(summary) = self.keys.finalized_summary_mut(&txid) {
+            let input_details = summary.input_details.to_vec();
+            let output_details = TransactionRecord::output_details_for(
+                tx,
+                network,
+                !input_details.is_empty(),
+                account_match.output_role_lookup(),
+            );
+            let now = owned(&output_details);
+            let adopted: BTreeSet<u32> = now
+                .iter()
+                .filter(|index| !summary.owned_outputs.contains(index))
+                .copied()
+                .collect();
+            if !adopted.is_empty() {
+                summary.owned_outputs = now.into_iter().collect();
+                // A block delivery below another wallet's ChainLock comes
+                // as `InBlock`, but this transaction is chainlocked.
+                let context = context.block_info().map_or_else(
+                    || context.clone(),
+                    |info| TransactionContext::InChainLockedBlock(*info),
+                );
+                let mut rebuilt = TransactionRecord::new(
+                    tx.clone(),
+                    self.keys.managed_account_type().to_account_type(),
+                    context,
+                    transaction_type,
+                    TransactionDirection::Incoming,
+                    input_details,
+                    output_details,
+                    0,
+                );
+                rebuilt.recompute_net_and_direction();
+                record = Some(rebuilt);
+            }
+            new_outputs = Some(adopted);
+        }
+        #[cfg(feature = "keep-finalized-transactions")]
+        let _ = transaction_type;
+
+        let owned_outputs = TransactionRecord::output_details_for(
+            tx,
+            network,
+            false,
+            account_match.output_role_lookup(),
+        );
+        let new_outputs = new_outputs.unwrap_or_else(|| {
+            let unused: HashSet<Address> = account_match
+                .account_type_match
+                .all_involved_addresses()
+                .into_iter()
+                .filter(|info| !info.is_used())
+                .map(|info| info.address)
+                .collect();
+            owned_outputs
+                .iter()
+                .filter(|d| d.address.as_ref().is_some_and(|address| unused.contains(address)))
+                .map(|d| d.index)
+                .collect()
+        });
+        coins_changed |= self.take_in_mined_outputs(
+            tx,
+            context,
+            owned_outputs.iter().filter(|d| new_outputs.contains(&d.index)),
+            observed_spent,
+            spent_claims,
+        );
+        if coins_changed {
+            self.keys.bump_monitor_revision();
+        }
+        Confirmation {
+            record,
+            coins_changed,
+        }
+    }
+
+    /// Take in the coins of the mined `tx`'s `outputs`, owned outputs not
+    /// yet in `utxos`, and return whether one was credited. A coin a recorded
+    /// transaction already spends is held under that spend while it is
+    /// unsettled, so a fork dropping the spend gives it back.
+    pub(crate) fn take_in_mined_outputs<'a>(
+        &mut self,
+        tx: &Transaction,
+        context: &TransactionContext,
+        outputs: impl IntoIterator<Item = &'a OutputDetail>,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
+    ) -> bool {
+        let txid = tx.txid();
+        let height = context.block_info().map_or(0, |info| info.height);
+        let mut credited = false;
+        for detail in outputs {
+            let Some(address) = detail.address.clone() else {
+                continue;
+            };
+            let outpoint = OutPoint::new(txid, detail.index);
+            if self.utxos.contains_key(&outpoint) {
+                continue;
+            }
+            let output = tx.output[detail.index as usize].clone();
+            let utxo = Utxo::new(outpoint, output, address, height, tx.is_coin_base());
+            credited |=
+                self.take_in_output(utxo, Vec::new(), observed_spent, Some(spent_claims), |utxo| {
+                    utxo.is_confirmed = true
+                });
+        }
+        credited
     }
 
     /// Record a new transaction and update UTXOs for spendable account types.
@@ -1035,19 +1222,6 @@ impl ManagedCoreFundsAccount {
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
 
-        let receive_addrs: HashSet<_> = account_match
-            .account_type_match
-            .involved_receive_addresses()
-            .iter()
-            .map(|info| &info.address)
-            .collect();
-        let change_addrs: HashSet<_> = account_match
-            .account_type_match
-            .involved_change_addresses()
-            .iter()
-            .map(|info| &info.address)
-            .collect();
-
         // Input details must be built before `update_utxos` removes spent UTXOs
         // and drops the `spent_before_funded` or `claim_guarded_outputs` entry for that outpoint.
         let mut input_details = Vec::new();
@@ -1077,38 +1251,12 @@ impl ManagedCoreFundsAccount {
         // snapshots.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
-        let network = self.keys.network();
-        let resolved_outputs: Vec<Option<Address>> = tx
-            .output
-            .iter()
-            .map(|output| Address::from_script(&output.script_pubkey, network).ok())
-            .collect();
-
-        // Build output details — annotate every output with its role
-        let mut output_details = Vec::new();
-        for (idx, output) in tx.output.iter().enumerate() {
-            let role = match &resolved_outputs[idx] {
-                Some(addr) if receive_addrs.contains(addr) => OutputRole::Received,
-                Some(addr) if change_addrs.contains(addr) => OutputRole::Change,
-                Some(_) if has_inputs => OutputRole::Sent,
-                Some(_) => continue,
-                None => {
-                    if output.script_pubkey.is_provably_unspendable() {
-                        OutputRole::Unspendable
-                    } else if has_inputs {
-                        OutputRole::Sent
-                    } else {
-                        continue;
-                    }
-                }
-            };
-            output_details.push(OutputDetail {
-                index: idx as u32,
-                role,
-                address: resolved_outputs[idx].clone(),
-                value: output.value,
-            });
-        }
+        let output_details = TransactionRecord::output_details_for(
+            tx,
+            self.keys.network(),
+            has_inputs,
+            account_match.output_role_lookup(),
+        );
 
         let direction =
             TransactionRecord::direction_for(transaction_type, has_inputs, &output_details);
@@ -1574,6 +1722,26 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             reservations: ReservationSet::default(),
         })
     }
+}
+
+/// Re-derive `record`'s output roles from `account_match`, against its
+/// stored inputs, and its flow when a role changed. Returns whether one did.
+fn adopt_owned_outputs(
+    record: &mut TransactionRecord,
+    account_match: &AccountMatch,
+    network: Network,
+) -> bool {
+    let output_details = TransactionRecord::output_details_for(
+        &record.transaction,
+        network,
+        !record.input_details.is_empty(),
+        account_match.output_role_lookup(),
+    );
+    let adopted = record.replace_output_details(output_details);
+    if adopted {
+        record.recompute_net_and_direction();
+    }
+    adopted
 }
 
 /// Test-only visit counter for the descendant walk in

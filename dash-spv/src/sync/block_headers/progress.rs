@@ -59,8 +59,10 @@ impl BlockHeadersProgress {
         self.bump_last_activity();
     }
     /// Update the tip height (last successfully processed height).
+    /// Also raises the target to the tip, since the chain is at least as high as what we store.
     pub fn update_tip_height(&mut self, height: u32) {
         self.tip_height = height;
+        self.update_target_height(height);
         self.bump_last_activity();
     }
     /// Update the target height (the best height of the connected peers).

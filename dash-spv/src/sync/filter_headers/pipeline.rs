@@ -1,6 +1,7 @@
 //! CFHeaders pipeline implementation.
 
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 
 use dashcore::network::message::NetworkMessage;
@@ -19,6 +20,8 @@ pub(super) const FILTER_HEADERS_BATCH_SIZE: u32 = 2000;
 pub(super) struct FilterHeadersPipeline {
     /// Wanted batches (stop_hash -> start_height); a batch leaves this map once received.
     batch_starts: HashMap<BlockHash, u32>,
+    /// Whether a batch was added since `send_pending` last declared them all.
+    undeclared: bool,
     /// Out-of-order response buffer (start_height -> data).
     buffered: HashMap<u32, CFHeaders>,
     /// Next height to process sequentially.
@@ -38,6 +41,7 @@ impl FilterHeadersPipeline {
     pub(super) fn new() -> Self {
         Self {
             batch_starts: HashMap::new(),
+            undeclared: false,
             buffered: HashMap::new(),
             next_expected: 0,
             target_height: 0,
@@ -72,7 +76,7 @@ impl FilterHeadersPipeline {
                     SyncError::Storage(format!("Missing header at height {}", batch_end))
                 })?;
 
-            self.batch_starts.insert(stop_hash, current);
+            self.want(stop_hash, current);
             added += 1;
 
             current = batch_end + 1;
@@ -125,7 +129,7 @@ impl FilterHeadersPipeline {
                     SyncError::Storage(format!("Missing header at height {}", batch_end))
                 })?;
 
-            self.batch_starts.insert(stop_hash, current);
+            self.want(stop_hash, current);
 
             current = batch_end + 1;
         }
@@ -163,7 +167,9 @@ impl FilterHeadersPipeline {
                 .await;
         }
 
-        tracing::debug!("Declared {} wanted CFHeaders batch(es) to the broker", batches.len());
+        if mem::take(&mut self.undeclared) {
+            tracing::debug!("Declared {} wanted CFHeaders batch(es) to the broker", batches.len());
+        }
 
         Ok(batches.len())
     }
@@ -229,8 +235,13 @@ impl FilterHeadersPipeline {
             .map(|(height, data)| (height, data.stop_hash))
             .collect();
         for (height, hash) in dropped.into_iter().chain([(start_height, stop_hash)]) {
-            self.batch_starts.insert(hash, height);
+            self.want(hash, height);
         }
+    }
+
+    fn want(&mut self, stop_hash: BlockHash, start_height: u32) {
+        self.batch_starts.insert(stop_hash, start_height);
+        self.undeclared = true;
     }
 }
 
