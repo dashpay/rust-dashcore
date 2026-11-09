@@ -12,6 +12,7 @@ use crate::sign_message;
 
 /// verifies the ECDSA signature
 /// The provided signature must be recoverable. Which means: it must contain the recovery byte as a prefix
+/// A signature with a high S value is rejected because it is a malleable twin of the low-S one.
 pub fn verify_data_signature(
     data: &[u8],
     signature: &[u8],
@@ -23,7 +24,10 @@ pub fn verify_data_signature(
 
     let pub_key = ECDSAPublicKey::from_slice(public_key).map_err(anyhow::Error::msg)?;
 
-    pub_key.inner.verify(&data_hash, sig.signature()?).map_err(anyhow::Error::msg)
+    let sig = sig.signature()?;
+    ensure!(sig.is_low_s(), "the signature has a high S value");
+
+    pub_key.inner.verify(&data_hash, sig).map_err(anyhow::Error::msg)
 }
 
 /// verifies the the hash signature. From provided signature and hash recovers the public key
