@@ -158,8 +158,43 @@ impl MasternodeList {
 mod tests {
     use super::*;
     use crate::consensus::deserialize;
+    use crate::network::message_sml::DeletedQuorum;
     use crate::sml::llmq_type::LLMQType;
     use std::collections::BTreeMap;
+
+    /// A list stored before a release of this crate named a quorum type keeps
+    /// its quorums under `LlmqtypeUnknown` with the type's byte. A later diff
+    /// names the type, and a quorum it deletes has to go, or the list would
+    /// hold it forever and stop matching its coinbase.
+    #[test]
+    fn a_quorum_kept_under_an_unnamed_type_byte_is_deleted_by_its_name() {
+        let diff: MnListDiff = deserialize(include_bytes!(
+            "../../../tests/data/test_DML_diffs/mn_list_diff_0_2227096.bin"
+        ))
+        .expect("expected to deserialize");
+        let mut list =
+            MasternodeList::from_diff(diff, 2_227_096, Network::Mainnet).expect("builds");
+        let quorums = Arc::make_mut(&mut list.quorums);
+        let (named, kept) = quorums.pop_first().expect("quorums");
+        let quorum_hash = *kept.keys().next().expect("a quorum");
+        quorums.insert(LLMQType::LlmqtypeUnknown(named.index()), kept);
+        let diff = MnListDiff {
+            base_block_hash: list.block_hash,
+            deleted_quorums: vec![DeletedQuorum {
+                llmq_type: named,
+                quorum_hash,
+            }],
+            ..MnListDiff::dummy_empty(0x00, 0x01)
+        };
+
+        let next = list.apply_diff(diff, 2_227_097, Network::Mainnet).expect("applies");
+
+        assert!(
+            !next.quorums.iter().any(|(llmq_type, quorums)| llmq_type.index() == named.index()
+                && quorums.contains_key(&quorum_hash)),
+            "the quorum is deleted"
+        );
+    }
 
     #[test]
     fn apply_diff_post_v20_requires_chainlock_signatures() {

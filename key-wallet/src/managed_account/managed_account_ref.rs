@@ -15,6 +15,7 @@ use crate::account::TransactionRecord;
 use crate::managed_account::address_pool::AddressInfo;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
+use crate::managed_account::managed_core_funds_account::Confirmation;
 use crate::managed_account::{ManagedCoreFundsAccount, ManagedCoreKeysAccount};
 use crate::transaction_checking::account_checker::AccountMatch;
 use crate::transaction_checking::transaction_router::TransactionType;
@@ -397,6 +398,7 @@ impl<'a> ManagedAccountRefMut<'a> {
             &BTreeMap::new(),
             &BTreeSet::new(),
         )
+        .record
     }
 
     /// Re-process an existing transaction, reconciling refreshed UTXO state
@@ -418,7 +420,7 @@ impl<'a> ManagedAccountRefMut<'a> {
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
-    ) -> Option<TransactionRecord> {
+    ) -> Confirmation {
         match self {
             ManagedAccountRefMut::Funds(a) => a.confirm_transaction(
                 tx,
@@ -429,9 +431,10 @@ impl<'a> ManagedAccountRefMut<'a> {
                 spent_claims,
                 external_final_parents,
             ),
-            ManagedAccountRefMut::Keys(a) => {
-                a.confirm_transaction(tx, account_match, context, transaction_type)
-            }
+            ManagedAccountRefMut::Keys(a) => Confirmation {
+                record: a.confirm_transaction(tx, account_match, context, transaction_type),
+                coins_changed: false,
+            },
         }
     }
 

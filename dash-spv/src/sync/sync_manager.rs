@@ -61,9 +61,9 @@ impl std::fmt::Display for NetworkEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NetworkEvent::PeersUpdated {
-                connected_count,
+                addresses,
                 ..
-            } => write!(f, "PeersUpdated({connected_count} peers)"),
+            } => write!(f, "PeersUpdated({} peers)", addresses.len()),
             NetworkEvent::PeerConnected(addr) => write!(f, "PeerConnected({addr})"),
             NetworkEvent::PeerDisconnected(addr) => write!(f, "PeerDisconnected({addr})"),
         }
@@ -79,11 +79,11 @@ pub(super) async fn default_handle_network_event<M: SyncManager + ?Sized>(
     // `PeersUpdated` kicks off the initial requests: the network manager connects in
     // `start`, after every manager has subscribed, so it is the first thing we hear.
     if let NetworkEvent::PeersUpdated {
-        connected_count,
+        addresses,
         ..
     } = event
     {
-        if *connected_count == 0 {
+        if addresses.is_empty() {
             tracing::info!("{} - no peers available, stopping sync", manager.identifier());
             manager.stop_sync();
             return Ok(vec![]);
@@ -301,7 +301,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                 result = context.network_event_receiver.recv() => {
                     match result {
                         Ok(event) => {
-                            tracing::debug!("{} received network event: {}", identifier, event);
+                            tracing::trace!("{} received network event: {}", identifier, event);
                             let progress_before = self.progress();
                             match self.handle_network_event(&event, &context.network).await {
                                 Ok(events) => {

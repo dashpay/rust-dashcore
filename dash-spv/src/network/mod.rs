@@ -4,6 +4,7 @@ mod costs;
 mod discovery;
 mod manager;
 mod peer;
+mod peer_set;
 mod transport;
 
 use crate::error::NetworkResult;

@@ -2350,61 +2350,79 @@ mod tests {
 
     #[test]
     fn test_bip_44_account_path() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
         assert_eq!(path.to_string(), "m/44'/5'/0'");
     }
 
     #[test]
     fn test_bip_44_payment_path() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 0);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 0).unwrap();
         assert_eq!(path.to_string(), "m/44'/5'/0'/1/0");
 
-        let path = DerivationPath::bip_44_payment_path(Network::Testnet, 1, false, 42);
+        let path = DerivationPath::bip_44_payment_path(Network::Testnet, 1, false, 42).unwrap();
         assert_eq!(path.to_string(), "m/44'/1'/1'/0/42");
     }
 
     #[test]
+    fn bip_44_payment_path_rejects_indexes_past_31_bits() {
+        let max = 0x7fff_ffff;
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, max, false, max).unwrap();
+        assert_eq!(path.to_string(), "m/44'/5'/2147483647'/0/2147483647");
+
+        assert_eq!(
+            DerivationPath::bip_44_payment_path(Network::Mainnet, max + 1, false, 0),
+            Err(Error::InvalidChildNumber(max + 1))
+        );
+        assert_eq!(
+            DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, max + 1),
+            Err(Error::InvalidChildNumber(max + 1))
+        );
+    }
+
+    #[test]
     fn test_coinjoin_path() {
-        let path = DerivationPath::coinjoin_path(Network::Mainnet, 0);
+        let path = DerivationPath::coinjoin_path(Network::Mainnet, 0).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/4'/0'");
 
-        let path = DerivationPath::coinjoin_path(Network::Testnet, 1);
+        let path = DerivationPath::coinjoin_path(Network::Testnet, 1).unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/4'/1'");
     }
 
     #[test]
     fn test_identity_registration_path() {
-        let path = DerivationPath::identity_registration_path(Network::Mainnet, 10);
+        let path = DerivationPath::identity_registration_path(Network::Mainnet, 10).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/1'/10'");
     }
 
     #[test]
     fn test_identity_top_up_path() {
-        let path = DerivationPath::identity_top_up_path(Network::Testnet, 2, 3);
+        let path = DerivationPath::identity_top_up_path(Network::Testnet, 2, 3).unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/5'/2'/2'/3");
     }
 
     #[test]
     fn test_identity_invitation_path() {
-        let path = DerivationPath::identity_invitation_path(Network::Mainnet, 15);
+        let path = DerivationPath::identity_invitation_path(Network::Mainnet, 15).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/3'/15'");
     }
 
     #[test]
     fn test_asset_lock_address_top_up_path() {
-        let path = DerivationPath::asset_lock_address_top_up_path(Network::Mainnet, 7);
+        let path = DerivationPath::asset_lock_address_top_up_path(Network::Mainnet, 7).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/4'/7'");
 
-        let path = DerivationPath::asset_lock_address_top_up_path(Network::Testnet, 0);
+        let path = DerivationPath::asset_lock_address_top_up_path(Network::Testnet, 0).unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/5'/4'/0'");
     }
 
     #[test]
     fn test_asset_lock_shielded_address_top_up_path() {
-        let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Mainnet, 3);
+        let path =
+            DerivationPath::asset_lock_shielded_address_top_up_path(Network::Mainnet, 3).unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/5'/3'");
 
-        let path = DerivationPath::asset_lock_shielded_address_top_up_path(Network::Testnet, 1);
+        let path =
+            DerivationPath::asset_lock_shielded_address_top_up_path(Network::Testnet, 1).unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/5'/5'/1'");
     }
 
@@ -2415,7 +2433,8 @@ mod tests {
             KeyDerivationType::ECDSA,
             1,
             2,
-        );
+        )
+        .unwrap();
         assert_eq!(path.to_string(), "m/9'/5'/5'/0'/0'/1'/2'");
 
         let path = DerivationPath::identity_authentication_path(
@@ -2423,7 +2442,8 @@ mod tests {
             KeyDerivationType::BLS,
             2,
             3,
-        );
+        )
+        .unwrap();
         assert_eq!(path.to_string(), "m/9'/1'/5'/0'/1'/2'/3'");
     }
 
@@ -2671,7 +2691,7 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_for_master_seed() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2687,7 +2707,7 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_for_master_seed() {
-        let path = DerivationPath::bip_44_account(Network::Mainnet, 0);
+        let path = DerivationPath::bip_44_account(Network::Mainnet, 0).unwrap();
         let pk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2703,7 +2723,7 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_payment_change_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3).unwrap();
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2716,7 +2736,7 @@ mod tests {
 
     #[test]
     fn test_derive_priv_ecdsa_payment_main_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3).unwrap();
         let sk = path
             .derive_priv_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2729,7 +2749,7 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_payment_change_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, true, 3).unwrap();
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),
@@ -2744,7 +2764,7 @@ mod tests {
 
     #[test]
     fn test_derive_pub_ecdsa_payment_external_key() {
-        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3);
+        let path = DerivationPath::bip_44_payment_path(Network::Mainnet, 0, false, 3).unwrap();
         let sk = path
             .derive_pub_ecdsa_for_master_seed(
                 hex_conservative::decode_to_vec(HEX_SEED).unwrap().as_ref(),

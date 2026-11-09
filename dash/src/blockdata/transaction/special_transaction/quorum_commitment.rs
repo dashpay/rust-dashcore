@@ -238,7 +238,7 @@ mod tests {
                 height: 0,
                 finalization_commitment: QuorumEntry {
                     version: 1,
-                    llmq_type: LLMQType::LlmqtypeUnknown,
+                    llmq_type: LLMQType::LlmqtypeUnknown(0),
                     quorum_hash: QuorumHash::all_zeros(),
                     quorum_index: None,
                     signers: vec![true, false, true, true, false],
@@ -260,7 +260,7 @@ mod tests {
                 height: 0,
                 finalization_commitment: QuorumEntry {
                     version: 2,
-                    llmq_type: LLMQType::LlmqtypeUnknown,
+                    llmq_type: LLMQType::LlmqtypeUnknown(0),
                     quorum_hash: QuorumHash::all_zeros(),
                     quorum_index: Some(1),
                     signers: vec![true, false, true, true, false, true, false],
