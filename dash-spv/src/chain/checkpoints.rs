@@ -38,21 +38,6 @@ static NO_CHECKPOINTS: CheckpointManager = CheckpointManager {
     checkpoints: BTreeMap::new(),
 };
 
-#[cfg(any(test, feature = "test-utils"))]
-impl CheckpointManager {
-    /// Checkpoints at every 50th block of `chain`.
-    pub fn dummy(chain: &[HashedBlockHeader]) -> Self {
-        let checkpoints = (49..chain.len())
-            .step_by(50)
-            .map(|height| {
-                let headers = chain[height + 1 - CHECKPOINT_HEADERS..=height].to_vec();
-                Checkpoint::new(height as u32, headers).expect("dummy checkpoint must fit")
-            })
-            .collect();
-        Self::new(checkpoints)
-    }
-}
-
 /// A known block and the [`CHECKPOINT_HEADERS`] - 1 headers before it.
 #[derive(Debug, Clone)]
 pub struct Checkpoint {
@@ -155,7 +140,7 @@ impl CheckpointManager {
         }
     }
 
-    fn new(checkpoints: Vec<Checkpoint>) -> Self {
+    pub(crate) fn new(checkpoints: Vec<Checkpoint>) -> Self {
         Self {
             checkpoints: checkpoints
                 .into_iter()
