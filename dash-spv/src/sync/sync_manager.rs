@@ -301,7 +301,7 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
                 result = context.network_event_receiver.recv() => {
                     match result {
                         Ok(event) => {
-                            tracing::debug!("{} received network event: {}", identifier, event);
+                            tracing::trace!("{} received network event: {}", identifier, event);
                             let progress_before = self.progress();
                             match self.handle_network_event(&event, &context.network).await {
                                 Ok(events) => {
