@@ -40,9 +40,12 @@ use crate::{ChainLock, InstantLock};
 /// This limit is not currently enforced by this implementation.
 pub const MAX_INV_SIZE: usize = 50_000;
 
-/// Maximum size, in bytes, of an encoded message
-/// This by necessity should be larger than `MAX_VEC_SIZE`
-pub const MAX_MSG_SIZE: usize = 5_000_000;
+/// Maximum size, in bytes, of a message payload: Dash Core's `MAX_PROTOCOL_MESSAGE_LENGTH`,
+/// 3 MiB. A header announcing a longer payload is refused before the payload is read.
+pub const MAX_MSG_SIZE: usize = 3 * 1024 * 1024;
+
+/// Size of a message header: magic, command, payload length and checksum.
+const MESSAGE_HEADER_SIZE: usize = 24;
 
 /// Serializer for command string
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -805,7 +808,7 @@ impl Decodable for HeaderDeserializationWrapper {
     fn consensus_decode_from_finite_reader<R: io::Read + ?Sized>(
         r: &mut R,
     ) -> Result<Self, encode::Error> {
-        let len = VarInt::consensus_decode(r)?.0;
+        let len = encode::read_compact_size_len(r)?;
         // Core never sends more and treats more as misbehaviour
         if len > MAX_HEADERS_RESULTS as u64 {
             return Err(encode::Error::ParseFailed("headers message has too many headers"));
@@ -834,7 +837,7 @@ impl Decodable for RawNetworkMessage {
     ) -> Result<Self, encode::Error> {
         let magic = Decodable::consensus_decode_from_finite_reader(r)?;
         let cmd = CommandString::consensus_decode_from_finite_reader(r)?;
-        let raw_payload = match CheckedData::consensus_decode_from_finite_reader(r) {
+        let raw_payload = match CheckedData::decode_limited(r, MAX_MSG_SIZE) {
             Ok(cd) => cd.0,
             Err(encode::Error::InvalidChecksum {
                 expected,
@@ -865,7 +868,9 @@ impl Decodable for RawNetworkMessage {
 
     #[inline]
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
-        Self::consensus_decode_from_finite_reader(r.take(MAX_MSG_SIZE as u64).by_ref())
+        Self::consensus_decode_from_finite_reader(
+            r.take((MESSAGE_HEADER_SIZE + MAX_MSG_SIZE) as u64).by_ref(),
+        )
     }
 }
 
@@ -883,11 +888,9 @@ impl tokio_util::codec::Decoder for RawNetworkMessageCodec {
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         use bytes::Buf as _;
 
-        /// `magic(4) + command(12) + payload_length(4) + checksum(4)`.
-        const HEADER_LEN: usize = 24;
         const LENGTH_OFFSET: usize = 16;
 
-        if src.len() < HEADER_LEN {
+        if src.len() < MESSAGE_HEADER_SIZE {
             return Ok(None);
         }
 
@@ -907,7 +910,7 @@ impl tokio_util::codec::Decoder for RawNetworkMessageCodec {
             .into());
         }
 
-        let frame_len = HEADER_LEN + payload_len;
+        let frame_len = MESSAGE_HEADER_SIZE + payload_len;
         if src.len() < frame_len {
             src.reserve(frame_len - src.len());
             return Ok(None);
@@ -950,7 +953,8 @@ impl tokio_util::codec::Encoder<RawNetworkMessage> for RawNetworkMessageCodec {
 
 #[cfg(all(test, feature = "tokio"))]
 mod codec_tests {
-    use super::{NetworkMessage, RawNetworkMessage, RawNetworkMessageCodec};
+    use super::test::message_bytes;
+    use super::{MAX_MSG_SIZE, NetworkMessage, RawNetworkMessage, RawNetworkMessageCodec};
     use bytes::BytesMut;
     use tokio_util::codec::{Decoder, Encoder};
 
@@ -992,6 +996,19 @@ mod codec_tests {
             }
         }
     }
+
+    #[test]
+    fn a_payload_over_the_protocol_limit_is_refused_at_the_header() {
+        let header = |len| BytesMut::from(&message_bytes("inv", len, &[])[..]);
+        let mut codec = RawNetworkMessageCodec;
+
+        let mut at_limit = header(MAX_MSG_SIZE as u32);
+        assert!(codec.decode(&mut at_limit).unwrap().is_none());
+
+        let mut over = header(MAX_MSG_SIZE as u32 + 1);
+        assert!(codec.decode(&mut over).is_err());
+        assert!(over.capacity() < MAX_MSG_SIZE, "nothing reserved");
+    }
 }
 
 #[cfg(test)]
@@ -1004,12 +1021,11 @@ mod test {
 
     use super::message_network::{Reject, RejectReason, VersionMessage};
     use super::{CommandString, NetworkMessage, RawNetworkMessage, *};
-    use crate::BlockHash;
     use crate::bip152::BlockTransactionsRequest;
     use crate::blockdata::block::{self, Block};
     use crate::blockdata::script::ScriptBuf;
     use crate::blockdata::transaction::Transaction;
-    use crate::consensus::encode::{deserialize, deserialize_partial, serialize};
+    use crate::consensus::encode::{MAX_COMPACT_SIZE, deserialize, deserialize_partial, serialize};
     use crate::internal_macros::hex;
     use crate::network::address::{AddrV2, AddrV2Message, Address};
     use crate::network::constants::ServiceFlags;
@@ -1017,6 +1033,7 @@ mod test {
     use crate::network::message_bloom::{BloomFlags, FilterAdd, FilterLoad};
     use crate::network::message_compact_blocks::{GetBlockTxn, SendCmpct};
     use crate::network::message_sml::GetMnListDiff;
+    use crate::{BlockHash, Network};
     use test_case::test_case;
 
     #[cfg(feature = "core-block-hash-use-x11")]
@@ -1414,13 +1431,14 @@ mod test {
         assert_eq!(msg.cmd(), "senddsq");
     }
 
-    #[test]
-    fn headers_short_frame_with_huge_count_fails() {
-        let payload = serialize(&VarInt(u64::MAX));
-        assert!(
-            HeaderDeserializationWrapper::consensus_decode_from_finite_reader(&mut &payload[..])
-                .is_err()
-        );
+    #[test_case(u64::MAX => matches encode::Error::OversizedVectorAllocation { .. }; "huge count")]
+    #[test_case(MAX_COMPACT_SIZE + 1 => matches encode::Error::OversizedVectorAllocation { .. }; "above MAX_SIZE")]
+    #[test_case(MAX_COMPACT_SIZE => matches encode::Error::ParseFailed(_); "MAX_SIZE, above the batch limit")]
+    fn headers_short_frame_with_huge_count_fails(count: u64) -> encode::Error {
+        let payload = serialize(&VarInt(count));
+        HeaderDeserializationWrapper::consensus_decode_from_finite_reader(&mut &payload[..])
+            .err()
+            .unwrap()
     }
 
     #[test_case(MAX_HEADERS_RESULTS, true; "full Core batch decodes")]
@@ -1432,6 +1450,73 @@ mod test {
         };
         let decoded = deserialize::<RawNetworkMessage>(&serialize(&msg));
         assert_eq!(decoded.ok(), decodes.then_some(msg));
+    }
+
+    /// Returns a message whose header announces `len` payload bytes, followed by `payload`.
+    pub(super) fn message_bytes(command: &str, len: u32, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = Network::Mainnet.magic().to_le_bytes().to_vec();
+        let mut cmd = [0; 12];
+        cmd[..command.len()].copy_from_slice(command.as_bytes());
+        bytes.extend_from_slice(&cmd);
+        bytes.extend_from_slice(&len.to_le_bytes());
+        bytes.extend_from_slice(&Hash::hash(payload).to_byte_array()[..4]);
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    fn unknown_payload_len(msg: RawNetworkMessage) -> usize {
+        match msg.payload {
+            NetworkMessage::Unknown {
+                payload,
+                ..
+            } => payload.len(),
+            other => panic!("expected an unknown message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_message_payload_above_the_limit_is_refused_at_the_header() {
+        // The header announces one byte too many and nothing follows: the error is the size,
+        // not a short read.
+        let header_only = message_bytes("foo", MAX_MSG_SIZE as u32 + 1, &[]);
+        assert_eq!(header_only.len(), MESSAGE_HEADER_SIZE);
+        match deserialize::<RawNetworkMessage>(&header_only) {
+            Err(encode::Error::OversizedVectorAllocation {
+                requested,
+                max,
+            }) => assert_eq!((requested, max), (MAX_MSG_SIZE + 1, MAX_MSG_SIZE)),
+            other => panic!("expected the size error, got {other:?}"),
+        }
+
+        let payload = vec![0xa5; MAX_MSG_SIZE];
+        let bytes = message_bytes("foo", payload.len() as u32, &payload);
+        let msg: RawNetworkMessage = deserialize(&bytes).unwrap();
+        assert_eq!(unknown_payload_len(msg), MAX_MSG_SIZE);
+
+        let payload = vec![0xa5; MAX_MSG_SIZE + 1];
+        let bytes = message_bytes("foo", payload.len() as u32, &payload);
+        assert!(matches!(
+            deserialize::<RawNetworkMessage>(&bytes),
+            Err(encode::Error::OversizedVectorAllocation { .. })
+        ));
+    }
+
+    #[test]
+    fn a_streamed_message_of_exactly_the_limit_is_read() {
+        let payload = vec![0x5a; MAX_MSG_SIZE];
+        let mut bytes = message_bytes("foo", payload.len() as u32, &payload);
+        bytes.extend_from_slice(b"next");
+        let mut cursor = io::Cursor::new(bytes);
+        let msg = RawNetworkMessage::consensus_decode(&mut cursor).unwrap();
+        assert_eq!(unknown_payload_len(msg), MAX_MSG_SIZE);
+        assert_eq!(cursor.position() as usize, MESSAGE_HEADER_SIZE + MAX_MSG_SIZE);
+
+        let payload = vec![0x5a; MAX_MSG_SIZE + 1];
+        let bytes = message_bytes("foo", payload.len() as u32, &payload);
+        assert!(matches!(
+            RawNetworkMessage::consensus_decode(&mut io::Cursor::new(bytes)),
+            Err(encode::Error::OversizedVectorAllocation { .. })
+        ));
     }
 
     #[test]
