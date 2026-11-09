@@ -104,7 +104,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 confirmed_txids,
             });
 
-            self.reapply_blocks(result.reapply_heights).await;
+            events.extend(self.reapply_blocks(result.reapply_heights).await);
         }
 
         // Check if pipeline is empty
@@ -163,7 +163,14 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
         result
     }
 
-    async fn reapply_blocks(&mut self, reapply: BTreeMap<WalletId, BTreeSet<u32>>) {
+    /// Re-applies stored blocks to the wallets in `reapply`, returning a
+    /// `BlockProcessed` per pass so the filters manager learns the scripts each
+    /// pass derived, in the order the passes ran.
+    async fn reapply_blocks(
+        &mut self,
+        reapply: BTreeMap<WalletId, BTreeSet<u32>>,
+    ) -> Vec<SyncEvent> {
+        let mut events = Vec::new();
         let mut queue: BTreeSet<(u32, WalletId)> = reapply
             .into_iter()
             .flat_map(|(wallet_id, heights)| heights.into_iter().map(move |h| (h, wallet_id)))
@@ -180,13 +187,23 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                     continue;
                 }
             };
-            let result = self.apply_block(&block, height, &BTreeSet::from([wallet_id])).await;
+            let wallets = BTreeSet::from([wallet_id]);
+            let result = self.apply_block(&block, height, &wallets).await;
+            let confirmed_txids = result.relevant_txids().cloned().collect();
             queue.extend(
                 result.reapply_heights.into_iter().flat_map(|(wallet_id, heights)| {
                     heights.into_iter().map(move |h| (h, wallet_id))
                 }),
             );
+            events.push(SyncEvent::BlockProcessed {
+                block_hash: *block.hash(),
+                height,
+                wallets,
+                new_scripts: result.new_scripts,
+                confirmed_txids,
+            });
         }
+        events
     }
 }
 
@@ -214,10 +231,10 @@ mod tests {
 
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_blockdata::Inventory;
-    use dashcore::{Block, BlockHash};
+    use dashcore::{Address, Block, BlockHash, Network};
     use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
     use key_wallet_manager::FilterMatchKey;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     type TestBlocksManager =
         BlocksManager<PersistentBlockHeaderStorage, PersistentBlockStorage, MockWallet>;
@@ -349,11 +366,15 @@ mod tests {
         assert_eq!(processed[0].1, 100);
     }
 
+    /// A re-application reports its own `BlockProcessed` with the scripts it
+    /// derived, but does not count as another processed block.
     #[tokio::test]
     async fn test_process_buffered_blocks_reapplies_requested_stored_block() {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let mut wallet = MockWallet::new();
         wallet.set_reapply_heights(100, BTreeSet::from([200]));
+        let derived = Address::dummy(Network::Regtest, 7);
+        wallet.set_derived_addresses(200, vec![derived.clone()]);
         let wallet = Arc::new(RwLock::new(wallet));
         let mut manager: TestBlocksManager =
             BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()).await;
@@ -373,9 +394,23 @@ mod tests {
         );
 
         let events = manager.process_buffered_blocks().await.unwrap();
+        let reported: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                SyncEvent::BlockProcessed {
+                    height,
+                    wallets,
+                    new_scripts,
+                    ..
+                } => Some((*height, wallets, new_scripts)),
+                _ => None,
+            })
+            .collect();
+        let wallets = BTreeSet::from([MOCK_WALLET_ID]);
+        let derived_scripts = BTreeMap::from([(MOCK_WALLET_ID, vec![derived.script_pubkey()])]);
         assert_eq!(
-            events.iter().filter(|e| matches!(e, SyncEvent::BlockProcessed { .. })).count(),
-            1
+            reported,
+            vec![(100, &wallets, &BTreeMap::new()), (200, &wallets, &derived_scripts)]
         );
 
         let processed = wallet.read().await.processed_blocks();
