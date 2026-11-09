@@ -4,10 +4,12 @@
 use dashcore::{Address, BlockHash, OutPoint, Transaction};
 use test_case::test_case;
 
+use crate::account::{Account, AccountType};
 use crate::managed_account::address_pool::AddressPool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
+use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::{KeySource, ManagedAccountType, Utxo};
 
@@ -38,6 +40,49 @@ fn funded(address: &Address, input: u8, value: u64) -> (Transaction, Utxo) {
         Utxo::new(OutPoint::new(tx.txid(), 0), tx.output[0].clone(), address.clone(), 1_000, false);
     utxo.is_confirmed = true;
     (tx, utxo)
+}
+
+/// Add the DashPay receiving account of a friendship and the reverse
+/// external account a wallet holding both identities also has. Both derive
+/// the same addresses. Returns their account types.
+fn befriend_both_ways(ctx: &mut TestWalletContext) -> (AccountType, AccountType) {
+    let (us, them) = ([0xaa; 32], [0xbb; 32]);
+    let receiving = AccountType::DashpayReceivingFunds {
+        index: 0,
+        user_identity_id: us,
+        friend_identity_id: them,
+    };
+    let reverse_external = AccountType::DashpayExternalAccount {
+        index: 0,
+        user_identity_id: them,
+        friend_identity_id: us,
+    };
+    for contact in [receiving, reverse_external] {
+        let path = contact.derivation_path(ctx.wallet.network).expect("contact path");
+        let xpub = ctx.wallet.derive_extended_public_key(&path).expect("contact xpub");
+        let account = Account::new(Some(ctx.wallet.wallet_id), contact, xpub, ctx.wallet.network)
+            .expect("contact account");
+        ctx.wallet.accounts.insert(account).expect("contact account is insertable");
+        ctx.managed_wallet
+            .add_managed_account(&ctx.wallet, contact)
+            .expect("contact account is manageable");
+    }
+    (receiving, reverse_external)
+}
+
+fn receiving_pool(ctx: &TestWalletContext) -> &AddressPool {
+    let account = ctx.managed_wallet.accounts.dashpay_receival_accounts.values().next();
+    account.expect("receiving account").managed_account_type().address_pools()[0]
+}
+
+fn held_by_receiving(ctx: &TestWalletContext, outpoint: &OutPoint) -> bool {
+    let accounts = &ctx.managed_wallet.accounts.dashpay_receival_accounts;
+    accounts.values().any(|account| account.utxos.contains_key(outpoint))
+}
+
+fn held_by_contact(ctx: &TestWalletContext, outpoint: &OutPoint) -> bool {
+    let accounts = &ctx.managed_wallet.accounts.dashpay_external_accounts;
+    accounts.values().any(|account| account.utxos.contains_key(outpoint))
 }
 
 fn held_by_any_funds_account(ctx: &TestWalletContext, outpoint: &OutPoint) -> bool {
@@ -100,6 +145,65 @@ fn a_utxo_matching_no_account_comes_back(ours_but_unreachable: bool) {
 
     assert_eq!(unmatched, std::slice::from_ref(&utxo));
     assert!(!held_by_any_funds_account(&ctx, &utxo.outpoint));
+}
+
+/// A wallet holding both identities of a friendship derives the same
+/// addresses for its receiving chain and for the reverse external chain. A
+/// UTXO at such an address restores into the receiving account, whose coins
+/// are the wallet's.
+#[test]
+fn a_utxo_both_a_receiving_and_a_contact_account_hold_restores_into_the_receiving_one() {
+    let mut ctx = TestWalletContext::new_random();
+    befriend_both_ways(&mut ctx);
+    let address = receiving_pool(&ctx).address_at_index(0).expect("first address");
+    let external = ctx.managed_wallet.accounts.dashpay_external_accounts.values().next();
+    assert!(external.expect("external account").contains_script_pub_key(&address.script_pubkey()));
+    let (_, utxo) = funded(&address, 0, 29_000);
+
+    let unmatched =
+        ctx.managed_wallet.restore_utxos(&ctx.wallet, [utxo.clone()]).expect("restores");
+
+    assert!(unmatched.is_empty());
+    assert!(held_by_receiving(&ctx, &utxo.outpoint));
+    assert!(!held_by_contact(&ctx, &utxo.outpoint));
+}
+
+/// The contact account's pool, derived further, holds a script from the
+/// start, while the receiving account reaches it only once the UTXO at the
+/// end of its window marks that address used. The UTXO still restores into
+/// the receiving account.
+#[test]
+fn a_receiving_pool_that_reaches_a_script_in_a_later_pass_claims_it() {
+    let mut ctx = TestWalletContext::new_random();
+    let (receiving, reverse_external) = befriend_both_ways(&mut ctx);
+    let pool = receiving_pool(&ctx);
+    let last = pool.highest_generated.expect("an initial window");
+    let far_index = last + pool.gap_limit;
+    let mut far_pool = pool.clone();
+    far_pool
+        .generate_up_to(far_index, &ctx.wallet.key_source_for_account(receiving))
+        .expect("derives");
+    let edge = pool.address_at_index(last).expect("derived");
+    let far = far_pool.address_at_index(far_index).expect("derived");
+    let key_source = ctx.wallet.key_source_for_account(reverse_external);
+    let external = ctx.managed_wallet.accounts.dashpay_external_accounts.values_mut().next();
+    let external_pools = external.expect("external account").managed_account_type_mut();
+    let external_pool = external_pools.address_pools_mut().into_iter().next().expect("a pool");
+    external_pool.generate_up_to(far_index, &key_source).expect("derives");
+    assert!(external_pool.contains_address(&far));
+    let (_, at_edge) = funded(&edge, 0, 10_000);
+    let (_, beyond) = funded(&far, 1, 20_000);
+
+    let unmatched = ctx
+        .managed_wallet
+        .restore_utxos(&ctx.wallet, [beyond.clone(), at_edge.clone()])
+        .expect("restores");
+
+    assert!(unmatched.is_empty());
+    for utxo in [&at_edge, &beyond] {
+        assert!(held_by_receiving(&ctx, &utxo.outpoint));
+        assert!(!held_by_contact(&ctx, &utxo.outpoint));
+    }
 }
 
 /// A pool already marked used up to the end of its window, as restored pool
