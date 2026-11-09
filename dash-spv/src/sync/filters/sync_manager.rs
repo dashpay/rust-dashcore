@@ -181,21 +181,23 @@ impl<
                 // Record per-wallet processing so a future scan can give a
                 // late-added wallet its own pass at this block via the
                 // `tracker.track` residual.
-                self.tracker.record_processed(*height, *block_hash, wallets);
+                let pass = self.tracker.record_processed(*height, *block_hash, wallets);
 
-                // Rescanned on the next tick, together with whatever the blocks
-                // processed meanwhile find: once per block, every active batch is
-                // re-matched for each block.
+                // Rescanned on the next tick or before the next commit, together
+                // with whatever the blocks processed meanwhile find: once per block,
+                // every active batch is re-matched for each block.
                 for (wallet_id, scripts) in new_scripts {
                     self.pending_new_scripts
                         .entry(*wallet_id)
+                        .or_default()
+                        .entry(pass)
                         .or_default()
                         .extend(scripts.iter().cloned());
                 }
                 let mut events = Vec::new();
 
                 // Check if this block is part of our tracked blocks
-                if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash) {
+                if let Some((_, batch_start)) = self.tracker.finish_in_flight(block_hash, wallets) {
                     if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                         batch.decrement_pending_blocks();
                         tracing::debug!(
@@ -271,8 +273,7 @@ impl<
         self.filter_pipeline.send_pending(network, &*header_storage).await?;
         drop(header_storage);
 
-        let new_scripts = std::mem::take(&mut self.pending_new_scripts);
-        let mut events = self.rescan_active_batches(&new_scripts).await?;
+        let mut events = self.rescan_active_batches().await?;
 
         // Store completed batches and do speculative matching
         events.extend(self.store_and_match_batches().await?);
