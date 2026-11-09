@@ -24,7 +24,9 @@ use crate::{
     StorageError,
 };
 
-pub(super) trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
+pub(super) trait Persistable:
+    Sized + Encodable + Decodable + PartialEq + Clone + 'static
+{
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
     const ITEMS_PER_SEGMENT: u32;
@@ -35,14 +37,16 @@ pub(super) trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone 
         format!("{}_{:06}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
     }
 
-    fn sentinel() -> Self;
+    /// Returns the value that marks an empty slot.
+    fn sentinel() -> &'static Self;
 }
 
 impl Persistable for Vec<u8> {
     const ITEMS_PER_SEGMENT: u32 = 2_000;
 
-    fn sentinel() -> Self {
-        vec![]
+    fn sentinel() -> &'static Self {
+        static SENTINEL: Vec<u8> = Vec::new();
+        &SENTINEL
     }
 }
 
@@ -50,8 +54,8 @@ impl Persistable for HashedBlockHeader {
     const ITEMS_PER_SEGMENT: u32 = 10_000;
     const ENCODED_SIZE: Option<u64> = Some(112);
 
-    fn sentinel() -> Self {
-        // Built once, since building it X11-hashes the header and reads compare against it.
+    fn sentinel() -> &'static Self {
+        // A lazy static, since building it X11-hashes the header.
         static SENTINEL: LazyLock<HashedBlockHeader> = LazyLock::new(|| {
             let header = BlockHeader {
                 version: Version::from_consensus(i32::MAX), // Invalid version
@@ -64,7 +68,7 @@ impl Persistable for HashedBlockHeader {
             HashedBlockHeader::from(header)
         });
 
-        SENTINEL.clone()
+        &SENTINEL
     }
 }
 
@@ -72,16 +76,17 @@ impl Persistable for FilterHeader {
     const ITEMS_PER_SEGMENT: u32 = 50_000;
     const ENCODED_SIZE: Option<u64> = Some(32);
 
-    fn sentinel() -> Self {
-        FilterHeader::from_byte_array([0u8; 32])
+    fn sentinel() -> &'static Self {
+        static SENTINEL: FilterHeader = FilterHeader::from_byte_array([0; 32]);
+        &SENTINEL
     }
 }
 
 impl Persistable for HashedBlock {
     const ITEMS_PER_SEGMENT: u32 = 1_000;
 
-    fn sentinel() -> Self {
-        // Built once, since building it X11-hashes the header.
+    fn sentinel() -> &'static Self {
+        // A lazy static, since building it X11-hashes the header.
         static SENTINEL: LazyLock<HashedBlock> = LazyLock::new(|| {
             HashedBlock::from(Block {
                 header: *HashedBlockHeader::sentinel().header(),
@@ -89,7 +94,7 @@ impl Persistable for HashedBlock {
             })
         });
 
-        SENTINEL.clone()
+        &SENTINEL
     }
 }
 
@@ -347,7 +352,7 @@ impl<I: Persistable> SegmentCache<I> {
             _ => self.get_segment_mut(&segment_id).await?.get_single(offset).clone(),
         };
 
-        Ok(Some(item).filter(|item| *item != I::sentinel()))
+        Ok(Some(item).filter(|item| item != I::sentinel()))
     }
 
     pub async fn store_items_at_height(
@@ -549,7 +554,7 @@ impl<I: Persistable> Segment<I> {
 
     fn new(segment_id: u32, mut items: Vec<I>, state: SegmentState) -> Self {
         debug_assert!(items.len() <= Self::ITEMS_PER_SEGMENT as usize);
-        items.resize(Self::ITEMS_PER_SEGMENT as usize, I::sentinel());
+        items.resize(Self::ITEMS_PER_SEGMENT as usize, I::sentinel().clone());
 
         Self {
             segment_id,
@@ -563,7 +568,7 @@ impl<I: Persistable> Segment<I> {
         let sentinel = I::sentinel();
 
         for (index, item) in self.items.iter().enumerate() {
-            if item != &sentinel {
+            if item != sentinel {
                 return Some(index as u32);
             }
         }
@@ -575,7 +580,7 @@ impl<I: Persistable> Segment<I> {
         let sentinel = I::sentinel();
 
         for (index, item) in self.items.iter().enumerate().rev() {
-            if item != &sentinel {
+            if item != sentinel {
                 return Some(index as u32);
             }
         }
@@ -612,7 +617,7 @@ impl<I: Persistable> Segment<I> {
             (items, SegmentState::Clean)
         } else {
             let mut vec = Vec::new();
-            vec.resize(Self::ITEMS_PER_SEGMENT as usize, I::sentinel());
+            vec.resize(Self::ITEMS_PER_SEGMENT as usize, I::sentinel().clone());
             (vec, SegmentState::Dirty)
         };
 
@@ -648,7 +653,7 @@ impl<I: Persistable> Segment<I> {
         let mut changed = false;
 
         for slot in &mut self.items[start..] {
-            if *slot != sentinel {
+            if slot != sentinel {
                 *slot = sentinel.clone();
                 changed = true;
             }
@@ -669,7 +674,7 @@ impl<I: Persistable> Segment<I> {
         // sentinel items, feel free to remove this debug assert.
         // This a bug prevention mechanism based on the assumption that
         // we are not storing an already valid and stored item.
-        debug_assert!(self.items[offset] == I::sentinel());
+        debug_assert!(self.items[offset] == *I::sentinel());
 
         self.items[offset] = item;
 
@@ -697,7 +702,7 @@ impl<I: Persistable> Segment<I> {
             let sentinel = I::sentinel();
             for item in res {
                 debug_assert!(
-                    *item != sentinel,
+                    item != sentinel,
                     "Found a gap in segment {} in interval [{},{})",
                     self.segment_id,
                     range.start,
@@ -1287,12 +1292,10 @@ mod tests {
         // Equality ignores the cached hash, so a wrong one would only show in persisted segments.
         let header = HashedBlockHeader::sentinel();
         assert_eq!(*header.hash(), header.header().block_hash());
-        assert_eq!(header, HashedBlockHeader::sentinel());
 
         let block = HashedBlock::sentinel();
         assert_eq!(*block.hash(), block.block().block_hash());
         assert_eq!(block.block().header, *header.header());
-        assert_eq!(block, HashedBlock::sentinel());
     }
 
     #[test]
