@@ -413,9 +413,11 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             }
         }
 
-        // Last, as the batches above already left the pipeline and a failure
-        // here would otherwise drop them.
-        self.store_completed_below().await?;
+        // Last, and without failing, as the batches above already left the pipeline
+        // and their events would otherwise be dropped.
+        if let Err(e) = self.store_completed_below().await {
+            tracing::warn!("Failed to store the headers synced below: {}", e);
+        }
 
         Ok(events)
     }
@@ -711,8 +713,8 @@ mod tests {
     }
 
     /// Headers below the stored ones that fail to store must not take the
-    /// forward batches stored alongside them down too: those already left the
-    /// pipeline, so nothing would download them again.
+    /// forward batches stored alongside them down too, nor their events: those
+    /// already left the pipeline, so nothing would download them again.
     #[tokio::test]
     async fn test_failed_store_below_keeps_forward_batches() {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
@@ -746,7 +748,13 @@ mod tests {
         let ready = manager.pipeline.take_ready_to_store();
         assert!(!ready.is_empty(), "precondition: the forward batch is ready");
 
-        assert!(manager.store_ready_batches(ready).await.is_err());
+        let events = manager.store_ready_batches(ready).await.unwrap();
+
+        let stored_tip = tip.height() + 2;
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::BlockHeadersStored { tip_height }] if *tip_height == stored_tip
+        ));
 
         assert!(!manager.pipeline.is_syncing_below());
         assert_eq!(manager.tip().await.unwrap().height(), tip.height() + 2);
