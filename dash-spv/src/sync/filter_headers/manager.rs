@@ -62,6 +62,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
     /// `Synced` or conditions are not met.
     pub(super) fn try_complete_sync(&mut self) -> Option<SyncEvent> {
         if self.block_headers_synced
+            && self.progress.missing_below() == 0
             && self.progress.current_height() >= self.progress.target_height()
         {
             if self.state() == SyncState::Synced {
@@ -261,9 +262,8 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
             tip_height: self.progress.current_height(),
         }];
         let header_start = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
-        if first <= header_start.saturating_sub(1) {
-            events.extend(self.try_complete_sync());
-        }
+        self.progress.update_missing_below(first.saturating_sub(header_start.saturating_sub(1)));
+        events.extend(self.try_complete_sync());
         Ok(events)
     }
 
