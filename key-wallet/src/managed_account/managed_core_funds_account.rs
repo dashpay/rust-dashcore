@@ -15,6 +15,7 @@ use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
 use crate::account::TransactionRecord;
+use crate::error::Error;
 use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
@@ -135,20 +136,20 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account).
-    pub fn from_account(account: &super::super::Account) -> Self {
-        Self::wrap(ManagedCoreKeysAccount::from_account(account))
+    pub fn from_account(account: &super::super::Account) -> Result<Self, Error> {
+        ManagedCoreKeysAccount::from_account(account).map(Self::wrap)
     }
 
     /// Create a `ManagedCoreFundsAccount` from a [`BLSAccount`].
     #[cfg(feature = "bls")]
-    pub fn from_bls_account(account: &BLSAccount) -> Self {
-        Self::wrap(ManagedCoreKeysAccount::from_bls_account(account))
+    pub fn from_bls_account(account: &BLSAccount) -> Result<Self, Error> {
+        ManagedCoreKeysAccount::from_bls_account(account).map(Self::wrap)
     }
 
     /// Create a `ManagedCoreFundsAccount` from an [`EdDSAAccount`].
     #[cfg(feature = "eddsa")]
-    pub fn from_eddsa_account(account: &EdDSAAccount) -> Self {
-        Self::wrap(ManagedCoreKeysAccount::from_eddsa_account(account))
+    pub fn from_eddsa_account(account: &EdDSAAccount) -> Result<Self, Error> {
+        ManagedCoreKeysAccount::from_eddsa_account(account).map(Self::wrap)
     }
 
     fn wrap(keys: ManagedCoreKeysAccount) -> Self {

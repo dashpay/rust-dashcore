@@ -1169,6 +1169,7 @@ mod dashpay_funding_scope_tests {
             account_xpub: xpub(),
             is_watch_only: matches!(account_type, AccountType::DashpayExternalAccount { .. }),
         })
+        .unwrap()
     }
 
     /// A DashPay **external** account is watch-only — its addresses derive from
