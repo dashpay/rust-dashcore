@@ -16,6 +16,8 @@ use std::process::ExitStatus;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 use tokio::process::Child;
+#[cfg(unix)]
+use tokio::process::Command;
 use tokio::time::{sleep, timeout};
 
 use super::fs_helpers::{copy_dir, copy_to_retain_dir};
@@ -681,6 +683,25 @@ impl DashCoreNode {
         let client = self.rpc_client();
         client.disconnect_node(&addr.to_string()).expect("failed to disconnect peer");
         tracing::info!("Disconnected peer {}", addr);
+    }
+
+    /// Freezes dashd with `SIGSTOP`, or resumes it with `SIGCONT`. Its sockets stay open, so
+    /// its peers see a silent connection rather than a disconnect.
+    #[cfg(unix)]
+    pub async fn set_paused(&self, paused: bool) {
+        let pid = self.process.as_ref().and_then(Child::id).expect("dashd is not running");
+        let signal = if paused {
+            "-STOP"
+        } else {
+            "-CONT"
+        };
+        let status = Command::new("kill")
+            .args([signal, &pid.to_string()])
+            .status()
+            .await
+            .expect("failed to run kill");
+        assert!(status.success(), "kill {signal} {pid} failed: {status}");
+        tracing::info!("Set paused={} on dashd", paused);
     }
 
     /// Enable or disable all P2P network activity on this node.
