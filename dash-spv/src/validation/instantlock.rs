@@ -158,7 +158,7 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
 /// Verifies an InstantLock's signature against the rotated quorums of its cycle.
 /// It does not check the lock's structure or the cycle's eligibility: use
 /// [`VerifiedInstantLock::verify`], which does both.
-pub struct InstantLockValidator<'a> {
+struct InstantLockValidator<'a> {
     /// The rotated quorums of the lock's cycle, by quorum index.
     cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
 }
@@ -170,7 +170,7 @@ fn signature_error(error: MessageVerificationError) -> ValidationError {
 }
 
 impl<'a> InstantLockValidator<'a> {
-    pub fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
+    fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
         Self {
             cycle_quorums,
         }

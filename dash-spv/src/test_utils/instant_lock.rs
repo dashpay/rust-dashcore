@@ -1,6 +1,7 @@
 //! Signed fixtures for consumers testing authenticated InstantSend replay.
 
 use std::collections::BTreeMap;
+use std::io;
 
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature, BlsError, BlsScheme, BlsSkBytes};
 use dashcore::hash_types::QuorumVVecHash;
@@ -23,7 +24,7 @@ pub enum InstantLockFixtureError {
     Key(#[from] BlsError),
     /// The lock signing digest could not be encoded.
     #[error("cannot encode fixture signing digest: {0}")]
-    Encoding(#[from] std::io::Error),
+    Encoding(#[from] io::Error),
 }
 
 /// A lock signed by a random key of its own, and a synthetic quorum cycle for it.

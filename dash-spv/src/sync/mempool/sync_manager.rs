@@ -189,7 +189,7 @@ mod tests {
     use crate::test_utils::{test_socket_address, MockNetworkManager};
     use crate::types::UnconfirmedTransaction;
     use crate::validation::VerifiedInstantLock;
-    use dashcore::{Amount, InstantLock};
+    use dashcore::{Amount, InstantLock, Transaction};
     use key_wallet_manager::test_utils::MockWallet;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
@@ -358,7 +358,7 @@ mod tests {
         // Add transactions to mempool
         let mut txids = Vec::new();
         for i in 0..2u32 {
-            let tx = dashcore::Transaction {
+            let tx = Transaction {
                 version: 1,
                 lock_time: i,
                 input: vec![],
@@ -406,7 +406,7 @@ mod tests {
         manager.handle_sync_event(&sync, &network).await.unwrap();
 
         // Add a transaction to mempool
-        let tx = dashcore::Transaction {
+        let tx = Transaction {
             version: 1,
             lock_time: 0,
             input: vec![],
@@ -649,7 +649,7 @@ mod tests {
     #[tokio::test]
     async fn should_accept_broadcast_on_verified_instant_lock(known: bool, uncertain: bool) {
         let (mut manager, network) = create_test_manager();
-        let tx = dashcore::Transaction {
+        let tx = Transaction {
             version: 1,
             lock_time: 0,
             input: vec![],
@@ -1064,7 +1064,7 @@ mod tests {
         network_mock.clear_sent().await;
 
         // handle_tx with a relevant transaction should NOT eagerly rebuild
-        let tx = dashcore::Transaction {
+        let tx = Transaction {
             version: 1,
             lock_time: 0,
             input: vec![],

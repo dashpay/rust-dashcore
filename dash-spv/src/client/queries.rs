@@ -17,6 +17,7 @@ use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
 use dashcore::{InstantLock, QuorumHash};
 use key_wallet_manager::WalletInterface;
+use std::result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -54,7 +55,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     pub async fn verify_instant_lock(
         &self,
         instant_lock: &InstantLock,
-    ) -> std::result::Result<Option<VerifiedInstantLock>, InstantLockVerificationError> {
+    ) -> result::Result<Option<VerifiedInstantLock>, InstantLockVerificationError> {
         let Some(engine) = &self.masternode_engine else {
             return VerifiedInstantLock::verify::<PersistentBlockHeaderStorage>(instant_lock, None);
         };
