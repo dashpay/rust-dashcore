@@ -141,15 +141,86 @@ mod tests {
         public_key: &[u8],
         mode: u8,
     ) {
+        sign_input(tx, 0, prevout, key, public_key, mode);
+    }
+
+    fn sign_input(
+        tx: &mut Transaction,
+        input_index: usize,
+        prevout: &TxOut,
+        key: &EcdsaSecretKey,
+        public_key: &[u8],
+        mode: u8,
+    ) {
         let hash = SighashCache::new(&*tx)
-            .legacy_signature_hash(0, &prevout.script_pubkey, u32::from(mode))
+            .legacy_signature_hash(input_index, &prevout.script_pubkey, u32::from(mode))
             .unwrap();
         let mut signature = key.sign(&hash.to_byte_array()).with_der(|der| der.to_vec());
         signature.push(mode);
-        tx.input[0].script_sig = Builder::new()
+        tx.input[input_index].script_sig = Builder::new()
             .push_slice(PushBytesBuf::try_from(signature).unwrap())
             .push_slice(PushBytesBuf::try_from(public_key.to_vec()).unwrap())
             .into_script();
+    }
+
+    /// Two inputs funded by different owners, each signed by its own.
+    fn signed_by_two_owners() -> (Transaction, Vec<TxOut>) {
+        let keys = [[7; 32], [9; 32]].map(|bytes| EcdsaSecretKey::from_bytes(&bytes).unwrap());
+        let public_keys =
+            keys.iter().map(|key| key.public_key().to_compressed()).collect::<Vec<_>>();
+        let prevouts = public_keys
+            .iter()
+            .map(|public_key| TxOut {
+                value: 100_000,
+                script_pubkey: ScriptBuf::new_p2pkh(&hash160::Hash::hash(public_key).into()),
+            })
+            .collect::<Vec<_>>();
+        let mut tx = Transaction {
+            version: 1,
+            lock_time: 0,
+            input: (0..2)
+                .map(|vout| TxIn {
+                    previous_output: OutPoint {
+                        txid: Txid::from_byte_array([3; 32]),
+                        vout,
+                    },
+                    ..Default::default()
+                })
+                .collect(),
+            output: vec![TxOut {
+                value: 190_000,
+                script_pubkey: prevouts[0].script_pubkey.clone(),
+            }],
+            special_transaction_payload: None,
+        };
+        for index in 0..2 {
+            sign_input(&mut tx, index, &prevouts[index], &keys[index], &public_keys[index], 1);
+        }
+        (tx, prevouts)
+    }
+
+    #[test]
+    fn should_authorize_each_input_only_against_its_own_funding_output() {
+        let (tx, prevouts) = signed_by_two_owners();
+        for index in 0..2 {
+            assert_eq!(verify_input_authorization(&tx, index, &prevouts[index]), Ok(true));
+            assert_eq!(verify_input_authorization(&tx, index, &prevouts[1 - index]), Ok(false));
+        }
+
+        // SIGHASH_ALL commits to every input, so changing one input revokes the other's.
+        let mut resequenced = tx.clone();
+        resequenced.input[1].sequence = 7;
+        assert_eq!(verify_input_authorization(&resequenced, 0, &prevouts[0]), Ok(false));
+
+        // A signature does not follow its input to another position.
+        let mut reordered = tx;
+        reordered.input.swap(0, 1);
+        for index in 0..2 {
+            assert_eq!(
+                verify_input_authorization(&reordered, index, &prevouts[1 - index]),
+                Ok(false)
+            );
+        }
     }
 
     #[test]
