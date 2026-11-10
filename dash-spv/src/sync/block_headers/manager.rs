@@ -21,7 +21,6 @@ use crate::sync::{
 };
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
-#[cfg(test)]
 use dashcore::block::Header;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::network::message_blockdata::Inventory;
@@ -202,27 +201,39 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         Ok(())
     }
 
-    /// Validate and store headers batch.
-    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
-        debug_assert!(!headers.is_empty());
-
-        // Validate batch for internal continuity, PoW and difficulty
-        let tip = self.tip().await?;
+    /// The stored headers up to `height` the next one's difficulty is computed from.
+    async fn ancestors(&self, height: u32) -> SyncResult<Vec<Header>> {
         let storage = self.header_storage.read().await;
 
         // A storage started at a checkpoint holds less history than a full window.
-        let first = tip
-            .height()
+        let first = height
             .saturating_sub(DGW_PAST_BLOCKS as u32 - 1)
             .max(storage.get_start_height().await.unwrap_or(0));
 
-        let ancestors = storage.load_headers(first..tip.height() + 1).await?;
+        let headers = storage.load_headers(first..height + 1).await?;
+        Ok(headers.iter().map(|header| *header.header()).collect())
+    }
 
-        drop(storage);
+    /// Height and ancestors of the block `headers` extend, a stored block or a
+    /// segment's tip. `None` if it's neither, as then nothing follows from them.
+    async fn attach_point(
+        &self,
+        headers: &[HashedBlockHeader],
+    ) -> SyncResult<Option<(u32, Vec<Header>)>> {
+        let Some(first) = headers.first() else {
+            return Ok(None);
+        };
+        let parent = first.header().prev_blockhash;
+        let height = self.header_storage.read().await.get_header_height_by_hash(&parent).await?;
+        match height {
+            Some(height) => Ok(Some((height, self.ancestors(height).await?))),
+            None => Ok(self.pipeline.segment_ancestors(&parent)),
+        }
+    }
 
-        let ancestors = ancestors.iter().map(|header| *header.header()).collect();
-
-        BlockHeaderValidator::new(self.network, ancestors, tip.height()).validate(headers)?;
+    /// Store an already validated headers batch.
+    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
+        debug_assert!(!headers.is_empty());
 
         // Store headers
         self.header_storage.write().await.store_headers(headers).await?;
@@ -258,6 +269,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             Some(first) => Some(first.header().prev_blockhash),
             None => self.pipeline.active_tip_locator(),
         };
+
+        if let Some((height, ancestors)) = self.attach_point(headers).await? {
+            let validator = BlockHeaderValidator::new(self.network, ancestors, height);
+            if let Err(e) = validator.validate(headers) {
+                network.ban_peer(peer).await;
+                return Err(e.into());
+            }
+        }
 
         // Route headers to the pipeline, validates checkpoint match.
         let matched = match self.pipeline.receive_headers(headers) {
@@ -625,6 +644,67 @@ mod tests {
             manager.fork_height(&[HashedBlockHeader::from(&branch)]).await.unwrap(),
             expected
         );
+    }
+
+    /// Headers are validated as they arrive, on the tip or branching off below it:
+    /// invalid ones are neither stored nor followed, and their peer is banned.
+    #[test_case(4, true; "valid on the tip")]
+    #[test_case(4, false; "invalid on the tip")]
+    #[test_case(2, true; "valid fork")]
+    #[test_case(2, false; "invalid fork")]
+    #[tokio::test]
+    async fn test_received_headers_are_validated(parent: usize, valid: bool) {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let chain: Vec<HashedBlockHeader> = Header::dummy_chain(5, BlockHash::dummy(0))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        storage.store_headers(&chain).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        manager.pipeline.init(4, *chain[4].hash(), 4);
+        manager.progress.set_state(SyncState::Synced);
+
+        let parent_hash = *chain[parent].hash();
+        let header = if valid {
+            Header::dummy_chain(1, parent_hash)[0]
+        } else {
+            Header {
+                prev_blockhash: parent_hash,
+                ..Header::dummy(5)
+            }
+        };
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+        let peer = test_socket_address(1);
+
+        let result = manager.handle_headers_pipeline(peer, &[header.into()], &network).await;
+
+        assert_eq!(result.is_ok(), valid);
+        assert_eq!(
+            mock.banned_peers().await,
+            if valid {
+                vec![]
+            } else {
+                vec![peer]
+            }
+        );
+        let forked = result.is_ok_and(|events| {
+            events.iter().any(|event| matches!(event, SyncEvent::ForkDetected { .. }))
+        });
+        assert_eq!(forked, valid && parent < 4);
+        let tip = if valid && parent == 4 {
+            5
+        } else {
+            4
+        };
+        assert_eq!(manager.tip().await.unwrap().height(), tip);
     }
 
     /// Create a manager in synced state with an initialized pipeline.

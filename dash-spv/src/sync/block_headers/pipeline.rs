@@ -4,8 +4,8 @@
 //! downloaded in parallel from multiple peers. Each segment tracks its own
 //! progress and buffers headers until ready for ordered storage.
 
-#[cfg(test)]
 use dashcore::block::Header;
+use dashcore::pow::DGW_PAST_BLOCKS;
 use dashcore::BlockHash;
 use std::sync::Arc;
 
@@ -254,6 +254,25 @@ impl HeadersPipeline {
             prev_hash
         );
         Ok(None)
+    }
+
+    /// Height and ancestors of the segment whose tip is `hash`, if any: the
+    /// checkpoint it starts at and the headers it has buffered since.
+    pub(super) fn segment_ancestors(&self, hash: &BlockHash) -> Option<(u32, Vec<Header>)> {
+        let segment = self.segments.iter().find(|segment| segment.matches(hash))?;
+        let checkpoint = self
+            .checkpoint_manager
+            .last_checkpoint_before_height(segment.start_height)
+            .filter(|checkpoint| checkpoint.height() == segment.start_height);
+        let buffered = &segment.buffered_headers;
+        let recent = &buffered[buffered.len().saturating_sub(DGW_PAST_BLOCKS)..];
+        let ancestors = checkpoint
+            .into_iter()
+            .flat_map(|checkpoint| checkpoint.headers())
+            .chain(recent)
+            .map(|header| *header.header())
+            .collect();
+        Some((segment.current_height, ancestors))
     }
 
     /// Get segments that are ready to store (complete and in order).
@@ -731,6 +750,50 @@ mod tests {
         let matched = pipeline.receive_headers(&[first_header.into()]).unwrap();
         assert_eq!(matched, None, "Duplicate headers should be silently ignored");
         assert!(pipeline.segments[0].buffered_headers.is_empty());
+    }
+
+    /// A segment's ancestors are the checkpoint it starts at, if it starts at
+    /// one, followed by the last headers it buffered.
+    #[test]
+    fn test_segment_ancestors() {
+        let cm = create_test_checkpoint_manager(true);
+        let checkpoint = cm.checkpoints().next().unwrap();
+        let segment = |id, start_height, start_hash| {
+            let buffered: Vec<HashedBlockHeader> =
+                Header::dummy_chain(30, start_hash).iter().map(HashedBlockHeader::from).collect();
+            let mut segment = SegmentState::new(id, start_height, start_hash, None, None);
+            segment.current_height = start_height + 30;
+            segment.current_tip_hash = *buffered[29].hash();
+            segment.buffered_headers = buffered;
+            segment
+        };
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.initialized = true;
+        pipeline.segments = vec![
+            segment(0, checkpoint.height(), *checkpoint.hash()),
+            // Above the checkpoint, so it must not take its headers.
+            segment(1, checkpoint.height() + 100, BlockHash::dummy(10)),
+        ];
+        let recent = |segment: &SegmentState| -> Vec<Header> {
+            segment.buffered_headers[6..].iter().map(|header| *header.header()).collect()
+        };
+
+        let at_checkpoint = &pipeline.segments[0];
+        let mut expected: Vec<Header> =
+            checkpoint.headers().iter().map(|header| *header.header()).collect();
+        expected.extend(recent(at_checkpoint));
+        assert_eq!(
+            pipeline.segment_ancestors(&at_checkpoint.current_tip_hash),
+            Some((checkpoint.height() + 30, expected))
+        );
+
+        let off_checkpoint = &pipeline.segments[1];
+        assert_eq!(
+            pipeline.segment_ancestors(&off_checkpoint.current_tip_hash),
+            Some((checkpoint.height() + 130, recent(off_checkpoint)))
+        );
+
+        assert_eq!(pipeline.segment_ancestors(&BlockHash::dummy(999)), None);
     }
 
     #[test]

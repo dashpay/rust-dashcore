@@ -74,6 +74,13 @@ pub trait WalletInterface: Send + Sync + 'static {
         wallets: &BTreeSet<WalletId>,
     ) -> BlockProcessingResult;
 
+    /// Whether [`Self::process_block_for_wallets`] checks every transaction of
+    /// the block against the addresses that call derives. The filter rescan then
+    /// skips the block for them instead of applying it again.
+    fn checks_derived_addresses(&self) -> bool {
+        false
+    }
+
     /// Called when a transaction is seen in the mempool.
     /// Returns whether the transaction was relevant and any new addresses generated.
     /// When `instant_lock` is `Some`, the transaction already has an IS lock.
