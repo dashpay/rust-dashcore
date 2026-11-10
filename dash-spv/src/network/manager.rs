@@ -1907,7 +1907,8 @@ mod tests {
         Delivers(u64),
         /// Connects at this second, idle, and receives nothing.
         Joins(u64),
-        /// Owes bytes, receives until the first second and again from the second.
+        /// Owes bytes. Receives until the time in the first field and again from the time
+        /// in the second, both in seconds.
         Resumes(u64, u64),
         /// Idle, and receives bytes every this many seconds.
         Whispers(u64),
