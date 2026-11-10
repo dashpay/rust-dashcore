@@ -1061,7 +1061,7 @@ struct Liveness {
 /// timeouts, and silent peers are kicked one per timeout, the one silent the longest first.
 #[derive(Default)]
 struct StallJudge {
-    progress: HashMap<PeerId, Liveness>,
+    liveness: HashMap<PeerId, Liveness>,
     /// When some peer's bytes last grew. A new peer's first counter is not growth: its
     /// handshake may predate a stall of our link, so it proves nothing about the link now.
     last_heard: Option<Instant>,
@@ -1082,10 +1082,10 @@ impl StallJudge {
     /// message still arriving. Small unrelated messages arrive whole, so only these bytes
     /// are progress on a request.
     fn observe(&mut self, now: Instant, peers: &[Observed]) -> Vec<PeerId> {
-        self.progress.retain(|id, _| peers.iter().any(|p| p.id == *id));
+        self.liveness.retain(|id, _| peers.iter().any(|p| p.id == *id));
         let mut streaming = Vec::new();
         for p in peers {
-            let entry = self.progress.entry(p.id).or_insert(Liveness {
+            let entry = self.liveness.entry(p.id).or_insert(Liveness {
                 bytes: p.bytes,
                 owing_since: now,
             });
@@ -1124,7 +1124,7 @@ impl StallJudge {
         // with no registry entries. Pending work plus a byte counter
         // frozen for REQUEST_TIMEOUT means stuck, whatever the registry thinks.
         for p in peers.iter().filter(|p| p.in_flight > 0) {
-            let Some(owing_since) = self.progress.get(&p.id).map(|l| l.owing_since) else {
+            let Some(owing_since) = self.liveness.get(&p.id).map(|l| l.owing_since) else {
                 continue;
             };
             if now.duration_since(owing_since) > p.timeout {
