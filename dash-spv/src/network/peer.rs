@@ -36,7 +36,7 @@ use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 
 use crate::network::bans::Ban;
-use crate::network::costs::Ledger;
+use crate::network::costs::{as_sent, Ledger};
 use crate::network::manager::{InboundMessage, NetworkState};
 use crate::network::transport::{encrypt_message, TransportPreference, V2Decoder};
 use crate::{error::NetworkResult, NetworkError};
@@ -270,21 +270,15 @@ impl PeerHandle {
     }
 
     pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
-        // The sync layer always declares plain `getheaders` since it doesn't know
-        // the peer; upgrade here. The reader decompresses `Headers2` back to `Headers`.
-        let upgraded = match msg {
-            NetworkMessage::GetHeaders(m) if self.headers2 => {
-                Some(NetworkMessage::GetHeaders2(m.clone()))
-            }
-            _ => None,
-        };
-        let msg = upgraded.as_ref().unwrap_or(msg);
+        // The sync layer sends a plain `getheaders`, since it does not know the peer.
+        // The reader decompresses `Headers2` back to `Headers`.
+        let msg = as_sent(msg, self.headers2);
 
-        self.ledger.charge(msg).await;
+        self.ledger.charge(&msg).await;
 
         let write = async {
             let mut writer = self.writer.lock().await;
-            writer.write_message(msg).await
+            writer.write_message(&msg).await
         };
         let outcome = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
             Ok(Ok(())) => Ok(()),
