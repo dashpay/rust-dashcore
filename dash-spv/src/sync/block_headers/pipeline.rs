@@ -32,6 +32,9 @@ pub struct HeadersPipeline {
     checkpoint_manager: &'static CheckpointManager,
     /// Whether the pipeline has been initialized.
     initialized: bool,
+    /// Segments syncing below the stored headers, highest first, each stored whole
+    /// once it and the ones above it are.
+    below: Vec<SegmentState>,
 }
 
 impl std::fmt::Debug for HeadersPipeline {
@@ -52,6 +55,7 @@ impl HeadersPipeline {
             next_to_store: 0,
             checkpoint_manager,
             initialized: false,
+            below: Vec::new(),
         }
     }
 
@@ -60,6 +64,7 @@ impl HeadersPipeline {
         self.segments.clear();
         self.next_to_store = 0;
         self.initialized = true;
+        self.below.clear();
 
         // Find checkpoints between current_height and target_height
         let mut boundaries: Vec<(u32, BlockHash)> = Vec::new();
@@ -111,6 +116,53 @@ impl HeadersPipeline {
         );
     }
 
+    /// Download `(start_height, end_height]` below the stored headers and the segments
+    /// already added, the block at `end_height` being `end_hash`.
+    pub(super) fn sync_below(
+        &mut self,
+        start_height: u32,
+        start_hash: BlockHash,
+        end_height: u32,
+        end_hash: BlockHash,
+    ) {
+        let mut segment = SegmentState::new(
+            self.segments.len() + self.below.len(),
+            start_height,
+            start_hash,
+            Some(end_height),
+            Some(end_hash),
+        );
+        segment.complete = start_height == end_height;
+        self.below.push(segment);
+    }
+
+    /// Whether a [`Self::sync_below`] segment is still to be stored.
+    pub(super) fn is_syncing_below(&self) -> bool {
+        !self.below.is_empty()
+    }
+
+    /// Headers of the highest [`Self::sync_below`] segment, once complete.
+    pub(super) fn take_below(&mut self) -> Option<Vec<HashedBlockHeader>> {
+        if !self.below.first()?.complete {
+            return None;
+        }
+        Some(self.below.remove(0).buffered_headers)
+    }
+
+    /// Drop the [`Self::sync_below`] segments, to sync below again from scratch.
+    pub(super) fn clear_below(&mut self) {
+        self.below.clear();
+    }
+
+    /// Declare the `getheaders` of the highest [`Self::sync_below`] segments still downloading.
+    pub(super) async fn send_below(&mut self, network: &Arc<dyn NetworkManager>) {
+        for below in
+            self.below.iter_mut().take(ACTIVE_SEGMENT_WINDOW).filter(|below| below.can_send())
+        {
+            below.send_request(network).await;
+        }
+    }
+
     /// Get the number of segments in the pipeline.
     pub fn segment_count(&self) -> usize {
         self.segments.len()
@@ -156,6 +208,13 @@ impl HeadersPipeline {
         }
 
         let prev_hash = headers[0].header().prev_blockhash;
+
+        if let Some(below) =
+            self.below.iter_mut().find(|below| !below.complete && below.matches(&prev_hash))
+        {
+            below.receive_headers(headers)?;
+            return Ok(Some(below.segment_id));
+        }
 
         // Find the segment that matches
         for (idx, segment) in self.segments.iter_mut().enumerate() {
@@ -266,14 +325,15 @@ impl HeadersPipeline {
         ready
     }
 
-    /// Check if all segments are complete.
+    /// Whether all segments above the stored headers are complete. The segments below
+    /// do not count, so syncing below never holds back the sync to the tip.
     pub fn is_complete(&self) -> bool {
         self.segments.iter().all(|s| s.complete && s.buffered_headers.is_empty())
     }
 
     /// Get the total number of buffered headers across all segments.
     pub fn total_buffered(&self) -> u32 {
-        self.segments.iter().map(|s| s.buffered_headers.len() as u32).sum()
+        self.segments.iter().chain(&self.below).map(|s| s.buffered_headers.len() as u32).sum()
     }
 
     /// Locator of the non-complete tip segment, used to key an empty `headers` response.
@@ -312,7 +372,7 @@ impl HeadersPipeline {
     /// Treats every segment's next request as new, for a sync that starts again after
     /// losing its peers, when queued requests may have been dropped.
     pub(super) fn forget_declared(&mut self) {
-        for segment in &mut self.segments {
+        for segment in self.segments.iter_mut().chain(&mut self.below) {
             segment.forget_declared();
         }
     }

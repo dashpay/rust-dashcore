@@ -142,6 +142,9 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     storage.block_headers(),
                     storage.filter_headers(),
                     storage.filters(),
+                    config
+                        .start_from_height
+                        .unwrap_or_else(|| config.network.hd_wallet_sync_floor()),
                 )
                 .await,
             );
