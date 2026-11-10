@@ -18,6 +18,9 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.90.0'
+    '.github/workflows/manki.yml':
+        - 'actions/setup-node@v7.1.0'
+        - 'manki-review/manki@v7.4.0'
     '.github/workflows/pr-review-policy.yml': []
     '.github/workflows/pr-title.yml':
         - 'amannn/action-semantic-pull-request@v6.1.1'
@@ -64,6 +67,11 @@ dependencies:
         commit: 'sha1-ed597411d8f924073f98dfc5c65a23a2325f34cd'
         owner_id: 44036562
         repo_id: 205262760
+    'actions/setup-node@v7.1.0':
+        ref: 'v7.1.0'
+        commit: 'sha1-949feb2413d6458794dcd2491c4babbbce0c15c1'
+        owner_id: 44036562
+        repo_id: 189476904
     'actions/setup-python@v7.1.0':
         ref: 'v7.1.0'
         commit: 'sha1-6d4fd22b20465ccc0f7354476588e8df7c9ca0e0'
@@ -101,6 +109,11 @@ dependencies:
         commit: 'sha1-0273be72a0bbd58fcd71d0d6c02c209b50d1e5e1'
         owner_id: 12292047
         repo_id: 248206495
+    'manki-review/manki@v7.4.0':
+        ref: 'v7.4.0'
+        commit: 'sha1-d6eba103babe1d1ef9b213fcd9dd19ed9a5c5415'
+        owner_id: 270828077
+        repo_id: 1190216666
     'peter-evans/create-pull-request@v8.1.1':
         ref: 'v8.1.1'
         commit: 'sha1-5f6978faf089d4d20b00c7766989d076bb2fc7f1'
