@@ -38,13 +38,13 @@ jobs:
           shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
           prefix-key: "v1-rust"
           cache-bin: false
-      - uses: taiki-e/install-action@v2.89.1
+      - uses: taiki-e/install-action@v2.90.0
         with:
           tool: just
 
       - name: Install cargo-llvm-cov
         if: inputs.coverage
-        uses: taiki-e/install-action@v2.89.1
+        uses: taiki-e/install-action@v2.90.0
         with:
           tool: cargo-llvm-cov
 
