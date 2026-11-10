@@ -1055,19 +1055,26 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // bytes are freed on the peer separately, so a wedged peer can sit at its cap
             // with no registry entries. Pending work plus a byte counter
             // frozen for REQUEST_TIMEOUT means stuck, whatever the registry thinks.
-            let mut culprits: HashSet<PeerId> = {
+            let (mut culprits, streaming) = {
                 let peers = connected.read().await;
                 let live: HashSet<PeerId> = peers.iter().map(|p| p.id()).collect();
                 progress.retain(|addr, _| live.contains(addr));
                 let mut culprits = HashSet::new();
+                let mut streaming = Vec::new();
                 for peer in peers.iter() {
                     let addr = peer.id();
                     let bytes = peer.bytes_read();
                     let in_flight = peer.in_flight_bytes();
                     let entry = progress.entry(addr).or_insert((bytes, now));
+                    let grew = bytes > entry.0;
+                    // Small unrelated messages arrive whole, so only bytes of a message
+                    // still arriving are progress on a request.
+                    if grew && peer.partial_message() {
+                        streaming.push(addr);
+                    }
                     // An idle peer owes no bytes, so its silence before it gets work
                     // must not count against its first request.
-                    if bytes > entry.0 || in_flight == 0 {
+                    if grew || in_flight == 0 {
                         *entry = (bytes, now);
                     }
                     if in_flight > 0 && now.duration_since(entry.1) > request_timeout(peer.lag_ms())
@@ -1075,8 +1082,9 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                         culprits.insert(addr);
                     }
                 }
-                culprits
+                (culprits, streaming)
             };
+            broker.receiving(&streaming).await;
             // A request that stopped making progress also condemns its peer: the
             // per-peer byte check above sees unrelated traffic and judges it healthy.
             let timeouts: HashMap<PeerId, Duration> = connected
@@ -1352,6 +1360,13 @@ mod tests {
         PeerNetworkManager::new(&config).await
     }
 
+    /// Lets the spawned tasks run what the last time advance made due.
+    async fn settle() {
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+    }
+
     /// The events received until none arrives for a while.
     async fn drain(events: &mut broadcast::Receiver<NetworkEvent>) -> Vec<NetworkEvent> {
         let mut received = Vec::new();
@@ -1546,40 +1561,70 @@ mod tests {
         assert_eq!(net.connected_count().await, 0);
     }
 
-    #[test_case(None, true; "a silent request")]
-    #[test_case(Some(1), false; "the carrier streaming keeps it alive")]
-    #[test_case(Some(2), true; "another peer streaming is not progress")]
+    /// Counts `n` bytes as read from connected peer `peer`, leaving a message unfinished
+    /// if `partial`.
+    async fn receive(net: &PeerNetworkManager, peer: u8, n: u64, partial: bool) {
+        for p in net.state.connected.read().await.iter() {
+            if p.id() == conn(peer, 0) {
+                p.receive_for_test(n, partial);
+            }
+        }
+    }
+
+    enum Feed {
+        Nothing,
+        /// A complete answer from this peer every second.
+        Answers(u8),
+        /// More bytes of one long message from this peer every second.
+        Streams(u8),
+        /// Small complete messages, such as pings, from this peer every second.
+        Chatters(u8),
+    }
+
+    /// Peer 1 carries a request for `secs` seconds beside idle peer 2.
+    #[test_case(Feed::Nothing, 11, true; "a silent request")]
+    #[test_case(Feed::Answers(1), 20, false; "the carrier answering keeps it alive")]
+    #[test_case(Feed::Answers(2), 11, true; "another peer answering is not progress")]
+    #[test_case(Feed::Streams(1), 55, false; "the carrier streaming one long answer keeps it alive")]
+    #[test_case(Feed::Streams(1), 61, true; "the carrier streaming one answer past the bound stalls")]
+    #[test_case(Feed::Streams(2), 11, true; "another peer streaming is not progress")]
+    #[test_case(Feed::Chatters(1), 11, true; "the carrier sending only small messages stalls")]
     #[tokio::test(start_paused = true)]
-    async fn the_timeout_monitor_requeues_stalled_requests(streamer: Option<u8>, stalls: bool) {
+    async fn the_timeout_monitor_requeues_stalled_requests(feed: Feed, secs: u64, stalls: bool) {
         let net = broker().await;
+        let session = net.session.lock().await.clone();
+        for n in 1..=2 {
+            let peer = ConnectedPeer::for_test(conn(n, 0)).await;
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+        }
         net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
 
-        // Two gaps that each stay under the deadline but together exceed it.
-        for _ in 0..2 {
-            tokio::time::advance(REQUEST_TIMEOUT - TIMEOUT_CHECK).await;
-            tokio::task::yield_now().await;
-            if let Some(peer) = streamer {
-                let piece = NetworkMessage::CFilter(CFilter {
-                    filter_type: 0,
-                    block_hash: BlockHash::dummy(1),
-                    filter: vec![0u8; 4],
-                });
-                net.state
-                    .inbound
-                    .send(PeerEvent::Message(conn(peer, 0), piece.into()))
-                    .expect("the pump is running");
+        for _ in 0..secs {
+            tokio::time::advance(TIMEOUT_CHECK).await;
+            match feed {
+                Feed::Nothing => {}
+                Feed::Answers(peer) => {
+                    let piece = NetworkMessage::CFilter(CFilter {
+                        filter_type: 0,
+                        block_hash: BlockHash::dummy(1),
+                        filter: vec![0u8; 4],
+                    });
+                    net.state
+                        .inbound
+                        .send(PeerEvent::Message(conn(peer, 0), piece.into()))
+                        .expect("the pump is running");
+                }
+                Feed::Streams(peer) => receive(&net, peer, 1000, true).await,
+                Feed::Chatters(peer) => receive(&net, peer, 100, false).await,
             }
-            tokio::task::yield_now().await;
-            tokio::task::yield_now().await;
+            settle().await;
         }
 
-        let want = if stalls {
-            "queued"
-        } else {
-            "on_wire"
-        };
-        assert_eq!(net.state.broker.state_of(&RequestKey::CFilters(0)).await, Some(want));
-        assert_eq!(net.state.broker.len(), stalls as usize);
+        // A stalled request is re-queued and may already be routed to peer 2.
+        let carrier = net.state.broker.carrier_of(&RequestKey::CFilters(0)).await;
+        assert_eq!(carrier == Some(conn(1, 0)), !stalls, "carrier {carrier:?}");
     }
 
     /// A timeout kick re-queues the stalled peer's work only once that peer is closed and out
