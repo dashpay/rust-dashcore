@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -102,6 +103,17 @@ impl Reply {
     }
 }
 
+/// Returns `msg` as a peer receives it. A peer that serves compressed headers gets a
+/// `getheaders` as `getheaders2`.
+pub(super) fn as_sent(msg: &NetworkMessage, headers2: bool) -> Cow<'_, NetworkMessage> {
+    match msg {
+        NetworkMessage::GetHeaders(m) if headers2 => {
+            Cow::Owned(NetworkMessage::GetHeaders2(m.clone()))
+        }
+        _ => Cow::Borrowed(msg),
+    }
+}
+
 pub struct ResponseCosts {
     expected: [AtomicU64; REPLY_KINDS],
 }
@@ -113,16 +125,10 @@ impl ResponseCosts {
         }
     }
 
-    /// What the router budgets for `msg`. A `getheaders` counts as `getheaders2`: the
-    /// router prices it before picking a peer, and nearly every peer gets it upgraded.
+    /// What the router budgets for `msg`, priced for a peer that serves compressed headers.
+    /// The router prices a request before it picks a peer, and nearly every peer does.
     pub fn cost(&self, msg: &NetworkMessage) -> u64 {
-        Reply::awaited(msg)
-            .iter()
-            .map(|reply| match reply {
-                Reply::Headers => self.expected(&Reply::Headers2),
-                reply => self.expected(reply),
-            })
-            .sum()
+        Reply::awaited(&as_sent(msg, true)).iter().map(|reply| self.expected(reply)).sum()
     }
 
     pub fn expected_kb(&self) -> [u64; REPLY_KINDS] {
@@ -267,6 +273,16 @@ mod tests {
     #[test_case(NetworkMessage::GetHeaders2(locator()); "compressed headers")]
     fn a_header_request_is_routed_at_the_compressed_reply_cost(request: NetworkMessage) {
         assert_eq!(ResponseCosts::new().cost(&request), 8000 * 43);
+    }
+
+    #[test_case(NetworkMessage::GetHeaders(locator()), true => NetworkMessage::GetHeaders2(locator()); "upgraded for a headers2 peer")]
+    #[test_case(NetworkMessage::GetHeaders(locator()), false => NetworkMessage::GetHeaders(locator()); "kept for a plain peer")]
+    #[test_case(NetworkMessage::GetHeaders2(locator()), false => NetworkMessage::GetHeaders2(locator()); "a getheaders2 is kept")]
+    fn a_peer_receives_getheaders_as_it_serves_headers(
+        request: NetworkMessage,
+        headers2: bool,
+    ) -> NetworkMessage {
+        as_sent(&request, headers2).into_owned()
     }
 
     /// Charges `request` on a peer's ledger and settles it with `reply`.
