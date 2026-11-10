@@ -1072,8 +1072,9 @@ struct StallJudge {
     last_heard: Option<Instant>,
     /// The last kick of a silent peer, which paces the next.
     last_kick: Option<Instant>,
-    /// The silent peers held at the last judgement because no peer proved our link works.
-    held: HashSet<PeerId>,
+    /// Whether our own link may be stalled: the last judgement held a silent peer because
+    /// no peer proved our link works.
+    link_stalled: bool,
     /// Whether some held peer has had no witness since its silence began, so the next
     /// bytes from any peer show our link is back.
     link_down: bool,
@@ -1113,11 +1114,6 @@ impl StallJudge {
         streaming
     }
 
-    /// Whether our own link may be stalled: a silent peer is held for lack of a witness.
-    fn link_stalled(&self) -> bool {
-        !self.held.is_empty()
-    }
-
     /// Returns the peers to kick and how many culprits are spared. `culprits` maps the
     /// peers of stalled requests to when their silence began.
     fn judge(
@@ -1126,7 +1122,7 @@ impl StallJudge {
         peers: &[Observed],
         mut culprits: HashMap<PeerId, Instant>,
     ) -> (HashSet<PeerId>, usize) {
-        self.held.clear();
+        self.link_stalled = false;
         self.link_down = false;
         // Judged on the peer's own counters, not just the registry: streaming in-flight
         // bytes are freed on the peer separately, so a wedged peer can sit at its cap
@@ -1145,6 +1141,7 @@ impl StallJudge {
             return (HashSet::new(), 0);
         }
 
+        let mut held = 0;
         let mut silent: Vec<(Instant, &Observed)> = Vec::new();
         for p in peers {
             let Some(&since) = culprits.get(&p.id) else {
@@ -1163,9 +1160,10 @@ impl StallJudge {
                 silent.push((since, p));
             } else {
                 self.link_down |= !witnessed_from(since);
-                self.held.insert(p.id);
+                held += 1;
             }
         }
+        self.link_stalled = held > 0;
         // A silent peer may still be our link failing it, so the one silent the longest
         // goes, and one kick per timeout keeps a stall of our link from taking the whole set
         // at once.
@@ -1176,10 +1174,11 @@ impl StallJudge {
         if due {
             self.last_kick = Some(now);
         }
-        let mut spared = self.held.clone();
-        spared.extend(silent.iter().skip(usize::from(due)).map(|(_, p)| p.id));
-        culprits.retain(|id, _| !spared.contains(id));
-        (culprits.into_keys().collect(), spared.len())
+        // A culprit that already left is not spared, so its requests are still re-queued.
+        let mut kicked: HashSet<PeerId> =
+            culprits.into_keys().filter(|id| peers.iter().all(|p| p.id != *id)).collect();
+        kicked.extend(silent.first().filter(|_| due).map(|(_, p)| p.id));
+        (kicked, held + silent.len() - usize::from(due))
     }
 }
 
@@ -1225,7 +1224,7 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 peers.iter().find(|p| p.id == *id).map_or(REQUEST_TIMEOUT, |p| p.timeout)
             };
             let (culprits, spared) = judge.judge(now, &peers, broker.expire(timeout).await);
-            link_stalled.store(judge.link_stalled(), Ordering::Relaxed);
+            link_stalled.store(judge.link_stalled, Ordering::Relaxed);
             if culprits.is_empty() {
                 if spared > 0 {
                     tracing::debug!(
@@ -2022,7 +2021,7 @@ mod tests {
         let left: Vec<PeerId> = peers.iter().map(|p| p.id).collect();
         let kept: Vec<PeerId> = kept.iter().map(|&n| conn(n, 0)).collect();
         assert_eq!(left, kept);
-        assert_eq!(judge.link_stalled(), link_stalled);
+        assert_eq!(judge.link_stalled, link_stalled);
     }
 
     /// A peer serves 1 MB/s with work for three ticks, then nothing for one.
