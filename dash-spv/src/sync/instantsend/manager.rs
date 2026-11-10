@@ -689,6 +689,29 @@ mod tests {
         assert_eq!(manager.state(), SyncState::Synced);
     }
 
+    /// Locks awaiting quorum data settle nothing, so they must not push a verified
+    /// lock out of the cache: its next announcement would be verified and emitted again.
+    #[tokio::test]
+    async fn should_keep_a_verified_lock_settled_while_unverified_locks_fill_the_cache() {
+        let mut manager =
+            InstantSendManager::new(Arc::new(RwLock::new(TestEngine::mainnet_fixture())));
+        let genuine = mainnet_fixture_is_lock();
+        let events = manager.process_instantlock(&genuine).await.unwrap();
+        assert!(matches!(events.as_slice(), [SyncEvent::InstantLockReceived { .. }]));
+
+        for i in 0..MAX_CACHE_SIZE {
+            let mut txid = [0xee; 32];
+            txid[0..4].copy_from_slice(&(i as u32).to_le_bytes());
+            let mut unverifiable = create_test_instantlock(Txid::from_byte_array(txid));
+            unverifiable.cyclehash = CycleHash::from_byte_array([7; 32]);
+            assert!(manager.process_instantlock(&unverifiable).await.unwrap().is_empty());
+        }
+
+        let events = manager.process_instantlock(&genuine).await.unwrap();
+        assert!(events.is_empty(), "the verified lock was emitted a second time: {events:?}");
+        assert_eq!(manager.progress.valid(), 1);
+    }
+
     #[tokio::test]
     async fn test_instantsend_pending_queue() {
         let mut manager = create_test_manager();
