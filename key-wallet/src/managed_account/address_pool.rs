@@ -26,28 +26,8 @@ pub const DEFAULT_INTERNAL_GAP_LIMIT: u32 = 30;
 
 /// Standard gap limit for CoinJoin addresses.
 ///
-/// Set to match dashj's `DeterministicKeyChain` lookahead
-/// (`DEFAULT_LOOKAHEAD_SIZE = 100`), which is the effective discovery window
-/// dashj-core (the reference wallet, `org.dashj:dashj-core:22.x`) watches for
-/// CoinJoin keychains. Address discovery here is dynamic — the pool watches
-/// `highest_used + gap_limit` addresses — so this bounds the largest run of
-/// UNUSED CoinJoin addresses the wallet can bridge during a filter/rescan
-/// before discovery stalls.
-///
-/// The previous value of 30 starved heavy mixers: DIP-9 CoinJoin mixing
-/// sprays denominations across many sequential addresses, and a run wider
-/// than 30 consecutive unused addresses caused the SDK to stop discovering —
-/// it then missed both the txs that CREATED far-index UTXOs and the txs that
-/// SPENT nearer ones, leaving a persistent balance mismatch vs dashj that
-/// survived a clean re-creation + full rescan (dashpay/platform#4074,
-/// dashpay/dash-wallet#1507). 100 restores parity with dashj's window so the
-/// SDK discovers every CoinJoin tx dashj does.
-///
-/// Cost is modest: the CoinJoin account watches two pools (external +
-/// internal), so this pre-derives and filter-matches ~200 CoinJoin addresses
-/// per account instead of ~60. BIP158 filter matching is a set intersection,
-/// so the extra scripts add negligible per-block work; the derivation is a
-/// one-time keychain expansion.
+/// Matches dashj's `DEFAULT_LOOKAHEAD_SIZE` of 100, so discovery bridges the long runs of unused
+/// addresses that CoinJoin mixing leaves.
 pub const DEFAULT_COINJOIN_GAP_LIMIT: u32 = 100;
 
 /// Standard gap limit for special purpose keys (identity, provider keys)
@@ -545,8 +525,18 @@ impl AddressPool {
     /// Stores `info` at its index, replacing any entry already there.
     ///
     /// Use it to restore persisted entries or keys that cannot be derived from the key source.
+    /// Fails if the address or script is already stored at another index.
     pub fn insert(&mut self, info: AddressInfo) -> Result<()> {
         ChildNumber::from_normal_idx(info.index).map_err(Error::Bip32)?;
+        let elsewhere = |index: Option<&u32>| index.is_some_and(|&i| i != info.index);
+        if elsewhere(self.address_index.get(&info.address))
+            || elsewhere(self.script_pubkey_index.get(&info.script_pubkey))
+        {
+            return Err(Error::InvalidParameter(format!(
+                "{} is already stored at another index",
+                info.address
+            )));
+        }
         if let Some(old) = self.addresses.remove(&info.index) {
             self.address_index.remove(&old.address);
             self.script_pubkey_index.remove(&old.script_pubkey);
@@ -734,8 +724,7 @@ impl AddressPool {
         self.address_index.get(address).and_then(|&index| self.addresses.get(&index))
     }
 
-    /// Get mutable address info by address
-    pub fn address_info_mut(&mut self, address: &Address) -> Option<&mut AddressInfo> {
+    fn address_info_mut(&mut self, address: &Address) -> Option<&mut AddressInfo> {
         self.address_index.get(address).and_then(|index| self.addresses.get_mut(index))
     }
 
@@ -859,6 +848,65 @@ mod tests {
         assert_eq!(pool.highest_used(), Some(0));
 
         assert!(pool.address_info(first_addr).unwrap().is_used());
+
+        assert!(pool.unmark_used(first_addr));
+        assert!(!pool.unmark_used(first_addr));
+        assert_eq!(pool.highest_used(), None);
+        assert!(pool.address_info(first_addr).unwrap().is_available());
+    }
+
+    #[test]
+    fn test_reserve_refuses_unavailable_addresses() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let key_source = test_key_source();
+        let mut pool = AddressPool::new(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+            &key_source,
+        )
+        .unwrap();
+        let addresses = pool.all_addresses();
+
+        assert!(pool.reserve(&addresses[0], 100));
+        assert!(!pool.reserve(&addresses[0], 100));
+        assert_eq!(pool.address_info(&addresses[0]).unwrap().reserved_at(), Some(100));
+
+        pool.mark_used(&addresses[1]);
+        assert!(!pool.reserve(&addresses[1], 100));
+
+        assert!(!pool.reserve(&Address::dummy(Network::Testnet, 99), 100));
+    }
+
+    #[test]
+    fn test_insert_replaces_index_and_rejects_duplicates() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let key_source = test_key_source();
+        let mut pool = AddressPool::new(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+            &key_source,
+        )
+        .unwrap();
+        let first = pool.address_info(&pool.address_at_index(0).unwrap()).unwrap().clone();
+        let mut second = pool.address_info(&pool.address_at_index(1).unwrap()).unwrap().clone();
+
+        let mut moved = first.clone();
+        moved.index = 1;
+        assert!(pool.insert(moved).is_err());
+        assert_eq!(pool.address_index(&first.address), Some(0));
+
+        let replaced = second.address.clone();
+        let replacement = Address::dummy(Network::Testnet, 99);
+        second.script_pubkey = replacement.script_pubkey();
+        second.address = replacement.clone();
+        pool.insert(second).unwrap();
+        assert_eq!(pool.address_index(&replacement), Some(1));
+        assert!(!pool.contains_address(&replaced));
+        assert_eq!(pool.all_addresses().len(), 5);
     }
 
     #[test]
