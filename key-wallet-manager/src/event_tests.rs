@@ -79,7 +79,9 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
             balance,
             account_balances,
             addresses_derived: _,
+            locked_outpoints,
         } => {
+            assert!(locked_outpoints.is_empty(), "an ordinary payment locks nothing");
             assert_eq!(*wid, wallet_id);
             assert_eq!(record.txid, tx.txid());
             assert_eq!(record.context, TransactionContext::Mempool);
@@ -132,7 +134,9 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
             balance,
             account_balances,
             addresses_derived: _,
+            locked_outpoints,
         } => {
+            assert!(locked_outpoints.is_empty(), "an ordinary payment locks nothing");
             assert_eq!(*wid, wallet_id);
             assert!(matches!(record.context, TransactionContext::InstantSend(_)));
             assert_eq!(balance.confirmed(), TX_AMOUNT);
@@ -348,7 +352,9 @@ async fn test_block_with_new_tx_emits_inserted_record() {
             account_balances,
             addresses_derived: _,
             chain_lock: _,
+            locked_outpoints,
         } => {
+            assert!(locked_outpoints.is_empty(), "an ordinary payment locks nothing");
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 100);
             assert_eq!(inserted.len(), 1);
@@ -414,7 +420,9 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             account_balances,
             addresses_derived: _,
             chain_lock: _,
+            locked_outpoints,
         } => {
+            assert!(locked_outpoints.is_empty(), "an ordinary payment locks nothing");
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 200);
             assert!(inserted.is_empty());
@@ -1396,7 +1404,8 @@ async fn manager_holding_a_coin() -> (WalletManager, WalletId, OutPoint) {
 
 /// A ProRegTx locks a collateral it names at the block that holds it, not
 /// from the mempool. The mempool sighting changes nothing and emits nothing;
-/// the block's `BlockProcessed` carries the coin in the locked balance.
+/// the block's `BlockProcessed` names the locked outpoint and carries the coin
+/// in the locked balance.
 #[tokio::test]
 async fn test_registration_locks_a_named_collateral_at_its_block_not_from_the_mempool() {
     let (mut manager, wallet_id, collateral) = manager_holding_a_coin().await;
@@ -1429,9 +1438,11 @@ async fn test_registration_locks_a_named_collateral_at_its_block_not_from_the_me
             updated,
             balance,
             account_balances,
+            locked_outpoints,
             ..
         } => {
             assert!(inserted.is_empty() && updated.is_empty(), "the ProRegTx records nothing");
+            assert_eq!(locked_outpoints, &vec![collateral]);
             assert_eq!(balance.locked(), TX_AMOUNT);
             assert_eq!(balance.spendable(), 0);
             let account = account_balances.get(&bip44_account_0()).expect("the coin's account");
@@ -1461,7 +1472,8 @@ async fn test_instant_locked_registration_locks_no_collateral_it_names() {
 }
 
 /// A ProRegTx that creates its collateral locks it from the mempool, and the
-/// `TransactionDetected` for the coin carries it in the locked balance.
+/// `TransactionDetected` for the coin names the locked outpoint and carries
+/// the coin in the locked balance.
 #[tokio::test]
 async fn test_mempool_registration_creating_its_collateral_emits_the_locked_balance() {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
@@ -1485,9 +1497,11 @@ async fn test_mempool_registration_creating_its_collateral_emits_the_locked_bala
             record,
             balance,
             account_balances,
+            locked_outpoints,
             ..
         } => {
             assert_eq!(record.txid, registration.txid());
+            assert_eq!(locked_outpoints, &vec![collateral]);
             assert_eq!(balance.locked(), TX_AMOUNT);
             assert_eq!(balance.spendable(), 0, "the collateral is not spendable balance");
             let account = account_balances.get(&bip44_account_0()).expect("the coin's account");
@@ -1513,6 +1527,48 @@ async fn test_check_transaction_reports_a_lock_for_a_wallet_it_is_otherwise_irre
 
     assert!(result.affected_wallets.is_empty());
     assert_eq!(result.per_wallet_locked_outpoints, BTreeMap::from([(wallet_id, vec![collateral])]));
+}
+
+/// A lock that moves no balance and adds no record still reaches a persister.
+/// Here a rescan locks again the collateral of the wallet's own registration,
+/// a coin that has not arrived.
+#[tokio::test]
+async fn test_block_processed_names_a_lock_that_changes_nothing_else() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let owner = manager
+        .get_wallet_info_mut(&wallet_id)
+        .expect("wallet info")
+        .provider_owner_keys_managed_account_mut()
+        .expect("provider owner keys account")
+        .next_address(None, true)
+        .expect("owner address");
+    let owner_key_hash = *owner.payload().as_pubkey_hash().expect("P2PKH owner address");
+    let collateral = OutPoint::new(Txid::from_byte_array([0xc5; 32]), 0);
+    let registration =
+        Transaction::dummy_provider_registration(collateral, owner_key_hash, Vec::new(), 0xc5);
+    let block = make_block(vec![registration], 0xc5, 1_001);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, block.block_hash(), 101, &wallets).await;
+    let info = manager.get_wallet_info_mut(&wallet_id).expect("wallet info");
+    assert!(info.unlock_outpoint(&collateral));
+    let mut rx = manager.subscribe_events();
+
+    manager.process_block_for_wallets(&block, block.block_hash(), 101, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "one BlockProcessed expected, got {:?}", events);
+    match &events[0] {
+        WalletEvent::BlockProcessed {
+            inserted,
+            updated,
+            locked_outpoints,
+            ..
+        } => {
+            assert!(inserted.is_empty() && updated.is_empty(), "already recorded");
+            assert_eq!(locked_outpoints, &vec![collateral]);
+        }
+        other => panic!("expected BlockProcessed, got {:?}", other),
+    }
 }
 
 // ---------------------------------------------------------------------------

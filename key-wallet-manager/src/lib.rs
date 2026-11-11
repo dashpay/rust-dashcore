@@ -114,11 +114,11 @@ pub struct CheckTransactionsResult {
     /// Outpoints this check added to each wallet's lock set, grouped by
     /// wallet: the collateral of a ProRegTx (see
     /// [`ManagedWalletInfo::locked_outpoints`]). Gathered whether or not the
-    /// transaction is relevant to the wallet, since a ProRegTx in a block
-    /// locks a coin the wallet holds even when nothing else ties it to the
-    /// wallet. A lock moves that coin from the spendable to the locked
-    /// balance, so a caller that checked with `update_balance = false`
-    /// refreshes these wallets as well as the affected ones.
+    /// transaction is relevant to the wallet: a ProRegTx in a block locks a
+    /// coin the wallet holds even when nothing else ties it to the wallet.
+    /// Block and mempool processing forward them on
+    /// [`crate::events::WalletEvent::BlockProcessed`] and
+    /// [`crate::events::WalletEvent::TransactionDetected`].
     pub per_wallet_locked_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
 }
 
