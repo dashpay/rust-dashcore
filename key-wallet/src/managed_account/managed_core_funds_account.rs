@@ -1448,7 +1448,7 @@ impl ManagedCoreFundsAccount {
     /// reservation. Only valid for Standard accounts.
     ///
     /// Derivation of fresh addresses on this path is unbounded, so callers are
-    /// assumed trusted. See [`address_pool::AddressPool::next_unused_and_reserve`].
+    /// assumed trusted.
     pub fn next_receive_address_and_reserve(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
@@ -1507,8 +1507,7 @@ impl ManagedCoreFundsAccount {
     /// explicitly released, which would otherwise pin gap-limit headroom
     /// forever. `now` and `ttl` are caller-supplied (seconds); the wallet keeps
     /// no clock. Returns the number of reservations reclaimed and bumps the
-    /// monitor revision when that is non-zero. See
-    /// [`address_pool::AddressPool::sweep_expired_reservations`].
+    /// monitor revision when that is non-zero.
     pub fn sweep_expired_receive_reservations(&mut self, now: u64, ttl: u64) -> usize {
         if let ManagedAccountType::Standard {
             external_addresses,
