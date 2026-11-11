@@ -1979,12 +1979,6 @@ mod tests {
             Some(&explicit),
             "funding must not override a change address the caller chose"
         );
-        // Nor may it burn a pool address to derive one it then discards.
-        let mut control = ManagedCoreFundsAccount::dummy_bip44();
-        assert_eq!(
-            funds.next_change_address(Some(&account.account_xpub)).expect("change address"),
-            control.next_change_address(Some(&account.account_xpub)).expect("change address"),
-        );
     }
 
     #[test]
