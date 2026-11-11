@@ -8,7 +8,7 @@ pub mod coin_selection;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
-mod locked_outpoints;
+pub(crate) mod locked_outpoints;
 pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;

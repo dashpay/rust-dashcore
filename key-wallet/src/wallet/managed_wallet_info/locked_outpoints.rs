@@ -2,12 +2,12 @@
 //!
 //! The wallet keeps one set of locked outpoints, like Dash Core's
 //! `setLockedCoins`, and coin selection never spends a coin in it. A ProRegTx
-//! locks the collateral it registers; [`ManagedWalletInfo::lock_outpoint`] and
+//! locks the collateral it registers when that coin is this wallet's;
+//! [`ManagedWalletInfo::lock_outpoint`] and
 //! [`ManagedWalletInfo::unlock_outpoint`] lock and unlock anything by hand. See
 //! [`ManagedWalletInfo::locked_outpoints`] for the full rules.
 
 use super::ManagedWalletInfo;
-use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::{OutPoint, Transaction, Txid};
@@ -42,37 +42,47 @@ impl ManagedWalletInfo {
     ///
     /// # What locks an outpoint
     ///
-    /// - A ProRegTx. The wallet locks the collateral of the masternode
-    ///   registrations it processes, so an ordinary send never spends it:
-    ///   spending the collateral would end the registration. The collateral is
-    ///   the ProRegTx's `collateralOutpoint`, or, when that names a null txid,
-    ///   the ProRegTx's own output at `collateralIndex`. When it is locked
+    /// - A ProRegTx whose collateral is this wallet's. The wallet locks that
+    ///   coin so an ordinary send never spends it: spending the collateral
+    ///   would end the registration. The collateral is the ProRegTx's
+    ///   `collateralOutpoint`, or, when that names a null txid, the ProRegTx's
+    ///   own output at `collateralIndex`. Whether and when it is locked
     ///   depends on which:
     ///   - A collateral the ProRegTx names is locked once the ProRegTx is in a
     ///     block ([`TransactionContext::InBlock`] or
-    ///     [`TransactionContext::InChainLockedBlock`]). Until then it is not a
+    ///     [`TransactionContext::InChainLockedBlock`]), when the wallet holds
+    ///     the coin or the ProRegTx is relevant to the wallet: it uses the
+    ///     wallet's keys, pays it or spends its coins. Until then it is not a
     ///     registration: the network may never accept it, and the wallet does
     ///     not check a ProRegTx's payload itself. Dash Core likewise locks such
     ///     a collateral once a block adds the registration to its masternode
     ///     list. An [`TransactionContext::InstantSend`] context counts as
     ///     unconfirmed here: the wallet does not verify InstantSend locks, and
     ///     cannot tell whether its caller did.
-    ///   - A collateral the ProRegTx creates is locked from its first
-    ///     sighting, mempool included, as the coin arrives: it is the
-    ///     ProRegTx's own output, so the lock can hold no other coin. An
-    ///     unconfirmed sighting does not lock that output again once the
-    ///     wallet holds it; a block does.
+    ///   - A collateral the ProRegTx creates is locked when that output pays
+    ///     this wallet, from its first sighting, mempool included, as the coin
+    ///     arrives: it is the ProRegTx's own output, so the lock can hold no
+    ///     other coin. An unconfirmed sighting does not lock that output again
+    ///     once the wallet holds it; a block does.
     /// - [`Self::lock_outpoint`].
     ///
-    /// Only [`Self::unlock_outpoint`] removes an outpoint. A coin's amount is
-    /// never a reason to lock it.
+    /// A ProRegTx that involves nothing of this wallet's locks nothing, so the
+    /// registrations of other masternodes do not grow the set. Only
+    /// [`Self::unlock_outpoint`] removes an outpoint. A coin's amount is never
+    /// a reason to lock it.
     ///
-    /// # Order does not matter
+    /// # A lock can come before its coin
     ///
-    /// An entry does not need a coin behind it. A collateral seen after the
-    /// block holding its ProRegTx, or a coin locked before it arrives, arrives
-    /// locked. A ProRegTx naming a coin that is not this wallet's leaves an
-    /// entry that never matches anything.
+    /// An entry does not need a coin behind it. A coin locked with
+    /// [`Self::lock_outpoint`] before it arrives, arrives locked. So does a
+    /// collateral seen after the block holding its ProRegTx (a rescan can hand
+    /// over the later block first), when that ProRegTx is relevant to the
+    /// wallet. A relevant ProRegTx naming a coin that is not this wallet's
+    /// leaves an entry that never matches anything.
+    ///
+    /// A named collateral that arrives after a ProRegTx involving nothing else
+    /// of this wallet's is not locked: nothing told the wallet the coin would
+    /// be its own. Lock it with [`Self::lock_outpoint`].
     ///
     /// # How long a lock lasts
     ///
@@ -157,32 +167,40 @@ impl ManagedWalletInfo {
         true
     }
 
-    /// Lock the collateral `tx` registers when it is a ProRegTx that locks it
-    /// in `context`: a collateral it names only in a block, its own output in
-    /// a block or, unconfirmed, as that coin arrives. See
-    /// [`Self::locked_outpoints`].
+    /// Lock `collateral`, the collateral of the ProRegTx `tx`, when it is
+    /// this wallet's to keep. See [`Self::locked_outpoints`] for the rule.
     ///
-    /// Returns the collateral when it was not locked before. Only updates the
+    /// Call it once the accounts recorded `tx`, with the sighting that was
+    /// checked: whether it was in a block (`confirmed`), whether the wallet
+    /// held `collateral` before the check (`held_before`) and whether the
+    /// check found `tx` relevant.
+    ///
+    /// Returns whether the collateral was not locked before. Only updates the
     /// set: the caller refreshes the flags of the coins involved.
     pub(crate) fn lock_masternode_collateral(
         &mut self,
         tx: &Transaction,
-        context: &TransactionContext,
-    ) -> Option<OutPoint> {
-        let collateral = masternode_collateral(tx)?;
-        if !context.confirmed() {
-            // Only a null collateral txid yields the ProRegTx's own txid: no
-            // transaction can name itself.
-            let creates_it = collateral.txid == tx.txid();
-            if !creates_it || self.holds_coin(&collateral) {
-                return None;
-            }
-        }
-        self.locked_outpoints.insert(collateral).then_some(collateral)
+        collateral: OutPoint,
+        confirmed: bool,
+        held_before: bool,
+        is_relevant: bool,
+    ) -> bool {
+        let holds = self.holds_coin(&collateral);
+        // Only a null collateral txid yields the ProRegTx's own txid: no
+        // transaction can name itself.
+        let creates_it = collateral.txid == tx.txid();
+        let locks = if creates_it {
+            holds && (confirmed || !held_before)
+        } else {
+            // A named coin can arrive after its registration, so a relevant
+            // registration locks it ahead.
+            confirmed && (holds || is_relevant)
+        };
+        locks && self.locked_outpoints.insert(collateral)
     }
 
     /// Whether a funds account of this wallet holds `outpoint` as a coin.
-    fn holds_coin(&self, outpoint: &OutPoint) -> bool {
+    pub(crate) fn holds_coin(&self, outpoint: &OutPoint) -> bool {
         self.accounts
             .all_funding_accounts()
             .iter()
@@ -230,53 +248,21 @@ impl ManagedWalletInfo {
 #[cfg(test)]
 mod tests {
     use super::masternode_collateral;
-    use dashcore::blockdata::transaction::special_transaction::provider_registration::{
-        ProviderMasternodeType, ProviderRegistrationPayload,
-    };
-    use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
-    use dashcore::bls_sig_utils::BLSPublicKey;
-    use dashcore::hash_types::InputsHash;
-    use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
-    use dashcore::{Address, Network, OutPoint, PubkeyHash, ScriptBuf, Transaction, TxOut, Txid};
+    use dashcore::{Address, Network, OutPoint, PubkeyHash, Transaction, TxOut, Txid};
 
     /// A ProRegTx naming `collateral`, with `outputs` outputs of its own.
     fn registration(collateral: OutPoint, outputs: usize) -> Transaction {
-        let key_hash = PubkeyHash::from_byte_array([0x70; 20]);
-        Transaction {
-            version: 3,
-            lock_time: 0,
-            input: Vec::new(),
-            output: vec![
-                TxOut {
-                    value: 1_000,
-                    script_pubkey: Address::dummy(Network::Testnet, 1).script_pubkey(),
-                };
-                outputs
-            ],
-            special_transaction_payload: Some(TransactionPayload::ProviderRegistrationPayloadType(
-                ProviderRegistrationPayload {
-                    version: 1,
-                    masternode_type: ProviderMasternodeType::Regular,
-                    masternode_mode: 0,
-                    collateral_outpoint: collateral,
-                    service_address: MasternodeNetInfo::Legacy(
-                        "127.0.0.1:19999".parse().expect("socket address"),
-                    ),
-                    owner_key_hash: key_hash,
-                    operator_public_key: BLSPublicKey::from([0x11; 48]),
-                    voting_key_hash: key_hash,
-                    operator_reward: 0,
-                    script_payout: ScriptBuf::new(),
-                    inputs_hash: InputsHash::all_zeros(),
-                    signature: vec![0x33; 65],
-                    platform_node_id: None,
-                    platform_p2p_port: None,
-                    platform_http_port: None,
-                    payouts: None,
-                    shared_collateral: None,
-                },
-            )),
-        }
+        let output = TxOut {
+            value: 1_000,
+            script_pubkey: Address::dummy(Network::Testnet, 1).script_pubkey(),
+        };
+        let owner_key_hash = PubkeyHash::from_byte_array([0x70; 20]);
+        Transaction::dummy_provider_registration(
+            collateral,
+            owner_key_hash,
+            vec![output; outputs],
+            0,
+        )
     }
 
     #[test]

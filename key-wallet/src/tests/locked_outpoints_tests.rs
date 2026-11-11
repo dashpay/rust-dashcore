@@ -5,21 +5,18 @@
 use std::str::FromStr;
 
 use dashcore::address::NetworkUnchecked;
-use dashcore::blockdata::transaction::special_transaction::provider_registration::{
-    ProviderMasternodeType, ProviderRegistrationPayload,
-};
 use dashcore::blockdata::transaction::special_transaction::provider_update_revocation::ProviderUpdateRevocationPayload;
 use dashcore::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
-use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
+use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hash_types::InputsHash;
-use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{
     Address, BlockHash, OutPoint, PubkeyHash, ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
 use test_case::test_case;
 
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use crate::wallet::managed_wallet_info::asset_lock_builder::{
@@ -71,43 +68,26 @@ fn elsewhere() -> Address<NetworkUnchecked> {
     Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs").expect("testnet address")
 }
 
-/// A ProRegTx registering `collateral`, paying `outputs`. Everything else,
-/// its fee input and keys included, belongs to no one this wallet knows, so
-/// the collateral is its only link to the wallet. `seed` varies the txid.
+/// The ProRegTx of someone else's masternode registering `collateral`, paying
+/// `outputs`. Its fee input and keys belong to no one this wallet knows, so
+/// the collateral is its only possible link to the wallet. `seed` varies the
+/// txid.
 fn registration(collateral: OutPoint, outputs: Vec<TxOut>, seed: u8) -> Transaction {
-    let key_hash = PubkeyHash::from_byte_array([0x70; 20]);
-    Transaction {
-        version: 3,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(Txid::from_byte_array([seed; 32]), 0),
-            ..Default::default()
-        }],
-        output: outputs,
-        special_transaction_payload: Some(TransactionPayload::ProviderRegistrationPayloadType(
-            ProviderRegistrationPayload {
-                version: 1,
-                masternode_type: ProviderMasternodeType::Regular,
-                masternode_mode: 0,
-                collateral_outpoint: collateral,
-                service_address: MasternodeNetInfo::Legacy(
-                    "127.0.0.1:19999".parse().expect("socket address"),
-                ),
-                owner_key_hash: key_hash,
-                operator_public_key: BLSPublicKey::from([0x11; 48]),
-                voting_key_hash: key_hash,
-                operator_reward: 0,
-                script_payout: ScriptBuf::new(),
-                inputs_hash: InputsHash::all_zeros(),
-                signature: vec![0x33; 65],
-                platform_node_id: None,
-                platform_p2p_port: None,
-                platform_http_port: None,
-                payouts: None,
-                shared_collateral: None,
-            },
-        )),
-    }
+    let owner_key_hash = PubkeyHash::from_byte_array([0x70; 20]);
+    Transaction::dummy_provider_registration(collateral, owner_key_hash, outputs, seed)
+}
+
+/// A ProRegTx registering `collateral` under an owner key of the wallet, so
+/// the wallet finds it relevant. `seed` varies the txid.
+fn own_registration(ctx: &mut TestWalletContext, collateral: OutPoint, seed: u8) -> Transaction {
+    let owner = ctx
+        .managed_wallet
+        .provider_owner_keys_managed_account_mut()
+        .expect("provider owner keys account")
+        .next_address(None, true)
+        .expect("owner address");
+    let owner_key_hash = *owner.payload().as_pubkey_hash().expect("P2PKH owner address");
+    Transaction::dummy_provider_registration(collateral, owner_key_hash, Vec::new(), seed)
 }
 
 /// Pay `value` to the wallet in a block at `height`; `seed` varies the txid.
@@ -220,22 +200,25 @@ async fn a_collateral_sized_coin_nobody_registered_is_spendable() {
     assert!(ctx.managed_wallet.locked_outpoints().is_empty());
 }
 
+/// The wallet holds the owner key, so the ProRegTx is relevant, and the
+/// collateral is one of its coins. A rescan can hand over the later block
+/// first: the collateral then arrives locked.
 #[test_case(true ; "collateral first")]
 #[test_case(false ; "registration first")]
 #[tokio::test]
-async fn a_registration_locks_its_external_collateral_whichever_arrives_first(
+async fn the_wallets_own_registration_locks_its_collateral_whichever_arrives_first(
     collateral_first: bool,
 ) {
     let mut ctx = TestWalletContext::new_random();
+    let spare = receive(&mut ctx, SPARE, 0x02, 100).await;
     let collateral_tx = Transaction::dummy(&ctx.receive_address, 0x01..0x02, &[COLLATERAL]);
     let collateral = OutPoint::new(collateral_tx.txid(), 0);
-    let registration = registration(collateral, vec![], 0xEE);
+    let registration = own_registration(&mut ctx, collateral, 0xEE);
 
     let registered = if collateral_first {
         ctx.check_transaction(&collateral_tx, block(100)).await;
         ctx.check_transaction(&registration, block(101)).await
     } else {
-        // A rescan can hand over the later block first.
         let registered = ctx.check_transaction(&registration, block(101)).await;
         assert!(ctx.managed_wallet.is_outpoint_locked(&collateral), "locked before it arrives");
         ctx.check_transaction(&collateral_tx, block(100)).await;
@@ -243,12 +226,79 @@ async fn a_registration_locks_its_external_collateral_whichever_arrives_first(
     };
 
     // No separate balance refresh: the checks leave the balance right.
+    assert!(registered.is_relevant, "the owner key is the wallet's");
+    assert_eq!(registered.locked_outpoints, vec![collateral]);
+    assert!(ctx.bip44_account().utxos[&collateral].is_locked);
+    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
+    assert_eq!(ctx.managed_wallet.balance().spendable(), SPARE);
+    ctx.managed_wallet.update_last_processed_height(TIP);
+    let tx = send(&mut ctx, DASH, SelectionStrategy::LargestFirst).expect("the spare coin");
+    assert_eq!(spent(&tx), vec![spare]);
+}
+
+/// Holding the collateral is enough: the registration may use keys and fee
+/// coins kept elsewhere.
+#[tokio::test]
+async fn a_registration_in_a_block_locks_a_collateral_the_wallet_holds() {
+    let mut ctx = TestWalletContext::new_random();
+    let collateral = receive(&mut ctx, COLLATERAL, 0x01, 100).await;
+
+    let registered =
+        ctx.check_transaction(&registration(collateral, vec![], 0xEE), block(101)).await;
+
+    // No separate balance refresh: the check leaves the balance right.
     assert!(!registered.is_relevant, "nothing but the collateral ties it to this wallet");
     assert_eq!(registered.locked_outpoints, vec![collateral]);
     assert!(registered.state_modified, "the lock set is persisted state");
     assert!(ctx.bip44_account().utxos[&collateral].is_locked);
     assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
     assert!(is_out_of_coins(send(&mut ctx, DASH, SelectionStrategy::LargestFirst)));
+}
+
+/// The registration of a masternode that is not this wallet's leaves no
+/// entry, so the lock set does not grow with the network's registrations.
+#[test_case(false, block(101) ; "naming a coin, in a block")]
+#[test_case(true, TransactionContext::Mempool ; "creating its collateral, in the mempool")]
+#[test_case(true, block(101) ; "creating its collateral, in a block")]
+#[tokio::test]
+async fn a_registration_of_another_masternode_locks_nothing(
+    creates_collateral: bool,
+    context: TransactionContext,
+) {
+    let mut ctx = TestWalletContext::new_random();
+    let held = receive(&mut ctx, COLLATERAL, 0x01, 100).await;
+    let registration = if creates_collateral {
+        let to_elsewhere = TxOut {
+            value: COLLATERAL,
+            script_pubkey: elsewhere().assume_checked().script_pubkey(),
+        };
+        registration(OutPoint::new(Txid::all_zeros(), 0), vec![to_elsewhere], 0xEE)
+    } else {
+        registration(OutPoint::new(Txid::from_byte_array([0x19; 32]), 0), vec![], 0xEE)
+    };
+
+    let result = ctx.check_transaction(&registration, context).await;
+
+    assert!(!result.is_relevant);
+    assert!(result.locked_outpoints.is_empty());
+    assert!(ctx.managed_wallet.locked_outpoints().is_empty());
+    assert!(!ctx.bip44_account().utxos[&held].is_locked);
+}
+
+/// A named collateral that arrives after a registration involving nothing
+/// else of the wallet's is an ordinary coin: nothing said it would be the
+/// wallet's.
+#[tokio::test]
+async fn a_collateral_arriving_after_a_foreign_registration_is_not_locked() {
+    let mut ctx = TestWalletContext::new_random();
+    let collateral_tx = Transaction::dummy(&ctx.receive_address, 0x01..0x02, &[COLLATERAL]);
+    let collateral = OutPoint::new(collateral_tx.txid(), 0);
+
+    ctx.check_transaction(&registration(collateral, vec![], 0xEE), block(101)).await;
+    ctx.check_transaction(&collateral_tx, block(100)).await;
+
+    assert!(!ctx.managed_wallet.is_outpoint_locked(&collateral));
+    assert_eq!(ctx.managed_wallet.balance().spendable(), COLLATERAL);
 }
 
 #[test_case(&[TransactionContext::Mempool, block(101)] ; "seen in the mempool, then mined")]
