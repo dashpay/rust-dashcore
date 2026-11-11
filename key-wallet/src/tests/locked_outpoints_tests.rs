@@ -474,6 +474,23 @@ async fn a_revocation_or_a_replacing_registration_keeps_the_collateral_locked() 
     assert_eq!(spent(&tx), vec![spare.expect("spare coin")]);
 }
 
+/// A transaction spending `coin` to an address that is not the wallet's.
+fn spend_of(coin: OutPoint) -> Transaction {
+    Transaction {
+        version: 1,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: coin,
+            ..Default::default()
+        }],
+        output: vec![TxOut {
+            value: COLLATERAL - 1_000,
+            script_pubkey: elsewhere().assume_checked().script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    }
+}
+
 /// Only spending the collateral ends a registration. The coin leaves; its
 /// entry stays and has nothing to act on, so a spend that is reorged out
 /// brings the coin back locked. So does a lock taken while the coin was
@@ -487,20 +504,7 @@ async fn a_spent_coin_comes_back_locked_when_its_spend_is_reorged_out(locked_bef
     if locked_before {
         assert!(ctx.managed_wallet.lock_outpoint(coin));
     }
-    let spend = Transaction {
-        version: 1,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: coin,
-            ..Default::default()
-        }],
-        output: vec![TxOut {
-            value: COLLATERAL - 1_000,
-            script_pubkey: elsewhere().assume_checked().script_pubkey(),
-        }],
-        special_transaction_payload: None,
-    };
-    assert!(ctx.check_transaction(&spend, block(150)).await.is_relevant);
+    assert!(ctx.check_transaction(&spend_of(coin), block(150)).await.is_relevant);
     assert!(!ctx.bip44_account().utxos.contains_key(&coin));
     assert_eq!(ctx.managed_wallet.balance().total(), 0);
     if locked_before {
@@ -559,6 +563,83 @@ async fn a_collateral_is_locked_even_before_the_next_balance_refresh() {
     assert_eq!(result.locked_outpoints, vec![collateral]);
     assert!(ctx.bip44_account().utxos[&collateral].is_locked);
     assert!(ctx.managed_wallet.get_spendable_utxos().is_empty());
+}
+
+/// A rescan can hand over the block spending a collateral before the block
+/// that funds or registers it. The wallet then keeps the coin aside as spent,
+/// and the registration still locks it: a fork that drops the spend brings it
+/// back locked.
+#[test_case(true ; "a collateral the registration creates")]
+#[test_case(false ; "a collateral the registration names")]
+#[tokio::test]
+async fn a_collateral_seen_spent_first_is_locked_and_comes_back_locked(creates_collateral: bool) {
+    let mut ctx = TestWalletContext::new_random();
+    let to_wallet = TxOut {
+        value: COLLATERAL,
+        script_pubkey: ctx.receive_address.script_pubkey(),
+    };
+    let (collateral, earlier_blocks) = if creates_collateral {
+        let registration = registration(OutPoint::new(Txid::all_zeros(), 0), vec![to_wallet], 0xEE);
+        (OutPoint::new(registration.txid(), 0), vec![(registration, 100)])
+    } else {
+        let funding = Transaction::dummy(&ctx.receive_address, 0x01..0x02, &[COLLATERAL]);
+        let collateral = OutPoint::new(funding.txid(), 0);
+        (collateral, vec![(funding, 100), (registration(collateral, vec![], 0xEE), 101)])
+    };
+    ctx.check_transaction(&spend_of(collateral), block(150)).await;
+
+    let mut reported = Vec::new();
+    for (tx, height) in &earlier_blocks {
+        reported.extend(ctx.check_transaction(tx, block(*height)).await.locked_outpoints);
+    }
+
+    assert_eq!(reported, vec![collateral]);
+    assert!(!ctx.bip44_account().utxos.contains_key(&collateral), "seen spent already");
+    ctx.managed_wallet.truncate_above(149).expect("no chainlock above the cut");
+    assert!(ctx.bip44_account().utxos[&collateral].is_locked);
+    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
+}
+
+/// A coin kept aside under a spend the wallet recorded counts as held: a
+/// registration processed after that spend locks it, and it comes back
+/// locked when a fork drops the spend.
+#[tokio::test]
+async fn a_collateral_under_a_recorded_spend_is_locked_and_comes_back_locked() {
+    let mut ctx = TestWalletContext::new_random();
+    let collateral = receive(&mut ctx, COLLATERAL, 0x01, 100).await;
+    assert!(ctx.check_transaction(&spend_of(collateral), block(150)).await.is_relevant);
+    assert!(!ctx.bip44_account().utxos.contains_key(&collateral));
+
+    let registered =
+        ctx.check_transaction(&registration(collateral, vec![], 0xEE), block(101)).await;
+
+    assert_eq!(registered.locked_outpoints, vec![collateral]);
+    ctx.managed_wallet.truncate_above(149).expect("no chainlock above the cut");
+    assert!(ctx.bip44_account().utxos[&collateral].is_locked);
+    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
+}
+
+/// A coin a restored spent-output claim holds back counts as held too: once
+/// the claim is released and the funding is processed again, the coin arrives
+/// locked.
+#[tokio::test]
+async fn a_collateral_held_back_by_a_spent_claim_is_locked() {
+    let mut ctx = TestWalletContext::new_random();
+    let funding = Transaction::dummy(&ctx.receive_address, 0x01..0x02, &[COLLATERAL]);
+    let collateral = OutPoint::new(funding.txid(), 0);
+    let claimant = Txid::from_byte_array([0x5c; 32]);
+    ctx.managed_wallet.restore_spent_outpoints(&[(collateral, Some(claimant))]);
+    ctx.check_transaction(&funding, block(100)).await;
+    assert!(!ctx.bip44_account().utxos.contains_key(&collateral));
+
+    let registered =
+        ctx.check_transaction(&registration(collateral, vec![], 0xEE), block(101)).await;
+
+    assert_eq!(registered.locked_outpoints, vec![collateral]);
+    ctx.managed_wallet.abandon_transaction(claimant);
+    ctx.check_transaction(&funding, block(100)).await;
+    assert!(ctx.bip44_account().utxos[&collateral].is_locked);
+    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
 }
 
 /// A coin locked before it arrives is locked on arrival, also when the check

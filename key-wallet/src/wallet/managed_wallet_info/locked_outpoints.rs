@@ -216,12 +216,14 @@ impl ManagedWalletInfo {
         locks && self.locked_outpoints.insert(collateral)
     }
 
-    /// Whether a funds account of this wallet holds `outpoint` as a coin.
+    /// Whether a funds account of this wallet holds `outpoint` as a coin. A
+    /// coin it keeps aside as spent counts: a fork that drops the spend gives
+    /// it back.
     pub(crate) fn holds_coin(&self, outpoint: &OutPoint) -> bool {
         self.accounts
             .all_funding_accounts()
             .iter()
-            .any(|account| account.utxos.contains_key(outpoint))
+            .any(|account| account.holds_or_keeps_aside(outpoint))
     }
 
     /// Set the lock flag of each coin this wallet holds among `outpoints` to
