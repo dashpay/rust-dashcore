@@ -1536,7 +1536,8 @@ async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
         // Pin the persistence-critical payload against the wallet's
         // own AddressInfo for the same index.
         let stored = external_pool_after
-            .info_at_index(derived.derivation_index)
+            .addresses
+            .get(&derived.derivation_index)
             .unwrap_or_else(|| panic!("pool missing index {}", derived.derivation_index));
         assert_eq!(
             derived.address, stored.address,

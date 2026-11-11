@@ -288,21 +288,6 @@ impl ManagedPlatformAccount {
         self.addresses.address_info(address).cloned()
     }
 
-    /// Get pool statistics
-    pub fn address_pool_stats(&self) -> super::address_pool::PoolStats {
-        self.addresses.stats()
-    }
-
-    /// Get total address count in the pool
-    pub fn total_address_count(&self) -> usize {
-        self.addresses.stats().total_generated as usize
-    }
-
-    /// Get used address count in the pool
-    pub fn used_address_count(&self) -> usize {
-        self.addresses.stats().used_count as usize
-    }
-
     /// Get the gap limit for the address pool
     pub fn gap_limit(&self) -> u32 {
         self.addresses.gap_limit

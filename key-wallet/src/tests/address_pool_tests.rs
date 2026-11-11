@@ -66,44 +66,6 @@ fn test_next_unused_multiple() {
 }
 
 #[test]
-fn test_next_unused_multiple_with_info() {
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-    let mut pool = AddressPool::new_without_generation(
-        base_path,
-        AddressPoolType::External,
-        20,
-        Network::Testnet,
-    );
-    let (key_source, _) = test_key_source();
-
-    // Test getting multiple addresses with info
-    let address_infos = pool.next_unused_multiple_with_info(3, &key_source, true);
-    assert_eq!(address_infos.len(), 3);
-
-    // Verify the info contains correct data
-    for (i, (addr, info)) in address_infos.iter().enumerate() {
-        assert_eq!(addr, &info.address);
-        assert_eq!(info.index, i as u32);
-        assert!(!info.is_used());
-        assert!(info.public_key.is_some());
-    }
-
-    // Mark first one as used
-    pool.mark_used(&address_infos[0].0);
-
-    // Reserve the second one: it must be skipped alongside the used one.
-    let reserved = pool.next_unused_and_reserve(&key_source, 100).unwrap();
-    assert_eq!(reserved, address_infos[1].0);
-
-    // Get more with info: should skip both the used and the reserved address,
-    // still returning the requested count by deriving fresh addresses.
-    let more_infos = pool.next_unused_multiple_with_info(3, &key_source, true);
-    assert_eq!(more_infos.len(), 3);
-    assert!(!more_infos.iter().any(|(addr, _)| addr == &reserved));
-    assert_eq!(more_infos[0].0, address_infos[2].0); // First available after used + reserved
-}
-
-#[test]
 fn test_next_unused_multiple_no_key_source() {
     let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
     let mut pool = AddressPool::new_without_generation(
@@ -191,46 +153,4 @@ fn test_next_unused_multiple_mixed_usage() {
     assert!(!initial.contains(&next_batch[5]));
     assert!(!initial.contains(&next_batch[6]));
     assert!(!initial.contains(&next_batch[7]));
-}
-
-/// `prune_unused` must drop a pruned address from BOTH reverse indexes it
-/// maintains — `address_index` and `script_pubkey_index`. A leftover
-/// `script_pubkey_index` entry would let a pruned (unwatched) script still
-/// resolve to an index and be treated as wallet-relevant. Regression guard for
-/// the missing `script_pubkey_index.remove` in `prune_unused`
-/// (dashpay/rust-dashcore#649 companion fix).
-#[test]
-fn prune_unused_clears_script_pubkey_index() {
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-    let gap_limit = 20u32;
-    let mut pool = AddressPool::new_without_generation(
-        base_path,
-        AddressPoolType::External,
-        gap_limit,
-        Network::Testnet,
-    );
-    let (key_source, _) = test_key_source();
-
-    // Generate well beyond the gap limit; none are marked used, so with
-    // `highest_used == None` everything above `gap_limit - 1` is prunable.
-    pool.generate_addresses(gap_limit + 10, &key_source, true).unwrap();
-
-    // Pick an index that will be pruned and capture its address + script.
-    let victim_index = gap_limit + 5;
-    let victim = pool.addresses.get(&victim_index).expect("victim address generated").clone();
-    assert_eq!(pool.address_index.get(&victim.address), Some(&victim_index));
-    assert_eq!(pool.script_pubkey_index.get(&victim.script_pubkey), Some(&victim_index));
-
-    let pruned = pool.prune_unused();
-    assert!(pruned > 0, "addresses beyond the gap limit should be pruned");
-
-    assert!(!pool.addresses.contains_key(&victim_index), "pruned address removed from pool");
-    assert!(
-        !pool.address_index.contains_key(&victim.address),
-        "pruned address removed from address_index"
-    );
-    assert!(
-        !pool.script_pubkey_index.contains_key(&victim.script_pubkey),
-        "pruned address must also be removed from script_pubkey_index"
-    );
 }

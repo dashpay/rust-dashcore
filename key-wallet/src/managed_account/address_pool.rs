@@ -5,14 +5,12 @@
 
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use core::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
-use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 use crate::Network;
 use dashcore::address::Payload;
 #[cfg(feature = "eddsa")]
@@ -132,7 +130,7 @@ pub enum DerivedKey {
 impl KeySource {
     /// Derive a child key at the given path
     /// Returns a DerivedKey which can be ECDSA, BLS, or EdDSA
-    pub fn derive_at_path(&self, path: &DerivationPath) -> Result<DerivedKey> {
+    fn derive_at_path(&self, path: &DerivationPath) -> Result<DerivedKey> {
         match self {
             KeySource::Private(xprv) => {
                 let child = xprv.derive_priv(path).map_err(Error::Bip32)?;
@@ -192,14 +190,6 @@ impl KeySource {
                 ))
             }
             KeySource::NoKeySource => Err(Error::NoKeySource),
-        }
-    }
-
-    /// Legacy method for ECDSA-only derivation (for backward compatibility)
-    pub fn derive_ecdsa_at_path(&self, path: &DerivationPath) -> Result<ExtendedPubKey> {
-        match self.derive_at_path(path)? {
-            DerivedKey::ECDSA(xpub) => Ok(xpub),
-            _ => Err(Error::InvalidParameter("Key source is not ECDSA".into())),
         }
     }
 
@@ -340,7 +330,7 @@ impl AddressInfo {
     }
 
     /// Whether this address is currently reserved (handed out but not yet used).
-    pub fn is_reserved(&self) -> bool {
+    fn is_reserved(&self) -> bool {
         matches!(self.state, AddressState::Reserved { .. })
     }
 
@@ -357,13 +347,6 @@ impl AddressInfo {
             } => Some(at),
             _ => None,
         }
-    }
-
-    /// Update transaction statistics
-    pub fn update_stats(&mut self, received: u64, sent: u64) {
-        self.total_received += received;
-        self.total_sent += sent;
-        self.tx_count += 1;
     }
 }
 
@@ -437,11 +420,6 @@ impl AddressPool {
         }
     }
 
-    /// Set the address type for new addresses
-    pub fn set_address_type(&mut self, address_type: AddressType) {
-        self.address_type = address_type;
-    }
-
     /// Check if this is an internal (change) address pool
     pub fn is_internal(&self) -> bool {
         self.pool_type == AddressPoolType::Internal
@@ -478,7 +456,7 @@ impl AddressPool {
     }
 
     /// Generate every address up to and including `index`
-    pub fn generate_up_to(
+    pub(crate) fn generate_up_to(
         &mut self,
         index: u32,
         key_source: &KeySource,
@@ -595,7 +573,7 @@ impl AddressPool {
     }
 
     /// Get the next unused address info
-    pub fn next_unused_with_info(
+    pub(crate) fn next_unused_with_info(
         &mut self,
         key_source: &KeySource,
         add_to_state: bool,
@@ -634,7 +612,11 @@ impl AddressPool {
     /// reclaimed only by [`AddressPool::release_reservation`] and
     /// [`AddressPool::sweep_expired_reservations`], so callers are assumed
     /// trusted. Gate or cap this before exposing it to untrusted input.
-    pub fn next_unused_and_reserve(&mut self, key_source: &KeySource, now: u64) -> Result<Address> {
+    pub(crate) fn next_unused_and_reserve(
+        &mut self,
+        key_source: &KeySource,
+        now: u64,
+    ) -> Result<Address> {
         let index = self.next_unused_with_info(key_source, true)?.index;
         // A lookup miss would hand out an unreserved address, so fail instead.
         let info = self.addresses.get_mut(&index).ok_or_else(|| {
@@ -674,7 +656,7 @@ impl AddressPool {
     /// declines to judge staleness and reclaims nothing. A `ttl` of 0 means no
     /// expiry window, so nothing is reclaimed either. A reservation stamped with
     /// `at == 0` (its caller had no clock) is likewise never aged out.
-    pub fn sweep_expired_reservations(&mut self, now: u64, ttl: u64) -> usize {
+    pub(crate) fn sweep_expired_reservations(&mut self, now: u64, ttl: u64) -> usize {
         if now == 0 || ttl == 0 {
             return 0;
         }
@@ -702,7 +684,7 @@ impl AddressPool {
     /// Returns the requested number of unused addresses, generating new ones if needed.
     /// This is more efficient than calling `next_unused` multiple times as it minimizes
     /// the search through existing addresses.
-    pub fn next_unused_multiple(
+    pub(crate) fn next_unused_multiple(
         &mut self,
         count: usize,
         key_source: &KeySource,
@@ -741,77 +723,6 @@ impl AddressPool {
         addresses
     }
 
-    /// Get multiple unused addresses with their info at once
-    ///
-    /// Returns the requested number of unused addresses with their full information,
-    /// generating new ones if needed. This is more efficient than calling
-    /// `next_unused_with_info` multiple times.
-    pub fn next_unused_multiple_with_info(
-        &mut self,
-        count: usize,
-        key_source: &KeySource,
-        add_to_state: bool,
-    ) -> Vec<(Address, AddressInfo)> {
-        let mut result = Vec::with_capacity(count);
-
-        // First, collect existing unused addresses with their info
-        let mut collected = 0;
-        for i in 0..=self.highest_generated.unwrap_or(0) {
-            if collected >= count {
-                break;
-            }
-            if let Some(info) = self.addresses.get(&i) {
-                if info.is_available() {
-                    result.push((info.address.clone(), info.clone()));
-                    collected += 1;
-                }
-            }
-        }
-
-        // If we have enough unused addresses, return them
-        if result.len() >= count {
-            result.truncate(count);
-            return result;
-        }
-
-        // If NoKeySource and we don't have enough addresses, return what we have
-        if matches!(key_source, KeySource::NoKeySource) {
-            return result;
-        }
-
-        let remaining = (count - result.len()) as u32;
-        let generated = self.generate_addresses(remaining, key_source, add_to_state);
-        result.extend(
-            generated.unwrap_or_default().into_iter().map(|info| (info.address.clone(), info)),
-        );
-        result
-    }
-
-    /// Get multiple unused addresses
-    pub fn unused_addresses_count(
-        &mut self,
-        count: u32,
-        key_source: &KeySource,
-    ) -> Result<Vec<Address>> {
-        let mut unused = Vec::new();
-        let mut current_index = 0;
-
-        // Collect existing unused addresses
-        while unused.len() < count as usize && current_index < self.next_index_to_derive() {
-            if let Some(info) = self.addresses.get(&current_index) {
-                if info.is_available() {
-                    unused.push(info.address.clone());
-                }
-            }
-            current_index += 1;
-        }
-
-        let remaining = count - unused.len() as u32;
-        let generated = self.generate_addresses(remaining, key_source, true)?;
-        unused.extend(generated.into_iter().map(|info| info.address));
-        Ok(unused)
-    }
-
     /// Mark an address as used
     pub fn mark_used(&mut self, address: &Address) -> bool {
         let Some(&index) = self.address_index.get(address) else {
@@ -833,42 +744,14 @@ impl AddressPool {
         true
     }
 
-    /// Scan addresses for usage using a check function
-    pub fn scan_for_usage<F>(&mut self, check_fn: F) -> Vec<Address>
-    where
-        F: Fn(&Address) -> bool,
-    {
-        let found: Vec<Address> = self
-            .addresses
-            .values()
-            .filter(|info| !info.is_used() && check_fn(&info.address))
-            .map(|info| info.address.clone())
-            .collect();
-
-        for address in &found {
-            self.mark_used(address);
-        }
-
-        found
-    }
-
     /// Get all addresses in the pool
     pub fn all_addresses(&self) -> Vec<Address> {
         self.addresses.values().map(|info| info.address.clone()).collect()
     }
 
     /// Get cached scriptPubKeys for every address in the pool.
-    pub fn all_script_pubkeys(&self) -> Vec<ScriptBuf> {
+    pub(crate) fn all_script_pubkeys(&self) -> Vec<ScriptBuf> {
         self.addresses.values().map(|info| info.script_pubkey.clone()).collect()
-    }
-
-    /// Get only used addresses
-    pub fn used_addresses(&self) -> Vec<Address> {
-        self.addresses
-            .values()
-            .filter(|info| info.is_used())
-            .map(|info| info.address.clone())
-            .collect()
     }
 
     /// Get only available addresses (neither used nor reserved)
@@ -899,19 +782,9 @@ impl AddressPool {
         }
     }
 
-    /// Get address info by index
-    pub fn info_at_index(&self, index: u32) -> Option<&AddressInfo> {
-        self.addresses.get(&index)
-    }
-
     /// Get the index of an address
     pub fn address_index(&self, address: &Address) -> Option<u32> {
         self.address_index.get(address).copied()
-    }
-
-    /// Get the index of an address by its script pubkey
-    pub fn script_pubkey_index(&self, script_pubkey: &ScriptBuf) -> Option<u32> {
-        self.script_pubkey_index.get(script_pubkey).copied()
     }
 
     /// Check if an address belongs to this pool
@@ -920,43 +793,8 @@ impl AddressPool {
     }
 
     /// Check if a script pubkey belongs to this pool
-    pub fn contains_script_pubkey(&self, script_pubkey: &ScriptBuf) -> bool {
+    pub(crate) fn contains_script_pubkey(&self, script_pubkey: &ScriptBuf) -> bool {
         self.script_pubkey_index.contains_key(script_pubkey)
-    }
-
-    /// Get addresses in the specified range
-    ///
-    /// Returns addresses from start_index (inclusive) to end_index (exclusive).
-    /// If addresses in the range haven't been generated yet, they will be generated.
-    pub fn address_range(
-        &mut self,
-        start_index: u32,
-        end_index: u32,
-        key_source: &KeySource,
-    ) -> Result<Vec<Address>> {
-        if end_index <= start_index {
-            return Ok(Vec::new());
-        }
-
-        self.generate_up_to(end_index - 1, key_source)?;
-
-        // Collect addresses in the range
-        let mut addresses = Vec::new();
-        for index in start_index..end_index {
-            if let Some(info) = self.addresses.get(&index) {
-                addresses.push(info.address.clone());
-            }
-        }
-
-        Ok(addresses)
-    }
-
-    /// Check if we need to generate more addresses
-    pub fn needs_more_addresses(&self) -> bool {
-        let available_count =
-            self.addresses.values().filter(|info| info.is_available()).count() as u32;
-
-        available_count < self.gap_limit
     }
 
     /// Raise the gap limit and generate the addresses the wider limit now requires.
@@ -985,230 +823,6 @@ impl AddressPool {
             Some(highest) => highest + self.gap_limit,
         };
         self.generate_up_to(target, key_source)
-    }
-
-    /// Set a custom label for an address
-    pub fn set_address_label(&mut self, address: &Address, label: String) -> bool {
-        if let Some(info) = self.address_info_mut(address) {
-            info.label = Some(label);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Add custom metadata to an address
-    pub fn add_address_metadata(&mut self, address: &Address, key: String, value: String) -> bool {
-        if let Some(info) = self.address_info_mut(address) {
-            info.metadata.insert(key, value);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Get pool statistics
-    pub fn stats(&self) -> PoolStats {
-        let used_count = self.used_indices.len() as u32;
-        let reserved_count =
-            self.addresses.values().filter(|info| info.is_reserved()).count() as u32;
-        let unused_count = self.addresses.len() as u32 - used_count - reserved_count;
-
-        PoolStats {
-            total_generated: self.addresses.len() as u32,
-            used_count,
-            reserved_count,
-            unused_count,
-            highest_used: self.highest_used,
-            highest_generated: self.highest_generated,
-            gap_limit: self.gap_limit,
-            is_internal: self.is_internal(),
-        }
-    }
-
-    /// Reset the pool (for rescan)
-    pub fn reset_usage(&mut self) {
-        for info in self.addresses.values_mut() {
-            info.state = AddressState::Available;
-            info.tx_count = 0;
-            info.total_received = 0;
-            info.total_sent = 0;
-            info.balance = 0;
-        }
-        self.used_indices.clear();
-        self.highest_used = None;
-    }
-
-    /// Prune unused addresses beyond the gap limit
-    pub fn prune_unused(&mut self) -> u32 {
-        let keep_until = match self.highest_used {
-            None => self.gap_limit - 1, // Keep indices 0 to gap_limit-1
-            Some(highest) => highest + self.gap_limit, // Keep up to highest + gap_limit
-        };
-
-        let mut pruned = 0;
-        let indices_to_remove: Vec<u32> = self
-            .addresses
-            .iter()
-            .filter(|(&idx, info)| {
-                idx > keep_until && !self.used_indices.contains(&idx) && !info.is_reserved()
-            })
-            .map(|(&idx, _)| idx)
-            .collect();
-
-        for idx in indices_to_remove {
-            if let Some(info) = self.addresses.remove(&idx) {
-                self.address_index.remove(&info.address);
-                self.script_pubkey_index.remove(&info.script_pubkey);
-                pruned += 1;
-            }
-        }
-
-        if let Some(&new_highest) = self.addresses.keys().max() {
-            self.highest_generated = Some(new_highest);
-        }
-
-        pruned
-    }
-}
-
-/// Pool statistics
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct PoolStats {
-    /// Total addresses generated
-    pub total_generated: u32,
-    /// Number of used addresses
-    pub used_count: u32,
-    /// Number of reserved addresses (handed out but not yet used)
-    pub reserved_count: u32,
-    /// Number of unused addresses (neither used nor reserved)
-    pub unused_count: u32,
-    /// Highest used index
-    pub highest_used: Option<u32>,
-    /// Highest generated index (None if no addresses generated)
-    pub highest_generated: Option<u32>,
-    /// Gap limit
-    pub gap_limit: u32,
-    /// Whether this is an internal pool
-    pub is_internal: bool,
-}
-
-impl fmt::Display for PoolStats {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} pool: {} addresses ({} used, {} reserved, {} unused), gap limit: {}",
-            if self.is_internal {
-                "Internal"
-            } else {
-                "External"
-            },
-            self.total_generated,
-            self.used_count,
-            self.reserved_count,
-            self.unused_count,
-            self.gap_limit
-        )
-    }
-}
-
-/// Builder for AddressPool
-pub struct AddressPoolBuilder {
-    base_path: Option<DerivationPath>,
-    pool_type: AddressPoolType,
-    gap_limit: u32,
-    network: Network,
-    address_type: AddressType,
-    key_source: Option<KeySource>,
-}
-
-impl AddressPoolBuilder {
-    /// Create a new builder
-    pub fn new() -> Self {
-        Self {
-            base_path: None,
-            pool_type: AddressPoolType::External,
-            gap_limit: DEFAULT_EXTERNAL_GAP_LIMIT,
-            network: Network::Mainnet,
-            address_type: AddressType::P2pkh,
-            key_source: None,
-        }
-    }
-
-    /// Set the base derivation path
-    pub fn base_path(mut self, path: DerivationPath) -> Self {
-        self.base_path = Some(path);
-        self
-    }
-
-    /// Set the pool type (external, internal, or absent)
-    pub fn pool_type(mut self, pool_type: AddressPoolType) -> Self {
-        self.pool_type = pool_type;
-        self
-    }
-
-    /// Set whether this is an internal (change) pool (compatibility method)
-    pub fn internal(mut self, is_internal: bool) -> Self {
-        self.pool_type = if is_internal {
-            AddressPoolType::Internal
-        } else {
-            AddressPoolType::External
-        };
-        self
-    }
-
-    /// Set the gap limit
-    pub fn gap_limit(mut self, limit: u32) -> Self {
-        self.gap_limit = limit;
-        self
-    }
-
-    /// Set the network
-    pub fn network(mut self, network: Network) -> Self {
-        self.network = network;
-        self
-    }
-
-    /// Set the address type
-    pub fn address_type(mut self, addr_type: AddressType) -> Self {
-        self.address_type = addr_type;
-        self
-    }
-
-    /// Set the key source for generating addresses
-    pub fn key_source(mut self, key_source: KeySource) -> Self {
-        self.key_source = Some(key_source);
-        self
-    }
-
-    /// Build the address pool
-    pub fn build(self) -> Result<AddressPool> {
-        let base_path =
-            self.base_path.ok_or(Error::InvalidParameter("base_path required".into()))?;
-
-        let mut pool = AddressPool::new_without_generation(
-            base_path,
-            self.pool_type,
-            self.gap_limit,
-            self.network,
-        );
-        pool.address_type = self.address_type;
-
-        // Generate addresses if a key source was provided
-        if let Some(key_source) = self.key_source {
-            if !matches!(key_source, KeySource::NoKeySource) {
-                pool.generate_addresses(self.gap_limit, &key_source, true)?;
-            }
-        }
-
-        Ok(pool)
-    }
-}
-
-impl Default for AddressPoolBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -1288,9 +902,7 @@ mod tests {
         assert_eq!(pool.used_indices.len(), 1);
         assert_eq!(pool.highest_used, Some(0));
 
-        let used = pool.used_addresses();
-        assert_eq!(used.len(), 1);
-        assert_eq!(&used[0], first_addr);
+        assert!(pool.address_info(first_addr).unwrap().is_used());
     }
 
     #[test]
@@ -1543,67 +1155,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reset_usage_clears_reservations() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new_without_generation(
-            base_path,
-            AddressPoolType::External,
-            5,
-            Network::Testnet,
-        );
-        let key_source = test_key_source();
-
-        let reserved = pool.next_unused_and_reserve(&key_source, 100).unwrap();
-        let index = pool.address_index(&reserved).unwrap();
-        assert!(pool.addresses.get(&index).unwrap().is_reserved());
-
-        // A rescan reset must drop reservations too, otherwise the address stays
-        // pinned forever and is never handed out again.
-        pool.reset_usage();
-        assert!(!pool.addresses.get(&index).unwrap().is_reserved());
-
-        let reissued = pool.next_unused_and_reserve(&key_source, 200).unwrap();
-        assert_eq!(reserved, reissued);
-    }
-
-    #[test]
-    fn test_prune_never_drops_reserved() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let gap_limit = 5;
-        let mut pool = AddressPool::new_without_generation(
-            base_path,
-            AddressPoolType::External,
-            gap_limit,
-            Network::Testnet,
-        );
-        let key_source = test_key_source();
-        pool.generate_addresses(10, &key_source, true).unwrap();
-
-        // Mark index 0 used so keep_until = highest_used + gap_limit = 5.
-        pool.mark_used(&pool.address_at_index(0).unwrap());
-
-        // Reserve indices 1..=7 (first available each time, index 0 is used).
-        let mut reserved = Vec::new();
-        for t in 0..7 {
-            reserved.push(pool.next_unused_and_reserve(&key_source, 100 + t).unwrap());
-        }
-
-        // Indices 6 and 7 are reserved and beyond keep_until. Indices 8 and 9
-        // are plain unused beyond keep_until and are the only prunable entries.
-        let pruned = pool.prune_unused();
-        assert_eq!(pruned, 2);
-        assert!(!pool.addresses.contains_key(&8));
-        assert!(!pool.addresses.contains_key(&9));
-
-        // Every reserved address survived the prune.
-        for addr in &reserved {
-            assert!(pool.address_index(addr).is_some());
-        }
-        assert!(pool.addresses.get(&6).unwrap().is_reserved());
-        assert!(pool.addresses.get(&7).unwrap().is_reserved());
-    }
-
-    #[test]
     fn test_gap_limit_maintenance() {
         let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
         let key_source = test_key_source();
@@ -1652,70 +1203,5 @@ mod tests {
         assert_eq!(new_addresses[1].index, gap_limit + 2);
         assert_eq!(pool.highest_generated, Some(gap_limit + 2));
         assert_eq!(pool.addresses.len(), gap_limit as usize + 3);
-    }
-
-    #[test]
-    fn test_reserved_addresses_count_against_gap_limit() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let key_source = test_key_source();
-        let gap_limit = 5;
-
-        // A pool with exactly gap_limit available addresses needs no more.
-        let mut pool = AddressPool::new(
-            base_path,
-            AddressPoolType::External,
-            gap_limit,
-            Network::Testnet,
-            &key_source,
-        )
-        .unwrap();
-        assert!(!pool.needs_more_addresses());
-
-        // Reserving one drops available headroom below the gap limit, so the
-        // pool now reports it needs more even though nothing was used.
-        pool.next_unused_and_reserve(&key_source, 100).unwrap();
-        assert!(pool.needs_more_addresses());
-    }
-
-    #[test]
-    fn test_address_pool_builder() {
-        let pool = AddressPoolBuilder::new()
-            .base_path(DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]))
-            .internal(true)
-            .gap_limit(10)
-            .network(Network::Testnet)
-            .address_type(AddressType::P2pkh)
-            .build()
-            .unwrap();
-
-        assert!(pool.is_internal());
-        assert_eq!(pool.gap_limit, 10);
-        assert_eq!(pool.network, Network::Testnet);
-    }
-
-    #[test]
-    fn test_scan_for_usage() {
-        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-        let mut pool = AddressPool::new_without_generation(
-            base_path,
-            AddressPoolType::External,
-            5,
-            Network::Testnet,
-        );
-        let key_source = test_key_source();
-
-        let addresses = pool.generate_addresses(10, &key_source, true).unwrap();
-
-        // Simulate checking for usage - mark addresses at indices 2, 5, 7 as used
-        let check_fn = |addr: &Address| {
-            addresses[2].address == *addr
-                || addresses[5].address == *addr
-                || addresses[7].address == *addr
-        };
-
-        let found = pool.scan_for_usage(check_fn);
-        assert_eq!(found.len(), 3);
-        assert_eq!(pool.used_indices.len(), 3);
-        assert_eq!(pool.highest_used, Some(7));
     }
 }

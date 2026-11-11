@@ -426,24 +426,6 @@ pub trait ManagedAccountTrait {
         self.managed_account_type().get_address_derivation_path(address)
     }
 
-    /// Get total address count across all pools
-    fn total_address_count(&self) -> usize {
-        self.managed_account_type()
-            .address_pools()
-            .iter()
-            .map(|pool| pool.stats().total_generated as usize)
-            .sum()
-    }
-
-    /// Get used address count across all pools
-    fn used_address_count(&self) -> usize {
-        self.managed_account_type()
-            .address_pools()
-            .iter()
-            .map(|pool| pool.stats().used_count as usize)
-            .sum()
-    }
-
     /// Widen the gap limit for every address pool of this account.
     /// Returns every freshly generated address (across all pools)
     fn set_gap_limit(

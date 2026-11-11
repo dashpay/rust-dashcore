@@ -48,7 +48,7 @@ pub use derivation::{DerivationPathBuilder, DerivationStrategy, KeyDerivation};
 pub use dip9::{DerivationPathReference, DerivationPathType};
 pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};
-pub use managed_account::address_pool::{AddressInfo, AddressPool, KeySource, PoolStats};
+pub use managed_account::address_pool::{AddressInfo, AddressPool, KeySource};
 pub use managed_account::managed_account_type::ManagedAccountType;
 pub use managed_account::managed_platform_account::ManagedPlatformAccount;
 pub use managed_account::platform_address::PlatformP2PKHAddress;
