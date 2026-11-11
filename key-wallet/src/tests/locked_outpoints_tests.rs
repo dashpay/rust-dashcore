@@ -14,7 +14,7 @@ use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hash_types::InputsHash;
-use dashcore::hashes::Hash;
+use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{
     Address, BlockHash, OutPoint, PubkeyHash, ScriptBuf, Transaction, TxIn, TxOut, Txid,
 };
@@ -90,7 +90,9 @@ fn registration(collateral: OutPoint, outputs: Vec<TxOut>, seed: u8) -> Transact
                 masternode_type: ProviderMasternodeType::Regular,
                 masternode_mode: 0,
                 collateral_outpoint: collateral,
-                service_address: "127.0.0.1:19999".parse().expect("socket address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("socket address"),
+                ),
                 owner_key_hash: key_hash,
                 operator_public_key: BLSPublicKey::from([0x11; 48]),
                 voting_key_hash: key_hash,
@@ -101,6 +103,8 @@ fn registration(collateral: OutPoint, outputs: Vec<TxOut>, seed: u8) -> Transact
                 platform_node_id: None,
                 platform_p2p_port: None,
                 platform_http_port: None,
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     }
@@ -577,8 +581,7 @@ fn provider_update_service() -> TransactionPayload {
     TransactionPayload::ProviderUpdateServicePayloadType(ProviderUpdateServicePayload::new(
         Some(0),
         Txid::all_zeros(),
-        0x00000000000000000000ffff7f000001, // 127.0.0.1 mapped
-        19999,
+        "127.0.0.1:19999".parse().expect("socket address"),
         ScriptBuf::new(),
         InputsHash::all_zeros(),
         None,

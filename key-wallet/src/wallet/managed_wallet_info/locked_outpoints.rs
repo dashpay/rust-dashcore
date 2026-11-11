@@ -10,7 +10,6 @@ use super::ManagedWalletInfo;
 use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
-use dashcore::hashes::Hash;
 use dashcore::{OutPoint, Transaction, Txid};
 use std::collections::BTreeSet;
 
@@ -237,7 +236,7 @@ mod tests {
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::bls_sig_utils::BLSPublicKey;
     use dashcore::hash_types::InputsHash;
-    use dashcore::hashes::Hash;
+    use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use dashcore::{Address, Network, OutPoint, PubkeyHash, ScriptBuf, Transaction, TxOut, Txid};
 
     /// A ProRegTx naming `collateral`, with `outputs` outputs of its own.
@@ -260,7 +259,9 @@ mod tests {
                     masternode_type: ProviderMasternodeType::Regular,
                     masternode_mode: 0,
                     collateral_outpoint: collateral,
-                    service_address: "127.0.0.1:19999".parse().expect("socket address"),
+                    service_address: MasternodeNetInfo::Legacy(
+                        "127.0.0.1:19999".parse().expect("socket address"),
+                    ),
                     owner_key_hash: key_hash,
                     operator_public_key: BLSPublicKey::from([0x11; 48]),
                     voting_key_hash: key_hash,
@@ -271,6 +272,8 @@ mod tests {
                     platform_node_id: None,
                     platform_p2p_port: None,
                     platform_http_port: None,
+                    payouts: None,
+                    shared_collateral: None,
                 },
             )),
         }

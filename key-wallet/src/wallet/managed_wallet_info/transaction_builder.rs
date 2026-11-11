@@ -543,6 +543,7 @@ impl TransactionBuilder {
             special_payload: self.special_payload.clone(),
             payload_finalizer: None,
             funding: self.funding.clone(),
+            locked: self.locked.clone(),
         }
     }
 

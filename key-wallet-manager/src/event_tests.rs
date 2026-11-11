@@ -12,8 +12,8 @@ use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hash_types::{CycleHash, InputsHash};
-use dashcore::hashes::Hash;
 use dashcore::opcodes;
+use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{
     BlockHash, CompactTarget, OutPoint, PubkeyHash, PublicKey, ScriptBuf, TxIn, TxMerkleNode,
     TxOut, Txid, Witness,
@@ -1391,7 +1391,9 @@ fn masternode_registration(collateral: OutPoint, outputs: Vec<TxOut>, seed: u8) 
                 masternode_type: ProviderMasternodeType::Regular,
                 masternode_mode: 0,
                 collateral_outpoint: collateral,
-                service_address: "127.0.0.1:19999".parse().expect("socket address"),
+                service_address: MasternodeNetInfo::Legacy(
+                    "127.0.0.1:19999".parse().expect("socket address"),
+                ),
                 owner_key_hash: key_hash,
                 operator_public_key: BLSPublicKey::from([0x11; 48]),
                 voting_key_hash: key_hash,
@@ -1402,6 +1404,8 @@ fn masternode_registration(collateral: OutPoint, outputs: Vec<TxOut>, seed: u8) 
                 platform_node_id: None,
                 platform_p2p_port: None,
                 platform_http_port: None,
+                payouts: None,
+                shared_collateral: None,
             },
         )),
     }
