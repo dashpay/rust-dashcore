@@ -619,8 +619,9 @@ mod tests {
         assert_eq!(restored.masternode_lists, engine.masternode_lists);
     }
 
-    /// A cycle whose entry the lists hold under its type and quorum hash, but
-    /// with another entry hash, is not restored. The other cycles are.
+    /// A cycle whose entry the lists hold under its type and quorum hash, but with another
+    /// entry hash, is not restored; the other cycles are. The hand-edited lists stand in for
+    /// a saved snapshot whose lists and cycles disagree, which no diff or `QRInfo` can produce.
     #[tokio::test]
     async fn a_snapshot_drops_a_cycle_its_lists_hold_with_another_entry_hash() {
         let mut engine = qr_info_engine().await;
