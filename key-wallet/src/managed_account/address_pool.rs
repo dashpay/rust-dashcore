@@ -452,28 +452,38 @@ impl AddressPool {
         self.pool_type == AddressPoolType::External
     }
 
+    /// Returns the index of the first available address, or the next index to derive when none is.
+    fn next_unused_index(&self) -> u32 {
+        self.addresses
+            .iter()
+            .find(|(_, info)| info.is_available())
+            .map_or_else(|| self.next_index_to_derive(), |(index, _)| *index)
+    }
+
+    fn next_index_to_derive(&self) -> u32 {
+        self.highest_generated.map_or(0, |highest| highest + 1)
+    }
+
     /// Generate addresses up to the specified count
     pub fn generate_addresses(
         &mut self,
         count: u32,
         key_source: &KeySource,
         add_to_state: bool,
-    ) -> Result<Vec<Address>> {
-        let mut new_addresses = Vec::new();
-        let start_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-        let end_index = start_index + count;
-
-        for index in start_index..end_index {
-            let address = self.generate_address_at_index(index, key_source, add_to_state)?;
-            new_addresses.push(address);
-        }
-
-        Ok(new_addresses)
+    ) -> Result<Vec<AddressInfo>> {
+        let start_index = self.next_index_to_derive();
+        (start_index..start_index + count)
+            .map(|index| self.generate_address_at_index(index, key_source, add_to_state))
+            .collect()
     }
 
     /// Generate every address up to and including `index`
-    pub fn generate_up_to(&mut self, index: u32, key_source: &KeySource) -> Result<Vec<Address>> {
-        let next = self.highest_generated.map_or(0, |highest| highest + 1);
+    pub fn generate_up_to(
+        &mut self,
+        index: u32,
+        key_source: &KeySource,
+    ) -> Result<Vec<AddressInfo>> {
+        let next = self.next_index_to_derive();
         self.generate_addresses((index + 1).saturating_sub(next), key_source, true)
     }
 
@@ -483,10 +493,10 @@ impl AddressPool {
         index: u32,
         key_source: &KeySource,
         add_to_state: bool,
-    ) -> Result<Address> {
+    ) -> Result<AddressInfo> {
         // Check if already generated
         if let Some(info) = self.addresses.get(&index) {
-            return Ok(info.address.clone());
+            return Ok(info.clone());
         }
 
         // Build the full path for record keeping
@@ -565,11 +575,10 @@ impl AddressPool {
         };
         let info =
             AddressInfo::new_with_public_key(address.clone(), index, full_path, public_key_type);
-        let script_pubkey = info.script_pubkey.clone();
         if add_to_state {
-            self.addresses.insert(index, info);
-            self.address_index.insert(address.clone(), index);
-            self.script_pubkey_index.insert(script_pubkey, index);
+            self.addresses.insert(index, info.clone());
+            self.address_index.insert(address, index);
+            self.script_pubkey_index.insert(info.script_pubkey.clone(), index);
 
             // Update highest generated
             if self.highest_generated.map(|h| index > h).unwrap_or(true) {
@@ -577,28 +586,12 @@ impl AddressPool {
             }
         }
 
-        Ok(address)
+        Ok(info)
     }
 
     /// Get the next unused address
     pub fn next_unused(&mut self, key_source: &KeySource, add_to_state: bool) -> Result<Address> {
-        // First, try to find an already generated unused address
-        for i in 0..=self.highest_generated.unwrap_or(0) {
-            if let Some(info) = self.addresses.get(&i) {
-                if info.is_available() {
-                    return Ok(info.address.clone());
-                }
-            }
-        }
-
-        // If NoKeySource, we can't generate new addresses
-        if matches!(key_source, KeySource::NoKeySource) {
-            return Err(Error::NoKeySource);
-        }
-
-        // Generate a new address
-        let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-        self.generate_address_at_index(next_index, key_source, add_to_state)
+        self.next_unused_with_info(key_source, add_to_state).map(|info| info.address)
     }
 
     /// Get the next unused address info
@@ -608,12 +601,8 @@ impl AddressPool {
         add_to_state: bool,
     ) -> Result<AddressInfo> {
         // First, try to find an already generated unused address
-        for i in 0..=self.highest_generated.unwrap_or(0) {
-            if let Some(info) = self.addresses.get(&i) {
-                if info.is_available() {
-                    return Ok(info.clone());
-                }
-            }
+        if let Some(info) = self.addresses.get(&self.next_unused_index()) {
+            return Ok(info.clone());
         }
 
         // If NoKeySource, we can't generate new addresses
@@ -621,14 +610,9 @@ impl AddressPool {
             return Err(Error::NoKeySource);
         }
 
-        // Generate a new address
-        let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-        self.generate_address_at_index(next_index, key_source, add_to_state)?;
-
-        // Return the AddressInfo we just created
-        self.addresses.get(&next_index).cloned().ok_or_else(|| {
-            Error::InvalidParameter("Failed to retrieve generated address info".into())
-        })
+        self.generate_addresses(1, key_source, add_to_state)?
+            .pop()
+            .ok_or_else(|| Error::InvalidState("generate_addresses(1) returned nothing".into()))
     }
 
     /// Reserve and return the next available address.
@@ -651,39 +635,15 @@ impl AddressPool {
     /// [`AddressPool::sweep_expired_reservations`], so callers are assumed
     /// trusted. Gate or cap this before exposing it to untrusted input.
     pub fn next_unused_and_reserve(&mut self, key_source: &KeySource, now: u64) -> Result<Address> {
-        for i in 0..=self.highest_generated.unwrap_or(0) {
-            if let Some(info) = self.addresses.get_mut(&i) {
-                if info.is_available() {
-                    info.state = AddressState::Reserved {
-                        at: now,
-                    };
-                    return Ok(info.address.clone());
-                }
-            }
-        }
-
-        if matches!(key_source, KeySource::NoKeySource) {
-            return Err(Error::NoKeySource);
-        }
-        let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-        let address = self.generate_address_at_index(next_index, key_source, true)?;
-        // `generate_address_at_index` with `add_to_state = true` always inserts
-        // at `next_index`. If `highest_generated` ever drifts out of sync with
-        // `addresses` a silent lookup miss would return an unreserved address,
-        // reintroducing the hand-out race this method exists to close, so report
-        // the broken invariant as an error rather than fail open.
-        let info = self.addresses.get_mut(&next_index).ok_or_else(|| {
-            Error::InvalidState(format!(
-                "next_unused_and_reserve: generate_address_at_index({}) succeeded but \
-                 the entry was not stored; pool invariant broken",
-                next_index
-            ))
+        let index = self.next_unused_with_info(key_source, true)?.index;
+        // A lookup miss would hand out an unreserved address, so fail instead.
+        let info = self.addresses.get_mut(&index).ok_or_else(|| {
+            Error::InvalidState(format!("next_unused_and_reserve: index {} not stored", index))
         })?;
-        debug_assert!(info.is_available());
         info.state = AddressState::Reserved {
             at: now,
         };
-        Ok(address)
+        Ok(info.address.clone())
     }
 
     /// Release a reservation, returning the address to the available pool.
@@ -775,21 +735,9 @@ impl AddressPool {
             return addresses;
         }
 
-        // Generate new addresses to fill the remaining count
-        let remaining = count - addresses.len();
-        let start_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-
-        for i in 0..remaining {
-            if let Ok(address) =
-                self.generate_address_at_index(start_index + i as u32, key_source, add_to_state)
-            {
-                addresses.push(address);
-            } else {
-                // If generation fails, return what we have so far
-                break;
-            }
-        }
-
+        let remaining = (count - addresses.len()) as u32;
+        let generated = self.generate_addresses(remaining, key_source, add_to_state);
+        addresses.extend(generated.unwrap_or_default().into_iter().map(|info| info.address));
         addresses
     }
 
@@ -831,22 +779,11 @@ impl AddressPool {
             return result;
         }
 
-        // Generate new addresses with info to fill the remaining count
-        let remaining = count - result.len();
-        let start_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-
-        for i in 0..remaining {
-            let index = start_index + i as u32;
-            if self.generate_address_at_index(index, key_source, add_to_state).is_ok() {
-                if let Some(info) = self.addresses.get(&index) {
-                    result.push((info.address.clone(), info.clone()));
-                }
-            } else {
-                // If generation fails, return what we have so far
-                break;
-            }
-        }
-
+        let remaining = (count - result.len()) as u32;
+        let generated = self.generate_addresses(remaining, key_source, add_to_state);
+        result.extend(
+            generated.unwrap_or_default().into_iter().map(|info| (info.address.clone(), info)),
+        );
         result
     }
 
@@ -860,9 +797,7 @@ impl AddressPool {
         let mut current_index = 0;
 
         // Collect existing unused addresses
-        while unused.len() < count as usize
-            && self.highest_generated.map(|h| current_index <= h).unwrap_or(false)
-        {
+        while unused.len() < count as usize && current_index < self.next_index_to_derive() {
             if let Some(info) = self.addresses.get(&current_index) {
                 if info.is_available() {
                     unused.push(info.address.clone());
@@ -871,13 +806,9 @@ impl AddressPool {
             current_index += 1;
         }
 
-        // Generate more if needed
-        while unused.len() < count as usize {
-            let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-            let address = self.generate_address_at_index(next_index, key_source, true)?;
-            unused.push(address);
-        }
-
+        let remaining = count - unused.len() as u32;
+        let generated = self.generate_addresses(remaining, key_source, true)?;
+        unused.extend(generated.into_iter().map(|info| info.address));
         Ok(unused)
     }
 
@@ -1031,14 +962,7 @@ impl AddressPool {
             return Ok(Vec::new());
         }
 
-        // Generate addresses up to end_index if needed
-        let current_highest = self.highest_generated.unwrap_or(0);
-        if end_index > current_highest + 1 {
-            // Generate from current_highest + 1 to end_index - 1
-            for index in (current_highest + 1)..end_index {
-                self.generate_address_at_index(index, key_source, true)?;
-            }
-        }
+        self.generate_up_to(end_index - 1, key_source)?;
 
         // Collect addresses in the range
         let mut addresses = Vec::new();
@@ -1084,27 +1008,7 @@ impl AddressPool {
             None => self.gap_limit - 1,
             Some(highest) => highest + self.gap_limit,
         };
-
-        let mut new_addresses = Vec::new();
-        while self.highest_generated.unwrap_or(0) < target {
-            let next_index = self.highest_generated.map(|h| h + 1).unwrap_or(0);
-            self.generate_address_at_index(next_index, key_source, true)?;
-            // `generate_address_at_index` with `add_to_state = true` always
-            // inserts at `next_index`. Surfacing a regression that breaks it
-            // (e.g. a refactor that hits the early-return branch on a
-            // re-derivation) as an error keeps the outer `while` from spinning
-            // into an infinite loop.
-            let info = self.addresses.get(&next_index).cloned().ok_or_else(|| {
-                Error::InvalidState(format!(
-                    "maintain_gap_limit: generate_address_at_index({}) succeeded but \
-                     the entry was not stored; pool invariant broken",
-                    next_index
-                ))
-            })?;
-            new_addresses.push(info);
-        }
-
-        Ok(new_addresses)
+        self.generate_up_to(target, key_source)
     }
 
     /// Set a custom label for an address
@@ -1402,7 +1306,7 @@ mod tests {
         let key_source = test_key_source();
 
         let addresses = pool.generate_addresses(5, &key_source, true).unwrap();
-        let first_addr = &addresses[0];
+        let first_addr = &addresses[0].address;
 
         assert!(pool.mark_used(first_addr));
         assert_eq!(pool.used_indices.len(), 1);
@@ -1828,7 +1732,9 @@ mod tests {
 
         // Simulate checking for usage - mark addresses at indices 2, 5, 7 as used
         let check_fn = |addr: &Address| {
-            addresses[2] == *addr || addresses[5] == *addr || addresses[7] == *addr
+            addresses[2].address == *addr
+                || addresses[5].address == *addr
+                || addresses[7].address == *addr
         };
 
         let found = pool.scan_for_usage(check_fn);

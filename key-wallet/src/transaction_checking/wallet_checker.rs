@@ -3997,6 +3997,7 @@ mod tests {
                 external_addresses
                     .generate_address_at_index(index, &KeySource::Public(xpub), true)
                     .unwrap()
+                    .address
             })
             .collect();
         let address = &addresses[0];

@@ -99,97 +99,6 @@ pub trait ManagedAccountTrait {
         self.managed_account_type()
     }
 
-    /// Get the next unused receive address index for standard accounts
-    fn get_next_receive_address_index(&self) -> Option<u32> {
-        if let ManagedAccountType::Standard {
-            external_addresses,
-            ..
-        } = self.managed_account_type()
-        {
-            next_index(external_addresses)
-        } else {
-            None
-        }
-    }
-
-    /// Get the next unused change address index for standard accounts
-    fn get_next_change_address_index(&self) -> Option<u32> {
-        if let ManagedAccountType::Standard {
-            internal_addresses,
-            ..
-        } = self.managed_account_type()
-        {
-            next_index(internal_addresses)
-        } else {
-            None
-        }
-    }
-
-    /// Get the next unused address index for single-pool account types
-    fn get_next_address_index(&self) -> Option<u32> {
-        match self.managed_account_type() {
-            ManagedAccountType::Standard {
-                ..
-            } => self.get_next_receive_address_index(),
-            ManagedAccountType::CoinJoin {
-                external_addresses: addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityRegistration {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityInvitation {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockShieldedAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderVotingKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOwnerKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOperatorKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderPlatformKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayReceivingFunds {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayExternalAccount {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::PlatformPayment {
-                addresses,
-                ..
-            } => next_index(addresses),
-        }
-    }
-
     /// Mark an address as used
     fn mark_address_used(&mut self, address: &Address) -> bool {
         self.managed_account_type_mut().mark_address_used(address)
@@ -643,12 +552,5 @@ pub trait ManagedAccountTrait {
                 ..
             } => Some(addresses.gap_limit),
         }
-    }
-}
-
-fn next_index(pool: &address_pool::AddressPool) -> Option<u32> {
-    match pool.unused_addresses().first() {
-        Some(addr) => pool.address_index(addr),
-        None => Some(pool.stats().highest_generated.map_or(0, |h| h + 1)),
     }
 }
