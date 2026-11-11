@@ -814,42 +814,23 @@ impl AddressPool {
 
     /// Mark an address as used
     pub fn mark_used(&mut self, address: &Address) -> bool {
-        if let Some(&index) = self.address_index.get(address) {
-            if let Some(info) = self.addresses.get_mut(&index) {
-                if !info.is_used() {
-                    info.mark_used();
-                    self.used_indices.insert(index);
+        let Some(&index) = self.address_index.get(address) else {
+            return false;
+        };
 
-                    // Update highest used
-                    self.highest_used = match self.highest_used {
-                        None => Some(index),
-                        Some(current) => Some(current.max(index)),
-                    };
+        let Some(info) = self.addresses.get_mut(&index) else {
+            return false;
+        };
 
-                    return true;
-                }
-            }
+        if info.is_used() {
+            return false;
         }
-        false
-    }
 
-    /// Mark an address at a specific index as used
-    pub fn mark_index_used(&mut self, index: u32) -> bool {
-        if let Some(info) = self.addresses.get_mut(&index) {
-            if !info.is_used() {
-                info.mark_used();
-                self.used_indices.insert(index);
+        info.mark_used();
+        self.used_indices.insert(index);
+        self.highest_used = Some(self.highest_used.map_or(index, |highest| highest.max(index)));
 
-                // Update highest used
-                self.highest_used = match self.highest_used {
-                    None => Some(index),
-                    Some(current) => Some(current.max(index)),
-                };
-
-                return true;
-            }
-        }
-        false
+        true
     }
 
     /// Scan addresses for usage using a check function
@@ -857,20 +838,15 @@ impl AddressPool {
     where
         F: Fn(&Address) -> bool,
     {
-        let mut found = Vec::new();
+        let found: Vec<Address> = self
+            .addresses
+            .values()
+            .filter(|info| !info.is_used() && check_fn(&info.address))
+            .map(|info| info.address.clone())
+            .collect();
 
-        for info in self.addresses.values_mut() {
-            if !info.is_used() && check_fn(&info.address) {
-                info.mark_used();
-                self.used_indices.insert(info.index);
-                found.push(info.address.clone());
-
-                // Update highest used
-                self.highest_used = match self.highest_used {
-                    None => Some(info.index),
-                    Some(current) => Some(current.max(info.index)),
-                };
-            }
+        for address in &found {
+            self.mark_used(address);
         }
 
         found
@@ -1604,7 +1580,7 @@ mod tests {
         pool.generate_addresses(10, &key_source, true).unwrap();
 
         // Mark index 0 used so keep_until = highest_used + gap_limit = 5.
-        pool.mark_index_used(0);
+        pool.mark_used(&pool.address_at_index(0).unwrap());
 
         // Reserve indices 1..=7 (first available each time, index 0 is used).
         let mut reserved = Vec::new();
@@ -1655,7 +1631,7 @@ mod tests {
         assert_eq!(pool.addresses.len(), gap_limit as usize);
 
         // Mark address at index 0 as used
-        pool.mark_index_used(0);
+        pool.mark_used(&pool.address_at_index(0).unwrap());
         assert_eq!(pool.highest_used, Some(0));
 
         // Should generate exactly 1 address to maintain gap_limit unused after index 0
@@ -1666,8 +1642,8 @@ mod tests {
         assert_eq!(pool.addresses.len(), gap_limit as usize + 1);
 
         // Mark address at index 1 and 2 as used
-        pool.mark_index_used(1);
-        pool.mark_index_used(2);
+        pool.mark_used(&pool.address_at_index(1).unwrap());
+        pool.mark_used(&pool.address_at_index(2).unwrap());
 
         // Should generate exactly 2 more addresses
         let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();

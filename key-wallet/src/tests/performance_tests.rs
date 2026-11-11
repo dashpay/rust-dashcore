@@ -288,7 +288,8 @@ fn test_gap_limit_scan_performance() {
     // Mark some as used (with gaps)
     let used_indices = vec![0, 1, 5, 10, 25, 50, 75];
     for &index in &used_indices {
-        pool.mark_index_used(index);
+        let address = pool.address_at_index(index).unwrap();
+        pool.mark_used(&address);
     }
 
     // Scan for gap limit

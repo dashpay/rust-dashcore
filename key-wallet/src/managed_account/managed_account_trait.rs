@@ -321,7 +321,7 @@ pub trait ManagedAccountTrait {
                     return Err("Expected BLS public key but got different key type");
                 };
 
-                addresses.mark_index_used(info.index);
+                addresses.mark_used(&info.address);
 
                 BLSPublicKey::try_from(pub_key_bytes.as_slice())
                     .map_err(|_| "BLS public key was not 48 bytes")?
@@ -356,7 +356,7 @@ pub trait ManagedAccountTrait {
                     return Err("Expected EdDSA public key but got different key type");
                 };
 
-                addresses.mark_index_used(info.index);
+                addresses.mark_used(&info.address);
 
                 let verifying_key = EddsaPkBytes::from_bytes(
                     pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
@@ -387,7 +387,7 @@ pub trait ManagedAccountTrait {
             .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
             .map_err(|_| "No unused address available")?;
 
-        pool.mark_index_used(info.index);
+        pool.mark_used(&info.address);
 
         let root_ext_priv = root_xpriv.to_extended_priv_key(network);
         let derived_xpriv =
@@ -398,8 +398,8 @@ pub trait ManagedAccountTrait {
         Ok(private_key)
     }
 
-    /// Peek at the next unused address's path and index without marking the index used.
-    fn peek_next_path(&mut self) -> Result<(crate::DerivationPath, u32), &'static str> {
+    /// Peek at the next unused address and its path without marking it used.
+    fn peek_next_path(&mut self) -> Result<(crate::DerivationPath, Address), &'static str> {
         if matches!(self.managed_account_type(), ManagedAccountType::Standard { .. }) {
             return Err("Standard accounts must use next_receive_address or next_change_address");
         }
@@ -411,25 +411,13 @@ pub trait ManagedAccountTrait {
             .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
             .map_err(|_| "No unused address available")?;
 
-        Ok((info.path, info.index))
-    }
-
-    /// Mark an index on the account's first address pool as used.
-    fn mark_first_pool_index_used(&mut self, index: u32) -> Result<(), &'static str> {
-        if matches!(self.managed_account_type(), ManagedAccountType::Standard { .. }) {
-            return Err("Standard accounts must use next_receive_address or next_change_address");
-        }
-
-        let mut pools = self.managed_account_type_mut().address_pools_mut();
-        let pool = pools.first_mut().ok_or("Account has no address pool")?;
-        pool.mark_index_used(index);
-        Ok(())
+        Ok((info.path, info.address))
     }
 
     /// Consume the next unused address and return only its derivation path.
     fn next_path(&mut self) -> Result<crate::DerivationPath, &'static str> {
-        let (path, index) = self.peek_next_path()?;
-        self.mark_first_pool_index_used(index)?;
+        let (path, address) = self.peek_next_path()?;
+        self.mark_address_used(&address);
         Ok(path)
     }
 
