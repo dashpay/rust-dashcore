@@ -197,14 +197,15 @@ impl FiltersPipeline {
     /// Handle a received CFilter message with filter data.
     ///
     /// Buffers the filter data for batch verification and wallet matching.
-    /// Returns `Some(batch_start)` (the `GetCFilters` request key) when a batch
-    /// completes, `None` otherwise.
+    /// Returns the stop hash of the batch's `GetCFilters` request when that request is over:
+    /// the batch completed, or its last filter arrived and earlier ones are missing. Peers
+    /// answer in order, so nothing more will come and the request must be declared again.
     pub(super) fn receive_with_data(
         &mut self,
         height: u32,
         block_hash: BlockHash,
         filter_data: &[u8],
-    ) -> Option<u32> {
+    ) -> Option<BlockHash> {
         // Find which batch this filter belongs to
         let batch_start = self.find_batch_for_height(height)?;
 
@@ -226,7 +227,17 @@ impl FiltersPipeline {
                     expected
                 );
             }
-            return None;
+            return if height == tracker.end_height() {
+                tracing::warn!(
+                    "Filter batch {} ended incomplete with {}/{} filters, requesting it again",
+                    batch_start,
+                    received,
+                    expected
+                );
+                self.batch_stops.get(&batch_start).copied()
+            } else {
+                None
+            };
         }
 
         let end_height = tracker.end_height();
@@ -235,7 +246,7 @@ impl FiltersPipeline {
             self.batch_trackers.get_mut(&batch_start).map(|t| t.take_filters()).unwrap_or_default();
 
         self.batch_trackers.remove(&batch_start);
-        self.batch_stops.remove(&batch_start);
+        let stop_hash = self.batch_stops.remove(&batch_start);
         for key in filters.keys() {
             self.block_heights.remove(key.hash());
         }
@@ -249,7 +260,18 @@ impl FiltersPipeline {
         let batch = FiltersBatch::new(batch_start, end_height, filters);
         self.completed_batches.insert(batch);
 
-        Some(batch_start)
+        stop_hash
+    }
+
+    /// Returns the stop hash of every batch still wanted, the keys of its `GetCFilters` requests.
+    pub(super) fn wanted_stops(&self) -> impl Iterator<Item = &BlockHash> {
+        self.batch_stops.values()
+    }
+
+    /// Wants the batch `start_height..=end_height` again. A rejected batch left the pipeline
+    /// when it completed, and without it the store order waits for it forever.
+    pub(super) fn requeue_rejected(&mut self, start_height: u32, end_height: u32) {
+        self.batch_trackers.insert(start_height, BatchTracker::new(end_height));
     }
 
     /// Returns the start height of the wanted batch that contains `height`.
@@ -397,20 +419,22 @@ mod tests {
     }
 
     #[test]
-    fn test_receive_batch_completion_returns_batch_start() {
+    fn test_receive_batch_completion_returns_the_stop_hash() {
         let mut pipeline = FiltersPipeline::new();
         pipeline.target_height = 2;
         pipeline.batch_trackers.insert(0, BatchTracker::new(2));
+        let stop_hash = Header::dummy(2).block_hash();
+        pipeline.batch_stops.insert(0, stop_hash);
 
-        let mut completed_at = None;
+        let mut completed_with = None;
         for h in 0..=2 {
             let hash = Header::dummy(h).block_hash();
-            if let Some(start) = pipeline.receive_with_data(h, hash, &dummy_filter_data(h)) {
-                completed_at = Some(start);
+            if let Some(stop) = pipeline.receive_with_data(h, hash, &dummy_filter_data(h)) {
+                completed_with = Some(stop);
             }
         }
 
-        assert_eq!(completed_at, Some(0));
+        assert_eq!(completed_with, Some(stop_hash));
         assert!(pipeline.batch_trackers.is_empty());
         assert!(!pipeline.batch_stops.contains_key(&0));
         assert_eq!(pipeline.completed_batches.len(), 1);

@@ -46,9 +46,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         msg: InboundMessage,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
+        // Released whatever comes of the reply: a reply that matches nothing must not leave
+        // its key settled, and a batch still wanted is declared again.
         if let NetworkMessage::CFHeaders(cfheaders) = &*msg {
+            network.release_request(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
             if self.pipeline.receive_below(cfheaders) {
-                network.release_request(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
                 return self.store_lower_batches().await;
             }
         }
@@ -62,8 +64,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             }
             return Ok(vec![]);
         };
-
-        network.release_request(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
 
         let mut events = Vec::new();
 
