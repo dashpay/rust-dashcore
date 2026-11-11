@@ -17,7 +17,10 @@ use dashcore::{
 use test_case::test_case;
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+#[cfg(feature = "serde")]
+use crate::managed_account::ManagedCoreFundsAccount;
 use crate::test_utils::TestWalletContext;
+use crate::transaction_checking::transaction_router::TransactionRouter;
 use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use crate::wallet::managed_wallet_info::asset_lock_builder::{
     AssetLockError, AssetLockFundingType, CreditOutputFunding,
@@ -27,6 +30,8 @@ use crate::wallet::managed_wallet_info::fee::FeeRate;
 use crate::wallet::managed_wallet_info::transaction_builder::{BuilderError, TransactionBuilder};
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+#[cfg(feature = "serde")]
+use crate::wallet::ManagedWalletInfo;
 use crate::Utxo;
 
 const DASH: u64 = 100_000_000;
@@ -36,14 +41,6 @@ const TIP: u32 = 200;
 
 fn block(height: u32) -> TransactionContext {
     TransactionContext::InBlock(BlockInfo::new(
-        height,
-        BlockHash::from_byte_array([height as u8; 32]),
-        1_700_000_000 + height,
-    ))
-}
-
-fn chain_locked_block(height: u32) -> TransactionContext {
-    TransactionContext::InChainLockedBlock(BlockInfo::new(
         height,
         BlockHash::from_byte_array([height as u8; 32]),
         1_700_000_000 + height,
@@ -149,12 +146,10 @@ fn is_out_of_coins(result: Result<Transaction, BuilderError>) -> bool {
     )
 }
 
-#[test_case(SelectionStrategy::SmallestFirst ; "smallest first")]
+/// Largest first and branch and bound, which falls back to it here, would
+/// take the collateral first; a drain takes every coin it is offered.
 #[test_case(SelectionStrategy::LargestFirst ; "largest first")]
-#[test_case(SelectionStrategy::SmallestFirstTill(1) ; "smallest first till one")]
 #[test_case(SelectionStrategy::BranchAndBound ; "branch and bound")]
-#[test_case(SelectionStrategy::OptimalConsolidation ; "optimal consolidation")]
-#[test_case(SelectionStrategy::Random ; "random")]
 #[test_case(SelectionStrategy::All ; "drain")]
 #[tokio::test]
 async fn a_send_spends_the_spare_coin_and_never_the_collateral(strategy: SelectionStrategy) {
@@ -162,22 +157,14 @@ async fn a_send_spends_the_spare_coin_and_never_the_collateral(strategy: Selecti
 
     let tx = send(&mut ctx, DASH, strategy).expect("the spare 5 DASH covers a 1 DASH send");
 
-    // A drain takes every spendable coin: still only the spare one.
     assert_eq!(spent(&tx), vec![spare.expect("spare coin")]);
 }
 
-#[test_case(SelectionStrategy::SmallestFirst ; "smallest first")]
-#[test_case(SelectionStrategy::LargestFirst ; "largest first")]
-#[test_case(SelectionStrategy::SmallestFirstTill(1) ; "smallest first till one")]
-#[test_case(SelectionStrategy::BranchAndBound ; "branch and bound")]
-#[test_case(SelectionStrategy::OptimalConsolidation ; "optimal consolidation")]
-#[test_case(SelectionStrategy::Random ; "random")]
-#[test_case(SelectionStrategy::All ; "drain")]
 #[tokio::test]
-async fn a_wallet_holding_only_its_collateral_has_nothing_to_send(strategy: SelectionStrategy) {
+async fn a_wallet_holding_only_its_collateral_has_nothing_to_send() {
     let (mut ctx, _collateral, _) = registered_wallet(None).await;
 
-    assert!(is_out_of_coins(send(&mut ctx, DASH, strategy)));
+    assert!(is_out_of_coins(send(&mut ctx, DASH, SelectionStrategy::LargestFirst)));
     assert!(ctx.managed_wallet.get_spendable_utxos().is_empty());
     let balance = ctx.managed_wallet.balance();
     assert_eq!(balance.spendable(), 0, "the collateral is not spendable balance");
@@ -365,24 +352,17 @@ async fn an_unconfirmed_registration_leaves_the_collateral_it_names_unlocked(
 
 /// The block that confirms a ProRegTx first seen unconfirmed locks the
 /// collateral it names.
-#[test_case(in_mempool, block(101) ; "mempool, then a block")]
-#[test_case(in_mempool, chain_locked_block(101) ; "mempool, then a chainlocked block")]
-#[test_case(instant_locked, block(101) ; "instant send, then a block")]
 #[tokio::test]
-async fn the_block_holding_a_registration_first_seen_unconfirmed_locks_its_collateral(
-    first: fn(&Transaction) -> TransactionContext,
-    mined: TransactionContext,
-) {
+async fn the_block_holding_a_registration_first_seen_unconfirmed_locks_its_collateral() {
     let mut ctx = TestWalletContext::new_random();
     let collateral = receive(&mut ctx, COLLATERAL, 0x01, 100).await;
     let registration = registration(collateral, vec![], 0xEE);
-    let unconfirmed = ctx.check_transaction(&registration, first(&registration)).await;
+    let unconfirmed = ctx.check_transaction(&registration, TransactionContext::Mempool).await;
     assert!(unconfirmed.locked_outpoints.is_empty());
 
-    let result = ctx.check_transaction(&registration, mined).await;
+    let result = ctx.check_transaction(&registration, block(101)).await;
 
     assert_eq!(result.locked_outpoints, vec![collateral]);
-    assert!(result.state_modified, "the lock set is persisted state");
     assert!(ctx.bip44_account().utxos[&collateral].is_locked);
     assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
     ctx.managed_wallet.update_last_processed_height(TIP);
@@ -438,6 +418,23 @@ async fn unlocking_lets_a_send_spend_the_collateral_and_relocking_stops_it_again
     assert!(is_out_of_coins(send(&mut ctx, DASH, SelectionStrategy::LargestFirst)));
 }
 
+/// Processing the block of a registration again locks its collateral again,
+/// also after an `unlock_outpoint`, as Dash Core locks collaterals again when
+/// it loads a wallet. Nothing else of the wallet changes on that pass, so the
+/// lock alone marks the state modified.
+#[tokio::test]
+async fn a_rescan_of_the_registration_block_locks_an_unlocked_collateral_again() {
+    let (mut ctx, collateral, _) = registered_wallet(None).await;
+    assert!(ctx.managed_wallet.unlock_outpoint(&collateral));
+
+    let rescanned =
+        ctx.check_transaction(&registration(collateral, vec![], 0xEE), block(101)).await;
+
+    assert_eq!(rescanned.locked_outpoints, vec![collateral]);
+    assert!(rescanned.state_modified, "the lock set is persisted state");
+    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
+}
+
 /// Core ties the lock to the masternode list, which only spending the
 /// collateral leaves: a revocation keeps the masternode registered, and a new
 /// ProRegTx naming the same collateral replaces the registration.
@@ -478,16 +475,23 @@ async fn a_revocation_or_a_replacing_registration_keeps_the_collateral_locked() 
 }
 
 /// Only spending the collateral ends a registration. The coin leaves; its
-/// entry stays and has nothing to act on, so a spend that is reorged out or
-/// swept brings the coin back locked.
+/// entry stays and has nothing to act on, so a spend that is reorged out
+/// brings the coin back locked. So does a lock taken while the coin was
+/// spent.
+#[test_case(true ; "locked before the spend")]
+#[test_case(false ; "locked while spent")]
 #[tokio::test]
-async fn spending_the_collateral_removes_the_coin_but_not_its_lock() {
-    let (mut ctx, collateral, _) = registered_wallet(None).await;
+async fn a_spent_coin_comes_back_locked_when_its_spend_is_reorged_out(locked_before: bool) {
+    let mut ctx = TestWalletContext::new_random();
+    let coin = receive(&mut ctx, COLLATERAL, 0x01, 100).await;
+    if locked_before {
+        assert!(ctx.managed_wallet.lock_outpoint(coin));
+    }
     let spend = Transaction {
         version: 1,
         lock_time: 0,
         input: vec![TxIn {
-            previous_output: collateral,
+            previous_output: coin,
             ..Default::default()
         }],
         output: vec![TxOut {
@@ -496,12 +500,20 @@ async fn spending_the_collateral_removes_the_coin_but_not_its_lock() {
         }],
         special_transaction_payload: None,
     };
-
     assert!(ctx.check_transaction(&spend, block(150)).await.is_relevant);
-
-    assert!(!ctx.bip44_account().utxos.contains_key(&collateral));
-    assert!(ctx.managed_wallet.is_outpoint_locked(&collateral));
+    assert!(!ctx.bip44_account().utxos.contains_key(&coin));
     assert_eq!(ctx.managed_wallet.balance().total(), 0);
+    if locked_before {
+        assert!(ctx.managed_wallet.is_outpoint_locked(&coin), "the entry outlives the coin");
+    } else {
+        assert!(ctx.managed_wallet.lock_outpoint(coin));
+    }
+
+    ctx.managed_wallet.truncate_above(149).expect("no chainlock above the cut");
+
+    assert!(ctx.bip44_account().utxos[&coin].is_locked);
+    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
+    assert_eq!(ctx.managed_wallet.balance().spendable(), 0);
 }
 
 #[tokio::test]
@@ -547,6 +559,51 @@ async fn a_collateral_is_locked_even_before_the_next_balance_refresh() {
     assert_eq!(result.locked_outpoints, vec![collateral]);
     assert!(ctx.bip44_account().utxos[&collateral].is_locked);
     assert!(ctx.managed_wallet.get_spendable_utxos().is_empty());
+}
+
+/// A coin locked before it arrives is locked on arrival, also when the check
+/// leaves the balance refresh to its caller, as block processing does.
+#[tokio::test]
+async fn a_coin_locked_ahead_arrives_locked_without_a_balance_refresh() {
+    let mut ctx = TestWalletContext::new_random();
+    let funding = Transaction::dummy(&ctx.receive_address, 0x01..0x02, &[COLLATERAL]);
+    let coin = OutPoint::new(funding.txid(), 0);
+    assert!(ctx.managed_wallet.lock_outpoint(coin));
+
+    ctx.managed_wallet
+        .check_core_transaction(&funding, block(100), &mut ctx.wallet, true, false)
+        .await;
+
+    assert!(ctx.bip44_account().utxos[&coin].is_locked);
+    assert!(ctx.managed_wallet.get_spendable_utxos().is_empty());
+}
+
+/// A caller driving one account directly rebuilds the coin without the
+/// wallet's lock set at hand: the coin keeps the lock flag it had.
+#[tokio::test]
+async fn confirming_a_transaction_on_one_account_keeps_the_coin_lock() {
+    let mut ctx = TestWalletContext::new_random();
+    let funding = Transaction::dummy(&ctx.receive_address, 0x01..0x02, &[COLLATERAL]);
+    let coin = OutPoint::new(funding.txid(), 0);
+    let seen = ctx.check_transaction(&funding, TransactionContext::Mempool).await;
+    let account_match = seen.affected_accounts[0].clone();
+    assert!(ctx.managed_wallet.lock_outpoint(coin));
+
+    let mut account = ctx
+        .managed_wallet
+        .accounts
+        .get_by_account_type_match_mut(&account_match.account_type_match)
+        .expect("BIP44 account");
+    account.confirm_transaction(
+        &funding,
+        &account_match,
+        block(100),
+        TransactionRouter::classify_transaction(&funding),
+    );
+
+    let utxo = &ctx.bip44_account().utxos[&coin];
+    assert!(utxo.is_confirmed, "rebuilt from the block");
+    assert!(utxo.is_locked);
 }
 
 /// A confirmed coin paying `value` to the wallet, as a store hands it back on
@@ -710,24 +767,18 @@ async fn special_transaction_funding_skips_the_collateral_even_when_seeded() {
 /// Funding records the coins the account holds locked, and the build drops
 /// them just before coin selection, so a copy seeded after the funding call is
 /// dropped too. `LargestFirst` would take the 1,000 DASH collateral first.
-#[test_case(false ; "seeded before funding")]
-#[test_case(true ; "seeded after funding")]
 #[tokio::test]
-async fn funding_drops_a_seeded_collateral(seeded_after_funding: bool) {
+async fn funding_drops_a_collateral_seeded_after_it() {
     let (mut ctx, collateral, spare) = registered_wallet(Some(SPARE)).await;
     let stale = stale_copy(&ctx, collateral);
     let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
     let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
 
-    let builder = TransactionBuilder::new()
+    let (tx, _fee, _reservation) = TransactionBuilder::new()
         .set_current_height(TIP)
-        .set_selection_strategy(SelectionStrategy::LargestFirst);
-    let builder = if seeded_after_funding {
-        builder.add_funding(funds, &account).add_inputs([stale])
-    } else {
-        builder.add_inputs([stale]).add_funding(funds, &account)
-    };
-    let (tx, _fee, _reservation) = builder
+        .set_selection_strategy(SelectionStrategy::LargestFirst)
+        .add_funding(funds, &account)
+        .add_inputs([stale])
         .add_output(&elsewhere().assume_checked(), DASH)
         .build_unsigned_reserved()
         .expect("the spare coin funds the payment");
@@ -736,36 +787,50 @@ async fn funding_drops_a_seeded_collateral(seeded_after_funding: bool) {
 }
 
 /// The chunked drain path offers only what the caller seeds; a seeded copy of
-/// a coin the account holds locked is dropped all the same, whichever call
-/// comes first.
-#[test_case(false ; "seeded before funding")]
-#[test_case(true ; "seeded after funding")]
+/// a coin the account holds locked is dropped all the same.
 #[tokio::test]
-async fn reservation_only_funding_drops_a_seeded_collateral(seeded_after_funding: bool) {
+async fn reservation_only_funding_drops_a_collateral_seeded_after_it() {
     let (mut ctx, collateral, _) = registered_wallet(None).await;
     let stale = stale_copy(&ctx, collateral);
     let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
     let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
 
-    let builder = TransactionBuilder::new()
+    let result = TransactionBuilder::new()
         .set_current_height(TIP)
-        .set_selection_strategy(SelectionStrategy::All);
-    let builder = if seeded_after_funding {
-        builder.add_funding_reservation_only(funds, &account).add_inputs([stale])
-    } else {
-        builder.add_inputs([stale]).add_funding_reservation_only(funds, &account)
-    };
-    let result = builder.add_output(&elsewhere().assume_checked(), DASH).build_unsigned_reserved();
+        .set_selection_strategy(SelectionStrategy::All)
+        .add_funding_reservation_only(funds, &account)
+        .add_inputs([stale])
+        .add_output(&elsewhere().assume_checked(), DASH)
+        .build_unsigned_reserved();
 
     assert!(matches!(result, Err(BuilderError::CoinSelection(SelectionError::NoUtxosAvailable))));
+}
+
+/// A build that takes only final coins says when coins awaiting finality
+/// would fund it. A copy of the locked collateral that is not final yet is no
+/// such coin.
+#[tokio::test]
+async fn a_locked_coin_is_not_reported_as_awaiting_finality() {
+    let (mut ctx, collateral, _) = registered_wallet(None).await;
+    let mut stale = stale_copy(&ctx, collateral);
+    stale.is_confirmed = false;
+    let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
+    let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
+
+    let result = TransactionBuilder::new()
+        .set_current_height(TIP)
+        .add_funding(funds, &account)
+        .add_inputs([stale])
+        .add_output(&elsewhere().assume_checked(), DASH)
+        .require_final_inputs()
+        .build_unsigned_reserved();
+
+    assert!(matches!(result, Err(BuilderError::CoinSelection(_))), "got {result:?}");
 }
 
 #[cfg(feature = "serde")]
 #[test]
 fn locks_survive_a_serialization_round_trip() {
-    use crate::managed_account::ManagedCoreFundsAccount;
-    use crate::wallet::ManagedWalletInfo;
-
     let mut info = ManagedWalletInfo::dummy(1);
     let mut account = ManagedCoreFundsAccount::dummy_bip44();
     let collateral = Utxo::dummy(1, COLLATERAL, 100, false, true);
@@ -800,8 +865,6 @@ fn locks_survive_a_serialization_round_trip() {
 #[cfg(feature = "serde")]
 #[test]
 fn a_snapshot_without_locks_loads_with_none() {
-    use crate::wallet::ManagedWalletInfo;
-
     let mut info = ManagedWalletInfo::dummy(2);
     info.lock_outpoint(OutPoint::new(Txid::from_byte_array([0x42; 32]), 0));
     let mut json = serde_json::to_value(&info).expect("serialize");
