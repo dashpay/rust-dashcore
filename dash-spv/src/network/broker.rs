@@ -257,9 +257,11 @@ impl Broker {
         if peers.is_empty() {
             return 0;
         }
-        let total_in_flight: u64 = peers.iter().map(PeerHandle::in_flight_bytes).sum();
-        let per_peer_room: u64 =
-            peers.iter().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
+        // A closed peer still listed is sent nothing, so its room would pop work that only
+        // goes back to the queue and wakes the router again at once.
+        let live = || peers.iter().filter(|p| !p.is_closed());
+        let total_in_flight: u64 = live().map(PeerHandle::in_flight_bytes).sum();
+        let per_peer_room: u64 = live().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
         let budget = per_peer_room.min(global_cap.saturating_sub(total_in_flight));
         if budget == 0 {
             return 0;
@@ -582,6 +584,7 @@ mod tests {
     use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
     use dashcore::network::message_sml::GetMnListDiff;
     use dashcore::Txid;
+    use futures::FutureExt;
     use test_case::test_case;
 
     fn get_headers(locator: u32) -> NetworkMessage {
@@ -684,6 +687,13 @@ mod tests {
         broker.mark_on_wire(&get_cfilters(0), gone.id()).await;
         gone.close();
         broker.requeue_from(&HashSet::from([gone.id()])).await;
+        broker.notified().await;
+
+        // With only the closed peer listed nothing is popped, so the router is not woken
+        // again and waits for a real change instead of spinning.
+        assert_eq!(broker.route(&[gone.handle()], u64::MAX, &ResponseCosts::new()).await, 0);
+        assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, Some("queued"));
+        assert!(broker.notified().now_or_never().is_none(), "the router was woken again");
 
         // Only the charge matters here: the loopback has no reader to answer it.
         broker.route(&[gone.handle(), other.handle()], u64::MAX, &ResponseCosts::new()).await;
