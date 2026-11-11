@@ -926,6 +926,8 @@ impl Exploration {
 /// Why a peer of a full set is to be replaced.
 #[derive(Clone, Copy)]
 enum Replace {
+    /// A peer of a set where every peer refused a queued request.
+    Refused(SocketAddr),
     Slow(SocketAddr),
     Crowded(SocketAddr),
     /// The slowest of a set that serves slowly as a whole, rotated out to explore, and
@@ -936,12 +938,16 @@ enum Replace {
 impl Replace {
     fn addr(self) -> SocketAddr {
         match self {
-            Replace::Slow(addr) | Replace::Crowded(addr) | Replace::Rotated(addr, _) => addr,
+            Replace::Refused(addr)
+            | Replace::Slow(addr)
+            | Replace::Crowded(addr)
+            | Replace::Rotated(addr, _) => addr,
         }
     }
 
     fn reason(self) -> &'static str {
         match self {
+            Replace::Refused(_) => "refusing",
             Replace::Slow(_) => "slow",
             Replace::Crowded(_) => "crowded",
             Replace::Rotated(..) => "rotated",
@@ -951,7 +957,7 @@ impl Replace {
     /// Which candidates may replace the peer.
     fn pick(self) -> Pick {
         match self {
-            Replace::Slow(_) => Pick::Any,
+            Replace::Refused(_) | Replace::Slow(_) => Pick::Any,
             Replace::Crowded(_) => Pick::NewGroups,
             Replace::Rotated(..) => Pick::Faster,
         }
@@ -1033,11 +1039,20 @@ impl Supervisor {
             // or an untried address is worth a swap even when no peer looks slow.
             let has_work = self.state.broker.len() > 0;
             let explore = deficit == 0 && has_work && !stalled;
+            // A request every peer refused is served by none of them, however long it waits.
+            let addrs: Vec<SocketAddr> = peers.iter().map(|p| p.addr()).collect();
+            let refused = self.state.broker.refused_by_all(&addrs).await;
             let replace = if deficit == 0 && cooled {
-                (!stalled)
-                    .then(|| underserving_peer(&peers))
+                refused
+                    .then(|| slowest_peer(peers.iter()))
                     .flatten()
-                    .map(|slow| Replace::Slow(slow.addr))
+                    .map(Replace::Refused)
+                    .or_else(|| {
+                        (!stalled)
+                            .then(|| underserving_peer(&peers))
+                            .flatten()
+                            .map(|slow| Replace::Slow(slow.addr))
+                    })
                     .or_else(|| {
                         (explore && probe_cooled)
                             .then(|| crowded_peer(&peers))
@@ -1302,14 +1317,20 @@ fn rotation_peer(peers: &[ConnectedPeer]) -> Result<(SocketAddr, u64), &'static 
 }
 
 /// The slowest peer of the most crowded network group, if any group holds more than one
-/// peer. An unmeasured peer counts as slowest, and a higher handshake ping breaks ties.
+/// peer.
 fn crowded_peer(peers: &[ConnectedPeer]) -> Option<SocketAddr> {
     let mut groups: HashMap<NetGroup, Vec<&ConnectedPeer>> = HashMap::new();
     for peer in peers {
         groups.entry(NetGroup::of(peer.addr())).or_default().push(peer);
     }
     let crowded = groups.into_values().filter(|group| group.len() > 1).max_by_key(Vec::len)?;
-    crowded.into_iter().min_by_key(|p| (p.serving_rate(), Reverse(lag_key(p)))).map(|p| p.addr())
+    slowest_peer(crowded.into_iter())
+}
+
+/// The slowest of `peers`. An unmeasured peer counts as slowest, and a higher handshake
+/// ping breaks ties.
+fn slowest_peer<'a>(peers: impl Iterator<Item = &'a ConnectedPeer>) -> Option<SocketAddr> {
+    peers.min_by_key(|p| (p.serving_rate(), Reverse(lag_key(p)))).map(|p| p.addr())
 }
 
 fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
@@ -1935,6 +1956,8 @@ mod tests {
 
     enum Spread {
         Work,
+        /// A block every peer sent `notfound` for waits in the queue.
+        Refused,
         NoWork,
         Stalled,
         Exclusive,
@@ -1993,7 +2016,15 @@ mod tests {
             let admitted = state.connected.admit(peer, &session, state.max_peers, None).await;
             assert!(matches!(admitted, Admission::Joined));
         }
-        if !matches!(spread, Spread::NoWork) {
+        if matches!(spread, Spread::Refused) {
+            state.broker.enqueue(0, NetworkMessage::GetData(vec![block(1)])).await;
+            let handles: Vec<PeerHandle> =
+                state.connected.read().await.iter().map(|p| p.handle()).collect();
+            for one in handles.chunks(1) {
+                assert_eq!(state.broker.route(one, &state.costs).await, 1);
+                state.broker.not_found(one[0].id(), &[block(1)]).await;
+            }
+        } else if !matches!(spread, Spread::NoWork) {
             state.broker.enqueue(0, get_cfilters(0)).await;
         }
         if matches!(spread, Spread::Stalled) {
@@ -2075,6 +2106,7 @@ mod tests {
     #[test_case([120_000, 100_000, 110_000], Spread::Stalled, 1 => Vec::<usize>::new(); "not while the link is stalled")]
     #[test_case([120_000, 100_000, 110_000], Spread::Exclusive, 1 => Vec::<usize>::new(); "configured peers are kept")]
     #[test_case([3_000_000, 2_500_000, 2_800_000], Spread::Work, 1 => Vec::<usize>::new(); "a healthy set is not churned")]
+    #[test_case([3_000_000, 2_500_000, 2_800_000], Spread::Refused, 1 => vec![1]; "a healthy set that refused a request swaps its slowest")]
     #[tokio::test]
     async fn a_slow_set_rotates_its_slowest_peer(
         rates: [u64; 3],

@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::mem;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dashcore::network::message::NetworkMessage;
@@ -25,6 +27,9 @@ const HEDGE_OVERDUE: Duration = Duration::from_secs(10);
 /// rate the request was routed by. A peer's queue can hold many seconds of work, and a copy
 /// sent while the batch merely waits in it is downloaded twice.
 const HEDGE_QUEUE_FACTOR: f64 = 2.0;
+/// A peer that refused a request is not asked for it again for this long. A node whose
+/// filter index is still catching up refuses only briefly, so the refusal must not last.
+const REFUSAL_HELD: Duration = Duration::from_secs(10);
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
 const DRAIN_PRIORITY: [MsgClass; MSG_CLASSES] =
@@ -63,8 +68,7 @@ pub fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
 }
 
 enum ReqState {
-    /// Attempts so far.
-    Queued(u32),
+    Queued(Retry),
     OnWire(Box<OnWire>),
     /// The whole reply was received and waits for its manager to release the key.
     Arrived,
@@ -83,10 +87,32 @@ struct OnWire {
     sent: Instant,
     /// How long after `sent` the request is overdue although its peer keeps delivering.
     overdue_after: Duration,
+    /// Rises with every message sent, in send order, which is the order peers answer in.
+    order: u64,
     msg: NetworkMessage,
     height: u32,
     hedge: Option<PeerId>,
+    retry: Retry,
+}
+
+/// What earlier attempts of a request taught.
+#[derive(Clone, Default)]
+struct Retry {
     attempts: u32,
+    /// Peers that let the request expire, skipped it or sent `notfound`, and when.
+    refused: Vec<(SocketAddr, Instant)>,
+}
+
+impl Retry {
+    fn refuse(&mut self, addr: SocketAddr) {
+        self.refused.retain(|(a, _)| *a != addr);
+        self.refused.push((addr, Instant::now()));
+    }
+
+    /// The peers that refused the request within [`REFUSAL_HELD`].
+    fn refusers(&self) -> impl Iterator<Item = SocketAddr> + '_ {
+        self.refused.iter().filter(|(_, at)| at.elapsed() < REFUSAL_HELD).map(|(addr, _)| *addr)
+    }
 }
 
 /// The request queue plus the registry of every keyed request in play, queued, on the
@@ -94,6 +120,7 @@ struct OnWire {
 pub struct Broker {
     queue: MsgQueue,
     requests: Mutex<HashMap<RequestKey, ReqState>>,
+    sends: AtomicU64,
 }
 
 impl Broker {
@@ -101,6 +128,7 @@ impl Broker {
         Self {
             queue: MsgQueue::new(),
             requests: Mutex::new(HashMap::new()),
+            sends: AtomicU64::new(0),
         }
     }
 
@@ -124,7 +152,7 @@ impl Broker {
                 return;
             }
             for key in keys {
-                reqs.insert(key, ReqState::Queued(0));
+                reqs.insert(key, ReqState::Queued(Retry::default()));
             }
         }
         self.queue.push(height, msg).await;
@@ -160,7 +188,13 @@ impl Broker {
         self.queue.pop_n(self.queue.len()).await;
     }
 
-    async fn requeue(&self, matches: impl Fn(&RequestKey, &OnWire) -> bool) -> usize {
+    /// Re-queues the on-wire requests `matches` selects. With `refused`, their peers count as
+    /// having refused them.
+    async fn requeue(
+        &self,
+        matches: impl Fn(&RequestKey, &OnWire) -> bool,
+        refused: bool,
+    ) -> usize {
         let retried: Vec<(u32, NetworkMessage)> = {
             let mut reqs = self.requests.lock().await;
             let keys: Vec<RequestKey> = reqs
@@ -173,8 +207,18 @@ impl Broker {
             keys.into_iter()
                 .filter_map(|key| match reqs.remove(&key) {
                     Some(ReqState::OnWire(o)) => {
-                        reqs.insert(key, ReqState::Queued(o.attempts));
-                        Some((o.height, o.msg))
+                        let OnWire {
+                            peer,
+                            msg,
+                            height,
+                            mut retry,
+                            ..
+                        } = *o;
+                        if refused {
+                            retry.refuse(peer.addr());
+                        }
+                        reqs.insert(key, ReqState::Queued(retry));
+                        Some((height, msg))
                     }
                     _ => None,
                 })
@@ -195,7 +239,7 @@ impl Broker {
                 }
             }
         }
-        self.requeue(|_, o| gone.contains(&o.peer)).await
+        self.requeue(|_, o| gone.contains(&o.peer), false).await
     }
 
     pub async fn not_found(&self, peer: PeerId, inv: &[Inventory]) {
@@ -207,7 +251,7 @@ impl Broker {
             })
             .collect();
         if !keys.is_empty() {
-            self.requeue(|k, o| o.peer == peer && keys.contains(k)).await;
+            self.requeue(|k, o| o.peer == peer && keys.contains(k), true).await;
         }
     }
 
@@ -216,19 +260,55 @@ impl Broker {
     /// it. A request put back in the queue is settled by a copy from any peer, and its message
     /// dropped. The key stays registered until released, so a re-declare before then sends
     /// nothing, and a manager that cannot use the reply must release the key.
+    ///
+    /// Peers answer in request order, so a reply from the carrier proves it skipped every
+    /// earlier request it holds that also settles on arrival. Those are retried elsewhere.
     pub async fn arrived(&self, peer: PeerId, key: RequestKey) {
         let mut reqs = self.requests.lock().await;
-        match reqs.get(&key) {
-            Some(ReqState::OnWire(o)) if o.peer == peer || o.hedge == Some(peer) => {}
+        let skipped: HashSet<RequestKey> = match reqs.get(&key) {
+            Some(ReqState::OnWire(o)) if o.peer == peer => reqs
+                .iter()
+                .filter_map(|(earlier, state)| match state {
+                    ReqState::OnWire(e)
+                        if e.peer == peer && e.order < o.order && settles_on_arrival(earlier) =>
+                    {
+                        Some(earlier.clone())
+                    }
+                    _ => None,
+                })
+                .collect(),
+            Some(ReqState::OnWire(o)) if o.hedge == Some(peer) => HashSet::new(),
             Some(ReqState::Queued(_)) => {
                 reqs.remove(&key);
                 self.drop_queued(&key, &reqs).await;
+                HashSet::new()
             }
             _ => return,
-        }
+        };
         reqs.insert(key, ReqState::Arrived);
         drop(reqs);
+        if !skipped.is_empty() {
+            tracing::debug!(
+                target: "dash_spv::network",
+                "{} skipped {skipped:?}, retrying elsewhere",
+                peer.addr(),
+            );
+            self.requeue(|k, _| skipped.contains(k), true).await;
+        }
         self.wake();
+    }
+
+    /// Whether a request is queued that every peer at `addrs` refused within
+    /// [`REFUSAL_HELD`], so only another peer can serve it now.
+    pub async fn refused_by_all(&self, addrs: &[SocketAddr]) -> bool {
+        !addrs.is_empty()
+            && self.requests.lock().await.values().any(|state| match state {
+                ReqState::Queued(retry) => {
+                    let refusers: Vec<SocketAddr> = retry.refusers().collect();
+                    addrs.iter().all(|a| refusers.contains(a))
+                }
+                _ => false,
+            })
     }
 
     /// Peers answer in order, so any answer is progress on all of its requests.
@@ -279,21 +359,21 @@ impl Broker {
             } else {
                 continue;
             };
-            if o.attempts < KICKING_ATTEMPTS {
+            if o.retry.attempts < KICKING_ATTEMPTS {
                 let since = culprits.entry(o.peer).or_insert(silent_since);
                 *since = (*since).min(silent_since);
             } else {
                 tracing::debug!(
                     target: "dash_spv::network",
                     "{key:?} unanswered after {} attempts, retrying without kicking {}",
-                    o.attempts,
+                    o.retry.attempts,
                     o.peer,
                 );
                 unanswerable.insert(key.clone());
             }
         }
         if !unanswerable.is_empty() {
-            self.requeue(|k, _| unanswerable.contains(k)).await;
+            self.requeue(|k, _| unanswerable.contains(k), true).await;
         }
         culprits
     }
@@ -319,6 +399,16 @@ impl Broker {
             }
         }
         let msgs = self.queue.pop_guaranteed(budget, &guaranteed, |m| costs.cost(m)).await;
+        let refused: HashMap<RequestKey, Vec<SocketAddr>> = {
+            let reqs = self.requests.lock().await;
+            msgs.iter()
+                .flat_map(|(_, msg)| request_keys(msg))
+                .filter_map(|key| match reqs.get(&key) {
+                    Some(ReqState::Queued(retry)) => Some((key, retry.refusers().collect())),
+                    _ => None,
+                })
+                .collect()
+        };
         let mut sent = 0;
         // Popped but unsent goes back: its key is registered, so a dropped message
         // would stall its pipeline.
@@ -328,8 +418,16 @@ impl Broker {
         for (height, msg) in msgs.by_ref() {
             // `peers` can be a snapshot taken before the timeout monitor closed one of them.
             let open = peers.iter().filter(|p| !p.is_closed() && p.in_flight_bytes() < p.cap());
-            let Some(peer) = choose_peer(open, classify(&msg)) else {
+            let keys = request_keys(&msg);
+            let willing = open.clone().filter(|p| {
+                !keys.iter().any(|k| refused.get(k).is_some_and(|r| r.contains(&p.addr())))
+            });
+            let Some(peer) = choose_peer(willing, classify(&msg)) else {
                 unsent.push((height, msg));
+                // Every peer with room refused this one, so the next may still go out.
+                if open.clone().next().is_some() {
+                    continue;
+                }
                 break;
             };
             if peer.send(&msg).await.is_ok() {
@@ -343,29 +441,35 @@ impl Broker {
             }
         }
         unsent.extend(msgs);
-        self.queue.push_front_all(unsent).await;
+        // No wake: the router is the one waiting, and a wake for a refused message would spin it.
+        self.queue.restore(unsent).await;
 
         if !on_wire.is_empty() {
             let mut reqs = self.requests.lock().await;
             for (height, msg, peer, overdue_after) in on_wire {
+                let now = Instant::now();
+                // One order for all keys of a message: its peer answers them in inventory order.
+                let order = self.sends.fetch_add(1, Ordering::Relaxed);
                 for key in request_keys(&msg) {
                     if let Some(slot) = reqs.get_mut(&key) {
-                        let attempts = match slot {
-                            ReqState::Queued(attempts) => *attempts,
-                            ReqState::OnWire(o) => o.attempts,
+                        let mut retry = match slot {
+                            ReqState::Queued(retry) => mem::take(retry),
+                            ReqState::OnWire(o) => mem::take(&mut o.retry),
                             // The reply to a requeued request can arrive while it is resent.
                             ReqState::Arrived => continue,
                         };
+                        retry.attempts += 1;
                         *slot = ReqState::OnWire(Box::new(OnWire {
                             peer: peer.id(),
                             msg: msg.clone(),
                             height,
-                            last_progress: Instant::now(),
-                            last_answer: Instant::now(),
-                            sent: Instant::now(),
+                            last_progress: now,
+                            last_answer: now,
+                            sent: now,
                             overdue_after,
+                            order,
                             hedge: None,
-                            attempts: attempts + 1,
+                            retry,
                         }));
                     }
                 }
@@ -462,10 +566,14 @@ impl Broker {
                 last_answer: Instant::now(),
                 sent: Instant::now(),
                 overdue_after: HEDGE_OVERDUE,
+                order: self.sends.fetch_add(1, Ordering::Relaxed),
                 msg: msg.clone(),
                 height: 0,
                 hedge: None,
-                attempts: 1,
+                retry: Retry {
+                    attempts: 1,
+                    refused: Vec::new(),
+                },
             };
             reqs.insert(key, ReqState::OnWire(Box::new(on_wire)));
         }
@@ -495,6 +603,12 @@ impl OnWire {
     fn overdue(&self) -> bool {
         self.last_answer.elapsed() >= HEDGE_AFTER || self.sent.elapsed() >= self.overdue_after
     }
+}
+
+/// Whether the reply to a request with `key` settles it on arrival. Only for those does a
+/// later reply from the same peer prove that peer skipped the request.
+fn settles_on_arrival(key: &RequestKey) -> bool {
+    matches!(key, RequestKey::Block(_) | RequestKey::CFilters(_) | RequestKey::CfHeaders(_))
 }
 
 /// Returns the on-wire request of the lowest height among the keys `wanted` selects.
@@ -702,13 +816,18 @@ impl MsgQueue {
         if msgs.is_empty() {
             return;
         }
+        self.restore(msgs).await;
+        self.notify.notify_one();
+    }
+
+    /// Puts `msgs` back at the front of their queues without waking the router.
+    async fn restore(&self, msgs: Vec<(u32, NetworkMessage)>) {
         let n = msgs.len();
         for (height, msg) in msgs.into_iter().rev() {
             let key = (height, self.front_seq.fetch_sub(1, Ordering::SeqCst));
             self.queue(classify(&msg)).lock().await.insert(key, msg);
         }
         self.len.fetch_add(n, Ordering::SeqCst);
-        self.notify.notify_one();
     }
 }
 
@@ -1015,6 +1134,72 @@ mod tests {
         assert_eq!(broker.state_of(&lowest).await, Some("arrived"), "the first copy settles it");
         assert_eq!(broker.hedge_filters(&peers).await, Some(2000));
         assert_eq!(broker.hedge_filters(&peers[..1]).await, None, "no other peer to ask");
+    }
+
+    enum Refusal {
+        /// The peer answered a later request first.
+        Skipped,
+        /// The request expired at the peer after it was already retried once.
+        Expired,
+        NotFound,
+    }
+
+    /// Peer 1 has far more room, so only its refusal sends the retry to peer 2. Once both
+    /// refused, the request waits for another peer while the rest of the queue still goes out.
+    #[test_case(Refusal::Skipped; "a skipped request")]
+    #[test_case(Refusal::Expired; "an expired request")]
+    #[test_case(Refusal::NotFound; "a block not found")]
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_request_is_retried_at_another_peer(refusal: Refusal) {
+        let broker = Broker::new();
+        let costs = ResponseCosts::new();
+        let first = ConnectedPeer::for_test(conn(1, 0)).await;
+        let second = ConnectedPeer::for_test(conn(2, 0)).await;
+        first.set_cap(1 << 30);
+        let both = [first.handle(), second.handle()];
+        let key = RequestKey::Block(BlockHash::dummy(1));
+
+        broker.enqueue(1, get_block(1)).await;
+        broker.enqueue(2, get_block(2)).await;
+        assert_eq!(broker.route(&both[..1], &costs).await, 2);
+        match refusal {
+            Refusal::Skipped => {
+                broker.arrived(first.id(), RequestKey::Block(BlockHash::dummy(2))).await;
+            }
+            Refusal::Expired => {
+                broker.requeue_from(&HashSet::from([first.id()])).await;
+                assert_eq!(broker.route(&both[..1], &costs).await, 2);
+                tokio::time::advance(Duration::from_millis(1)).await;
+                assert!(broker.expire(|_| Duration::ZERO).await.is_empty(), "no kick");
+            }
+            Refusal::NotFound => broker.not_found(first.id(), &[block(1)]).await,
+        }
+        assert_eq!(broker.state_of(&key).await, Some("queued"));
+
+        let retried = if matches!(refusal, Refusal::Expired) {
+            2
+        } else {
+            1
+        };
+        assert_eq!(broker.route(&both, &costs).await, retried);
+        assert_eq!(broker.carrier_of(&key).await, Some(second.id()));
+        assert!(!broker.refused_by_all(&[first.addr(), second.addr()]).await);
+
+        broker.not_found(second.id(), &[block(1)]).await;
+        broker.enqueue(3, get_block(3)).await;
+        assert_eq!(broker.route(&both, &costs).await, 1, "only the other request goes out");
+        assert_eq!(broker.state_of(&key).await, Some("queued"));
+        assert!(broker.refused_by_all(&[first.addr(), second.addr()]).await);
+        assert!(!broker.refused_by_all(&[first.addr(), second.addr(), conn(3, 0).addr()]).await);
+
+        broker.notified().await;
+        assert_eq!(broker.route(&both, &costs).await, 0);
+        let woken = tokio::time::timeout(Duration::from_secs(1), broker.notified()).await;
+        assert!(woken.is_err(), "a request no peer will take must not spin the router");
+
+        tokio::time::advance(REFUSAL_HELD).await;
+        assert!(!broker.refused_by_all(&[first.addr(), second.addr()]).await);
+        assert_eq!(broker.route(&both, &costs).await, 1, "a refusal does not last");
     }
 
     /// Peer 2 is idle and unmeasured, peer 3 measured and busy. Returns the peer asked for
