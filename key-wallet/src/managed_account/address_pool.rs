@@ -258,18 +258,17 @@ pub struct AddressInfo {
 }
 
 impl AddressInfo {
-    /// Create new address info with a public key
-    fn new_with_public_key(
+    fn new(
         address: Address,
         index: u32,
         path: DerivationPath,
-        public_key: PublicKeyType,
+        public_key: Option<PublicKeyType>,
     ) -> Self {
         let script_pubkey = address.script_pubkey();
         Self {
             address,
             script_pubkey,
-            public_key: Some(public_key),
+            public_key,
             index,
             path,
             state: AddressState::Available,
@@ -298,20 +297,7 @@ impl AddressInfo {
             return Err(Error::InvalidAddress("Script is not P2PKH".to_string()));
         }
 
-        Ok(Self {
-            address,
-            script_pubkey,
-            public_key: None, // Public key not available from script alone
-            index,
-            path,
-            state: AddressState::Available,
-            tx_count: 0,
-            total_received: 0,
-            total_sent: 0,
-            balance: 0,
-            label: None,
-            metadata: BTreeMap::new(),
-        })
+        Ok(Self::new(address, index, path, None))
     }
 
     /// Mark this address as used.
@@ -551,8 +537,7 @@ impl AddressPool {
                 (address, PublicKeyType::EdDSA(public_key_bytes))
             }
         };
-        let info =
-            AddressInfo::new_with_public_key(address.clone(), index, full_path, public_key_type);
+        let info = AddressInfo::new(address.clone(), index, full_path, Some(public_key_type));
         if add_to_state {
             self.addresses.insert(index, info.clone());
             self.address_index.insert(address, index);
