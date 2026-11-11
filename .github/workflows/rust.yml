@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: Swatinem/rust-cache@v2.9.3
-      - uses: taiki-e/install-action@v2.89.1
+      - uses: taiki-e/install-action@v2.90.0
         with:
           tool: just
       - name: Check workspace compiles on MSRV
@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: Swatinem/rust-cache@v2.9.3
-      - uses: taiki-e/install-action@v2.89.1
+      - uses: taiki-e/install-action@v2.90.0
         with:
           tool: just
       - name: Build documentation
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: taiki-e/install-action@v2.89.1
+      - uses: taiki-e/install-action@v2.90.0
         with:
           tool: just
       - run: pip install pyyaml
@@ -66,7 +66,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: taiki-e/install-action@v2.89.1
+      - uses: taiki-e/install-action@v2.90.0
         with:
           tool: just
       - name: Verify the action lockfile
