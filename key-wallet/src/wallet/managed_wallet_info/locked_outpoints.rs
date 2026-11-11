@@ -1,5 +1,5 @@
-//! Outpoints the wallet will not spend, like Dash Core's `setLockedCoins`.
-//! See [`ManagedWalletInfo::locked_outpoints`] for the rules.
+//! Outpoints the wallet will not spend. See
+//! [`ManagedWalletInfo::locked_outpoints`] for the rules.
 
 use super::ManagedWalletInfo;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -31,6 +31,10 @@ impl ManagedWalletInfo {
     /// Coin selection skips a coin in this set whatever the strategy, and its
     /// value counts as [`WalletCoreBalance::locked`](crate::WalletCoreBalance::locked).
     /// Only [`Self::unlock_outpoint`] removes an outpoint.
+    ///
+    /// A spent coin keeps its entry, so it comes back locked when a fork
+    /// drops the spend. Dash Core drops the lock with the coin and derives it
+    /// again from its masternode list, which this wallet does not have.
     ///
     /// # What locks an outpoint
     ///
