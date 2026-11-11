@@ -269,6 +269,10 @@ impl PeerHandle {
         self.cap.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn is_closed(&self) -> bool {
+        self.token.is_cancelled()
+    }
+
     pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
         // The sync layer sends a plain `getheaders`, since it does not know the peer.
         // The reader decompresses `Headers2` back to `Headers`.

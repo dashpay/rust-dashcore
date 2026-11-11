@@ -282,7 +282,8 @@ impl Broker {
         let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle)> = Vec::new();
         let mut msgs = msgs.into_iter();
         for (height, msg) in msgs.by_ref() {
-            let open = peers.iter().filter(|p| p.in_flight_bytes() < p.cap());
+            // `peers` can be a snapshot taken before the timeout monitor closed one of them.
+            let open = peers.iter().filter(|p| !p.is_closed() && p.in_flight_bytes() < p.cap());
             let Some(peer) = choose_peer(open, classify(&msg)) else {
                 unsent.push((height, msg));
                 break;
@@ -354,7 +355,7 @@ impl Broker {
             }
             let peer = peers
                 .iter()
-                .filter(|p| p.id() != o.peer && p.in_flight_bytes() < p.cap())
+                .filter(|p| !p.is_closed() && p.id() != o.peer && p.in_flight_bytes() < p.cap())
                 .max_by_key(|p| p.cap().saturating_sub(p.in_flight_bytes()))?;
             (key.clone(), o.msg.clone(), o.height, peer.clone())
         };
@@ -669,6 +670,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requeued_work_skips_a_closed_peer_still_listed() {
+        let broker = Broker::new();
+        let gone = ConnectedPeer::for_test(conn(1, 0)).await;
+        let other = ConnectedPeer::for_test(conn(2, 0)).await;
+        broker.mark_on_wire(&get_cfilters(0), gone.id()).await;
+        gone.close();
+        broker.requeue_from(&HashSet::from([gone.id()])).await;
+
+        // Only the charge matters here: the loopback has no reader to answer it.
+        broker.route(&[gone.handle(), other.handle()], u64::MAX, &ResponseCosts::new()).await;
+
+        assert_eq!(gone.in_flight_bytes(), 0);
+        assert!(other.in_flight_bytes() > 0);
+    }
+
+    #[tokio::test]
     async fn a_requeued_request_dedups_until_its_response_arrives() {
         let broker = Broker::new();
         let peer = conn(1, 0);
@@ -687,14 +704,19 @@ mod tests {
     }
 
     /// A block at a slow peer gets a second copy only once it is the lowest on the wire and
-    /// its peer stopped delivering.
+    /// its peer stopped delivering. Peer 3 has the most room but was kicked after the
+    /// snapshot of `peers` was taken, so it never gets the copy.
     #[tokio::test(start_paused = true)]
     async fn hedge_asks_another_peer_only_for_the_lowest_stalled_block() {
         let broker = Broker::new();
         let costs = ResponseCosts::new();
+        let kicked = ConnectedPeer::for_test(conn(3, 0)).await;
+        kicked.set_cap(u64::MAX);
+        kicked.close();
         let peers = [
             ConnectedPeer::for_test(conn(1, 0)).await.handle(),
             ConnectedPeer::for_test(conn(2, 0)).await.handle(),
+            kicked.handle(),
         ];
         let (slow, idle) = (&peers[..1], peers[1].id());
         let get_block = |n: u32| NetworkMessage::GetData(vec![block(n)]);
