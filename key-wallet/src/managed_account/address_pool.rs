@@ -64,10 +64,11 @@ pub const MAX_GAP_LIMIT: u32 = 1000;
 
 /// Types of public keys used in the address pool
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 #[allow(clippy::upper_case_acronyms)]
 pub enum PublicKeyType {
-    /// ECDSA public key (standard Bitcoin/Dash addresses) - stored as `Vec<u8>` for serialization
+    /// ECDSA public key (standard Bitcoin/Dash addresses)
     ECDSA(Vec<u8>),
     /// EdDSA public key (Ed25519, used in some Platform operations)
     EdDSA(Vec<u8>),
@@ -88,50 +89,6 @@ pub enum AddressPoolType {
     Absent,
     /// Absent/single pool - uses hardened derivation
     AbsentHardened,
-}
-
-#[cfg(feature = "serde")]
-impl Serialize for PublicKeyType {
-    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        #[allow(clippy::upper_case_acronyms)]
-        enum PublicKeyTypeSer<'a> {
-            ECDSA(&'a Vec<u8>),
-            EdDSA(&'a Vec<u8>),
-            BLS(&'a Vec<u8>),
-        }
-
-        match self {
-            PublicKeyType::ECDSA(bytes) => PublicKeyTypeSer::ECDSA(bytes).serialize(serializer),
-            PublicKeyType::EdDSA(bytes) => PublicKeyTypeSer::EdDSA(bytes).serialize(serializer),
-            PublicKeyType::BLS(bytes) => PublicKeyTypeSer::BLS(bytes).serialize(serializer),
-        }
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> Deserialize<'de> for PublicKeyType {
-    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[allow(clippy::upper_case_acronyms)]
-        enum PublicKeyTypeDe {
-            ECDSA(Vec<u8>),
-            EdDSA(Vec<u8>),
-            BLS(Vec<u8>),
-        }
-
-        match PublicKeyTypeDe::deserialize(deserializer)? {
-            PublicKeyTypeDe::ECDSA(bytes) => Ok(PublicKeyType::ECDSA(bytes)),
-            PublicKeyTypeDe::EdDSA(bytes) => Ok(PublicKeyType::EdDSA(bytes)),
-            PublicKeyTypeDe::BLS(bytes) => Ok(PublicKeyType::BLS(bytes)),
-        }
-    }
 }
 
 /// Key source for address derivation
