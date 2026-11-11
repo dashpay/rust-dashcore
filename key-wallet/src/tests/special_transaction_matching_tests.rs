@@ -126,7 +126,7 @@ async fn asset_lock_credit_output_to_identity_registration_address_matches() {
     let address = info
         .identity_registration_managed_account_mut()
         .expect("identity registration managed")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("derive address");
 
     let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
@@ -177,7 +177,7 @@ async fn asset_lock_regular_output_to_identity_topup_address_matches() {
     let address = info
         .topup_managed_account_at_registration_index_mut(registration_index)
         .expect("identity_topup[0] managed")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("derive address");
 
     let mut tx = asset_lock_to(ScriptBuf::new(), ASSET_LOCK_VALUE);
@@ -199,7 +199,7 @@ async fn asset_lock_credit_output_to_identity_topup_not_bound_address_matches() 
     let address = info
         .identity_topup_not_bound_managed_account_mut()
         .expect("identity_topup_not_bound managed")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("derive address");
 
     let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
@@ -216,7 +216,7 @@ async fn asset_lock_credit_output_to_identity_invitation_address_matches() {
     let address = info
         .identity_invitation_managed_account_mut()
         .expect("identity_invitation managed")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("derive address");
 
     let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
@@ -236,7 +236,7 @@ async fn asset_lock_credit_output_to_asset_lock_address_topup_address_matches() 
         .asset_lock_address_topup
         .as_mut()
         .expect("asset_lock_address_topup managed")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("derive address");
 
     let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
@@ -260,7 +260,7 @@ async fn asset_lock_credit_output_to_asset_lock_shielded_address_topup_address_m
         .asset_lock_shielded_address_topup
         .as_mut()
         .expect("asset_lock_shielded_address_topup managed")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("derive address");
 
     let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
@@ -344,17 +344,17 @@ async fn provider_registration_with_owner_key_hash_matches_provider_owner_keys()
     let owner_addr = info
         .provider_owner_keys_managed_account_mut()
         .expect("provider_owner_keys managed")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive owner");
     let voting_addr = other_info
         .provider_voting_keys_managed_account_mut()
         .expect("other voting")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive voting");
     let operator_pk = other_info
         .provider_operator_keys_managed_account_mut()
         .expect("other operator")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("derive operator");
 
     let tx = prov_reg_tx(
@@ -379,17 +379,17 @@ async fn provider_registration_with_voting_key_hash_matches_provider_voting_keys
     let owner_addr = other_info
         .provider_owner_keys_managed_account_mut()
         .expect("other owner")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive owner");
     let voting_addr = info
         .provider_voting_keys_managed_account_mut()
         .expect("provider_voting_keys managed")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive voting");
     let operator_pk = other_info
         .provider_operator_keys_managed_account_mut()
         .expect("other operator")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("derive operator");
 
     let tx = prov_reg_tx(
@@ -415,17 +415,17 @@ async fn provider_registration_with_operator_public_key_matches_provider_operato
     let owner_addr = other_info
         .provider_owner_keys_managed_account_mut()
         .expect("other owner")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive owner");
     let voting_addr = other_info
         .provider_voting_keys_managed_account_mut()
         .expect("other voting")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive voting");
     let operator_pk = info
         .provider_operator_keys_managed_account_mut()
         .expect("provider_operator_keys managed")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("derive operator");
 
     let tx = prov_reg_tx(
@@ -460,19 +460,19 @@ async fn provider_registration_extends_operator_key_gap_limit() {
     let owner_addr = other_info
         .provider_owner_keys_managed_account_mut()
         .expect("other owner")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive owner");
     let voting_addr = other_info
         .provider_voting_keys_managed_account_mut()
         .expect("other voting")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive voting");
     // Takes operator key 0 and marks it used, so the pool's unused window
     // shrinks below the gap limit.
     let operator_pk = info
         .provider_operator_keys_managed_account_mut()
         .expect("provider_operator_keys managed")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("derive operator");
 
     let operator_pool_state = |info: &ManagedWalletInfo| {
@@ -542,17 +542,17 @@ async fn provider_registration_with_platform_node_id_matches_provider_platform_k
     let owner_addr = other_info
         .provider_owner_keys_managed_account_mut()
         .expect("other owner")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive owner");
     let voting_addr = other_info
         .provider_voting_keys_managed_account_mut()
         .expect("other voting")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive voting");
     let operator_pk = other_info
         .provider_operator_keys_managed_account_mut()
         .expect("other operator")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("derive operator");
 
     let root = wallet.root_extended_priv_key().expect("root extended priv key");
@@ -560,7 +560,7 @@ async fn provider_registration_with_platform_node_id_matches_provider_platform_k
     let (_platform_pk, platform_info) = info
         .provider_platform_keys_managed_account_mut()
         .expect("provider_platform_keys managed")
-        .next_eddsa_platform_key(eddsa, true)
+        .next_eddsa_platform_key(eddsa)
         .expect("derive platform");
     let platform_node_id = dashcore::PlatformNodeId::from_byte_array(
         derive_pubkey_hash(&platform_info.address).to_byte_array(),
@@ -591,7 +591,7 @@ async fn provider_update_registrar_with_voting_key_change_matches_provider_votin
     let voting_addr = info
         .provider_voting_keys_managed_account_mut()
         .expect("provider_voting_keys managed")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive voting");
     // Operator key sourced from a fresh wallet so it doesn't accidentally
     // match this wallet's operator account.
@@ -599,7 +599,7 @@ async fn provider_update_registrar_with_voting_key_change_matches_provider_votin
     let operator_pk = other_info
         .provider_operator_keys_managed_account_mut()
         .expect("other operator")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("derive operator");
 
     let tx = Transaction {
@@ -648,12 +648,12 @@ async fn provider_update_registrar_with_operator_key_change_matches_provider_ope
     let voting_addr = other_info
         .provider_voting_keys_managed_account_mut()
         .expect("other voting")
-        .next_address(None, true)
+        .next_address(None)
         .expect("derive voting");
     let operator_pk = info
         .provider_operator_keys_managed_account_mut()
         .expect("provider_operator_keys managed")
-        .next_bls_operator_key(None, true)
+        .next_bls_operator_key(None)
         .expect("derive operator");
 
     let tx = Transaction {
@@ -709,7 +709,7 @@ async fn keys_account_record_is_thin_marker_internal_with_no_details() {
     let address = info
         .identity_registration_managed_account_mut()
         .expect("identity_registration managed")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("derive address");
 
     let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
@@ -749,7 +749,7 @@ fn next_bip44_receive_script(wallet: &Wallet, info: &mut ManagedWalletInfo) -> S
     let xpub = wallet.accounts.standard_bip44_accounts.get(&0).expect("bip44 account").account_xpub;
     info.first_bip44_managed_account_mut()
         .expect("bip44 managed")
-        .next_receive_address(Some(&xpub), true)
+        .next_receive_address(Some(&xpub))
         .expect("derive receive address")
         .script_pubkey()
 }
@@ -898,7 +898,7 @@ async fn provider_update_service_payout_to_bip44_change_address_matches() {
     let script = info
         .first_bip44_managed_account_mut()
         .expect("bip44 managed")
-        .next_change_address(Some(&xpub), true)
+        .next_change_address(Some(&xpub))
         .expect("derive change address")
         .script_pubkey();
 

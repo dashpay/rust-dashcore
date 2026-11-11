@@ -136,7 +136,6 @@ pub trait ManagedAccountTrait {
     fn next_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::Standard {
@@ -203,7 +202,7 @@ pub trait ManagedAccountTrait {
                     None => address_pool::KeySource::NoKeySource,
                 };
 
-                addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
+                addresses.next_unused(&key_source).map_err(|e| match e {
                     crate::error::Error::NoKeySource => {
                         "No unused addresses available and no key source provided"
                     }
@@ -217,7 +216,6 @@ pub trait ManagedAccountTrait {
     fn next_address_with_info(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
     ) -> Result<address_pool::AddressInfo, &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::Standard {
@@ -286,7 +284,7 @@ pub trait ManagedAccountTrait {
                     None => address_pool::KeySource::NoKeySource,
                 };
 
-                addresses.next_unused_with_info(&key_source, add_to_state).map_err(|e| match e {
+                addresses.next_unused_with_info(&key_source).map_err(|e| match e {
                     crate::error::Error::NoKeySource => {
                         "No unused addresses available and no key source provided"
                     }
@@ -301,7 +299,6 @@ pub trait ManagedAccountTrait {
     fn next_bls_operator_key(
         &mut self,
         account_xpub: Option<ExtendedBLSPubKey>,
-        add_to_state: bool,
     ) -> Result<BLSPublicKey, &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderOperatorKeys {
@@ -314,7 +311,7 @@ pub trait ManagedAccountTrait {
                 };
 
                 let info = addresses
-                    .next_unused_with_info(&key_source, add_to_state)
+                    .next_unused_with_info(&key_source)
                     .map_err(|_| "Failed to get next unused address")?;
 
                 let Some(PublicKeyType::BLS(pub_key_bytes)) = info.public_key else {
@@ -339,7 +336,6 @@ pub trait ManagedAccountTrait {
     fn next_eddsa_platform_key(
         &mut self,
         account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
-        add_to_state: bool,
     ) -> Result<(EddsaPkBytes, AddressInfo), &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderPlatformKeys {
@@ -349,7 +345,7 @@ pub trait ManagedAccountTrait {
                 let key_source = address_pool::KeySource::EdDSAPrivate(account_xpriv);
 
                 let info = addresses
-                    .next_unused_with_info(&key_source, add_to_state)
+                    .next_unused_with_info(&key_source)
                     .map_err(|_| "Failed to get next unused address")?;
 
                 let Some(PublicKeyType::EdDSA(pub_key_bytes)) = info.public_key.clone() else {
@@ -384,7 +380,7 @@ pub trait ManagedAccountTrait {
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
 
         let info = pool
-            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource)
             .map_err(|_| "No unused address available")?;
 
         pool.mark_used(&info.address);
@@ -408,7 +404,7 @@ pub trait ManagedAccountTrait {
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
 
         let info = pool
-            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource)
             .map_err(|_| "No unused address available")?;
 
         Ok((info.path, info.address))

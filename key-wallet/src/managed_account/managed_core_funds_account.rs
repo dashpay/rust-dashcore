@@ -1385,7 +1385,6 @@ impl ManagedCoreFundsAccount {
     pub fn next_receive_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         if let ManagedAccountType::Standard {
             external_addresses,
@@ -1397,13 +1396,12 @@ impl ManagedCoreFundsAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            let addr =
-                external_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                    crate::error::Error::NoKeySource => {
-                        "No unused addresses available and no key source provided"
-                    }
-                    _ => "Failed to generate receive address",
-                })?;
+            let addr = external_addresses.next_unused(&key_source).map_err(|e| match e {
+                crate::error::Error::NoKeySource => {
+                    "No unused addresses available and no key source provided"
+                }
+                _ => "Failed to generate receive address",
+            })?;
             self.keys.bump_monitor_revision();
             Ok(addr)
         } else {
@@ -1416,7 +1414,6 @@ impl ManagedCoreFundsAccount {
     pub fn next_change_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         if let ManagedAccountType::Standard {
             internal_addresses,
@@ -1428,13 +1425,12 @@ impl ManagedCoreFundsAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            let addr =
-                internal_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                    crate::error::Error::NoKeySource => {
-                        "No unused addresses available and no key source provided"
-                    }
-                    _ => "Failed to generate change address",
-                })?;
+            let addr = internal_addresses.next_unused(&key_source).map_err(|e| match e {
+                crate::error::Error::NoKeySource => {
+                    "No unused addresses available and no key source provided"
+                }
+                _ => "Failed to generate change address",
+            })?;
             self.keys.bump_monitor_revision();
             Ok(addr)
         } else {

@@ -352,7 +352,7 @@ impl AddressPool {
 
         // Generate addresses up to the gap limit if we have a key source
         if key_source.can_derive() {
-            pool.generate_addresses(gap_limit, key_source, true)?;
+            pool.generate_addresses(gap_limit, key_source)?;
         }
 
         Ok(pool)
@@ -413,11 +413,10 @@ impl AddressPool {
         &mut self,
         count: u32,
         key_source: &KeySource,
-        add_to_state: bool,
     ) -> Result<Vec<AddressInfo>> {
         let start_index = self.next_index_to_derive();
         (start_index..start_index + count)
-            .map(|index| self.generate_address_at_index(index, key_source, add_to_state))
+            .map(|index| self.generate_address_at_index(index, key_source))
             .collect()
     }
 
@@ -428,7 +427,7 @@ impl AddressPool {
         key_source: &KeySource,
     ) -> Result<Vec<AddressInfo>> {
         let next = self.next_index_to_derive();
-        self.generate_addresses((index + 1).saturating_sub(next), key_source, true)
+        self.generate_addresses((index + 1).saturating_sub(next), key_source)
     }
 
     /// Generate a specific address at an index
@@ -436,7 +435,6 @@ impl AddressPool {
         &mut self,
         index: u32,
         key_source: &KeySource,
-        add_to_state: bool,
     ) -> Result<AddressInfo> {
         // Check if already generated
         if let Some(info) = self.addresses.get(&index) {
@@ -518,32 +516,26 @@ impl AddressPool {
             }
         };
         let info = AddressInfo::new(address.clone(), index, full_path, Some(public_key_type));
-        if add_to_state {
-            self.addresses.insert(index, info.clone());
-            self.address_index.insert(address, index);
-            self.script_pubkey_index.insert(info.script_pubkey.clone(), index);
-        }
+        self.addresses.insert(index, info.clone());
+        self.address_index.insert(address, index);
+        self.script_pubkey_index.insert(info.script_pubkey.clone(), index);
 
         Ok(info)
     }
 
     /// Get the next unused address
-    pub fn next_unused(&mut self, key_source: &KeySource, add_to_state: bool) -> Result<Address> {
-        self.next_unused_with_info(key_source, add_to_state).map(|info| info.address)
+    pub fn next_unused(&mut self, key_source: &KeySource) -> Result<Address> {
+        self.next_unused_with_info(key_source).map(|info| info.address)
     }
 
     /// Get the next unused address info
-    pub(crate) fn next_unused_with_info(
-        &mut self,
-        key_source: &KeySource,
-        add_to_state: bool,
-    ) -> Result<AddressInfo> {
+    pub(crate) fn next_unused_with_info(&mut self, key_source: &KeySource) -> Result<AddressInfo> {
         // First, try to find an already generated unused address
         if let Some(info) = self.addresses.get(&self.next_unused_index()) {
             return Ok(info.clone());
         }
 
-        self.generate_addresses(1, key_source, add_to_state)?
+        self.generate_addresses(1, key_source)?
             .pop()
             .ok_or_else(|| Error::InvalidState("generate_addresses(1) returned nothing".into()))
     }
@@ -572,7 +564,7 @@ impl AddressPool {
         key_source: &KeySource,
         now: u64,
     ) -> Result<Address> {
-        let index = self.next_unused_with_info(key_source, true)?.index;
+        let index = self.next_unused_with_info(key_source)?.index;
         // A lookup miss would hand out an unreserved address, so fail instead.
         let info = self.addresses.get_mut(&index).ok_or_else(|| {
             Error::InvalidState(format!("next_unused_and_reserve: index {} not stored", index))
@@ -762,7 +754,7 @@ mod tests {
         );
         let key_source = test_key_source();
 
-        let addresses = pool.generate_addresses(10, &key_source, true).unwrap();
+        let addresses = pool.generate_addresses(10, &key_source).unwrap();
         assert_eq!(addresses.len(), 10);
         assert_eq!(pool.highest_generated(), Some(9));
         assert_eq!(pool.addresses.len(), 10);
@@ -800,7 +792,7 @@ mod tests {
         );
         let key_source = test_key_source();
 
-        let addresses = pool.generate_addresses(5, &key_source, true).unwrap();
+        let addresses = pool.generate_addresses(5, &key_source).unwrap();
         let first_addr = &addresses[0].address;
 
         assert!(pool.mark_used(first_addr));
@@ -820,12 +812,12 @@ mod tests {
         );
         let key_source = test_key_source();
 
-        let addr1 = pool.next_unused(&key_source, true).unwrap();
-        let addr2 = pool.next_unused(&key_source, true).unwrap();
+        let addr1 = pool.next_unused(&key_source).unwrap();
+        let addr2 = pool.next_unused(&key_source).unwrap();
         assert_eq!(addr1, addr2); // Should return same unused address
 
         pool.mark_used(&addr1);
-        let addr3 = pool.next_unused(&key_source, true).unwrap();
+        let addr3 = pool.next_unused(&key_source).unwrap();
         assert_ne!(addr1, addr3); // Should return different address after marking used
     }
 
@@ -871,8 +863,8 @@ mod tests {
         let key_source = test_key_source();
 
         // Without reserving, two hand-outs return the same address (the race).
-        let peek1 = pool.next_unused(&key_source, true).unwrap();
-        let peek2 = pool.next_unused(&key_source, true).unwrap();
+        let peek1 = pool.next_unused(&key_source).unwrap();
+        let peek2 = pool.next_unused(&key_source).unwrap();
         assert_eq!(peek1, peek2);
 
         // Reserving on hand-out makes two sequential calls return distinct
@@ -882,7 +874,7 @@ mod tests {
         assert_ne!(addr1, addr2);
 
         // A plain peek must skip the reserved addresses too.
-        let peek3 = pool.next_unused(&key_source, true).unwrap();
+        let peek3 = pool.next_unused(&key_source).unwrap();
         assert_ne!(peek3, addr1);
         assert_ne!(peek3, addr2);
     }
@@ -929,7 +921,7 @@ mod tests {
         assert!(pool.release_reservation(index));
         assert!(!pool.release_reservation(index));
         // Releasing a never-reserved index is a no-op too.
-        let other = pool.next_unused(&key_source, true).unwrap();
+        let other = pool.next_unused(&key_source).unwrap();
         let other_index = pool.address_index(&other).unwrap();
         assert!(!pool.release_reservation(other_index));
         // Unknown index is a no-op.

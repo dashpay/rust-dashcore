@@ -82,7 +82,7 @@ fn wallet_with_mixing_history(used: u32) -> (Manager, [u8; 32]) {
             panic!("expected CoinJoin managed account type");
         };
         external_addresses
-            .generate_addresses(used, &key_source, true)
+            .generate_addresses(used, &key_source)
             .expect("derive CoinJoin addresses");
         external_addresses.all_addresses()
     };

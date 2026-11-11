@@ -225,7 +225,7 @@ impl TransactionBuilder {
         self.funding.push((funds_acc.reservations().clone(), owned));
         self.inputs.extend(candidates);
         if self.change_addr.is_none() {
-            self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
+            self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub)).ok();
         }
         self
     }
@@ -1982,8 +1982,8 @@ mod tests {
         // Nor may it burn a pool address to derive one it then discards.
         let mut control = ManagedCoreFundsAccount::dummy_bip44();
         assert_eq!(
-            funds.next_change_address(Some(&account.account_xpub), true).expect("change address"),
-            control.next_change_address(Some(&account.account_xpub), true).expect("change address"),
+            funds.next_change_address(Some(&account.account_xpub)).expect("change address"),
+            control.next_change_address(Some(&account.account_xpub)).expect("change address"),
         );
     }
 

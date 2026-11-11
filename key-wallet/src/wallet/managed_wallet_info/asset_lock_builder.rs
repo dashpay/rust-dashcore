@@ -687,7 +687,7 @@ mod tests {
     ) -> OutPoint {
         let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
         let account = info.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
-        let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
+        let funding_address = account.next_receive_address(Some(&account_xpub)).unwrap();
         let outpoint = OutPoint {
             txid: Txid::from_byte_array([txid_byte; 32]),
             vout: 0,
@@ -727,9 +727,7 @@ mod tests {
             crate::ManagedAccountType::CoinJoin {
                 external_addresses,
                 ..
-            } => external_addresses
-                .next_unused(&crate::KeySource::Public(account_xpub), true)
-                .unwrap(),
+            } => external_addresses.next_unused(&crate::KeySource::Public(account_xpub)).unwrap(),
             _ => unreachable!("coinjoin account must carry the CoinJoin managed type"),
         };
         let outpoint = OutPoint {
@@ -1294,7 +1292,7 @@ mod tests {
             .expect("default wallet has BIP32 account 0")
             .account_xpub;
         let account = info.accounts.standard_bip32_accounts.get_mut(&0).unwrap();
-        let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
+        let funding_address = account.next_receive_address(Some(&account_xpub)).unwrap();
         let outpoint = OutPoint {
             txid: Txid::from_byte_array([txid_byte; 32]),
             vout: 0,

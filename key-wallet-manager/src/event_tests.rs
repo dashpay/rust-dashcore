@@ -776,7 +776,7 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
         .expect("wallet info")
         .identity_registration_managed_account_mut()
         .expect("managed IdentityRegistration account")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("identity registration address");
 
     // Build a DIP-2 AssetLock transaction whose `credit_outputs` pay to the
@@ -2322,7 +2322,7 @@ async fn late_funding_block_publishes_spender_correction() {
             .unwrap()
             .first_bip44_managed_account_mut()
             .unwrap()
-            .next_change_address(None, true)
+            .next_change_address(None)
             .unwrap();
         let funding = create_tx_paying_to(&addr, 0xd5);
         let mut spender = create_tx_paying_to(&change, 0xd6);

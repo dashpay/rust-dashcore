@@ -283,7 +283,7 @@ fn test_gap_limit_scan_performance() {
             .unwrap();
 
     // Generate addresses with gaps
-    pool.generate_addresses(100, &key_source, true).unwrap();
+    pool.generate_addresses(100, &key_source).unwrap();
 
     // Mark some as used (with gaps)
     let used_indices = vec![0, 1, 5, 10, 25, 50, 75];
