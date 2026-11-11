@@ -71,6 +71,14 @@ impl ManagedWalletInfo {
     /// [`Self::unlock_outpoint`] removes an outpoint. A coin's amount is never
     /// a reason to lock it.
     ///
+    /// The wallet locks from the registrations it is handed. A client that
+    /// fetches blocks by compact filter finds a ProRegTx that only names one
+    /// of the wallet's coins through
+    /// [`WalletInfoInterface::monitored_filter_elements`], which watches held
+    /// outpoints only for a wallet with provider accounts. A wallet without
+    /// them is not handed such a ProRegTx: lock its collateral with
+    /// [`Self::lock_outpoint`].
+    ///
     /// # A lock can come before its coin
     ///
     /// An entry does not need a coin behind it. A coin locked with
