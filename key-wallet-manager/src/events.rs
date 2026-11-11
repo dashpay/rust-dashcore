@@ -627,7 +627,6 @@ mod project_derived_addresses_tests {
     use key_wallet::account::StandardAccountType;
     use key_wallet::bip32::{ChildNumber, DerivationPath};
     use key_wallet::managed_account::address_pool::{AddressInfo, AddressState};
-    use std::collections::BTreeMap;
 
     /// Compressed encoding of the secp256k1 generator point (G).
     const TEST_PUBKEY_G: [u8; 33] = [
@@ -681,12 +680,6 @@ mod project_derived_addresses_tests {
                 index,
                 path,
                 state: AddressState::Available,
-                tx_count: 0,
-                total_received: 0,
-                total_sent: 0,
-                balance: 0,
-                label: None,
-                metadata: BTreeMap::new(),
             },
         }
     }

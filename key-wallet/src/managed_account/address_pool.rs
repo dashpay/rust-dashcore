@@ -243,18 +243,6 @@ pub struct AddressInfo {
     pub path: DerivationPath,
     /// Lifecycle state: available, reserved, or used
     pub state: AddressState,
-    /// Transaction count for this address
-    pub tx_count: u32,
-    /// Total received amount
-    pub total_received: u64,
-    /// Total sent amount
-    pub total_sent: u64,
-    /// Current balance
-    pub balance: u64,
-    /// Custom label
-    pub label: Option<String>,
-    /// Custom metadata
-    pub metadata: BTreeMap<String, String>,
 }
 
 impl AddressInfo {
@@ -272,12 +260,6 @@ impl AddressInfo {
             index,
             path,
             state: AddressState::Available,
-            tx_count: 0,
-            total_received: 0,
-            total_sent: 0,
-            balance: 0,
-            label: None,
-            metadata: BTreeMap::new(),
         }
     }
 
@@ -355,8 +337,6 @@ pub struct AddressPool {
     pub address_index: HashMap<Address, u32>,
     /// Reverse lookup: script pubkey -> index
     pub script_pubkey_index: HashMap<ScriptBuf, u32>,
-    /// Address type preference
-    pub address_type: AddressType,
 }
 
 impl AddressPool {
@@ -393,7 +373,6 @@ impl AddressPool {
             addresses: BTreeMap::new(),
             address_index: HashMap::new(),
             script_pubkey_index: HashMap::new(),
-            address_type: AddressType::P2pkh,
         }
     }
 
