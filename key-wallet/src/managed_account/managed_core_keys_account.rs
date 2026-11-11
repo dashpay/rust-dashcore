@@ -6,6 +6,7 @@
 //! special-purpose flows (identity registration, asset locks, masternode provider
 //! keys) rather than to hold and spend Dash directly.
 
+use crate::account::AccountType;
 #[cfg(feature = "bls")]
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
@@ -234,19 +235,17 @@ impl ManagedCoreKeysAccount {
 
     /// Create a `ManagedCoreKeysAccount` from an [`Account`](super::super::Account).
     pub fn from_account(account: &super::super::Account) -> Result<Self> {
-        let key_source = address_pool::KeySource::Public(account.account_xpub);
+        // An xpub cannot derive the hardened pool of `ProviderPlatformKeys`.
+        let key_source = if account.account_type == AccountType::ProviderPlatformKeys {
+            address_pool::KeySource::NoKeySource
+        } else {
+            address_pool::KeySource::Public(account.account_xpub)
+        };
         let managed_type = ManagedAccountType::from_account_type(
             account.account_type,
             account.network,
             &key_source,
-        )
-        .or_else(|_| {
-            ManagedAccountType::from_account_type(
-                account.account_type,
-                account.network,
-                &address_pool::KeySource::NoKeySource,
-            )
-        })?;
+        )?;
 
         Ok(Self::new(managed_type, account.network))
     }
@@ -259,14 +258,7 @@ impl ManagedCoreKeysAccount {
             account.account_type,
             account.network,
             &key_source,
-        )
-        .or_else(|_| {
-            ManagedAccountType::from_account_type(
-                account.account_type,
-                account.network,
-                &address_pool::KeySource::NoKeySource,
-            )
-        })?;
+        )?;
 
         Ok(Self::new(managed_type, account.network))
     }
