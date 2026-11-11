@@ -149,14 +149,9 @@ pub struct ManagedWalletInfo {
     pub(crate) account_generation: u64,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) noted_chain_lock_height: Option<CoreBlockHeight>,
-    /// Outpoints the wallet will not spend: masternode collateral, and
-    /// anything locked by hand. The source of truth for coin locks; see
-    /// [`Self::locked_outpoints`] for the rules.
-    ///
-    /// `#[serde(default)]` loads a snapshot written before this field existed
-    /// with no locks, in self-describing formats (e.g. JSON). As with
-    /// `observed_spent_outpoints`, non-self-describing serde formats cannot
-    /// default a missing field.
+    /// Outpoints the wallet will not spend; see [`Self::locked_outpoints`].
+    /// `serde(default)` loads a snapshot written before the field existed
+    /// with no locks, in self-describing formats only.
     #[cfg_attr(feature = "serde", serde(default))]
     pub(crate) locked_outpoints: BTreeSet<OutPoint>,
 }

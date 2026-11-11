@@ -42,15 +42,9 @@ pub trait WalletTransactionChecker {
     ///
     /// The context parameter indicates where the transaction comes from (mempool, block, etc.)
     ///
-    /// With `update_state`, a ProRegTx also locks the collateral it
-    /// registers when that coin is this wallet's, so coin selection skips it:
-    /// a collateral it names once the ProRegTx is in a block, its own output
-    /// from any context. The ProRegTx need not be relevant for that: holding
-    /// the collateral is enough. New locks are listed in
-    /// [`TransactionCheckResult::locked_outpoints`]; with
-    /// `update_balance = false`, refresh the balance of a wallet whose check
-    /// lists any, since a lock moves a held coin to the locked balance. See
-    /// [`ManagedWalletInfo::locked_outpoints`].
+    /// With `update_state`, a ProRegTx also locks its collateral when that
+    /// coin is this wallet's, and [`TransactionCheckResult::locked_outpoints`]
+    /// lists the new locks. See [`ManagedWalletInfo::locked_outpoints`].
     async fn check_core_transaction(
         &mut self,
         tx: &Transaction,
@@ -305,11 +299,9 @@ impl WalletTransactionChecker for ManagedWalletInfo {
             )
         });
 
-        // Bring the lock flags of the coins involved in line with the lock
-        // set: the coins `tx` pays this wallet, and a collateral it locked.
-        // A balance refresh does this too, but the one inside the check ran
-        // before the lock, and block processing passes
-        // `update_balance = false` and refreshes once per block.
+        // The balance refresh inside the check ran before the lock, and block
+        // processing passes `update_balance = false`: set the lock flags of
+        // the coins `tx` pays this wallet and of the collateral here.
         let txid = tx.txid();
         let outputs = (0..tx.output.len() as u32).map(|vout| OutPoint::new(txid, vout));
         let flags_changed = self.refresh_lock_flags(outputs.chain(locked));
