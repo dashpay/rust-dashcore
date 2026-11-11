@@ -1327,6 +1327,8 @@ mod tests {
     use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::BlockHash;
     use test_case::test_case;
+    use tokio::task;
+    use tokio::time;
 
     fn get_cfilters(start: u32) -> NetworkMessage {
         NetworkMessage::GetCFilters(GetCFilters {
@@ -1578,6 +1580,46 @@ mod tests {
         };
         assert_eq!(net.state.broker.state_of(&RequestKey::CFilters(0)).await, Some(want));
         assert_eq!(net.state.broker.len(), stalls as usize);
+    }
+
+    /// A timeout kick re-queues the stalled peer's work only once that peer is closed and out
+    /// of the set, so no router snapshot can hand the work back. Holding the filter queue
+    /// stops the monitor at that point. The work then goes to the peer that stays.
+    #[tokio::test(start_paused = true)]
+    async fn a_kicked_peer_gets_none_of_its_requeued_work() {
+        let net = broker().await;
+        let session = net.session.lock().await.clone();
+        let mut handles = Vec::new();
+        for n in 1..=2 {
+            let peer = ConnectedPeer::for_test(conn(n, 0)).await;
+            handles.push(peer.handle());
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+        }
+        net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
+
+        let held = net.state.broker.hold_queue_of(&get_cfilters(0)).await;
+        time::advance(REQUEST_TIMEOUT + TIMEOUT_CHECK * 2).await;
+        for _ in 0..4 {
+            task::yield_now().await;
+        }
+        let key = RequestKey::CFilters(0);
+        assert_eq!(
+            net.state.broker.state_of(&key).await,
+            Some("queued"),
+            "the monitor reached the re-queue"
+        );
+        assert_eq!(net.connected_count().await, 1, "re-queued before the kick");
+        assert!(handles[0].is_closed(), "re-queued before the stalled peer was closed");
+        drop(held);
+        for _ in 0..4 {
+            task::yield_now().await;
+        }
+
+        assert_eq!(net.state.broker.state_of(&key).await, Some("on_wire"));
+        assert_eq!(handles[0].in_flight_bytes(), 0, "work went back to the kicked peer");
+        assert!(handles[1].in_flight_bytes() > 0, "the peer that stays carries the work");
     }
 
     /// A peer that was silent while idle is timed from the request it is given, and

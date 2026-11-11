@@ -393,6 +393,13 @@ impl Broker {
             ReqState::Arrived => "arrived",
         })
     }
+
+    /// Locks the queue `msg` waits in until the returned guard drops, so a test can stop a
+    /// task at the moment it queues such a message.
+    #[cfg(test)]
+    pub async fn hold_queue_of(&self, msg: &NetworkMessage) -> impl Sized + '_ {
+        self.queue.queue(classify(msg)).lock().await
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
