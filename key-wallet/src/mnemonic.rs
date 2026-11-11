@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use bip39 as bip39_crate;
+use dashcore_hashes::{sha512, Hash, HashEngine, HmacEngine};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use unicode_normalization::char::is_combining_mark;
@@ -150,6 +151,58 @@ fn word_in_any_list(word: &str) -> bool {
 /// [`Mnemonic::cleanup_phrase`]'s early-return gate.
 fn phrase_is_valid_any(normalized: &str) -> bool {
     Mnemonic::from_phrase(normalized).is_ok()
+}
+
+/// An HMAC-SHA512 engine whose inner and outer states are erased on zeroize.
+struct SeedHmacEngine {
+    engine: HmacEngine<sha512::HashEngine>,
+}
+
+impl Zeroize for SeedHmacEngine {
+    fn zeroize(&mut self) {
+        self.engine.non_secure_erase();
+    }
+}
+
+/// Returns the BIP39 seed of `phrase` and `passphrase`: PBKDF2-HMAC-SHA512 over
+/// the phrase, 2048 rounds, salt `"mnemonic"` + NFKD(passphrase). `phrase` must
+/// already be NFKD, as every bip39 wordlist is.
+fn bip39_seed(phrase: &str, passphrase: &str) -> Zeroizing<[u8; 64]> {
+    const SALT_PREFIX: &[u8] = b"mnemonic";
+    let nfkd_len: usize = passphrase.nfkd().map(char::len_utf8).sum();
+    let mut salt = Zeroizing::new(Vec::with_capacity(SALT_PREFIX.len() + nfkd_len));
+    salt.extend_from_slice(SALT_PREFIX);
+    let mut utf8 = Zeroizing::new([0; 4]);
+    for c in passphrase.nfkd() {
+        salt.extend_from_slice(c.encode_utf8(&mut utf8[..]).as_bytes());
+    }
+    pbkdf2_hmac_sha512_one_block(phrase.as_bytes(), &salt)
+}
+
+/// Returns PBKDF2-HMAC-SHA512 with BIP39's 2048 rounds. A 64-byte output is one
+/// SHA-512 output (dkLen = hLen), so block index 1 is the whole output.
+fn pbkdf2_hmac_sha512_one_block(password: &[u8], salt: &[u8]) -> Zeroizing<[u8; 64]> {
+    const ROUNDS: u32 = 2048;
+    let hmac = Zeroizing::new(SeedHmacEngine {
+        engine: HmacEngine::new(password),
+    });
+
+    let mut engine = hmac.engine.clone();
+    engine.input(salt);
+    engine.input(&1u32.to_be_bytes());
+    let mut u = Zeroizing::new([0; 64]);
+    u.copy_from_slice(engine.finalize().as_byte_array());
+    let mut out = Zeroizing::new([0; 64]);
+    out.copy_from_slice(&u[..]);
+    for _ in 1..ROUNDS {
+        let mut engine = hmac.engine.clone();
+        engine.input(&u[..]);
+        u.copy_from_slice(engine.finalize().as_byte_array());
+        for (o, x) in out.iter_mut().zip(u.iter()) {
+            *o ^= x;
+        }
+    }
+    out
 }
 
 /// BIP39 Mnemonic phrase
@@ -344,7 +397,7 @@ impl Mnemonic {
 
     /// The BIP39 seed for `passphrase`, wiped when dropped.
     pub fn to_seed(&self, passphrase: &str) -> Zeroizing<[u8; 64]> {
-        Zeroizing::new(self.inner.to_seed(passphrase))
+        bip39_seed(&self.phrase(), passphrase)
     }
 
     /// Derive extended private key from this mnemonic
@@ -1295,13 +1348,13 @@ mod tests {
     fn test_ambiguous_wordlist_phrase_is_seed_equivalent() {
         // This phrase (entropy 2aef2e023642257119dbff0ae316a5d4) is checksum-
         // valid under BOTH Chinese wordlists — the worst case for first-match-
-        // wins auto-detection. It is seed-safe because bip39's to_seed hashes
-        // the matched word strings themselves (bip39 2.2.2 reconstructs
-        // `lang.word_list()[idx]`, a lossless round-trip of the input words),
-        // so whichever list wins, the seed equals PBKDF2 over the sentence.
-        // The expected value below is exactly that sentence-PBKDF2, computed
-        // independently of this codebase — if a future bip39 bump ever made
-        // the seed depend on which wordlist matched, this assertion catches it.
+        // wins auto-detection. It is seed-safe because to_seed hashes
+        // `Mnemonic::phrase()`, which joins the matched word strings
+        // themselves (a lossless round-trip of the input words), so whichever
+        // list wins, the seed equals PBKDF2 over the sentence. The expected
+        // value below is exactly that sentence-PBKDF2, computed independently
+        // of this codebase — if the seed ever came to depend on which wordlist
+        // matched, this assertion catches it.
         const DUAL_LIST_PHRASE: &str = "名 苗 壤 喜 七 隆 盾 竟 加 常 弄 幼";
         const DUAL_LIST_SEED_HEX: &str = "fbfe5b8c860317d75fc6f7de4057bc4e67bef2cf408e5b19e1eda451e50b6c65a4272d46317eda3121a36c561f9e84e83b7c3cc8b7a711d3e4c34640c2ecdd73";
 
