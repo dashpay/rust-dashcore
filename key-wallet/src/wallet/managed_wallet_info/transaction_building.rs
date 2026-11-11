@@ -278,6 +278,10 @@ impl ManagedWalletInfo {
         source_index: u32,
         mut builder: TransactionBuilder,
     ) -> Result<PooledFunding, BuilderError> {
+        // Coin selection reads each coin's lock flag, and a coin can enter an
+        // account without one: set every flag from the lock set first.
+        self.refresh_all_lock_flags();
+
         let preferences = if sources.is_empty() {
             &AccountTypePreference::DEFAULT[..]
         } else {

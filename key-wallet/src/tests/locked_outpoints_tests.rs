@@ -549,22 +549,61 @@ async fn a_collateral_is_locked_even_before_the_next_balance_refresh() {
     assert!(ctx.managed_wallet.get_spendable_utxos().is_empty());
 }
 
-/// The lock set is the source of truth: a flag written on a held coin by hand
-/// is set back from the set on the next balance refresh.
-#[tokio::test]
-async fn a_held_coins_lock_flag_follows_the_lock_set() {
-    let (mut ctx, collateral, spare) = registered_wallet(Some(SPARE)).await;
-    let spare = spare.expect("spare coin");
+/// A confirmed coin paying `value` to the wallet, as a store hands it back on
+/// load; `seed` varies the outpoint.
+fn stored_coin(ctx: &TestWalletContext, value: u64, seed: u8) -> Utxo {
+    let tx = Transaction::dummy(&ctx.receive_address, seed..seed + 1, &[value]);
+    let mut utxo = Utxo::new(
+        OutPoint::new(tx.txid(), 0),
+        tx.output[0].clone(),
+        ctx.receive_address.clone(),
+        100,
+        false,
+    );
+    utxo.is_confirmed = true;
+    utxo
+}
+
+/// A store restores its locks and its coins in either order. With no balance
+/// refresh in between, the collateral is already out of reach.
+#[test_case(true ; "locks first")]
+#[test_case(false ; "coins first")]
+fn a_restored_lock_holds_whichever_is_restored_first(locks_first: bool) {
+    let mut ctx = TestWalletContext::new_random();
+    let collateral = stored_coin(&ctx, COLLATERAL, 0x01);
+    let spare = stored_coin(&ctx, SPARE, 0x02);
+    let coins = [collateral.clone(), spare.clone()];
+    if locks_first {
+        ctx.managed_wallet.lock_outpoint(collateral.outpoint);
+        ctx.managed_wallet.restore_utxos(&ctx.wallet, coins).expect("restores");
+    } else {
+        ctx.managed_wallet.restore_utxos(&ctx.wallet, coins).expect("restores");
+        ctx.managed_wallet.lock_outpoint(collateral.outpoint);
+    }
+
+    let spendable: Vec<OutPoint> =
+        ctx.managed_wallet.get_spendable_utxos().into_iter().map(|utxo| utxo.outpoint).collect();
+    assert_eq!(spendable, vec![spare.outpoint]);
+    let tx = send(&mut ctx, DASH, SelectionStrategy::LargestFirst).expect("the spare coin");
+    assert_eq!(spent(&tx), vec![spare.outpoint]);
+}
+
+/// A store that puts a coin into an account itself, after locking its
+/// outpoint, passes every point where the wallet sets the coin's flag. A send
+/// reads the lock set all the same.
+#[test]
+fn a_send_skips_a_locked_coin_put_into_an_account_directly() {
+    let mut ctx = TestWalletContext::new_random();
+    let collateral = stored_coin(&ctx, COLLATERAL, 0x01);
+    let spare = stored_coin(&ctx, SPARE, 0x02);
+    ctx.managed_wallet.lock_outpoint(collateral.outpoint);
     let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("BIP44 account");
-    account.utxos.get_mut(&collateral).expect("collateral").is_locked = false;
-    account.utxos.get_mut(&spare).expect("spare").is_locked = true;
+    account.utxos.insert(collateral.outpoint, collateral);
+    account.utxos.insert(spare.outpoint, spare.clone());
 
-    ctx.managed_wallet.update_balance();
+    let tx = send(&mut ctx, DASH, SelectionStrategy::LargestFirst).expect("the spare coin");
 
-    assert!(ctx.bip44_account().utxos[&collateral].is_locked);
-    assert!(!ctx.bip44_account().utxos[&spare].is_locked);
-    assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
-    assert_eq!(ctx.managed_wallet.balance().spendable(), SPARE);
+    assert_eq!(spent(&tx), vec![spare.outpoint]);
 }
 
 #[test_case(false ; "a set amount")]

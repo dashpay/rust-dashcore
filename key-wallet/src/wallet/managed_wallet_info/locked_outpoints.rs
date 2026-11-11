@@ -106,9 +106,10 @@ impl ManagedWalletInfo {
     /// Coin selection works on [`Utxo`](crate::Utxo)s and skips a locked one
     /// through [`Utxo::is_spendable`](crate::Utxo::is_spendable). The wallet
     /// keeps the `is_locked` flag of every coin it holds equal to membership in
-    /// this set: when the coin arrives, when its outpoint is locked or
-    /// unlocked, and on every balance refresh. A flag written on a held coin
-    /// directly is overwritten by the next refresh.
+    /// this set: when the coin arrives or is restored, when its outpoint is
+    /// locked or unlocked, on every balance refresh and before the wallet
+    /// funds a transaction. A flag written on a held coin directly is
+    /// overwritten by the next refresh.
     ///
     /// A lock or an unlock moves a held coin between the spendable and the
     /// locked balance. [`Self::lock_outpoint`], [`Self::unlock_outpoint`] and a
@@ -125,7 +126,15 @@ impl ManagedWalletInfo {
     /// [`TransactionCheckResult::locked_outpoints`](crate::transaction_checking::TransactionCheckResult::locked_outpoints),
     /// [`Self::lock_outpoint`] and [`Self::unlock_outpoint`] report their own
     /// changes, and on load the store calls [`Self::lock_outpoint`] for each
-    /// persisted outpoint, before or after restoring the coins.
+    /// persisted outpoint, before or after restoring the coins with
+    /// [`Self::restore_utxos`].
+    ///
+    /// [`TransactionContext::InBlock`]:
+    ///     crate::transaction_checking::TransactionContext::InBlock
+    /// [`TransactionContext::InChainLockedBlock`]:
+    ///     crate::transaction_checking::TransactionContext::InChainLockedBlock
+    /// [`TransactionContext::InstantSend`]:
+    ///     crate::transaction_checking::TransactionContext::InstantSend
     pub fn locked_outpoints(&self) -> &BTreeSet<OutPoint> {
         &self.locked_outpoints
     }
@@ -232,9 +241,9 @@ impl ManagedWalletInfo {
     /// Set the lock flag of every coin this wallet holds to its membership in
     /// the lock set.
     ///
-    /// Run before every balance refresh, so coins inserted without going
-    /// through transaction checking (a store restoring its coins, say) pick up
-    /// their locks too.
+    /// Run before every balance refresh and before funding a transaction, so
+    /// a coin that entered an account some other way than transaction
+    /// checking or [`Self::restore_utxos`] picks up its lock too.
     pub(crate) fn refresh_all_lock_flags(&mut self) {
         let locked = &self.locked_outpoints;
         for account in self.accounts.all_funding_accounts_mut() {

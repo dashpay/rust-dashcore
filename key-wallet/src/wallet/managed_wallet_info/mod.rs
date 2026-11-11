@@ -464,7 +464,9 @@ impl ManagedWalletInfo {
     /// way as when it processes the funding transaction, except that claims
     /// are not consulted. The restored UTXO
     /// keeps the InstantSend lock and trust of any copy it replaces or takes
-    /// out, and their coin lock replaces its own. A matched outpoint the
+    /// out. Its coin lock follows the wallet's lock set
+    /// ([`locked_outpoints`](Self::locked_outpoints)), whatever flag it or
+    /// those copies carry. A matched outpoint the
     /// wallet already saw spent is neither credited nor returned: one the
     /// owning account recorded spending is held under that spend, so a fork
     /// dropping the spend gives it back, and one spent in a processed block
@@ -517,12 +519,14 @@ impl ManagedWalletInfo {
             }
         };
         let mut unmatched = Vec::new();
+        let mut matched = Vec::new();
         for (utxo, owner) in utxos.into_iter().zip(owners) {
             let Some(owner) = owner else {
                 unmatched.push(utxo);
                 continue;
             };
             let outpoint = utxo.outpoint;
+            matched.push(outpoint);
             let mut copies = Vec::new();
             for (index, account) in accounts.iter_mut().enumerate() {
                 if index != owner {
@@ -539,6 +543,7 @@ impl ManagedWalletInfo {
                 account.bump_monitor_revision();
             }
         }
+        self.refresh_lock_flags(matched);
         Ok(unmatched)
     }
 
