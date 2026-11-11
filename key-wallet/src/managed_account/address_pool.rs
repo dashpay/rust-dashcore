@@ -353,13 +353,13 @@ impl AddressPool {
 
         // Generate addresses up to the gap limit if we have a key source
         if key_source.can_derive() {
-            pool.generate_addresses(gap_limit, key_source)?;
+            pool.generate_addresses(pool.gap_limit, key_source)?;
         }
 
         Ok(pool)
     }
 
-    /// Create a new address pool without generating any addresses
+    /// Create a new address pool without generating any addresses. The gap limit is clamped to `1..=MAX_GAP_LIMIT`.
     pub fn new_without_generation(
         base_path: DerivationPath,
         pool_type: AddressPoolType,
@@ -369,7 +369,7 @@ impl AddressPool {
         Self {
             base_path,
             pool_type,
-            gap_limit,
+            gap_limit: gap_limit.clamp(1, MAX_GAP_LIMIT),
             network,
             addresses: BTreeMap::new(),
             address_index: HashMap::new(),
@@ -416,7 +416,7 @@ impl AddressPool {
         key_source: &KeySource,
     ) -> Result<Vec<AddressInfo>> {
         let start_index = self.next_index_to_derive();
-        (start_index..start_index + count)
+        (start_index..start_index.saturating_add(count))
             .map(|index| self.generate_address_at_index(index, key_source))
             .collect()
     }
@@ -428,7 +428,7 @@ impl AddressPool {
         key_source: &KeySource,
     ) -> Result<Vec<AddressInfo>> {
         let next = self.next_index_to_derive();
-        self.generate_addresses((index + 1).saturating_sub(next), key_source)
+        self.generate_addresses(index.saturating_add(1).saturating_sub(next), key_source)
     }
 
     /// Generate a specific address at an index
