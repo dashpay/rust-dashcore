@@ -1331,10 +1331,13 @@ mod tests {
     use super::*;
     use crate::client::ClientConfig;
     use crate::test_utils::test_socket_address;
+    use dashcore::consensus::encode::serialize;
+    use dashcore::network::message::RawNetworkMessage;
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
-    use dashcore::BlockHash;
+    use dashcore::{BlockHash, Network};
     use test_case::test_case;
+    use tokio::io::AsyncWriteExt;
     use tokio::task;
     use tokio::time;
 
@@ -1561,16 +1564,6 @@ mod tests {
         assert_eq!(net.connected_count().await, 0);
     }
 
-    /// Counts `n` bytes as read from connected peer `peer`, leaving a message unfinished
-    /// if `partial`.
-    async fn receive(net: &PeerNetworkManager, peer: u8, n: u64, partial: bool) {
-        for p in net.state.connected.read().await.iter() {
-            if p.id() == conn(peer, 0) {
-                p.receive_for_test(n, partial);
-            }
-        }
-    }
-
     enum Feed {
         Nothing,
         /// A complete answer from this peer every second.
@@ -1593,15 +1586,29 @@ mod tests {
     async fn the_timeout_monitor_requeues_stalled_requests(feed: Feed, secs: u64, stalls: bool) {
         let net = broker().await;
         let session = net.session.lock().await.clone();
+        let mut far_ends = Vec::new();
         for n in 1..=2 {
-            let peer = ConnectedPeer::for_test(conn(n, 0)).await;
+            let (peer, far) = ConnectedPeer::for_test_reading(conn(n, 0), net.state.clone()).await;
+            far_ends.push(far);
             let admitted =
                 net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
             assert!(matches!(admitted, Admission::Joined));
         }
         net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
+        let framed = |payload| {
+            serialize(&RawNetworkMessage {
+                magic: Network::Regtest.magic(),
+                payload,
+            })
+        };
+        let long_answer = framed(NetworkMessage::CFilter(CFilter {
+            filter_type: 0,
+            block_hash: BlockHash::dummy(1),
+            filter: vec![0; 100_000],
+        }));
+        let ping = framed(NetworkMessage::Ping(1));
 
-        for _ in 0..secs {
+        for second in 0..secs as usize {
             tokio::time::advance(TIMEOUT_CHECK).await;
             match feed {
                 Feed::Nothing => {}
@@ -1616,8 +1623,14 @@ mod tests {
                         .send(PeerEvent::Message(conn(peer, 0), piece.into()))
                         .expect("the pump is running");
                 }
-                Feed::Streams(peer) => receive(&net, peer, 1000, true).await,
-                Feed::Chatters(peer) => receive(&net, peer, 100, false).await,
+                // A kicked peer's socket is closed, so a write after the kick fails.
+                Feed::Streams(peer) => {
+                    let piece = &long_answer[second * 1000..(second + 1) * 1000];
+                    let _ = far_ends[peer as usize - 1].write_all(piece).await;
+                }
+                Feed::Chatters(peer) => {
+                    let _ = far_ends[peer as usize - 1].write_all(&ping).await;
+                }
             }
             settle().await;
         }

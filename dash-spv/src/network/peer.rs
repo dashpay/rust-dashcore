@@ -416,36 +416,71 @@ impl ConnectedPeer {
     /// The far end discards what it reads, so sends succeed.
     #[cfg(test)]
     pub(crate) async fn for_test(id: PeerId) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
-        let addr = listener.local_addr().expect("bound address");
-        let stream = TcpStream::connect(addr).await.expect("connect loopback");
-        let (mut far, _) = listener.accept().await.expect("accept loopback");
+        let (link, mut far) = test_link().await;
         tokio::spawn(async move { io::copy(&mut far, &mut io::sink()).await });
-        let link = Link::v1(stream, Network::Regtest.magic());
+        let ledger = Arc::new(Ledger::new(Arc::new(ResponseCosts::new())));
+        Self::from_test_parts(
+            id,
+            Arc::new(Mutex::new(link.writer)),
+            ledger,
+            (Arc::new(AtomicU64::new(0)), Arc::new(AtomicBool::new(false))),
+            CancellationToken::new(),
+        )
+    }
+
+    /// A handshaken connection `id` over a loopback socket, its reader started as
+    /// `connect` starts it. Returns the far end's write half, which feeds the reader.
+    #[cfg(test)]
+    pub(crate) async fn for_test_reading(
+        id: PeerId,
+        state: Arc<NetworkState>,
+    ) -> (Self, OwnedWriteHalf) {
+        let (link, far) = test_link().await;
+        let (mut far_read, far_write) = far.into_split();
+        tokio::spawn(async move { io::copy(&mut far_read, &mut io::sink()).await });
+        let (reader, bytes, partial) = peer_reader(link.reader, link.codec, state.clone());
+        let writer = Arc::new(Mutex::new(link.writer));
+        let ledger = Arc::new(Ledger::new(state.costs.clone()));
+        let token = CancellationToken::new();
+        let magic = Network::Regtest.magic();
+        spawn_reader(id, magic, reader, writer.clone(), state, token.clone(), ledger.clone());
+        (Self::from_test_parts(id, writer, ledger, (bytes, partial), token), far_write)
+    }
+
+    #[cfg(test)]
+    fn from_test_parts(
+        id: PeerId,
+        writer: Arc<Mutex<PeerWriter>>,
+        ledger: Arc<Ledger>,
+        (bytes, partial): (Arc<AtomicU64>, Arc<AtomicBool>),
+        token: CancellationToken,
+    ) -> Self {
         ConnectedPeer {
             handle: PeerHandle {
                 id,
-                writer: Arc::new(Mutex::new(link.writer)),
-                ledger: Arc::new(Ledger::new(Arc::new(ResponseCosts::new()))),
+                writer,
+                ledger,
                 cap: Arc::new(AtomicU64::new(INITIAL_CAP_BYTES)),
                 serving_rate: Arc::new(AtomicU64::new(0)),
                 headers2: false,
-                token: CancellationToken::new(),
+                token,
             },
             version: build_version(id.addr(), "test"),
             lag_ms: AtomicU32::new(1),
-            bytes: Arc::new(AtomicU64::new(0)),
-            partial: Arc::new(AtomicBool::new(false)),
+            bytes,
+            partial,
         }
     }
+}
 
-    /// Counts `n` bytes as read from the socket, as the reader does, leaving a message
-    /// unfinished if `partial`.
-    #[cfg(test)]
-    pub(crate) fn receive_for_test(&self, n: u64, partial: bool) {
-        self.bytes.fetch_add(n, Ordering::Relaxed);
-        self.partial.store(partial, Ordering::Relaxed);
-    }
+/// A V1 link over a loopback socket, and the socket's far end.
+#[cfg(test)]
+async fn test_link() -> (Link, TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+    let addr = listener.local_addr().expect("bound address");
+    let stream = TcpStream::connect(addr).await.expect("connect loopback");
+    let (far, _) = listener.accept().await.expect("accept loopback");
+    (Link::v1(stream, Network::Regtest.magic()), far)
 }
 
 impl DisconnectedPeer {
