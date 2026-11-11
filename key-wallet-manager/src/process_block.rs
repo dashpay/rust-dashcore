@@ -729,8 +729,8 @@ mod tests {
     };
     use key_wallet::account::ManagedAccountTrait as _;
     use key_wallet::account::StandardAccountType;
-    use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
     use key_wallet::managed_account::address_pool::AddressPoolType;
+    use key_wallet::managed_account::address_pool::DEFAULT_COINJOIN_GAP_LIMIT;
     use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;

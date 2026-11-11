@@ -513,7 +513,7 @@ mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
     use crate::account::{ECDSAAddressDerivation, TransactionRecord};
-    use crate::gap_limit::{
+    use crate::managed_account::address_pool::{
         DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
     };
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;

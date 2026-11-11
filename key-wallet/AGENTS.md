@@ -8,10 +8,9 @@ This crate handles key material. Correctness comes before performance, and priva
 
 - `wallet/`: `Wallet` and its construction, backup and restore. `wallet/managed_wallet_info/` holds `ManagedWalletInfo` plus coin selection, fees and transaction building.
 - `account/`: `Account`, `AccountType` and `AccountCollection`, with the BLS and EdDSA variants.
-- `managed_account/`: the mutable account state and `AddressPool`.
+- `managed_account/`: the mutable account state, and `AddressPool` with the default gap limits and `MAX_GAP_LIMIT`.
 - `transaction_checking/`: `TransactionRouter` and the `WalletTransactionChecker` trait that decides which transactions belong to the wallet.
 - `bip32.rs`, `dip9.rs`, `derivation*.rs`, `mnemonic.rs`, `seed.rs`: key derivation and the DIP-9 path constants.
-- `gap_limit.rs`: the default gap limits and `MAX_GAP_LIMIT`.
 - `src/tests/`: crate-level tests grouped by topic. `src/test_utils/`: helpers behind the `test-utils` feature.
 
 ## Invariants

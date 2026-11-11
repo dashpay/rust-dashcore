@@ -51,7 +51,7 @@ use dashcore::{
     Address, Block, BlockHash, Network, OutPoint, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use key_wallet::account::ManagedAccountTrait;
-use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
+use key_wallet::managed_account::address_pool::DEFAULT_COINJOIN_GAP_LIMIT;
 use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;

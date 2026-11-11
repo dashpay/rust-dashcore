@@ -29,7 +29,6 @@ pub mod derivation_bls_bip32;
 pub mod derivation_slip10;
 pub mod dip9;
 pub mod error;
-pub mod gap_limit;
 pub mod managed_account;
 pub mod mnemonic;
 pub mod seed;
