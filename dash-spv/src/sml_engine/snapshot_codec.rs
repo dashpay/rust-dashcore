@@ -388,7 +388,6 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
             latest_coinbase,
             ..Self::new(network, headers)
         };
-        // An earlier build may have stored a served entry no list held.
         engine.retain_listed_cycles();
         Ok(engine)
     }

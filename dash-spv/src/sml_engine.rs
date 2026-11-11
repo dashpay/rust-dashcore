@@ -306,8 +306,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     }
 
     /// Returns an engine holding the lists, rotated cycles and latest coinbase
-    /// [`Self::snapshot`] encoded. A cycle is restored only when it is complete,
-    /// `Verified` throughout, and one restored list holds every entry of it.
+    /// [`Self::snapshot`] encoded. A cycle is restored only when one restored
+    /// list holds every entry of it.
     pub fn from_snapshot(
         network: Network,
         headers: Arc<RwLock<H>>,
@@ -712,31 +712,23 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         })
     }
 
-    /// Keeps the restored cycles a `QRInfo` would store again: each complete,
-    /// `Verified` throughout, and held entry for entry, with the same entry
-    /// hash, by one restored list.
+    /// Keeps the restored cycles whose quorums are all `Verified` and held by
+    /// one restored list with the same entry hash.
     fn retain_listed_cycles(&mut self) {
-        let unlisted: Vec<BlockHash> = self
-            .rotated_quorums_per_cycle
-            .iter()
-            .filter(|(cycle_hash, cycle)| {
-                !self.is_cycle_fully_verified(cycle_hash)
-                    || !self.masternode_lists.values().any(|list| {
-                        cycle.values().all(|stored| {
-                            list.quorums
-                                .get(&stored.quorum_entry.llmq_type)
-                                .and_then(|quorums| quorums.get(&stored.quorum_entry.quorum_hash))
-                                .is_some_and(|listed| {
-                                    listed.entry_hash == stored.quorum_entry.calculate_entry_hash()
-                                })
-                        })
+        let lists = &self.masternode_lists;
+        self.rotated_quorums_per_cycle.retain(|_, cycle| {
+            cycle.values().all(|stored| stored.verified == LLMQEntryVerificationStatus::Verified)
+                && lists.values().any(|list| {
+                    cycle.values().all(|stored| {
+                        list.quorums
+                            .get(&stored.quorum_entry.llmq_type)
+                            .and_then(|quorums| quorums.get(&stored.quorum_entry.quorum_hash))
+                            .is_some_and(|listed| {
+                                listed.entry_hash == stored.quorum_entry.calculate_entry_hash()
+                            })
                     })
-            })
-            .map(|(cycle_hash, _)| *cycle_hash)
-            .collect();
-        for cycle_hash in unlisted {
-            self.rotated_quorums_per_cycle.remove(&cycle_hash);
-        }
+                })
+        });
     }
 
     /// Merges the active set into its stored cycle when every quorum of it is
@@ -1662,6 +1654,26 @@ mod tests {
             )),
         );
         (engine, qr_info)
+    }
+
+    /// A restart keeps both cycles the QRInfo stored, the previous one without
+    /// the straggler it could not verify included.
+    #[tokio::test]
+    async fn a_snapshot_restores_the_cycles_a_qr_info_stored() {
+        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+        engine.feed_qr_info(qr_info).await.expect("the fixture feeds");
+        let cycles = engine.rotated_quorums_per_cycle();
+        assert_eq!(cycles.len(), 2);
+        assert!(cycles.values().any(|cycle| cycle.len() == 31), "the previous cycle is partial");
+
+        let restored = TestEngine::from_snapshot(
+            Network::Mainnet,
+            engine.headers(),
+            &engine.snapshot().expect("encodes"),
+        )
+        .expect("decodes");
+
+        assert!(restored.rotated_quorums_per_cycle() == cycles);
     }
 
     /// A QRInfo the engine refuses leaves it as it was, so a retry against
