@@ -10,14 +10,14 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'codecov/codecov-action@v7.1.1'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.89.1'
+        - 'taiki-e/install-action@v2.90.0'
     '.github/workflows/changelog-guard.yml': []
     '.github/workflows/conflict-check.yml':
         - 'eps1lon/actions-label-merge-conflict@v3.1.0'
     '.github/workflows/fuzz.yml':
         - 'actions/checkout@v7.0.1'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.89.1'
+        - 'taiki-e/install-action@v2.90.0'
     '.github/workflows/pr-review-policy.yml': []
     '.github/workflows/pr-title.yml':
         - 'amannn/action-semantic-pull-request@v6.1.1'
@@ -33,16 +33,16 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'embarkstudios/cargo-deny-action@v2.1.1'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.89.1'
+        - 'taiki-e/install-action@v2.90.0'
     '.github/workflows/sanitizer.yml':
         - 'actions/checkout@v7.0.1'
         - 'dtolnay/rust-toolchain@nightly'
-        - 'taiki-e/install-action@v2.89.1'
+        - 'taiki-e/install-action@v2.90.0'
     '.github/workflows/update-masternode-seeds.yml':
         - 'actions/checkout@v7.0.1'
         - 'peter-evans/create-pull-request@v8.1.1'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.89.1'
+        - 'taiki-e/install-action@v2.90.0'
 dependencies:
     'actions/cache@v4':
         ref: 'v4'
@@ -118,8 +118,8 @@ dependencies:
         commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
         owner_id: 580492
         repo_id: 298565987
-    'taiki-e/install-action@v2.89.1':
-        ref: 'v2.89.1'
-        commit: 'sha1-682ce6c3c696a4cd5168a05f98e51aa02b877941'
+    'taiki-e/install-action@v2.90.0':
+        ref: 'v2.90.0'
+        commit: 'sha1-b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2'
         owner_id: 43724913
         repo_id: 442947557
