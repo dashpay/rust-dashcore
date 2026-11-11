@@ -166,7 +166,7 @@ fn test_extreme_gap_limit() {
         Network::Testnet,
     );
 
-    assert_eq!(pool.gap_limit, MAX_GAP_LIMIT);
+    assert_eq!(pool.gap_limit(), MAX_GAP_LIMIT);
 
     // Test with zero gap limit
     let zero_gap_pool = AddressPool::new_without_generation(
@@ -175,7 +175,7 @@ fn test_extreme_gap_limit() {
         0,
         Network::Testnet,
     );
-    assert_eq!(zero_gap_pool.gap_limit, 1);
+    assert_eq!(zero_gap_pool.gap_limit(), 1);
 }
 
 #[test]

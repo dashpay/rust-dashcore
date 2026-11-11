@@ -516,7 +516,7 @@ pub trait ManagedAccountTrait {
             | ManagedAccountType::PlatformPayment {
                 addresses,
                 ..
-            } => Some(addresses.gap_limit),
+            } => Some(addresses.gap_limit()),
         }
     }
 }

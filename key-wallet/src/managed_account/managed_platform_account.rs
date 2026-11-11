@@ -56,7 +56,7 @@ impl ManagedPlatformAccount {
     ///
     /// The network is derived from the AddressPool to ensure consistency.
     pub fn new(account: u32, key_class: u32, addresses: AddressPool, is_watch_only: bool) -> Self {
-        let network = addresses.network;
+        let network = addresses.network();
         Self {
             account,
             key_class,
@@ -288,7 +288,7 @@ impl ManagedPlatformAccount {
 
     /// Get the gap limit for the address pool
     pub fn gap_limit(&self) -> u32 {
-        self.addresses.gap_limit
+        self.addresses.gap_limit()
     }
 }
 

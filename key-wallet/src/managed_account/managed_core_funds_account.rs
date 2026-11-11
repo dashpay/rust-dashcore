@@ -1530,7 +1530,7 @@ impl ManagedCoreFundsAccount {
             ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } => Some(external_addresses.gap_limit),
+            } => Some(external_addresses.gap_limit()),
             _ => None,
         }
     }
@@ -1541,7 +1541,7 @@ impl ManagedCoreFundsAccount {
             ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } => Some(internal_addresses.gap_limit),
+            } => Some(internal_addresses.gap_limit()),
             _ => None,
         }
     }

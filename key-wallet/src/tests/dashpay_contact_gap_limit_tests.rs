@@ -78,7 +78,7 @@ async fn contact_payments_extend_the_contact_pool() {
             "external"
         };
         let pool = contact_pool(&ctx, contact);
-        let gap = pool.gap_limit;
+        let gap = pool.gap_limit();
         let last_built = pool.address_at_index(gap - 1).expect("construction fills the window");
         assert!(
             pool.address_at_index(gap).is_none(),

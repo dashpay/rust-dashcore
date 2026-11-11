@@ -1440,7 +1440,7 @@ fn pool_state(
         _ => panic!("unexpected pool type {:?}", pool_type),
     };
     let highest = pool.highest_generated().expect("pre-generated pool must have addresses");
-    let gap_limit = pool.gap_limit;
+    let gap_limit = pool.gap_limit();
     let addr = pool.address_at_index(highest).expect("highest index must exist");
     (highest, gap_limit, addr)
 }
@@ -1536,7 +1536,7 @@ async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
         // Pin the persistence-critical payload against the wallet's
         // own AddressInfo for the same index.
         let stored = external_pool_after
-            .addresses
+            .addresses()
             .get(&derived.derivation_index)
             .unwrap_or_else(|| panic!("pool missing index {}", derived.derivation_index));
         assert_eq!(

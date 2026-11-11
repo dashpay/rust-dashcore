@@ -1051,7 +1051,7 @@ mod tests {
             .managed_account_type()
             .address_pools()
             .iter()
-            .find(|p| p.pool_type == AddressPoolType::External)
+            .find(|p| p.pool_type() == AddressPoolType::External)
             .and_then(|p| p.highest_used());
         assert_eq!(pool_used, Some(gap + 8));
 

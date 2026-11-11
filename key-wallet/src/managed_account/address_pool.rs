@@ -325,19 +325,19 @@ impl AddressInfo {
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
 pub struct AddressPool {
     /// Base derivation path for this pool
-    pub base_path: DerivationPath,
+    base_path: DerivationPath,
     /// Type of address pool (external, internal, or absent)
-    pub pool_type: AddressPoolType,
+    pool_type: AddressPoolType,
     /// Gap limit for this pool
-    pub gap_limit: u32,
+    gap_limit: u32,
     /// Network for address generation
-    pub network: Network,
+    network: Network,
     /// All addresses in the pool
-    pub addresses: BTreeMap<u32, AddressInfo>,
+    addresses: BTreeMap<u32, AddressInfo>,
     /// Reverse lookup: address -> index
-    pub address_index: HashMap<Address, u32>,
+    address_index: HashMap<Address, u32>,
     /// Reverse lookup: script pubkey -> index
-    pub script_pubkey_index: HashMap<ScriptBuf, u32>,
+    script_pubkey_index: HashMap<ScriptBuf, u32>,
 }
 
 impl AddressPool {
@@ -375,6 +375,27 @@ impl AddressPool {
             address_index: HashMap::new(),
             script_pubkey_index: HashMap::new(),
         }
+    }
+
+    pub fn base_path(&self) -> &DerivationPath {
+        &self.base_path
+    }
+
+    pub fn pool_type(&self) -> AddressPoolType {
+        self.pool_type
+    }
+
+    pub fn gap_limit(&self) -> u32 {
+        self.gap_limit
+    }
+
+    pub fn network(&self) -> Network {
+        self.network
+    }
+
+    /// Returns every address in the pool, keyed by derivation index.
+    pub fn addresses(&self) -> &BTreeMap<u32, AddressInfo> {
+        &self.addresses
     }
 
     /// Check if this is an internal (change) address pool
@@ -517,11 +538,23 @@ impl AddressPool {
             }
         };
         let info = AddressInfo::new(address.clone(), index, full_path, Some(public_key_type));
-        self.addresses.insert(index, info.clone());
-        self.address_index.insert(address, index);
-        self.script_pubkey_index.insert(info.script_pubkey.clone(), index);
-
+        self.insert(info.clone())?;
         Ok(info)
+    }
+
+    /// Stores `info` at its index, replacing any entry already there.
+    ///
+    /// Use it to restore persisted entries or keys that cannot be derived from the key source.
+    pub fn insert(&mut self, info: AddressInfo) -> Result<()> {
+        ChildNumber::from_normal_idx(info.index).map_err(Error::Bip32)?;
+        if let Some(old) = self.addresses.remove(&info.index) {
+            self.address_index.remove(&old.address);
+            self.script_pubkey_index.remove(&old.script_pubkey);
+        }
+        self.address_index.insert(info.address.clone(), info.index);
+        self.script_pubkey_index.insert(info.script_pubkey.clone(), info.index);
+        self.addresses.insert(info.index, info);
+        Ok(())
     }
 
     /// Get the next unused address
@@ -565,15 +598,29 @@ impl AddressPool {
         key_source: &KeySource,
         now: u64,
     ) -> Result<Address> {
-        let index = self.next_unused_with_info(key_source)?.index;
-        // A lookup miss would hand out an unreserved address, so fail instead.
-        let info = self.addresses.get_mut(&index).ok_or_else(|| {
-            Error::InvalidState(format!("next_unused_and_reserve: index {} not stored", index))
-        })?;
+        let address = self.next_unused_with_info(key_source)?.address;
+        // A failed reservation would hand out an unreserved address, so fail instead.
+        if !self.reserve(&address, now) {
+            return Err(Error::InvalidState(format!(
+                "next_unused_and_reserve: {} not reservable",
+                address
+            )));
+        }
+        Ok(address)
+    }
+
+    /// Reserves `address` with timestamp `now` if it is available. Returns whether it did.
+    pub fn reserve(&mut self, address: &Address, now: u64) -> bool {
+        let Some(info) = self.address_info_mut(address) else {
+            return false;
+        };
+        if !info.is_available() {
+            return false;
+        }
         info.state = AddressState::Reserved {
             at: now,
         };
-        Ok(info.address.clone())
+        true
     }
 
     /// Release a reservation, returning the address to the available pool.
@@ -643,6 +690,18 @@ impl AddressPool {
 
         info.mark_used();
 
+        true
+    }
+
+    /// Returns a used address to the available state. Returns whether it was used.
+    pub fn unmark_used(&mut self, address: &Address) -> bool {
+        let Some(info) = self.address_info_mut(address) else {
+            return false;
+        };
+        if !info.is_used() {
+            return false;
+        }
+        info.state = AddressState::Available;
         true
     }
 

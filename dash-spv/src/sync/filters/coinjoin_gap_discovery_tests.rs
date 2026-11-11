@@ -111,7 +111,7 @@ fn coinjoin_external_pool(info: &ManagedWalletInfo) -> &AddressPool {
         .managed_account_type()
         .address_pools()
         .into_iter()
-        .find(|p| p.pool_type == AddressPoolType::External)
+        .find(|p| p.pool_type() == AddressPoolType::External)
         .expect("CoinJoin External pool")
 }
 
@@ -127,7 +127,7 @@ async fn coinjoin_pool_state(
     (
         pool.highest_used(),
         pool.highest_generated(),
-        pool.addresses.values().filter(|info| info.is_used()).count(),
+        pool.addresses().values().filter(|info| info.is_used()).count(),
     )
 }
 

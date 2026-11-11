@@ -166,7 +166,7 @@ impl ManagedWalletInfo {
             }
             let rev_before = new_addresses.len();
             for pool in account.managed_account_type_mut().address_pools_mut() {
-                let pool_type = pool.pool_type;
+                let pool_type = pool.pool_type();
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(infos) => {
                         new_addresses.extend(infos.into_iter().map(|info| DerivedAddressInfo {

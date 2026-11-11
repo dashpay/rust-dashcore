@@ -481,7 +481,7 @@ async fn provider_registration_extends_operator_key_gap_limit() {
         match account.managed_account_type() {
             ManagedAccountType::ProviderOperatorKeys {
                 addresses,
-            } => (addresses.highest_generated(), addresses.highest_used(), addresses.gap_limit),
+            } => (addresses.highest_generated(), addresses.highest_used(), addresses.gap_limit()),
             _ => unreachable!("operator account holds an operator pool"),
         }
     };
