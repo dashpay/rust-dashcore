@@ -97,7 +97,7 @@ fn held_by_any_funds_account(ctx: &TestWalletContext, outpoint: &OutPoint) -> bo
 async fn a_coinjoin_utxo_past_the_stored_window_restores_into_coinjoin() {
     let mut ctx = TestWalletContext::new_random();
     let gap = coinjoin_pool(&ctx).gap_limit;
-    assert_eq!(coinjoin_pool(&ctx).highest_generated, Some(gap - 1));
+    assert_eq!(coinjoin_pool(&ctx).highest_generated(), Some(gap - 1));
     let (_, inside) = funded(&coinjoin_address(&ctx, gap - 1), 0, 100_000);
     let (beyond_tx, beyond) = funded(&coinjoin_address(&ctx, 2 * gap - 1), 1, 200_000);
 
@@ -173,7 +173,7 @@ fn a_receiving_pool_that_reaches_a_script_in_a_later_pass_claims_it() {
     let mut ctx = TestWalletContext::new_random();
     let (receiving, reverse_external) = befriend_both_ways(&mut ctx);
     let pool = receiving_pool(&ctx);
-    let last = pool.highest_generated.expect("an initial window");
+    let last = pool.highest_generated().expect("an initial window");
     let far_index = last + pool.gap_limit;
     let mut far_pool = pool.clone();
     far_pool

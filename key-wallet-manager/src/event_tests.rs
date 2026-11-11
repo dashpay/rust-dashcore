@@ -1439,7 +1439,7 @@ fn pool_state(
         ) => internal_addresses,
         _ => panic!("unexpected pool type {:?}", pool_type),
     };
-    let highest = pool.highest_generated.expect("pre-generated pool must have addresses");
+    let highest = pool.highest_generated().expect("pre-generated pool must have addresses");
     let gap_limit = pool.gap_limit;
     let addr = pool.address_at_index(highest).expect("highest index must exist");
     (highest, gap_limit, addr)

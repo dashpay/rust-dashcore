@@ -7,7 +7,7 @@
 use bincode_derive::{Decode, Encode};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
@@ -355,12 +355,6 @@ pub struct AddressPool {
     pub address_index: HashMap<Address, u32>,
     /// Reverse lookup: script pubkey -> index
     pub script_pubkey_index: HashMap<ScriptBuf, u32>,
-    /// Set of used address indices
-    pub used_indices: HashSet<u32>,
-    /// Highest generated index (None if no addresses generated yet)
-    pub highest_generated: Option<u32>,
-    /// Highest used index
-    pub highest_used: Option<u32>,
     /// Address type preference
     pub address_type: AddressType,
 }
@@ -399,9 +393,6 @@ impl AddressPool {
             addresses: BTreeMap::new(),
             address_index: HashMap::new(),
             script_pubkey_index: HashMap::new(),
-            used_indices: HashSet::new(),
-            highest_generated: None,
-            highest_used: None,
             address_type: AddressType::P2pkh,
         }
     }
@@ -424,8 +415,18 @@ impl AddressPool {
             .map_or_else(|| self.next_index_to_derive(), |(index, _)| *index)
     }
 
+    /// Returns the highest derived index, or `None` for an empty pool.
+    pub fn highest_generated(&self) -> Option<u32> {
+        self.addresses.keys().next_back().copied()
+    }
+
+    /// Returns the highest used index, or `None` when no address is used.
+    pub fn highest_used(&self) -> Option<u32> {
+        self.addresses.values().rev().find(|info| info.is_used()).map(|info| info.index)
+    }
+
     fn next_index_to_derive(&self) -> u32 {
-        self.highest_generated.map_or(0, |highest| highest + 1)
+        self.highest_generated().map_or(0, |highest| highest + 1)
     }
 
     /// Generate addresses up to the specified count
@@ -542,11 +543,6 @@ impl AddressPool {
             self.addresses.insert(index, info.clone());
             self.address_index.insert(address, index);
             self.script_pubkey_index.insert(info.script_pubkey.clone(), index);
-
-            // Update highest generated
-            if self.highest_generated.map(|h| index > h).unwrap_or(true) {
-                self.highest_generated = Some(index);
-            }
         }
 
         Ok(info)
@@ -674,8 +670,6 @@ impl AddressPool {
         }
 
         info.mark_used();
-        self.used_indices.insert(index);
-        self.highest_used = Some(self.highest_used.map_or(index, |highest| highest.max(index)));
 
         true
     }
@@ -750,7 +744,7 @@ impl AddressPool {
     /// emission seam — surface the full derivation context (index, path,
     /// public key) for downstream persisters without re-deriving it.
     pub fn maintain_gap_limit(&mut self, key_source: &KeySource) -> Result<Vec<AddressInfo>> {
-        let target = match self.highest_used {
+        let target = match self.highest_used() {
             None => self.gap_limit - 1,
             Some(highest) => highest + self.gap_limit,
         };
@@ -791,7 +785,7 @@ mod tests {
 
         let addresses = pool.generate_addresses(10, &key_source, true).unwrap();
         assert_eq!(addresses.len(), 10);
-        assert_eq!(pool.highest_generated, Some(9));
+        assert_eq!(pool.highest_generated(), Some(9));
         assert_eq!(pool.addresses.len(), 10);
     }
 
@@ -809,11 +803,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(pool.generate_up_to(29, &key_source).unwrap().len(), 25);
-        assert_eq!(pool.highest_generated, Some(29));
+        assert_eq!(pool.highest_generated(), Some(29));
         assert_eq!(pool.addresses.len(), 30);
 
         assert!(pool.generate_up_to(10, &key_source).unwrap().is_empty());
-        assert_eq!(pool.highest_generated, Some(29));
+        assert_eq!(pool.highest_generated(), Some(29));
     }
 
     #[test]
@@ -831,8 +825,7 @@ mod tests {
         let first_addr = &addresses[0].address;
 
         assert!(pool.mark_used(first_addr));
-        assert_eq!(pool.used_indices.len(), 1);
-        assert_eq!(pool.highest_used, Some(0));
+        assert_eq!(pool.highest_used(), Some(0));
 
         assert!(pool.address_info(first_addr).unwrap().is_used());
     }
@@ -879,7 +872,7 @@ mod tests {
         assert_eq!(pool.gap_limit, 20);
         assert_eq!(new.len(), 15);
         assert_eq!(pool.addresses.len(), 20);
-        assert_eq!(pool.highest_generated, Some(19));
+        assert_eq!(pool.highest_generated(), Some(19));
 
         // The new limit is capped at MAX_GAP_LIMIT.
         pool.set_gap_limit(crate::gap_limit::MAX_GAP_LIMIT + 500, &key_source).unwrap();
@@ -1103,25 +1096,25 @@ mod tests {
         .unwrap();
 
         // Verify gap_limit addresses generated, none used
-        assert_eq!(pool.highest_generated, Some(gap_limit - 1));
-        assert_eq!(pool.highest_used, None);
+        assert_eq!(pool.highest_generated(), Some(gap_limit - 1));
+        assert_eq!(pool.highest_used(), None);
         assert_eq!(pool.addresses.len(), gap_limit as usize);
 
         // Calling maintain_gap_limit should not generate any new addresses when none are used
         let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
         assert_eq!(new_addresses.len(), 0);
-        assert_eq!(pool.highest_generated, Some(gap_limit - 1));
+        assert_eq!(pool.highest_generated(), Some(gap_limit - 1));
         assert_eq!(pool.addresses.len(), gap_limit as usize);
 
         // Mark address at index 0 as used
         pool.mark_used(&pool.address_at_index(0).unwrap());
-        assert_eq!(pool.highest_used, Some(0));
+        assert_eq!(pool.highest_used(), Some(0));
 
         // Should generate exactly 1 address to maintain gap_limit unused after index 0
         let new_addresses = pool.maintain_gap_limit(&key_source).unwrap();
         assert_eq!(new_addresses.len(), 1);
         assert_eq!(new_addresses[0].index, gap_limit);
-        assert_eq!(pool.highest_generated, Some(gap_limit));
+        assert_eq!(pool.highest_generated(), Some(gap_limit));
         assert_eq!(pool.addresses.len(), gap_limit as usize + 1);
 
         // Mark address at index 1 and 2 as used
@@ -1133,7 +1126,7 @@ mod tests {
         assert_eq!(new_addresses.len(), 2);
         assert_eq!(new_addresses[0].index, gap_limit + 1);
         assert_eq!(new_addresses[1].index, gap_limit + 2);
-        assert_eq!(pool.highest_generated, Some(gap_limit + 2));
+        assert_eq!(pool.highest_generated(), Some(gap_limit + 2));
         assert_eq!(pool.addresses.len(), gap_limit as usize + 3);
     }
 }

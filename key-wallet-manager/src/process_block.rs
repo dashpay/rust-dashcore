@@ -1052,7 +1052,7 @@ mod tests {
             .address_pools()
             .iter()
             .find(|p| p.pool_type == AddressPoolType::External)
-            .and_then(|p| p.highest_used);
+            .and_then(|p| p.highest_used());
         assert_eq!(pool_used, Some(gap + 8));
 
         let txids = BTreeSet::from([early.txid(), late.txid(), both.txid()]);

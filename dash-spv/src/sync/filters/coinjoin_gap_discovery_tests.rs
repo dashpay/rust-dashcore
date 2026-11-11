@@ -124,7 +124,11 @@ async fn coinjoin_pool_state(
     let wm = wallet.read().await;
     let info = wm.get_wallet_info(wallet_id).expect("wallet info present");
     let pool = coinjoin_external_pool(info);
-    (pool.highest_used, pool.highest_generated, pool.used_indices.len())
+    (
+        pool.highest_used(),
+        pool.highest_generated(),
+        pool.addresses.values().filter(|info| info.is_used()).count(),
+    )
 }
 
 /// One block at `height` whose single transaction pays every address in

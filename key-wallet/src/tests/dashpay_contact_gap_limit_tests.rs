@@ -90,7 +90,7 @@ async fn contact_payments_extend_the_contact_pool() {
             "{direction}: payment to a monitored address is seen"
         );
         assert_eq!(
-            contact_pool(&ctx, contact).highest_generated,
+            contact_pool(&ctx, contact).highest_generated(),
             Some(gap - 1 + gap),
             "{direction}: using an address must leave a full window monitored ahead of it"
         );
@@ -102,7 +102,7 @@ async fn contact_payments_extend_the_contact_pool() {
             "{direction}: the payment past the construction window must be seen too"
         );
         assert_eq!(
-            contact_pool(&ctx, contact).highest_generated,
+            contact_pool(&ctx, contact).highest_generated(),
             Some(gap * 2),
             "{direction}: the window must keep moving, not widen once"
         );
