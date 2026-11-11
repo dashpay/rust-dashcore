@@ -726,11 +726,7 @@ impl AddressPool {
 
     /// Get mutable address info by address
     pub fn address_info_mut(&mut self, address: &Address) -> Option<&mut AddressInfo> {
-        if let Some(&index) = self.address_index.get(address) {
-            self.addresses.get_mut(&index)
-        } else {
-            None
-        }
+        self.address_index.get(address).and_then(|index| self.addresses.get_mut(index))
     }
 
     /// Get the index of an address
