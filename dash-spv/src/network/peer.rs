@@ -17,7 +17,7 @@ use dashcore::{
 use futures::lock::Mutex;
 use rand::Rng;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(test)]
@@ -137,6 +137,23 @@ impl Decoder for SizedCodec {
     }
 }
 
+/// Frames messages and records whether the bytes of an unfinished one are buffered.
+struct TrackedCodec {
+    codec: SizedCodec,
+    partial: Arc<AtomicBool>,
+}
+
+impl Decoder for TrackedCodec {
+    type Item = (RawNetworkMessage, u64);
+    type Error = encode::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let frame = self.codec.decode(src);
+        self.partial.store(!src.is_empty(), Ordering::Relaxed);
+        frame
+    }
+}
+
 /// The socket's write half, framing each message for the connection's transport.
 struct PeerWriter {
     half: OwnedWriteHalf,
@@ -172,7 +189,7 @@ impl PeerWriter {
 /// the peer's version packet.
 type LinkReader = Either<ProtocolSessionReader<OwnedReadHalf>, OwnedReadHalf>;
 
-type PeerReader = FramedRead<CountingReader<LinkReader>, SizedCodec>;
+type PeerReader = FramedRead<CountingReader<LinkReader>, TrackedCodec>;
 
 /// A TCP connection with its transport negotiated, ready for the version handshake.
 struct Link {
@@ -304,6 +321,7 @@ pub struct ConnectedPeer {
     version: VersionMessage,
     lag_ms: AtomicU32,
     bytes: Arc<AtomicU64>,
+    partial: Arc<AtomicBool>,
 }
 
 pub struct DisconnectedPeer {
@@ -344,6 +362,11 @@ impl ConnectedPeer {
 
     pub fn bytes_read(&self) -> u64 {
         self.bytes.load(Ordering::Relaxed)
+    }
+
+    /// Whether part of a message has arrived and the rest has not.
+    pub fn partial_message(&self) -> bool {
+        self.partial.load(Ordering::Relaxed)
     }
 
     pub fn in_flight_bytes(&self) -> u64 {
@@ -389,7 +412,16 @@ impl ConnectedPeer {
             version: build_version(id.addr(), "test"),
             lag_ms: AtomicU32::new(1),
             bytes: Arc::new(AtomicU64::new(0)),
+            partial: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Counts `n` bytes as read from the socket, as the reader does, leaving a message
+    /// unfinished if `partial`.
+    #[cfg(test)]
+    pub(crate) fn receive_for_test(&self, n: u64, partial: bool) {
+        self.bytes.fetch_add(n, Ordering::Relaxed);
+        self.partial.store(partial, Ordering::Relaxed);
     }
 }
 
@@ -485,13 +517,17 @@ impl DisconnectedPeer {
             1
         };
         let peer_bytes = Arc::new(AtomicU64::new(0));
+        let partial = Arc::new(AtomicBool::new(false));
         let mut reader = FramedRead::new(
             CountingReader {
                 inner: reader,
                 state: state.clone(),
                 peer_bytes: peer_bytes.clone(),
             },
-            codec,
+            TrackedCodec {
+                codec,
+                partial: partial.clone(),
+            },
         );
 
         handshake_send(
@@ -614,6 +650,7 @@ impl DisconnectedPeer {
             version,
             lag_ms: AtomicU32::new(lag_ms),
             bytes: peer_bytes,
+            partial,
         })
     }
 }
@@ -756,6 +793,8 @@ async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> Net
 mod tests {
     use std::io::{Error as IoError, ErrorKind};
 
+    use test_case::test_case;
+
     use super::*;
 
     fn io_error(kind: ErrorKind) -> ProtocolError {
@@ -792,5 +831,26 @@ mod tests {
         let straddling =
             wire_agent(&format!("{}é{}", "a".repeat(MAX_USER_AGENT_LEN - 3), "b".repeat(10)));
         assert_eq!(straddling, format!("/{}/", "a".repeat(MAX_USER_AGENT_LEN - 3)));
+    }
+
+    /// Whether the codec reports an unfinished message after the first `n` bytes of two
+    /// 32-byte pings arrive.
+    #[test_case(1 => true; "part of a header")]
+    #[test_case(24 => true; "a header without its payload")]
+    #[test_case(32 => false; "a whole ping")]
+    #[test_case(40 => true; "a whole ping and part of the next")]
+    fn the_codec_tracks_an_unfinished_message(n: usize) -> bool {
+        let magic = Network::Regtest.magic();
+        let ping = encode::serialize(&RawNetworkMessage {
+            magic,
+            payload: NetworkMessage::Ping(1),
+        });
+        let mut codec = TrackedCodec {
+            codec: SizedCodec::V1,
+            partial: Arc::new(AtomicBool::new(false)),
+        };
+        let mut src = BytesMut::from(&[ping.clone(), ping].concat()[..n]);
+        while codec.decode(&mut src).unwrap().is_some() {}
+        codec.partial.load(Ordering::Relaxed)
     }
 }
