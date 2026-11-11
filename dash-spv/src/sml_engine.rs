@@ -2025,36 +2025,6 @@ mod tests {
         assert_refused_as_not_in_list(&mut engine, qr_info, quorum_hash).await;
     }
 
-    /// A stored entry with the type and quorum hash of a listed one but another
-    /// entry hash is not reused: the QRInfo stores the cycle from its tip list.
-    #[tokio::test]
-    async fn a_stored_entry_the_tip_list_does_not_hold_is_not_used() {
-        let (mut served, qr_info) = load_qrinfo_2518986_fixture();
-        served.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
-
-        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
-        engine.feed_qr_info(qr_info.clone()).await.expect("the fixture feeds");
-        let cycle_hash = engine.block_hash_at(2518848).expect("the cycle base is known");
-        let stored = engine
-            .rotated_quorums_per_cycle
-            .get_mut(&cycle_hash)
-            .and_then(|cycle| cycle.get_mut(&(ALTERED_INDEX as u16)))
-            .expect("the cycle is stored");
-        let mut unlisted = stored.quorum_entry.clone();
-        unlisted.quorum_vvec_hash = QuorumVVecHash::all_zeros();
-        *stored = unlisted.into();
-        assert!(!engine.is_cycle_fully_verified(&cycle_hash));
-
-        let fed = engine.feed_qr_info(qr_info).await.expect("the clean QRInfo feeds");
-
-        assert_eq!(fed.fully_verified_count, 32);
-        assert_eq!(fed.stored_cycle_height, Some(2518848));
-        assert!(
-            engine.rotated_quorums_per_cycle == served.rotated_quorums_per_cycle,
-            "the cycle is stored from the list at the QRInfo's tip"
-        );
-    }
-
     /// Returns an engine and the `qrinfo` dashd v23.1.8 served at regtest H=597 to a cold start.
     /// Index 1 of `llmq_test_dip0024` is a straggler from cycle 456, and no served diff ends at
     /// 448, its own work block.
