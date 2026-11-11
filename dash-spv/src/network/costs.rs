@@ -1,7 +1,10 @@
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::Duration;
+
+// Tokio's clock, so tests can pause time to age a request.
+use tokio::time::Instant;
 
 use dashcore::consensus::encode;
 use dashcore::hash_types::{ChainLockHash, InstantSendLockHash};
@@ -186,6 +189,14 @@ impl Ledger {
         let count = self.latency_count.load(Ordering::Relaxed);
         let avg_ms = self.latency_ns.load(Ordering::Relaxed) as f64 / count.max(1) as f64 / 1e6;
         (count, avg_ms, self.latency_max_ns.load(Ordering::Relaxed) as f64 / 1e6)
+    }
+
+    /// How long the oldest awaited reply has been awaited, if no reply ever came.
+    pub(crate) async fn unanswered_for(&self) -> Option<Duration> {
+        if self.latency_count.load(Ordering::Relaxed) > 0 {
+            return None;
+        }
+        self.awaited.lock().await.iter().map(|a| a.sent.elapsed()).max()
     }
 
     pub async fn charge(&self, msg: &NetworkMessage) {
