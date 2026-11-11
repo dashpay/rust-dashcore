@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
-use dashcore::bls_sig_utils::{BLSSignature, BlsScheme};
+use dashcore::bls_sig_utils::BlsScheme;
 use dashcore::network::message_qrinfo::QuorumSnapshot;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::QUORUM_MEMBER_LIST_OFFSET;
@@ -31,7 +31,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .masternode_lists
             .get(&work_height)
             .ok_or(QuorumValidationError::RequiredMasternodeListNotPresent(work_height))?;
-        let Some(chain_lock) = self.coinbase_chain_lock(work_height, &masternode_list.block_hash)
+        let Some(chain_lock) = self.work_block_chain_lock(work_height, &masternode_list.block_hash)
         else {
             return Err(QuorumValidationError::RequiredChainLockNotPresent(
                 work_height,
@@ -45,7 +45,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             quorum.quorum_entry.llmq_type,
             masternode_list.block_hash,
             work_height,
-            chain_lock.unwrap_or(BLSSignature::from([0; 96])),
+            chain_lock,
             self.network,
         )?;
         let members: Vec<_> = masternode_list.valid_masternodes_for_quorum(
