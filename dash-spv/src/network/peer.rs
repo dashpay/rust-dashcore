@@ -191,6 +191,29 @@ type LinkReader = Either<ProtocolSessionReader<OwnedReadHalf>, OwnedReadHalf>;
 
 type PeerReader = FramedRead<CountingReader<LinkReader>, TrackedCodec>;
 
+/// Returns a connection's reader with the counters the peer reads: the bytes read from
+/// the socket, and whether the bytes of an unfinished message are buffered.
+fn peer_reader(
+    reader: LinkReader,
+    codec: SizedCodec,
+    state: Arc<NetworkState>,
+) -> (PeerReader, Arc<AtomicU64>, Arc<AtomicBool>) {
+    let peer_bytes = Arc::new(AtomicU64::new(0));
+    let partial = Arc::new(AtomicBool::new(false));
+    let reader = FramedRead::new(
+        CountingReader {
+            inner: reader,
+            state,
+            peer_bytes: peer_bytes.clone(),
+        },
+        TrackedCodec {
+            codec,
+            partial: partial.clone(),
+        },
+    );
+    (reader, peer_bytes, partial)
+}
+
 /// A TCP connection with its transport negotiated, ready for the version handshake.
 struct Link {
     reader: LinkReader,
@@ -516,19 +539,7 @@ impl DisconnectedPeer {
         } else {
             1
         };
-        let peer_bytes = Arc::new(AtomicU64::new(0));
-        let partial = Arc::new(AtomicBool::new(false));
-        let mut reader = FramedRead::new(
-            CountingReader {
-                inner: reader,
-                state: state.clone(),
-                peer_bytes: peer_bytes.clone(),
-            },
-            TrackedCodec {
-                codec,
-                partial: partial.clone(),
-            },
-        );
+        let (mut reader, peer_bytes, partial) = peer_reader(reader, codec, state.clone());
 
         handshake_send(
             &mut writer,
