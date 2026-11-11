@@ -340,12 +340,11 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
         if Network::decode(decoder)? != network {
             return Err(DecodeError::Other("snapshot of another network"));
         }
-        // Read to reach `latest_coinbase`, then dropped: the engine restores no rotated cycle.
         let (
             masternode_entries,
             quorum_entries,
             records,
-            _rotated_quorums_per_cycle,
+            rotated_quorums_per_cycle,
             latest_coinbase,
         ) = Decoded::decode(decoder)?;
 
@@ -383,12 +382,15 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
             }
         }
 
-        Ok(Self {
+        let mut engine = Self {
             masternode_lists,
-            rotated_quorums_per_cycle: BTreeMap::new(),
+            rotated_quorums_per_cycle,
             latest_coinbase,
             ..Self::new(network, headers)
-        })
+        };
+        // An earlier build may have stored a served entry no list held.
+        engine.retain_listed_cycles();
+        Ok(engine)
     }
 }
 
@@ -562,7 +564,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_snapshot_restores_the_lists_and_their_sharing_but_not_the_cycles() {
+    async fn a_snapshot_restores_the_lists_and_their_sharing() {
         let mut with_coinbase = chain_engine();
         with_coinbase.latest_coinbase = Some(CoinbasePayload {
             version: 4,
@@ -573,7 +575,7 @@ mod tests {
             ..CoinbasePayload::dummy(100)
         });
 
-        for mut engine in
+        for engine in
             [TestEngine::mainnet_fixture(), chain_engine(), qr_info_engine().await, with_coinbase]
         {
             let bytes = engine.snapshot().expect("encodes");
@@ -581,14 +583,41 @@ mod tests {
                 .expect("decodes");
 
             assert_eq!(restored.masternode_lists, engine.masternode_lists);
-            assert!(restored.rotated_quorums_per_cycle.is_empty());
             assert_eq!(restored.latest_coinbase, engine.latest_coinbase);
             assert!(shares_at_least(&engine.masternode_lists, &restored.masternode_lists));
             assert!(distinct(&restored.masternode_lists) <= distinct(&engine.masternode_lists));
             assert!(entries_deduplicated(&restored.masternode_lists));
-            engine.rotated_quorums_per_cycle.clear();
-            assert_eq!(restored.snapshot().expect("encodes"), engine.snapshot().expect("encodes"));
         }
+    }
+
+    /// The cycle a `QRInfo` stored comes back with its lists, so IS locks of it
+    /// verify after a restart without waiting for the next `QRInfo`.
+    #[tokio::test]
+    async fn a_snapshot_restores_the_cycles_its_lists_hold() {
+        let engine = qr_info_engine().await;
+        assert!(!engine.rotated_quorums_per_cycle().is_empty(), "the QRInfo stores a cycle");
+        let bytes = engine.snapshot().expect("encodes");
+
+        let restored =
+            TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes).expect("decodes");
+
+        assert!(restored.rotated_quorums_per_cycle() == engine.rotated_quorums_per_cycle());
+        assert_eq!(restored.snapshot().expect("encodes"), bytes);
+    }
+
+    /// A cycle whose entries no restored list holds, as the fixture's lists hold
+    /// only their ChainLock quorums, is not restored.
+    #[test]
+    fn a_snapshot_drops_a_cycle_no_restored_list_holds() {
+        let engine = TestEngine::mainnet_fixture();
+        assert!(!engine.rotated_quorums_per_cycle().is_empty(), "the fixture holds a cycle");
+        let bytes = engine.snapshot().expect("encodes");
+
+        let restored =
+            TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes).expect("decodes");
+
+        assert!(restored.rotated_quorums_per_cycle().is_empty());
+        assert_eq!(restored.masternode_lists, engine.masternode_lists);
     }
 
     #[test]

@@ -305,8 +305,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         bincode::encode_to_vec(self, snapshot_codec::config())
     }
 
-    /// Returns an engine holding the lists and latest coinbase [`Self::snapshot`]
-    /// encoded. It holds no rotated cycle until its first QRInfo.
+    /// Returns an engine holding the lists, rotated cycles and latest coinbase
+    /// [`Self::snapshot`] encoded. A cycle is restored only when it is complete,
+    /// `Verified` throughout, and one restored list holds every entry of it.
     pub fn from_snapshot(
         network: Network,
         headers: Arc<RwLock<H>>,
@@ -709,6 +710,33 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             existing.len() == expected
                 && existing.values().all(|q| q.verified == LLMQEntryVerificationStatus::Verified)
         })
+    }
+
+    /// Keeps the restored cycles a `QRInfo` would store again: each complete,
+    /// `Verified` throughout, and held entry for entry, with the same entry
+    /// hash, by one restored list.
+    fn retain_listed_cycles(&mut self) {
+        let unlisted: Vec<BlockHash> = self
+            .rotated_quorums_per_cycle
+            .iter()
+            .filter(|(cycle_hash, cycle)| {
+                !self.is_cycle_fully_verified(cycle_hash)
+                    || !self.masternode_lists.values().any(|list| {
+                        cycle.values().all(|stored| {
+                            list.quorums
+                                .get(&stored.quorum_entry.llmq_type)
+                                .and_then(|quorums| quorums.get(&stored.quorum_entry.quorum_hash))
+                                .is_some_and(|listed| {
+                                    listed.entry_hash == stored.quorum_entry.calculate_entry_hash()
+                                })
+                        })
+                    })
+            })
+            .map(|(cycle_hash, _)| *cycle_hash)
+            .collect();
+        for cycle_hash in unlisted {
+            self.rotated_quorums_per_cycle.remove(&cycle_hash);
+        }
     }
 
     /// Merges the active set into its stored cycle when every quorum of it is

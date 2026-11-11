@@ -115,8 +115,8 @@ async fn test_masternode_list_sync() {
 }
 
 /// Sync masternode list, stop, restart with same storage twice without new blocks,
-/// and verify each start rebuilds the first session's list from storage. A start restores no
-/// rotated cycle, and an InstantSend lock sent after it verifies once the start QRInfo stores one.
+/// and verify each start rebuilds the first session's list and rotated cycles from storage, so an
+/// InstantSend lock sent after it verifies.
 #[tokio::test]
 async fn test_masternode_list_sync_with_restart() {
     let Some(mut ctx) = TestContext::new(false).await else {
@@ -146,6 +146,7 @@ async fn test_masternode_list_sync_with_restart() {
             .next_back()
             .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
     };
+    let first_cycles = client_handle.engine.read().await.rotated_quorums_per_cycle().clone();
     let (_, _, first_masternodes) =
         first_tip.expect("the first session must build a masternode list before testing restart");
     assert!(
@@ -181,15 +182,20 @@ async fn test_masternode_list_sync_with_restart() {
         "startup must rebuild the first session's masternode list from storage, \
          not default and let a fresh dashd sync cover for it"
     );
-    assert!(
-        client_handle.engine.read().await.rotated_quorums_per_cycle().is_empty(),
-        "a start must not restore rotated cycles; the start QRInfo stores them again"
-    );
+    {
+        let engine = client_handle.engine.read().await;
+        let restored_cycles = engine.rotated_quorums_per_cycle();
+        assert!(!restored_cycles.is_empty(), "a start must restore the stored rotated cycles");
+        assert!(
+            restored_cycles.iter().all(|(hash, cycle)| first_cycles.get(hash) == Some(cycle)),
+            "a start must restore only the first session's cycles, unchanged"
+        );
+    }
 
     client_handle.run().await;
 
     // An InstantSend lock sent right after the restart, which the client may
-    // receive before its start QRInfo has stored the lock's cycle.
+    // receive before its start QRInfo.
     let addr = receive_address(&wallet, &wallet_id).await;
     let txid = ctx.mn_ctx.controller.send_to_address(&addr, Amount::from_sat(50_000_000));
     wait_for_controller_islock(&mut ctx.mn_ctx, &txid, 60).await;
@@ -209,7 +215,7 @@ async fn test_masternode_list_sync_with_restart() {
         let engine = client_handle.engine.read().await;
         assert!(
             engine.rotated_quorums_of_cycle(&lock.cyclehash).is_some(),
-            "the lock is accepted against the cycle the start QRInfo stored"
+            "the lock is accepted against a stored cycle"
         );
         assert_all_rotated_quorums_verified(&engine);
     }

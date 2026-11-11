@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_reopened_storage_restores_the_lists_but_not_the_cycles() {
+    async fn a_reopened_storage_restores_the_persisted_engine() {
         let dir = TempDir::new().unwrap();
         let engine = TestEngine::mainnet_fixture();
         assert!(!engine.rotated_quorums_per_cycle().is_empty(), "the fixture holds cycles");
@@ -220,7 +220,10 @@ mod tests {
         let restored = reopened.engine();
         let restored = restored.read().await;
         assert!(restored.masternode_lists == lists, "the lists are restored");
-        assert!(restored.rotated_quorums_per_cycle().is_empty(), "the cycles are not");
+        assert!(
+            restored.rotated_quorums_per_cycle().is_empty(),
+            "the fixture's lists hold no entry of its cycle"
+        );
     }
 
     #[tokio::test]
