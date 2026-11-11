@@ -36,7 +36,7 @@ use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 
 use crate::network::bans::Ban;
-use crate::network::costs::{as_sent, Ledger};
+use crate::network::costs::{as_sent, Ledger, HEADERS2_RESP_BYTES};
 use crate::network::manager::{InboundMessage, NetworkState};
 use crate::network::transport::{encrypt_message, TransportPreference, V2Decoder};
 use crate::{error::NetworkResult, NetworkError};
@@ -89,7 +89,7 @@ const V2_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const PING_INTERVAL: Duration = Duration::from_secs(120);
 /// A new peer's in-flight byte cap until the controller has measured it.
-pub const INITIAL_CAP_BYTES: u64 = 256 * 1024;
+pub const INITIAL_CAP_BYTES: u64 = 2 * HEADERS2_RESP_BYTES;
 
 /// Counts bytes read, globally and per peer, to size the in-flight budgets from
 /// measured throughput.
@@ -260,6 +260,9 @@ pub struct PeerHandle {
     cap: Arc<AtomicU64>,
     /// Bytes/s this peer serves while bandwidth bound, 0 until measured.
     serving_rate: Arc<AtomicU64>,
+    /// Bytes/s this peer served over the last two seconds, 0 until it delivered anything.
+    /// A rough stand-in for `serving_rate` while that is still being measured.
+    served: Arc<AtomicU64>,
     headers2: bool,
     /// Child of the global shutdown; cancelling it stops the reader and closes the socket.
     token: CancellationToken,
@@ -276,6 +279,10 @@ impl PeerHandle {
 
     pub(super) fn serving_rate(&self) -> u64 {
         self.serving_rate.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn served(&self) -> u64 {
+        self.served.load(Ordering::Relaxed)
     }
 
     pub fn in_flight_bytes(&self) -> u64 {
@@ -389,6 +396,10 @@ impl ConnectedPeer {
         self.handle.serving_rate.store(bytes_per_sec, Ordering::Relaxed);
     }
 
+    pub(crate) fn set_served(&self, bytes_per_sec: u64) {
+        self.handle.served.store(bytes_per_sec, Ordering::Relaxed);
+    }
+
     /// A handshaken connection `id` over a loopback socket, with no reader running.
     /// The far end discards what it reads, so sends succeed.
     #[cfg(test)]
@@ -406,6 +417,7 @@ impl ConnectedPeer {
                 ledger: Arc::new(Ledger::new(Arc::new(ResponseCosts::new()))),
                 cap: Arc::new(AtomicU64::new(INITIAL_CAP_BYTES)),
                 serving_rate: Arc::new(AtomicU64::new(0)),
+                served: Arc::new(AtomicU64::new(0)),
                 headers2: false,
                 token: CancellationToken::new(),
             },
@@ -644,6 +656,7 @@ impl DisconnectedPeer {
                 ledger,
                 cap,
                 serving_rate: Arc::new(AtomicU64::new(0)),
+                served: Arc::new(AtomicU64::new(0)),
                 headers2,
                 token,
             },

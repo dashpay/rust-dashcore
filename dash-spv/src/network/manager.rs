@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -206,7 +206,6 @@ pub struct NetworkState {
     pub subscribers: Subscribers,
     pub inbound: UnboundedSender<PeerEvent>,
     pub bytes: AtomicU64,
-    pub global_cap: AtomicU64,
     pub peer_wake: Notify,
     pub costs: Arc<ResponseCosts>,
     pub max_peers: usize,
@@ -257,7 +256,6 @@ impl PeerNetworkManager {
             subscribers: Mutex::new(HashMap::new()),
             inbound,
             bytes: AtomicU64::new(0),
-            global_cap: AtomicU64::new(MIN_CAP_BYTES * max_peers as u64),
             peer_wake: Notify::new(),
             costs: Arc::new(ResponseCosts::new()),
             max_peers,
@@ -413,7 +411,6 @@ fn spawn_router(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHa
             broker,
             connected,
             costs,
-            global_cap,
             ..
         } = &*state;
         loop {
@@ -431,7 +428,7 @@ fn spawn_router(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHa
 
             let peers: Vec<PeerHandle> =
                 connected.read().await.iter().map(|p| p.handle()).collect();
-            let sent = broker.route(&peers, global_cap.load(Ordering::Relaxed), costs).await;
+            let sent = broker.route(&peers, costs).await;
             drop(peers);
 
             if sent == 0 {
@@ -453,33 +450,23 @@ const FLOW_TICK: Duration = Duration::from_millis(250);
 /// Weight of a new tick in the rate and in-flight averages (~1 s horizon).
 const FLOW_EMA_ALPHA: f64 = 0.25;
 
-/// Ticks of round-trip samples the base round trip is the minimum of (30 s).
-const BASE_RTT_TICKS: u64 = 120;
-
-/// Shortest period between adjustments, in ticks; otherwise two round trips.
-const MIN_PERIOD_TICKS: u32 = 4;
-
-/// Smallest cap of a peer (and of the link, per peer): one response always fits.
+/// Smallest cap of a peer: two header replies, so a new peer has one queued behind the
+/// one it is serving.
 const MIN_CAP_BYTES: u64 = INITIAL_CAP_BYTES;
 
-/// Linear probe per second, per peer: linear in time, not per adjustment, so a far
-/// peer (adjusted once per two long round trips) ramps as fast as a near one.
-const CAP_STEP_BYTES_PER_SEC: f64 = 512.0 * 1024.0;
+/// Seconds of a peer's served rate its cap allows in flight. A request sent to the peer
+/// waits this long behind the ones before it, so this stays small. It must still exceed
+/// the round trip, or a peer limited by its cap cannot show it could serve more.
+const TARGET_QUEUE_SECS: f64 = 2.0;
 
-/// Added in-flight must buy at least this share of a proportional rate gain, or the
-/// path is full and the addition only queued.
-const MIN_ELASTICITY: f64 = 0.3;
+/// Horizon of the served rate. A burst of `n` bytes raises the cap by about `n`.
+const SERVED_RATE_SECS: f64 = 2.0;
 
-/// In-flight growth below this is noise, not an experiment to judge.
-const MIN_GROWTH: f64 = 0.05;
+/// Growth per second of a bound peer's cap, to find more than the served rate shows.
+const CAP_PROBE_BYTES_PER_SEC: f64 = 32.0 * 1024.0;
 
-/// Queue at the bottleneck, as a fraction of the bandwidth-delay product, above which
-/// the cap is cut by the excess (TCP Vegas' beta) whatever the rate did.
-const QUEUE_HIGH: f64 = 1.0;
-
-/// Queue floor in bytes: responses are lumpy (a filter batch can be 1 MB), so a small
-/// bandwidth-delay product must still absorb a couple.
-const QUEUE_FLOOR_BYTES: f64 = 1024.0 * 1024.0;
+/// Share per second of its excess over the target that a bound peer's cap gives back.
+const CAP_DECAY_PER_SEC: f64 = 0.5;
 
 /// Ticks a peer must have been bandwidth bound before its rate is compared, and the
 /// span its serving rate is averaged over, so a momentary dip never condemns it.
@@ -488,48 +475,30 @@ const SERVING_SAMPLE_TICKS: u32 = 120;
 /// A peer serving below this fraction of the best connected peer's rate is slow.
 const SLOW_RATE_FRACTION: f64 = 0.25;
 
-/// Sizes a byte cap from throughput alone. Grows it linearly while each addition of
-/// in-flight bytes still buys proportionally more bytes/s; once the rate stops
-/// following, scales it back by how much of the addition did not pay. As a guard,
-/// by Little's law the round trip is `in_flight / rate` and its 30 s minimum the
-/// path's base, so `in_flight - rate · base_rtt` is what sits queued (TCP Vegas):
-/// more than a bandwidth-delay product of it cuts the cap by the excess.
+/// Sizes a peer's byte cap in seconds of its own served rate: a fast peer reaches
+/// megabytes within a second or two and a slow one stays near [`MIN_CAP_BYTES`]. The cap
+/// rises at once when the served rate supports it. It only falls while the peer is
+/// [`ByteLimiter::serving_all`]. Otherwise a peer shows how much it was asked for, which
+/// says nothing about what it can serve.
 struct ByteLimiter {
     cap: f64,
-    min_cap: f64,
     /// Bytes/s and bytes in flight, averaged over ticks.
     rate: f64,
     in_flight: f64,
+    /// Bytes/s the peer serves, averaged over [`SERVED_RATE_SECS`] of ticks in which it
+    /// served all it could.
+    served: f64,
     last_bytes: u64,
-    /// Monotonic window of (tick, round trip) giving the minimum over the last
-    /// [`BASE_RTT_TICKS`].
-    rtts: VecDeque<(u64, f64)>,
-    ticks: u64,
-    base_rtt: f64,
-    /// Rate and in-flight at the last adjustment, to judge what it bought.
-    prev_rate: f64,
-    prev_in_flight: f64,
-    since_adjust: u32,
-    /// Whether the cap was ever cut: until then it is still ramping, and the rate it
-    /// allows says nothing about the peer.
-    found_ceiling: bool,
 }
 
 impl ByteLimiter {
-    fn new(cap: u64, last_bytes: u64) -> Self {
+    fn new(last_bytes: u64) -> Self {
         Self {
-            cap: cap as f64,
-            min_cap: cap as f64,
+            cap: MIN_CAP_BYTES as f64,
             rate: 0.0,
             in_flight: 0.0,
+            served: 0.0,
             last_bytes,
-            rtts: VecDeque::new(),
-            ticks: 0,
-            base_rtt: 0.0,
-            prev_rate: 0.0,
-            prev_in_flight: 0.0,
-            since_adjust: 0,
-            found_ceiling: false,
         }
     }
 
@@ -537,67 +506,47 @@ impl ByteLimiter {
         self.in_flight / self.rate.max(1.0)
     }
 
-    /// One tick with the cumulative bytes received and the bytes in flight now;
-    /// `step` is the linear growth per second.
-    fn tick(&mut self, bytes: u64, in_flight: u64, step: f64) -> u64 {
+    /// Whether the router has given the peer all its cap allows.
+    fn bound(&self, in_flight: u64) -> bool {
+        in_flight > 0 && in_flight >= self.cap as u64
+    }
+
+    /// Whether what the peer delivers is all it can serve: it is bound, or it holds more than
+    /// [`TARGET_QUEUE_SECS`] of what it delivers. A cap raised by a burst leaves the peer below
+    /// it, so without the second case the cap never comes down while the queue grows.
+    /// Less than [`MIN_CAP_BYTES`] in flight is a reply or two in the making, not a backlog.
+    fn serving_all(&self, in_flight: u64) -> bool {
+        self.bound(in_flight)
+            || (in_flight >= MIN_CAP_BYTES && in_flight as f64 > self.rate * TARGET_QUEUE_SECS)
+    }
+
+    /// One tick with the cumulative bytes received and the bytes in flight now. A stall
+    /// of our own link says nothing about the peer, so it leaves the cap alone.
+    fn tick(&mut self, bytes: u64, in_flight: u64, link_stalled: bool) -> u64 {
         let tick_s = FLOW_TICK.as_secs_f64();
-        let got = bytes.saturating_sub(self.last_bytes) as f64;
+        let got = bytes.saturating_sub(self.last_bytes) as f64 / tick_s;
         self.last_bytes = bytes;
-        self.rate += FLOW_EMA_ALPHA * (got / tick_s - self.rate);
+        self.rate += FLOW_EMA_ALPHA * (got - self.rate);
         self.in_flight += FLOW_EMA_ALPHA * (in_flight as f64 - self.in_flight);
-        self.ticks += 1;
-
-        // Nothing asked or nothing arriving says nothing about the path.
-        if in_flight == 0 || self.rate < 1.0 || self.in_flight < 1.0 {
+        if link_stalled {
             return self.cap as u64;
         }
-        let rtt = self.rtt();
-        while self.rtts.back().is_some_and(|&(_, r)| r >= rtt) {
-            self.rtts.pop_back();
-        }
-        self.rtts.push_back((self.ticks, rtt));
-        while self.rtts.front().is_some_and(|&(t, _)| t + BASE_RTT_TICKS < self.ticks) {
-            self.rtts.pop_front();
-        }
-        self.base_rtt = self.rtts.front().map_or(rtt, |&(_, r)| r);
 
-        // One adjustment per two round trips, so each judges the last one's effect.
-        self.since_adjust += 1;
-        let period = ((2.0 * rtt / tick_s).ceil() as u32).max(MIN_PERIOD_TICKS);
-        if self.since_adjust < period {
-            return self.cap as u64;
+        let serving_all = self.serving_all(in_flight);
+        if serving_all || got > self.served {
+            self.served += tick_s / SERVED_RATE_SECS * (got - self.served);
         }
-        let step = step * self.since_adjust as f64 * tick_s;
-        self.since_adjust = 0;
-        let (prev_rate, prev_in_flight) = (self.prev_rate, self.prev_in_flight);
-        self.prev_rate = self.rate;
-        self.prev_in_flight = self.in_flight;
-
-        let bdp = self.rate * self.base_rtt;
-        let queued = self.in_flight - bdp;
-        let high = (bdp * QUEUE_HIGH).max(QUEUE_FLOOR_BYTES);
-        let growth = if prev_in_flight > 0.0 {
-            self.in_flight / prev_in_flight - 1.0
-        } else {
-            0.0
-        };
-        let gain = if prev_rate > 0.0 {
-            self.rate / prev_rate - 1.0
-        } else {
-            0.0
-        };
-        // Growth needs the cap to be what limits us; an under-used cap proves nothing.
-        let limited = in_flight as f64 + step >= self.cap;
-        if queued > high {
-            self.cap -= queued - high;
-            self.found_ceiling = true;
-        } else if growth > MIN_GROWTH && gain < growth * MIN_ELASTICITY {
-            self.cap *= (1.0 + gain.max(0.0)) / (1.0 + growth);
-            self.found_ceiling = true;
-        } else if limited {
-            self.cap += step;
+        let target = self.served * TARGET_QUEUE_SECS;
+        if target > self.cap {
+            self.cap = target;
+        } else if serving_all {
+            // Only a bound peer can show it would serve more than its cap allows.
+            if self.bound(in_flight) {
+                self.cap += CAP_PROBE_BYTES_PER_SEC * tick_s;
+            }
+            self.cap -= (self.cap - target).max(0.0) * CAP_DECAY_PER_SEC * tick_s;
         }
-        self.cap = self.cap.max(self.min_cap);
+        self.cap = self.cap.max(MIN_CAP_BYTES as f64);
         self.cap as u64
     }
 }
@@ -612,20 +561,17 @@ struct PeerFlow {
 impl PeerFlow {
     fn new(bytes: u64) -> Self {
         Self {
-            limiter: ByteLimiter::new(MIN_CAP_BYTES, bytes),
+            limiter: ByteLimiter::new(bytes),
             serving_rate: 0.0,
             serving_ticks: 0,
         }
     }
 
-    /// One tick with the peer's cumulative bytes received, its bytes in flight now,
-    /// whether the client's own cap holds back work and whether our link is stalled.
-    /// Returns its new cap.
-    fn tick(&mut self, bytes: u64, in_flight: u64, link_full: bool, link_stalled: bool) -> u64 {
-        // The router sends a peer work until it reaches its cap or the link cap binds.
-        // Short of both, its rate shows how much it was asked for, not its bandwidth.
-        let bound = in_flight > 0 && (in_flight >= self.limiter.cap as u64 || link_full);
-        let cap = self.limiter.tick(bytes, in_flight, CAP_STEP_BYTES_PER_SEC);
+    /// One tick with the peer's cumulative bytes received, its bytes in flight now and
+    /// whether our link is stalled. Returns its new cap.
+    fn tick(&mut self, bytes: u64, in_flight: u64, link_stalled: bool) -> u64 {
+        let bound = self.limiter.bound(in_flight);
+        let cap = self.limiter.tick(bytes, in_flight, link_stalled);
         self.sample(self.limiter.rate, bound, link_stalled);
         cap
     }
@@ -643,7 +589,7 @@ impl PeerFlow {
 
     /// Returns the peer's serving rate in bytes/s, 0 until measured.
     fn serving_rate(&self) -> u64 {
-        let measured = self.limiter.found_ceiling && self.serving_ticks >= SERVING_SAMPLE_TICKS;
+        let measured = self.serving_ticks >= SERVING_SAMPLE_TICKS;
         if measured {
             self.serving_rate as u64
         } else {
@@ -652,14 +598,13 @@ impl PeerFlow {
     }
 }
 
-/// Sizes the byte caps of every peer and of the client's own link, each with a
-/// [`ByteLimiter`] on its own throughput: the router sends while both have room.
+/// Sizes the byte cap of every peer with a [`ByteLimiter`] on its own throughput. Each cap
+/// follows its peer's share of the client's link, so a full link needs no cap of its own.
 /// Also reports how fast each peer serves while bandwidth bound, for [`underserving_peer`].
 fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
             bytes,
-            global_cap,
             connected,
             peer_wake,
             broker,
@@ -667,7 +612,6 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             link_stalled,
             ..
         } = &*state;
-        let mut global = ByteLimiter::new(MIN_CAP_BYTES, bytes.load(Ordering::Relaxed));
         let mut peers: HashMap<PeerId, PeerFlow> = HashMap::new();
         let mut last_underserving: Option<SocketAddr> = None;
         // Bytes read, in flight and cap at each peer's last `peer_speed` line. A peer is
@@ -692,19 +636,13 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             let in_flights: Vec<u64> = g.iter().map(ConnectedPeer::in_flight_bytes).collect();
             let total_in_flight: u64 = in_flights.iter().sum();
-            let link_full = total_in_flight >= global_cap.load(Ordering::Relaxed);
             let stalled = link_stalled.load(Ordering::Relaxed);
             for (p, &in_flight) in g.iter().zip(&in_flights) {
                 let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
-                p.set_cap(flow.tick(p.bytes_read(), in_flight, link_full, stalled));
+                p.set_cap(flow.tick(p.bytes_read(), in_flight, stalled));
                 p.set_serving_rate(flow.serving_rate());
+                p.set_served(flow.limiter.served as u64);
             }
-
-            global.min_cap = (MIN_CAP_BYTES * g.len() as u64) as f64;
-            global.cap = global.cap.max(global.min_cap);
-            let step = CAP_STEP_BYTES_PER_SEC * g.len() as f64;
-            let cap = global.tick(bytes.load(Ordering::Relaxed), total_in_flight, step);
-            global_cap.store(cap, Ordering::Relaxed);
 
             if ticks.is_multiple_of(2) {
                 let caps: u64 = g.iter().map(|p| p.cap()).sum();
@@ -719,40 +657,35 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                     any_reported = true;
                     tracing::debug!(
                         target: "peer_speed",
-                        "peer {}: cap={} KB in_flight={} KB rate={:.2} MB/s rtt={:.0}ms base={:.0}ms lag={}ms total={:.1} MB",
+                        "peer {}: cap={} KB in_flight={} KB rate={:.2} MB/s served={:.2} MB/s rtt={:.0}ms lag={}ms total={:.1} MB",
                         p.addr(),
                         p.cap() >> 10,
                         p.in_flight_bytes() >> 10,
                         flow.limiter.rate / 1e6,
+                        flow.limiter.served / 1e6,
                         flow.limiter.rtt() * 1e3,
-                        flow.limiter.base_rtt * 1e3,
                         p.lag_ms(),
                         p.bytes_read() as f64 / 1e6,
                     );
                 }
-                let bind = if total_in_flight >= cap.min(caps) {
-                    if cap <= caps {
-                        "global"
-                    } else {
-                        "peers"
-                    }
+                let bind = if total_in_flight >= caps {
+                    "peers"
                 } else {
                     "work"
                 };
                 let snapshot =
-                    Some((bytes.load(Ordering::Relaxed), total_in_flight, cap, caps, g.len()));
+                    Some((bytes.load(Ordering::Relaxed), total_in_flight, caps, g.len()));
                 if any_reported || reported_bandwidth != snapshot {
                     reported_bandwidth = snapshot;
+                    let rate: f64 = peers.values().map(|flow| flow.limiter.rate).sum();
                     tracing::debug!(
                         target: "peer_speed",
-                        "bandwidth: {:.1} MB/s bind={} | global_cap={} sum_peer_cap={} in_flight={} KB | rtt={:.0}ms base={:.0}ms | peers={} | resp KB {:?}",
-                        global.rate / 1e6,
+                        "bandwidth: {:.1} MB/s bind={} | sum_peer_cap={} in_flight={} KB | rtt={:.0}ms | peers={} | resp KB {:?}",
+                        rate / 1e6,
                         bind,
-                        cap >> 10,
                         caps >> 10,
                         total_in_flight >> 10,
-                        global.rtt() * 1e3,
-                        global.base_rtt * 1e3,
+                        total_in_flight as f64 / rate.max(1.0) * 1e3,
                         g.len(),
                         costs.expected_kb(),
                     );
@@ -1534,22 +1467,16 @@ mod tests {
             }
         }
 
-        fn tick(&mut self, delivered: u64, in_flight: u64, link_full: bool) {
+        fn tick(&mut self, delivered: u64, in_flight: u64) {
             self.bytes += delivered;
-            self.cap = self.flow.tick(self.bytes, in_flight, link_full, false);
+            self.cap = self.flow.tick(self.bytes, in_flight, false);
         }
 
-        /// Bulk download at `rate` bytes/s. The router keeps the peer at its own cap, or
-        /// at half of it when the client's link cap binds first.
-        fn bulk(&mut self, rate: u64, link_full: bool, ticks: u32) {
+        /// Bulk download at `rate` bytes/s, with the router keeping the peer at its cap.
+        fn bulk(&mut self, rate: u64, ticks: u32) {
             let delivered = (rate as f64 * FLOW_TICK.as_secs_f64()) as u64;
             for _ in 0..ticks {
-                let in_flight = if link_full {
-                    self.cap / 2
-                } else {
-                    self.cap
-                };
-                self.tick(delivered, in_flight, link_full);
+                self.tick(delivered, self.cap);
             }
         }
 
@@ -1559,11 +1486,11 @@ mod tests {
             const REPLY_BYTES: u64 = 4 * 1024;
             for _ in 0..count {
                 for _ in 1..latency {
-                    self.tick(0, REPLY_BYTES, false);
+                    self.tick(0, REPLY_BYTES);
                 }
-                self.tick(REPLY_BYTES, 0, false);
+                self.tick(REPLY_BYTES, 0);
                 for _ in 0..40 {
-                    self.tick(0, 0, false);
+                    self.tick(0, 0);
                 }
             }
         }
@@ -1571,18 +1498,16 @@ mod tests {
 
     /// Only a peer serving all the work its caps allow is compared. Small replies at the
     /// tip measure the round trip, so a far peer must not look slow for them.
-    #[test_case(1_000_000, false, true => None; "latency bound replies at the tip")]
-    #[test_case(100_000, false, false => Some(1); "a slow peer at its own cap")]
-    #[test_case(100_000, true, false => Some(1); "a slow peer held back by the link cap")]
+    #[test_case(1_000_000, true => None; "latency bound replies at the tip")]
+    #[test_case(100_000, false => Some(1); "a slow peer at its own cap")]
     #[tokio::test]
     async fn only_bandwidth_bound_service_condemns_a_peer(
         second_rate: u64,
-        link_full: bool,
         then_idle: bool,
     ) -> Option<usize> {
         let mut served = [Served::new(), Served::new()];
         for (s, rate) in served.iter_mut().zip([1_000_000, second_rate]) {
-            s.bulk(rate, link_full, SERVING_SAMPLE_TICKS * 10);
+            s.bulk(rate, SERVING_SAMPLE_TICKS * 10);
             assert!(s.flow.serving_rate() > 0, "a bandwidth bound peer is measured");
         }
         if then_idle {
@@ -2033,5 +1958,146 @@ mod tests {
     #[test_case("Headers" => None; "case sensitive")]
     fn message_type_from_cmd(cmd: &str) -> Option<MessageType> {
         MessageType::from_cmd(cmd)
+    }
+
+    /// Returns the initial cap and the cap after every tick of `secs`, while the sender
+    /// keeps the cap full and the path delivers `serve(second, in_flight)` bytes/s.
+    fn caps_while_full(secs: u32, serve: impl Fn(f64, f64) -> f64) -> Vec<u64> {
+        caps_with_work(secs, |_, cap| cap, serve)
+    }
+
+    /// Like [`caps_while_full`], with `work(second, cap)` bytes in flight.
+    fn caps_with_work(
+        secs: u32,
+        work: impl Fn(f64, u64) -> u64,
+        serve: impl Fn(f64, f64) -> f64,
+    ) -> Vec<u64> {
+        let tick_s = FLOW_TICK.as_secs_f64();
+        let mut limiter = ByteLimiter::new(0);
+        let mut bytes = 0.0;
+        let mut caps = vec![MIN_CAP_BYTES];
+        for tick in 0..(secs as f64 / tick_s) as usize {
+            let second = tick as f64 * tick_s;
+            let in_flight = work(second, caps[caps.len() - 1]);
+            bytes += serve(second, in_flight as f64) * tick_s;
+            caps.push(limiter.tick(bytes as u64, in_flight, false));
+        }
+        caps
+    }
+
+    fn cap_after(caps: &[u64], secs: u32) -> u64 {
+        caps[(secs as f64 / FLOW_TICK.as_secs_f64()) as usize]
+    }
+
+    #[test_case(0.1, 2; "a near link")]
+    #[test_case(0.8, 5; "a far link")]
+    #[test_case(1.5, 30; "a link whose round trip nears the target queue")]
+    fn a_byte_cap_ramps_to_fill_a_fast_link(round_trip: f64, within_secs: u32) {
+        let link_rate = 10e6;
+        let caps = caps_while_full(60, |_, in_flight| (in_flight / round_trip).min(link_rate));
+
+        let bdp = (link_rate * round_trip) as u64;
+        assert!(cap_after(&caps, within_secs) >= bdp, "{}", cap_after(&caps, within_secs));
+    }
+
+    #[test]
+    fn a_slow_peer_keeps_a_small_cap() {
+        let caps = caps_while_full(300, |_, _| 150_000.0);
+
+        let peak = caps.iter().max().copied().unwrap_or_default();
+        assert!(peak < MIN_CAP_BYTES + 128 * 1024, "peak cap {peak}");
+    }
+
+    /// After 10 s at 5 MB/s the peer serves 100 KB/s. With 4 MB to serve it stays below the
+    /// cap that burst earned, yet holds a 40 s queue, so the cap must fall all the same.
+    #[test_case(false; "kept full")]
+    #[test_case(true; "below the cap with a backlog")]
+    fn a_cap_falls_with_the_peer_that_slowed_down(backlog: bool) {
+        let work = |second: f64, cap: u64| {
+            if backlog && second >= 10.0 {
+                4 << 20
+            } else {
+                cap
+            }
+        };
+        let caps = caps_with_work(60, work, |second, _| {
+            if second < 10.0 {
+                5e6
+            } else {
+                100_000.0
+            }
+        });
+
+        assert!(cap_after(&caps, 10) > 8_000_000, "{}", cap_after(&caps, 10));
+        assert!(cap_after(&caps, 30) < MIN_CAP_BYTES + 128 * 1024, "{}", cap_after(&caps, 30));
+    }
+
+    /// The peer alternates a second at 4 MB/s with a silent second. Its cap follows that
+    /// 2 MB/s average, not each burst, which alone would ask for 8 MB.
+    #[test]
+    fn a_bursty_peer_keeps_a_steady_cap() {
+        let caps = caps_while_full(60, |second, _| {
+            if (second as u32).is_multiple_of(2) {
+                4e6
+            } else {
+                0.0
+            }
+        });
+
+        let settled = &caps[caps.len() / 2..];
+        let (low, high) = (settled.iter().min(), settled.iter().max());
+        assert!(
+            low.zip(high).is_some_and(|(&low, &high)| low > 2_500_000 && high < 6_000_000),
+            "{low:?} to {high:?}"
+        );
+    }
+
+    /// A peer that got less work than its cap shows what it was asked for, not what it can
+    /// serve. Its cap neither falls nor grows then, and bulk work finds it where it was.
+    #[test_case(4 * 1024, 4 * 1024, 1000; "a trickle of small replies")]
+    #[test_case(0, 0, 1000; "no work")]
+    #[test_case(MIN_CAP_BYTES / 2, 0, 40; "one reply in the making")]
+    fn a_peer_below_its_cap_keeps_it(in_flight: u64, per_tick: u64, ticks: usize) {
+        let delivered = (5e6 * FLOW_TICK.as_secs_f64()) as u64;
+        let mut limiter = ByteLimiter::new(0);
+        let mut bytes = 0;
+        let mut cap = MIN_CAP_BYTES;
+        for _ in 0..40 {
+            bytes += delivered;
+            cap = limiter.tick(bytes, cap, false);
+        }
+        let earned = cap;
+
+        for _ in 0..ticks {
+            bytes += per_tick;
+            assert_eq!(limiter.tick(bytes, in_flight, false), earned);
+        }
+        for _ in 0..40 {
+            bytes += delivered;
+            cap = limiter.tick(bytes, cap, false);
+            assert!(cap as f64 > earned as f64 * 0.9, "{cap} fell from {earned}");
+        }
+    }
+
+    #[test]
+    fn a_stall_of_our_link_leaves_the_cap_alone() {
+        let delivered = (5e6 * FLOW_TICK.as_secs_f64()) as u64;
+        let mut limiter = ByteLimiter::new(0);
+        let mut bytes = 0;
+        let mut cap = MIN_CAP_BYTES;
+        for _ in 0..40 {
+            bytes += delivered;
+            cap = limiter.tick(bytes, cap, false);
+        }
+        let earned = cap;
+
+        for _ in 0..40 {
+            cap = limiter.tick(bytes, cap, true);
+        }
+        assert_eq!(cap, earned);
+        assert!(
+            limiter.tick(bytes + delivered, cap, false) > earned / 2,
+            "the rate is still known"
+        );
     }
 }
