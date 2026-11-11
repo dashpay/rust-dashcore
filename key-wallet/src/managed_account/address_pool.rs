@@ -391,7 +391,7 @@ impl AddressPool {
         let mut pool = Self::new_without_generation(base_path, pool_type, gap_limit, network);
 
         // Generate addresses up to the gap limit if we have a key source
-        if !matches!(key_source, KeySource::NoKeySource) {
+        if key_source.can_derive() {
             pool.generate_addresses(gap_limit, key_source, true)?;
         }
 
@@ -581,11 +581,6 @@ impl AddressPool {
         // First, try to find an already generated unused address
         if let Some(info) = self.addresses.get(&self.next_unused_index()) {
             return Ok(info.clone());
-        }
-
-        // If NoKeySource, we can't generate new addresses
-        if matches!(key_source, KeySource::NoKeySource) {
-            return Err(Error::NoKeySource);
         }
 
         self.generate_addresses(1, key_source, add_to_state)?
