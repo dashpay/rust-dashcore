@@ -1,4 +1,5 @@
 use super::manager::MEMPOOL_TX_EXPIRY;
+use crate::client::config::MempoolStrategy;
 use crate::error::SyncResult;
 use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
 use crate::sync::{
@@ -160,11 +161,13 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         //
         // The hash covers exactly what the filter is built from, so polling it
         // catches every change without the wallet having to signal one.
-        let current_hash = self.wallet.read().await.monitor_hash();
-        if current_hash != self.last_monitor_hash {
-            tracing::info!("Wallet monitored set changed, rebuilding bloom filter");
-            self.rebuild_filter(network).await?;
-            self.last_monitor_hash = current_hash;
+        if self.strategy == MempoolStrategy::BloomFilter {
+            let current_hash = self.wallet.read().await.monitor_hash();
+            if current_hash != self.last_monitor_hash {
+                tracing::info!("Wallet monitored set changed, rebuilding bloom filter");
+                self.rebuild_filter(network).await?;
+                self.last_monitor_hash = current_hash;
+            }
         }
 
         Ok(events)
@@ -178,7 +181,6 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::config::MempoolStrategy;
     use crate::sync::BroadcastConfig;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
     use key_wallet_manager::test_utils::MockWallet;

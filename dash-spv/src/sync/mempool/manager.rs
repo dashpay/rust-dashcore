@@ -59,7 +59,7 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     /// Self-broadcast transactions and their network-acceptance state.
     pub(super) broadcasts: HashMap<Txid, TxBroadcastState>,
     broadcast_config: BroadcastConfig,
-    strategy: MempoolStrategy,
+    pub(super) strategy: MempoolStrategy,
     max_transactions: usize,
     /// Txids we have requested via getdata but not yet received, with request time.
     pending_requests: HashMap<Txid, Instant>,
