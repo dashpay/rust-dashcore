@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use bip39 as bip39_crate;
+use dashcore_hashes::{sha512, Hash, HashEngine, HmacEngine};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use unicode_normalization::char::is_combining_mark;
@@ -150,6 +151,53 @@ fn word_in_any_list(word: &str) -> bool {
 /// [`Mnemonic::cleanup_phrase`]'s early-return gate.
 fn phrase_is_valid_any(normalized: &str) -> bool {
     Mnemonic::from_phrase(normalized).is_ok()
+}
+
+/// An HMAC-SHA512 engine whose inner and outer states are erased on zeroize.
+struct SeedHmacEngine {
+    engine: HmacEngine<sha512::HashEngine>,
+}
+
+impl Zeroize for SeedHmacEngine {
+    fn zeroize(&mut self) {
+        self.engine.non_secure_erase();
+    }
+}
+
+/// Returns the BIP39 seed of `phrase` and `passphrase`: PBKDF2-HMAC-SHA512 over
+/// the phrase, 2048 rounds, salt `"mnemonic"` + NFKD(passphrase). `phrase` must
+/// already be NFKD, as every bip39 wordlist is.
+fn bip39_seed(phrase: &str, passphrase: &str) -> Zeroizing<[u8; 64]> {
+    let salt = collect_zeroizing("mnemonic".chars().chain(passphrase.nfkd()));
+    pbkdf2_hmac_sha512_one_block(phrase.as_bytes(), salt.as_bytes())
+}
+
+/// Returns PBKDF2-HMAC-SHA512 with BIP39's 2048 rounds. A 64-byte output is one
+/// SHA-512 output (dkLen = hLen), so block index 1 is the whole output.
+/// Erases the keyed engine `hmac`, but not each round's clone of it, which `finalize`
+/// consumes, or the value `finalize` returns.
+fn pbkdf2_hmac_sha512_one_block(password: &[u8], salt: &[u8]) -> Zeroizing<[u8; 64]> {
+    const ROUNDS: u32 = 2048;
+    let hmac = Zeroizing::new(SeedHmacEngine {
+        engine: HmacEngine::new(password),
+    });
+
+    let mut engine = hmac.engine.clone();
+    engine.input(salt);
+    engine.input(&1u32.to_be_bytes());
+    let mut u = Zeroizing::new([0; 64]);
+    u.copy_from_slice(engine.finalize().as_byte_array());
+    let mut out = Zeroizing::new([0; 64]);
+    out.copy_from_slice(&u[..]);
+    for _ in 1..ROUNDS {
+        let mut engine = hmac.engine.clone();
+        engine.input(&u[..]);
+        u.copy_from_slice(engine.finalize().as_byte_array());
+        for (o, x) in out.iter_mut().zip(u.iter()) {
+            *o ^= x;
+        }
+    }
+    out
 }
 
 /// BIP39 Mnemonic phrase
@@ -344,7 +392,7 @@ impl Mnemonic {
 
     /// The BIP39 seed for `passphrase`, wiped when dropped.
     pub fn to_seed(&self, passphrase: &str) -> Zeroizing<[u8; 64]> {
-        Zeroizing::new(self.inner.to_seed(passphrase))
+        bip39_seed(&self.phrase(), passphrase)
     }
 
     /// Derive extended private key from this mnemonic
@@ -532,7 +580,7 @@ impl fmt::Display for Mnemonic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hex_conservative::DisplayHex;
+    use hex_conservative::{decode_to_vec, DisplayHex};
 
     #[test]
     #[cfg(feature = "getrandom")]
@@ -621,85 +669,140 @@ mod tests {
         assert!(!Mnemonic::validate(invalid_phrase));
     }
 
-    // ✓ Test from DashSync DSBIP39Tests.m - BIP39 test vectors
+    // The complete English BIP-39 vector set, passphrase "TREZOR", as the bip39 3.0.0 crate
+    // (CC0-1.0) carries them: entropy, phrase, seed.
+    const TREZOR_VECTORS: &[(&str, &str, &str)] = &[
+        (
+            "00000000000000000000000000000000",
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+            "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04",
+        ),
+        (
+            "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+            "legal winner thank year wave sausage worth useful legal winner thank yellow",
+            "2e8905819b8723fe2c1d161860e5ee1830318dbf49a83bd451cfb8440c28bd6fa457fe1296106559a3c80937a1c1069be3a3a5bd381ee6260e8d9739fce1f607",
+        ),
+        (
+            "80808080808080808080808080808080",
+            "letter advice cage absurd amount doctor acoustic avoid letter advice cage above",
+            "d71de856f81a8acc65e6fc851a38d4d7ec216fd0796d0a6827a3ad6ed5511a30fa280f12eb2e47ed2ac03b5c462a0358d18d69fe4f985ec81778c1b370b652a8",
+        ),
+        (
+            "ffffffffffffffffffffffffffffffff",
+            "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
+            "ac27495480225222079d7be181583751e86f571027b0497b5b5d11218e0a8a13332572917f0f8e5a589620c6f15b11c61dee327651a14c34e18231052e48c069",
+        ),
+        (
+            "000000000000000000000000000000000000000000000000",
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon agent",
+            "035895f2f481b1b0f01fcf8c289c794660b289981a78f8106447707fdd9666ca06da5a9a565181599b79f53b844d8a71dd9f439c52a3d7b3e8a79c906ac845fa",
+        ),
+        (
+            "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+            "legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal will",
+            "f2b94508732bcbacbcc020faefecfc89feafa6649a5491b8c952cede496c214a0c7b3c392d168748f2d4a612bada0753b52a1c7ac53c1e93abd5c6320b9e95dd",
+        ),
+        (
+            "808080808080808080808080808080808080808080808080",
+            "letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic avoid letter always",
+            "107d7c02a5aa6f38c58083ff74f04c607c2d2c0ecc55501dadd72d025b751bc27fe913ffb796f841c49b1d33b610cf0e91d3aa239027f5e99fe4ce9e5088cd65",
+        ),
+        (
+            "ffffffffffffffffffffffffffffffffffffffffffffffff",
+            "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo when",
+            "0cd6e5d827bb62eb8fc1e262254223817fd068a74b5b449cc2f667c3f1f985a76379b43348d952e2265b4cd129090758b3e3c2c49103b5051aac2eaeb890a528",
+        ),
+        (
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+            "bda85446c68413707090a52022edd26a1c9462295029f2e60cd7c4f2bbd3097170af7a4d73245cafa9c3cca8d561a7c3de6f5d4a10be8ed2a5e608d68f92fcc8",
+        ),
+        (
+            "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+            "legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title",
+            "bc09fca1804f7e69da93c2f2028eb238c227f2e9dda30cd63699232578480a4021b146ad717fbb7e451ce9eb835f43620bf5c514db0f8add49f5d121449d3e87",
+        ),
+        (
+            "8080808080808080808080808080808080808080808080808080808080808080",
+            "letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic bless",
+            "c0c519bd0e91a2ed54357d9d1ebef6f5af218a153624cf4f2da911a0ed8f7a09e2ef61af0aca007096df430022f7a2b6fb91661a9589097069720d015e4e982f",
+        ),
+        (
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote",
+            "dd48c104698c30cfe2b6142103248622fb7bb0ff692eebb00089b32d22484e1613912f0a5b694407be899ffd31ed3992c456cdf60f5d4564b8ba3f05a69890ad",
+        ),
+        (
+            "9e885d952ad362caeb4efe34a8e91bd2",
+            "ozone drill grab fiber curtain grace pudding thank cruise elder eight picnic",
+            "274ddc525802f7c828d8ef7ddbcdc5304e87ac3535913611fbbfa986d0c9e5476c91689f9c8a54fd55bd38606aa6a8595ad213d4c9c9f9aca3fb217069a41028",
+        ),
+        (
+            "6610b25967cdcca9d59875f5cb50b0ea75433311869e930b",
+            "gravity machine north sort system female filter attitude volume fold club stay feature office ecology stable narrow fog",
+            "628c3827a8823298ee685db84f55caa34b5cc195a778e52d45f59bcf75aba68e4d7590e101dc414bc1bbd5737666fbbef35d1f1903953b66624f910feef245ac",
+        ),
+        (
+            "68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c",
+            "hamster diagram private dutch cause delay private meat slide toddler razor book happy fancy gospel tennis maple dilemma loan word shrug inflict delay length",
+            "64c87cde7e12ecf6704ab95bb1408bef047c22db4cc7491c4271d170a1b213d20b385bc1588d9c7b38f1b39d415665b8a9030c9ec653d75e65f847d8fc1fc440",
+        ),
+        (
+            "c0ba5a8e914111210f2bd131f3d5e08d",
+            "scheme spot photo card baby mountain device kick cradle pact join borrow",
+            "ea725895aaae8d4c1cf682c1bfd2d358d52ed9f0f0591131b559e2724bb234fca05aa9c02c57407e04ee9dc3b454aa63fbff483a8b11de949624b9f1831a9612",
+        ),
+        (
+            "6d9be1ee6ebd27a258115aad99b7317b9c8d28b6d76431c3",
+            "horn tenant knee talent sponsor spell gate clip pulse soap slush warm silver nephew swap uncle crack brave",
+            "fd579828af3da1d32544ce4db5c73d53fc8acc4ddb1e3b251a31179cdb71e853c56d2fcb11aed39898ce6c34b10b5382772db8796e52837b54468aeb312cfc3d",
+        ),
+        (
+            "9f6a2878b2520799a44ef18bc7df394e7061a224d2c33cd015b157d746869863",
+            "panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside",
+            "72be8e052fc4919d2adf28d5306b5474b0069df35b02303de8c1729c9538dbb6fc2d731d5f832193cd9fb6aeecbc469594a70e3dd50811b5067f3b88b28c3e8d",
+        ),
+        (
+            "23db8160a31d3e0dca3688ed941adbf3",
+            "cat swing flag economy stadium alone churn speed unique patch report train",
+            "deb5f45449e615feff5640f2e49f933ff51895de3b4381832b3139941c57b59205a42480c52175b6efcffaa58a2503887c1e8b363a707256bdd2b587b46541f5",
+        ),
+        (
+            "8197a4a47f0425faeaa69deebc05ca29c0a5b5cc76ceacc0",
+            "light rule cinnamon wrap drastic word pride squirrel upgrade then income fatal apart sustain crack supply proud access",
+            "4cbdff1ca2db800fd61cae72a57475fdc6bab03e441fd63f96dabd1f183ef5b782925f00105f318309a7e9c3ea6967c7801e46c8a58082674c860a37b93eda02",
+        ),
+        (
+            "066dca1a2bb7e8a1db2832148ce9933eea0f3ac9548d793112d9a95c9407efad",
+            "all hour make first leader extend hole alien behind guard gospel lava path output census museum junior mass reopen famous sing advance salt reform",
+            "26e975ec644423f4a4c4f4215ef09b4bd7ef924e85d1d17c4cf3f136c2863cf6df0a475045652c57eb5fb41513ca2a2d67722b77e954b4b3fc11f7590449191d",
+        ),
+        (
+            "f30f8c1da665478f49b001d94c5fc452",
+            "vessel ladder alter error federal sibling chat ability sun glass valve picture",
+            "2aaa9242daafcee6aa9d7269f17d4efe271e1b9a529178d7dc139cd18747090bf9d60295d0ce74309a78852a9caadf0af48aae1c6253839624076224374bc63f",
+        ),
+        (
+            "c10ec20dc3cd9f652c7fac2f1230f7a3c828389a14392f05",
+            "scissors invite lock maple supreme raw rapid void congress muscle digital elegant little brisk hair mango congress clump",
+            "7b4a10be9d98e6cba265566db7f136718e1398c71cb581e1b2f464cac1ceedf4f3e274dc270003c670ad8d02c4558b2f8e39edea2775c9e232c7cb798b069e88",
+        ),
+        (
+            "f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f",
+            "void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold",
+            "01f5bced59dec48e362f2c45b5de68b9fd6c92c6634f44d6d40aab69056506f0e35524a518034ddc1192e1dacd32c1ed3eaa3c3b131c88ed8e7e54c49a5d0998",
+        ),
+    ];
+
     #[test]
     fn test_bip39_test_vectors() {
-        // Test vector 1: all zeros entropy
-        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
-        let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
-        let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
-
-        let seed = mnemonic.to_seed("TREZOR");
-        let expected_seed = "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04";
-        assert_eq!(seed.to_lower_hex_string(), expected_seed);
-
-        // Test vector 2: 0x7f7f... entropy
-        let entropy = hex_conservative::decode_to_vec("7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f").unwrap();
-        let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
-        let expected_phrase =
-            "legal winner thank year wave sausage worth useful legal winner thank yellow";
-        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
-
-        let seed = mnemonic.to_seed("TREZOR");
-        let expected_seed = "2e8905819b8723fe2c1d161860e5ee1830318dbf49a83bd451cfb8440c28bd6fa457fe1296106559a3c80937a1c1069be3a3a5bd381ee6260e8d9739fce1f607";
-        assert_eq!(seed.to_lower_hex_string(), expected_seed);
-
-        // Test vector 3: 0x8080... entropy
-        let entropy = hex_conservative::decode_to_vec("80808080808080808080808080808080").unwrap();
-        let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
-        let expected_phrase =
-            "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";
-        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
-
-        let seed = mnemonic.to_seed("TREZOR");
-        let expected_seed = "d71de856f81a8acc65e6fc851a38d4d7ec216fd0796d0a6827a3ad6ed5511a30fa280f12eb2e47ed2ac03b5c462a0358d18d69fe4f985ec81778c1b370b652a8";
-        assert_eq!(seed.to_lower_hex_string(), expected_seed);
-
-        // Test vector 4: all ones entropy
-        let entropy = hex_conservative::decode_to_vec("ffffffffffffffffffffffffffffffff").unwrap();
-        let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
-        let expected_phrase = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong";
-        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
-
-        let seed = mnemonic.to_seed("TREZOR");
-        let expected_seed = "ac27495480225222079d7be181583751e86f571027b0497b5b5d11218e0a8a13332572917f0f8e5a589620c6f15b11c61dee327651a14c34e18231052e48c069";
-        assert_eq!(seed.to_lower_hex_string(), expected_seed);
-    }
-
-    // ✓ Test 18-word mnemonics (from DashSync)
-    #[test]
-    fn test_18_word_mnemonics() {
-        // Test 18-word mnemonic
-        let entropy =
-            hex_conservative::decode_to_vec("000000000000000000000000000000000000000000000000")
-                .unwrap();
-        let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
-        let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon agent";
-        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
-        assert_eq!(mnemonic.word_count(), 18);
-
-        let seed = mnemonic.to_seed("TREZOR");
-        let expected_seed = "035895f2f481b1b0f01fcf8c289c794660b289981a78f8106447707fdd9666ca06da5a9a565181599b79f53b844d8a71dd9f439c52a3d7b3e8a79c906ac845fa";
-        assert_eq!(seed.to_lower_hex_string(), expected_seed);
-    }
-
-    // ✓ Test 24-word mnemonics (from DashSync)
-    #[test]
-    fn test_24_word_mnemonics() {
-        // Test 24-word mnemonic
-        let entropy = hex_conservative::decode_to_vec(
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        )
-        .unwrap();
-        let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
-        let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
-        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
-        assert_eq!(mnemonic.word_count(), 24);
-
-        let seed = mnemonic.to_seed("TREZOR");
-        let expected_seed = "bda85446c68413707090a52022edd26a1c9462295029f2e60cd7c4f2bbd3097170af7a4d73245cafa9c3cca8d561a7c3de6f5d4a10be8ed2a5e608d68f92fcc8";
-        assert_eq!(seed.to_lower_hex_string(), expected_seed);
+        for &(entropy, phrase, seed) in TREZOR_VECTORS {
+            let entropy = decode_to_vec(entropy).unwrap();
+            let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
+            assert_eq!(mnemonic.phrase().as_str(), phrase);
+            assert_eq!(mnemonic.word_count(), phrase.split(' ').count());
+            assert_eq!(mnemonic.to_seed("TREZOR").to_lower_hex_string(), seed, "{phrase}");
+        }
     }
 
     // ✓ Test random entropy examples (from DashSync)
@@ -1295,13 +1398,13 @@ mod tests {
     fn test_ambiguous_wordlist_phrase_is_seed_equivalent() {
         // This phrase (entropy 2aef2e023642257119dbff0ae316a5d4) is checksum-
         // valid under BOTH Chinese wordlists — the worst case for first-match-
-        // wins auto-detection. It is seed-safe because bip39's to_seed hashes
-        // the matched word strings themselves (bip39 2.2.2 reconstructs
-        // `lang.word_list()[idx]`, a lossless round-trip of the input words),
-        // so whichever list wins, the seed equals PBKDF2 over the sentence.
-        // The expected value below is exactly that sentence-PBKDF2, computed
-        // independently of this codebase — if a future bip39 bump ever made
-        // the seed depend on which wordlist matched, this assertion catches it.
+        // wins auto-detection. It is seed-safe because to_seed hashes
+        // `Mnemonic::phrase()`, which joins the matched word strings
+        // themselves (a lossless round-trip of the input words), so whichever
+        // list wins, the seed equals PBKDF2 over the sentence. The expected
+        // value below is exactly that sentence-PBKDF2, computed independently
+        // of this codebase — if the seed ever came to depend on which wordlist
+        // matched, this assertion catches it.
         const DUAL_LIST_PHRASE: &str = "名 苗 壤 喜 七 隆 盾 竟 加 常 弄 幼";
         const DUAL_LIST_SEED_HEX: &str = "fbfe5b8c860317d75fc6f7de4057bc4e67bef2cf408e5b19e1eda451e50b6c65a4272d46317eda3121a36c561f9e84e83b7c3cc8b7a711d3e4c34640c2ecdd73";
 
