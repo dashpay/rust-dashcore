@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, BlockHash, ScriptBuf, Transaction, Txid};
+use dashcore::{Address, Block, BlockHash, OutPoint, ScriptBuf, Transaction, Txid};
 use hex_conservative::DisplayHex;
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
@@ -63,6 +63,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>> = BTreeMap::new();
+        let mut per_wallet_locked: BTreeMap<WalletId, Vec<OutPoint>> = BTreeMap::new();
         let mut relevant_positions: BTreeMap<WalletId, BTreeSet<usize>> = BTreeMap::new();
         let mut listed_txids: HashSet<Txid> = HashSet::new();
 
@@ -104,6 +105,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                         derived.iter().map(|d| d.info.script_pubkey.clone()).collect::<Vec<_>>();
                     result.new_scripts.entry(wallet_id).or_default().extend(scripts);
                     per_wallet_derived.entry(wallet_id).or_default().extend(derived);
+                }
+                for (wallet_id, locked) in check_result.per_wallet_locked_outpoints {
+                    per_wallet_locked.entry(wallet_id).or_default().extend(locked);
                 }
                 for (wallet_id, records) in check_result.per_wallet_new_records {
                     let inserted = per_wallet_inserted.entry(wallet_id).or_default();
@@ -184,6 +188,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             per_wallet_inserted,
             per_wallet_updated,
             per_wallet_derived,
+            per_wallet_locked,
         );
 
         result
@@ -238,6 +243,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let per_wallet_updated_records =
             std::mem::take(&mut check_result.per_wallet_updated_records);
         let mut per_wallet_derived = std::mem::take(&mut check_result.new_addresses);
+        let mut per_wallet_locked = std::mem::take(&mut check_result.per_wallet_locked_outpoints);
 
         for (wallet_id, records) in per_wallet_new_records {
             let Some(info) = self.wallet_infos.get(&wallet_id) else {
@@ -265,6 +271,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                     balance,
                     account_balances: account_balances.clone(),
                     addresses_derived: project_derived_addresses(for_record),
+                    // Once per wallet, on its first record.
+                    locked_outpoints: per_wallet_locked.remove(&wallet_id).unwrap_or_default(),
                 };
                 self.emit_event(event);
             }
@@ -336,6 +344,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                         balance,
                         account_balances: account_balances.clone(),
                         addresses_derived: Vec::new(),
+                        locked_outpoints: Vec::new(),
                     });
                 }
                 if let Some(lock) =
@@ -385,7 +394,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             .unwrap_or_default()
     }
 
-    fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {
+    fn watched_outpoints(&self) -> Vec<OutPoint> {
         self.watched_outpoints()
     }
 
@@ -485,6 +494,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.finalize_block_advance(
             height,
             &wallets,
+            BTreeMap::new(),
             BTreeMap::new(),
             BTreeMap::new(),
             BTreeMap::new(),
@@ -625,6 +635,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>>,
         mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>>,
         mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>>,
+        mut per_wallet_locked: BTreeMap<WalletId, Vec<OutPoint>>,
     ) {
         if wallets.is_empty() {
             return;
@@ -691,11 +702,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                 project_derived_addresses(derived_for_wallet);
             let chain_lock =
                 info.last_applied_chain_lock().filter(|cl| height <= cl.block_height).cloned();
+            let locked_outpoints = per_wallet_locked.remove(wallet_id).unwrap_or_default();
 
             if !inserted.is_empty()
                 || !updated.is_empty()
                 || !matured.is_empty()
                 || !addresses_derived.is_empty()
+                || !locked_outpoints.is_empty()
                 || balance_changed
             {
                 let event = WalletEvent::BlockProcessed {
@@ -708,6 +721,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     balance: new_balance,
                     account_balances,
                     addresses_derived,
+                    locked_outpoints,
                 };
                 self.emit_event(event);
             }

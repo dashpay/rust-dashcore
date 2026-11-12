@@ -1,11 +1,17 @@
 use std::ops::Range;
 
-use crate::bls_sig_utils::BLSSignature;
+use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use crate::consensus::serialize;
-use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
+use crate::hash_types::{
+    InputsHash, MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums,
+};
+use crate::sml::masternode_list_entry::MasternodeNetInfo;
 use crate::transaction::special_transaction::coinbase::CoinbasePayload;
+use crate::transaction::special_transaction::provider_registration::{
+    ProviderMasternodeType, ProviderRegistrationPayload,
+};
 use crate::transaction::special_transaction::{TransactionPayload, TransactionType};
-use crate::{Address, OutPoint, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
+use crate::{Address, OutPoint, PubkeyHash, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
 
 /// A special transaction type no Dash Core version assigns
 pub const UNASSIGNED_SPECIAL_TX_TYPE: u16 = 0xffff;
@@ -56,6 +62,47 @@ impl Transaction {
             input: inputs,
             output: outputs,
             special_transaction_payload: None,
+        }
+    }
+
+    /// Creates a ProRegTx registering `collateral`, with `owner_key_hash` as
+    /// its owner and voting key, paying `outputs`. `input_id` sets its one
+    /// input and so varies the txid.
+    pub fn dummy_provider_registration(
+        collateral: OutPoint,
+        owner_key_hash: PubkeyHash,
+        outputs: Vec<TxOut>,
+        input_id: u8,
+    ) -> Transaction {
+        Transaction {
+            version: 3,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint::new(Txid::from([input_id; 32]), 0),
+                ..Default::default()
+            }],
+            output: outputs,
+            special_transaction_payload: Some(TransactionPayload::ProviderRegistrationPayloadType(
+                ProviderRegistrationPayload {
+                    version: 1,
+                    masternode_type: ProviderMasternodeType::Regular,
+                    masternode_mode: 0,
+                    collateral_outpoint: collateral,
+                    service_address: MasternodeNetInfo::Legacy(([127, 0, 0, 1], 19999).into()),
+                    owner_key_hash,
+                    operator_public_key: BLSPublicKey::from([0x11; 48]),
+                    voting_key_hash: owner_key_hash,
+                    operator_reward: 0,
+                    script_payout: ScriptBuf::new(),
+                    inputs_hash: InputsHash::all_zeros(),
+                    signature: vec![0x33; 65],
+                    platform_node_id: None,
+                    platform_p2p_port: None,
+                    platform_http_port: None,
+                    payouts: None,
+                    shared_collateral: None,
+                },
+            )),
         }
     }
 
