@@ -629,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_account_rejects_reverse_external_sharing_receiving_xpub() {
+    fn test_add_account_accepts_reverse_external_sharing_receiving_xpub() {
         let mut wallet = Wallet::new_random(
             Network::Testnet,
             initialization::WalletAccountCreationOptions::Default,
@@ -657,8 +657,8 @@ mod tests {
             None,
         );
 
-        assert!(matches!(result, Err(Error::InvalidParameter(_))));
-        assert_eq!(wallet.accounts.count(), count);
+        assert!(result.is_ok());
+        assert_eq!(wallet.accounts.count(), count + 1);
     }
 
     // ✓ Test wallet ID generation

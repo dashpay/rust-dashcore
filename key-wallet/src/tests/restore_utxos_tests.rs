@@ -4,7 +4,7 @@
 use dashcore::{Address, BlockHash, OutPoint, Transaction};
 use test_case::test_case;
 
-use crate::account::{Account, AccountType};
+use crate::account::AccountType;
 use crate::managed_account::address_pool::AddressPool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::test_utils::TestWalletContext;
@@ -58,11 +58,7 @@ fn befriend_both_ways(ctx: &mut TestWalletContext) -> (AccountType, AccountType)
         friend_identity_id: us,
     };
     for contact in [receiving, reverse_external] {
-        let path = contact.derivation_path(ctx.wallet.network).expect("contact path");
-        let xpub = ctx.wallet.derive_extended_public_key(&path).expect("contact xpub");
-        let account = Account::new(Some(ctx.wallet.wallet_id), contact, xpub, ctx.wallet.network)
-            .expect("contact account");
-        ctx.wallet.accounts.insert(account).expect("contact account is insertable");
+        ctx.wallet.add_account(contact, None).expect("contact account is addable");
         ctx.managed_wallet
             .add_managed_account(&ctx.wallet, contact)
             .expect("contact account is manageable");
