@@ -12,6 +12,7 @@ use crate::sign_message;
 
 /// verifies the ECDSA signature
 /// The provided signature must be recoverable. Which means: it must contain the recovery byte as a prefix
+/// A signature with a high S value is rejected because it is a malleable twin of the low-S one.
 pub fn verify_data_signature(
     data: &[u8],
     signature: &[u8],
@@ -23,7 +24,10 @@ pub fn verify_data_signature(
 
     let pub_key = ECDSAPublicKey::from_slice(public_key).map_err(anyhow::Error::msg)?;
 
-    pub_key.inner.verify(&data_hash, sig.signature()?).map_err(anyhow::Error::msg)
+    let sig = sig.signature()?;
+    ensure!(sig.is_low_s(), "the signature has a high S value");
+
+    pub_key.inner.verify(&data_hash, sig).map_err(anyhow::Error::msg)
 }
 
 /// verifies the the hash signature. From provided signature and hash recovers the public key
@@ -119,6 +123,20 @@ mod test {
 
         verify_data_signature(&data, &signature, &k.public_key_compressed)
             .expect("verification shouldn't fail")
+    }
+
+    /// Uses the high-S twin of the signature pinned in `sign_hash_output_is_unchanged`.
+    #[test]
+    fn verify_data_signature_rejects_high_s() {
+        let k = get_keys();
+        let data = hex!("fafafa");
+        let signature = hex!(
+            "218f7395d4f8d36f8b53c3b8b34edfda5b618f3ec53e8b9f1f508e75dc8fc85693d66f642b8432e842e615493ffd809922ff3365ef0390b1ece732c76ba5280972"
+        );
+
+        let result = verify_data_signature(&data, &signature, &k.public_key_compressed);
+
+        assert_error_contains!(result, "the signature has a high S value");
     }
 
     /// Pins the deterministic (RFC 6979) signature so the key handling in
