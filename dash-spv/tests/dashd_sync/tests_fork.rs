@@ -201,6 +201,15 @@ async fn test_sync_follows_reorg_announced_by_inv() {
     // when the whole branch becomes active at once.
     let node = &ctx.dashd.node;
     node.set_network_active(false);
+    assert!(
+        wait_for_network_event(
+            &mut client_handle.network_event_receiver,
+            |e| matches!(e, NetworkEvent::PeerDisconnected { .. }),
+            Duration::from_secs(30),
+        )
+        .await,
+        "the client did not disconnect"
+    );
     let replaced_tip = node.get_best_block_hash();
     node.invalidate_block(&replaced_tip);
     let branch = node.generate_blocks(10, &node.get_new_address_from_wallet("default"));

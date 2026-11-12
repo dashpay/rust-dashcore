@@ -448,8 +448,10 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             }
         }
         if !events.is_empty() {
-            let ancestors = self.locator_ancestors().await?;
-            self.pipeline.set_tip_ancestors(ancestors);
+            match self.locator_ancestors().await {
+                Ok(ancestors) => self.pipeline.set_tip_ancestors(ancestors),
+                Err(e) => tracing::warn!("Failed to refresh the tip locator: {}", e),
+            }
         }
 
         // Last, and without failing, as the batches above already left the pipeline
