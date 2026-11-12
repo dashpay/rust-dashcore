@@ -5,9 +5,9 @@
 use super::test_helpers::*;
 use super::*;
 use crate::wallet_interface::WalletInterface;
-use dashcore::block::{Block, Header, Version};
+use dashcore::block::Block;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
-use dashcore::{BlockHash, CompactTarget, ScriptBuf, TxIn, TxMerkleNode, TxOut};
+use dashcore::{ScriptBuf, TxOut};
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 use key_wallet::managed_account::managed_core_funds_account::ManagedCoreFundsAccount;
@@ -16,7 +16,6 @@ use key_wallet::{AddressPool, KeySource};
 use std::collections::BTreeSet;
 
 const HEIGHT: CoreBlockHeight = 100;
-const VALUE: u64 = 100_000;
 const MAX_PASSES: usize = 16;
 
 #[derive(Clone, Copy, Debug)]
@@ -54,24 +53,6 @@ fn external_address(manager: &WalletManager, wallet_id: &WalletId, index: u32) -
     pool.address_at_index(index).expect("derived")
 }
 
-fn transaction(inputs: impl IntoIterator<Item = OutPoint>, output: Vec<TxOut>) -> Transaction {
-    Transaction {
-        version: 2,
-        lock_time: 0,
-        input: inputs
-            .into_iter()
-            .map(|previous_output| TxIn {
-                previous_output,
-                script_sig: ScriptBuf::new(),
-                sequence: u32::MAX,
-                witness: Default::default(),
-            })
-            .collect(),
-        output,
-        special_transaction_payload: None,
-    }
-}
-
 fn paying_external(
     manager: &WalletManager,
     wallet_id: &WalletId,
@@ -81,33 +62,19 @@ fn paying_external(
     let output = indices
         .into_iter()
         .map(|index| TxOut {
-            value: VALUE,
+            value: TX_AMOUNT,
             script_pubkey: external_address(manager, wallet_id, index).script_pubkey(),
         })
         .collect();
-    transaction([OutPoint::new(Txid::from_byte_array([input_seed; 32]), 0)], output)
+    create_tx([OutPoint::new(Txid::from_byte_array([input_seed; 32]), 0)], output)
 }
 
 fn spending_to_nobody(outpoints: impl IntoIterator<Item = OutPoint>) -> Transaction {
     let output = TxOut {
-        value: VALUE / 2,
+        value: TX_AMOUNT / 2,
         script_pubkey: ScriptBuf::new_op_return(&[0x57]),
     };
-    transaction(outpoints, vec![output])
-}
-
-fn block_at(height: CoreBlockHeight, txdata: Vec<Transaction>) -> Block {
-    Block {
-        header: Header {
-            version: Version::default(),
-            prev_blockhash: BlockHash::from_byte_array([height as u8; 32]),
-            merkle_root: TxMerkleNode::all_zeros(),
-            time: 1_000 + height,
-            bits: CompactTarget::from_consensus(0x1d00ffff),
-            nonce: 0,
-        },
-        txdata,
-    }
+    create_tx(outpoints, vec![output])
 }
 
 /// One pass over `block`. Returns whether it derived new scripts, which is
@@ -215,7 +182,7 @@ fn assert_credited_in_full(
 ) {
     let txid = tx.txid();
     let all: BTreeSet<u32> = (0..tx.output.len() as u32).collect();
-    let paid = (VALUE * tx.output.len() as u64) as i64;
+    let paid = (TX_AMOUNT * tx.output.len() as u64) as i64;
     assert_eq!(held_vouts(manager, wallet_id, &txid), all, "{chain_lock_at:?}: coins held");
     let record = last_emitted(events, &txid);
     assert_eq!(owned_output_indices(&record), all, "{chain_lock_at:?}: emitted record owns");
@@ -242,14 +209,14 @@ async fn run_past_the_gap_limit(chain_lock_at: ChainLockAt) {
     let (mut manager, wallet_id, _) = setup_manager_with_wallet();
     let gap = external_pool(&manager, &wallet_id).gap_limit;
     let tx = paying_external(&manager, &wallet_id, 0..gap + gap / 2, 0x57);
-    let block = block_at(HEIGHT, vec![tx.clone()]);
+    let block = Block::dummy(HEIGHT, vec![tx.clone()]);
     let mut rx = manager.subscribe_events();
 
     process_with_rescans(&mut manager, wallet_id, &block, chain_lock_at).await;
 
     let events = drain_events(&mut rx);
     assert_credited_in_full(&manager, &wallet_id, &events, &tx, chain_lock_at);
-    assert_balance(&manager, &wallet_id, VALUE * tx.output.len() as u64, chain_lock_at);
+    assert_balance(&manager, &wallet_id, TX_AMOUNT * tx.output.len() as u64, chain_lock_at);
 }
 
 #[tokio::test]
@@ -280,7 +247,7 @@ fn late_and_extending(manager: &WalletManager, wallet_id: &WalletId) -> (Transac
 async fn output_a_later_payment_derives(chain_lock_at: ChainLockAt) {
     let (mut manager, wallet_id, _) = setup_manager_with_wallet();
     let (late, extending) = late_and_extending(&manager, &wallet_id);
-    let block = block_at(HEIGHT, vec![late.clone(), extending.clone()]);
+    let block = Block::dummy(HEIGHT, vec![late.clone(), extending.clone()]);
     let mut rx = manager.subscribe_events();
 
     process_with_rescans(&mut manager, wallet_id, &block, chain_lock_at).await;
@@ -288,7 +255,7 @@ async fn output_a_later_payment_derives(chain_lock_at: ChainLockAt) {
     let events = drain_events(&mut rx);
     assert_credited_in_full(&manager, &wallet_id, &events, &late, chain_lock_at);
     assert_credited_in_full(&manager, &wallet_id, &events, &extending, chain_lock_at);
-    assert_balance(&manager, &wallet_id, 3 * VALUE, chain_lock_at);
+    assert_balance(&manager, &wallet_id, 3 * TX_AMOUNT, chain_lock_at);
 }
 
 #[tokio::test]
@@ -312,8 +279,8 @@ async fn test_unchainlocked_rescan_emits_the_record_an_output_a_later_payment_de
 async fn spent_outputs_stay_spent(chain_lock_at: ChainLockAt) {
     let (mut manager, wallet_id, _) = setup_manager_with_wallet();
     let (late, extending) = late_and_extending(&manager, &wallet_id);
-    let funding = block_at(HEIGHT, vec![late.clone(), extending.clone()]);
-    let spends = block_at(
+    let funding = Block::dummy(HEIGHT, vec![late.clone(), extending.clone()]);
+    let spends = Block::dummy(
         HEIGHT + 1,
         vec![
             spending_to_nobody([OutPoint::new(late.txid(), 0)]),
@@ -338,7 +305,7 @@ async fn spent_outputs_stay_spent(chain_lock_at: ChainLockAt) {
     assert!(late_coins.is_empty(), "{chain_lock_at:?}: late coins {late_coins:?}");
     let extending_coins = held_vouts(&manager, &wallet_id, &extending.txid());
     assert_eq!(extending_coins, BTreeSet::from([0]), "{chain_lock_at:?}: extending coins");
-    assert_balance(&manager, &wallet_id, VALUE, chain_lock_at);
+    assert_balance(&manager, &wallet_id, TX_AMOUNT, chain_lock_at);
 }
 
 #[tokio::test]
@@ -363,9 +330,9 @@ async fn test_unchainlocked_rescan_keeps_late_outputs_spent() {
 async fn test_rescan_after_an_account_reload_keeps_late_outputs_spent() {
     let (mut manager, wallet_id, _) = setup_manager_with_wallet();
     let (late, extending) = late_and_extending(&manager, &wallet_id);
-    let funding = block_at(HEIGHT, vec![late.clone(), extending.clone()]);
+    let funding = Block::dummy(HEIGHT, vec![late.clone(), extending.clone()]);
     let both = [OutPoint::new(late.txid(), 0), OutPoint::new(late.txid(), 1)];
-    let spends = block_at(HEIGHT + 1, vec![spending_to_nobody(both)]);
+    let spends = Block::dummy(HEIGHT + 1, vec![spending_to_nobody(both)]);
     manager.apply_chain_lock(ChainLock::dummy(HEIGHT + 10));
     pass(&mut manager, wallet_id, &funding, HEIGHT).await;
     pass(&mut manager, wallet_id, &spends, HEIGHT + 1).await;
@@ -383,5 +350,5 @@ async fn test_rescan_after_an_account_reload_keeps_late_outputs_spent() {
     let late_coins = held_vouts(&manager, &wallet_id, &late.txid());
     assert!(late_coins.is_empty(), "late coins {late_coins:?}");
     assert_eq!(held_vouts(&manager, &wallet_id, &extending.txid()), BTreeSet::from([0]));
-    assert_balance(&manager, &wallet_id, VALUE, ChainLockAt::BeforeFirstPass);
+    assert_balance(&manager, &wallet_id, TX_AMOUNT, ChainLockAt::BeforeFirstPass);
 }
