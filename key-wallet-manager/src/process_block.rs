@@ -5,15 +5,28 @@ use async_trait::async_trait;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
-use dashcore::{Address, Block, BlockHash, ScriptBuf, Transaction};
+use dashcore::{Address, Block, BlockHash, OutPoint, ScriptBuf, Transaction, Txid};
 use hex_conservative::DisplayHex;
 use key_wallet::account::AccountType;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::WalletCoreBalance;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use tokio::sync::broadcast;
+
+/// Whether both records are of the same transaction in the same account.
+fn same_record(a: &TransactionRecord, b: &TransactionRecord) -> bool {
+    a.txid == b.txid && a.account_type == b.account_type
+}
+
+/// Adds `record`, replacing an earlier version of the same record.
+fn upsert_record(records: &mut Vec<TransactionRecord>, record: TransactionRecord) {
+    match records.iter_mut().find(|r| same_record(r, &record)) {
+        Some(existing) => *existing = record,
+        None => records.push(record),
+    }
+}
 
 #[async_trait]
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletManager<T> {
@@ -50,76 +63,109 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>> = BTreeMap::new();
         let mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>> = BTreeMap::new();
-        let mut relevant_positions: BTreeMap<WalletId, Vec<usize>> = BTreeMap::new();
+        let mut per_wallet_locked: BTreeMap<WalletId, Vec<OutPoint>> = BTreeMap::new();
+        let mut relevant_positions: BTreeMap<WalletId, BTreeSet<usize>> = BTreeMap::new();
+        let mut listed_txids: HashSet<Txid> = HashSet::new();
 
-        for (position, tx) in block.txdata.iter().enumerate() {
-            // Stamp each record with its `block.vtx` index so consumers
-            // can replay Core's same-block apply order (e.g. multiple
-            // provider updates for one masternode in a single block).
-            let tx_info = info.with_position(position as u32);
-            let block_context = if all_chainlocked {
-                TransactionContext::InChainLockedBlock(tx_info)
-            } else {
-                TransactionContext::InBlock(tx_info)
-            };
-            let check_result =
-                self.check_transaction_in_wallets(tx, block_context, wallets, true, false).await;
-
-            if !check_result.affected_wallets.is_empty() {
-                if check_result.is_new_transaction {
-                    result.new_txids.push(tx.txid());
+        // A transaction can pay an address that a later transaction of this
+        // block derives. So every wallet that derived addresses checks the
+        // whole block again, until none derives more.
+        let mut pass_wallets = wallets.clone();
+        while !pass_wallets.is_empty() {
+            let mut derived_wallets = BTreeSet::new();
+            for (position, tx) in block.txdata.iter().enumerate() {
+                // Stamp each record with its `block.vtx` index so consumers
+                // can replay Core's same-block apply order (e.g. multiple
+                // provider updates for one masternode in a single block).
+                let tx_info = info.with_position(position as u32);
+                let block_context = if all_chainlocked {
+                    TransactionContext::InChainLockedBlock(tx_info)
                 } else {
-                    result.existing_txids.push(tx.txid());
-                }
-            }
-            for wallet_id in &check_result.affected_wallets {
-                relevant_positions.entry(*wallet_id).or_default().push(position);
-            }
+                    TransactionContext::InBlock(tx_info)
+                };
+                let check_result = self
+                    .check_transaction_in_wallets(tx, block_context, &pass_wallets, true, false)
+                    .await;
 
-            for (wallet_id, derived) in check_result.new_addresses {
-                let scripts =
-                    derived.iter().map(|d| d.info.script_pubkey.clone()).collect::<Vec<_>>();
-                result.new_scripts.entry(wallet_id).or_default().extend(scripts);
-                per_wallet_derived.entry(wallet_id).or_default().extend(derived);
-            }
-            for (wallet_id, records) in check_result.per_wallet_new_records {
-                per_wallet_inserted.entry(wallet_id).or_default().extend(records);
-            }
-            for (wallet_id, records) in check_result.per_wallet_updated_records {
-                per_wallet_updated.entry(wallet_id).or_default().extend(records);
-            }
-            // Emitted per transaction rather than batched into the block
-            // event: a sweep names the transaction that superseded the
-            // removed ones, and that attribution is lost once the block's
-            // transactions are folded together.
-            let mut per_wallet_released = check_result.per_wallet_released_outpoints;
-            for (wallet_id, txids) in check_result.per_wallet_swept {
-                if txids.is_empty() {
-                    continue;
+                let txid = tx.txid();
+                if !check_result.affected_wallets.is_empty() && listed_txids.insert(txid) {
+                    if check_result.is_new_transaction {
+                        result.new_txids.push(txid);
+                    } else {
+                        result.existing_txids.push(txid);
+                    }
                 }
-                let Some(info) = self.wallet_infos.get(&wallet_id) else {
-                    continue;
-                };
-                let released_outpoints = per_wallet_released.remove(&wallet_id).unwrap_or_default();
-                let event = WalletEvent::TransactionsSwept {
-                    wallet_id,
-                    txids,
-                    superseded_by: tx.txid(),
-                    // The winner is a transaction of this very block, so its
-                    // mined height is the block's height.
-                    winner_mined_height: Some(height),
-                    released_outpoints,
-                    balance: info.balance(),
-                    account_balances: BTreeMap::new(),
-                };
-                self.emit_event(event);
+                for wallet_id in &check_result.affected_wallets {
+                    relevant_positions.entry(*wallet_id).or_default().insert(position);
+                }
+
+                for (wallet_id, derived) in check_result.new_addresses {
+                    derived_wallets.insert(wallet_id);
+                    let scripts =
+                        derived.iter().map(|d| d.info.script_pubkey.clone()).collect::<Vec<_>>();
+                    result.new_scripts.entry(wallet_id).or_default().extend(scripts);
+                    per_wallet_derived.entry(wallet_id).or_default().extend(derived);
+                }
+                for (wallet_id, locked) in check_result.per_wallet_locked_outpoints {
+                    per_wallet_locked.entry(wallet_id).or_default().extend(locked);
+                }
+                for (wallet_id, records) in check_result.per_wallet_new_records {
+                    let inserted = per_wallet_inserted.entry(wallet_id).or_default();
+                    for record in records {
+                        upsert_record(inserted, record);
+                    }
+                }
+                for (wallet_id, records) in check_result.per_wallet_updated_records {
+                    for record in records {
+                        // A record inserted by an earlier pass stays an insert.
+                        let inserted =
+                            per_wallet_inserted.get_mut(&wallet_id).and_then(|inserted| {
+                                inserted.iter_mut().find(|r| same_record(r, &record))
+                            });
+                        match inserted {
+                            Some(inserted) => *inserted = record,
+                            None => upsert_record(
+                                per_wallet_updated.entry(wallet_id).or_default(),
+                                record,
+                            ),
+                        }
+                    }
+                }
+                // Emitted per transaction rather than batched into the block
+                // event: a sweep names the transaction that superseded the
+                // removed ones, and that attribution is lost once the block's
+                // transactions are folded together.
+                let mut per_wallet_released = check_result.per_wallet_released_outpoints;
+                for (wallet_id, txids) in check_result.per_wallet_swept {
+                    if txids.is_empty() {
+                        continue;
+                    }
+                    let Some(info) = self.wallet_infos.get(&wallet_id) else {
+                        continue;
+                    };
+                    let released_outpoints =
+                        per_wallet_released.remove(&wallet_id).unwrap_or_default();
+                    let event = WalletEvent::TransactionsSwept {
+                        wallet_id,
+                        txids,
+                        superseded_by: txid,
+                        // The winner is a transaction of this very block, so its
+                        // mined height is the block's height.
+                        winner_mined_height: Some(height),
+                        released_outpoints,
+                        balance: info.balance(),
+                        account_balances: BTreeMap::new(),
+                    };
+                    self.emit_event(event);
+                }
+                debug_assert!(
+                    per_wallet_released.is_empty(),
+                    "released outpoints for a wallet that emitted no sweep would be \
+                     dropped here, stranding those coins marked spent forever: {:?}",
+                    per_wallet_released
+                );
             }
-            debug_assert!(
-                per_wallet_released.is_empty(),
-                "released outpoints for a wallet that emitted no sweep would be \
-                 dropped here, stranding those coins marked spent forever: {:?}",
-                per_wallet_released
-            );
+            pass_wallets = derived_wallets;
         }
 
         for (wallet_id, positions) in relevant_positions {
@@ -142,9 +188,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             per_wallet_inserted,
             per_wallet_updated,
             per_wallet_derived,
+            per_wallet_locked,
         );
 
         result
+    }
+
+    fn checks_derived_addresses(&self) -> bool {
+        true
     }
 
     async fn process_mempool_transaction(
@@ -192,6 +243,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let per_wallet_updated_records =
             std::mem::take(&mut check_result.per_wallet_updated_records);
         let mut per_wallet_derived = std::mem::take(&mut check_result.new_addresses);
+        let mut per_wallet_locked = std::mem::take(&mut check_result.per_wallet_locked_outpoints);
 
         for (wallet_id, records) in per_wallet_new_records {
             let Some(info) = self.wallet_infos.get(&wallet_id) else {
@@ -219,6 +271,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                     balance,
                     account_balances: account_balances.clone(),
                     addresses_derived: project_derived_addresses(for_record),
+                    // Once per wallet, on its first record.
+                    locked_outpoints: per_wallet_locked.remove(&wallet_id).unwrap_or_default(),
                 };
                 self.emit_event(event);
             }
@@ -290,6 +344,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                         balance,
                         account_balances: account_balances.clone(),
                         addresses_derived: Vec::new(),
+                        locked_outpoints: Vec::new(),
                     });
                 }
                 if let Some(lock) =
@@ -339,7 +394,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             .unwrap_or_default()
     }
 
-    fn watched_outpoints(&self) -> Vec<dashcore::OutPoint> {
+    fn watched_outpoints(&self) -> Vec<OutPoint> {
         self.watched_outpoints()
     }
 
@@ -435,6 +490,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.finalize_block_advance(
             height,
             &wallets,
+            BTreeMap::new(),
             BTreeMap::new(),
             BTreeMap::new(),
             BTreeMap::new(),
@@ -575,6 +631,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         mut per_wallet_inserted: BTreeMap<WalletId, Vec<TransactionRecord>>,
         mut per_wallet_updated: BTreeMap<WalletId, Vec<TransactionRecord>>,
         mut per_wallet_derived: BTreeMap<WalletId, Vec<DerivedAddressInfo>>,
+        mut per_wallet_locked: BTreeMap<WalletId, Vec<OutPoint>>,
     ) {
         if wallets.is_empty() {
             return;
@@ -641,11 +698,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                 project_derived_addresses(derived_for_wallet);
             let chain_lock =
                 info.last_applied_chain_lock().filter(|cl| height <= cl.block_height).cloned();
+            let locked_outpoints = per_wallet_locked.remove(wallet_id).unwrap_or_default();
 
             if !inserted.is_empty()
                 || !updated.is_empty()
                 || !matured.is_empty()
                 || !addresses_derived.is_empty()
+                || !locked_outpoints.is_empty()
                 || balance_changed
             {
                 let event = WalletEvent::BlockProcessed {
@@ -658,6 +717,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
                     balance: new_balance,
                     account_balances,
                     addresses_derived,
+                    locked_outpoints,
                 };
                 self.emit_event(event);
             }
@@ -670,6 +730,7 @@ mod tests {
     use super::*;
     use crate::matching::{check_compact_filters_for_elements, FilterMatchKey};
     use crate::test_helpers::*;
+    use crate::test_utils::coinjoin_external_addresses;
     use dashcore::bip158::BlockFilter;
     use dashcore::block::{Header, Version};
     use dashcore::pow::CompactTarget;
@@ -677,6 +738,8 @@ mod tests {
         BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
     };
     use key_wallet::account::ManagedAccountTrait as _;
+    use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
+    use key_wallet::managed_account::address_pool::AddressPoolType;
     use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -955,6 +1018,78 @@ mod tests {
             }
         }
         assert!(found, "should emit BlockProcessed for block processing");
+    }
+
+    /// A block paying addresses that only its own transactions derive is fully
+    /// credited by one call. A transaction checked again is listed and recorded once.
+    #[tokio::test]
+    async fn test_process_block_credits_addresses_the_block_derives() {
+        let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+        let gap = DEFAULT_COINJOIN_GAP_LIMIT;
+        let addresses = coinjoin_external_addresses(&manager, &wallet_id, gap + 9);
+        let derived_by_late = &addresses[(gap + 2) as usize];
+        let also_derived_by_late = &addresses[(gap + 8) as usize];
+
+        // `late` uses index 8, which derives up to G+8. `early` pays G+2, and
+        // `both` pays index 6 and G+8, past what using 6 alone derives.
+        let early = create_tx_paying_to(derived_by_late, 0x21);
+        let mut both = create_tx_paying_to(&addresses[6], 0x23);
+        both.output.push(TxOut {
+            value: TX_AMOUNT,
+            script_pubkey: also_derived_by_late.script_pubkey(),
+        });
+        let late = create_tx_paying_to(&addresses[8], 0x22);
+        let block = make_block(vec![early.clone(), both.clone(), late.clone()]);
+
+        let mut rx = manager.subscribe_events();
+        let result = manager
+            .process_block_for_wallets(
+                &block,
+                block.block_hash(),
+                100,
+                &BTreeSet::from([wallet_id]),
+            )
+            .await;
+
+        assert_eq!(
+            manager.get_wallet_balance(&wallet_id).expect("balance").confirmed(),
+            4 * TX_AMOUNT
+        );
+        let pool_used = coinjoin_account(&manager, &wallet_id)
+            .managed_account_type()
+            .address_pools()
+            .iter()
+            .find(|p| p.pool_type == AddressPoolType::External)
+            .and_then(|p| p.highest_used);
+        assert_eq!(pool_used, Some(gap + 8));
+
+        let txids = BTreeSet::from([early.txid(), late.txid(), both.txid()]);
+        assert_eq!(result.new_txids.len(), 3);
+        assert_eq!(result.new_txids.iter().copied().collect::<BTreeSet<_>>(), txids);
+        assert!(result.existing_txids.is_empty());
+        assert!(result.new_scripts[&wallet_id].contains(&derived_by_late.script_pubkey()));
+
+        // The second pass corrects `both`, which the first recorded owning one
+        // output. The event carries it once, as inserted, with both outputs.
+        let inserted: Vec<TransactionRecord> = drain_events(&mut rx)
+            .into_iter()
+            .filter_map(|event| match event {
+                WalletEvent::BlockProcessed {
+                    inserted,
+                    updated,
+                    ..
+                } => {
+                    assert!(updated.is_empty());
+                    Some(inserted)
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(inserted.len(), 3);
+        assert_eq!(inserted.iter().map(|record| record.txid).collect::<BTreeSet<_>>(), txids);
+        let both_record = inserted.iter().find(|record| record.txid == both.txid());
+        assert_eq!(both_record.map(|record| record.net_amount), Some(2 * TX_AMOUNT as i64));
     }
 
     #[tokio::test]

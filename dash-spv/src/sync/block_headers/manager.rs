@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::chain::CheckpointManager;
+use crate::chain::{Checkpoint, CheckpointManager};
 use crate::error::{SyncError, SyncResult};
 use crate::network::{NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip, MetadataStorage};
@@ -21,7 +21,6 @@ use crate::sync::{
 };
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
-#[cfg(test)]
 use dashcore::block::Header;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::network::message_blockdata::Inventory;
@@ -54,6 +53,8 @@ pub struct BlockHeadersManager<H: BlockHeaderStorage, M: MetadataStorage> {
     pub(super) announced_peers: HashSet<SocketAddr>,
     /// Network whose difficulty rules new headers are checked against.
     network: Network,
+    /// Lowest height a wallet needs, which [`Self::extend_down`] syncs down to.
+    pub(super) floor: Option<u32>,
 }
 
 impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for BlockHeadersManager<H, M> {
@@ -100,6 +101,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             pending_announcements: HashMap::new(),
             announced_peers: HashSet::new(),
             network,
+            floor: None,
         })
     }
 
@@ -112,27 +114,126 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             .ok_or_else(|| SyncError::MissingDependency("storage not initialized".to_string()))
     }
 
-    /// Validate and store headers batch.
-    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
-        debug_assert!(!headers.is_empty());
+    /// Sync the headers below the lowest stored one, down to [`Self::floor`].
+    ///
+    /// Splits the range at the checkpoints below the lowest stored header, down to the
+    /// one that reaches the floor or genesis, and downloads the segments in parallel.
+    /// It waits until the pipeline runs.
+    pub(super) async fn extend_down(&mut self) -> SyncResult<()> {
+        if self.pipeline.is_syncing_below() || !self.pipeline.is_initialized() {
+            return Ok(());
+        }
+        let Some(floor) = self.floor else {
+            return Ok(());
+        };
+        let storage = self.header_storage.read().await;
+        let Some(start) = storage.get_start_height().await.filter(|start| floor < *start) else {
+            self.floor = None;
+            self.progress.update_missing_below(0);
+            return Ok(());
+        };
+        self.progress.update_missing_below(start - floor);
+        let mut join = storage
+            .get_header(start)
+            .await?
+            .ok_or_else(|| SyncError::MissingDependency(format!("no header at {start}")))?
+            .header()
+            .prev_blockhash;
+        drop(storage);
 
-        // Validate batch for internal continuity, PoW and difficulty
-        let tip = self.tip().await?;
+        let mut end = start;
+        loop {
+            let anchor = self.anchor_below(end);
+            self.pipeline.sync_below(anchor.height(), *anchor.hash(), end - 1, join);
+            if anchor.start_height() <= floor {
+                tracing::info!(
+                    "Syncing headers {}..{} below the stored ones",
+                    anchor.height() + 1,
+                    start
+                );
+                return Ok(());
+            }
+            end = anchor.start_height();
+            join = anchor.headers().first().map(|first| first.header().prev_blockhash).ok_or_else(
+                || {
+                    SyncError::InvalidState(format!(
+                        "checkpoint {} has no headers",
+                        anchor.height()
+                    ))
+                },
+            )?;
+        }
+    }
+
+    /// The checkpoint below `start`, or genesis.
+    fn anchor_below(&self, start: u32) -> Checkpoint {
+        self.checkpoint_manager
+            .last_checkpoint_before_height(start - 1)
+            .cloned()
+            .unwrap_or_else(|| Checkpoint::genesis(self.network))
+    }
+
+    /// Store the anchor below `start` and the `downloaded` headers joining it to `start`.
+    async fn store_below(
+        &mut self,
+        start: u32,
+        downloaded: &[HashedBlockHeader],
+    ) -> SyncResult<()> {
+        let anchor = self.anchor_below(start);
+        if !downloaded.is_empty() {
+            let ancestors = anchor.headers().iter().map(|header| *header.header()).collect();
+            BlockHeaderValidator::new(self.network, ancestors, anchor.height())
+                .validate(downloaded)?;
+        }
+        let mut headers = anchor.headers().to_vec();
+        headers.extend_from_slice(downloaded);
+        let mut storage = self.header_storage.write().await;
+        let joins = storage.get_header(start).await?.map(|header| header.header().prev_blockhash)
+            == headers.last().map(|last| *last.hash());
+        if !joins {
+            return Err(SyncError::Validation(format!("headers below {start} do not join it")));
+        }
+        storage.store_headers_at_height(&headers, anchor.start_height()).await?;
+        if let Some(floor) = self.floor {
+            self.progress.update_missing_below(anchor.start_height().saturating_sub(floor));
+        }
+        tracing::info!("Headers synced down to {}", anchor.start_height());
+        Ok(())
+    }
+
+    /// The stored headers up to `height` the next one's difficulty is computed from.
+    async fn ancestors(&self, height: u32) -> SyncResult<Vec<Header>> {
         let storage = self.header_storage.read().await;
 
         // A storage started at a checkpoint holds less history than a full window.
-        let first = tip
-            .height()
+        let first = height
             .saturating_sub(DGW_PAST_BLOCKS as u32 - 1)
             .max(storage.get_start_height().await.unwrap_or(0));
 
-        let ancestors = storage.load_headers(first..tip.height() + 1).await?;
+        let headers = storage.load_headers(first..height + 1).await?;
+        Ok(headers.iter().map(|header| *header.header()).collect())
+    }
 
-        drop(storage);
+    /// Height and ancestors of the block `headers` extend, a stored block or a
+    /// segment's tip. `None` if it's neither, as then nothing follows from them.
+    async fn attach_point(
+        &self,
+        headers: &[HashedBlockHeader],
+    ) -> SyncResult<Option<(u32, Vec<Header>)>> {
+        let Some(first) = headers.first() else {
+            return Ok(None);
+        };
+        let parent = first.header().prev_blockhash;
+        let height = self.header_storage.read().await.get_header_height_by_hash(&parent).await?;
+        match height {
+            Some(height) => Ok(Some((height, self.ancestors(height).await?))),
+            None => Ok(self.pipeline.segment_ancestors(&parent)),
+        }
+    }
 
-        let ancestors = ancestors.iter().map(|header| *header.header()).collect();
-
-        BlockHeaderValidator::new(self.network, ancestors, tip.height()).validate(headers)?;
+    /// Store an already validated headers batch.
+    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
+        debug_assert!(!headers.is_empty());
 
         // Store headers
         self.header_storage.write().await.store_headers(headers).await?;
@@ -168,6 +269,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             Some(first) => Some(first.header().prev_blockhash),
             None => self.pipeline.active_tip_locator(),
         };
+
+        if let Some((height, ancestors)) = self.attach_point(headers).await? {
+            let validator = BlockHeaderValidator::new(self.network, ancestors, height);
+            if let Err(e) = validator.validate(headers) {
+                network.ban_peer(peer).await;
+                return Err(e.into());
+            }
+        }
 
         // Route headers to the pipeline, validates checkpoint match.
         let matched = match self.pipeline.receive_headers(headers) {
@@ -208,6 +317,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         }
 
         events.extend(self.store_ready_batches(ready_batches).await?);
+        self.pipeline.send_below(network).await;
 
         // After storing unsolicited post-sync headers, mark the tip complete so the next header goes through
         // the clean reset path. Don't mark complete during active catch-up.
@@ -322,7 +432,29 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             }
         }
 
+        // Last, and without failing, as the batches above already left the pipeline
+        // and their events would otherwise be dropped.
+        if let Err(e) = self.store_completed_below().await {
+            tracing::warn!("Failed to store the headers synced below: {}", e);
+        }
+
         Ok(events)
+    }
+
+    /// Store the segments below that finished downloading, from the highest down.
+    pub(super) async fn store_completed_below(&mut self) -> SyncResult<()> {
+        while let Some(below) = self.pipeline.take_below() {
+            let start = self.header_storage.read().await.get_start_height().await;
+            let start = start.ok_or_else(|| {
+                SyncError::MissingDependency("no headers stored to sync below".to_string())
+            })?;
+            if let Err(e) = self.store_below(start, &below).await {
+                // `extend_down` starts the segments again only once none is left.
+                self.pipeline.clear_below();
+                return Err(e);
+            }
+        }
+        Ok(())
     }
 
     /// Close out an initial sync whose pipeline has nothing left to download.
@@ -514,6 +646,67 @@ mod tests {
         );
     }
 
+    /// Headers are validated as they arrive, on the tip or branching off below it:
+    /// invalid ones are neither stored nor followed, and their peer is banned.
+    #[test_case(4, true; "valid on the tip")]
+    #[test_case(4, false; "invalid on the tip")]
+    #[test_case(2, true; "valid fork")]
+    #[test_case(2, false; "invalid fork")]
+    #[tokio::test]
+    async fn test_received_headers_are_validated(parent: usize, valid: bool) {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let chain: Vec<HashedBlockHeader> = Header::dummy_chain(5, BlockHash::dummy(0))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        storage.store_headers(&chain).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        manager.pipeline.init(4, *chain[4].hash(), 4);
+        manager.progress.set_state(SyncState::Synced);
+
+        let parent_hash = *chain[parent].hash();
+        let header = if valid {
+            Header::dummy_chain(1, parent_hash)[0]
+        } else {
+            Header {
+                prev_blockhash: parent_hash,
+                ..Header::dummy(5)
+            }
+        };
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+        let peer = test_socket_address(1);
+
+        let result = manager.handle_headers_pipeline(peer, &[header.into()], &network).await;
+
+        assert_eq!(result.is_ok(), valid);
+        assert_eq!(
+            mock.banned_peers().await,
+            if valid {
+                vec![]
+            } else {
+                vec![peer]
+            }
+        );
+        let forked = result.is_ok_and(|events| {
+            events.iter().any(|event| matches!(event, SyncEvent::ForkDetected { .. }))
+        });
+        assert_eq!(forked, valid && parent < 4);
+        let tip = if valid && parent == 4 {
+            5
+        } else {
+            4
+        };
+        assert_eq!(manager.tip().await.unwrap().height(), tip);
+    }
+
     /// Create a manager in synced state with an initialized pipeline.
     async fn create_synced_manager() -> TestBlockHeadersManager {
         let mut manager = create_test_manager().await;
@@ -597,6 +790,97 @@ mod tests {
             events.iter().any(|e| matches!(e, SyncEvent::BlockHeaderSyncComplete { .. })),
             "completion must be announced, or downstream managers never start"
         );
+    }
+
+    /// Headers below the stored ones that fail to store must not take the
+    /// forward batches stored alongside them down too, nor their events: those
+    /// already left the pipeline, so nothing would download them again.
+    #[tokio::test]
+    async fn test_failed_store_below_keeps_forward_batches() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let stored: Vec<HashedBlockHeader> = Header::dummy_chain(3, BlockHash::dummy(1))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        storage.block_headers().write().await.store_headers_at_height(&stored, 10).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        let tip = manager.tip().await.unwrap();
+        manager.pipeline.init(tip.height(), *tip.hash(), tip.height() + 2);
+
+        // Headers below that join neither the anchor nor the stored ones.
+        let below: Vec<HashedBlockHeader> = Header::dummy_chain(1, BlockHash::dummy(2))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        manager.pipeline.sync_below(0, BlockHash::dummy(2), 1, *below[0].hash());
+        manager.pipeline.receive_headers(&below).unwrap();
+
+        let forward: Vec<HashedBlockHeader> =
+            Header::dummy_chain(2, *tip.hash()).iter().map(HashedBlockHeader::from).collect();
+        manager.pipeline.receive_headers(&forward).unwrap();
+        let ready = manager.pipeline.take_ready_to_store();
+        assert!(!ready.is_empty(), "precondition: the forward batch is ready");
+
+        let events = manager.store_ready_batches(ready).await.unwrap();
+
+        let stored_tip = tip.height() + 2;
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::BlockHeadersStored { tip_height }] if *tip_height == stored_tip
+        ));
+
+        assert!(!manager.pipeline.is_syncing_below());
+        assert_eq!(manager.tip().await.unwrap().height(), tip.height() + 2);
+    }
+
+    /// Syncs every checkpoint segment down to the floor at once: one adjacent to its
+    /// checkpoint needs no download, a distant one does, and it stops at the floor, not genesis.
+    #[tokio::test]
+    async fn test_extend_down_descends_checkpoints_to_the_floor() {
+        let chain: Vec<HashedBlockHeader> = Header::dummy_chain(130, BlockHash::dummy(1))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let headers = storage.block_headers();
+        headers.write().await.store_headers_at_height(&chain[100..], 100).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            headers.clone(),
+            storage.metadata(),
+            Box::leak(Box::new(CheckpointManager::dummy(&chain))),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        manager.pipeline.init(129, *chain[129].hash(), 129);
+        manager.floor = Some(30);
+
+        manager.extend_down().await.unwrap();
+        manager.store_completed_below().await.unwrap();
+        assert!(manager.pipeline.is_syncing_below());
+        assert_eq!(headers.read().await.get_start_height().await, Some(75));
+
+        manager.pipeline.receive_headers(&chain[50..75]).unwrap();
+        manager.store_completed_below().await.unwrap();
+        assert!(!manager.pipeline.is_syncing_below());
+        assert_eq!(headers.read().await.get_start_height().await, Some(25));
+
+        manager.extend_down().await.unwrap();
+        assert_eq!(manager.floor, None);
+        assert!(!manager.pipeline.is_syncing_below());
+        assert_eq!(headers.read().await.get_start_height().await, Some(25));
+        for height in 25..=129u32 {
+            let stored = headers.read().await.get_header(height).await.unwrap();
+            assert_eq!(stored.map(|header| *header.hash()), Some(*chain[height as usize].hash()));
+        }
     }
 
     #[tokio::test]

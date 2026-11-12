@@ -218,6 +218,15 @@ impl ManagedCoreFundsAccount {
         self.spent_outpoints.contains(outpoint)
     }
 
+    /// Whether the account holds `outpoint` as a UTXO or keeps it aside as
+    /// spent or claimed, to take it back if that spend or claim goes away.
+    pub(crate) fn holds_or_keeps_aside(&self, outpoint: &OutPoint) -> bool {
+        self.utxos.contains_key(outpoint)
+            || self.spent_before_funded.contains_key(outpoint)
+            || self.claim_guarded_outputs.contains_key(outpoint)
+            || self.unsettled_spends.values().flatten().any(|utxo| utxo.outpoint == *outpoint)
+    }
+
     /// Fill `claim_guarded_outputs` for a claim restored after its funding:
     /// the account holds the funding transaction's full record, the output
     /// pays one of its addresses, and the outpoint is neither in `utxos` nor
@@ -357,9 +366,9 @@ impl ManagedCoreFundsAccount {
         // scratch, so carry forward flags that must not regress. An
         // InstantSend lock is permanent for a txid (DIP-0010) and
         // trust only ever settles, so both latch monotonically. A
-        // coin reservation is orthogonal to chain context and is kept
-        // as-is. `is_confirmed` stays freshly derived so a reorg can
-        // still downgrade it.
+        // coin lock follows the wallet's lock set, not chain context,
+        // and is kept as-is. `is_confirmed` stays freshly derived so a
+        // reorg can still downgrade it.
         copies.extend(self.utxos.get(&outpoint).cloned());
         if !copies.is_empty() {
             output.is_instantlocked |= copies.iter().any(|copy| copy.is_instantlocked);

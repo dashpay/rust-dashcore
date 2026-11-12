@@ -12,6 +12,10 @@ use crate::network::costs::ResponseCosts;
 use crate::network::peer::{PeerHandle, PeerId};
 
 const KICKING_ATTEMPTS: u32 = 2;
+/// How many timeouts a request lives on bytes of a message still arriving, without an
+/// answer. A big answer on a slow link must fit, but a message that never finishes must
+/// not keep its request alive forever.
+const ANSWER_TIMEOUTS: u32 = 6;
 const HEDGE_AFTER: Duration = Duration::from_secs(2);
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
@@ -62,8 +66,12 @@ struct OnWire {
     /// The connection, not the address: a late close of an old connection must not
     /// pull back the work of a new one to the same address.
     peer: PeerId,
-    /// Refreshed by every piece of a streaming response.
+    /// Refreshed by every answer and by bytes of a message still arriving, since a big
+    /// answer can take longer than a timeout to arrive.
     last_progress: Instant,
+    /// Refreshed only by answers, so a block still arriving slowly can be hedged and a
+    /// message that never finishes cannot keep the request alive forever.
+    last_answer: Instant,
     msg: NetworkMessage,
     height: u32,
     hedge: Option<PeerId>,
@@ -205,18 +213,33 @@ impl Broker {
 
     /// Peers answer in order, so any answer is progress on all of its requests.
     pub async fn progress(&self, peer: PeerId) {
+        self.refresh(&[peer], true).await;
+    }
+
+    /// Bytes of a message still arriving from any of `peers` are progress on their requests.
+    pub async fn receiving(&self, peers: &[PeerId]) {
+        if !peers.is_empty() {
+            self.refresh(peers, false).await;
+        }
+    }
+
+    async fn refresh(&self, peers: &[PeerId], answered: bool) {
         let now = Instant::now();
         for state in self.requests.lock().await.values_mut() {
             if let ReqState::OnWire(o) = state {
-                if o.peer == peer {
+                if peers.contains(&o.peer) {
                     o.last_progress = now;
+                    if answered {
+                        o.last_answer = now;
+                    }
                 }
             }
         }
     }
 
-    /// Returns the peers to kick for a stalled request. A request that already
-    /// stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
+    /// Returns the peers to kick for a stalled request. A request stalls after a timeout
+    /// without progress, or after [`ANSWER_TIMEOUTS`] timeouts without an answer. A request
+    /// that already stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
     pub async fn expire(&self, timeout: impl Fn(&PeerId) -> Duration) -> HashSet<PeerId> {
         let now = Instant::now();
         let mut culprits = HashSet::new();
@@ -225,7 +248,10 @@ impl Broker {
             let ReqState::OnWire(o) = state else {
                 continue;
             };
-            if now.duration_since(o.last_progress) <= timeout(&o.peer) {
+            let timeout = timeout(&o.peer);
+            if now.duration_since(o.last_progress) <= timeout
+                && now.duration_since(o.last_answer) <= timeout * ANSWER_TIMEOUTS
+            {
                 continue;
             }
             if o.attempts < KICKING_ATTEMPTS {
@@ -257,9 +283,11 @@ impl Broker {
         if peers.is_empty() {
             return 0;
         }
-        let total_in_flight: u64 = peers.iter().map(PeerHandle::in_flight_bytes).sum();
-        let per_peer_room: u64 =
-            peers.iter().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
+        // A closed peer still listed is sent nothing, so its room would pop work that only
+        // goes back to the queue and wakes the router again at once.
+        let live = || peers.iter().filter(|p| !p.is_closed());
+        let total_in_flight: u64 = live().map(PeerHandle::in_flight_bytes).sum();
+        let per_peer_room: u64 = live().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
         let budget = per_peer_room.min(global_cap.saturating_sub(total_in_flight));
         if budget == 0 {
             return 0;
@@ -282,7 +310,8 @@ impl Broker {
         let mut on_wire: Vec<(u32, NetworkMessage, PeerHandle)> = Vec::new();
         let mut msgs = msgs.into_iter();
         for (height, msg) in msgs.by_ref() {
-            let open = peers.iter().filter(|p| p.in_flight_bytes() < p.cap());
+            // `peers` can be a snapshot taken before the timeout monitor closed one of them.
+            let open = peers.iter().filter(|p| !p.is_closed() && p.in_flight_bytes() < p.cap());
             let Some(peer) = choose_peer(open, classify(&msg)) else {
                 unsent.push((height, msg));
                 break;
@@ -314,6 +343,7 @@ impl Broker {
                             msg: msg.clone(),
                             height,
                             last_progress: Instant::now(),
+                            last_answer: Instant::now(),
                             hedge: None,
                             attempts: attempts + 1,
                         }));
@@ -334,7 +364,7 @@ impl Broker {
         sent
     }
 
-    /// Endgame: asks a second peer for the lowest block on the wire once its peer delivered
+    /// Endgame: asks a second peer for the lowest block on the wire once its peer answered
     /// nothing for [`HEDGE_AFTER`], and returns its height. Blocks are processed in height
     /// order, so only the lowest one holds up progress and a second copy of any other is wasted.
     pub async fn hedge(&self, peers: &[PeerHandle]) -> Option<u32> {
@@ -349,12 +379,12 @@ impl Broker {
                     _ => None,
                 })
                 .min_by_key(|(_, o)| o.height)?;
-            if o.hedge.is_some() || o.last_progress.elapsed() < HEDGE_AFTER {
+            if o.hedge.is_some() || o.last_answer.elapsed() < HEDGE_AFTER {
                 return None;
             }
             let peer = peers
                 .iter()
-                .filter(|p| p.id() != o.peer && p.in_flight_bytes() < p.cap())
+                .filter(|p| !p.is_closed() && p.id() != o.peer && p.in_flight_bytes() < p.cap())
                 .max_by_key(|p| p.cap().saturating_sub(p.in_flight_bytes()))?;
             (key.clone(), o.msg.clone(), o.height, peer.clone())
         };
@@ -375,6 +405,7 @@ impl Broker {
             let on_wire = OnWire {
                 peer,
                 last_progress: Instant::now(),
+                last_answer: Instant::now(),
                 msg: msg.clone(),
                 height: 0,
                 hedge: None,
@@ -385,12 +416,27 @@ impl Broker {
     }
 
     #[cfg(test)]
+    pub async fn carrier_of(&self, key: &RequestKey) -> Option<PeerId> {
+        match self.requests.lock().await.get(key) {
+            Some(ReqState::OnWire(o)) => Some(o.peer),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
     pub async fn state_of(&self, key: &RequestKey) -> Option<&'static str> {
         self.requests.lock().await.get(key).map(|s| match s {
             ReqState::Queued(_) => "queued",
             ReqState::OnWire(_) => "on_wire",
             ReqState::Arrived => "arrived",
         })
+    }
+
+    /// Locks the queue `msg` waits in until the returned guard drops, so a test can stop a
+    /// task at the moment it queues such a message.
+    #[cfg(test)]
+    pub async fn hold_queue_of(&self, msg: &NetworkMessage) -> impl Sized + '_ {
+        self.queue.queue(classify(msg)).lock().await
     }
 }
 
@@ -574,6 +620,7 @@ mod tests {
     use dashcore::network::message_filter::{GetCFHeaders, GetCFilters};
     use dashcore::network::message_sml::GetMnListDiff;
     use dashcore::Txid;
+    use futures::FutureExt;
     use test_case::test_case;
 
     fn get_headers(locator: u32) -> NetworkMessage {
@@ -669,6 +716,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requeued_work_skips_a_closed_peer_still_listed() {
+        let broker = Broker::new();
+        let gone = ConnectedPeer::for_test(conn(1, 0)).await;
+        let other = ConnectedPeer::for_test(conn(2, 0)).await;
+        broker.mark_on_wire(&get_cfilters(0), gone.id()).await;
+        gone.close();
+        broker.requeue_from(&HashSet::from([gone.id()])).await;
+        broker.notified().await;
+
+        // With only the closed peer listed nothing is popped, so the router is not woken
+        // again and waits for a real change instead of spinning.
+        assert_eq!(broker.route(&[gone.handle()], u64::MAX, &ResponseCosts::new()).await, 0);
+        assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, Some("queued"));
+        assert!(broker.notified().now_or_never().is_none(), "the router was woken again");
+
+        // Only the charge matters here: the loopback has no reader to answer it.
+        broker.route(&[gone.handle(), other.handle()], u64::MAX, &ResponseCosts::new()).await;
+
+        assert_eq!(gone.in_flight_bytes(), 0);
+        assert!(other.in_flight_bytes() > 0);
+    }
+
+    #[tokio::test]
     async fn a_requeued_request_dedups_until_its_response_arrives() {
         let broker = Broker::new();
         let peer = conn(1, 0);
@@ -687,14 +757,19 @@ mod tests {
     }
 
     /// A block at a slow peer gets a second copy only once it is the lowest on the wire and
-    /// its peer stopped delivering.
+    /// its peer stopped delivering. Peer 3 has the most room but was kicked after the
+    /// snapshot of `peers` was taken, so it never gets the copy.
     #[tokio::test(start_paused = true)]
     async fn hedge_asks_another_peer_only_for_the_lowest_stalled_block() {
         let broker = Broker::new();
         let costs = ResponseCosts::new();
+        let kicked = ConnectedPeer::for_test(conn(3, 0)).await;
+        kicked.set_cap(u64::MAX);
+        kicked.close();
         let peers = [
             ConnectedPeer::for_test(conn(1, 0)).await.handle(),
             ConnectedPeer::for_test(conn(2, 0)).await.handle(),
+            kicked.handle(),
         ];
         let (slow, idle) = (&peers[..1], peers[1].id());
         let get_block = |n: u32| NetworkMessage::GetData(vec![block(n)]);
@@ -727,8 +802,9 @@ mod tests {
         tokio::time::advance(HEDGE_AFTER / 2).await;
         assert_eq!(broker.hedge(&peers).await, None, "the slow peer is still delivering");
 
+        broker.receiving(&[slow[0].id()]).await;
         tokio::time::advance(HEDGE_AFTER / 2).await;
-        assert_eq!(broker.hedge(&peers).await, Some(10));
+        assert_eq!(broker.hedge(&peers).await, Some(10), "a block still arriving is hedged");
         assert_eq!(broker.hedge(&peers).await, None, "later blocks wait for the lowest");
         assert_eq!(hedged_blocks().await, [10]);
 

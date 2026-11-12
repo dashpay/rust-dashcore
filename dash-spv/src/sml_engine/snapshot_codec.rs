@@ -382,12 +382,14 @@ impl<H: BlockHeaderStorage> Decode<(Network, Arc<RwLock<H>>)> for MasternodeList
             }
         }
 
-        Ok(Self {
+        let mut engine = Self {
             masternode_lists,
             rotated_quorums_per_cycle,
             latest_coinbase,
             ..Self::new(network, headers)
-        })
+        };
+        engine.retain_listed_cycles();
+        Ok(engine)
     }
 }
 
@@ -399,7 +401,7 @@ mod tests {
     use bincode::error::DecodeError;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::consensus::deserialize;
-    use dashcore::hash_types::MerkleRootAssetUnlocks;
+    use dashcore::hash_types::{MerkleRootAssetUnlocks, QuorumVVecHash};
     use dashcore::network::message_qrinfo::QRInfo;
     use dashcore::network::message_sml::MnListDiff;
     use dashcore::prelude::CoreBlockHeight;
@@ -561,7 +563,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_snapshot_restores_the_lists_cycles_and_their_sharing() {
+    async fn a_snapshot_restores_the_lists_and_their_sharing() {
         let mut with_coinbase = chain_engine();
         with_coinbase.latest_coinbase = Some(CoinbasePayload {
             version: 4,
@@ -580,13 +582,84 @@ mod tests {
                 .expect("decodes");
 
             assert_eq!(restored.masternode_lists, engine.masternode_lists);
-            assert_eq!(restored.rotated_quorums_per_cycle, engine.rotated_quorums_per_cycle);
             assert_eq!(restored.latest_coinbase, engine.latest_coinbase);
             assert!(shares_at_least(&engine.masternode_lists, &restored.masternode_lists));
             assert!(distinct(&restored.masternode_lists) <= distinct(&engine.masternode_lists));
             assert!(entries_deduplicated(&restored.masternode_lists));
-            assert_eq!(restored.snapshot().expect("encodes"), bytes);
         }
+    }
+
+    /// The cycle a `QRInfo` stored comes back with its lists, so IS locks of it
+    /// verify after a restart without waiting for the next `QRInfo`.
+    #[tokio::test]
+    async fn a_snapshot_restores_the_cycles_its_lists_hold() {
+        let engine = qr_info_engine().await;
+        assert!(!engine.rotated_quorums_per_cycle().is_empty(), "the QRInfo stores a cycle");
+        let bytes = engine.snapshot().expect("encodes");
+
+        let restored =
+            TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes).expect("decodes");
+
+        assert!(restored.rotated_quorums_per_cycle() == engine.rotated_quorums_per_cycle());
+        assert_eq!(restored.snapshot().expect("encodes"), bytes);
+    }
+
+    /// A cycle whose entries no restored list holds, as the fixture's lists hold
+    /// only their ChainLock quorums, is not restored.
+    #[test]
+    fn a_snapshot_drops_a_cycle_no_restored_list_holds() {
+        let engine = TestEngine::mainnet_fixture();
+        assert!(!engine.rotated_quorums_per_cycle().is_empty(), "the fixture holds a cycle");
+        let bytes = engine.snapshot().expect("encodes");
+
+        let restored =
+            TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes).expect("decodes");
+
+        assert!(restored.rotated_quorums_per_cycle().is_empty());
+        assert_eq!(restored.masternode_lists, engine.masternode_lists);
+    }
+
+    /// A cycle whose entry the lists hold under its type and quorum hash, but with another
+    /// entry hash, is not restored; the other cycles are. The hand-edited lists stand in for
+    /// a saved snapshot whose lists and cycles disagree, which no diff or `QRInfo` can produce.
+    #[tokio::test]
+    async fn a_snapshot_drops_a_cycle_its_lists_hold_with_another_entry_hash() {
+        let mut engine = qr_info_engine().await;
+        let stored = engine
+            .rotated_quorums_per_cycle()
+            .values()
+            .flat_map(|cycle| cycle.values())
+            .next()
+            .expect("the QRInfo stores a cycle")
+            .quorum_entry
+            .clone();
+        assert_ne!(stored.quorum_vvec_hash, QuorumVVecHash::all_zeros());
+        let mut altered = 0;
+        for list in engine.masternode_lists.values_mut() {
+            let listed = Arc::make_mut(&mut list.quorums)
+                .get_mut(&stored.llmq_type)
+                .and_then(|quorums| quorums.get_mut(&stored.quorum_hash));
+            if let Some(listed) = listed {
+                let listed = Arc::make_mut(listed);
+                listed.quorum_entry.quorum_vvec_hash = QuorumVVecHash::all_zeros();
+                listed.commitment_hash = listed.quorum_entry.calculate_commitment_hash();
+                listed.entry_hash = listed.quorum_entry.calculate_entry_hash();
+                altered += 1;
+            }
+        }
+        assert!(altered > 0, "a list holds the stored entry");
+        let bytes = engine.snapshot().expect("encodes");
+
+        let restored =
+            TestEngine::from_snapshot(Network::Mainnet, engine.headers(), &bytes).expect("decodes");
+
+        let mut kept = engine.rotated_quorums_per_cycle().clone();
+        kept.retain(|_, cycle| {
+            cycle.values().all(|entry| entry.quorum_entry.quorum_hash != stored.quorum_hash)
+        });
+        assert_eq!(kept.len() + 1, engine.rotated_quorums_per_cycle().len());
+        assert!(restored.rotated_quorums_per_cycle() == &kept, "only the altered cycle is dropped");
+        assert_eq!(restored.masternode_lists, engine.masternode_lists);
     }
 
     #[test]

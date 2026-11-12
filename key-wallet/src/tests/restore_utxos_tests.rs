@@ -242,34 +242,30 @@ fn a_copy_another_account_holds_is_taken_out_on_restore() {
 }
 
 /// The restored UTXO keeps the InstantSend lock and trust of the copy it
-/// takes out of BIP44, and takes the coin lock of the copies it replaces in
-/// place of its own: locked if either the copy CoinJoin held or the one taken
-/// out of BIP44 is locked.
-#[test_case(true, true, true; "a held lock stays")]
-#[test_case(false, false, false; "a held unlock stays")]
-#[test_case(false, true, true; "a lock on the misplaced copy stays")]
-fn a_restored_utxo_keeps_the_flags_of_the_copies_it_replaces(
-    held_locked: bool,
-    misplaced_locked: bool,
-    expected_locked: bool,
-) {
+/// takes out of BIP44. Its coin lock follows the wallet's lock set, whatever
+/// flag it or the copies it replaces carry.
+#[test_case(true; "a locked outpoint restores locked")]
+#[test_case(false; "an unlocked outpoint restores unlocked")]
+fn a_restored_utxo_keeps_the_flags_of_the_copies_it_replaces(locked: bool) {
     let mut ctx = TestWalletContext::new_random();
     let (_, mut utxo) = funded(&coinjoin_address(&ctx, 0), 0, 100_000);
+    if locked {
+        ctx.managed_wallet.lock_outpoint(utxo.outpoint);
+    }
     let accounts = &mut ctx.managed_wallet.accounts;
     let mut held = utxo.clone();
-    held.is_locked = held_locked;
+    held.is_locked = !locked;
     accounts.coinjoin_accounts.get_mut(&0).unwrap().utxos.insert(utxo.outpoint, held);
     let mut misplaced = utxo.clone();
     misplaced.is_instantlocked = true;
     misplaced.is_trusted = true;
-    misplaced.is_locked = misplaced_locked;
     accounts.standard_bip44_accounts.get_mut(&0).unwrap().utxos.insert(utxo.outpoint, misplaced);
-    utxo.is_locked = !(held_locked || misplaced_locked);
+    utxo.is_locked = !locked;
 
     ctx.managed_wallet.restore_utxos(&ctx.wallet, [utxo.clone()]).expect("restores");
 
     let restored = &ctx.managed_wallet.accounts.coinjoin_accounts[&0].utxos[&utxo.outpoint];
-    assert_eq!(restored.is_locked, expected_locked);
+    assert_eq!(restored.is_locked, locked);
     assert!(restored.is_instantlocked);
     assert!(restored.is_trusted);
 }

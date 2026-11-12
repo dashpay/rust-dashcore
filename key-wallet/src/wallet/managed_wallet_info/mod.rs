@@ -8,6 +8,7 @@ pub mod coin_selection;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
+pub(crate) mod locked_outpoints;
 pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;
@@ -148,6 +149,11 @@ pub struct ManagedWalletInfo {
     pub(crate) account_generation: u64,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) noted_chain_lock_height: Option<CoreBlockHeight>,
+    /// Outpoints the wallet will not spend; see [`Self::locked_outpoints`].
+    /// `serde(default)` loads a snapshot written before the field existed
+    /// with no locks, in self-describing formats only.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) locked_outpoints: BTreeSet<OutPoint>,
 }
 
 /// Serde adapter for [`ManagedWalletInfo::observed_spent_outpoints`] that
@@ -255,6 +261,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
@@ -273,6 +280,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
@@ -301,6 +309,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
@@ -450,7 +459,9 @@ impl ManagedWalletInfo {
     /// way as when it processes the funding transaction, except that claims
     /// are not consulted. The restored UTXO
     /// keeps the InstantSend lock and trust of any copy it replaces or takes
-    /// out, and their coin lock replaces its own. A matched outpoint the
+    /// out. Its coin lock follows the wallet's lock set
+    /// ([`locked_outpoints`](Self::locked_outpoints)), whatever flag it or
+    /// those copies carry. A matched outpoint the
     /// wallet already saw spent is neither credited nor returned: one the
     /// owning account recorded spending is held under that spend, so a fork
     /// dropping the spend gives it back, and one spent in a processed block
@@ -499,12 +510,14 @@ impl ManagedWalletInfo {
             }
         };
         let mut unmatched = Vec::new();
+        let mut matched = Vec::new();
         for (utxo, owner) in utxos.into_iter().zip(owners) {
             let Some(owner) = owner else {
                 unmatched.push(utxo);
                 continue;
             };
             let outpoint = utxo.outpoint;
+            matched.push(outpoint);
             let mut copies = Vec::new();
             for (index, account) in accounts.iter_mut().enumerate() {
                 if index != owner {
@@ -516,6 +529,7 @@ impl ManagedWalletInfo {
             let account = &mut accounts[owner];
             account.take_in_output(utxo, copies, &self.observed_spent_outpoints, None, |_| {});
         }
+        self.refresh_lock_flags(matched);
         Ok(unmatched)
     }
 
