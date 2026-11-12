@@ -346,9 +346,9 @@ impl<'a> ManagedAccountRefMut<'a> {
 
     /// Re-process an existing transaction with updated context.
     ///
-    /// Funds variants additionally refresh UTXO state. Returns the record when it is new, when
-    /// its confirmation status changed, or, for funds variants, when it gains outputs derived
-    /// since it was recorded; a record finality reduced to a summary comes back rebuilt from it.
+    /// Funds variants additionally refresh UTXO state. Returns the record when it is new or its
+    /// confirmation status changed, and, for funds variants, when it gained outputs derived since
+    /// it was recorded.
     ///
     /// This public entry point confirms with no observed-spend context — the
     /// pre-#649 behavior, appropriate for callers driving an account directly

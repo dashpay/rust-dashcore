@@ -4,6 +4,7 @@ use dashcore::{OutPoint, ScriptBuf, TxIn, TxOut, Txid, Witness};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
+use std::slice;
 use tokio::sync::broadcast;
 
 pub(crate) const TEST_MNEMONIC: &str =
@@ -29,33 +30,33 @@ pub(crate) fn setup_manager_with_wallet() -> (WalletManager<ManagedWalletInfo>, 
     (manager, wallet_id, addr)
 }
 
-pub(crate) fn create_tx(
-    inputs: impl IntoIterator<Item = OutPoint>,
-    output: Vec<TxOut>,
-) -> Transaction {
+pub(crate) fn create_tx_paying_to(addr: &Address, input_seed: u8) -> Transaction {
+    create_tx_paying(slice::from_ref(addr), input_seed)
+}
+
+/// Pays `TX_AMOUNT` to each of `addrs`, from one input seeded with `input_seed`.
+pub(crate) fn create_tx_paying(addrs: &[Address], input_seed: u8) -> Transaction {
     Transaction {
         version: 2,
         lock_time: 0,
-        input: inputs
-            .into_iter()
-            .map(|previous_output| TxIn {
-                previous_output,
-                script_sig: ScriptBuf::new(),
-                sequence: u32::MAX,
-                witness: Witness::default(),
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([input_seed; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: addrs
+            .iter()
+            .map(|addr| TxOut {
+                value: TX_AMOUNT,
+                script_pubkey: addr.script_pubkey(),
             })
             .collect(),
-        output,
         special_transaction_payload: None,
     }
-}
-
-pub(crate) fn create_tx_paying_to(addr: &Address, input_seed: u8) -> Transaction {
-    let output = TxOut {
-        value: TX_AMOUNT,
-        script_pubkey: addr.script_pubkey(),
-    };
-    create_tx([OutPoint::new(Txid::from_byte_array([input_seed; 32]), 0)], vec![output])
 }
 
 pub(crate) fn drain_events(rx: &mut broadcast::Receiver<WalletEvent>) -> Vec<WalletEvent> {
