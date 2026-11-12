@@ -158,8 +158,6 @@ impl TransactionBuilder {
     ///
     /// A change address already set by [`set_change_address`](Self::set_change_address)
     /// wins: the funding account is only asked for one when the builder has none.
-    /// Deriving unconditionally would both discard the caller's choice and burn a
-    /// pool address, since `next_change_address` advances the pool state.
     pub fn add_funding(self, funds_acc: &mut ManagedCoreFundsAccount, acc: &Account) -> Self {
         self.fund_from(funds_acc, acc, true)
     }
