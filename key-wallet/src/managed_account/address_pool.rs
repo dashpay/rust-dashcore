@@ -521,9 +521,21 @@ impl AddressPool {
     /// Stores `info` at its index, replacing any entry already there.
     ///
     /// Use it to restore persisted entries or keys that cannot be derived from the key source.
-    /// Fails if the address is already stored at another index.
+    /// Fails if the address is already stored at another index, or if the index would leave a
+    /// gap in a pool derived from the account xpub. Such a gap would never be derived or watched.
     pub fn insert(&mut self, info: AddressInfo) -> Result<()> {
         ChildNumber::from_normal_idx(info.index).map_err(Error::Bip32)?;
+
+        if self.pool_type != AddressPoolType::AbsentHardened
+            && info.index > self.next_index_to_derive()
+        {
+            return Err(Error::InvalidParameter(format!(
+                "index {} leaves a gap, the next index to derive is {}",
+                info.index,
+                self.next_index_to_derive()
+            )));
+        }
+
         let script_pubkey = info.address.script_pubkey();
         let elsewhere = |index: Option<&u32>| index.is_some_and(|&i| i != info.index);
         if elsewhere(self.address_index.get(&info.address))
