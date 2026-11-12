@@ -826,6 +826,19 @@ mod tests {
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
+        // Sync discovers addresses before the filters complete
+        {
+            let sync_addr = dashcore::Address::from_script(
+                &dashcore::ScriptBuf::from_bytes(vec![
+                    0x76, 0xa9, 0x14, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef,
+                    0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0x88, 0xac,
+                ]),
+                dashcore::Network::Testnet,
+            )
+            .unwrap();
+            wallet.write().await.set_addresses(vec![addr.clone(), sync_addr]);
+        }
+
         // Activate — this snapshots the monitor hash
         let sync = SyncEvent::FiltersSyncComplete {
             tip_height: 1000,

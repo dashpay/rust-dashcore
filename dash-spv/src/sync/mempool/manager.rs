@@ -136,6 +136,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         &mut self,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<()> {
+        self.last_monitor_hash = self.wallet.read().await.monitor_hash();
         let inactive: Vec<SocketAddr> =
             self.peers.iter().filter(|(_, v)| v.is_none()).map(|(k, _)| *k).collect();
         for peer in inactive {
