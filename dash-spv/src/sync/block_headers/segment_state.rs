@@ -2,6 +2,7 @@ use crate::error::{SyncError, SyncResult};
 use crate::network::{HeadersRequest, NetworkManager, SendRequest};
 use crate::types::HashedBlockHeader;
 use dashcore::BlockHash;
+use std::iter;
 use std::sync::Arc;
 
 /// State for a single download segment between two checkpoints.
@@ -17,6 +18,8 @@ pub(super) struct SegmentState {
     target_hash: Option<BlockHash>,
     /// Current tip hash for GetHeaders locator.
     pub(super) current_tip_hash: BlockHash,
+    /// Stored hashes below the start, sent after `current_tip_hash` in the locator.
+    pub(super) ancestors: Vec<BlockHash>,
     /// Locator of the last declared GetHeaders that is still unanswered.
     declared: Option<BlockHash>,
     /// Current height reached in this segment.
@@ -42,6 +45,7 @@ impl SegmentState {
             target_height,
             target_hash,
             current_tip_hash: start_hash,
+            ancestors: Vec::new(),
             declared: None,
             current_height: start_height,
             buffered_headers: Vec::new(),
@@ -60,7 +64,9 @@ impl SegmentState {
         network
             .send(HeadersRequest {
                 height: self.current_height,
-                locator: self.current_tip_hash,
+                locator: iter::once(self.current_tip_hash)
+                    .chain(self.ancestors.iter().copied())
+                    .collect(),
             })
             .await;
         if self.declared == Some(self.current_tip_hash) {
