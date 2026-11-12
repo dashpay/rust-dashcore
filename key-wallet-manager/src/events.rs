@@ -660,7 +660,6 @@ mod project_derived_addresses_tests {
         let pubkey =
             dashcore::PublicKey::from_slice(&TEST_PUBKEY_G).expect("generator point is valid");
         let address = dashcore::Address::p2pkh(&pubkey, key_wallet::Network::Testnet);
-        let script_pubkey = address.script_pubkey();
         let path = DerivationPath::from(vec![
             ChildNumber::from_normal_idx(0).unwrap(),
             ChildNumber::from_normal_idx(index).unwrap(),
@@ -675,7 +674,6 @@ mod project_derived_addresses_tests {
             pool_type,
             info: AddressInfo {
                 address,
-                script_pubkey,
                 public_key: Some(PublicKeyType::ECDSA(pubkey_bytes)),
                 index,
                 path,

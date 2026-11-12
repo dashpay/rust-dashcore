@@ -101,7 +101,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 for (wallet_id, derived) in check_result.new_addresses {
                     derived_wallets.insert(wallet_id);
                     let scripts =
-                        derived.iter().map(|d| d.info.script_pubkey.clone()).collect::<Vec<_>>();
+                        derived.iter().map(|d| d.info.address.script_pubkey()).collect::<Vec<_>>();
                     result.new_scripts.entry(wallet_id).or_default().extend(scripts);
                     per_wallet_derived.entry(wallet_id).or_default().extend(derived);
                 }

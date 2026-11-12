@@ -214,8 +214,6 @@ pub enum AddressState {
 pub struct AddressInfo {
     /// The address
     pub address: Address,
-    /// The script pubkey for this address
-    pub script_pubkey: ScriptBuf,
     /// The public key used to derive this address
     pub public_key: Option<PublicKeyType>,
     /// Derivation index
@@ -233,10 +231,8 @@ impl AddressInfo {
         path: DerivationPath,
         public_key: Option<PublicKeyType>,
     ) -> Self {
-        let script_pubkey = address.script_pubkey();
         Self {
             address,
-            script_pubkey,
             public_key,
             index,
             path,
@@ -525,12 +521,13 @@ impl AddressPool {
     /// Stores `info` at its index, replacing any entry already there.
     ///
     /// Use it to restore persisted entries or keys that cannot be derived from the key source.
-    /// Fails if the address or script is already stored at another index.
+    /// Fails if the address is already stored at another index.
     pub fn insert(&mut self, info: AddressInfo) -> Result<()> {
         ChildNumber::from_normal_idx(info.index).map_err(Error::Bip32)?;
+        let script_pubkey = info.address.script_pubkey();
         let elsewhere = |index: Option<&u32>| index.is_some_and(|&i| i != info.index);
         if elsewhere(self.address_index.get(&info.address))
-            || elsewhere(self.script_pubkey_index.get(&info.script_pubkey))
+            || elsewhere(self.script_pubkey_index.get(&script_pubkey))
         {
             return Err(Error::InvalidParameter(format!(
                 "{} is already stored at another index",
@@ -539,10 +536,10 @@ impl AddressPool {
         }
         if let Some(old) = self.addresses.remove(&info.index) {
             self.address_index.remove(&old.address);
-            self.script_pubkey_index.remove(&old.script_pubkey);
+            self.script_pubkey_index.remove(&old.address.script_pubkey());
         }
         self.address_index.insert(info.address.clone(), info.index);
-        self.script_pubkey_index.insert(info.script_pubkey.clone(), info.index);
+        self.script_pubkey_index.insert(script_pubkey, info.index);
         self.addresses.insert(info.index, info);
         Ok(())
     }
@@ -700,9 +697,9 @@ impl AddressPool {
         self.addresses.values().map(|info| info.address.clone()).collect()
     }
 
-    /// Get cached scriptPubKeys for every address in the pool.
+    /// Get the scriptPubKeys of every address in the pool.
     pub(crate) fn all_script_pubkeys(&self) -> Vec<ScriptBuf> {
-        self.addresses.values().map(|info| info.script_pubkey.clone()).collect()
+        self.addresses.values().map(|info| info.address.script_pubkey()).collect()
     }
 
     /// Get only available addresses (neither used nor reserved)
@@ -901,7 +898,6 @@ mod tests {
 
         let replaced = second.address.clone();
         let replacement = Address::dummy(Network::Testnet, 99);
-        second.script_pubkey = replacement.script_pubkey();
         second.address = replacement.clone();
         pool.insert(second).unwrap();
         assert_eq!(pool.address_index(&replacement), Some(1));
