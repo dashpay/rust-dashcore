@@ -74,7 +74,7 @@ impl MetadataStorage for PersistentMetadataStorage {
 
         let data = tokio::fs::read(path).await?;
         serde_json::from_slice(&data).map(Some).map_err(|e| {
-            StorageError::Serialization(format!("Failed to deserialize metadata {key}: {e}"))
+            StorageError::Corruption(format!("Failed to deserialize metadata {key}: {e}"))
         })
     }
 

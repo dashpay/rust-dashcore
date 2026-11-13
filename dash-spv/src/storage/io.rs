@@ -29,7 +29,7 @@ pub(crate) struct ChecksummedFile<I> {
     _items: PhantomData<I>,
 }
 
-impl<I: Encodable + Decodable> ChecksummedFile<I> {
+impl<I> ChecksummedFile<I> {
     pub(crate) fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
@@ -37,6 +37,28 @@ impl<I: Encodable + Decodable> ChecksummedFile<I> {
         }
     }
 
+    /// Checks the file against its checksum without decoding the items.
+    pub(crate) async fn verify(&self) -> StorageResult<()> {
+        self.verified(&tokio::fs::read(&self.path).await?).map(|_| ())
+    }
+
+    fn verified<'a>(&self, bytes: &'a [u8]) -> StorageResult<&'a [u8]> {
+        let corruption =
+            || StorageError::Corruption(format!("Checksum mismatch in {:?}", self.path));
+
+        let split = bytes.len().checked_sub(blake3::OUT_LEN).ok_or_else(corruption)?;
+
+        let (data, checksum) = bytes.split_at(split);
+
+        if blake3::hash(data).as_bytes() != checksum {
+            return Err(corruption());
+        }
+
+        Ok(data)
+    }
+}
+
+impl<I: Encodable + Decodable> ChecksummedFile<I> {
     /// Atomically writes `items` and their checksum
     pub(crate) async fn write(&self, items: &[I]) -> StorageResult<()> {
         atomic_write_with(&self.path, |file| async move {
@@ -71,11 +93,6 @@ impl<I: Encodable + Decodable> ChecksummedFile<I> {
         Ok(items)
     }
 
-    /// Checks the file against its checksum without decoding the items.
-    pub(crate) async fn verify(&self) -> StorageResult<()> {
-        self.verified(&tokio::fs::read(&self.path).await?).map(|_| ())
-    }
-
     /// Returns the item at byte `offset` without reading the rest
     /// of the file and without checking the checksum.
     pub(crate) fn read_unverified_at(&self, offset: u64) -> StorageResult<I> {
@@ -85,20 +102,27 @@ impl<I: Encodable + Decodable> ChecksummedFile<I> {
 
         Ok(I::consensus_decode(&mut BufReader::new(file))?)
     }
+}
 
-    fn verified<'a>(&self, bytes: &'a [u8]) -> StorageResult<&'a [u8]> {
-        let corruption =
-            || StorageError::Corruption(format!("Checksum mismatch in {:?}", self.path));
+impl ChecksummedFile<u8> {
+    /// Atomically writes `data` and its checksum.
+    pub(crate) async fn write_bytes(&self, data: &[u8]) -> StorageResult<()> {
+        atomic_write_with(&self.path, |mut file| async move {
+            file.write_all(data).await?;
+            file.write_all(blake3::hash(data).as_bytes()).await?;
+            file.sync_all().await
+        })
+        .await
+    }
 
-        let split = bytes.len().checked_sub(blake3::OUT_LEN).ok_or_else(corruption)?;
+    /// Returns the bytes after verifying the checksum.
+    pub(crate) async fn read_bytes(&self) -> StorageResult<Vec<u8>> {
+        let mut bytes = tokio::fs::read(&self.path).await?;
+        let len = self.verified(&bytes)?.len();
 
-        let (data, checksum) = bytes.split_at(split);
+        bytes.truncate(len);
 
-        if blake3::hash(data).as_bytes() != checksum {
-            return Err(corruption());
-        }
-
-        Ok(data)
+        Ok(bytes)
     }
 }
 
