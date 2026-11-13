@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -164,7 +165,11 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
                         break None
                     }
-                    Ok(SyncEvent::StorageCorrupted { error }) = corruption_rx.recv() => {
+                    // Takes every event, since a refused one disables the branch until the next tick.
+                    result @ (Ok(_) | Err(RecvError::Lagged(_))) = corruption_rx.recv() => {
+                        let Ok(SyncEvent::StorageCorrupted { error }) = result else {
+                            continue;
+                        };
                         loop_shutdown.cancel();
                         let recovering = client.clone();
                         let handlers = handlers.clone();
