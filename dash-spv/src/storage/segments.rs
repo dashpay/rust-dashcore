@@ -2,8 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File},
-    io::{BufReader, Seek, SeekFrom},
+    fs,
     ops::Range,
     path::{Path, PathBuf},
     sync::LazyLock,
@@ -12,14 +11,14 @@ use std::{
 
 use dashcore::{
     block::{Header as BlockHeader, Version},
-    consensus::{encode, Decodable, Encodable},
+    consensus::{Decodable, Encodable},
     hash_types::FilterHeader,
     Block, BlockHash, CompactTarget,
 };
 
 use crate::{
     error::StorageResult,
-    storage::io::atomic_write_items,
+    storage::io::ChecksummedFile,
     types::{HashedBlock, HashedBlockHeader},
     StorageError,
 };
@@ -162,7 +161,7 @@ impl<I: Persistable> SegmentCache<I> {
     /// `.{extension}` fixtures must parse as a `u32`, so trailing junk
     /// (`segment_000000junk.dat`) is rejected and ids longer than the
     /// zero-padding width (`segment_1000000.dat`) are accepted, not truncated.
-    fn parse_segment_id(file_name: &str) -> Option<u32> {
+    pub(super) fn parse_segment_id(file_name: &str) -> Option<u32> {
         let separator = format!("{}_", I::SEGMENT_PREFIX);
         let suffix = format!(".{}", I::DATA_FILE_EXTENSION);
 
@@ -341,13 +340,9 @@ impl<I: Persistable> SegmentCache<I> {
         // own, without loading the segment.
         let item = match I::ENCODED_SIZE {
             Some(size) if !self.segments.contains_key(&segment_id) => {
-                let mut file =
-                    File::open(self.segments_dir.join(I::segment_file_name(segment_id)))?;
+                let path = self.segments_dir.join(I::segment_file_name(segment_id));
 
-                file.seek(SeekFrom::Start(offset as u64 * size))?;
-
-                I::consensus_decode(&mut BufReader::new(file))
-                    .map_err(|e| StorageError::ReadFailed(format!("Failed to decode item: {e}")))?
+                ChecksummedFile::new(path).read_unverified_at(offset as u64 * size)?
             }
             _ => self.get_segment_mut(&segment_id).await?.get_single(offset).clone(),
         };
@@ -593,28 +588,7 @@ impl<I: Persistable> Segment<I> {
         let segment_path = base_path.join(I::segment_file_name(segment_id));
 
         let (items, state) = if segment_path.exists() {
-            let file = File::open(&segment_path)?;
-            let mut reader = BufReader::new(file);
-            let mut items = Vec::with_capacity(Segment::<I>::ITEMS_PER_SEGMENT as usize);
-
-            loop {
-                match I::consensus_decode(&mut reader) {
-                    Ok(item) => items.push(item),
-                    Err(encode::Error::Io(ref e))
-                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                    {
-                        break
-                    }
-                    Err(e) => {
-                        return Err(StorageError::ReadFailed(format!(
-                            "Failed to decode item: {}",
-                            e
-                        )))
-                    }
-                }
-            }
-
-            (items, SegmentState::Clean)
+            (ChecksummedFile::new(segment_path).read().await?, SegmentState::Clean)
         } else {
             let mut vec = Vec::new();
             vec.resize(Self::ITEMS_PER_SEGMENT as usize, I::sentinel().clone());
@@ -636,7 +610,7 @@ impl<I: Persistable> Segment<I> {
             return Err(StorageError::WriteFailed(format!("Failed to persist segment: {}", e)));
         }
 
-        atomic_write_items(&path, &self.items).await?;
+        ChecksummedFile::new(path).write(&self.items).await?;
 
         self.state = SegmentState::Clean;
         Ok(())

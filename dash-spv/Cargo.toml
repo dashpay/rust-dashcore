@@ -61,6 +61,7 @@ tracing-appender = { version = "0.2", optional = true }
 chrono = { workspace = true, features = ["default"], optional = true }
 
 # Utilities
+blake3 = { workspace = true }
 rand = { workspace = true }
 hex-conservative = { workspace = true }
 

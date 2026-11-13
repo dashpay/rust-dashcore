@@ -1,6 +1,7 @@
 mod v1;
 mod v2;
 mod v3;
+mod v4;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,12 +10,16 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::io::atomic_write;
+use crate::storage::io::{atomic_write, ChecksummedFile};
+use crate::storage::segments::{Persistable, SegmentCache};
+use crate::types::{HashedBlock, HashedBlockHeader};
+use dashcore::hash_types::FilterHeader;
 use v1::V1Migrator;
 use v2::V2Migrator;
 use v3::V3Migrator;
+use v4::V4Migrator;
 
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 
 #[async_trait]
 trait Migrator {
@@ -32,7 +37,16 @@ enum MigratorError {
     // We cannot recover from this, errors in the storage system itself
     // E.g. atommic_write failing
     #[error(transparent)]
-    Storage(#[from] StorageError),
+    Storage(StorageError),
+}
+
+impl From<StorageError> for MigratorError {
+    fn from(e: StorageError) -> Self {
+        match e {
+            StorageError::Corruption(e) => MigratorError::Corruption(e),
+            e => MigratorError::Storage(e),
+        }
+    }
 }
 
 impl From<MigratorError> for StorageError {
@@ -121,7 +135,7 @@ async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
         tracing::info!("Migrating storage from version {} to {}", version, version + 1);
 
         const MIGRATORS: &[&dyn Migrator; CURRENT_VERSION as usize] =
-            &[&V1Migrator, &V2Migrator, &V3Migrator];
+            &[&V1Migrator, &V2Migrator, &V3Migrator, &V4Migrator];
 
         MIGRATORS[version as usize].apply_migration(storage_path).await?;
 
@@ -132,6 +146,29 @@ async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
         })?;
 
         atomic_write(&version_path, version.as_bytes()).await?;
+    }
+
+    verify_segments(storage_path).await
+}
+
+async fn verify_segments(storage_path: &Path) -> Result<(), MigratorError> {
+    verify_folder::<HashedBlockHeader>(&storage_path.join("block_headers")).await?;
+    verify_folder::<FilterHeader>(&storage_path.join("filter_headers")).await?;
+    verify_folder::<Vec<u8>>(&storage_path.join("filters")).await?;
+    verify_folder::<HashedBlock>(&storage_path.join("blocks")).await
+}
+
+async fn verify_folder<I: Persistable>(folder: &Path) -> Result<(), MigratorError> {
+    let mut entries = match tokio::fs::read_dir(folder).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    while let Some(entry) = entries.next_entry().await? {
+        if entry.file_name().to_str().and_then(SegmentCache::<I>::parse_segment_id).is_some() {
+            ChecksummedFile::<I>::new(entry.path()).verify().await?;
+        }
     }
 
     Ok(())

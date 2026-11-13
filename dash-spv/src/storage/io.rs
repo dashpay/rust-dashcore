@@ -1,9 +1,12 @@
 //! Low-level I/O utilities for reading and writing segment files.
 
+use std::fs::File;
+use std::io::{BufReader, Seek, SeekFrom};
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use crate::error::{StorageError, StorageResult};
-use dashcore::consensus::Encodable;
+use dashcore::consensus::{Decodable, Encodable};
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 /// Get the temporary file path for atomic writes.
@@ -20,32 +23,91 @@ fn get_temp_path(path: &Path) -> PathBuf {
     temp_path
 }
 
+/// A file of encoded items followed by the blake3 hash of those items.
+pub(crate) struct ChecksummedFile<I> {
+    path: PathBuf,
+    _items: PhantomData<I>,
+}
+
+impl<I: Encodable + Decodable> ChecksummedFile<I> {
+    pub(crate) fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            _items: PhantomData,
+        }
+    }
+
+    /// Atomically writes `items` and their checksum
+    pub(crate) async fn write(&self, items: &[I]) -> StorageResult<()> {
+        atomic_write_with(&self.path, |file| async move {
+            let mut writer = BufWriter::with_capacity(1 << 20, file);
+            let mut hasher = blake3::Hasher::new();
+            let mut encoded = Vec::new();
+
+            for item in items {
+                encoded.clear();
+                item.consensus_encode(&mut encoded)?;
+                hasher.update(&encoded);
+                writer.write_all(&encoded).await?;
+            }
+
+            writer.write_all(hasher.finalize().as_bytes()).await?;
+            writer.flush().await?;
+            writer.into_inner().sync_all().await
+        })
+        .await
+    }
+
+    /// Returns the items after verifying the checksum
+    pub(crate) async fn read(&self) -> StorageResult<Vec<I>> {
+        let bytes = tokio::fs::read(&self.path).await?;
+        let mut data = self.verified(&bytes)?;
+        let mut items = Vec::new();
+
+        while !data.is_empty() {
+            items.push(I::consensus_decode(&mut data)?);
+        }
+
+        Ok(items)
+    }
+
+    /// Checks the file against its checksum without decoding the items.
+    pub(crate) async fn verify(&self) -> StorageResult<()> {
+        self.verified(&tokio::fs::read(&self.path).await?).map(|_| ())
+    }
+
+    /// Returns the item at byte `offset` without reading the rest
+    /// of the file and without checking the checksum.
+    pub(crate) fn read_unverified_at(&self, offset: u64) -> StorageResult<I> {
+        let mut file = File::open(&self.path)?;
+
+        file.seek(SeekFrom::Start(offset))?;
+
+        Ok(I::consensus_decode(&mut BufReader::new(file))?)
+    }
+
+    fn verified<'a>(&self, bytes: &'a [u8]) -> StorageResult<&'a [u8]> {
+        let corruption =
+            || StorageError::Corruption(format!("Checksum mismatch in {:?}", self.path));
+
+        let split = bytes.len().checked_sub(blake3::OUT_LEN).ok_or_else(corruption)?;
+
+        let (data, checksum) = bytes.split_at(split);
+
+        if blake3::hash(data).as_bytes() != checksum {
+            return Err(corruption());
+        }
+
+        Ok(data)
+    }
+}
+
 /// Atomically write data to a file.
 /// Uses temporary file + sync + rename pattern for crash resilience.
 pub(crate) async fn atomic_write(path: &Path, data: &[u8]) -> StorageResult<()> {
     atomic_write_with(path, |mut file| async move {
         file.write_all(data).await?;
         file.sync_all().await
-    })
-    .await
-}
-
-/// Like [`atomic_write`], but encodes `items` into the file one at a time
-/// instead of into a buffer holding all of them.
-pub(crate) async fn atomic_write_items<I: Encodable>(
-    path: &Path,
-    items: &[I],
-) -> StorageResult<()> {
-    atomic_write_with(path, |file| async move {
-        let mut writer = BufWriter::with_capacity(1 << 20, file);
-        let mut encoded = Vec::new();
-        for item in items {
-            encoded.clear();
-            item.consensus_encode(&mut encoded)?;
-            writer.write_all(&encoded).await?;
-        }
-        writer.flush().await?;
-        writer.into_inner().sync_all().await
     })
     .await
 }
@@ -89,15 +151,14 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_atomic_write_items_matches_encoding_all_at_once() {
+    async fn test_checksummed_file_write_read_roundtrip() {
         let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("items.dat");
+        let file = ChecksummedFile::new(temp_dir.path().join("items.dat"));
         let items = vec![vec![1u8, 2, 3], vec![], vec![4u8; 300]];
 
-        atomic_write_items(&path, &items).await.unwrap();
+        file.write(&items).await.unwrap();
 
-        let expected: Vec<u8> = items.iter().flat_map(dashcore::consensus::serialize).collect();
-        assert_eq!(fs::read(&path).unwrap(), expected);
+        assert_eq!(file.read().await.unwrap(), items);
     }
 
     #[test]

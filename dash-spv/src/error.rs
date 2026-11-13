@@ -1,5 +1,6 @@
 //! Error types for the Dash SPV client.
 
+use dashcore::consensus::encode;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::QuorumHash;
 use std::io;
@@ -96,6 +97,12 @@ pub enum StorageError {
 
     #[error("Data directory locked: {0}")]
     DirectoryLocked(String),
+}
+
+impl From<encode::Error> for StorageError {
+    fn from(e: encode::Error) -> Self {
+        StorageError::Corruption(format!("Failed to decode item: {e}"))
+    }
 }
 
 /// Validation-related errors.
