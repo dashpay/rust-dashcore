@@ -60,6 +60,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         // connection events.
         let sync_event_rx = self.subscribe_sync_events().await;
         let mut fork_rx = self.subscribe_sync_events().await;
+        let mut corruption_rx = self.subscribe_sync_events().await;
         let chainlock_dispatch_rx = self.subscribe_sync_events().await;
         let network_event_rx = self.subscribe_network_events().await;
         let progress_rx = self.subscribe_progress().await;
@@ -158,6 +159,18 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                         client.detached_tasks.lock().await.spawn(async move {
                             if let Err(e) = recovering.handle_fork(fork_height, loop_id).await {
                                 tracing::warn!("Error recovering from the fork: {}", e);
+                            }
+                        });
+
+                        break None
+                    }
+                    Ok(SyncEvent::StorageCorrupted { error }) = corruption_rx.recv() => {
+                        loop_shutdown.cancel();
+                        let recovering = client.clone();
+
+                        client.detached_tasks.lock().await.spawn(async move {
+                            if let Err(e) = recovering.handle_corruption(error, loop_id).await {
+                                tracing::warn!("Error recovering from the corruption: {}", e);
                             }
                         });
 

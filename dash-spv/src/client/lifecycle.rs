@@ -279,6 +279,34 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         })
     }
 
+    /// Recover from a storage corruption the sync loop `loop_id` read back:
+    /// stop the client, wipe the storage and run again, so the client syncs
+    /// it again. A loop that was stopped or replaced in the meantime is left
+    /// alone.
+    ///
+    /// Boxed because the client it runs again can recover from a corruption too.
+    pub(super) fn handle_corruption(
+        &self,
+        error: String,
+        loop_id: u64,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let mut sync_loop = self.sync_loop.lock().await;
+            let Some(corrupted) = sync_loop.take_if(|running| running.id == loop_id) else {
+                return Ok(());
+            };
+            self.stop_locked(corrupted).await;
+
+            tracing::warn!("Storage corrupted, wiping it and syncing again: {}", error);
+            if let Err(e) = self.storage.lock().await.clear().await {
+                tracing::warn!("Corrupted storage not wiped: {}", e);
+            }
+            self.sync_coordinator.lock().await.reset_progress();
+
+            self.run_locked(&mut sync_loop).await
+        })
+    }
+
     /// Drops what the wallets, the stored chain and the masternode engine hold
     /// above `height`.
     ///

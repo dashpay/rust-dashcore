@@ -166,7 +166,7 @@ pub enum SyncError {
 
     /// Storage-related errors (e.g., database failures)
     #[error("Storage error: {0}")]
-    Storage(String),
+    Storage(#[from] StorageError),
 
     /// Masternode sync failed (QRInfo or MnListDiff processing error)
     #[error("Masternode sync failed: {0}")]
@@ -198,12 +198,6 @@ pub type LoggingResult<T> = std::result::Result<T, LoggingError>;
 impl From<NetworkError> for SyncError {
     fn from(err: NetworkError) -> Self {
         SyncError::Network(err.to_string())
-    }
-}
-
-impl From<StorageError> for SyncError {
-    fn from(err: StorageError) -> Self {
-        SyncError::Storage(err.to_string())
     }
 }
 
