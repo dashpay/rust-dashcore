@@ -23,6 +23,7 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 WORKSPACE_VERSION = re.compile(r'(^\[workspace\.package\]\n(?:(?!\[)[^\n]*\n)*?version = ")(\d+\.\d+\.\d+)(")', re.MULTILINE)
 SECTION_START = re.compile(r"^## ", re.MULTILINE)
 RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+")
+SECTION_VERSION = re.compile(r"## (\d+\.\d+\.\d+) - ")
 # `#123`, but not `rust-bitcoin#123`, a URL fragment or `[#123](...)`, which old entries use for
 # upstream rust-bitcoin PRs.
 PR_REFERENCE = re.compile(r"(?<![\w/\[])#(\d+)\b")
@@ -129,17 +130,54 @@ def check(version: str, changelog: str, tags: list[str], merged: dict[int, str] 
     return warnings
 
 
-def bump(cargo_toml: str, changelog: str, released_changelog: str, released: str) -> tuple[str, str, str] | None:
-    """Returns `Cargo.toml` and `CHANGELOG.md` for the version after `released`, and that version.
-    Returns `None` when `dev` is not on `released`, which means it already moved on.
+def bump(cargo_toml: str, changelog: str, released_changelog: str, released: str) -> tuple[str, str, str | None] | None:
+    """Returns `Cargo.toml` and `CHANGELOG.md` for `dev` after `released`, and the new version.
+
+    `dev` on `released` moves to the next minor version. `dev` already past it, after a patch
+    release, only gains the released section and keeps its version (`None`). Returns `None` when
+    `dev` already has the section.
     """
-    if workspace_version(cargo_toml) != released:
-        return None
     header, sections = split_sections(changelog)
-    parts = (release_section(released_changelog, released), "".join(sections))
-    body = "\n\n".join(part.strip() for part in parts if part.strip())
+    if any(section.startswith("## Unreleased") for section in sections):
+        raise ReleaseError("CHANGELOG.md on dev has an `Unreleased` section, move its entries into a release section")
+    version = workspace_version(cargo_toml)
+    if parse_version(version) < parse_version(released):
+        raise ReleaseError(f"dev is on {version}, below the released {released}")
+    versions = [match.group(1) if (match := SECTION_VERSION.match(section)) else None for section in sections]
+    if released in versions:
+        return None
+    # Above the first older release, so a patch release lands below the newer sections.
+    position = next(
+        (index for index, other in enumerate(versions) if other and parse_version(other) < parse_version(released)),
+        len(sections),
+    )
+    sections.insert(position, release_section(released_changelog, released))
+    new_changelog = header + "\n\n".join(section.strip() for section in sections) + "\n"
+    if version != released:
+        return cargo_toml, new_changelog, None
     new_version = next_version(released)
-    return set_workspace_version(cargo_toml, new_version), header + body + "\n", new_version
+    return set_workspace_version(cargo_toml, new_version), new_changelog, new_version
+
+
+def bump_pr(released: str, new_version: str | None, repository: str, sha: str) -> tuple[str, str, str]:
+    """Returns the branch, title and body of the PR that brings a release to `dev`."""
+    release = f"[`v{released}`](https://github.com/{repository}/releases/tag/v{released})"
+    tag = f"The release is the tag `v{released}` on {sha}"
+    footer = "Opened by `.github/workflows/release.yml`."
+    if new_version is None:
+        body = (
+            f"Adds the `{released}` changelog section to `dev` now that {release} is released from `master`. "
+            f"`dev` is already past `{released}`, so its version stays.\n\n"
+            f"This PR goes into `dev` only. {tag}.\n\n{footer}"
+        )
+        return f"chore/changelog-v{released}", f"chore: add the `{released}` changelog", body
+    body = (
+        f"Starts the `{new_version}` development cycle on `dev` now that {release} is released from `master`.\n\n"
+        f"- Bump the workspace version to `{new_version}`.\n"
+        f"- Add the `{released}` changelog section, identical to the one on `master`.\n\n"
+        f"This PR goes into `dev` only. {tag}, where the workspace version stays `{released}`.\n\n{footer}"
+    )
+    return f"chore/bump-version-to-{new_version}", f"chore: bump version to `{new_version}`", body
 
 
 def remote_tags() -> list[str]:
@@ -165,7 +203,7 @@ def set_output(name: str, value: str):
     path = os.environ.get("GITHUB_OUTPUT")
     if path:
         with open(path, "a") as output:
-            output.write(f"{name}={value}\n")
+            output.write(f"{name}<<RELEASE_OUTPUT\n{value}\nRELEASE_OUTPUT\n")
 
 
 def main():
@@ -200,13 +238,18 @@ def main():
         elif args.command == "bump":
             result = bump(cargo_toml, changelog, args.released_changelog.read_text(), args.released)
             if result is None:
-                print(f"::notice::dev is not on {args.released}, so it needs no bump")
+                print(f"::notice::dev already has the {args.released} changelog section")
                 return
             new_cargo_toml, new_changelog, new_version = result
             CARGO_TOML.write_text(new_cargo_toml)
             CHANGELOG.write_text(new_changelog)
-            print(f"Bumped to {new_version}")
-            set_output("version", new_version)
+            branch, title, body = bump_pr(
+                args.released, new_version, os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_SHA", "")
+            )
+            print(title)
+            set_output("branch", branch)
+            set_output("title", title)
+            set_output("body", body)
     except ReleaseError as error:
         print(f"::error::{error}")
         sys.exit(1)
