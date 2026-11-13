@@ -80,10 +80,10 @@ impl Request for BlockRequest {
     }
 }
 
-/// `getheaders` from the header at `height`, whose hash is `locator`.
+/// `getheaders` from the header at `height`, whose hash is the first of `locator`.
 pub struct HeadersRequest {
     pub height: u32,
-    pub locator: BlockHash,
+    pub locator: Vec<BlockHash>,
 }
 
 impl Request for HeadersRequest {
@@ -91,10 +91,7 @@ impl Request for HeadersRequest {
         self.height
     }
     fn into_message(self) -> NetworkMessage {
-        NetworkMessage::GetHeaders(GetHeadersMessage::new(
-            vec![self.locator],
-            BlockHash::all_zeros(),
-        ))
+        NetworkMessage::GetHeaders(GetHeadersMessage::new(self.locator, BlockHash::all_zeros()))
     }
 }
 

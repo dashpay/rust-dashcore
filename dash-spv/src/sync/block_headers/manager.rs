@@ -114,6 +114,31 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             .ok_or_else(|| SyncError::MissingDependency("storage not initialized".to_string()))
     }
 
+    /// Stored hashes below the tip for a `getheaders` locator: ten one block apart, then
+    /// twice as far apart each time, down to the lowest stored header. A peer that does not
+    /// know the tip answers from the newest of them it knows, which is where a fork starts.
+    pub(super) async fn locator_ancestors(&self) -> SyncResult<Vec<BlockHash>> {
+        let storage = self.header_storage.read().await;
+        let (Some(start), Some(tip)) =
+            (storage.get_start_height().await, storage.get_tip_height().await)
+        else {
+            return Ok(vec![]);
+        };
+        let mut ancestors = Vec::new();
+        let mut height = tip;
+        let mut step = 1;
+        while height > start {
+            height = height.saturating_sub(step).max(start);
+            if let Some(header) = storage.get_header(height).await? {
+                ancestors.push(*header.hash());
+            }
+            if ancestors.len() >= 10 {
+                step *= 2;
+            }
+        }
+        Ok(ancestors)
+    }
+
     /// Sync the headers below the lowest stored one, down to [`Self::floor`].
     ///
     /// Splits the range at the checkpoints below the lowest stored header, down to the
@@ -335,11 +360,24 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         Ok(events)
     }
 
-    /// Height where `headers` branch off the stored chain below its tip, if they
-    /// do. A branch off below the best ChainLock, or below the newest checkpoint
-    /// the stored chain reaches, is not followed: the blocks they fix are final.
+    /// Height to drop the stored chain to when `headers` do not extend its tip: the
+    /// best ChainLock, or the newest checkpoint the tip reaches without one. Those blocks
+    /// are final, so a branch off below them is not followed.
     async fn fork_height(&self, headers: &[HashedBlockHeader]) -> SyncResult<Option<u32>> {
         let storage = self.header_storage.read().await;
+        let Some(tip) = storage.get_tip_height().await.filter(|&tip| tip > 0) else {
+            return Ok(None);
+        };
+        let chain_lock = self
+            .metadata_storage
+            .read()
+            .await
+            .load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY)
+            .await?;
+        let checkpoint = self.checkpoint_manager.last_checkpoint_before_height(tip);
+        let final_height = chain_lock
+            .map_or(0, |cl| cl.block_height)
+            .max(checkpoint.map_or(0, Checkpoint::height));
 
         // Skip the headers we already store: a peer may resend part of our chain.
         for header in headers {
@@ -348,40 +386,18 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             }
 
             let parent = storage.get_header_height_by_hash(&header.header().prev_blockhash).await?;
-            let tip = storage.get_tip_height().await;
-            let Some(fork_height) = parent.filter(|&parent| tip.is_some_and(|tip| parent < tip))
-            else {
+            let Some(parent) = parent.filter(|&parent| parent < tip) else {
                 return Ok(None);
             };
-
-            if let Some(checkpoint) = tip
-                .and_then(|tip| self.checkpoint_manager.last_checkpoint_before_height(tip))
-                .filter(|checkpoint| fork_height < checkpoint.height())
-            {
+            if parent < final_height {
                 tracing::warn!(
-                    "Ignoring a fork at height {}, below the checkpoint at {}",
-                    fork_height,
-                    checkpoint.height()
+                    "Ignoring a fork at height {}, below the final height {}",
+                    parent,
+                    final_height
                 );
                 return Ok(None);
             }
-
-            let chain_lock = self
-                .metadata_storage
-                .read()
-                .await
-                .load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY)
-                .await?;
-            if let Some(chain_lock) = chain_lock.filter(|cl| fork_height < cl.block_height) {
-                tracing::warn!(
-                    "Ignoring a fork at height {}, below the ChainLock at {}",
-                    fork_height,
-                    chain_lock.block_height
-                );
-                return Ok(None);
-            }
-
-            return Ok(Some(fork_height));
+            return Ok(Some(final_height));
         }
 
         Ok(None)
@@ -429,6 +445,12 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 events.push(SyncEvent::BlockHeadersStored {
                     tip_height: new_tip.height(),
                 });
+            }
+        }
+        if !events.is_empty() {
+            match self.locator_ancestors().await {
+                Ok(ancestors) => self.pipeline.set_tip_ancestors(ancestors),
+                Err(e) => tracing::warn!("Failed to refresh the tip locator: {}", e),
             }
         }
 
@@ -570,10 +592,10 @@ mod tests {
         .expect("Failed to create BlockHeadersManager")
     }
 
-    #[test_case(None, 5, Some(5); "no ChainLock")]
+    #[test_case(None, 5, Some(0); "no ChainLock")]
     #[test_case(Some(6), 5, None; "below the ChainLock")]
     #[test_case(Some(5), 5, Some(5); "at the ChainLock")]
-    #[test_case(Some(3), 5, Some(5); "above the ChainLock")]
+    #[test_case(Some(3), 5, Some(3); "above the ChainLock")]
     #[tokio::test]
     async fn a_branch_off_below_the_best_chain_lock_is_no_fork(
         chain_locked: Option<u32>,
@@ -615,7 +637,7 @@ mod tests {
     /// or no fork could ever be followed before the chain reached it.
     #[test_case(49_999, None; "below the checkpoint")]
     #[test_case(50_000, Some(50_000); "at the checkpoint")]
-    #[test_case(50_001, Some(50_001); "above the checkpoint")]
+    #[test_case(50_001, Some(50_000); "above the checkpoint")]
     #[tokio::test]
     async fn a_branch_off_below_the_newest_reached_checkpoint_is_no_fork(
         branch_off: u32,
@@ -668,7 +690,7 @@ mod tests {
         )
         .await
         .unwrap();
-        manager.pipeline.init(4, *chain[4].hash(), 4);
+        manager.pipeline.init(4, *chain[4].hash(), vec![], 4);
         manager.progress.set_state(SyncState::Synced);
 
         let parent_hash = *chain[parent].hash();
@@ -711,7 +733,7 @@ mod tests {
     async fn create_synced_manager() -> TestBlockHeadersManager {
         let mut manager = create_test_manager().await;
         let tip = manager.tip().await.unwrap();
-        manager.pipeline.init(tip.height(), *tip.hash(), tip.height());
+        manager.pipeline.init(tip.height(), *tip.hash(), vec![], tip.height());
         manager.progress.set_state(SyncState::Synced);
         manager
     }
@@ -734,7 +756,7 @@ mod tests {
         let tip = manager.tip().await.unwrap();
         let start_height = tip.height();
 
-        manager.pipeline.init(start_height, *tip.hash(), start_height + 2);
+        manager.pipeline.init(start_height, *tip.hash(), vec![], start_height + 2);
         manager.progress.set_state(SyncState::Syncing);
 
         let mock = Arc::new(MockNetworkManager::new());
@@ -812,7 +834,7 @@ mod tests {
         .await
         .unwrap();
         let tip = manager.tip().await.unwrap();
-        manager.pipeline.init(tip.height(), *tip.hash(), tip.height() + 2);
+        manager.pipeline.init(tip.height(), *tip.hash(), vec![], tip.height() + 2);
 
         // Headers below that join neither the anchor nor the stored ones.
         let below: Vec<HashedBlockHeader> = Header::dummy_chain(1, BlockHash::dummy(2))
@@ -860,7 +882,7 @@ mod tests {
         )
         .await
         .unwrap();
-        manager.pipeline.init(129, *chain[129].hash(), 129);
+        manager.pipeline.init(129, *chain[129].hash(), vec![], 129);
         manager.floor = Some(30);
 
         manager.extend_down().await.unwrap();
@@ -955,7 +977,7 @@ mod tests {
         let tip_hash = *tip.hash();
 
         // Simulate completed sync: pipeline initialized with tip segment marked complete
-        manager.pipeline.init(0, tip_hash, 0);
+        manager.pipeline.init(0, tip_hash, vec![], 0);
         manager.pipeline.mark_tip_complete();
         manager.progress.set_state(SyncState::Synced);
 

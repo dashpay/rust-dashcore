@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::GetHeadersMessage;
 use dashcore::BlockHash;
+use std::iter;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -58,7 +59,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
             let target_height = self.progress.target_height();
 
             // Initialize the pipeline with checkpoint-based segments
-            self.pipeline.init(tip.height(), *tip.hash(), target_height);
+            let ancestors = self.locator_ancestors().await?;
+            self.pipeline.init(tip.height(), *tip.hash(), ancestors, target_height);
 
             tracing::info!(
                 "Starting parallel header sync from {} to {} ({} segments)",
@@ -224,6 +226,8 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                     && !self.pipeline.tip_segment_has_pending_request()
                 {
                     let tip = self.tip().await?;
+                    let locator =
+                        iter::once(*tip.hash()).chain(self.locator_ancestors().await?).collect();
                     tracing::info!("Announcing tip {} to new peer {}", tip.height(), address);
                     // Peer-pinned send: this must reach THIS peer so it learns our
                     // tip, not whichever peer the router would otherwise pick.
@@ -231,7 +235,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                         .send_to(
                             *address,
                             NetworkMessage::GetHeaders(GetHeadersMessage::new(
-                                vec![*tip.hash()],
+                                locator,
                                 BlockHash::all_zeros(),
                             )),
                         )

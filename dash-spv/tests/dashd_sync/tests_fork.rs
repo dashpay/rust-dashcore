@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use dash_spv::network::PeerNetworkManager;
+use dash_spv::network::{NetworkEvent, PeerNetworkManager};
 use dash_spv::test_utils::{create_test_wallet, next_unused_receive_address, TestChain};
 use dash_spv::{DashSpvClient, Network};
 use dashcore::{Address, Amount};
@@ -9,8 +9,8 @@ use key_wallet_manager::WalletEvent;
 use serde_json::json;
 
 use super::helpers::{
-    build_and_sign, count_wallet_transactions, wait_for_sync, wait_for_wallet_synced, PeerTracker,
-    EMPTY_MNEMONIC,
+    build_and_sign, count_wallet_transactions, wait_for_network_event, wait_for_sync,
+    wait_for_wallet_synced, PeerTracker, EMPTY_MNEMONIC,
 };
 use super::setup::{create_and_start_client, TestContext};
 
@@ -38,7 +38,7 @@ async fn test_sync_follows_reorg() {
     let miner_address = node.get_new_address();
     let funding_amount = 500_000_000;
     let address = next_unused_receive_address(&wallet, &wallet_id).await;
-    let funding_txid = node.send_to_address(&address, Amount::from_sat(funding_amount));
+    node.send_to_address(&address, Amount::from_sat(funding_amount));
     node.generate_blocks(1, &miner_address);
     let fork_height = ctx.dashd.initial_height + 1;
     wait_for_sync(&mut client_handle.progress_receiver, fork_height).await;
@@ -112,12 +112,6 @@ async fn test_sync_follows_reorg() {
     assert_eq!(balance.confirmed(), funding_amount);
     assert_eq!(count_wallet_transactions(&wallet, &wallet_id).await, 1);
 
-    let funding_outpoint = spend
-        .input
-        .iter()
-        .map(|input| input.previous_output)
-        .find(|outpoint| outpoint.txid == funding_txid)
-        .expect("the spend takes the funding output");
     let mut truncations = Vec::new();
     while let Ok(event) = events.try_recv() {
         if let WalletEvent::ChainTruncated {
@@ -135,9 +129,10 @@ async fn test_sync_follows_reorg() {
             ));
         }
     }
+    // Without a ChainLock the fork drops the chain down to genesis, funding included.
     assert_eq!(
         truncations,
-        vec![(fork_height, 2, true, vec![funding_outpoint])],
+        vec![(0, 3, true, vec![])],
         "the persister is told what to drop and what to restore"
     );
 
@@ -152,4 +147,95 @@ async fn test_sync_follows_reorg() {
     DashSpvClient::new(config, network_manager, wallet, vec![])
         .await
         .expect("the storage must be released once stop returns");
+}
+
+/// Verify a client restarted on a tip the network replaced while it was stopped
+/// follows the network. The chain is longer than one `headers` response, so a
+/// peer that does not know the stored tip answers with headers the client stores.
+#[tokio::test]
+async fn test_restart_follows_reorg_while_stopped() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+    client_handle.stop().await;
+    drop(client_handle);
+
+    let node = &ctx.dashd.node;
+    node.invalidate_block(&node.get_best_block_hash());
+    node.generate_blocks(2, &node.get_new_address_from_wallet("default"));
+    let new_tip = ctx.dashd.initial_height + 1;
+
+    let mut client_handle = ctx.spawn_new_client().await;
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        wait_for_sync(&mut client_handle.progress_receiver, new_tip),
+    )
+    .await
+    .expect("client did not follow the reorg it missed while stopped");
+    let tip = client_handle.client.tip_header().await.expect("tip");
+    assert_eq!(*tip.hash(), node.get_best_block_hash());
+}
+
+/// Verify a synced client follows a reorg the peer announces with `inv`, which it does
+/// for a branch of more than 8 blocks. The client asks for headers from its tip, so its
+/// locator must reach the fork point even though the tip moved since the sync started.
+#[tokio::test]
+async fn test_sync_follows_reorg_announced_by_inv() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    // Build the branch offline and set it aside, so the client hears of it only
+    // when the whole branch becomes active at once.
+    let node = &ctx.dashd.node;
+    node.set_network_active(false);
+    assert!(
+        wait_for_network_event(
+            &mut client_handle.network_event_receiver,
+            |e| matches!(e, NetworkEvent::PeerDisconnected { .. }),
+            Duration::from_secs(30),
+        )
+        .await,
+        "the client did not disconnect"
+    );
+    let replaced_tip = node.get_best_block_hash();
+    node.invalidate_block(&replaced_tip);
+    let branch = node.generate_blocks(10, &node.get_new_address_from_wallet("default"));
+    node.invalidate_block(&branch[0]);
+    node.try_rpc_call("reconsiderblock", &[json!(replaced_tip.to_string())])
+        .expect("reconsiderblock failed");
+    node.set_network_active(true);
+    assert!(
+        wait_for_network_event(
+            &mut client_handle.network_event_receiver,
+            |e| matches!(e, NetworkEvent::PeerConnected { .. }),
+            Duration::from_secs(30),
+        )
+        .await,
+        "the client did not reconnect"
+    );
+
+    node.try_rpc_call("reconsiderblock", &[json!(branch[0].to_string())])
+        .expect("reconsiderblock failed");
+    let new_tip = ctx.dashd.initial_height + 9;
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        wait_for_sync(&mut client_handle.progress_receiver, new_tip),
+    )
+    .await
+    .expect("client did not follow the reorg announced by inv");
+    let tip = client_handle.client.tip_header().await.expect("tip");
+    assert_eq!(*tip.hash(), node.get_best_block_hash());
 }
