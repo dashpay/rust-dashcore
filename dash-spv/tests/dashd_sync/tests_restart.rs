@@ -1,6 +1,7 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::HashSet;
+use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +16,8 @@ use dash_spv::test_utils::SYNC_TIMEOUT;
 use super::setup::{create_and_start_client, TestContext};
 use dash_spv::test_utils::{create_test_wallet, TestChain};
 
-/// Verify sync state is identical after stopping and restarting with same storage.
+/// Verify sync state is identical after stopping and restarting with same storage,
+/// and that a corrupted segment of it is wiped and synced again.
 #[tokio::test]
 async fn test_sync_restart_consistency() {
     let Some(ctx) = TestContext::new(TestChain::Full).await else {
@@ -57,6 +59,29 @@ async fn test_sync_restart_consistency() {
     assert_eq!(first_balance, second_balance, "Balance mismatch after restart");
     assert_eq!(first_tx_count, second_tx_count, "Transaction count mismatch after restart");
     tracing::info!("State consistent after restart");
+
+    drop(client_handle);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let segment = ctx.client_config.storage_path.join("block_headers").join("segment_000000.dat");
+    let original_segment = fs::read(&segment).unwrap();
+    let mut corrupted_segment = original_segment.clone();
+    corrupted_segment[0] ^= 1;
+    fs::write(&segment, corrupted_segment).unwrap();
+
+    tracing::info!("Restarting with a corrupted segment");
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    client_handle.stop().await;
+    ctx.assert_synced(&client_handle.client.progress().await).await;
+    assert_eq!(first_balance, ctx.spendable_balance().await, "Balance mismatch after resync");
+    assert_eq!(
+        first_tx_count,
+        ctx.transaction_count().await,
+        "Transaction count mismatch after resync"
+    );
+    assert_eq!(fs::read(&segment).unwrap(), original_segment, "Corrupted segment not synced again");
 
     // A block mined right after a fully-synced restart must commit through the
     // Filters phase instead of freezing `committed_height` one below the new
