@@ -1398,7 +1398,6 @@ impl ManagedCoreFundsAccount {
     pub fn next_receive_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         if let ManagedAccountType::Standard {
             external_addresses,
@@ -1410,13 +1409,12 @@ impl ManagedCoreFundsAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            let addr =
-                external_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                    crate::error::Error::NoKeySource => {
-                        "No unused addresses available and no key source provided"
-                    }
-                    _ => "Failed to generate receive address",
-                })?;
+            let addr = external_addresses.next_unused(&key_source).map_err(|e| match e {
+                crate::error::Error::NoKeySource => {
+                    "No unused addresses available and no key source provided"
+                }
+                _ => "Failed to generate receive address",
+            })?;
             self.keys.bump_monitor_revision();
             Ok(addr)
         } else {
@@ -1429,7 +1427,6 @@ impl ManagedCoreFundsAccount {
     pub fn next_change_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         if let ManagedAccountType::Standard {
             internal_addresses,
@@ -1441,13 +1438,12 @@ impl ManagedCoreFundsAccount {
                 None => address_pool::KeySource::NoKeySource,
             };
 
-            let addr =
-                internal_addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
-                    crate::error::Error::NoKeySource => {
-                        "No unused addresses available and no key source provided"
-                    }
-                    _ => "Failed to generate change address",
-                })?;
+            let addr = internal_addresses.next_unused(&key_source).map_err(|e| match e {
+                crate::error::Error::NoKeySource => {
+                    "No unused addresses available and no key source provided"
+                }
+                _ => "Failed to generate change address",
+            })?;
             self.keys.bump_monitor_revision();
             Ok(addr)
         } else {
@@ -1465,7 +1461,7 @@ impl ManagedCoreFundsAccount {
     /// reservation. Only valid for Standard accounts.
     ///
     /// Derivation of fresh addresses on this path is unbounded, so callers are
-    /// assumed trusted. See [`address_pool::AddressPool::next_unused_and_reserve`].
+    /// assumed trusted.
     pub fn next_receive_address_and_reserve(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
@@ -1524,8 +1520,7 @@ impl ManagedCoreFundsAccount {
     /// explicitly released, which would otherwise pin gap-limit headroom
     /// forever. `now` and `ttl` are caller-supplied (seconds); the wallet keeps
     /// no clock. Returns the number of reservations reclaimed and bumps the
-    /// monitor revision when that is non-zero. See
-    /// [`address_pool::AddressPool::sweep_expired_reservations`].
+    /// monitor revision when that is non-zero.
     pub fn sweep_expired_receive_reservations(&mut self, now: u64, ttl: u64) -> usize {
         if let ManagedAccountType::Standard {
             external_addresses,
@@ -1542,89 +1537,13 @@ impl ManagedCoreFundsAccount {
         }
     }
 
-    /// Generate multiple receive addresses at once using the optionally provided extended public key.
-    /// Only valid for Standard accounts.
-    pub fn next_receive_addresses(
-        &mut self,
-        account_xpub: Option<&ExtendedPubKey>,
-        count: usize,
-        add_to_state: bool,
-    ) -> Result<Vec<Address>, String> {
-        if let ManagedAccountType::Standard {
-            external_addresses,
-            ..
-        } = self.keys.managed_account_type_mut()
-        {
-            let key_source = match account_xpub {
-                Some(xpub) => address_pool::KeySource::Public(*xpub),
-                None => address_pool::KeySource::NoKeySource,
-            };
-
-            let addresses =
-                external_addresses.next_unused_multiple(count, &key_source, add_to_state);
-            if addresses.is_empty() && count > 0 {
-                Err("Failed to generate any receive addresses".to_string())
-            } else if addresses.len() < count
-                && matches!(key_source, address_pool::KeySource::NoKeySource)
-            {
-                Err(format!(
-                    "Could only generate {} out of {} requested addresses (no key source)",
-                    addresses.len(),
-                    count
-                ))
-            } else {
-                Ok(addresses)
-            }
-        } else {
-            Err("Cannot generate receive addresses for non-standard account type".to_string())
-        }
-    }
-
-    /// Generate multiple change addresses at once using the optionally provided extended public key.
-    /// Only valid for Standard accounts.
-    pub fn next_change_addresses(
-        &mut self,
-        account_xpub: Option<&ExtendedPubKey>,
-        count: usize,
-        add_to_state: bool,
-    ) -> Result<Vec<Address>, String> {
-        if let ManagedAccountType::Standard {
-            internal_addresses,
-            ..
-        } = self.keys.managed_account_type_mut()
-        {
-            let key_source = match account_xpub {
-                Some(xpub) => address_pool::KeySource::Public(*xpub),
-                None => address_pool::KeySource::NoKeySource,
-            };
-
-            let addresses =
-                internal_addresses.next_unused_multiple(count, &key_source, add_to_state);
-            if addresses.is_empty() && count > 0 {
-                Err("Failed to generate any change addresses".to_string())
-            } else if addresses.len() < count
-                && matches!(key_source, address_pool::KeySource::NoKeySource)
-            {
-                Err(format!(
-                    "Could only generate {} out of {} requested addresses (no key source)",
-                    addresses.len(),
-                    count
-                ))
-            } else {
-                Ok(addresses)
-            }
-        } else {
-            Err("Cannot generate change addresses for non-standard account type".to_string())
-        }
-    }
-
     /// Get the external gap limit for standard accounts
     pub fn external_gap_limit(&self) -> Option<u32> {
         match self.keys.managed_account_type() {
             ManagedAccountType::Standard {
                 external_addresses,
                 ..
-            } => Some(external_addresses.gap_limit),
+            } => Some(external_addresses.gap_limit()),
             _ => None,
         }
     }
@@ -1635,7 +1554,7 @@ impl ManagedCoreFundsAccount {
             ManagedAccountType::Standard {
                 internal_addresses,
                 ..
-            } => Some(internal_addresses.gap_limit),
+            } => Some(internal_addresses.gap_limit()),
             _ => None,
         }
     }

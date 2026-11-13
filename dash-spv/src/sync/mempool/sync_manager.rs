@@ -457,7 +457,7 @@ mod tests {
         let address = preview
             .bip44_managed_account_at_index_mut(1)
             .unwrap()
-            .next_receive_address(None, true)
+            .next_receive_address(None)
             .unwrap();
         let mut funding = Transaction::dummy(&ctx.receive_address, 0..1, &[100_000]);
         funding.output.push(TxOut {

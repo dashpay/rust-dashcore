@@ -56,7 +56,7 @@ impl ManagedPlatformAccount {
     ///
     /// The network is derived from the AddressPool to ensure consistency.
     pub fn new(account: u32, key_class: u32, addresses: AddressPool, is_watch_only: bool) -> Self {
-        let network = addresses.network;
+        let network = addresses.network();
         Self {
             account,
             key_class,
@@ -227,10 +227,9 @@ impl ManagedPlatformAccount {
     pub fn next_unused_address(
         &mut self,
         key_source: &super::address_pool::KeySource,
-        add_to_state: bool,
     ) -> Result<Address> {
         self.addresses
-            .next_unused(key_source, add_to_state)
+            .next_unused(key_source)
             .map_err(|e| Error::InvalidParameter(format!("Failed to get next address: {}", e)))
     }
 
@@ -238,9 +237,8 @@ impl ManagedPlatformAccount {
     pub fn next_unused_platform_address(
         &mut self,
         key_source: &super::address_pool::KeySource,
-        add_to_state: bool,
     ) -> Result<PlatformP2PKHAddress> {
-        let addr = self.next_unused_address(key_source, add_to_state)?;
+        let addr = self.next_unused_address(key_source)?;
         PlatformP2PKHAddress::from_address(&addr)
     }
 
@@ -288,24 +286,9 @@ impl ManagedPlatformAccount {
         self.addresses.address_info(address).cloned()
     }
 
-    /// Get pool statistics
-    pub fn address_pool_stats(&self) -> super::address_pool::PoolStats {
-        self.addresses.stats()
-    }
-
-    /// Get total address count in the pool
-    pub fn total_address_count(&self) -> usize {
-        self.addresses.stats().total_generated as usize
-    }
-
-    /// Get used address count in the pool
-    pub fn used_address_count(&self) -> usize {
-        self.addresses.stats().used_count as usize
-    }
-
     /// Get the gap limit for the address pool
     pub fn gap_limit(&self) -> u32 {
-        self.addresses.gap_limit
+        self.addresses.gap_limit()
     }
 }
 

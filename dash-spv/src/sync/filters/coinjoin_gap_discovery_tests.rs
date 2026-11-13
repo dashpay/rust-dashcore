@@ -51,7 +51,7 @@ use dashcore::{
     Address, Block, BlockHash, Network, OutPoint, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use key_wallet::account::ManagedAccountTrait;
-use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
+use key_wallet::managed_account::address_pool::DEFAULT_COINJOIN_GAP_LIMIT;
 use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -111,7 +111,7 @@ fn coinjoin_external_pool(info: &ManagedWalletInfo) -> &AddressPool {
         .managed_account_type()
         .address_pools()
         .into_iter()
-        .find(|p| p.pool_type == AddressPoolType::External)
+        .find(|p| p.pool_type() == AddressPoolType::External)
         .expect("CoinJoin External pool")
 }
 
@@ -124,7 +124,11 @@ async fn coinjoin_pool_state(
     let wm = wallet.read().await;
     let info = wm.get_wallet_info(wallet_id).expect("wallet info present");
     let pool = coinjoin_external_pool(info);
-    (pool.highest_used, pool.highest_generated, pool.used_indices.len())
+    (
+        pool.highest_used(),
+        pool.highest_generated(),
+        pool.addresses().values().filter(|info| info.is_used()).count(),
+    )
 }
 
 /// One block at `height` whose single transaction pays every address in

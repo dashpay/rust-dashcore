@@ -6,8 +6,6 @@ mod account_tests;
 
 mod balance_tests;
 
-mod address_pool_tests;
-
 mod address_reservation_tests;
 
 mod advanced_transaction_tests;

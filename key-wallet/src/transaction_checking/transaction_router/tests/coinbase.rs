@@ -106,7 +106,7 @@ async fn test_coinbase_transaction_routing_to_bip44_change_address() {
     let change_address = managed_wallet_info
         .first_bip44_managed_account_mut()
         .expect("Failed to get first BIP44 managed account")
-        .next_change_address(Some(&xpub), true)
+        .next_change_address(Some(&xpub))
         .expect("Failed to generate change address from BIP44 account");
 
     // Create a coinbase transaction that pays to our change address

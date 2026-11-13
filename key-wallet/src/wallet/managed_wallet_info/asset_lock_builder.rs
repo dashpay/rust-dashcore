@@ -590,7 +590,7 @@ impl ManagedWalletInfo {
                 // Phase 1 (sync): peek without marking used. Borrow is scoped
                 // to the block so we can re-resolve the account after the
                 // signer await.
-                let (path, index) = {
+                let (path, address) = {
                     let funding_key_account = resolve_funding_account(
                         &mut self.accounts,
                         funding.funding_type,
@@ -602,24 +602,19 @@ impl ManagedWalletInfo {
                 };
 
                 // Phase 2 (async): signer round-trip. If this errors, we return
-                // without ever calling mark_first_pool_index_used — index stays
-                // free for a retry.
+                // without marking the address used, so it stays free for a retry.
                 let pubkey = signer
                     .public_key(&path)
                     .await
                     .map_err(|e| AssetLockError::Signer(e.to_string()))?;
 
-                // Phase 3 (sync): signer succeeded, commit the index.
-                {
-                    let funding_key_account = resolve_funding_account(
-                        &mut self.accounts,
-                        funding.funding_type,
-                        funding.identity_index,
-                    )?;
-                    funding_key_account
-                        .mark_first_pool_index_used(index)
-                        .map_err(|e| AssetLockError::KeyDerivation(e.to_string()))?;
-                }
+                // Phase 3 (sync): signer succeeded, commit the address.
+                resolve_funding_account(
+                    &mut self.accounts,
+                    funding.funding_type,
+                    funding.identity_index,
+                )?
+                .mark_address_used(&address);
 
                 credit_output_keys.push((pubkey, path));
             }
@@ -692,7 +687,7 @@ mod tests {
     ) -> OutPoint {
         let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
         let account = info.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
-        let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
+        let funding_address = account.next_receive_address(Some(&account_xpub)).unwrap();
         let outpoint = OutPoint {
             txid: Txid::from_byte_array([txid_byte; 32]),
             vout: 0,
@@ -732,9 +727,7 @@ mod tests {
             crate::ManagedAccountType::CoinJoin {
                 external_addresses,
                 ..
-            } => external_addresses
-                .next_unused(&crate::KeySource::Public(account_xpub), true)
-                .unwrap(),
+            } => external_addresses.next_unused(&crate::KeySource::Public(account_xpub)).unwrap(),
             _ => unreachable!("coinjoin account must carry the CoinJoin managed type"),
         };
         let outpoint = OutPoint {
@@ -1299,7 +1292,7 @@ mod tests {
             .expect("default wallet has BIP32 account 0")
             .account_xpub;
         let account = info.accounts.standard_bip32_accounts.get_mut(&0).unwrap();
-        let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
+        let funding_address = account.next_receive_address(Some(&account_xpub)).unwrap();
         let outpoint = OutPoint {
             txid: Txid::from_byte_array([txid_byte; 32]),
             vout: 0,

@@ -843,7 +843,7 @@ async fn test_block_with_index_less_account_tx_carries_account_type() {
         .expect("wallet info")
         .identity_registration_managed_account_mut()
         .expect("managed IdentityRegistration account")
-        .next_address(Some(&xpub), true)
+        .next_address(Some(&xpub))
         .expect("identity registration address");
 
     // Build a DIP-2 AssetLock transaction whose `credit_outputs` pay to the
@@ -1704,8 +1704,8 @@ fn pool_state(
         ) => internal_addresses,
         _ => panic!("unexpected pool type {:?}", pool_type),
     };
-    let highest = pool.highest_generated.expect("pre-generated pool must have addresses");
-    let gap_limit = pool.gap_limit;
+    let highest = pool.highest_generated().expect("pre-generated pool must have addresses");
+    let gap_limit = pool.gap_limit();
     let addr = pool.address_at_index(highest).expect("highest index must exist");
     (highest, gap_limit, addr)
 }
@@ -1801,7 +1801,8 @@ async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
         // Pin the persistence-critical payload against the wallet's
         // own AddressInfo for the same index.
         let stored = external_pool_after
-            .info_at_index(derived.derivation_index)
+            .addresses()
+            .get(&derived.derivation_index)
             .unwrap_or_else(|| panic!("pool missing index {}", derived.derivation_index));
         assert_eq!(
             derived.address, stored.address,
@@ -2586,7 +2587,7 @@ async fn late_funding_block_publishes_spender_correction() {
             .unwrap()
             .first_bip44_managed_account_mut()
             .unwrap()
-            .next_change_address(None, true)
+            .next_change_address(None)
             .unwrap();
         let funding = create_tx_paying_to(&addr, 0xd5);
         let mut spender = create_tx_paying_to(&change, 0xd6);

@@ -170,7 +170,7 @@ impl ManagedWalletInfo {
             }
             let rev_before = new_addresses.len();
             for pool in account.managed_account_type_mut().address_pools_mut() {
-                let pool_type = pool.pool_type;
+                let pool_type = pool.pool_type();
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(infos) => {
                         new_addresses.extend(infos.into_iter().map(|info| DerivedAddressInfo {
@@ -575,7 +575,7 @@ mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
     use crate::account::{ECDSAAddressDerivation, TransactionRecord};
-    use crate::gap_limit::{
+    use crate::managed_account::address_pool::{
         DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
     };
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
@@ -678,7 +678,7 @@ mod tests {
                 let xpub = bip32_account.account_xpub;
                 if let Some(managed_account) = managed_wallet.first_bip32_managed_account_mut() {
                     let address = managed_account
-                        .next_receive_address(Some(&xpub), true)
+                        .next_receive_address(Some(&xpub))
                         .expect("Should get BIP32 address");
                     (Some(xpub), Some(address))
                 } else {
@@ -713,7 +713,7 @@ mod tests {
                 let xpub = coinjoin_account.account_xpub;
                 if let Some(managed_account) = managed_wallet.first_coinjoin_managed_account_mut() {
                     let address = managed_account
-                        .next_address(Some(&xpub), true)
+                        .next_address(Some(&xpub))
                         .expect("Should get CoinJoin address");
                     (Some(xpub), Some(address))
                 } else {
@@ -962,7 +962,7 @@ mod tests {
             } = managed_account.managed_account_type_mut()
             {
                 external_addresses
-                    .next_unused(&KeySource::Public(coinjoin_xpub), true)
+                    .next_unused(&KeySource::Public(coinjoin_xpub))
                     .expect("coinjoin address")
             } else {
                 panic!("Expected CoinJoin account type");
@@ -973,7 +973,7 @@ mod tests {
         let change_address = managed_wallet
             .first_bip44_managed_account_mut()
             .expect("managed bip44")
-            .next_change_address(Some(&bip44_xpub), true)
+            .next_change_address(Some(&bip44_xpub))
             .expect("bip44 change address");
 
         // Fund the CoinJoin address, creating a CoinJoin UTXO.
@@ -1304,7 +1304,7 @@ mod tests {
         let change_address = managed_wallet
             .first_bip44_managed_account_mut()
             .expect("Should have managed account")
-            .next_change_address(Some(&xpub), true)
+            .next_change_address(Some(&xpub))
             .expect("Should get change address");
 
         // Create the funding transaction
@@ -1552,14 +1552,14 @@ mod tests {
         let address0 = managed_wallet
             .bip44_managed_account_at_index_mut(0)
             .expect("managed account 0")
-            .next_receive_address(Some(&xpub0), true)
+            .next_receive_address(Some(&xpub0))
             .expect("address for account 0");
         let xpub1 =
             wallet.accounts.standard_bip44_accounts.get(&1).expect("account 1").account_xpub;
         let address1 = managed_wallet
             .bip44_managed_account_at_index_mut(1)
             .expect("managed account 1")
-            .next_receive_address(Some(&xpub1), true)
+            .next_receive_address(Some(&xpub1))
             .expect("address for account 1");
 
         let mut wallet_mut = wallet;
@@ -1672,7 +1672,7 @@ mod tests {
         let address0 = managed_wallet
             .bip44_managed_account_at_index_mut(0)
             .expect("Should have managed account 0")
-            .next_receive_address(Some(&xpub0), true)
+            .next_receive_address(Some(&xpub0))
             .expect("Should generate address for account 0");
 
         let xpub1 = wallet
@@ -1684,7 +1684,7 @@ mod tests {
         let address1 = managed_wallet
             .bip44_managed_account_at_index_mut(1)
             .expect("Should have managed account 1")
-            .next_receive_address(Some(&xpub1), true)
+            .next_receive_address(Some(&xpub1))
             .expect("Should generate address for account 1");
 
         // Build a tx with outputs to both accounts.
@@ -1954,7 +1954,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_receive_address(Some(&ctx.xpub), true)
+            .next_receive_address(Some(&ctx.xpub))
             .expect("second receive address");
 
         let multi_tx = Transaction {
@@ -2001,7 +2001,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         let send_amount = 600_000u64;
@@ -2057,13 +2057,13 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_receive_address(Some(&ctx.xpub), true)
+            .next_receive_address(Some(&ctx.xpub))
             .expect("self address");
         let change_address = ctx
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         let self_amount = 800_000u64;
@@ -2150,7 +2150,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         let send_amount = 400_000u64;
@@ -2303,9 +2303,7 @@ mod tests {
             ..
         } = managed_account.managed_account_type_mut()
         {
-            external_addresses
-                .next_unused(&KeySource::Public(xpub), true)
-                .expect("coinjoin address")
+            external_addresses.next_unused(&KeySource::Public(xpub)).expect("coinjoin address")
         } else {
             panic!("Expected CoinJoin account type");
         };
@@ -2400,7 +2398,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         // Spend the funding UTXO: send some out, send the rest back to ourselves
@@ -2492,7 +2490,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let spend = Transaction {
             version: 2,
@@ -2574,7 +2572,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let loser = Transaction {
             version: 2,
@@ -2662,7 +2660,7 @@ mod tests {
             .managed_wallet
             .first_bip32_managed_account_mut()
             .expect("BIP32 managed account")
-            .next_receive_address(Some(&bip32_xpub), true)
+            .next_receive_address(Some(&bip32_xpub))
             .expect("BIP32 receive address");
         let funding_tx = Transaction::dummy(&bip32_address, 0..1, &[1_000_000]);
         ctx.check_transaction(
@@ -2707,7 +2705,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let loser = spend(&loser_change, 399_000, 600_000);
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
@@ -2716,7 +2714,7 @@ mod tests {
             .managed_wallet
             .first_bip32_managed_account_mut()
             .expect("BIP32 managed account")
-            .next_change_address(Some(&bip32_xpub), true)
+            .next_change_address(Some(&bip32_xpub))
             .expect("BIP32 change address");
         let winner = spend(&winner_change, 299_000, 700_000);
         ctx.check_transaction(
@@ -2794,7 +2792,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let winner = spend(&winner_change, 299_000, 700_000);
         ctx.check_transaction(
@@ -2814,7 +2812,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let loser = spend(&loser_change, 399_000, 600_000);
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
@@ -2876,7 +2874,7 @@ mod tests {
             ctx.managed_wallet
                 .first_bip44_managed_account_mut()
                 .expect("account")
-                .next_change_address(Some(&ctx.xpub), true)
+                .next_change_address(Some(&ctx.xpub))
                 .expect("change address")
         };
 
@@ -3003,7 +3001,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let loser = Transaction {
             version: 2,
@@ -3124,7 +3122,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let identity_xpub = ctx
             .wallet
@@ -3137,7 +3135,7 @@ mod tests {
             .managed_wallet
             .identity_registration_managed_account_mut()
             .expect("managed identity account")
-            .next_address(Some(&identity_xpub), true)
+            .next_address(Some(&identity_xpub))
             .expect("identity address");
         let mut loser = spend(vec![coin_a, coin_b], &loser_change, 99_000, 800_000);
         loser.version = 3;
@@ -3162,7 +3160,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let winner = spend(vec![coin_a], &winner_change, 99_000, 400_000);
         let result = ctx
@@ -3279,7 +3277,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let parent = spend(vec![coin_x], &parent_change, 99_000, 400_000);
         ctx.check_transaction(&parent, TransactionContext::Mempool).await;
@@ -3294,7 +3292,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let child = spend(vec![parent_change_outpoint, coin_c], &child_change, 89_000, 400_000);
         ctx.check_transaction(&child, TransactionContext::Mempool).await;
@@ -3305,7 +3303,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let winner = spend(vec![coin_x], &winner_change, 99_000, 400_000);
         let result = ctx
@@ -3368,7 +3366,7 @@ mod tests {
             .managed_wallet
             .first_bip32_managed_account_mut()
             .expect("BIP32 account")
-            .next_receive_address(Some(&bip32_xpub), true)
+            .next_receive_address(Some(&bip32_xpub))
             .expect("BIP32 address");
 
         let funding_tx = Transaction::dummy(&ctx.receive_address, 0..2, &[500_000, 400_000]);
@@ -3426,7 +3424,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let rival = spend(vec![coin_b], &rival_change, 50_000, 340_000);
         ctx.check_transaction(&rival, TransactionContext::Mempool).await;
@@ -3437,7 +3435,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let winner = spend(vec![coin_a], &winner_change, 99_000, 400_000);
         let result = ctx
@@ -3521,7 +3519,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let loser = spend_of(&loser_change, 399_000, 600_000);
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
@@ -3530,7 +3528,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let winner = spend_of(&winner_change, 299_000, 700_000);
         ctx.check_transaction(&winner, TransactionContext::Mempool).await;
@@ -3605,7 +3603,7 @@ mod tests {
                 .managed_wallet
                 .first_bip44_managed_account_mut()
                 .expect("account")
-                .next_change_address(Some(&ctx.xpub), true)
+                .next_change_address(Some(&ctx.xpub))
                 .expect("change address");
             // The tip pays us twice, and nothing spends it onward, so both
             // outputs are still live when the cascade runs — exercising the
@@ -3633,7 +3631,7 @@ mod tests {
                     .managed_wallet
                     .first_bip44_managed_account_mut()
                     .expect("account")
-                    .next_change_address(Some(&ctx.xpub), true)
+                    .next_change_address(Some(&ctx.xpub))
                     .expect("change address");
                 outputs.push(TxOut {
                     value: change_b,
@@ -3780,7 +3778,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let loser = spend_of(&first_change, 399_000, 600_000);
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
@@ -3800,7 +3798,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let winner = spend_of(&second_change, 299_000, 700_000);
         ctx.check_transaction(
@@ -3861,7 +3859,7 @@ mod tests {
             .managed_wallet
             .first_bip32_managed_account_mut()
             .expect("BIP32 managed account")
-            .next_receive_address(Some(&bip32_xpub), true)
+            .next_receive_address(Some(&bip32_xpub))
             .expect("BIP32 receive address");
 
         let funding_value = 1_000_000u64;
@@ -3879,7 +3877,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         let send_amount = 600_000u64;
@@ -3958,7 +3956,7 @@ mod tests {
             .managed_wallet
             .first_bip44_managed_account_mut()
             .expect("account")
-            .next_change_address(Some(&ctx.xpub), true)
+            .next_change_address(Some(&ctx.xpub))
             .expect("change address");
 
         // Spend the still-unconfirmed funding UTXO: some out, the rest back
@@ -4057,8 +4055,9 @@ mod tests {
         let addresses: Vec<_> = (0..=30)
             .map(|index| {
                 external_addresses
-                    .generate_address_at_index(index, &KeySource::Public(xpub), true)
+                    .generate_address_at_index(index, &KeySource::Public(xpub))
                     .unwrap()
+                    .address
             })
             .collect();
         let address = &addresses[0];

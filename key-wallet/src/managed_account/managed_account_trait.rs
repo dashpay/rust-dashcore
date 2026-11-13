@@ -99,97 +99,6 @@ pub trait ManagedAccountTrait {
         self.managed_account_type()
     }
 
-    /// Get the next unused receive address index for standard accounts
-    fn get_next_receive_address_index(&self) -> Option<u32> {
-        if let ManagedAccountType::Standard {
-            external_addresses,
-            ..
-        } = self.managed_account_type()
-        {
-            next_index(external_addresses)
-        } else {
-            None
-        }
-    }
-
-    /// Get the next unused change address index for standard accounts
-    fn get_next_change_address_index(&self) -> Option<u32> {
-        if let ManagedAccountType::Standard {
-            internal_addresses,
-            ..
-        } = self.managed_account_type()
-        {
-            next_index(internal_addresses)
-        } else {
-            None
-        }
-    }
-
-    /// Get the next unused address index for single-pool account types
-    fn get_next_address_index(&self) -> Option<u32> {
-        match self.managed_account_type() {
-            ManagedAccountType::Standard {
-                ..
-            } => self.get_next_receive_address_index(),
-            ManagedAccountType::CoinJoin {
-                external_addresses: addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityRegistration {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityTopUpNotBoundToIdentity {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::IdentityInvitation {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::AssetLockShieldedAddressTopUp {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderVotingKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOwnerKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderOperatorKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::ProviderPlatformKeys {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayReceivingFunds {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::DashpayExternalAccount {
-                addresses,
-                ..
-            }
-            | ManagedAccountType::PlatformPayment {
-                addresses,
-                ..
-            } => next_index(addresses),
-        }
-    }
-
     /// Mark an address as used
     fn mark_address_used(&mut self, address: &Address) -> bool {
         self.managed_account_type_mut().mark_address_used(address)
@@ -227,7 +136,6 @@ pub trait ManagedAccountTrait {
     fn next_address(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
     ) -> Result<Address, &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::Standard {
@@ -294,7 +202,7 @@ pub trait ManagedAccountTrait {
                     None => address_pool::KeySource::NoKeySource,
                 };
 
-                addresses.next_unused(&key_source, add_to_state).map_err(|e| match e {
+                addresses.next_unused(&key_source).map_err(|e| match e {
                     crate::error::Error::NoKeySource => {
                         "No unused addresses available and no key source provided"
                     }
@@ -308,7 +216,6 @@ pub trait ManagedAccountTrait {
     fn next_address_with_info(
         &mut self,
         account_xpub: Option<&ExtendedPubKey>,
-        add_to_state: bool,
     ) -> Result<address_pool::AddressInfo, &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::Standard {
@@ -377,7 +284,7 @@ pub trait ManagedAccountTrait {
                     None => address_pool::KeySource::NoKeySource,
                 };
 
-                addresses.next_unused_with_info(&key_source, add_to_state).map_err(|e| match e {
+                addresses.next_unused_with_info(&key_source).map_err(|e| match e {
                     crate::error::Error::NoKeySource => {
                         "No unused addresses available and no key source provided"
                     }
@@ -392,7 +299,6 @@ pub trait ManagedAccountTrait {
     fn next_bls_operator_key(
         &mut self,
         account_xpub: Option<ExtendedBLSPubKey>,
-        add_to_state: bool,
     ) -> Result<BLSPublicKey, &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderOperatorKeys {
@@ -405,14 +311,14 @@ pub trait ManagedAccountTrait {
                 };
 
                 let info = addresses
-                    .next_unused_with_info(&key_source, add_to_state)
+                    .next_unused_with_info(&key_source)
                     .map_err(|_| "Failed to get next unused address")?;
 
                 let Some(PublicKeyType::BLS(pub_key_bytes)) = info.public_key else {
                     return Err("Expected BLS public key but got different key type");
                 };
 
-                addresses.mark_index_used(info.index);
+                addresses.mark_used(&info.address);
 
                 BLSPublicKey::try_from(pub_key_bytes.as_slice())
                     .map_err(|_| "BLS public key was not 48 bytes")?
@@ -430,7 +336,6 @@ pub trait ManagedAccountTrait {
     fn next_eddsa_platform_key(
         &mut self,
         account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
-        add_to_state: bool,
     ) -> Result<(EddsaPkBytes, AddressInfo), &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderPlatformKeys {
@@ -440,14 +345,14 @@ pub trait ManagedAccountTrait {
                 let key_source = address_pool::KeySource::EdDSAPrivate(account_xpriv);
 
                 let info = addresses
-                    .next_unused_with_info(&key_source, add_to_state)
+                    .next_unused_with_info(&key_source)
                     .map_err(|_| "Failed to get next unused address")?;
 
                 let Some(PublicKeyType::EdDSA(pub_key_bytes)) = info.public_key.clone() else {
                     return Err("Expected EdDSA public key but got different key type");
                 };
 
-                addresses.mark_index_used(info.index);
+                addresses.mark_used(&info.address);
 
                 let verifying_key = EddsaPkBytes::from_bytes(
                     pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
@@ -475,10 +380,10 @@ pub trait ManagedAccountTrait {
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
 
         let info = pool
-            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource)
             .map_err(|_| "No unused address available")?;
 
-        pool.mark_index_used(info.index);
+        pool.mark_used(&info.address);
 
         let root_ext_priv = root_xpriv.to_extended_priv_key(network);
         let derived_xpriv =
@@ -489,8 +394,8 @@ pub trait ManagedAccountTrait {
         Ok(private_key)
     }
 
-    /// Peek at the next unused address's path and index without marking the index used.
-    fn peek_next_path(&mut self) -> Result<(crate::DerivationPath, u32), &'static str> {
+    /// Peek at the next unused address and its path without marking it used.
+    fn peek_next_path(&mut self) -> Result<(crate::DerivationPath, Address), &'static str> {
         if matches!(self.managed_account_type(), ManagedAccountType::Standard { .. }) {
             return Err("Standard accounts must use next_receive_address or next_change_address");
         }
@@ -499,52 +404,22 @@ pub trait ManagedAccountTrait {
         let pool = pools.first_mut().ok_or("Account has no address pool")?;
 
         let info = pool
-            .next_unused_with_info(&address_pool::KeySource::NoKeySource, false)
+            .next_unused_with_info(&address_pool::KeySource::NoKeySource)
             .map_err(|_| "No unused address available")?;
 
-        Ok((info.path, info.index))
-    }
-
-    /// Mark an index on the account's first address pool as used.
-    fn mark_first_pool_index_used(&mut self, index: u32) -> Result<(), &'static str> {
-        if matches!(self.managed_account_type(), ManagedAccountType::Standard { .. }) {
-            return Err("Standard accounts must use next_receive_address or next_change_address");
-        }
-
-        let mut pools = self.managed_account_type_mut().address_pools_mut();
-        let pool = pools.first_mut().ok_or("Account has no address pool")?;
-        pool.mark_index_used(index);
-        Ok(())
+        Ok((info.path, info.address))
     }
 
     /// Consume the next unused address and return only its derivation path.
     fn next_path(&mut self) -> Result<crate::DerivationPath, &'static str> {
-        let (path, index) = self.peek_next_path()?;
-        self.mark_first_pool_index_used(index)?;
+        let (path, address) = self.peek_next_path()?;
+        self.mark_address_used(&address);
         Ok(path)
     }
 
     /// Get the derivation path for an address if it belongs to this account
     fn address_derivation_path(&self, address: &Address) -> Option<crate::DerivationPath> {
         self.managed_account_type().get_address_derivation_path(address)
-    }
-
-    /// Get total address count across all pools
-    fn total_address_count(&self) -> usize {
-        self.managed_account_type()
-            .address_pools()
-            .iter()
-            .map(|pool| pool.stats().total_generated as usize)
-            .sum()
-    }
-
-    /// Get used address count across all pools
-    fn used_address_count(&self) -> usize {
-        self.managed_account_type()
-            .address_pools()
-            .iter()
-            .map(|pool| pool.stats().used_count as usize)
-            .sum()
     }
 
     /// Widen the gap limit for every address pool of this account.
@@ -641,14 +516,7 @@ pub trait ManagedAccountTrait {
             | ManagedAccountType::PlatformPayment {
                 addresses,
                 ..
-            } => Some(addresses.gap_limit),
+            } => Some(addresses.gap_limit()),
         }
-    }
-}
-
-fn next_index(pool: &address_pool::AddressPool) -> Option<u32> {
-    match pool.unused_addresses().first() {
-        Some(addr) => pool.address_index(addr),
-        None => Some(pool.stats().highest_generated.map_or(0, |h| h + 1)),
     }
 }

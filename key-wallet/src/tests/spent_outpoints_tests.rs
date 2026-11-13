@@ -24,7 +24,7 @@ use crate::Network;
 fn receive_address(wallet: &Wallet, info: &mut ManagedWalletInfo, index: u32) -> dashcore::Address {
     let xpub = wallet.accounts.standard_bip44_accounts[&index].account_xpub;
     let account = info.accounts.standard_bip44_accounts.get_mut(&index).unwrap();
-    account.next_receive_address(Some(&xpub), true).unwrap()
+    account.next_receive_address(Some(&xpub)).unwrap()
 }
 
 /// A wallet with `count` BIP44 accounts, and a receive address of each.
