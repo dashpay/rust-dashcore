@@ -1116,14 +1116,15 @@ impl StallJudge {
         streaming
     }
 
-    /// Returns the peers to kick and how many culprits are spared. `culprits` maps the
-    /// peers of stalled requests to when their silence began.
+    /// Returns the peers to kick, how many culprits are spared, and the kicked peer no peer
+    /// witnessed, if any. `culprits` maps the peers of stalled requests to when their
+    /// silence began.
     fn judge(
         &mut self,
         now: Instant,
         peers: &[Observed],
         mut culprits: HashMap<PeerId, Instant>,
-    ) -> (HashSet<PeerId>, usize) {
+    ) -> (HashSet<PeerId>, usize, Option<PeerId>) {
         self.link_stalled = false;
         self.link_down = false;
         // Judged on the peer's own counters, not just the registry: streaming in-flight
@@ -1140,11 +1141,11 @@ impl StallJudge {
             }
         }
         if culprits.is_empty() {
-            return (HashSet::new(), 0);
+            return (HashSet::new(), 0, None);
         }
 
         let mut held = 0;
-        let mut silent: Vec<(Instant, &Observed)> = Vec::new();
+        let mut silent: Vec<(Instant, &Observed, bool)> = Vec::new();
         for p in peers {
             let Some(&since) = culprits.get(&p.id) else {
                 continue;
@@ -1155,11 +1156,12 @@ impl StallJudge {
             let witnessed_from =
                 |from: Instant| self.last_heard.is_some_and(|heard| heard > from + p.timeout);
             let blamed_from = self.link_back.map_or(since, |back| back.max(since));
-            if witnessed_from(blamed_from)
+            let witnessed = witnessed_from(blamed_from);
+            if witnessed
                 || now.duration_since(blamed_from) > p.timeout * LINK_STALL_TIMEOUTS
                 || now.duration_since(since) > p.timeout * MAX_HOLD_TIMEOUTS
             {
-                silent.push((since, p));
+                silent.push((since, p, witnessed));
             } else {
                 self.link_down |= !witnessed_from(since);
                 held += 1;
@@ -1169,8 +1171,8 @@ impl StallJudge {
         // A silent peer may still be our link failing it, so the one silent the longest
         // goes, and one kick per timeout keeps a stall of our link from taking the whole set
         // at once.
-        silent.sort_by_key(|&(since, p)| (since, p.id.addr()));
-        let due = silent.first().is_some_and(|(_, worst)| {
+        silent.sort_by_key(|&(since, p, _)| (since, p.id.addr()));
+        let due = silent.first().is_some_and(|(_, worst, _)| {
             self.last_kick.is_none_or(|at| now.duration_since(at) > worst.timeout)
         });
         if due {
@@ -1179,14 +1181,16 @@ impl StallJudge {
         // A culprit that already left is not spared, so its requests are still re-queued.
         let mut kicked: HashSet<PeerId> =
             culprits.into_keys().filter(|id| peers.iter().all(|p| p.id != *id)).collect();
-        kicked.extend(silent.first().filter(|_| due).map(|(_, p)| p.id));
-        (kicked, held + silent.len() - usize::from(due))
+        let kick = silent.first().filter(|_| due);
+        kicked.extend(kick.map(|(_, p, _)| p.id));
+        let unwitnessed = kick.filter(|(_, _, witnessed)| !witnessed).map(|(_, p, _)| p.id);
+        (kicked, held + silent.len() - usize::from(due), unwitnessed)
     }
 }
 
-/// Every [`TIMEOUT_CHECK`], kicks the peers [`StallJudge`] finds stalled on requests
-/// with no progress for a [`REQUEST_TIMEOUT`], re-queues all their on-wire requests for
-/// other peers and wakes the supervisor to refill the set.
+/// Every [`TIMEOUT_CHECK`], kicks the peers [`StallJudge`] finds stalled on requests with no
+/// progress for a [`REQUEST_TIMEOUT`], bans every kicked peer except one kicked with no witness,
+/// re-queues their on-wire requests for other peers and wakes the supervisor to refill the set.
 fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
@@ -1225,7 +1229,8 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             let timeout = |id: &PeerId| {
                 peers.iter().find(|p| p.id == *id).map_or(REQUEST_TIMEOUT, |p| p.timeout)
             };
-            let (culprits, spared) = judge.judge(now, &peers, broker.expire(timeout).await);
+            let (culprits, spared, unwitnessed) =
+                judge.judge(now, &peers, broker.expire(timeout).await);
             link_stalled.store(judge.link_stalled, Ordering::Relaxed);
             if culprits.is_empty() {
                 if spared > 0 {
@@ -1248,7 +1253,9 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // going away), keeping keys as Queued so de-dup holds.
             let retried = broker.requeue_from(&culprits).await;
             let dropped = kicked.len();
-            for peer in &culprits {
+            // A peer kicked only because its hold ran out is likely a victim of our own link.
+            // If it is unreachable after all, redialing it fails and backs off.
+            for peer in culprits.iter().filter(|&&peer| Some(peer) != unwitnessed) {
                 bans.ban(peer.addr(), Ban::Kicked).await;
             }
             // The set is now short: wake the supervisor, which otherwise idles.
@@ -1877,6 +1884,8 @@ mod tests {
                     time::advance(REQUEST_TIMEOUT * LINK_STALL_TIMEOUTS + TIMEOUT_CHECK).await;
                     settle().await;
                 }
+                // No peer witnessed the silence, so it may have been our link's.
+                assert!(net.state.bans.banned().await.is_empty(), "a held peer was banned");
             }
             Departure::Stop => {
                 net.stop().await;
@@ -2010,6 +2019,8 @@ mod tests {
         // A stalled request is re-queued and may already be routed to peer 2.
         let carrier = net.state.broker.carrier_of(&RequestKey::CFilters(0)).await;
         assert_eq!(carrier == Some(conn(1, 0)), !stalls, "carrier {carrier:?}");
+        let banned = net.state.bans.banned().await.contains(&conn(1, 0).addr());
+        assert_eq!(banned, stalls, "a peer kicked beside a witness is banned");
     }
 
     /// A timeout kick re-queues the stalled peer's work only once that peer is closed and out
@@ -2105,44 +2116,45 @@ mod tests {
     }
 
     /// Peer `n + 1` plays `roles[n]` for `secs` seconds. `link_stalled` is whether the
-    /// judge then suspects our own link.
-    #[test_case(&[Role::Registered(0); 3], 11, &[1, 2, 3], true; "a stall of every peer at once is our link")]
-    #[test_case(&[Role::Registered(0); 3], 41, &[1, 2, 3], true; "a 40 s silence of every peer kicks nobody")]
-    #[test_case(&[Role::Registered(0); 3], 71, &[2, 3], false; "every peer silent past the bound loses the one silent the longest")]
-    #[test_case(&[Role::Registered(0); 3], 72, &[3], false; "every peer silent past the bound loses one per timeout")]
-    #[test_case(&[Role::Charged(0); 3], 25, &[1, 2, 3], true; "a long stall of every peer is still our link")]
-    #[test_case(&[Role::Registered(1), Role::Registered(2), Role::Registered(3)], 25, &[1, 2, 3], true; "peers going silent a second apart in an outage stay")]
-    #[test_case(&[Role::Charged(1), Role::Charged(2), Role::Charged(3)], 25, &[1, 2, 3], true; "peers owing bytes and going silent a second apart stay")]
-    #[test_case(&[Role::Delivers(0), Role::Registered(0), Role::Delivers(0)], 11, &[1, 3], false; "a lone silent request among delivering peers is kicked")]
-    #[test_case(&[Role::Delivers(0), Role::Charged(0), Role::Delivers(0)], 12, &[1, 3], false; "a lone peer owing bytes among delivering peers is kicked")]
-    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(0)], 11, &[2, 3], false; "two stalls beside a delivering peer kick one")]
-    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(0)], 22, &[2], false; "the second stall goes a timeout later")]
-    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(1)], 12, &[2, 3], false; "stalls a second apart beside a delivering peer go one per timeout")]
-    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(2)], 14, &[2, 3], false; "stalls two seconds apart beside a delivering peer go one per timeout")]
-    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(1), Role::Joins(11)], 12, &[2, 3, 4], false; "a replacement joining does not unpace the next stall")]
-    #[test_case(&[Role::Registered(0), Role::Delivers(13), Role::Registered(1)], 24, &[2, 3], false; "a late witness kicks the peer silent the longest a timeout later")]
-    #[test_case(&[Role::Resumes(5, 20), Role::Resumes(5, 20), Role::Charged(5)], 25, &[1, 2, 3], true; "a peer still silent when the link is back gets a timeout")]
-    #[test_case(&[Role::Resumes(5, 20), Role::Resumes(5, 20), Role::Charged(5)], 31, &[1, 2], false; "a peer silent a timeout after the link is back is kicked")]
-    #[test_case(&[Role::Charged(0), Role::Whispers(3)], 13, &[2], false; "a lone peer owing bytes beside an idle one is no link stall")]
-    #[test_case(&[Role::Registered(0)], 41, &[1], true; "a sole silent peer stays through a 40 s outage")]
-    #[test_case(&[Role::Registered(0)], 61, &[], false; "a sole silent peer is kicked past the bound")]
-    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Joins(12)], 13, &[1, 2, 3], true; "a peer joining during an outage proves nothing")]
-    #[test_case(&[Role::Charged(0), Role::Delivers(30)], 15, &[1, 2], true; "a lone peer owing bytes beside a quiet idle one is held")]
-    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 35, &[1, 2, 3], true; "an idle peer receiving first after an outage gives the held peers a timeout")]
-    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 36, &[2, 3], false; "held peers silent a timeout after an idle peer receives go")]
-    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 47, &[3], false; "held peers silent after an idle peer receives go one per timeout")]
-    #[test_case(&[Role::Charged(0), Role::Whispers(15)], 30, &[2], false; "an idle peer's later bytes do not restart a held peer's timeout")]
-    #[test_case(&[Role::Resumes(0, 55), Role::Charged(0)], 65, &[1, 2], true; "a peer silent through a 55 s outage gets a timeout after it")]
-    #[test_case(&[Role::Resumes(0, 55), Role::Charged(0)], 66, &[1], false; "a peer silent a timeout after a 55 s outage is kicked")]
-    #[test_case(&[Role::Chatters(0)], 11, &[], false; "a sole peer receiving only small messages is kicked")]
-    #[test_case(&[Role::Chatters(25); 3], 36, &[2, 3], false; "peers receiving only small messages after an outage go one per timeout")]
-    #[test_case(&[Role::Charged(0), Role::Flaps(12, 5)], 121, &[1, 2], true; "a dead peer beside a flapping link is held up to the absolute bound")]
-    #[test_case(&[Role::Charged(0), Role::Flaps(12, 5)], 122, &[2], false; "a dead peer beside a flapping link is kicked at the absolute bound")]
+    /// judge then suspects our own link, `unbanned` the peers kicked with no witness.
+    #[test_case(&[Role::Registered(0); 3], 11, &[1, 2, 3], true, &[]; "a stall of every peer at once is our link")]
+    #[test_case(&[Role::Registered(0); 3], 41, &[1, 2, 3], true, &[]; "a 40 s silence of every peer kicks nobody")]
+    #[test_case(&[Role::Registered(0); 3], 71, &[2, 3], false, &[1]; "every peer silent past the bound loses the one silent the longest")]
+    #[test_case(&[Role::Registered(0); 3], 72, &[3], false, &[1, 2]; "every peer silent past the bound loses one per timeout")]
+    #[test_case(&[Role::Charged(0); 3], 25, &[1, 2, 3], true, &[]; "a long stall of every peer is still our link")]
+    #[test_case(&[Role::Registered(1), Role::Registered(2), Role::Registered(3)], 25, &[1, 2, 3], true, &[]; "peers going silent a second apart in an outage stay")]
+    #[test_case(&[Role::Charged(1), Role::Charged(2), Role::Charged(3)], 25, &[1, 2, 3], true, &[]; "peers owing bytes and going silent a second apart stay")]
+    #[test_case(&[Role::Delivers(0), Role::Registered(0), Role::Delivers(0)], 11, &[1, 3], false, &[]; "a lone silent request among delivering peers is kicked")]
+    #[test_case(&[Role::Delivers(0), Role::Charged(0), Role::Delivers(0)], 12, &[1, 3], false, &[]; "a lone peer owing bytes among delivering peers is kicked")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(0)], 11, &[2, 3], false, &[]; "two stalls beside a delivering peer kick one")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(0)], 22, &[2], false, &[]; "the second stall goes a timeout later")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(1)], 12, &[2, 3], false, &[]; "stalls a second apart beside a delivering peer go one per timeout")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(2)], 14, &[2, 3], false, &[]; "stalls two seconds apart beside a delivering peer go one per timeout")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(1), Role::Joins(11)], 12, &[2, 3, 4], false, &[]; "a replacement joining does not unpace the next stall")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(13), Role::Registered(1)], 24, &[2, 3], false, &[]; "a late witness kicks the peer silent the longest a timeout later")]
+    #[test_case(&[Role::Resumes(5, 20), Role::Resumes(5, 20), Role::Charged(5)], 25, &[1, 2, 3], true, &[]; "a peer still silent when the link is back gets a timeout")]
+    #[test_case(&[Role::Resumes(5, 20), Role::Resumes(5, 20), Role::Charged(5)], 31, &[1, 2], false, &[]; "a peer silent a timeout after the link is back is kicked")]
+    #[test_case(&[Role::Charged(0), Role::Whispers(3)], 13, &[2], false, &[]; "a lone peer owing bytes beside an idle one is no link stall")]
+    #[test_case(&[Role::Registered(0)], 41, &[1], true, &[]; "a sole silent peer stays through a 40 s outage")]
+    #[test_case(&[Role::Registered(0)], 61, &[], false, &[1]; "a sole silent peer is kicked past the bound")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Joins(12)], 13, &[1, 2, 3], true, &[]; "a peer joining during an outage proves nothing")]
+    #[test_case(&[Role::Charged(0), Role::Delivers(30)], 15, &[1, 2], true, &[]; "a lone peer owing bytes beside a quiet idle one is held")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 35, &[1, 2, 3], true, &[]; "an idle peer receiving first after an outage gives the held peers a timeout")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 36, &[2, 3], false, &[]; "held peers silent a timeout after an idle peer receives go")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 47, &[3], false, &[]; "held peers silent after an idle peer receives go one per timeout")]
+    #[test_case(&[Role::Charged(0), Role::Whispers(15)], 30, &[2], false, &[]; "an idle peer's later bytes do not restart a held peer's timeout")]
+    #[test_case(&[Role::Resumes(0, 55), Role::Charged(0)], 65, &[1, 2], true, &[]; "a peer silent through a 55 s outage gets a timeout after it")]
+    #[test_case(&[Role::Resumes(0, 55), Role::Charged(0)], 66, &[1], false, &[]; "a peer silent a timeout after a 55 s outage is kicked")]
+    #[test_case(&[Role::Chatters(0)], 11, &[], false, &[]; "a sole peer receiving only small messages is kicked")]
+    #[test_case(&[Role::Chatters(25); 3], 36, &[2, 3], false, &[]; "peers receiving only small messages after an outage go one per timeout")]
+    #[test_case(&[Role::Charged(0), Role::Flaps(12, 5)], 121, &[1, 2], true, &[]; "a dead peer beside a flapping link is held up to the absolute bound")]
+    #[test_case(&[Role::Charged(0), Role::Flaps(12, 5)], 122, &[2], false, &[1]; "a dead peer beside a flapping link is kicked at the absolute bound")]
     fn the_stall_judge_kicks_one_peer_per_shared_stall(
         roles: &[Role],
         secs: u64,
         kept: &[u8],
         link_stalled: bool,
+        unbanned: &[u8],
     ) {
         // Every received byte but a chatter's is part of an answer still arriving.
         let peer = |n: u8, role: Role| Observed {
@@ -2166,6 +2178,7 @@ mod tests {
             .map(|(n, _)| (conn(n, 0), start))
             .collect();
         let mut judge = StallJudge::default();
+        let mut kicked_unbanned = Vec::new();
 
         for second in 1..=secs {
             for (n, &role) in (1..).zip(roles) {
@@ -2197,8 +2210,9 @@ mod tests {
                 .filter(|(_, &progress)| now.duration_since(progress) > REQUEST_TIMEOUT)
                 .map(|(&id, &progress)| (id, progress))
                 .collect();
-            let (kicked, _) = judge.judge(now, &peers, stalled);
+            let (kicked, _, unwitnessed) = judge.judge(now, &peers, stalled);
             assert!(kicked.len() <= 1, "second {second} kicked {kicked:?}");
+            kicked_unbanned.extend(unwitnessed);
             peers.retain(|p| !kicked.contains(&p.id));
             requests.retain(|id, _| !kicked.contains(id));
         }
@@ -2207,6 +2221,8 @@ mod tests {
         let kept: Vec<PeerId> = kept.iter().map(|&n| conn(n, 0)).collect();
         assert_eq!(left, kept);
         assert_eq!(judge.link_stalled, link_stalled);
+        let unbanned: Vec<PeerId> = unbanned.iter().map(|&n| conn(n, 0)).collect();
+        assert_eq!(kicked_unbanned, unbanned, "kicked without a ban");
     }
 
     /// A peer's silence with work drags its serving rate. Once every peer is silent long
