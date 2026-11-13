@@ -626,19 +626,14 @@ impl PeerFlow {
         // Short of both, its rate shows how much it was asked for, not its bandwidth.
         let bound = in_flight > 0 && (in_flight >= self.limiter.cap as u64 || link_full);
         let cap = self.limiter.tick(bytes, in_flight, CAP_STEP_BYTES_PER_SEC);
-        self.sample(self.limiter.rate, bound, link_stalled);
-        cap
-    }
-
-    /// Folds `rate` into the serving rate if the peer had work. Ticks are skipped once the
-    /// timeout monitor sees our own link stalled, since such a stall says nothing about
-    /// the peer and would drag its average for 30 s.
-    fn sample(&mut self, rate: f64, has_work: bool, link_stalled: bool) {
-        if has_work && !link_stalled {
+        // A stall of our own link says nothing about the peer and would drag its average
+        // for 30 s, so ticks are skipped once the timeout monitor sees one.
+        if bound && !link_stalled {
             self.serving_ticks += 1;
             let alpha = 1.0 / self.serving_ticks.min(SERVING_SAMPLE_TICKS) as f64;
-            self.serving_rate += alpha * (rate - self.serving_rate);
+            self.serving_rate += alpha * (self.limiter.rate - self.serving_rate);
         }
+        cap
     }
 
     /// Returns the peer's serving rate in bytes/s, 0 until measured.
