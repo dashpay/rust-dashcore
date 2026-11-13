@@ -173,16 +173,50 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use test_case::test_case;
 
     #[tokio::test]
     async fn test_checksummed_file_write_read_roundtrip() {
         let temp_dir = TempDir::new().unwrap();
         let file = ChecksummedFile::new(temp_dir.path().join("items.dat"));
-        let items = vec![vec![1u8, 2, 3], vec![], vec![4u8; 300]];
+        let items = vec![vec![1, 2, 3], vec![], vec![4; 300]];
 
         file.write(&items).await.unwrap();
 
         assert_eq!(file.read().await.unwrap(), items);
+        assert_eq!(file.read_unverified_at(0).unwrap(), items[0]);
+        file.verify().await.unwrap();
+
+        let bytes_file = ChecksummedFile::<u8>::new(temp_dir.path().join("bytes.dat"));
+        bytes_file.write_bytes(b"snapshot").await.unwrap();
+        assert_eq!(bytes_file.read_bytes().await.unwrap(), b"snapshot");
+    }
+
+    #[test_case(|bytes| bytes[0] ^= 1 ; "flipped data byte")]
+    #[test_case(|bytes| *bytes.last_mut().unwrap() ^= 1 ; "flipped checksum byte")]
+    #[test_case(|bytes| { bytes.pop(); } ; "truncated")]
+    #[test_case(|bytes| bytes.push(0) ; "extra byte")]
+    #[test_case(|bytes| bytes.truncate(blake3::OUT_LEN - 1) ; "shorter than the checksum")]
+    #[tokio::test]
+    async fn test_checksummed_file_detects_corruption(corrupt: fn(&mut Vec<u8>)) {
+        let temp_dir = TempDir::new().unwrap();
+        let items_path = temp_dir.path().join("items.dat");
+        let bytes_path = temp_dir.path().join("bytes.dat");
+        let file = ChecksummedFile::new(&items_path);
+        let bytes_file = ChecksummedFile::<u8>::new(&bytes_path);
+
+        file.write(&[vec![1, 2, 3], vec![4; 300]]).await.unwrap();
+        bytes_file.write_bytes(b"snapshot").await.unwrap();
+
+        for path in [&items_path, &bytes_path] {
+            let mut bytes = fs::read(path).unwrap();
+            corrupt(&mut bytes);
+            fs::write(path, bytes).unwrap();
+        }
+
+        assert!(matches!(file.read().await, Err(StorageError::Corruption(_))));
+        assert!(matches!(file.verify().await, Err(StorageError::Corruption(_))));
+        assert!(matches!(bytes_file.read_bytes().await, Err(StorageError::Corruption(_))));
     }
 
     #[test]

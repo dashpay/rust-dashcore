@@ -818,6 +818,14 @@ mod tests {
             loaded_segment.get(MAX_ITEMS / 2 - 1..MAX_ITEMS / 2),
             [FilterHeader::dummy(MAX_ITEMS / 2 - 1)]
         );
+
+        let path = tmp_dir.path().join(FilterHeader::segment_file_name(segment_id));
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[0] ^= 1;
+        fs::write(&path, bytes).unwrap();
+
+        let result = Segment::<FilterHeader>::load(tmp_dir.path(), segment_id).await;
+        assert!(matches!(result, Err(StorageError::Corruption(_))));
     }
 
     #[tokio::test]
