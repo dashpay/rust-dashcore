@@ -1,6 +1,15 @@
 import unittest
 
-from release import ReleaseError, bump, check, next_version, release_section, set_workspace_version, workspace_version
+from release import (
+    ReleaseError,
+    bump,
+    check,
+    merged_prs,
+    next_version,
+    release_section,
+    set_workspace_version,
+    workspace_version,
+)
 
 CARGO_TOML = """[workspace]
 members = ["dash"]
@@ -63,17 +72,53 @@ class ReleaseSectionTests(unittest.TestCase):
 
 class CheckTests(unittest.TestCase):
     def test_accepts_a_new_version_above_every_tag(self):
-        check("0.46.0", CHANGELOG, ["v0.44.0", "v0.45.0"])
-        check("0.46.0", CHANGELOG, [])
+        self.assertEqual(check("0.46.0", CHANGELOG, ["v0.44.0", "v0.45.0"], {2: "feat: new thing (#2)"}), [])
+        self.assertEqual(check("0.46.0", CHANGELOG, [], None), [])
 
     def test_rejects_a_released_or_lower_version(self):
         for tags in (["v0.45.0", "v0.46.0"], ["v0.47.0"], ["v0.46.1"]):
             with self.subTest(tags=tags), self.assertRaises(ReleaseError):
-                check("0.46.0", CHANGELOG, tags)
+                check("0.46.0", CHANGELOG, tags, None)
 
     def test_rejects_a_version_without_a_section(self):
         with self.assertRaises(ReleaseError):
-            check("0.47.0", CHANGELOG, ["v0.46.0"])
+            check("0.47.0", CHANGELOG, ["v0.46.0"], None)
+
+    def test_rejects_a_pr_an_earlier_release_lists(self):
+        carried_over = CHANGELOG.replace("- New thing (#2) @a", "- New thing (#2) @a\n- Old thing (#1) @b")
+        with self.assertRaises(ReleaseError):
+            check("0.46.0", carried_over, ["v0.45.0"], None)
+
+    def test_upstream_links_and_foreign_references_are_not_prs(self):
+        changelog = CHANGELOG + "\n## 0.1.0 - 2020-01-01\n\n- Upstream [#2](https://github.com/rust-bitcoin/rust-bitcoin/pull/2)\n"
+        changelog = changelog.replace("(#2) @a", "(#2) @a, see rust-bitcoin#1 and https://example.com/x#1")
+        self.assertEqual(check("0.46.0", changelog, ["v0.45.0"], {2: "fix: new thing (#2)"}), [])
+
+    def test_warns_about_unmerged_and_left_out_prs(self):
+        merged = {
+            3: "feat(dash-spv)!: left out (#3)",
+            4: "fix: left out too (#4)",
+            5: "ci: routinely left out (#5)",
+            6: "chore: also routinely left out (#6)",
+        }
+        warnings = check("0.46.0", CHANGELOG, ["v0.45.0"], merged)
+        self.assertEqual(len(warnings), 2)
+        self.assertIn("not merged since the latest release: #2", warnings[0])
+        self.assertTrue(warnings[1].endswith(": #3, #4"))
+
+
+class MergedPrsTests(unittest.TestCase):
+    def test_reads_squash_and_merge_commit_subjects(self):
+        subjects = [
+            "feat(key-wallet): expose `holds_coin` (#1400)",
+            "Merge pull request #1402 from dashpay/chore/release-v0.46.0",
+            "chore: merge `master` into the release branch",
+            "fix: mention #12 midway",
+        ]
+        self.assertEqual(
+            merged_prs(subjects),
+            {1400: subjects[0], 1402: subjects[1]},
+        )
 
 
 class BumpTests(unittest.TestCase):
