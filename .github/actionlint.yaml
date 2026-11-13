@@ -1,0 +1,6 @@
+# Workaround for rhysd/actionlint#711, remove when `$/` is recognised as valid syntax
+paths:
+  .github/workflows/**/*.{yaml,yml}:
+    ignore:
+      - reusable workflow call "\$/.+" at "uses" is not following the format
+      - specifying action "\$/.+" in invalid format because ref is missing

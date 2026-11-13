@@ -349,7 +349,7 @@ mod tests {
     use crate::Utxo;
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::{Address, Network, Transaction, Txid};
-    use dashcore_hashes::{sha256d, Hash};
+    use dashcore_hashes::sha256d;
     use std::str::FromStr;
 
     #[test]
@@ -454,9 +454,8 @@ mod tests {
     fn test_asset_lock_transaction() {
         // Test based on DSTransactionTests.m testAssetLockTx1
         use dashcore::consensus::Decodable;
-        use hex;
 
-        let hex_data = hex::decode("0300080001eecf4e8f1ffd3a3a4e5033d618231fd05e5f08c1a727aac420f9a26db9bf39eb010000006a473044022026f169570532332f857cb64a0b7d9c0837d6f031633e1d6c395d7c03b799460302207eba4c4575a66803cecf50b61ff5f2efc2bd4e61dff00d9d4847aa3d8b1a5e550121036cd0b73d304bacc80fa747d254fbc5f0bf944dd8c8b925cd161bb499b790d08d0000000002317dd0be030000002321022ca85dba11c4e5a6da3a00e73a08765319a5d66c2f6434b288494337b0c9ed2dac6df29c3b00000000026a000000000046010200e1f505000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac6d11a735000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac").unwrap();
+        let hex_data = hex_conservative::decode_to_vec("0300080001eecf4e8f1ffd3a3a4e5033d618231fd05e5f08c1a727aac420f9a26db9bf39eb010000006a473044022026f169570532332f857cb64a0b7d9c0837d6f031633e1d6c395d7c03b799460302207eba4c4575a66803cecf50b61ff5f2efc2bd4e61dff00d9d4847aa3d8b1a5e550121036cd0b73d304bacc80fa747d254fbc5f0bf944dd8c8b925cd161bb499b790d08d0000000002317dd0be030000002321022ca85dba11c4e5a6da3a00e73a08765319a5d66c2f6434b288494337b0c9ed2dac6df29c3b00000000026a000000000046010200e1f505000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac6d11a735000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac").unwrap();
 
         let mut cursor = std::io::Cursor::new(hex_data);
         let tx = Transaction::consensus_decode(&mut cursor).unwrap();
@@ -483,9 +482,8 @@ mod tests {
     fn test_coinbase_transaction() {
         // Test based on DSTransactionTests.m testCoinbaseTransaction
         use dashcore::consensus::Decodable;
-        use hex;
 
-        let hex_data = hex::decode("03000500010000000000000000000000000000000000000000000000000000000000000000ffffffff0502f6050105ffffffff0200c11a3d050000002321038df098a36af5f1b7271e32ad52947f64c1ad70c16a8a1a987105eaab5daa7ad2ac00c11a3d050000001976a914bfb885c89c83cd44992a8ade29b610e6ddf00c5788ac00000000260100f6050000aaaec8d6a8535a01bd844817dea1faed66f6c397b1dcaec5fe8c5af025023c35").unwrap();
+        let hex_data = hex_conservative::decode_to_vec("03000500010000000000000000000000000000000000000000000000000000000000000000ffffffff0502f6050105ffffffff0200c11a3d050000002321038df098a36af5f1b7271e32ad52947f64c1ad70c16a8a1a987105eaab5daa7ad2ac00c11a3d050000001976a914bfb885c89c83cd44992a8ade29b610e6ddf00c5788ac00000000260100f6050000aaaec8d6a8535a01bd844817dea1faed66f6c397b1dcaec5fe8c5af025023c35").unwrap();
 
         let mut cursor = std::io::Cursor::new(hex_data);
         let tx = Transaction::consensus_decode(&mut cursor).unwrap();
@@ -495,7 +493,7 @@ mod tests {
         // Check if it's a coinbase transaction by checking if first input has null previous_output
         assert_eq!(
             tx.input[0].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[0u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([0u8; 32]))
         );
         assert_eq!(tx.input[0].previous_output.vout, 0xffffffff);
         assert_eq!(tx.output.len(), 2);
@@ -637,7 +635,7 @@ mod tests {
     use crate::DerivationPath;
     use crate::Wallet;
     use dashcore::address::NetworkUnchecked;
-    use secp256k1::PublicKey;
+    use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 
     fn test_wallet_and_info() -> (Wallet, ManagedWalletInfo) {
         let wallet =
@@ -669,27 +667,24 @@ mod tests {
             &self,
             path: &DerivationPath,
             sighash: [u8; 32],
-        ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
-            let secp = secp256k1::Secp256k1::new();
+        ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
-                .derive_priv(&secp, path)
+                .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            let msg = secp256k1::Message::from_digest(sighash);
-            let sig = secp.sign_ecdsa(&msg, &xpriv.private_key);
-            let pk = secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key);
+            let sig = xpriv.private_key.sign(&sighash);
+            let pk = xpriv.private_key.public_key();
             Ok((sig, pk))
         }
 
-        async fn public_key(&self, path: &DerivationPath) -> Result<PublicKey, Self::Error> {
-            let secp = secp256k1::Secp256k1::new();
+        async fn public_key(&self, path: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
-                .derive_priv(&secp, path)
+                .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            Ok(secp256k1::PublicKey::from_secret_key(&secp, &xpriv.private_key))
+            Ok(xpriv.private_key.public_key())
         }
     }
 
@@ -699,13 +694,12 @@ mod tests {
             &self,
             path: &DerivationPath,
         ) -> Result<crate::bip32::ExtendedPubKey, Self::Error> {
-            let secp = secp256k1::Secp256k1::new();
             let xpriv = self
                 .root
                 .to_extended_priv_key(self.network)
-                .derive_priv(&secp, path)
+                .derive_priv(path)
                 .map_err(|e| e.to_string())?;
-            Ok(crate::bip32::ExtendedPubKey::from_priv(&secp, &xpriv))
+            Ok(crate::bip32::ExtendedPubKey::from_priv(&xpriv))
         }
     }
 
@@ -784,10 +778,10 @@ mod tests {
                 &self,
                 _: &DerivationPath,
                 _: [u8; 32],
-            ) -> Result<(secp256k1::ecdsa::Signature, PublicKey), Self::Error> {
+            ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
                 unreachable!("should be rejected before any signing is attempted")
             }
-            async fn public_key(&self, _: &DerivationPath) -> Result<PublicKey, Self::Error> {
+            async fn public_key(&self, _: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
                 unreachable!()
             }
         }

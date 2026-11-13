@@ -379,15 +379,14 @@ fn fmt_satoshi_in(
     let mut num_after_decimal_point = 0;
     let mut norm_nb_decimals = 0;
     let mut num_before_decimal_point = satoshi;
-    let trailing_decimal_zeros;
     let mut exp = 0;
-    match precision.cmp(&0) {
+    let trailing_decimal_zeros = match precision.cmp(&0) {
         // We add the number of zeroes to the end
         Ordering::Greater => {
             if satoshi > 0 {
                 exp = precision as usize;
             }
-            trailing_decimal_zeros = options.precision.unwrap_or(0);
+            options.precision.unwrap_or(0)
         }
         Ordering::Less => {
             let precision = unsigned_abs(precision);
@@ -406,10 +405,10 @@ fn fmt_satoshi_in(
             }
             // compute requested precision
             let opt_precision = options.precision.unwrap_or(0);
-            trailing_decimal_zeros = opt_precision.saturating_sub(norm_nb_decimals);
+            opt_precision.saturating_sub(norm_nb_decimals)
         }
-        Ordering::Equal => trailing_decimal_zeros = options.precision.unwrap_or(0),
-    }
+        Ordering::Equal => options.precision.unwrap_or(0),
+    };
     let total_decimals = norm_nb_decimals + trailing_decimal_zeros;
     // Compute expected width of the number
     let mut num_width = if total_decimals > 0 {
@@ -1242,6 +1241,7 @@ mod private {
     use crate::{Amount, SignedAmount};
 
     /// Used to seal the `CheckedSum` trait
+    #[allow(unnameable_types)]
     pub trait SumSeal<A> {}
 
     impl<T> SumSeal<Amount> for T where T: Iterator<Item = Amount> {}
@@ -1286,6 +1286,7 @@ pub mod serde {
     mod private {
         /// add this as a trait bound to traits which consumers of this library
         /// should not be able to implement.
+        #[allow(unnameable_types)]
         pub trait Sealed {}
         impl Sealed for super::Amount {}
         impl Sealed for super::SignedAmount {}

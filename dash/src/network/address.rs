@@ -341,8 +341,6 @@ mod test {
     use core::str::FromStr;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-    use hashes::hex::FromHex;
-
     use super::{AddrV2, AddrV2Message, Address};
     use crate::consensus::encode::{deserialize, serialize};
     use crate::internal_macros::hex;
@@ -370,12 +368,12 @@ mod test {
             format!(
                 "The address is: {:?}",
                 Address {
-                    services: flags.add(ServiceFlags::WITNESS),
+                    services: flags.add(ServiceFlags::BLOOM),
                     address: [0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001],
                     port: 8333
                 }
             ),
-            "The address is: Address {services: ServiceFlags(NETWORK|WITNESS), address: 10.0.0.1, port: 8333}"
+            "The address is: Address {services: ServiceFlags(NETWORK|BLOOM), address: 10.0.0.1, port: 8333}"
         );
 
         assert_eq!(
@@ -413,7 +411,7 @@ mod test {
     #[test]
     fn test_socket_addr() {
         let s4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(111, 222, 123, 4)), 5555);
-        let a4 = Address::new(&s4, ServiceFlags::NETWORK | ServiceFlags::WITNESS);
+        let a4 = Address::new(&s4, ServiceFlags::NETWORK | ServiceFlags::BLOOM);
         assert_eq!(a4.socket_addr().unwrap(), s4);
         let s6 = SocketAddr::new(
             IpAddr::V6(Ipv6Addr::new(
@@ -421,7 +419,7 @@ mod test {
             )),
             9999,
         );
-        let a6 = Address::new(&s6, ServiceFlags::NETWORK | ServiceFlags::WITNESS);
+        let a6 = Address::new(&s6, ServiceFlags::NETWORK | ServiceFlags::BLOOM);
         assert_eq!(a6.socket_addr().unwrap(), s6);
     }
 
@@ -446,12 +444,14 @@ mod test {
             AddrV2::Ipv6(Ipv6Addr::from_str("1a1b:2a2b:3a3b:4a4b:5a5b:6a6b:7a7b:8a8b").unwrap());
         assert_eq!(serialize(&ip), hex!("02101a1b2a2b3a3b4a4b5a5b6a6b7a7b8a8b"));
 
-        let ip = AddrV2::TorV2(FromHex::from_hex("f1f2f3f4f5f6f7f8f9fa").unwrap());
+        let ip = AddrV2::TorV2(hex_conservative::decode_to_array("f1f2f3f4f5f6f7f8f9fa").unwrap());
         assert_eq!(serialize(&ip), hex!("030af1f2f3f4f5f6f7f8f9fa"));
 
         let ip = AddrV2::TorV3(
-            FromHex::from_hex("53cd5648488c4707914182655b7664034e09e66f7e8cbf1084e654eb56c5bd88")
-                .unwrap(),
+            hex_conservative::decode_to_array(
+                "53cd5648488c4707914182655b7664034e09e66f7e8cbf1084e654eb56c5bd88",
+            )
+            .unwrap(),
         );
         assert_eq!(
             serialize(&ip),
@@ -459,8 +459,10 @@ mod test {
         );
 
         let ip = AddrV2::I2p(
-            FromHex::from_hex("a2894dabaec08c0051a481a6dac88b64f98232ae42d4b6fd2fa81952dfe36a87")
-                .unwrap(),
+            hex_conservative::decode_to_array(
+                "a2894dabaec08c0051a481a6dac88b64f98232ae42d4b6fd2fa81952dfe36a87",
+            )
+            .unwrap(),
         );
         assert_eq!(
             serialize(&ip),
@@ -509,7 +511,10 @@ mod test {
 
         // Valid TORv2.
         let ip: AddrV2 = deserialize(&hex!("030af1f2f3f4f5f6f7f8f9fa")).unwrap();
-        assert_eq!(ip, AddrV2::TorV2(FromHex::from_hex("f1f2f3f4f5f6f7f8f9fa").unwrap()));
+        assert_eq!(
+            ip,
+            AddrV2::TorV2(hex_conservative::decode_to_array("f1f2f3f4f5f6f7f8f9fa").unwrap())
+        );
 
         // Invalid TORv2, with bogus length.
         assert!(deserialize::<AddrV2>(&hex!("030700")).is_err());
@@ -522,7 +527,7 @@ mod test {
         assert_eq!(
             ip,
             AddrV2::TorV3(
-                FromHex::from_hex(
+                hex_conservative::decode_to_array(
                     "79bcc625184b05194975c28b66b66b0469f7f6556fb1ac3189a79b40dda32f1f"
                 )
                 .unwrap()
@@ -540,7 +545,7 @@ mod test {
         assert_eq!(
             ip,
             AddrV2::I2p(
-                FromHex::from_hex(
+                hex_conservative::decode_to_array(
                     "a2894dabaec08c0051a481a6dac88b64f98232ae42d4b6fd2fa81952dfe36a87"
                 )
                 .unwrap()
@@ -588,7 +593,7 @@ mod test {
                 },
                 AddrV2Message {
                     services: ServiceFlags::NETWORK_LIMITED
-                        | ServiceFlags::WITNESS
+                        | ServiceFlags::from(1 << 3)
                         | ServiceFlags::COMPACT_FILTERS,
                     time: 0x83766279,
                     port: 8333,

@@ -25,7 +25,7 @@ use std::error;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{self, Hash};
+use bitcoin_units::parse_int::int_from_str;
 
 use crate::consensus::{Decodable, Encodable, deserialize, encode};
 use crate::hash_types::Txid;
@@ -58,7 +58,7 @@ impl From<OutPoint> for [u8; 36] {
     fn from(value: OutPoint) -> Self {
         let mut bytes = [0u8; 36];
         // Serialize the txid
-        let txid_bytes: [u8; 32] = value.txid.to_raw_hash().into(); // Assuming to_raw_hash() returns the hash as sha256d::Hash, which can be converted into [u8; 32]
+        let txid_bytes: [u8; 32] = hashes::Hash::to_byte_array(value.txid.to_raw_hash()); // Assuming to_raw_hash() returns the hash as sha256d::Hash, which can be converted into [u8; 32]
         bytes[..32].copy_from_slice(&txid_bytes);
         // Serialize the vout
         let vout_bytes = value.vout.to_le_bytes();
@@ -83,7 +83,7 @@ impl OutPoint {
     #[inline]
     pub fn null() -> OutPoint {
         OutPoint {
-            txid: Hash::all_zeros(),
+            txid: Txid::all_zeros(),
             vout: u32::MAX,
         }
     }
@@ -152,7 +152,7 @@ impl TryInto<Vec<u8>> for OutPoint {
 #[non_exhaustive]
 pub enum ParseOutPointError {
     /// Error in TXID part.
-    Txid(hashes::hex::Error),
+    Txid(hex_conservative::DecodeFixedLengthBytesError),
     /// Error in vout part.
     Vout(crate::error::ParseIntError),
     /// Error in general format.
@@ -219,7 +219,7 @@ fn parse_vout(s: &str) -> Result<u32, ParseOutPointError> {
             return Err(ParseOutPointError::VoutNotCanonical);
         }
     }
-    crate::parse::int(s).map_err(ParseOutPointError::Vout)
+    int_from_str(s).map_err(ParseOutPointError::Vout)
 }
 
 #[cfg(test)]
@@ -279,7 +279,7 @@ mod tests {
             OutPoint::from_str(
                 "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456:lol"
             ),
-            Err(ParseOutPointError::Vout(crate::parse::int::<u32, _>("lol").unwrap_err()))
+            Err(ParseOutPointError::Vout(int_from_str::<u32>("lol").unwrap_err()))
         );
 
         assert_eq!(

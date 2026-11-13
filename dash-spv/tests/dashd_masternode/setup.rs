@@ -1,52 +1,48 @@
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use dash_spv::error::Result as SpvResult;
 use dash_spv::network::NetworkEvent;
 use dash_spv::test_utils::{
     create_test_wallet, init_test_logging, next_unused_receive_address, retain_test_dir,
     MasternodeTestContext, TestEventHandler,
 };
+use dash_spv::test_utils::{MasternodeListEngine, PersistentBlockHeaderStorage};
 use dash_spv::{
     client::{ClientConfig, DashSpvClient},
     network::PeerNetworkManager,
-    storage::DiskStorageManager,
-    sync::{SyncEvent, SyncProgress},
-    LoggingGuard, Network,
+    LoggingGuard, Network, SyncEvent, SyncProgress,
 };
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{WalletEvent, WalletId, WalletManager};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::{broadcast, watch, RwLock};
-use tokio::task::JoinHandle;
 use tokio::time;
 
 /// Timeout for masternode sync tests (masternode sync takes longer than wallet sync).
 pub(super) const SYNC_TIMEOUT: u64 = 60;
 
-pub(super) type TestClient =
-    DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager, DiskStorageManager>;
+pub(super) type TestClient = DashSpvClient<WalletManager<ManagedWalletInfo>, PeerNetworkManager>;
 
 pub(super) struct ClientHandle {
     pub(super) client: TestClient,
-    pub(super) run_handle: Option<JoinHandle<SpvResult<()>>>,
     pub(super) progress_receiver: watch::Receiver<SyncProgress>,
     pub(super) sync_event_receiver: broadcast::Receiver<SyncEvent>,
     pub(super) wallet_event_receiver: broadcast::Receiver<WalletEvent>,
     pub(super) _network_event_receiver: broadcast::Receiver<NetworkEvent>,
-    pub(super) engine: Arc<RwLock<MasternodeListEngine>>,
+    pub(super) engine: Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>,
 }
 
 impl ClientHandle {
+    pub(super) async fn run(&mut self) {
+        tracing::info!("Starting client...");
+        self.client.run().await.expect("client run failed");
+    }
+
     pub(super) async fn stop(&mut self) {
-        tracing::info!("Stopping client run loop...");
-        self.client.stop().await.expect("client stop failed");
-        if let Some(handle) = self.run_handle.take() {
-            handle.await.expect("Run task panicked").expect("Run task returned error");
-        }
+        tracing::info!("Stopping client...");
+        self.client.stop().await;
     }
 }
 
@@ -161,14 +157,11 @@ pub(super) async fn receive_address(
     next_unused_receive_address(wallet, wallet_id).await
 }
 
-pub(super) async fn create_and_start_client(
+pub(super) async fn create_client(
     config: &ClientConfig,
     wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> ClientHandle {
-    let network_manager =
-        PeerNetworkManager::new(config).await.expect("Failed to create network manager");
-    let storage_manager =
-        DiskStorageManager::new(config).await.expect("Failed to create storage manager");
+    let network_manager = PeerNetworkManager::new(config).await;
 
     let handler = Arc::new(TestEventHandler::new());
     let progress_receiver = handler.subscribe_progress();
@@ -176,24 +169,30 @@ pub(super) async fn create_and_start_client(
     let wallet_event_receiver = handler.subscribe_wallet_events();
     let _network_event_receiver = handler.subscribe_network_events();
 
-    let client =
-        DashSpvClient::new(config.clone(), network_manager, storage_manager, wallet, vec![handler])
-            .await
-            .expect("Failed to create client");
+    let client = DashSpvClient::new(config.clone(), network_manager, wallet, vec![handler])
+        .await
+        .expect("Failed to create client");
 
-    let engine =
-        client.masternode_list_engine().expect("Engine should be initialized after creation");
-    let run_client = client.clone();
-
-    let run_handle = tokio::task::spawn(async move { run_client.run().await });
+    let engine = dash_spv::test_utils::masternode_list_engine(&client)
+        .expect("Engine should be initialized after creation");
 
     ClientHandle {
         client,
-        run_handle: Some(run_handle),
         progress_receiver,
         sync_event_receiver,
         wallet_event_receiver,
         _network_event_receiver,
         engine,
     }
+}
+
+/// Built and started. Use [`create_client`] plus [`ClientHandle::run`] instead when
+/// the test needs to look at the client before it touches the network.
+pub(super) async fn create_and_start_client(
+    config: &ClientConfig,
+    wallet: Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+) -> ClientHandle {
+    let mut handle = create_client(config, wallet).await;
+    handle.run().await;
+    handle
 }

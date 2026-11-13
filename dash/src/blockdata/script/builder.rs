@@ -1,12 +1,10 @@
 // Written in 2014 by Andrew Poelstra <apoelstra@wpsoftware.net>
 // SPDX-License-Identifier: CC0-1.0
 
-#[cfg(feature = "bitcoinconsensus")]
-use core::convert::From;
 use core::default::Default;
 use core::fmt;
 
-use secp256k1::XOnlyPublicKey;
+use crate::crypto::key::XOnlyPublicKey;
 
 use crate::blockdata::locktime::absolute;
 use crate::blockdata::opcodes::all::*;
@@ -73,16 +71,14 @@ impl Builder {
 
     /// Adds instructions to push a public key onto the stack.
     pub fn push_key(self, key: &PublicKey) -> Builder {
-        if key.compressed {
-            self.push_slice(key.inner.serialize())
-        } else {
-            self.push_slice(key.inner.serialize_uncompressed())
-        }
+        key.with_serialized(|bytes| {
+            self.push_slice(<&PushBytes>::try_from(bytes).expect("a key is 33 or 65 bytes"))
+        })
     }
 
     /// Adds instructions to push an XOnly public key onto the stack.
     pub fn push_x_only_key(self, x_only_key: &XOnlyPublicKey) -> Builder {
-        self.push_slice(x_only_key.serialize())
+        self.push_slice(x_only_key.serialize().0)
     }
 
     /// Adds a single opcode to the script.

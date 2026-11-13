@@ -3,19 +3,26 @@
 //! These tests verify SPV masternode list synchronization against a pre-generated
 //! regtest masternode network (1 controller + 4 masternodes with DKG cycles).
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
-use dash_spv::sync::{ProgressPercentage, SyncState};
+use dash_spv::{ProgressPercentage, SyncEvent, SyncState};
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use dashcore::sml::llmq_type::LLMQType;
+use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
+use dashcore::QuorumHash;
+use tokio::sync::Mutex;
 
 use super::helpers::{
-    assert_all_rotated_quorums_verified, wait_for_chainlock_height_at_least,
-    wait_for_masternode_sync, wait_for_mn_state_event, wait_for_mn_state_event_above,
+    assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
+    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_masternode_sync,
+    wait_for_mn_state_event, wait_for_mn_state_event_above,
     wait_for_mn_state_with_stored_cycle_above,
 };
 use super::setup::{
-    create_and_start_client, create_dummy_wallet, create_mn_test_config, TestContext, SYNC_TIMEOUT,
+    create_and_start_client, create_client, create_dummy_wallet, create_mn_test_config,
+    TestContext, SYNC_TIMEOUT,
 };
 
 /// Sync masternode list against a pre-generated regtest controller node.
@@ -33,7 +40,9 @@ async fn test_masternode_list_sync() {
     let config =
         create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
 
-    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let mut client_handle = create_client(&config, Arc::clone(&wallet)).await;
+    assert_eq!(client_handle.client.latest_coinbase().await, None);
+    client_handle.run().await;
 
     // Wait for the MasternodeStateUpdated event
     let mn_height =
@@ -72,9 +81,27 @@ async fn test_masternode_list_sync() {
         );
     }
 
+    // The client accessors return the engine's newest list, from both async
+    // and blocking callers.
+    {
+        let engine_list = client_handle.engine.read().await.latest_masternode_list().cloned();
+        assert!(engine_list.is_some());
+        assert_eq!(client_handle.client.latest_masternode_list().await, engine_list);
+        let client = client_handle.client.clone();
+        let blocking_list =
+            tokio::task::spawn_blocking(move || client.latest_masternode_list_blocking())
+                .await
+                .expect("blocking accessor should not panic");
+        assert_eq!(blocking_list, engine_list);
+
+        let engine_coinbase = client_handle.engine.read().await.latest_coinbase().cloned();
+        assert!(engine_coinbase.is_some());
+        assert_eq!(client_handle.client.latest_coinbase().await, engine_coinbase);
+    }
+
     client_handle.stop().await;
 
-    let final_progress = client_handle.client.sync_progress().await;
+    let final_progress = client_handle.client.progress().await;
 
     // Headers should also be synced
     let header_height = final_progress.headers().unwrap().current_height();
@@ -86,7 +113,8 @@ async fn test_masternode_list_sync() {
     );
 }
 
-/// Sync masternode list, stop, restart with same storage, verify incremental sync.
+/// Sync masternode list, stop, restart with same storage twice without new blocks,
+/// and verify each start rebuilds the first session's list from storage.
 #[tokio::test]
 async fn test_masternode_list_sync_with_restart() {
     let Some(ctx) = TestContext::new(true).await else {
@@ -103,12 +131,52 @@ async fn test_masternode_list_sync_with_restart() {
     let first_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let first_height = first_mn_progress.current_height();
+
+    let first_tip = {
+        let engine = client_handle.engine.read().await;
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
+    };
+    let (_, _, first_masternodes) =
+        first_tip.expect("the first session must build a masternode list before testing restart");
+    assert!(
+        first_masternodes > 0,
+        "the first session must have a masternode list before its persistence can be tested"
+    );
+
     client_handle.stop().await;
     drop(client_handle);
 
+    let after_first = storage_snapshot(ctx.storage_path());
+    assert_storage_persisted(
+        &after_first,
+        &format!("after a first session that built {first_masternodes} masternode(s)"),
+    );
+
     // Restart with same storage
     tracing::info!("=== Restarting with same storage ===");
-    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let mut client_handle = create_client(&config, Arc::clone(&wallet)).await;
+
+    // Read before the run loop is spawned, so nothing has come off the network yet:
+    // this is what the stored engine restored on its own.
+    let restored_tip = {
+        let engine = client_handle.engine.read().await;
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
+    };
+    assert_eq!(
+        restored_tip, first_tip,
+        "startup must rebuild the first session's masternode list from storage, \
+         not default and let a fresh dashd sync cover for it"
+    );
+
+    client_handle.run().await;
     let second_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let second_height = second_mn_progress.current_height();
@@ -123,13 +191,24 @@ async fn test_masternode_list_sync_with_restart() {
         "Should reach Synced state after restart"
     );
 
-    tracing::info!(
-        "Restart verified: first_height={}, second_height={}",
-        first_height,
-        second_height
-    );
+    let after_second = storage_snapshot(ctx.storage_path());
+    assert_storage_did_not_shrink(&after_first, &after_second, "masternode restart");
 
     client_handle.stop().await;
+    drop(client_handle);
+
+    // The second session stored the engine again at the same tip, in place of
+    // the first session's snapshot.
+    let client_handle = create_client(&config, Arc::clone(&wallet)).await;
+    let restored_tip = {
+        let engine = client_handle.engine.read().await;
+        engine
+            .masternode_lists
+            .iter()
+            .next_back()
+            .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
+    };
+    assert_eq!(restored_tip, first_tip, "a second restart must still restore the stored list");
 }
 
 /// Sync to pre-generated height, generate new blocks, verify incremental update.
@@ -224,7 +303,7 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
     let num_cycles = 3;
     let mut prev_stored_cycles: usize = {
         let engine = client_handle.engine.read().await;
-        engine.rotated_quorums_per_cycle.len()
+        engine.rotated_quorums_per_cycle().len()
     };
     for cycle in 1..=num_cycles {
         tracing::info!("Starting DKG cycle {}/{}...", cycle, num_cycles);
@@ -236,12 +315,12 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
         // Incremental event that fires before the QRInfo window opens.
         let pre_dkg_max_cycle: u32 = {
             let engine = client_handle.engine.read().await;
-            engine
-                .rotated_quorums_per_cycle
-                .keys()
-                .filter_map(|h| engine.block_container.get_height(h))
-                .max()
-                .unwrap_or(0)
+            let mut max_cycle = 0;
+            for cycle_hash in engine.rotated_quorums_per_cycle().keys() {
+                let height = engine.height_of(cycle_hash).await.expect("the headers read");
+                max_cycle = max_cycle.max(height.unwrap_or(0));
+            }
+            max_cycle
         };
 
         let quorum_hash =
@@ -271,7 +350,7 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
         // Then verify every stored rotated quorum is `Verified`.
         let stored_cycles = {
             let engine = client_handle.engine.read().await;
-            let stored = engine.rotated_quorums_per_cycle.len();
+            let stored = engine.rotated_quorums_per_cycle().len();
             assert!(
                 stored >= prev_stored_cycles,
                 "Cycle {}: rotated_quorums_per_cycle shrank from {} to {}",
@@ -358,7 +437,7 @@ async fn test_rotated_quorums_stored_when_sync_starts_post_dkg() {
 
     {
         let engine = client_handle.engine.read().await;
-        let stored = engine.rotated_quorums_per_cycle.len();
+        let stored = engine.rotated_quorums_per_cycle().len();
         assert!(
             stored >= 2,
             "Initial QRInfo should store both the freshly-mined tip cycle and \
@@ -368,11 +447,10 @@ async fn test_rotated_quorums_stored_when_sync_starts_post_dkg() {
             stored
         );
         assert_all_rotated_quorums_verified(&engine);
-        let mut heights: Vec<u32> = engine
-            .rotated_quorums_per_cycle
-            .keys()
-            .filter_map(|h| engine.block_container.get_height(h))
-            .collect();
+        let mut heights: Vec<u32> = Vec::new();
+        for cycle_hash in engine.rotated_quorums_per_cycle().keys() {
+            heights.extend(engine.height_of(cycle_hash).await.expect("the headers read"));
+        }
         heights.sort_unstable();
         heights.dedup();
         assert!(
@@ -442,7 +520,7 @@ async fn test_masternode_list_sync_end_to_end() {
             latest_list.quorums.get(&LLMQType::LlmqtypeTest).map(|q| q.len()).unwrap_or(0);
         assert!(non_rotating_quorums > 0, "Should have llmq_test (type 100) quorums");
 
-        let rotated_quorum_cycles = engine.rotated_quorums_per_cycle.len();
+        let rotated_quorum_cycles = engine.rotated_quorums_per_cycle().len();
         assert!(rotated_quorum_cycles > 0, "Should have rotated quorum cycles from initial QRInfo");
 
         // Every quorum in `rotated_quorums_per_cycle` must be Verified.
@@ -451,7 +529,7 @@ async fn test_masternode_list_sync_end_to_end() {
         assert_all_rotated_quorums_verified(&engine);
         tracing::info!(
             "All rotated quorums across {} cycles verified",
-            engine.rotated_quorums_per_cycle.len()
+            engine.rotated_quorums_per_cycle().len()
         );
 
         // Non-rotating quorums in the latest MN list must be Verified.
@@ -481,7 +559,7 @@ async fn test_masternode_list_sync_end_to_end() {
     // assert the count grew once the SPV has fully validated the new cycle.
     let prev_stored_cycles = {
         let engine = client_handle.engine.read().await;
-        engine.rotated_quorums_per_cycle.len()
+        engine.rotated_quorums_per_cycle().len()
     };
 
     // Mine a DKG cycle and verify the SPV client picks up the update
@@ -518,7 +596,7 @@ async fn test_masternode_list_sync_end_to_end() {
             "MN count should remain {} after DKG",
             expected_masternodes
         );
-        let stored = engine.rotated_quorums_per_cycle.len();
+        let stored = engine.rotated_quorums_per_cycle().len();
         assert!(
             stored > prev_stored_cycles,
             "Expected rotated_quorums_per_cycle to grow by at least 1 after DKG: \
@@ -560,4 +638,155 @@ async fn test_masternode_list_sync_end_to_end() {
     tracing::info!("SPV synced to ChainLocked height {}", cl_sync_height);
 
     client_handle.stop().await;
+}
+
+/// A non-rotating quorum mined after the client synced, whose work block lies
+/// at or below the height of that first sync, is `Verified` in every list the
+/// client publishes it in.
+///
+/// Once synced, the client follows the tip with one `GetMnListDiff` per block,
+/// so it holds a list for every block after the sync but none for the blocks
+/// before it. The first quorum mined after the sync has its work block
+/// (`quorum height - QUORUM_MEMBER_LIST_OFFSET`) among those, and a tip update
+/// that does not fetch it leaves the quorum `Skipped(MissedList)` until the
+/// next QRInfo, about 12 hours later on mainnet and testnet. Regtest fires a
+/// QRInfo in every cycle's mining window, so this checks each list at the
+/// moment the client publishes it rather than the state after the cycle.
+///
+/// The client's tasks must keep running while the test thread mines blocks,
+/// hence the multi-threaded runtime.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_quorum_mined_after_start_is_verified_on_arrival() {
+    let Some(mut ctx) = TestContext::new(false).await else {
+        return;
+    };
+
+    // Stop the chain a few blocks short of the next cycle, past the work block
+    // of the quorum that cycle mines. Each block waits for its ChainLock, as
+    // `mine_dkg_cycle`'s alignment blocks do.
+    let interval = ctx.mn_ctx.metadata.dkg_interval;
+    let next_quorum_height = (ctx.mn_ctx.expected_height / interval + 1) * interval;
+    let start_height = next_quorum_height - QUORUM_MEMBER_LIST_OFFSET / 2;
+    if let Some(blocks) = start_height.checked_sub(ctx.mn_ctx.expected_height) {
+        ctx.mn_ctx.mine_blocks_and_wait_for_chainlock(blocks.into(), 15);
+    }
+
+    let wallet = create_dummy_wallet();
+    let config =
+        create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
+    let mut client_handle = create_and_start_client(&config, Arc::clone(&wallet)).await;
+    let mn_progress =
+        wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
+    assert_eq!(mn_progress.state(), SyncState::Synced);
+
+    let synced_height = mn_progress.current_height();
+    assert!(
+        next_quorum_height - QUORUM_MEMBER_LIST_OFFSET <= synced_height,
+        "the next quorum (height {next_quorum_height}) must have its work block at or below the \
+         synced height {synced_height} for this test to cover the first quorum after the start"
+    );
+
+    // Record the quorum statuses of every list the client publishes, at the
+    // height it publishes it. The observer reads the engine after the event,
+    // so a later QRInfo could already have verified the quorum in that list;
+    // the tip-update check below rules out the common case.
+    let mut events = client_handle.sync_event_receiver.resubscribe();
+    let engine = Arc::clone(&client_handle.engine);
+    let published = Arc::new(Mutex::new(Vec::new()));
+    let newest_published = Arc::new(AtomicU32::new(0));
+    let observer = tokio::spawn({
+        let published = Arc::clone(&published);
+        let newest_published = Arc::clone(&newest_published);
+        async move {
+            while let Ok(event) = events.recv().await {
+                let SyncEvent::MasternodeStateUpdated {
+                    height,
+                    qr_info_result,
+                } = event
+                else {
+                    continue;
+                };
+                let statuses: Option<Vec<(QuorumHash, LLMQEntryVerificationStatus)>> =
+                    engine.read().await.masternode_lists.get(&height).map(|list| {
+                        list.quorums
+                            .get(&LLMQType::LlmqtypeTest)
+                            .into_iter()
+                            .flatten()
+                            .map(|(hash, quorum)| (*hash, quorum.verified.clone()))
+                            .collect()
+                    });
+                if let Some(statuses) = statuses {
+                    published.lock().await.push((height, qr_info_result.is_none(), statuses));
+                }
+                // Only now may the mining hook go on: a later block, or a QRInfo
+                // it brings, must not reach the list before it is recorded.
+                newest_published.fetch_max(height, Ordering::SeqCst);
+            }
+        }
+    });
+
+    // The cycle's llmq_test commitment goes into its first phase-6 block
+    // (`mine_dkg_cycle` waits until the controller would mine it), the last
+    // block before the DIP24 mining window opens and the client asks for a
+    // QRInfo. Mining the next block only once the client published that one
+    // keeps the two out of one header batch.
+    let llmq_test_window = LLMQType::LlmqtypeTest.dkg_window_at_cycle(0).mining_start;
+    let dip24_window = LLMQType::LlmqtypeTestDIP0024.dkg_window_at_cycle(0).mining_start;
+    assert!(llmq_test_window < dip24_window, "the llmq_test window must open first");
+    let before_dip24_window = next_quorum_height + dip24_window - 1;
+    let quorum_hash = ctx
+        .mn_ctx
+        .mine_dkg_cycle_with_hook(|_, height| {
+            if height != before_dip24_window {
+                return;
+            }
+            let start = Instant::now();
+            while newest_published.load(Ordering::SeqCst) < height {
+                assert!(
+                    start.elapsed() < Duration::from_secs(SYNC_TIMEOUT),
+                    "the client published no list at {height} within {SYNC_TIMEOUT}s"
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
+        })
+        .expect("DKG cycle should succeed");
+    let tip = ctx
+        .mn_ctx
+        .controller
+        .try_rpc_call("getblockcount", &[])
+        .and_then(|count| count.as_u64())
+        .expect("getblockcount") as u32;
+    wait_for_mn_state_event_above(&mut client_handle.sync_event_receiver, tip - 1, SYNC_TIMEOUT)
+        .await;
+    client_handle.stop().await;
+    observer.abort();
+    let published = std::mem::take(&mut *published.lock().await);
+
+    let quorum_hash = QuorumHash::from_byte_array(quorum_hash.to_byte_array());
+    let arrivals: Vec<_> = published
+        .iter()
+        .filter_map(|(height, tip_update, statuses)| {
+            let (_, status) = statuses.iter().find(|(hash, _)| *hash == quorum_hash)?;
+            Some((*height, *tip_update, status))
+        })
+        .collect();
+    // The llmq_test mining window opens before the DIP24 one, in which the
+    // client fires QRInfo, so a tip update should bring the commitment. A
+    // QRInfo fetches the work-block lists itself and would not cover the fix.
+    // (A list published after every QRInfo attempt failed also carries no
+    // result, which this cannot tell apart.)
+    assert!(
+        arrivals.first().is_some_and(|(_, tip_update, _)| *tip_update),
+        "the llmq_test quorum {quorum_hash} must first reach the client through a tip update, \
+         got {arrivals:?}"
+    );
+    let unverified: Vec<_> = arrivals
+        .iter()
+        .filter(|(_, _, status)| **status != LLMQEntryVerificationStatus::Verified)
+        .collect();
+    assert!(
+        unverified.is_empty(),
+        "the llmq_test quorum {quorum_hash} mined after the start must be Verified in every \
+         published list, got {unverified:?} (synced at {synced_height})"
+    );
 }

@@ -1,6 +1,7 @@
 #[cfg(feature = "bincode")]
 #[cfg(test)]
 mod tests {
+    use hex_conservative::DisplayHex;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -24,7 +25,7 @@ mod tests {
         assert!(result.is_ok());
         let (bytes, wallet_id) = result.unwrap();
         assert!(!bytes.is_empty());
-        println!("Full wallet ID: {}", hex::encode(wallet_id));
+        println!("Full wallet ID: {}", wallet_id.to_lower_hex_string());
 
         // The wallet's sync checkpoint should be seeded to birth_height - 1.
         let info = manager.get_wallet_info(&wallet_id).unwrap();
@@ -47,7 +48,7 @@ mod tests {
 
         // Same wallet ID because it's derived from the same root public key
         assert_eq!(wallet_id, wallet_id2);
-        println!("Watch-only wallet ID: {}", hex::encode(wallet_id2));
+        println!("Watch-only wallet ID: {}", wallet_id2.to_lower_hex_string());
 
         // Test 3: Create externally signable wallet (for hardware wallets)
         let mut manager3 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);
@@ -62,7 +63,7 @@ mod tests {
         let (bytes3, wallet_id3) = result.unwrap();
         assert!(!bytes3.is_empty());
         assert_eq!(wallet_id, wallet_id3);
-        println!("Externally signable wallet ID: {}", hex::encode(wallet_id3));
+        println!("Externally signable wallet ID: {}", wallet_id3.to_lower_hex_string());
 
         // Test 4: Import the serialized wallet back with a specific birth height
         let mut manager4 = WalletManager::<ManagedWalletInfo>::new(Network::Testnet);

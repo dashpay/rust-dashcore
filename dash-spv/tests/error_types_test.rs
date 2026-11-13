@@ -9,7 +9,7 @@
 use std::io;
 
 use dash_spv::error::*;
-use dash_spv::sync::ManagerIdentifier;
+use dash_spv::ManagerIdentifier;
 
 #[test]
 fn test_storage_error_from_io_error() {

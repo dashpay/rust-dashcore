@@ -3,7 +3,6 @@
 mod block_headers;
 mod blocks;
 mod chainlock;
-pub(super) mod download_coordinator;
 mod events;
 mod filter_headers;
 mod filters;
@@ -30,3 +29,5 @@ pub use identifier::ManagerIdentifier;
 pub use progress::{ProgressPercentage, SyncProgress, SyncState};
 pub use sync_coordinator::{Managers, SyncCoordinator};
 pub use sync_manager::{SyncManager, SyncManagerProgress, SyncManagerTaskContext};
+
+const BEST_CHAINLOCK_METADATA_STORAGE_KEY: &str = "best_chainlock";

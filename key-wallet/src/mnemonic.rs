@@ -12,7 +12,7 @@ use bip39 as bip39_crate;
 use serde::{Deserialize, Serialize};
 use unicode_normalization::char::is_combining_mark;
 use unicode_normalization::UnicodeNormalization;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// Language for mnemonic generation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +98,45 @@ impl Language {
 /// [`Mnemonic::cleanup_phrase`].
 const IDEO_SP: &str = "\u{3000}";
 
+/// `phrase` in NFKD form, in a buffer that is wiped when dropped, or `None` when it already
+/// is NFKD. The buffer is allocated at its final size, so it never reallocates and leaves
+/// no partial copy behind.
+fn nfkd_zeroizing(phrase: &str) -> Option<Zeroizing<String>> {
+    use unicode_normalization::{is_nfkd_quick, IsNormalized};
+    if is_nfkd_quick(phrase.chars()) == IsNormalized::Yes {
+        return None;
+    }
+    Some(collect_zeroizing(phrase.nfkd()))
+}
+
+/// `chars` collected into a buffer that is wiped when dropped. The buffer is allocated at its
+/// final size, so it never reallocates and leaves no partial copy behind.
+fn collect_zeroizing<I>(chars: I) -> Zeroizing<String>
+where
+    I: Iterator<Item = char> + Clone,
+{
+    let len = chars.clone().map(char::len_utf8).sum();
+    let mut collected = Zeroizing::new(String::with_capacity(len));
+    collected.extend(chars);
+    collected
+}
+
+/// `s` with every `from` replaced by `to`, as [`str::replace`] does, in a buffer that is wiped
+/// when dropped and allocated at its final size.
+fn replace_zeroizing(s: &str, from: &str, to: &str) -> Zeroizing<String> {
+    let count = s.matches(from).count();
+    let len = s.len() - count * from.len() + count * to.len();
+    let mut replaced = Zeroizing::new(String::with_capacity(len));
+    let mut rest = 0;
+    for (start, _) in s.match_indices(from) {
+        replaced.push_str(&s[rest..start]);
+        replaced.push_str(to);
+        rest = start + from.len();
+    }
+    replaced.push_str(&s[rest..]);
+    replaced
+}
+
 /// `true` if `word` is a member of *any* supported language's wordlist.
 /// Exact membership; caller pre-normalizes.
 fn word_in_any_list(word: &str) -> bool {
@@ -114,10 +153,20 @@ fn phrase_is_valid_any(normalized: &str) -> bool {
 }
 
 /// BIP39 Mnemonic phrase
-#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Mnemonic {
     inner: bip39_crate::Mnemonic,
+}
+
+/// Shows the language and the word count, never the words.
+impl fmt::Debug for Mnemonic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Mnemonic")
+            .field("language", &self.language())
+            .field("word_count", &self.word_count())
+            .finish()
+    }
 }
 
 #[cfg(feature = "bincode")]
@@ -137,7 +186,19 @@ impl<C> bincode::Decode<C> for Mnemonic {
     fn decode<D: bincode::de::Decoder<Context = C>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        let phrase: String = bincode::Decode::decode(decoder)?;
+        // Read like a `String` (bincode decodes it as `Vec<u8>` plus a UTF-8 check),
+        // but the decoded bytes are wiped when dropped, also on invalid UTF-8.
+        let bytes = <Vec<u8> as bincode::Decode<C>>::decode(decoder)?;
+        let phrase = match String::from_utf8(bytes) {
+            Ok(phrase) => Zeroizing::new(phrase),
+            Err(e) => {
+                let inner = e.utf8_error();
+                drop(Zeroizing::new(e.into_bytes()));
+                return Err(bincode::error::DecodeError::Utf8 {
+                    inner,
+                });
+            }
+        };
         // Same deterministic per-language walk as `from_phrase`
         // (bip39's autodetect can fail with AmbiguousLanguages on shared words).
         Mnemonic::from_phrase(&phrase)
@@ -150,9 +211,9 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for Mnemonic {
     fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = C>>(
         decoder: &mut D,
     ) -> core::result::Result<Self, bincode::error::DecodeError> {
-        let phrase: String = bincode::BorrowDecode::borrow_decode(decoder)?;
-        Mnemonic::from_phrase(&phrase)
-            .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))
+        // `String`'s `BorrowDecode` is its `Decode`, so this reads the same bytes and
+        // wipes them the same way.
+        bincode::Decode::decode(decoder)
     }
 }
 
@@ -172,7 +233,7 @@ impl Mnemonic {
 
         // Generate random entropy
         let mut entropy = vec![0u8; entropy_bytes];
-        getrandom::getrandom(&mut entropy)
+        getrandom::fill(&mut entropy)
             .map_err(|e| Error::InvalidMnemonic(format!("Failed to generate entropy: {}", e)))?;
 
         // Create mnemonic from entropy with specified language
@@ -216,17 +277,23 @@ impl Mnemonic {
     /// it carries the most useful diagnostics (unknown-word index, bad
     /// checksum) for the most common case.
     pub fn from_phrase(phrase: &str) -> Result<Self> {
-        let english_error =
-            match bip39_crate::Mnemonic::parse_in(bip39_crate::Language::English, phrase) {
-                Ok(inner) => {
-                    return Ok(Self {
-                        inner,
-                    })
-                }
-                Err(error) => error,
-            };
+        // `bip39`'s `parse_in` normalizes to NFKD for every language it is given, into a
+        // string that is not wiped. Normalize once here instead, then parse the result.
+        let normalized = nfkd_zeroizing(phrase);
+        let phrase = normalized.as_deref().map_or(phrase, String::as_str);
+        let english_error = match bip39_crate::Mnemonic::parse_in_normalized(
+            bip39_crate::Language::English,
+            phrase,
+        ) {
+            Ok(inner) => {
+                return Ok(Self {
+                    inner,
+                })
+            }
+            Err(error) => error,
+        };
         for &language in &Language::ALL[1..] {
-            if let Ok(inner) = bip39_crate::Mnemonic::parse_in(language.into(), phrase) {
+            if let Ok(inner) = bip39_crate::Mnemonic::parse_in_normalized(language.into(), phrase) {
                 return Ok(Self {
                     inner,
                 });
@@ -243,9 +310,21 @@ impl Mnemonic {
         self.inner.language().into()
     }
 
-    /// Get the mnemonic phrase as a string
-    pub fn phrase(&self) -> String {
-        self.inner.words().collect::<Vec<_>>().join(" ")
+    /// The phrase (words joined by single spaces), wiped when dropped.
+    ///
+    /// The buffer is allocated with its exact final capacity up front, so it
+    /// never reallocates and leaves no partial copy of the phrase behind.
+    pub fn phrase(&self) -> Zeroizing<String> {
+        let capacity = self.inner.words().map(str::len).sum::<usize>()
+            + self.inner.word_count().saturating_sub(1);
+        let mut phrase = Zeroizing::new(String::with_capacity(capacity));
+        for (i, word) in self.inner.words().enumerate() {
+            if i > 0 {
+                phrase.push(' ');
+            }
+            phrase.push_str(word);
+        }
+        phrase
     }
 
     /// Get the word count
@@ -263,11 +342,9 @@ impl Mnemonic {
         })
     }
 
-    /// Convert to seed with optional passphrase
-    pub fn to_seed(&self, passphrase: &str) -> [u8; 64] {
-        let mut seed = [0u8; 64];
-        seed.copy_from_slice(&self.inner.to_seed(passphrase));
-        seed
+    /// The BIP39 seed for `passphrase`, wiped when dropped.
+    pub fn to_seed(&self, passphrase: &str) -> Zeroizing<[u8; 64]> {
+        Zeroizing::new(self.inner.to_seed(passphrase))
     }
 
     /// Derive extended private key from this mnemonic
@@ -277,7 +354,7 @@ impl Mnemonic {
         network: crate::Network,
     ) -> Result<ExtendedPrivKey> {
         let seed = self.to_seed(passphrase);
-        ExtendedPrivKey::new_master(network, &seed).map_err(Into::into)
+        ExtendedPrivKey::new_master(network, &seed[..]).map_err(Into::into)
     }
 
     /// Validate a mnemonic phrase against every supported wordlist.
@@ -293,14 +370,25 @@ impl Mnemonic {
     /// space (ends trimmed). This is **input tolerance** for user-typed
     /// phrases, NOT BIP39 seed normalization — [`Self::to_seed`] performs the
     /// BIP39 (NFKD-only) normalization required for seed derivation.
+    ///
+    /// The intermediate copies are wiped when dropped, and the returned string is allocated at
+    /// its final size. The lowercase copy comes from [`str::to_lowercase`], which can reallocate,
+    /// leaving an earlier buffer unwiped, when a lowercase form is longer than its character.
     pub fn normalize_phrase(input: &str) -> String {
-        input
-            .nfkd()
-            .collect::<String>()
-            .to_lowercase()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
+        let nfkd = nfkd_zeroizing(input);
+        let nfkd = nfkd.as_deref().map_or(input, String::as_str);
+        let lower = Zeroizing::new(nfkd.to_lowercase());
+        let words: Vec<&str> = lower.split_whitespace().collect();
+        let len =
+            words.iter().map(|word| word.len()).sum::<usize>() + words.len().saturating_sub(1);
+        let mut normalized = String::with_capacity(len);
+        for (i, word) in words.iter().enumerate() {
+            if i > 0 {
+                normalized.push(' ');
+            }
+            normalized.push_str(word);
+        }
+        normalized
     }
 
     /// Minimal cleanup of user-typed recover input for display/editing, plus
@@ -331,10 +419,15 @@ impl Mnemonic {
         //     inverted. We mirror M* via `is_combining_mark` so NFKD-decomposed
         //     input keeps its combining marks (e.g. Japanese voiced kana か+゙,
         //     Latin diacritics) instead of being corrupted.
-        let mut s: String = phrase
-            .chars()
-            .filter(|&c| c.is_alphabetic() || is_combining_mark(c) || c.is_whitespace())
-            .collect();
+        //
+        //     Every intermediate copy below is a `Zeroizing` buffer, wiped when replaced or
+        //     dropped, and allocated at its final size so it never reallocates. Only
+        //     `normalize_phrase`'s `to_lowercase` can reallocate.
+        let s = collect_zeroizing(
+            phrase
+                .chars()
+                .filter(|&c| c.is_alphabetic() || is_combining_mark(c) || c.is_whitespace()),
+        );
 
         // (2) canonicalize every Unicode whitespace to an ASCII space — not
         //     just '\n'. Step (1) keeps all whitespace, and the valid-phrase
@@ -342,30 +435,27 @@ impl Mnemonic {
         //     CRLF/tab-delimited phrase would otherwise come back with '\r' /
         //     '\t' still in it. (Seed-equivalent: BIP-39 NFKD maps U+3000 and
         //     friends to U+0020 anyway.)
-        s = s
-            .chars()
-            .map(|c| {
-                if c.is_whitespace() {
-                    ' '
-                } else {
-                    c
-                }
-            })
-            .collect();
+        let mut s = collect_zeroizing(s.chars().map(|c| {
+            if c.is_whitespace() {
+                ' '
+            } else {
+                c
+            }
+        }));
 
         // (3) collapse "  " -> " "
         while s.contains("  ") {
-            s = s.replace("  ", " ");
+            s = replace_zeroizing(&s, "  ", " ");
         }
 
         // (4) trim leading whitespace only (DashSync deletes index-0 ws in a loop)
-        let mut s = s.trim_start().to_string();
+        let mut s = Zeroizing::new(s.trim_start().to_string());
 
         // (5) normalize + validity check; if valid, return the cleaned (pre-
         //     normalize) string verbatim — DashSync `return s;`
-        let normalized = Self::normalize_phrase(&s);
+        let normalized = Zeroizing::new(Self::normalize_phrase(&s));
         if phrase_is_valid_any(&normalized) {
-            return s;
+            return core::mem::take(&mut *s);
         }
 
         // (6) CJK auto-split: walk the words of the *normalized* phrase; for
@@ -382,11 +472,12 @@ impl Mnemonic {
         //     form (the wordlist + `to_seed` use it), so emitting it from the
         //     split path is correct. (DSBIP39Mnemonic has the same
         //     original-vs-NFKD mismatch; this fixes it.)
-        s = s.nfkd().collect::<String>();
+        s = collect_zeroizing(s.nfkd());
 
         let dbl_ideo = format!("{IDEO_SP}{IDEO_SP}");
         for word in normalized.split(' ') {
-            let wchars: Vec<char> = word.chars().collect();
+            let mut wchars = Zeroizing::new(Vec::with_capacity(word.chars().count()));
+            wchars.extend(word.chars());
             if wchars.is_empty() {
                 continue;
             }
@@ -399,16 +490,18 @@ impl Mnemonic {
             while i < wlen {
                 let mut j = core::cmp::min(8, wlen - i);
                 while j >= 1 {
-                    let candidate: String = wchars[i..i + j].iter().collect();
+                    let candidate = collect_zeroizing(wchars[i..i + j].iter().copied());
                     if word_in_any_list(&candidate) {
-                        let wrapped = format!("{IDEO_SP}{candidate}{IDEO_SP}");
-                        s = s.replace(&candidate, &wrapped);
+                        let wrapped = collect_zeroizing(
+                            IDEO_SP.chars().chain(candidate.chars()).chain(IDEO_SP.chars()),
+                        );
+                        s = replace_zeroizing(&s, &candidate, &wrapped);
                         while s.contains(&dbl_ideo) {
-                            s = s.replace(&dbl_ideo, IDEO_SP);
+                            s = replace_zeroizing(&s, &dbl_ideo, IDEO_SP);
                         }
                         // CFStringTrimWhitespace strips leading/trailing ws,
                         // incl. U+3000 (which `str::trim` also treats as ws).
-                        s = s.trim().to_string();
+                        s = Zeroizing::new(s.trim().to_string());
                         i += j - 1; // outer `i += 1` advances past the match
                         break;
                     }
@@ -418,7 +511,7 @@ impl Mnemonic {
             }
         }
 
-        s
+        core::mem::take(&mut *s)
     }
 }
 
@@ -432,14 +525,14 @@ impl FromStr for Mnemonic {
 
 impl fmt::Display for Mnemonic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.phrase())
+        f.write_str(&self.phrase())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hex::FromHex;
+    use hex_conservative::DisplayHex;
 
     #[test]
     #[cfg(feature = "getrandom")]
@@ -532,103 +625,108 @@ mod tests {
     #[test]
     fn test_bip39_test_vectors() {
         // Test vector 1: all zeros entropy
-        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test vector 2: 0x7f7f... entropy
-        let entropy = Vec::from_hex("7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f").unwrap();
+        let entropy = hex_conservative::decode_to_vec("7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "legal winner thank year wave sausage worth useful legal winner thank yellow";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "2e8905819b8723fe2c1d161860e5ee1830318dbf49a83bd451cfb8440c28bd6fa457fe1296106559a3c80937a1c1069be3a3a5bd381ee6260e8d9739fce1f607";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test vector 3: 0x8080... entropy
-        let entropy = Vec::from_hex("80808080808080808080808080808080").unwrap();
+        let entropy = hex_conservative::decode_to_vec("80808080808080808080808080808080").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "d71de856f81a8acc65e6fc851a38d4d7ec216fd0796d0a6827a3ad6ed5511a30fa280f12eb2e47ed2ac03b5c462a0358d18d69fe4f985ec81778c1b370b652a8";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test vector 4: all ones entropy
-        let entropy = Vec::from_hex("ffffffffffffffffffffffffffffffff").unwrap();
+        let entropy = hex_conservative::decode_to_vec("ffffffffffffffffffffffffffffffff").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "ac27495480225222079d7be181583751e86f571027b0497b5b5d11218e0a8a13332572917f0f8e5a589620c6f15b11c61dee327651a14c34e18231052e48c069";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
     }
 
     // ✓ Test 18-word mnemonics (from DashSync)
     #[test]
     fn test_18_word_mnemonics() {
         // Test 18-word mnemonic
-        let entropy = Vec::from_hex("000000000000000000000000000000000000000000000000").unwrap();
+        let entropy =
+            hex_conservative::decode_to_vec("000000000000000000000000000000000000000000000000")
+                .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon agent";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
         assert_eq!(mnemonic.word_count(), 18);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "035895f2f481b1b0f01fcf8c289c794660b289981a78f8106447707fdd9666ca06da5a9a565181599b79f53b844d8a71dd9f439c52a3d7b3e8a79c906ac845fa";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
     }
 
     // ✓ Test 24-word mnemonics (from DashSync)
     #[test]
     fn test_24_word_mnemonics() {
         // Test 24-word mnemonic
-        let entropy =
-            Vec::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
-                .unwrap();
+        let entropy = hex_conservative::decode_to_vec(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
         assert_eq!(mnemonic.word_count(), 24);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "bda85446c68413707090a52022edd26a1c9462295029f2e60cd7c4f2bbd3097170af7a4d73245cafa9c3cca8d561a7c3de6f5d4a10be8ed2a5e608d68f92fcc8";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
     }
 
     // ✓ Test random entropy examples (from DashSync)
     #[test]
     fn test_random_entropy_examples() {
         // Test random entropy 1
-        let entropy = Vec::from_hex("77c2b00716cec7213839159e404db50d").unwrap();
+        let entropy = hex_conservative::decode_to_vec("77c2b00716cec7213839159e404db50d").unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase =
             "jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "b5b6d0127db1a9d2226af0c3346031d77af31e918dba64287a1b44b8ebf63cdd52676f672a290aae502472cf2d602c051f3e6f18055e84e4c43897fc4e51a6ff";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test random entropy 2
-        let entropy = Vec::from_hex("b63a9c59a6e641f288ebc103017f1da9f8290b3da6bdef7b").unwrap();
+        let entropy =
+            hex_conservative::decode_to_vec("b63a9c59a6e641f288ebc103017f1da9f8290b3da6bdef7b")
+                .unwrap();
         let mnemonic = Mnemonic::from_entropy(&entropy, Language::English).unwrap();
         let expected_phrase = "renew stay biology evidence goat welcome casual join adapt armor shuffle fault little machine walk stumble urge swap";
-        assert_eq!(mnemonic.phrase(), expected_phrase);
+        assert_eq!(mnemonic.phrase().as_str(), expected_phrase);
 
         let seed = mnemonic.to_seed("TREZOR");
         let expected_seed = "9248d83e06f4cd98debf5b6f010542760df925ce46cf38a1bdb4e4de7d21f5c39366941c69e1bdbf2966e0f6e6dbece898a0e2f0a4c2b3e640953dfe8b7bbdc5";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
     }
 
     // ✓ Test Unicode normalization (from DashSync - Czech test case)
@@ -661,7 +759,7 @@ mod tests {
         // English (test_mnemonic_validation) and Portuguese
         // (test_portuguese_mnemonic); the other languages were only built via
         // from_entropy in test_multiple_languages, never validate()'d.
-        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
         for language in [
             Language::French,
             Language::Spanish,
@@ -690,7 +788,7 @@ mod tests {
 
         // Test that we can create mnemonics in different languages
         // (We can't easily test actual phrases without the word lists, but we can test the API)
-        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
 
         let _mnemonic_fr = Mnemonic::from_entropy(&entropy, Language::French).unwrap();
         let _mnemonic_es = Mnemonic::from_entropy(&entropy, Language::Spanish).unwrap();
@@ -709,19 +807,19 @@ mod tests {
     #[test]
     fn test_portuguese_mnemonic() {
         // Test with known entropy
-        let entropy = Vec::from_hex("00000000000000000000000000000000").unwrap();
+        let entropy = hex_conservative::decode_to_vec("00000000000000000000000000000000").unwrap();
         let mnemonic_pt = Mnemonic::from_entropy(&entropy, Language::Portuguese).unwrap();
 
         // Portuguese phrase for all zeros entropy
         // Note: bip39 library uses "abater" as the 12th word for Portuguese
         let expected_phrase_pt = "abacate abacate abacate abacate abacate abacate abacate abacate abacate abacate abacate abater";
-        assert_eq!(mnemonic_pt.phrase(), expected_phrase_pt);
+        assert_eq!(mnemonic_pt.phrase().as_str(), expected_phrase_pt);
 
         // Test seed generation with Portuguese mnemonic
         let seed = mnemonic_pt.to_seed("TREZOR");
         // Portuguese mnemonic with same entropy produces a different seed than English
         let expected_seed = "ab9742b024a1e8bd241b76f8b3a157e9d442da60277bc8f36b8b23afe163de79414fb49fd1a8dd26f4ea7f0dc965c760b3b80727557bdca61e1f0b0f069952f2";
-        assert_eq!(hex::encode(seed), expected_seed);
+        assert_eq!(seed.to_lower_hex_string(), expected_seed);
 
         // Test parsing a Portuguese mnemonic phrase
         let phrase_pt = "abacate abacate abacate abacate abacate abacate abacate abacate abacate abacate abacate abater";
@@ -763,7 +861,7 @@ mod tests {
     fn test_from_str() {
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
         let mnemonic: Mnemonic = phrase.parse().unwrap();
-        assert_eq!(mnemonic.phrase(), phrase);
+        assert_eq!(mnemonic.phrase().as_str(), phrase);
     }
 
     // ✓ Test display implementation
@@ -905,6 +1003,43 @@ mod tests {
         // Idempotent.
         let once = Mnemonic::normalize_phrase("  ABANDON\tAbout ");
         assert_eq!(Mnemonic::normalize_phrase(&once), once);
+    }
+
+    #[test]
+    fn test_normalize_phrase_allocates_its_final_size() {
+        // U+023A's lowercase form is longer than it is.
+        for input in
+            ["  ABANDON\tabout \n legal  ", "", "   ", "\u{00c1}baco  \u{00e1}baco", "\u{023a}bc"]
+        {
+            let normalized = Mnemonic::normalize_phrase(input);
+            assert_eq!(normalized.capacity(), normalized.len(), "{:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_collect_zeroizing_allocates_its_final_size() {
+        let text = "abandon\u{3000}\u{304d}\u{3087}\u{3046}";
+        let collected = collect_zeroizing(text.chars());
+        assert_eq!(collected.as_str(), text);
+        assert_eq!(collected.capacity(), collected.len());
+    }
+
+    #[test]
+    fn test_replace_zeroizing_matches_str_replace_at_its_final_size() {
+        let cases = [
+            ("a  b   c    d", "  ", " "),
+            ("", "  ", " "),
+            ("abc", "x", "yy"),
+            ("ab", "", "x"),
+            ("aaaa", "aa", "a"),
+            ("\u{304d}\u{3087}\u{3046}", "\u{3087}", "\u{3000}\u{3087}\u{3000}"),
+            ("\u{3000}\u{3000}x\u{3000}\u{3000}", "\u{3000}\u{3000}", "\u{3000}"),
+        ];
+        for (text, from, to) in cases {
+            let replaced = replace_zeroizing(text, from, to);
+            assert_eq!(replaced.as_str(), text.replace(from, to), "{:?}", (text, from, to));
+            assert_eq!(replaced.capacity(), replaced.len(), "{:?}", (text, from, to));
+        }
     }
 
     #[test]
@@ -1067,6 +1202,28 @@ mod tests {
         );
     }
 
+    /// Exact outputs, pinned to what `cleanup_phrase` returned before its intermediate copies
+    /// were made wiping.
+    #[test]
+    fn cleanup_phrase_exact_outputs() {
+        // Not a valid phrase: punctuation is dropped, whitespace collapsed, and only the start
+        // trimmed.
+        assert_eq!(Mnemonic::cleanup_phrase("  foo,,  bar\t\tbaz "), "foo bar baz ");
+        // Not a valid phrase: the result comes back in NFKD form.
+        assert_eq!(Mnemonic::cleanup_phrase("\u{e9}t\u{e9} x"), "e\u{301}te\u{301} x");
+        // Simplified-Chinese words are single ideographs, so a no-space phrase comes back with
+        // an ideographic space between every two words.
+        let entropy = [
+            0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6, 0x07, 0x18, 0x29, 0x3a, 0x4b, 0x5c, 0x6d, 0x7e,
+            0x8f, 0x90,
+        ];
+        let phrase =
+            Mnemonic::from_entropy(&entropy, Language::ChineseSimplified).unwrap().phrase();
+        let nospace: String = phrase.split(' ').collect();
+        let expected = phrase.split(' ').collect::<Vec<_>>().join(IDEO_SP);
+        assert_eq!(Mnemonic::cleanup_phrase(&nospace), expected);
+    }
+
     #[test]
     fn cleanup_strips_punctuation_around_cjk() {
         // Punctuation removal and CJK auto-split must both fire on a no-space
@@ -1153,7 +1310,10 @@ mod tests {
             mnemonic.language(),
             Language::ChineseSimplified | Language::ChineseTraditional
         ));
-        assert_eq!(mnemonic.to_seed("").to_vec(), Vec::from_hex(DUAL_LIST_SEED_HEX).unwrap());
+        assert_eq!(
+            mnemonic.to_seed("").to_vec(),
+            hex_conservative::decode_to_vec(DUAL_LIST_SEED_HEX).unwrap()
+        );
     }
 
     #[test]
@@ -1169,7 +1329,7 @@ mod tests {
         assert_eq!(mnemonic.language(), Language::French);
         assert_eq!(
             mnemonic.to_seed("TREZOR").to_vec(),
-            Vec::from_hex(FRENCH_SEED_TREZOR_HEX).unwrap()
+            hex_conservative::decode_to_vec(FRENCH_SEED_TREZOR_HEX).unwrap()
         );
     }
 
@@ -1187,6 +1347,20 @@ mod tests {
     }
 
     #[test]
+    fn test_nfkd_zeroizing_normalizes_into_an_exact_size_buffer() {
+        use unicode_normalization::UnicodeNormalization;
+        let nfkd_phrase =
+            Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, Language::French).unwrap().phrase();
+        assert!(nfkd_zeroizing(&nfkd_phrase).is_none(), "NFKD input is used as it is");
+
+        let nfc_phrase: String = nfkd_phrase.nfc().collect();
+        assert_ne!(nfc_phrase, *nfkd_phrase);
+        let normalized = nfkd_zeroizing(&nfc_phrase).expect("NFC input is normalized");
+        assert_eq!(*normalized, *nfkd_phrase);
+        assert_eq!(normalized.capacity(), normalized.len());
+    }
+
+    #[test]
     fn test_from_phrase_nfc_input_matches_nfkd() {
         use unicode_normalization::UnicodeNormalization;
         let mnemonic =
@@ -1195,7 +1369,7 @@ mod tests {
         let nfkd_phrase = mnemonic.phrase();
         let nfc_phrase: String = nfkd_phrase.nfc().collect();
         assert_ne!(
-            nfc_phrase, nfkd_phrase,
+            nfc_phrase, *nfkd_phrase,
             "fixture must contain decomposable accents to cover NFC input"
         );
         let parsed = Mnemonic::from_phrase(&nfc_phrase).unwrap();
@@ -1241,6 +1415,16 @@ mod tests {
     }
 
     #[test]
+    fn test_phrase_is_exact_size_in_every_language() {
+        for language in Language::ALL {
+            let mnemonic = Mnemonic::from_entropy(&[0x5a; 32], language).unwrap();
+            let phrase = mnemonic.phrase();
+            assert_eq!(phrase.capacity(), phrase.len(), "{language:?}");
+            assert_eq!(phrase.split(' ').count(), 24, "{language:?}");
+        }
+    }
+
+    #[test]
     fn test_from_str_parses_any_language() {
         let french =
             Mnemonic::from_entropy(&ANY_LANGUAGE_TEST_ENTROPY, Language::French).unwrap().phrase();
@@ -1259,5 +1443,24 @@ mod tests {
             bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
         assert_eq!(decoded.phrase(), original.phrase());
         assert_eq!(decoded.to_seed(""), original.to_seed(""));
+
+        let (borrowed, _): (Mnemonic, usize) =
+            bincode::borrow_decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(borrowed.phrase(), original.phrase());
+        assert_eq!(borrowed.to_seed(""), original.to_seed(""));
+    }
+
+    #[test]
+    #[cfg(feature = "bincode")]
+    fn test_bincode_decode_rejects_invalid_utf8_phrase() {
+        // Encoded the way a `String` is: a length, then the bytes.
+        let bytes =
+            bincode::encode_to_vec(vec![0x61u8, 0xff, 0x62], bincode::config::standard()).unwrap();
+        let decoded: core::result::Result<(Mnemonic, usize), _> =
+            bincode::decode_from_slice(&bytes, bincode::config::standard());
+        assert!(matches!(decoded, Err(bincode::error::DecodeError::Utf8 { .. })));
+        let borrowed: core::result::Result<(Mnemonic, usize), _> =
+            bincode::borrow_decode_from_slice(&bytes, bincode::config::standard());
+        assert!(matches!(borrowed, Err(bincode::error::DecodeError::Utf8 { .. })));
     }
 }

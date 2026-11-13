@@ -3,8 +3,6 @@
 //! This module provides key derivation functionality with a builder pattern
 //! for flexible path construction and derivation strategies.
 
-use secp256k1::Secp256k1;
-
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::error::{Error, Result};
 use crate::{AccountType, Network};
@@ -12,36 +10,20 @@ use crate::{AccountType, Network};
 /// Key derivation interface
 pub trait KeyDerivation {
     /// Derive a child private key at the given path
-    fn derive_priv<C: secp256k1::Signing>(
-        &self,
-        secp: &Secp256k1<C>,
-        path: &DerivationPath,
-    ) -> Result<ExtendedPrivKey>;
+    fn derive_priv(&self, path: &DerivationPath) -> Result<ExtendedPrivKey>;
 
     /// Derive a child public key at the given path
-    fn derive_pub<C: secp256k1::Signing>(
-        &self,
-        secp: &Secp256k1<C>,
-        path: &DerivationPath,
-    ) -> Result<ExtendedPubKey>;
+    fn derive_pub(&self, path: &DerivationPath) -> Result<ExtendedPubKey>;
 }
 
 impl KeyDerivation for ExtendedPrivKey {
-    fn derive_priv<C: secp256k1::Signing>(
-        &self,
-        secp: &Secp256k1<C>,
-        path: &DerivationPath,
-    ) -> Result<ExtendedPrivKey> {
-        self.derive_priv(secp, path).map_err(Error::Bip32)
+    fn derive_priv(&self, path: &DerivationPath) -> Result<ExtendedPrivKey> {
+        self.derive_priv(path).map_err(Error::Bip32)
     }
 
-    fn derive_pub<C: secp256k1::Signing>(
-        &self,
-        secp: &Secp256k1<C>,
-        path: &DerivationPath,
-    ) -> Result<ExtendedPubKey> {
-        let priv_key = self.derive_priv(secp, path)?;
-        Ok(ExtendedPubKey::from_priv(secp, &priv_key))
+    fn derive_pub(&self, path: &DerivationPath) -> Result<ExtendedPubKey> {
+        let priv_key = self.derive_priv(path)?;
+        Ok(ExtendedPubKey::from_priv(&priv_key))
     }
 }
 
@@ -191,13 +173,8 @@ impl DerivationPathBuilder {
     ) -> Result<DerivationPath> {
         // For now, just use BIP44 derivation
         // m/44'/coin_type'/account'/0/0
-        let coin_type = match network {
-            Network::Mainnet => 5,
-            Network::Testnet | Network::Devnet | Network::Regtest => 1,
-        };
-
         self.purpose(44)
-            .coin_type(coin_type)
+            .coin_type(network.addr_params().bip44_idx)
             .account(account_index)
             .change(0)
             .address_index(0)
@@ -235,10 +212,9 @@ impl DerivationStrategy {
     }
 
     /// Derive a batch of addresses
-    pub fn derive_batch<C: secp256k1::Signing>(
+    pub fn derive_batch(
         &self,
         key: &ExtendedPrivKey,
-        secp: &Secp256k1<C>,
         start_index: u32,
         count: u32,
     ) -> Result<Vec<ExtendedPubKey>> {
@@ -248,22 +224,16 @@ impl DerivationStrategy {
             let mut path = self.base_path.clone();
             path.push(ChildNumber::from_normal_idx(i).map_err(Error::Bip32)?);
 
-            let derived = key.derive_priv(secp, &path).map_err(Error::Bip32)?;
-            keys.push(ExtendedPubKey::from_priv(secp, &derived));
+            let derived = key.derive_priv(&path).map_err(Error::Bip32)?;
+            keys.push(ExtendedPubKey::from_priv(&derived));
         }
 
         Ok(keys)
     }
 
     /// Scan for used addresses
-    pub fn scan_for_activity<C, F>(
-        &self,
-        key: &ExtendedPrivKey,
-        secp: &Secp256k1<C>,
-        check_fn: F,
-    ) -> Result<Vec<u32>>
+    pub fn scan_for_activity<F>(&self, key: &ExtendedPrivKey, check_fn: F) -> Result<Vec<u32>>
     where
-        C: secp256k1::Signing,
         F: Fn(&ExtendedPubKey) -> bool,
     {
         let mut used_indices = Vec::new();
@@ -274,8 +244,8 @@ impl DerivationStrategy {
             let mut path = self.base_path.clone();
             path.push(ChildNumber::from_normal_idx(index).map_err(Error::Bip32)?);
 
-            let derived = key.derive_priv(secp, &path).map_err(Error::Bip32)?;
-            let pubkey = ExtendedPubKey::from_priv(secp, &derived);
+            let derived = key.derive_priv(&path).map_err(Error::Bip32)?;
+            let pubkey = ExtendedPubKey::from_priv(&derived);
 
             if check_fn(&pubkey) {
                 used_indices.push(index);
@@ -299,19 +269,16 @@ impl DerivationStrategy {
 mod tests {
     use super::*;
     use crate::mnemonic::Mnemonic;
-    use dashcore_hashes::Hash;
+    use dashcore::ecdsa::EcdsaPublicKey;
 
     // ✓ Test BIP32 derivation with exact DashSync test vectors
     #[test]
     fn test_bip32_derivation_vectors() {
-        use hex::FromHex;
-
         // Test vector from DashSync DSBIP32Tests.m - seed "000102030405060708090a0b0c0d0e0f"
-        let seed = Vec::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
-        let secp = secp256k1::Secp256k1::new();
+        let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // Create master key
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed[..]).unwrap();
 
         // Test m/0'/1/2' path (from DashSync test)
         let path = DerivationPath::from(vec![
@@ -326,16 +293,17 @@ mod tests {
             },
         ]);
 
-        let derived_key = master_key.derive_priv(&secp, &path).unwrap();
+        let derived_key = master_key.derive_priv(&path).unwrap();
 
         // The DashSync test expects this private key at m/0'/1/2':
         // DashSync includes a network prefix byte (0xCC for mainnet) before the key
         // "cccbce0d719ecf7431d88e6a89fa1483e02e35092af60c042b1df2ff59fa424dca"
-        let expected_with_prefix =
-            Vec::from_hex("cccbce0d719ecf7431d88e6a89fa1483e02e35092af60c042b1df2ff59fa424dca")
-                .unwrap();
+        let expected_with_prefix = hex_conservative::decode_to_vec(
+            "cccbce0d719ecf7431d88e6a89fa1483e02e35092af60c042b1df2ff59fa424dca",
+        )
+        .unwrap();
         // Skip the first byte (network prefix) and compare the actual 32-byte key
-        assert_eq!(&derived_key.private_key.secret_bytes(), &expected_with_prefix[1..]);
+        assert_eq!(&derived_key.private_key.to_bytes()[..], &expected_with_prefix[1..]);
 
         // Test m/0'/0/97 path for zero padding test (from DashSync)
         let path_zero_padding = DerivationPath::from(vec![
@@ -350,27 +318,25 @@ mod tests {
             },
         ]);
 
-        let derived_key_zero = master_key.derive_priv(&secp, &path_zero_padding).unwrap();
+        let derived_key_zero = master_key.derive_priv(&path_zero_padding).unwrap();
 
         // DashSync expects: "00136c1ad038f9a00871895322a487ed14f1cdc4d22ad351cfa1a0d235975dd7"
-        let expected_zero_padded =
-            Vec::from_hex("00136c1ad038f9a00871895322a487ed14f1cdc4d22ad351cfa1a0d235975dd7")
-                .unwrap();
-        assert_eq!(&derived_key_zero.private_key.secret_bytes(), &expected_zero_padded[..]);
+        let expected_zero_padded = hex_conservative::decode_to_vec(
+            "00136c1ad038f9a00871895322a487ed14f1cdc4d22ad351cfa1a0d235975dd7",
+        )
+        .unwrap();
+        assert_eq!(&derived_key_zero.private_key.to_bytes()[..], &expected_zero_padded[..]);
     }
 
     // ✓ Test extended key serialization (from DashSync DSBIP32Tests.m)
     #[test]
     fn test_extended_key_serialization() {
-        use hex::FromHex;
-
-        let seed = Vec::from_hex("000102030405060708090a0b0c0d0e0f").unwrap();
-        let secp = secp256k1::Secp256k1::new();
+        let seed = hex_conservative::decode_to_vec("000102030405060708090a0b0c0d0e0f").unwrap();
 
         // Test master key serialization (m)
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed[..]).unwrap();
         let master_xprv = master_key.to_string();
-        let master_xpub = ExtendedPubKey::from_priv(&secp, &master_key).to_string();
+        let master_xpub = ExtendedPubKey::from_priv(&master_key).to_string();
 
         // DashSync expects these exact serializations for m
         assert_eq!(master_xpub, "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8");
@@ -380,9 +346,9 @@ mod tests {
         let path_m_0h = DerivationPath::from(vec![ChildNumber::Hardened {
             index: 0,
         }]);
-        let key_m_0h = master_key.derive_priv(&secp, &path_m_0h).unwrap();
+        let key_m_0h = master_key.derive_priv(&path_m_0h).unwrap();
         let xprv_m_0h = key_m_0h.to_string();
-        let xpub_m_0h = ExtendedPubKey::from_priv(&secp, &key_m_0h).to_string();
+        let xpub_m_0h = ExtendedPubKey::from_priv(&key_m_0h).to_string();
 
         // DashSync expects these for m/0'
         assert_eq!(xpub_m_0h, "xpub68Gmy5EdvgibQVfPdqkBBCHxA5htiqg55crXYuXoQRKfDBFA1WEjWgP6LHhwBZeNK1VTsfTFUHCdrfp1bgwQ9xv5ski8PX9rL2dZXvgGDnw");
@@ -397,9 +363,9 @@ mod tests {
                 index: 1,
             },
         ]);
-        let key_m_0h_1 = master_key.derive_priv(&secp, &path_m_0h_1).unwrap();
+        let key_m_0h_1 = master_key.derive_priv(&path_m_0h_1).unwrap();
         let xprv_m_0h_1 = key_m_0h_1.to_string();
-        let xpub_m_0h_1 = ExtendedPubKey::from_priv(&secp, &key_m_0h_1).to_string();
+        let xpub_m_0h_1 = ExtendedPubKey::from_priv(&key_m_0h_1).to_string();
 
         // DashSync expects these for m/0'/1
         assert_eq!(xpub_m_0h_1, "xpub6ASuArnXKPbfEwhqN6e3mwBcDTgzisQN1wXN9BJcM47sSikHjJf3UFHKkNAWbWMiGj7Wf5uMash7SyYq527Hqck2AxYysAA7xmALppuCkwQ");
@@ -417,9 +383,9 @@ mod tests {
                 index: 2,
             },
         ]);
-        let key_m_0h_1_2h = master_key.derive_priv(&secp, &path_m_0h_1_2h).unwrap();
+        let key_m_0h_1_2h = master_key.derive_priv(&path_m_0h_1_2h).unwrap();
         let xprv_m_0h_1_2h = key_m_0h_1_2h.to_string();
-        let xpub_m_0h_1_2h = ExtendedPubKey::from_priv(&secp, &key_m_0h_1_2h).to_string();
+        let xpub_m_0h_1_2h = ExtendedPubKey::from_priv(&key_m_0h_1_2h).to_string();
 
         // DashSync expects these for m/0'/1/2'
         assert_eq!(xpub_m_0h_1_2h, "xpub6D4BDPcP2GT577Vvch3R8wDkScZWzQzMMUm3PWbmWvVJrZwQY4VUNgqFJPMM3No2dFDFGTsxxpG5uJh7n7epu4trkrX7x7DogT5Uv6fcLW5");
@@ -432,8 +398,7 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("upper renew that grow pelican pave subway relief describe enforce suit hedgehog blossom dose swallow").unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed).unwrap();
-        let secp = secp256k1::Secp256k1::new();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Mainnet, &seed[..]).unwrap();
 
         // Test identity authentication derivation (purpose 9' for Dash Platform)
         // m/9'/5'/1'/0 (DIP-9: Identity Authentication)
@@ -452,8 +417,11 @@ mod tests {
             }, // Key index
         ]);
 
-        let identity_key = master_key.derive_priv(&secp, &identity_auth_path).unwrap();
-        assert_ne!(&identity_key.private_key[..], &master_key.private_key[..]);
+        let identity_key = master_key.derive_priv(&identity_auth_path).unwrap();
+        assert_ne!(
+            &identity_key.private_key.to_bytes()[..],
+            &master_key.private_key.to_bytes()[..]
+        );
 
         // Test identity registration derivation
         // m/9'/5'/1'/1 (DIP-9: Identity Registration)
@@ -472,8 +440,8 @@ mod tests {
             },
         ]);
 
-        let reg_key = master_key.derive_priv(&secp, &identity_reg_path).unwrap();
-        assert_ne!(&reg_key.private_key[..], &identity_key.private_key[..]);
+        let reg_key = master_key.derive_priv(&identity_reg_path).unwrap();
+        assert_ne!(&reg_key.private_key.to_bytes()[..], &identity_key.private_key.to_bytes()[..]);
 
         // Test identity top-up derivation
         // m/9'/5'/1'/2 (DIP-9: Identity Top-up)
@@ -492,9 +460,9 @@ mod tests {
             },
         ]);
 
-        let topup_key = master_key.derive_priv(&secp, &identity_topup_path).unwrap();
-        assert_ne!(&topup_key.private_key[..], &reg_key.private_key[..]);
-        assert_ne!(&topup_key.private_key[..], &identity_key.private_key[..]);
+        let topup_key = master_key.derive_priv(&identity_topup_path).unwrap();
+        assert_ne!(&topup_key.private_key.to_bytes()[..], &reg_key.private_key.to_bytes()[..]);
+        assert_ne!(&topup_key.private_key.to_bytes()[..], &identity_key.private_key.to_bytes()[..]);
 
         // Test provider voting derivation (masternode voting)
         // m/3'/1'/0' (Provider voting)
@@ -510,8 +478,8 @@ mod tests {
             }, // Provider index
         ]);
 
-        let voting_key = master_key.derive_priv(&secp, &provider_voting_path).unwrap();
-        assert_ne!(&voting_key.private_key[..], &topup_key.private_key[..]);
+        let voting_key = master_key.derive_priv(&provider_voting_path).unwrap();
+        assert_ne!(&voting_key.private_key.to_bytes()[..], &topup_key.private_key.to_bytes()[..]);
 
         // Test provider operator derivation
         // m/3'/0'/0' (Provider operator)
@@ -527,8 +495,11 @@ mod tests {
             }, // Provider index
         ]);
 
-        let operator_key = master_key.derive_priv(&secp, &provider_op_path).unwrap();
-        assert_ne!(&operator_key.private_key[..], &voting_key.private_key[..]);
+        let operator_key = master_key.derive_priv(&provider_op_path).unwrap();
+        assert_ne!(
+            &operator_key.private_key.to_bytes()[..],
+            &voting_key.private_key.to_bytes()[..]
+        );
     }
 
     // ✓ Test derivation path builder pattern
@@ -537,7 +508,7 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Test builder for BIP44 path
         let bip44_path = DerivationPathBuilder::new()
@@ -570,9 +541,8 @@ mod tests {
         assert_eq!(bip44_path, expected_path);
 
         // Test derivation with the built path
-        let secp = secp256k1::Secp256k1::new();
-        let derived = master_key.derive_priv(&secp, &bip44_path).unwrap();
-        assert_ne!(&derived.private_key[..], &master_key.private_key[..]);
+        let derived = master_key.derive_priv(&bip44_path).unwrap();
+        assert_ne!(&derived.private_key.to_bytes()[..], &master_key.private_key.to_bytes()[..]);
     }
 
     // ✓ Test key signing and verification
@@ -581,39 +551,28 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
-        let secp = secp256k1::Secp256k1::new();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Derive a key for signing
         let path = DerivationPath::from(vec![ChildNumber::Hardened {
             index: 0,
         }]);
-        let signing_key = master_key.derive_priv(&secp, &path).unwrap();
+        let signing_key = master_key.derive_priv(&path).unwrap();
 
         // Test message
         let message = b"Hello Dash!";
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
 
         // Sign the message (deterministic signing)
-        let signature1 = secp.sign_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &signing_key.private_key,
-        );
-        let signature2 = secp.sign_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &signing_key.private_key,
-        );
+        let signature1 = signing_key.private_key.sign(&message_hash.to_byte_array());
+        let signature2 = signing_key.private_key.sign(&message_hash.to_byte_array());
 
         // Signatures should be the same (deterministic)
         assert_eq!(signature1, signature2);
 
         // Verify the signature
-        let pubkey = ExtendedPubKey::from_priv(&secp, &signing_key);
-        let verified = secp.verify_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &signature1,
-            &pubkey.public_key,
-        );
+        let pubkey = ExtendedPubKey::from_priv(&signing_key);
+        let verified = pubkey.public_key.verify(&message_hash.to_byte_array(), signature1);
         assert!(verified.is_ok());
     }
 
@@ -623,33 +582,25 @@ mod tests {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
-        let secp = secp256k1::Secp256k1::new();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Derive a key for signing
         let path = DerivationPath::from(vec![ChildNumber::Normal {
             index: 0,
         }]);
-        let signing_key = master_key.derive_priv(&secp, &path).unwrap();
-        let public_key = ExtendedPubKey::from_priv(&secp, &signing_key);
+        let signing_key = master_key.derive_priv(&path).unwrap();
+        let public_key = ExtendedPubKey::from_priv(&signing_key);
 
         // Test message
         let message = b"Dash recovery test";
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
 
         // Create recoverable signature
-        let signature = secp.sign_ecdsa_recoverable(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &signing_key.private_key,
-        );
+        let signature = signing_key.private_key.sign_recoverable(&message_hash.to_byte_array());
 
         // Recover the public key from signature
-        let recovered_pubkey = secp
-            .recover_ecdsa(
-                &secp256k1::Message::from_digest(message_hash.to_byte_array()),
-                &signature,
-            )
-            .unwrap();
+        let recovered_pubkey =
+            EcdsaPublicKey::recover(&message_hash.to_byte_array(), &signature).unwrap();
 
         // Should match original public key
         assert_eq!(recovered_pubkey, public_key.public_key);
@@ -668,8 +619,7 @@ mod tests {
         .unwrap();
 
         let seed = mnemonic.to_seed("");
-        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed).unwrap();
-        let secp = secp256k1::Secp256k1::new();
+        let master_key = ExtendedPrivKey::new_master(crate::Network::Testnet, &seed[..]).unwrap();
 
         // Test DashPay contact derivation path: m/9'/5'/15'/0'
         // This is used for master identity contacts in DashPay
@@ -688,8 +638,8 @@ mod tests {
             }, // account 0
         ]);
 
-        let dashpay_key = master_key.derive_priv(&secp, &dashpay_path).unwrap();
-        let dashpay_pubkey = ExtendedPubKey::from_priv(&secp, &dashpay_key);
+        let dashpay_key = master_key.derive_priv(&dashpay_path).unwrap();
+        let dashpay_pubkey = ExtendedPubKey::from_priv(&dashpay_key);
 
         // Verify this produces a different key than other special paths
         // Test against identity authentication path
@@ -707,14 +657,11 @@ mod tests {
                 index: 0,
             },
         ]);
-        let auth_key = master_key.derive_priv(&secp, &auth_path).unwrap();
+        let auth_key = master_key.derive_priv(&auth_path).unwrap();
 
         // Keys should be different
         assert_ne!(dashpay_key.private_key, auth_key.private_key);
-        assert_ne!(
-            dashpay_pubkey.public_key,
-            ExtendedPubKey::from_priv(&secp, &auth_key).public_key
-        );
+        assert_ne!(dashpay_pubkey.public_key, ExtendedPubKey::from_priv(&auth_key).public_key);
 
         // Test multiple DashPay accounts
         let dashpay_account_1 = DerivationPath::from(vec![
@@ -732,7 +679,7 @@ mod tests {
             }, // account 1
         ]);
 
-        let dashpay_key_1 = master_key.derive_priv(&secp, &dashpay_account_1).unwrap();
+        let dashpay_key_1 = master_key.derive_priv(&dashpay_account_1).unwrap();
 
         // Different accounts should have different keys
         assert_ne!(dashpay_key.private_key, dashpay_key_1.private_key);
@@ -740,25 +687,19 @@ mod tests {
         // Verify we can derive contact-specific keys from the DashPay account
         // In DashPay, contact keys are derived further from the account key
         let contact_0 = dashpay_key
-            .derive_priv(
-                &secp,
-                &DerivationPath::from(vec![
-                    ChildNumber::Normal {
-                        index: 0,
-                    }, // First contact
-                ]),
-            )
+            .derive_priv(&DerivationPath::from(vec![
+                ChildNumber::Normal {
+                    index: 0,
+                }, // First contact
+            ]))
             .unwrap();
 
         let contact_1 = dashpay_key
-            .derive_priv(
-                &secp,
-                &DerivationPath::from(vec![
-                    ChildNumber::Normal {
-                        index: 1,
-                    }, // Second contact
-                ]),
-            )
+            .derive_priv(&DerivationPath::from(vec![
+                ChildNumber::Normal {
+                    index: 1,
+                }, // Second contact
+            ]))
             .unwrap();
 
         // Contact keys should be different
@@ -767,16 +708,9 @@ mod tests {
         // Verify the DashPay key can sign and verify messages
         let message = b"DashPay contact message";
         let message_hash = dashcore_hashes::sha256::Hash::hash(message);
-        let signature = secp.sign_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &dashpay_key.private_key,
-        );
+        let signature = dashpay_key.private_key.sign(&message_hash.to_byte_array());
 
-        let verified = secp.verify_ecdsa(
-            &secp256k1::Message::from_digest(message_hash.to_byte_array()),
-            &signature,
-            &dashpay_pubkey.public_key,
-        );
+        let verified = dashpay_pubkey.public_key.verify(&message_hash.to_byte_array(), signature);
         assert!(verified.is_ok());
     }
 }

@@ -148,11 +148,6 @@ impl BlockMatchTracker {
             self.processed_blocks_per_wallet.split_off(&(height + 1));
     }
 
-    /// True while matched blocks are still awaiting their `BlockProcessed`.
-    pub(super) fn has_blocks_in_flight(&self) -> bool {
-        !self.blocks_remaining.is_empty()
-    }
-
     /// True when there is no in-flight or processed-record state.
     pub(super) fn is_empty(&self) -> bool {
         self.blocks_remaining.is_empty() && self.processed_blocks_per_wallet.is_empty()

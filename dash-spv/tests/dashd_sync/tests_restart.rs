@@ -1,12 +1,15 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dash_spv::sync::SyncEvent;
 use dash_spv::Network;
+use dash_spv::{SyncEvent, SyncProgress};
 
-use super::helpers::{get_spendable_balance, is_progress_event, wait_for_sync};
+use super::helpers::{
+    get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete, PeerTracker,
+};
 use dash_spv::test_utils::SYNC_TIMEOUT;
 
 use super::setup::{create_and_start_client, TestContext};
@@ -23,8 +26,15 @@ async fn test_sync_restart_consistency() {
     tracing::info!("Starting first sync");
     let mut client_handle = ctx.spawn_new_client().await;
     wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+    let mut tracker = PeerTracker::default();
+    tracker.update(&mut client_handle.network_event_receiver);
+    assert!(tracker.peers.contains(&ctx.dashd.addr), "synced through the dashd peer");
 
+    // The handler must hear the peers go, or it keeps reporting peers the client dropped.
     client_handle.stop().await;
+    tracker.update(&mut client_handle.network_event_receiver);
+    assert!(tracker.peers.is_empty(), "peers still tracked after stop: {:?}", tracker.peers);
+    assert_eq!(tracker.listed, Some(HashSet::new()));
     ctx.assert_synced(&client_handle.client.progress().await).await;
     let first_balance = ctx.spendable_balance().await;
     let first_tx_count = ctx.transaction_count().await;
@@ -122,10 +132,14 @@ async fn test_sync_with_multiple_restarts() {
         return;
     };
 
+    // Restarting on every 2nd progress event until completion takes hundreds of cycles.
+    const MAX_RESTARTS: usize = 8;
+
     let mut restart_count = 0;
     let final_progress = loop {
         tracing::info!("Starting sync (restart count: {})", restart_count);
         let mut client_handle = ctx.spawn_new_client().await;
+        let final_run = restart_count >= MAX_RESTARTS;
 
         // Wait for either sync completion or the 2nd matching event
         let mut events_seen = 0;
@@ -146,7 +160,7 @@ async fn test_sync_with_multiple_restarts() {
                     match result {
                         Ok(ref event) if is_progress_event(event) => {
                             events_seen += 1;
-                            if events_seen % 2 == 0 {
+                            if !final_run && events_seen % 2 == 0 {
                                 tracing::info!("Restarting on: {}", event);
                                 should_restart = true;
                                 break;
@@ -192,7 +206,7 @@ async fn test_sync_with_random_restarts() {
     let mut rng = StdRng::seed_from_u64(seed);
 
     for i in 0..num_restarts {
-        let delay_ms = rng.gen_range(50..500);
+        let delay_ms = rng.random_range(50..500);
         tracing::info!("Restart {}: sleeping {}ms before stopping", i + 1, delay_ms);
         let mut client_handle = ctx.spawn_new_client().await;
 
@@ -210,4 +224,51 @@ async fn test_sync_with_random_restarts() {
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
     tracing::info!("Sync completed after {} random restarts (seed={})", num_restarts, seed);
+}
+
+/// Verify the same client syncs again after being stopped, including after
+/// runs that were stopped right away.
+#[tokio::test]
+async fn test_sync_restarts_same_client() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let mut client_handle = ctx.spawn_new_client().await;
+
+    for _ in 0..3 {
+        client_handle.run().await;
+        client_handle.stop().await;
+    }
+
+    client_handle.run().await;
+    wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
+    client_handle.stop().await;
+
+    ctx.assert_synced(&client_handle.client.progress().await).await;
+}
+
+/// Verify clearing the storage of a running client stops it, and the client
+/// syncs from scratch after its storage was cleared again between runs.
+#[tokio::test]
+async fn test_clear_storage_stops_running_client() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
+
+    client_handle.client.clear_storage().await.unwrap();
+    assert!(!client_handle.client.is_running());
+    assert!(client_handle.client.tip_header().await.is_none());
+    assert_eq!(client_handle.client.progress().await, SyncProgress::default());
+
+    client_handle.stop().await;
+    client_handle.run().await;
+    client_handle.client.clear_storage().await.unwrap();
+
+    client_handle.sync_event_receiver = client_handle.sync_event_receiver.resubscribe();
+    client_handle.run().await;
+    wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
+    client_handle.stop().await;
+    ctx.assert_synced(&client_handle.client.progress().await).await;
 }

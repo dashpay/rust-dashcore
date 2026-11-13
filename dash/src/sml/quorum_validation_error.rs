@@ -14,22 +14,11 @@ pub enum QuorumValidationError {
     #[error("Required block not present: {0} ({1})")]
     RequiredBlockNotPresent(BlockHash, String),
 
-    #[error("Required block height not present: {0}")]
-    RequiredBlockHeightNotPresent(CoreBlockHeight),
-
-    #[error("The masternode list was not present at block height {0}")]
-    VerifyingMasternodeListNotPresent(CoreBlockHeight),
-
     #[error("Required masternode list not present at block height {0}")]
     RequiredMasternodeListNotPresent(CoreBlockHeight),
 
     #[error("Required chain lock not present at block height {0}, block hash: {1}")]
     RequiredChainLockNotPresent(CoreBlockHeight, BlockHash),
-
-    #[error(
-        "Required rotated chain lock sig at h - {0} not present for masternode diff block hash: {1}"
-    )]
-    RequiredRotatedChainLockSigNotPresent(u8, BlockHash),
 
     #[error("Required rotated chain lock sigs not present for masternode diff block hash: {0}")]
     RequiredRotatedChainLockSigsNotPresent(BlockHash),
@@ -75,9 +64,6 @@ pub enum QuorumValidationError {
     #[error("Threshold signature not valid: {0}")]
     ThresholdSignatureNotValid(String),
 
-    #[error("Commitment hash not present")]
-    CommitmentHashNotPresent,
-
     #[error("Required snapshot not present {0}")]
     RequiredSnapshotNotPresent(BlockHash),
 
@@ -100,14 +86,27 @@ pub enum QuorumValidationError {
     CorruptedCodeExecution(String),
     #[error("Expected only rotated quorums, but got quorum {0} of type {1}")]
     ExpectedOnlyRotatedQuorums(QuorumHash, LLMQType),
-
-    /// Error indicating that a required feature is not turned on.
-    #[error("Feature not turned on: {0}")]
-    FeatureNotTurnedOn(String),
 }
 
 impl From<SmlError> for QuorumValidationError {
     fn from(value: SmlError) -> Self {
         QuorumValidationError::SMLError(value)
+    }
+}
+
+#[cfg(feature = "bls")]
+impl From<crate::bls_sig_utils::BlsError> for QuorumValidationError {
+    fn from(e: crate::bls_sig_utils::BlsError) -> Self {
+        use crate::bls_sig_utils::BlsError;
+
+        match e {
+            BlsError::InvalidPublicKey(s) => Self::InvalidBLSPublicKey(s),
+            BlsError::InvalidSignature(s) => Self::InvalidBLSSignature(s),
+            BlsError::InvalidSecretKey => {
+                Self::InvalidBLSPublicKey("invalid secret key".to_string())
+            }
+            BlsError::InvalidTweak => Self::InvalidBLSPublicKey("invalid tweak".to_string()),
+            BlsError::VerificationFailed(s) => Self::ThresholdSignatureNotValid(s),
+        }
     }
 }

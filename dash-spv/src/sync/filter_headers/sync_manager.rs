@@ -1,5 +1,5 @@
 use crate::error::SyncResult;
-use crate::network::{Message, MessageType, RequestSender};
+use crate::network::{InboundMessage, MessageType, NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage};
 use crate::sync::filter_headers::pipeline::FilterHeadersPipeline;
 use crate::sync::progress::ProgressPercentage;
@@ -8,6 +8,8 @@ use crate::sync::{
 };
 use crate::SyncError;
 use async_trait::async_trait;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 #[async_trait]
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeadersManager<H, FH> {
@@ -28,7 +30,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     }
 
     fn wanted_message_types(&self) -> &'static [MessageType] {
-        &[MessageType::CFHeaders]
+        &[MessageType::CfHeaders]
     }
 
     fn on_disconnect(&mut self) {
@@ -37,17 +39,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         self.block_headers_synced = false;
     }
 
-    fn on_peer_disconnect(&mut self) {
-        self.pipeline.requeue_in_flight();
-    }
-
     async fn handle_message(
         &mut self,
-        msg: Message,
-        requests: &RequestSender,
+        _peer: SocketAddr,
+        msg: InboundMessage,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         // Match response to get start height
-        let Some((start_height, cfheaders)) = self.pipeline.match_response(msg.inner()) else {
+        let Some((start_height, cfheaders)) = self.pipeline.match_response(&msg) else {
             if self.pipeline.is_complete() {
                 if let Some(event) = self.try_complete_sync() {
                     return Ok(vec![event]);
@@ -56,59 +55,52 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             return Ok(vec![]);
         };
 
+        network.release_request(RequestKey::CfHeaders(cfheaders.stop_hash)).await;
+
         let mut events = Vec::new();
 
         // Try to receive (may buffer if out of order)
         if let Some(data) = self.pipeline.receive(start_height, cfheaders) {
-            // In order - process immediately
-            let count = self.process_cfheaders(&data, start_height).await?;
-            if count == 0 {
-                return Err(SyncError::Network("CFHeaders batch contained no headers".to_string()));
-            }
-            let batch_start = start_height;
-            let batch_end = start_height + count.saturating_sub(1);
-
-            // Advance and capture any buffered batches that are now ready
-            let mut ready_batches = self.pipeline.advance(count);
-            self.progress.update_current_height(self.pipeline.next_expected().saturating_sub(1));
-
-            tracing::debug!(
-                "Processed {} filter headers at {}, now at {}/{}",
-                count,
-                start_height,
-                self.progress.current_height(),
-                self.progress.block_header_tip_height()
-            );
-
-            // Emit event for this batch
-            events.push(SyncEvent::FilterHeadersStored {
-                start_height: batch_start,
-                end_height: batch_end,
-                tip_height: self.progress.current_height(),
-            });
-
-            // Process buffered responses (including any returned by first advance)
-            while !ready_batches.is_empty() {
-                // Take ownership and process each batch
-                for (height, data) in std::mem::take(&mut ready_batches) {
-                    let count = self.process_cfheaders(&data, height).await?;
-                    if count == 0 {
-                        return Err(SyncError::Network(
-                            "CFHeaders batch contained no headers".to_string(),
-                        ));
+            // In order - process it, then any buffered batches that become ready
+            let mut ready_batches = vec![(start_height, data)];
+            while let Some((height, data)) = ready_batches.pop() {
+                let count = match self.process_cfheaders(&data, height).await {
+                    Ok(count) => count,
+                    Err(SyncError::Validation(reason)) => {
+                        tracing::warn!(
+                            "Rejected CFHeaders batch at {}, requesting it again: {}",
+                            height,
+                            reason
+                        );
+                        self.pipeline.requeue_rejected(height, data.stop_hash);
+                        break;
                     }
-                    // Get more ready batches (advance returns any that are now ready)
-                    let more_ready = self.pipeline.advance(count);
-                    ready_batches.extend(more_ready);
-                    self.progress
-                        .update_current_height(self.pipeline.next_expected().saturating_sub(1));
-
-                    events.push(SyncEvent::FilterHeadersStored {
-                        start_height: height,
-                        end_height: height + count.saturating_sub(1),
-                        tip_height: self.progress.current_height(),
-                    });
+                    Err(e) => return Err(e),
+                };
+                if count == 0 {
+                    return Err(SyncError::Network(
+                        "CFHeaders batch contained no headers".to_string(),
+                    ));
                 }
+
+                // Advance and capture any buffered batch that is now ready
+                ready_batches.extend(self.pipeline.advance(count));
+                self.progress
+                    .update_current_height(self.pipeline.next_expected().saturating_sub(1));
+
+                tracing::debug!(
+                    "Processed {} filter headers at {}, now at {}/{}",
+                    count,
+                    height,
+                    self.progress.current_height(),
+                    self.progress.block_header_tip_height()
+                );
+
+                events.push(SyncEvent::FilterHeadersStored {
+                    start_height: height,
+                    end_height: height + count.saturating_sub(1),
+                    tip_height: self.progress.current_height(),
+                });
             }
         } else {
             tracing::debug!(
@@ -118,8 +110,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
             );
         }
 
-        // Send more requests
-        self.pipeline.send_pending(requests)?;
+        self.pipeline.send_pending(network).await?;
 
         if self.pipeline.is_complete() {
             if let Some(event) = self.try_complete_sync() {
@@ -133,28 +124,24 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
     async fn handle_sync_event(
         &mut self,
         event: &SyncEvent,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
             SyncEvent::BlockHeaderSyncComplete {
                 tip_height,
             } => {
                 self.block_headers_synced = true;
-                self.handle_new_headers(*tip_height, requests).await
+                self.handle_new_headers(*tip_height, network).await
             }
             SyncEvent::BlockHeadersStored {
                 tip_height,
-            } => self.handle_new_headers(*tip_height, requests).await,
+            } => self.handle_new_headers(*tip_height, network).await,
             _ => Ok(vec![]),
         }
     }
 
-    async fn tick(&mut self, requests: &RequestSender) -> SyncResult<Vec<SyncEvent>> {
-        // Handle timed out requests (re-queues them for retry)
-        self.pipeline.handle_timeouts();
-
-        // Send pending requests (including retries)
-        self.pipeline.send_pending(requests)?;
+    async fn tick(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<Vec<SyncEvent>> {
+        self.pipeline.send_pending(network).await?;
 
         // Re-read the block-header tip and extend from here if it moved.
         //
@@ -176,7 +163,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> SyncManager for FilterHeade
         // (#960): trust the tick, not the message.
         if let Some(tip) = self.stored_block_header_tip().await {
             if tip > self.progress.block_header_tip_height() {
-                return self.handle_new_headers(tip, requests).await;
+                return self.handle_new_headers(tip, network).await;
             }
         }
 

@@ -1,6 +1,5 @@
 //! Configuration management for the Dash SPV client.
 
-use clap::ValueEnum;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -9,11 +8,13 @@ use dashcore::Network;
 // Serialization removed due to complex Address types
 
 use crate::client::devnet::DevnetConfig;
+use crate::network::TransportPreference;
 use crate::sync::BroadcastHoldout;
 use crate::types::ValidationMode;
 
 /// Strategy for handling mempool (unconfirmed) transactions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum MempoolStrategy {
     /// Fetch all announced transactions (high bandwidth, sees all transactions).
     FetchAll,
@@ -53,9 +54,8 @@ pub struct ClientConfig {
     /// Maximum number of peers to connect to.
     pub max_peers: u32,
 
-    /// Optional user agent string to advertise in the P2P version message.
-    /// If not set, a sensible default is used (includes crate version).
-    pub user_agent: Option<String>,
+    /// User agent string to advertise in the P2P version message.
+    pub user_agent: String,
 
     // Mempool configuration
     /// Enable tracking of unconfirmed (mempool) transactions.
@@ -99,6 +99,10 @@ pub struct ClientConfig {
 
     /// Devnet-only configuration. Must be `Some` iff `network == Network::Devnet`.
     pub devnet: Option<DevnetConfig>,
+
+    /// Transport preference for peer connections (V1, V2, or V2 with fallback).
+    /// Default is V2Preferred: try V2 encrypted transport first, fall back to V1.
+    pub transport_preference: TransportPreference,
 }
 
 impl Default for ClientConfig {
@@ -112,7 +116,7 @@ impl Default for ClientConfig {
             enable_filters: true,
             enable_masternodes: true,
             max_peers: 3,
-            user_agent: None,
+            user_agent: concat!("/dash-spv:", env!("CARGO_PKG_VERSION"), "/").to_string(),
             // Mempool defaults
             enable_mempool_tracking: true,
             mempool_strategy: MempoolStrategy::FetchAll,
@@ -124,6 +128,7 @@ impl Default for ClientConfig {
             start_from_height: None,
             reservation_sweep_ttl_secs: Some(3600),
             devnet: None,
+            transport_preference: TransportPreference::default(),
         }
     }
 }
@@ -190,9 +195,9 @@ impl ClientConfig {
     }
 
     /// Set custom user agent string for the P2P handshake.
-    /// The library will lightly validate and normalize it during handshake.
+    /// Missing `/` delimiters are added and the result is capped at 256 bytes, the limit Dash Core accepts.
     pub fn with_user_agent(mut self, agent: impl Into<String>) -> Self {
-        self.user_agent = Some(agent.into());
+        self.user_agent = agent.into();
         self
     }
 
@@ -259,6 +264,16 @@ impl ClientConfig {
     /// [`validate`](Self::validate) enforces the biconditional.
     pub fn with_devnet(mut self, devnet: DevnetConfig) -> Self {
         self.devnet = Some(devnet);
+        self
+    }
+
+    /// Set transport preference for peer connections.
+    ///
+    /// - `V2Preferred` (default): Try BIP324 v2 encrypted transport first, fall back to v1
+    /// - `V2Only`: Require BIP324 v2 encrypted transport, fail if peer doesn't support it
+    /// - `V1Only`: Use traditional unencrypted v1 transport only
+    pub fn with_transport_preference(mut self, preference: TransportPreference) -> Self {
+        self.transport_preference = preference;
         self
     }
 

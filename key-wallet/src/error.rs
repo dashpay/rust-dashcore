@@ -23,8 +23,6 @@ pub enum Error {
     InvalidDerivationPath(String),
     /// Invalid address
     InvalidAddress(String),
-    /// Secp256k1 error
-    Secp256k1(secp256k1::Error),
     /// Base58 decoding error
     Base58,
     /// Invalid network
@@ -53,6 +51,13 @@ pub enum Error {
         /// What must be supplied instead, e.g. `"extended public key (xpub)"`.
         required_key: &'static str,
     },
+    /// A truncation below the wallet's applied ChainLock, whose blocks are final.
+    TruncateBelowChainLock {
+        /// The height asked to truncate above.
+        height: u32,
+        /// The height of the wallet's applied ChainLock.
+        chain_locked: u32,
+    },
 }
 
 impl fmt::Display for Error {
@@ -66,7 +71,6 @@ impl fmt::Display for Error {
             Error::InvalidMnemonic(s) => write!(f, "Invalid mnemonic: {}", s),
             Error::InvalidDerivationPath(s) => write!(f, "Invalid derivation path: {}", s),
             Error::InvalidAddress(s) => write!(f, "Invalid address: {}", s),
-            Error::Secp256k1(e) => write!(f, "Secp256k1 error: {}", e),
             Error::Base58 => write!(f, "Base58 decoding error"),
             Error::InvalidNetwork => write!(f, "Invalid network"),
             Error::KeyError(s) => write!(f, "Key error: {}", s),
@@ -86,6 +90,14 @@ impl fmt::Display for Error {
                  Some(..) argument of the add_*account method.",
                 account_type, required_key
             ),
+            Error::TruncateBelowChainLock {
+                height,
+                chain_locked,
+            } => write!(
+                f,
+                "Cannot truncate above {}: blocks up to the ChainLock at {} are final",
+                height, chain_locked
+            ),
         }
     }
 }
@@ -96,7 +108,6 @@ impl error::Error for Error {
             Error::Bip32(e) => Some(e),
             #[cfg(feature = "eddsa")]
             Error::Slip10(e) => Some(e),
-            Error::Secp256k1(e) => Some(e),
             _ => None,
         }
     }
@@ -105,12 +116,6 @@ impl error::Error for Error {
 impl From<crate::bip32::Error> for Error {
     fn from(e: crate::bip32::Error) -> Self {
         Error::Bip32(e)
-    }
-}
-
-impl From<secp256k1::Error> for Error {
-    fn from(e: secp256k1::Error) -> Self {
-        Error::Secp256k1(e)
     }
 }
 

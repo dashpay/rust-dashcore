@@ -209,7 +209,8 @@ impl Decodable for BloomFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::key::{PrivateKey, secp256k1};
+    use crate::crypto::key::PrivateKey;
+    use crate::ecdsa::EcdsaSecretKey;
 
     #[test]
     fn test_bloom_filter_basic() {
@@ -313,17 +314,20 @@ mod tests {
     fn test_bloom_filter_dash_core_compatibility() {
         let mut filter = BloomFilter::new(3, 0.01, 0, BloomFlags::All).unwrap();
 
-        let data1 = hex::decode("99108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap();
-        let data2 = hex::decode("b5a2c786d9ef4658287ced5914b37a1b4aa32eee").unwrap();
-        let data3 = hex::decode("b9300670b4c5366e95b2699e8b18bc75e5f729c5").unwrap();
+        let data1 =
+            hex_conservative::decode_to_vec("99108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap();
+        let data2 =
+            hex_conservative::decode_to_vec("b5a2c786d9ef4658287ced5914b37a1b4aa32eee").unwrap();
+        let data3 =
+            hex_conservative::decode_to_vec("b9300670b4c5366e95b2699e8b18bc75e5f729c5").unwrap();
 
         assert!(!filter.contains(&data1));
 
         filter.insert(&data1);
         assert!(filter.contains(&data1));
-        assert!(
-            !filter.contains(&hex::decode("19108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap())
-        );
+        assert!(!filter.contains(
+            &hex_conservative::decode_to_vec("19108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap()
+        ));
 
         filter.insert(&data2);
         assert!(filter.contains(&data2));
@@ -334,7 +338,7 @@ mod tests {
         let mut encoded = Vec::new();
         filter.consensus_encode(&mut encoded).unwrap();
 
-        let expected = hex::decode("03614e9b050000000000000001").unwrap();
+        let expected = hex_conservative::decode_to_vec("03614e9b050000000000000001").unwrap();
         assert_eq!(encoded, expected, "Serialized bloom filter must match Dash Core test vector");
     }
 
@@ -347,18 +351,17 @@ mod tests {
     /// Expected serialized bytes: "038fc16b080000000000000001"
     #[test]
     fn test_bloom_create_insert_key() {
-        let secp = secp256k1::Secp256k1::new();
-
         // Private key from Dash Core test WIF: 7sQb6QHALg4XyHsJHsSNXnEHGhZfzTTUPJXJqaqK7CavQkiL9Ms
-        let privkey_bytes: [u8; 32] =
-            hex::decode("f49addfd726a59abde172c86452f5f73038a02f4415878dc14934175e8418aff")
-                .unwrap()
-                .try_into()
-                .unwrap();
-        let secret_key = secp256k1::SecretKey::from_byte_array(&privkey_bytes).unwrap();
+        let privkey_bytes: [u8; 32] = hex_conservative::decode_to_vec(
+            "f49addfd726a59abde172c86452f5f73038a02f4415878dc14934175e8418aff",
+        )
+        .unwrap()
+        .try_into()
+        .unwrap();
+        let secret_key = EcdsaSecretKey::from_bytes(&privkey_bytes).unwrap();
         let privkey =
             PrivateKey::new_uncompressed(secret_key, crate::network::constants::Network::Mainnet);
-        let pubkey = privkey.public_key(&secp);
+        let pubkey = privkey.public_key();
 
         let mut filter = BloomFilter::new(2, 0.001, 0, BloomFlags::All).unwrap();
 
@@ -373,7 +376,7 @@ mod tests {
         let mut encoded = Vec::new();
         filter.consensus_encode(&mut encoded).unwrap();
 
-        let expected = hex::decode("038fc16b080000000000000001").unwrap();
+        let expected = hex_conservative::decode_to_vec("038fc16b080000000000000001").unwrap();
         assert_eq!(
             encoded, expected,
             "Serialized bloom filter must match Dash Core bloom_create_insert_key test vector"
@@ -386,15 +389,18 @@ mod tests {
     fn test_bloom_filter_dash_core_compatibility_with_tweak() {
         let mut filter = BloomFilter::new(3, 0.01, 2147483649, BloomFlags::All).unwrap();
 
-        let data1 = hex::decode("99108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap();
-        let data2 = hex::decode("b5a2c786d9ef4658287ced5914b37a1b4aa32eee").unwrap();
-        let data3 = hex::decode("b9300670b4c5366e95b2699e8b18bc75e5f729c5").unwrap();
+        let data1 =
+            hex_conservative::decode_to_vec("99108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap();
+        let data2 =
+            hex_conservative::decode_to_vec("b5a2c786d9ef4658287ced5914b37a1b4aa32eee").unwrap();
+        let data3 =
+            hex_conservative::decode_to_vec("b9300670b4c5366e95b2699e8b18bc75e5f729c5").unwrap();
 
         filter.insert(&data1);
         assert!(filter.contains(&data1));
-        assert!(
-            !filter.contains(&hex::decode("19108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap())
-        );
+        assert!(!filter.contains(
+            &hex_conservative::decode_to_vec("19108ad8ed9bb6274d3980bab5a85c048f0950c8").unwrap()
+        ));
 
         filter.insert(&data2);
         assert!(filter.contains(&data2));
@@ -405,7 +411,7 @@ mod tests {
         let mut encoded = Vec::new();
         filter.consensus_encode(&mut encoded).unwrap();
 
-        let expected = hex::decode("03ce4299050000000100008001").unwrap();
+        let expected = hex_conservative::decode_to_vec("03ce4299050000000100008001").unwrap();
         assert_eq!(
             encoded, expected,
             "Serialized bloom filter must match Dash Core test vector (with tweak)"

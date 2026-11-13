@@ -38,17 +38,17 @@ use std::net::SocketAddr;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::Hash;
-use internals::hex::Case::Lower;
-use internals::impl_array_newtype;
+use hashes::{HashEngine, sha256d};
+use hex_conservative::Case::Lower;
 
 use crate::address::Payload;
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::provider_update_service::ProTxVersion;
 use crate::bls_sig_utils::BLSPublicKey;
 use crate::consensus::{Decodable, Encodable, encode};
+use crate::crypto::ecdsa::{ECDSA_REC_SIG_LEN, EcdsaRecSignature};
 use crate::hash_types::{InputsHash, PubkeyHash, SpecialTransactionPayloadHash};
-use crate::internal_macros::{impl_bytes_newtype, impl_consensus_encoding};
+use crate::internal_macros::impl_consensus_encoding;
 use crate::platform_node_id::PlatformNodeId;
 use crate::prelude::*;
 use crate::sml::masternode_list_entry::MasternodeNetInfo;
@@ -127,27 +127,42 @@ impl Decodable for ProviderMasternodeType {
     }
 }
 
-/// A compact recoverable ECDSA signature of 65 bytes, written without a length prefix.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct JoinSignature([u8; 65]);
-
-impl_array_newtype!(JoinSignature, u8, 65);
-impl_bytes_newtype!(JoinSignature, 65);
-
-impl Encodable for JoinSignature {
+// Written without a length prefix, as Core does.
+impl Encodable for EcdsaRecSignature {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        w.write_all(&self.0)?;
-        Ok(self.0.len())
+        w.write_all(self.as_bytes())?;
+        Ok(ECDSA_REC_SIG_LEN)
     }
 }
 
-impl Decodable for JoinSignature {
+impl Decodable for EcdsaRecSignature {
     fn consensus_decode<R: io::Read + ?Sized>(r: &mut R) -> Result<Self, encode::Error> {
-        let mut bytes = [0; 65];
+        let mut bytes = [0; ECDSA_REC_SIG_LEN];
         r.read_exact(&mut bytes).map_err(encode::Error::Io)?;
-        Ok(JoinSignature(bytes))
+        Ok(EcdsaRecSignature::from(bytes))
     }
+}
+
+/// Encodes signatures as Core does: a `u8` count followed by the signatures.
+pub(crate) fn encode_compact_signatures<W: io::Write + ?Sized>(
+    signatures: &[EcdsaRecSignature],
+    w: &mut W,
+) -> Result<usize, io::Error> {
+    let count = u8::try_from(signatures.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "more than 255 signatures"))?;
+    let mut len = count.consensus_encode(w)?;
+    for signature in signatures {
+        len += signature.consensus_encode(w)?;
+    }
+    Ok(len)
+}
+
+/// Decodes signatures written by [`encode_compact_signatures`].
+pub(crate) fn decode_compact_signatures<R: io::Read + ?Sized>(
+    r: &mut R,
+) -> Result<Vec<EcdsaRecSignature>, encode::Error> {
+    let count = u8::consensus_decode(r)?;
+    (0..count).map(|_| EcdsaRecSignature::consensus_decode(r)).collect()
 }
 
 /// One participant's contribution to the collateral of a shared masternode.
@@ -184,7 +199,7 @@ impl CollateralShare {
 pub struct SharedCollateral {
     pub shares: Vec<CollateralShare>,
     /// One consent signature per share, in share order.
-    pub join_sigs: Vec<JoinSignature>,
+    pub join_sigs: Vec<EcdsaRecSignature>,
     pub early_period_blocks: u32,
     /// Penalty in duffs for leaving within `early_period_blocks`.
     pub early_penalty: i64,
@@ -194,7 +209,7 @@ impl SharedCollateral {
     /// The size of the terms in bytes.
     pub fn size(&self) -> usize {
         1 + self.shares.iter().map(CollateralShare::size).sum::<usize>()
-            + 65 * self.join_sigs.len()
+            + ECDSA_REC_SIG_LEN * self.join_sigs.len()
             + 4
             + 8
     }
@@ -231,7 +246,7 @@ impl Decodable for SharedCollateral {
         let shares =
             (0..count).map(|_| CollateralShare::consensus_decode(r)).collect::<Result<_, _>>()?;
         let join_sigs =
-            (0..count).map(|_| JoinSignature::consensus_decode(r)).collect::<Result<_, _>>()?;
+            (0..count).map(|_| EcdsaRecSignature::consensus_decode(r)).collect::<Result<_, _>>()?;
         Ok(SharedCollateral {
             shares,
             join_sigs,
@@ -452,9 +467,9 @@ impl SpecialTransactionBasePayloadEncodable for ProviderRegistrationPayload {
     }
 
     fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
-        let mut engine = SpecialTransactionPayloadHash::engine();
+        let mut engine = sha256d::Hash::engine();
         self.base_payload_data_encode(&mut engine).expect("engines don't error");
-        SpecialTransactionPayloadHash::from_engine(engine)
+        SpecialTransactionPayloadHash::from_raw_hash(engine.finalize())
     }
 }
 
@@ -882,21 +897,19 @@ impl<'de> serde::Deserialize<'de> for ProviderRegistrationPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 
-    use hashes::Hash;
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as BASE64;
 
     use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::{Encodable, deserialize};
     use crate::hash_types::InputsHash;
-    use crate::hashes::hex::FromHex;
     use crate::internal_macros::hex;
     use crate::transaction::special_transaction::provider_registration::{
         ProviderMasternodeType, ProviderRegistrationPayload,
     };
     use crate::{OutPoint, PubkeyHash, ScriptBuf, Txid};
-
-    use std::net::IpAddr;
 
     use crate::Network;
     use crate::PrivateKey;
@@ -1006,7 +1019,7 @@ mod tests {
         let owner_key_hash_hex = "3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c";
         assert_eq!(
             owner_key_hash_hex,
-            expected_provider_registration_payload.owner_key_hash.to_hex()
+            expected_provider_registration_payload.owner_key_hash.to_string()
         );
 
         let operator_key_hex = "157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfa";
@@ -1018,7 +1031,7 @@ mod tests {
         let voting_key_hash_hex = "d38a30fafe61575db40f05ab0a08d55119b0aad3";
         assert_eq!(
             voting_key_hash_hex,
-            expected_provider_registration_payload.voting_key_hash.to_hex()
+            expected_provider_registration_payload.voting_key_hash.to_string()
         );
 
         let inputs_hash_hex = "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734";
@@ -1054,7 +1067,7 @@ mod tests {
             collateral_private_key.to_bytes().as_slice(),
         )
         .expect("expected to sign message digest");
-        let base64_signature = base64::encode(signature.as_slice());
+        let base64_signature = BASE64.encode(signature.as_slice());
 
         assert_eq!(
             expected_base64_signature, base64_signature,
@@ -1084,9 +1097,9 @@ mod tests {
                     service_address: MasternodeNetInfo::Legacy(SocketAddr::V4(SocketAddrV4::new(
                         address, port,
                     ))),
-                    owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
+                    owner_key_hash: PubkeyHash::from_str(owner_key_hash_hex).unwrap(),
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                    voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                    voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
                     operator_reward,
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
@@ -1122,7 +1135,7 @@ mod tests {
         // This is a test for testnet
         let network = Network::Testnet;
 
-        let expected_transaction_bytes = Vec::from_hex("030001000379efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002000000006a473044022015df39c80ca8595cc197a0be692e9d158dc53bdbc8c6abca0d30c086f338c037022063becdb4f891436de3d2fb21cbf294e9dcb5c1a04bc0ba621867479e46d048cc0121030de5cb8989b6902d98017ab4d42b9244912006b0a1561c1d1ba0e2f3117a39adffffffff79efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002010000006a47304402205c1bae23b459081b060de14133a20378243bebc05c8e2ed9acdabf6717ae7f9702204027ba0abbcce9ba5b2cb563cbff0190ba8f80e5f8fd6beb07c2c449f194c9be01210270b0f0b71472736a397975a84927314261be815d423006d1bcbc00cd693c3d81ffffffff9d925d6cd8e3a408f472e872d1c2849bc664efda8c7f68f1b3a3efde221bc474010000006a47304402203fa23ec33f91efa026b34e90b15a1fd64ff03242a6a92985b16a25b590e5bae002202d1429374b60b1180cd8b9bd0b432158524f5624d6c5d2d6db8c637c9961a21e0121024c0b09e261253dc40ed572c2d63d0b6cda89154583d75a5ab5a14fba81d70089ffffffff0200e87648170000001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac438ca95a020000001976a91470ed8f5b5cfd4791c15b9d8a7f829cb6a98da18c88ac00000000d101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffff010101014e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac14b33f2231f0df567e0dfb12899c893f5d2d05f6dcc7d9c8c27b68a71191c75400").unwrap();
+        let expected_transaction_bytes = hex_conservative::decode_to_vec("030001000379efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002000000006a473044022015df39c80ca8595cc197a0be692e9d158dc53bdbc8c6abca0d30c086f338c037022063becdb4f891436de3d2fb21cbf294e9dcb5c1a04bc0ba621867479e46d048cc0121030de5cb8989b6902d98017ab4d42b9244912006b0a1561c1d1ba0e2f3117a39adffffffff79efbe95cba05893d09f4ec51a71171a3852b54aa958ae35ce43276f5f8f1002010000006a47304402205c1bae23b459081b060de14133a20378243bebc05c8e2ed9acdabf6717ae7f9702204027ba0abbcce9ba5b2cb563cbff0190ba8f80e5f8fd6beb07c2c449f194c9be01210270b0f0b71472736a397975a84927314261be815d423006d1bcbc00cd693c3d81ffffffff9d925d6cd8e3a408f472e872d1c2849bc664efda8c7f68f1b3a3efde221bc474010000006a47304402203fa23ec33f91efa026b34e90b15a1fd64ff03242a6a92985b16a25b590e5bae002202d1429374b60b1180cd8b9bd0b432158524f5624d6c5d2d6db8c637c9961a21e0121024c0b09e261253dc40ed572c2d63d0b6cda89154583d75a5ab5a14fba81d70089ffffffff0200e87648170000001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac438ca95a020000001976a91470ed8f5b5cfd4791c15b9d8a7f829cb6a98da18c88ac00000000d101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffff010101014e1f3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfad38a30fafe61575db40f05ab0a08d55119b0aad300001976a9143795a62df2eb953c1d08bc996d4089ee5d67e28b88ac14b33f2231f0df567e0dfb12899c893f5d2d05f6dcc7d9c8c27b68a71191c75400").unwrap();
 
         let expected_transaction: Transaction =
             deserialize(expected_transaction_bytes.as_slice()).expect("expected a transaction");
@@ -1202,7 +1215,7 @@ mod tests {
         let owner_key_hash_hex = "3dd03f9ec192b5f275a433bfc90f468ee1a3eb4c";
         assert_eq!(
             owner_key_hash_hex,
-            expected_provider_registration_payload.owner_key_hash.to_hex()
+            expected_provider_registration_payload.owner_key_hash.to_string()
         );
 
         let operator_key_hex = "157b10706659e25eb362b5d902d809f9160b1688e201ee6e94b40f9b5062d7074683ef05a2d5efb7793c47059c878dfa";
@@ -1214,7 +1227,7 @@ mod tests {
         let voting_key_hash_hex = "d38a30fafe61575db40f05ab0a08d55119b0aad3";
         assert_eq!(
             voting_key_hash_hex,
-            expected_provider_registration_payload.voting_key_hash.to_hex()
+            expected_provider_registration_payload.voting_key_hash.to_string()
         );
 
         let inputs_hash_hex = "7ba273b835b1017da314a3363760835ff5ac20278c160604cb8773750b997734";
@@ -1246,11 +1259,11 @@ mod tests {
 
         let expected_base64_signature = "H7N+ScH/K4BXcTk5pVE+bnEacc/y5RfmIk33JO11Cu8bf5rZ7GErSnJQIy4eQA2nGKlQHh2aVWVSbksf9owCh2M=";
         let signature = sign_hash(
-            base64::decode(&expected_base64_signature).expect("expected valid base64").as_slice(),
+            BASE64.decode(expected_base64_signature).expect("expected valid base64").as_slice(),
             collateral_private_key.to_bytes().as_slice(),
         )
         .expect("expected to sign message digest");
-        let base64_signature = base64::encode(signature.as_slice());
+        let base64_signature = BASE64.encode(signature.as_slice());
 
         assert_eq!(
             expected_base64_signature, base64_signature,
@@ -1278,9 +1291,9 @@ mod tests {
                     masternode_mode: provider_mode,
                     collateral_outpoint,
                     service_address: MasternodeNetInfo::Legacy(service_address),
-                    owner_key_hash: PubkeyHash::from_hex(owner_key_hash_hex).unwrap(),
+                    owner_key_hash: PubkeyHash::from_str(owner_key_hash_hex).unwrap(),
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                    voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                    voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
                     operator_reward,
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
@@ -1482,7 +1495,7 @@ mod tests {
             }]),
             shared_collateral: Some(SharedCollateral {
                 shares: (0..shares).map(share).collect(),
-                join_sigs: (0..shares).map(|i| JoinSignature::from([i; 65])).collect(),
+                join_sigs: (0..shares).map(|i| EcdsaRecSignature::from([i; 65])).collect(),
                 early_period_blocks: 1000,
                 early_penalty: 100_000_000,
             }),

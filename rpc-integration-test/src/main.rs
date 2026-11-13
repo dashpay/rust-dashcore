@@ -8,11 +8,9 @@
 //! to test the serialization of arguments and deserialization of responses.
 //!
 
-#[macro_use]
-extern crate lazy_static;
-
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::sync::LazyLock;
 use tracing::trace;
 use tracing_log::LogTracer;
 use tracing_subscriber::EnvFilter;
@@ -25,36 +23,32 @@ use dashcore_rpc::{
         Address, AddressType, Amount, EcdsaSighashType, Network, OutPoint, PrivateKey,
         SignedAmount, Transaction, TxIn, TxOut, Txid, Witness,
         consensus::encode::{deserialize, serialize},
-        hashes::Hash,
-        hashes::hex::FromHex,
-        secp256k1,
+        ecdsa::EcdsaSecretKey,
+        hashes::sha256d,
     },
 };
 
 use dashcore_rpc::dashcore::address::NetworkUnchecked;
 use dashcore_rpc::dashcore::{BlockHash, ProTxHash, QuorumHash, ScriptBuf};
 use dashcore_rpc::dashcore_rpc_json::{
-    GetBlockTemplateModes, GetBlockTemplateRules, ProTxInfo, ProTxRevokeReason, ScanTxOutRequest,
+    GetBlockTemplateModes, ProTxInfo, ProTxRevokeReason, ScanTxOutRequest,
 };
 use dashcore_rpc::json::ProTxListType;
 use dashcore_rpc::json::QuorumType::LlmqTest;
+use hex_conservative::DisplayHex;
 
 const FAUCET_WALLET_NAME: &str = "main";
 const TEST_WALLET_NAME: &str = "testwallet";
 const DEFAULT_WALLET_NODE_RPC_URL: &str = "http://127.0.0.1:20002";
 const DEFAULT_EVO_NODE_RPC_URL: &str = "http://127.0.0.1:20302";
 
-lazy_static! {
-    static ref SECP: secp256k1::Secp256k1<secp256k1::All> = secp256k1::Secp256k1::new();
-    static ref NET: Network = Network::Regtest;
-    /// A random address not owned by the node.
-    static ref RANDOM_ADDRESS: Address = Address::from_str("yd89z5ad98AsM6kRNJ15jveAQHTUz9AJa3")
-            .unwrap()
-            .require_network(*NET)
-            .unwrap();
-    /// The default fee amount to use when needed.
-    static ref FEE: Amount = Amount::from_btc(0.001).unwrap();
-}
+const NET: Network = Network::Regtest;
+/// A random address not owned by the node.
+static RANDOM_ADDRESS: LazyLock<Address> = LazyLock::new(|| {
+    Address::from_str("yd89z5ad98AsM6kRNJ15jveAQHTUz9AJa3").unwrap().require_network(NET).unwrap()
+});
+/// The default fee amount to use when needed.
+static FEE: LazyLock<Amount> = LazyLock::new(|| Amount::from_btc(0.001).unwrap());
 
 /// Assert that the call returns a "method not found" error.
 macro_rules! assert_not_found {
@@ -210,7 +204,7 @@ fn main() {
 
     // Fund test wallet
     let test_wallet_address =
-        wallet_client.get_new_address(None).unwrap().require_network(*NET).unwrap();
+        wallet_client.get_new_address(None).unwrap().require_network(NET).unwrap();
 
     faucet_client
         .send_to_address(
@@ -393,24 +387,24 @@ fn test_get_blockchain_info(cl: &Client) {
 }
 
 fn test_get_new_address(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     assert_eq!(addr.address_type(), Some(AddressType::P2pkh));
 
-    let addr = cl.get_new_address(Some("test")).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(Some("test")).unwrap().require_network(NET).unwrap();
     assert_eq!(addr.address_type(), Some(AddressType::P2pkh));
 }
 
 fn test_dump_private_key(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let sk = cl.dump_private_key(&addr).unwrap();
-    assert_eq!(addr.to_string(), Address::p2pkh(&sk.public_key(&SECP), *NET).to_string());
+    assert_eq!(addr.to_string(), Address::p2pkh(&sk.public_key(), NET).to_string());
 }
 
 #[allow(dead_code)]
 fn test_get_balance_generate_to_address(cl: &Client) {
     let initial = cl.get_balance(None, None).unwrap();
 
-    let address = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let address = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
 
     let blocks = cl.generate_to_address(10, &address).unwrap();
     assert_eq!(blocks.len(), 10);
@@ -423,7 +417,7 @@ fn test_get_balances_generate_to_address(cl: &Client) {
     if wallet_node_version() >= 190000 {
         let initial = cl.get_balances().unwrap();
 
-        let address = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+        let address = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
 
         let blocks = cl.generate_to_address(10, &address).unwrap();
         assert_eq!(blocks.len(), 10);
@@ -454,8 +448,8 @@ fn test_get_block(cl: &Client) {
     let tip = cl.get_best_block_hash().unwrap();
     let block = cl.get_block(&tip).unwrap();
     let hex = cl.get_block_hex(&tip).unwrap();
-    assert_eq!(block, deserialize(&Vec::<u8>::from_hex(&hex).unwrap()).unwrap());
-    assert_eq!(hex, hex::encode(serialize(&block)));
+    assert_eq!(block, deserialize(&hex_conservative::decode_to_vec(&hex).unwrap()).unwrap());
+    assert_eq!(hex, serialize(&block).to_lower_hex_string());
 
     let tip = cl.get_best_block_hash().unwrap();
     let info = cl.get_block_info(&tip).unwrap();
@@ -488,18 +482,18 @@ fn test_get_block_stats(cl: &Client) {
 fn test_get_address_info(cl: &Client) {
     // TODO: check - hex is None
     // let addr = cl.get_new_address(None).unwrap()
-    //     .require_network(*NET).unwrap();
+    //     .require_network(NET).unwrap();
     // let info = cl.get_address_info(&addr).unwrap();
     // assert!(!info.hex.unwrap().is_empty());
 
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let info = cl.get_address_info(&addr).unwrap();
     assert!(info.is_mine);
 }
 
 #[allow(deprecated)]
 fn test_set_label(cl: &Client) {
-    let addr = cl.get_new_address(Some("label")).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(Some("label")).unwrap().require_network(NET).unwrap();
     let info = cl.get_address_info(&addr).unwrap();
     if wallet_node_version() >= 20_00_00 {
         assert!(info.label.is_none());
@@ -533,7 +527,7 @@ fn test_set_label(cl: &Client) {
 }
 
 fn test_send_to_address(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let est = json::EstimateMode::Conservative;
     let _ = cl
         .send_to_address(&addr, btc(1), Some("cc"), None, None, None, None, None, None, None)
@@ -561,7 +555,7 @@ fn test_send_to_address(cl: &Client) {
 }
 
 fn test_get_received_by_address(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let _ =
         cl.send_to_address(&addr, btc(1), None, None, None, None, None, None, None, None).unwrap();
     assert_eq!(cl.get_received_by_address(&addr, Some(0)).unwrap(), btc(1));
@@ -569,7 +563,7 @@ fn test_get_received_by_address(cl: &Client) {
 
     // TODO: fix - looks like there's a consensus delay when things are running on network of three nodes.
     // let addr2 = cl.get_new_address(None).unwrap()
-    //     .require_network(*NET).unwrap();
+    //     .require_network(NET).unwrap();
     // let _ = cl.generate_to_address(1, &addr2).unwrap();
     // sleep(Duration::new(30, 0));
     // assert_eq!(cl.get_received_by_address(&addr, Some(1)).unwrap(), btc(1));
@@ -578,7 +572,7 @@ fn test_get_received_by_address(cl: &Client) {
 
 fn test_list_unspent(cl: &Client) {
     let addr_unchecked = cl.get_new_address(None).unwrap();
-    let addr = addr_unchecked.clone().require_network(*NET).unwrap();
+    let addr = addr_unchecked.clone().require_network(NET).unwrap();
     let txid =
         cl.send_to_address(&addr, btc(1), None, None, None, None, None, None, None, None).unwrap();
     let unspent = cl.list_unspent(Some(0), None, Some(&[&addr]), None, None).unwrap();
@@ -610,17 +604,17 @@ fn test_get_connection_count(cl: &Client) {
 
 fn test_get_raw_change_address(cl: &Client) {
     let address = cl.get_raw_change_address().unwrap();
-    assert!(address.is_valid_for_network(*NET));
+    assert!(address.is_valid_for_network(NET));
 }
 
 fn test_get_raw_transaction(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let txid =
         cl.send_to_address(&addr, btc(1), None, None, None, None, None, None, None, None).unwrap();
     let tx = cl.get_raw_transaction(&txid, None).unwrap();
     let hex = cl.get_raw_transaction_hex(&txid, None).unwrap();
-    assert_eq!(tx, deserialize(&hex::decode(&hex).unwrap()).unwrap());
-    assert_eq!(hex, hex::encode(serialize(&tx)));
+    assert_eq!(tx, deserialize(&hex_conservative::decode_to_vec(&hex).unwrap()).unwrap());
+    assert_eq!(hex, serialize(&tx).to_lower_hex_string());
 
     let info = cl.get_raw_transaction_info(&txid, None).unwrap();
     assert_eq!(info.txid, txid);
@@ -629,7 +623,7 @@ fn test_get_raw_transaction(cl: &Client) {
     //   instantly updating chain and last call to get_raw_transaction_info
     //   results in an error
     // let addr = &cl.get_new_address(None).unwrap()
-    //     .require_network(*NET).unwrap();
+    //     .require_network(NET).unwrap();
     // let blocks = cl.generate_to_address(7, addr).unwrap();
     // let _ = cl.get_raw_transaction_info(&txid, Some(&blocks[0])).unwrap();
 }
@@ -671,7 +665,7 @@ fn test_get_tx_out_proof(cl: &Client) {
     let txid2 = cl
         .send_to_address(&RANDOM_ADDRESS, btc(1), None, None, None, None, None, None, None, None)
         .unwrap();
-    let addr = &cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = &cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let blocks = cl.generate_to_address(7, addr).unwrap();
     let proof = cl.get_tx_out_proof(&[txid1, txid2], Some(&blocks[0])).unwrap();
     assert!(!proof.is_empty());
@@ -684,12 +678,12 @@ fn test_get_mempool_entry(cl: &Client) {
     let entry = cl.get_mempool_entry(&txid).unwrap();
     assert!(entry.spent_by.is_empty());
 
-    let fake = Txid::hash(&[1, 2]);
+    let fake = Txid::from_raw_hash(sha256d::Hash::hash(&[1, 2]));
     assert!(cl.get_mempool_entry(&fake).is_err());
 }
 
 fn test_lock_unspent_unlock_unspent(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let txid =
         cl.send_to_address(&addr, btc(1), None, None, None, None, None, None, None, None).unwrap();
 
@@ -702,7 +696,7 @@ fn test_lock_unspent_unlock_unspent(cl: &Client) {
 
 #[allow(dead_code)]
 fn test_get_block_filter(cl: &Client) {
-    let addr = &cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = &cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let blocks = cl.generate_to_address(7, addr).unwrap();
     if wallet_node_version() >= 190000 {
         let _ = cl.get_block_filter(&blocks[0]).unwrap();
@@ -712,12 +706,8 @@ fn test_get_block_filter(cl: &Client) {
 }
 
 fn test_sign_raw_transaction_with_send_raw_transaction(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
-        compressed: true,
-    };
-    let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);
+    let sk = PrivateKey::new(EcdsaSecretKey::generate(), Network::Regtest);
+    let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
 
     let options = json::ListUnspentQueryOptions {
         minimum_amount: Some(btc(2)),
@@ -812,12 +802,12 @@ fn test_create_raw_transaction(cl: &Client) {
     let tx =
         cl.create_raw_transaction(std::slice::from_ref(&input), &output, Some(500_000)).unwrap();
     let hex = cl.create_raw_transaction_hex(&[input], &output, Some(500_000)).unwrap();
-    assert_eq!(tx, deserialize(&hex::decode(&hex).unwrap()).unwrap());
-    assert_eq!(hex, hex::encode(serialize(&tx)));
+    assert_eq!(tx, deserialize(&hex_conservative::decode_to_vec(&hex).unwrap()).unwrap());
+    assert_eq!(hex, serialize(&tx).to_lower_hex_string());
 }
 
 fn test_fund_raw_transaction(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let mut output = HashMap::new();
     output.insert(RANDOM_ADDRESS.to_string(), btc(1));
 
@@ -1015,7 +1005,7 @@ fn test_finalize_psbt(cl: &Client) {
 }
 
 fn test_list_received_by_address(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     let txid =
         cl.send_to_address(&addr, btc(1), None, None, None, None, None, None, None, None).unwrap();
 
@@ -1030,46 +1020,30 @@ fn test_list_received_by_address(cl: &Client) {
 }
 
 fn test_import_public_key(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
-        compressed: true,
-    };
-    cl.import_public_key(&sk.public_key(&SECP), None, None).unwrap();
-    cl.import_public_key(&sk.public_key(&SECP), Some("l"), None).unwrap();
-    cl.import_public_key(&sk.public_key(&SECP), None, Some(false)).unwrap();
+    let sk = PrivateKey::new(EcdsaSecretKey::generate(), Network::Regtest);
+    cl.import_public_key(&sk.public_key(), None, None).unwrap();
+    cl.import_public_key(&sk.public_key(), Some("l"), None).unwrap();
+    cl.import_public_key(&sk.public_key(), None, Some(false)).unwrap();
 }
 
 fn test_import_priv_key(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
-        compressed: true,
-    };
+    let sk = PrivateKey::new(EcdsaSecretKey::generate(), Network::Regtest);
     cl.import_private_key(&sk, None, None).unwrap();
     cl.import_private_key(&sk, Some("l"), None).unwrap();
     cl.import_private_key(&sk, None, Some(false)).unwrap();
 }
 
 fn test_import_address(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
-        compressed: true,
-    };
-    let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);
+    let sk = PrivateKey::new(EcdsaSecretKey::generate(), Network::Regtest);
+    let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
     cl.import_address(&addr, None, None).unwrap();
     cl.import_address(&addr, Some("l"), None).unwrap();
     cl.import_address(&addr, None, Some(false)).unwrap();
 }
 
 fn test_import_address_script(cl: &Client) {
-    let sk = PrivateKey {
-        network: Network::Regtest,
-        inner: secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng()),
-        compressed: true,
-    };
-    let addr = Address::p2pkh(&sk.public_key(&SECP), Network::Regtest);
+    let sk = PrivateKey::new(EcdsaSecretKey::generate(), Network::Regtest);
+    let addr = Address::p2pkh(&sk.public_key(), Network::Regtest);
     cl.import_address_script(&addr.script_pubkey(), None, None, None).unwrap();
     cl.import_address_script(&addr.script_pubkey(), Some("l"), None, None).unwrap();
     cl.import_address_script(&addr.script_pubkey(), None, Some(false), None).unwrap();
@@ -1297,10 +1271,10 @@ fn test_uptime(cl: &Client) {
 }
 
 fn test_scantxoutset(cl: &Client) {
-    let addr = cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let addr = cl.get_new_address(None).unwrap().require_network(NET).unwrap();
 
     cl.generate_to_address(2, &addr).unwrap();
-    let other_addr = &cl.get_new_address(None).unwrap().require_network(*NET).unwrap();
+    let other_addr = &cl.get_new_address(None).unwrap().require_network(NET).unwrap();
     cl.generate_to_address(7, other_addr).unwrap();
 
     let utxos = cl
@@ -1319,8 +1293,7 @@ fn test_getblocktemplate(cl: &Client) {
     cl.send_to_address(&RANDOM_ADDRESS, btc(1), None, None, None, None, None, None, None, None)
         .unwrap();
 
-    cl.get_block_template(GetBlockTemplateModes::Template, &[GetBlockTemplateRules::SegWit], &[])
-        .unwrap();
+    cl.get_block_template(GetBlockTemplateModes::Template, &[], &[]).unwrap();
 
     // let pop: &Address = &RANDOM_ADDRESS;
 
@@ -1515,15 +1488,6 @@ fn test_get_protx_info(cl: &Client) {
     let protx_info = cl.get_protx_info(&pro_tx_hash, None).unwrap();
 
     let ProTxInfo {
-        pro_tx_hash: _,
-        collateral_hash: _,
-        collateral_index: _,
-        collateral_address: _,
-        operator_reward: _,
-        state: _,
-        confirmations: _,
-        wallet: _,
-        meta_info: _,
         ..
     } = protx_info;
 }
@@ -1559,19 +1523,19 @@ fn test_get_protx_register_fund(cl: &Client) {
 fn test_get_protx_register_prepare(cl: &Client) {
     let owner_address = Address::<NetworkUnchecked>::from_str("yemjhGQ99V5ayJMjoyGGPtxteahii6G1Jz")
         .unwrap()
-        .require_network(*NET)
+        .require_network(NET)
         .unwrap();
 
     let voting_address =
         Address::<NetworkUnchecked>::from_str("yemjhGQ99V5ayJMjoyGGPtxteahii6G1Jz")
             .unwrap()
-            .require_network(*NET)
+            .require_network(NET)
             .unwrap();
 
     let payout_address =
         Address::<NetworkUnchecked>::from_str("yjJJLkYDUN6X8gWjXbCoKEXoiLeKxxMMRt")
             .unwrap()
-            .require_network(*NET)
+            .require_network(NET)
             .unwrap();
 
     let _protx_register_prepare = cl.get_protx_register_prepare(
@@ -1612,7 +1576,7 @@ fn test_get_protx_update_registrar(cl: &Client) {
     let voting_address =
         Address::<NetworkUnchecked>::from_str("yX2cDS4kcJ4LK4uq9Hd4TG7kURV3sGLZrw")
             .unwrap()
-            .require_network(*NET)
+            .require_network(NET)
             .unwrap();
 
     let _protx_update_registrar = cl.get_protx_update_registrar(

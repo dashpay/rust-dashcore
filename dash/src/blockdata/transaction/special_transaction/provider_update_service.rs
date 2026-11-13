@@ -36,7 +36,7 @@
 
 use std::net::SocketAddr;
 
-use hashes::Hash;
+use hashes::{HashEngine, sha256d};
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::provider_registration::ProviderMasternodeType;
@@ -187,9 +187,9 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateServicePayload {
     }
 
     fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
-        let mut engine = SpecialTransactionPayloadHash::engine();
+        let mut engine = sha256d::Hash::engine();
         self.base_payload_data_encode(&mut engine).expect("engines don't error");
-        SpecialTransactionPayloadHash::from_engine(engine)
+        SpecialTransactionPayloadHash::from_raw_hash(engine.finalize())
     }
 }
 
@@ -541,8 +541,6 @@ mod tests {
     use core::str::FromStr;
     use std::net::{Ipv4Addr, SocketAddr};
 
-    use hashes::Hash;
-
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::blockdata::transaction::special_transaction::TransactionPayload::ProviderUpdateServicePayloadType;
     use crate::blockdata::transaction::special_transaction::provider_update_service::ProviderUpdateServicePayload;
@@ -867,7 +865,7 @@ mod tests {
         };
 
         // Decode hex to bytes
-        let block_bytes = match hex::decode(&block_hex_string) {
+        let block_bytes = match hex_conservative::decode_to_vec(&block_hex_string) {
             Ok(bytes) => bytes,
             Err(e) => {
                 panic!("❌ Failed to decode hex: {}", e);
@@ -978,7 +976,7 @@ mod tests {
             }
         };
 
-        let block_bytes = match hex::decode(&block_hex_string) {
+        let block_bytes = match hex_conservative::decode_to_vec(&block_hex_string) {
             Ok(bytes) => bytes,
             Err(e) => {
                 panic!("❌ Failed to decode hex: {}", e);

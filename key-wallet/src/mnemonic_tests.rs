@@ -27,7 +27,7 @@ mod tests {
         assert!(mnemonic.is_ok());
 
         let mnemonic = mnemonic.unwrap();
-        assert_eq!(mnemonic.phrase(), phrase);
+        assert_eq!(mnemonic.phrase().as_str(), phrase);
     }
 
     #[test]

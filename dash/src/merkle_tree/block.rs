@@ -15,13 +15,12 @@
 //!
 //! ```rust
 //! use dashcore::hash_types::Txid;
-//! use dashcore::hashes::hex::FromHex;
 //! use dashcore::{Block, MerkleBlock};
 //!
 //! // Get the proof from a dashcored by running in the terminal:
 //! // $ TXID="5a4ebf66822b0b2d56bd9dc64ece0bc38ee7844a23ff1d7320a88c5fdb2ad3e2"
 //! // $ dashcore-cli gettxoutproof [\"$TXID\"]
-//! let mb_bytes = Vec::from_hex("01000000ba8b9cda965dd8e536670f9ddec10e53aab14b20bacad27b913719\
+//! let mb_bytes = hex_conservative::decode_to_vec("01000000ba8b9cda965dd8e536670f9ddec10e53aab14b20bacad27b913719\
 //!     0000000000190760b278fe7b8565fda3b968b918d5fd997f993b23674c0af3b6fde300b38f33a5914ce6ed5b\
 //!     1b01e32f570200000002252bf9d75c4f481ebb6278d708257d1f12beb6dd30301d26c623f789b2ba6fc0e2d3\
 //!     2adb5f8ca820731dff234a84e78ec30bce4ec69dbd562d0b2b8266bf4e5a0105").unwrap();
@@ -42,16 +41,22 @@
 
 use core::fmt;
 
-use hashes::Hash;
+use hashes::{HashEngine, sha256d};
 
 use self::MerkleBlockError::*;
 use crate::blockdata::block::{self, Block};
-use crate::blockdata::constants::{MAX_BLOCK_WEIGHT, MIN_TRANSACTION_WEIGHT};
+use crate::blockdata::constants::MAX_BLOCK_SIZE;
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::{self, Decodable, Encodable};
 use crate::hash_types::{TxMerkleNode, Txid};
 use crate::io;
+use crate::network::message_sml::MnListDiff;
 use crate::prelude::*;
+
+/// An upper bound on the transactions in a Dash block: its size limit over the
+/// 60 bytes of the smallest transaction, Dash Core's bound in
+/// `CPartialMerkleTree::ExtractMatches` (`MaxBlockSize() / 60`).
+const MAX_BLOCK_TRANSACTIONS: u32 = MAX_BLOCK_SIZE / 60;
 
 /// Data structure that represents a block header paired to a partial merkle tree.
 ///
@@ -75,11 +80,10 @@ impl MerkleBlock {
     ///
     /// ```rust
     /// use dashcore::hash_types::Txid;
-    /// use dashcore::hashes::hex::FromHex;
     /// use dashcore::{Block, MerkleBlock};
     ///
     /// // Block 80000
-    /// let block_bytes = Vec::from_hex("01000000ba8b9cda965dd8e536670f9ddec10e53aab14b20bacad2\
+    /// let block_bytes = hex_conservative::decode_to_vec("01000000ba8b9cda965dd8e536670f9ddec10e53aab14b20bacad2\
     ///     7b9137190000000000190760b278fe7b8565fda3b968b918d5fd997f993b23674c0af3b6fde300b38f33\
     ///     a5914ce6ed5b1b01e32f5702010000000100000000000000000000000000000000000000000000000000\
     ///     00000000000000ffffffff0704e6ed5b1b014effffffff0100f2052a01000000434104b68a50eaa0287e\
@@ -210,6 +214,34 @@ pub struct PartialMerkleTree {
 }
 
 impl PartialMerkleTree {
+    /// Constructs a partial merkle tree from the given `MnListDiff`.
+    pub fn from_mn_list_diff(mn_list_diff: &MnListDiff) -> Self {
+        PartialMerkleTree::from_parts(
+            mn_list_diff.total_transactions,
+            mn_list_diff
+                .merkle_hashes
+                .iter()
+                .map(|hash| TxMerkleNode::from_raw_hash(hash.to_raw_hash()))
+                .collect(),
+            &mn_list_diff.merkle_flags,
+        )
+    }
+
+    /// `bytes` packs the bits per 8 in a byte, least significant bit first.
+    fn from_parts(num_transactions: u32, hashes: Vec<TxMerkleNode>, bytes: &[u8]) -> Self {
+        let mut bits: Vec<bool> = vec![false; bytes.len() * 8];
+
+        for (p, bit) in bits.iter_mut().enumerate() {
+            *bit = (bytes[p / 8] & (1 << (p % 8) as u8)) != 0;
+        }
+
+        PartialMerkleTree {
+            num_transactions,
+            bits,
+            hashes,
+        }
+    }
+
     /// Returns the total number of transactions in the block.
     pub fn num_transactions(&self) -> u32 {
         self.num_transactions
@@ -235,7 +267,6 @@ impl PartialMerkleTree {
     ///
     /// ```rust
     /// use dashcore::hash_types::Txid;
-    /// use dashcore::hashes::hex::FromHex;
     /// use dashcore::merkle_tree::{MerkleBlock, PartialMerkleTree};
     ///
     /// // Block 80000
@@ -287,7 +318,7 @@ impl PartialMerkleTree {
             return Err(NoTransactions);
         };
         // check for excessively high numbers of transactions
-        if self.num_transactions > MAX_BLOCK_WEIGHT / MIN_TRANSACTION_WEIGHT {
+        if self.num_transactions > MAX_BLOCK_TRANSACTIONS {
             return Err(TooManyTransactions);
         }
         // there can never be more hashes provided than one for every txid
@@ -435,10 +466,10 @@ impl PartialMerkleTree {
 
     /// Helper method to produce SHA256D(left + right)
     fn parent_hash(left: TxMerkleNode, right: TxMerkleNode) -> TxMerkleNode {
-        let mut encoder = TxMerkleNode::engine();
+        let mut encoder = sha256d::Hash::engine();
         left.consensus_encode(&mut encoder).expect("engines don't error");
         right.consensus_encode(&mut encoder).expect("engines don't error");
-        TxMerkleNode::from_engine(encoder)
+        TxMerkleNode::from_raw_hash(encoder.finalize())
     }
 }
 
@@ -459,16 +490,7 @@ impl Decodable for PartialMerkleTree {
         let hashes: Vec<TxMerkleNode> = Decodable::consensus_decode(r)?;
 
         let bytes: Vec<u8> = Decodable::consensus_decode(r)?;
-        let mut bits: Vec<bool> = vec![false; bytes.len() * 8];
-
-        for (p, bit) in bits.iter_mut().enumerate() {
-            *bit = (bytes[p / 8] & (1 << (p % 8) as u8)) != 0;
-        }
-        Ok(PartialMerkleTree {
-            num_transactions,
-            hashes,
-            bits,
-        })
+        Ok(PartialMerkleTree::from_parts(num_transactions, hashes, &bytes))
     }
 }
 
@@ -535,13 +557,10 @@ impl std::error::Error for MerkleBlockError {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "rand-std")]
-    use hashes::Hash;
-    #[cfg(feature = "rand-std")]
-    use secp256k1::rand::prelude::*;
-
     use super::*;
     use crate::consensus::encode::{deserialize, serialize};
+    #[cfg(feature = "rand-std")]
+    use crate::crypto::key::rand::prelude::*;
     #[cfg(feature = "rand-std")]
     use crate::hash_types::TxMerkleNode;
     use crate::internal_macros::hex;
@@ -587,7 +606,7 @@ mod tests {
 
         use crate::merkle_tree;
 
-        let mut rng = thread_rng();
+        let mut rng = crate::crypto::key::rand::rng();
         // Create some fake tx ids
         let tx_ids = (1..=tx_count)
             .map(|i| format!("{:064x}", i).parse::<Txid>().unwrap())
@@ -612,7 +631,7 @@ mod tests {
                 // Generate `att / 2` random bits
                 let rand_bits = match att / 2 {
                     0 => 0,
-                    bits => rng.r#gen::<u64>() >> (64 - bits),
+                    bits => rng.random::<u64>() >> (64 - bits),
                 };
                 let include = rand_bits == 0;
                 matches[j] = include;
@@ -657,6 +676,32 @@ mod tests {
                 assert_ne!(merkle_root_3, merkle_root_1);
             }
         }
+    }
+
+    /// A Dash block holds up to 33,333 transactions: its 2 MB size limit over
+    /// the 60 bytes of the smallest transaction, the bound Dash Core's
+    /// `CPartialMerkleTree::ExtractMatches` allows. A proof of a transaction
+    /// in such a block is accepted, one claiming a larger block is refused.
+    #[test]
+    fn a_partial_merkle_tree_spans_as_many_transactions_as_a_dash_block_holds() {
+        let tree = |count: u32| {
+            let txids: Vec<Txid> = (0..count)
+                .map(|i| {
+                    let mut bytes = [0u8; 32];
+                    bytes[..4].copy_from_slice(&i.to_le_bytes());
+                    Txid::from_byte_array(bytes)
+                })
+                .collect();
+            let mut matches = vec![false; count as usize];
+            matches[0] = true;
+            PartialMerkleTree::from_txids(&txids, &matches)
+        };
+
+        assert!(tree(33_333).extract_matches(&mut vec![], &mut vec![]).is_ok());
+        assert_eq!(
+            tree(33_334).extract_matches(&mut vec![], &mut vec![]),
+            Err(MerkleBlockError::TooManyTransactions)
+        );
     }
 
     #[test]
@@ -759,8 +804,8 @@ mod tests {
     impl PartialMerkleTree {
         /// Flip one bit in one of the hashes - this should break the authentication
         fn damage(&mut self, rng: &mut ThreadRng) {
-            let n = rng.gen_range(0..self.hashes.len());
-            let bit = rng.r#gen::<u8>();
+            let n = rng.random_range(0..self.hashes.len());
+            let bit = rng.random::<u8>();
             let hashes = &mut self.hashes;
             let mut hash = hashes[n].to_byte_array();
             hash[(bit >> 3) as usize] ^= 1 << (bit & 7);
@@ -771,8 +816,7 @@ mod tests {
     /// Returns a real block (0000000000013b8ab2cd513b0261a14096412195a72a0c4827d229dcc7e0f7af)
     /// with 9 txs.
     fn get_block_13b8a() -> Block {
-        use hashes::hex::FromHex;
         let block_hex = include_str!("../../tests/data/block_13b8a.hex");
-        deserialize(&Vec::from_hex(block_hex).unwrap()).unwrap()
+        deserialize(&hex_conservative::decode_to_vec(block_hex).unwrap()).unwrap()
     }
 }

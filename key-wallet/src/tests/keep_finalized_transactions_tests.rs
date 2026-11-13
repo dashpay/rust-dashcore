@@ -34,9 +34,6 @@ use crate::{
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 #[cfg(not(feature = "keep-finalized-transactions"))]
 use dashcore::ephemerealdata::instant_lock::InstantLock;
-use dashcore::hashes::Hash;
-#[cfg(not(feature = "keep-finalized-transactions"))]
-use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{BlockHash, Transaction};
 
 fn bip44_account_type() -> AccountType {
@@ -240,6 +237,7 @@ fn proreg_tx_and_owner_match() -> (Transaction, AccountMatch) {
     use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
     use dashcore::bls_sig_utils::BLSPublicKey;
     use dashcore::hash_types::InputsHash;
+    use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
     use dashcore::{OutPoint, PubkeyHash, ScriptBuf, Txid};
     use std::net::SocketAddr;
     use std::str::FromStr;

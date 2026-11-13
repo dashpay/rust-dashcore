@@ -2,27 +2,31 @@
 //!
 //! This module contains:
 //! - The main `DashSpvClient` struct definition
-//! - Simple getters for wallet, network, storage, etc.
-//! - Storage operations (clear_storage, clear_sync_state, clear_filters)
-//! - State queries (is_running, tip_hash, tip_height, chain_state, stats)
+//! - Simple getters for wallet and network
+//! - State and header queries (is_running, tip_header, header_at, header_height)
+//! - clear_storage
 //! - Configuration updates
-//! - Terminal UI accessors
 
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
+use crate::sml_engine::MasternodeListEngine;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{watch, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
+use tokio::task::{JoinHandle, JoinSet};
+use tokio_util::sync::CancellationToken;
 
 use super::ClientConfig;
-use crate::error::{Result, SpvError};
+use crate::error::{Result, SpvError, StorageResult};
 use crate::network::NetworkManager;
 use crate::storage::{
-    PersistentBlockHeaderStorage, PersistentBlockStorage, PersistentFilterHeaderStorage,
-    PersistentFilterStorage, PersistentMetadataStorage, StorageManager,
+    BlockHeaderStorage, BlockHeaderTip, DiskStorageManager, PersistentBlockHeaderStorage,
+    PersistentBlockStorage, PersistentFilterHeaderStorage, PersistentFilterStorage,
+    PersistentMetadataStorage, StorageManager,
 };
-use crate::sync::SyncCoordinator;
+use crate::sync::{Managers, SyncCoordinator};
+use crate::types::HashedBlockHeader;
 use key_wallet_manager::WalletInterface;
 
-pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
+pub(super) type SyncManagers<W> = Managers<
     PersistentBlockHeaderStorage,
     PersistentFilterHeaderStorage,
     PersistentFilterStorage,
@@ -35,7 +39,7 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 ///
 /// # Generic Design Philosophy
 ///
-/// This struct uses three generic parameters (`W`, `N`, `S`) instead of concrete types or
+/// This struct uses two generic parameters (`W`, `N`) instead of concrete types or
 /// trait objects. This design choice provides significant benefits for a library:
 ///
 /// ## Benefits of Generic Architecture
@@ -53,7 +57,6 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 /// ### 3. **Library Flexibility** 🔌
 /// - Users can plug in their own `WalletInterface` implementations
 /// - Custom `NetworkManager` for specialized network requirements
-/// - Alternative `StorageManager` (in-memory, cloud, custom DB)
 /// - Essential for a reusable library
 ///
 /// ### 4. **Testing Without Mocks** 🧪
@@ -71,7 +74,6 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 ///
 /// - `W: WalletInterface` - Handles UTXO tracking, address management, transaction processing
 /// - `N: NetworkManager` - Manages peer connections, message routing, network protocol
-/// - `S: StorageManager` - Persistent storage for headers, filters, chain state
 /// - Event handlers are stored as `Vec<Arc<dyn EventHandler>>`
 ///
 /// ## Common Configurations
@@ -80,18 +82,10 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 ///
 /// ```ignore
 /// // Production configuration
-/// type StandardSpvClient = DashSpvClient<
-///     WalletManager,
-///     PeerNetworkManager,
-///     DiskStorageManager,
-/// >;
+/// type StandardSpvClient = DashSpvClient<WalletManager, PeerNetworkManager>;
 ///
 /// // Test configuration
-/// type TestSpvClient = DashSpvClient<
-///     WalletManager,
-///     MockNetworkManager,
-///     DiskStorageManager,
-/// >;
+/// type TestSpvClient = DashSpvClient<WalletManager, MockNetworkManager>;
 /// ```
 ///
 /// ## Why Not Trait Objects?
@@ -103,21 +97,42 @@ pub(super) type PersistentSyncCoordinator<W> = SyncCoordinator<
 /// - Not reduce binary size (production has one instantiation anyway)
 ///
 /// The generic design is an intentional, beneficial architectural choice for a library.
-pub struct DashSpvClient<W: WalletInterface, N: NetworkManager, S: StorageManager> {
+pub struct DashSpvClient<W: WalletInterface, N: NetworkManager> {
     pub(super) config: Arc<RwLock<ClientConfig>>,
-    pub(super) network: Arc<Mutex<N>>,
-    pub(super) storage: Arc<Mutex<S>>,
+    pub(super) network: Arc<N>,
+    pub(super) storage: Arc<Mutex<DiskStorageManager>>,
     /// External wallet implementation (required)
     pub(super) wallet: Arc<RwLock<W>>,
-    pub(super) masternode_engine: Option<Arc<RwLock<MasternodeListEngine>>>,
-    pub(super) sync_coordinator: Arc<Mutex<PersistentSyncCoordinator<W>>>,
-    /// `true` while running, `false` once a stop is requested. Stored as a
-    /// `watch` so a stop is observed immediately rather than polled.
-    pub(super) running: Arc<watch::Sender<bool>>,
+    pub(super) masternode_engine:
+        Option<Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>>,
+    pub(super) sync_coordinator: Arc<Mutex<SyncCoordinator>>,
+    /// The running sync loop, `None` while stopped. A loop whose `shutdown` is
+    /// cancelled has failed and waits to be torn down. `run` and `stop` hold
+    /// the lock throughout, so they never overlap.
+    pub(super) sync_loop: Arc<Mutex<Option<SyncLoop>>>,
+    /// Whether the sync loop is running, readable without locking `sync_loop`.
+    /// Set once `run` started it, cleared as soon as it stops or fails.
+    pub(super) running: Arc<AtomicBool>,
+    /// Tasks the sync loop detached, each holding a client clone. `stop` joins them.
+    pub(super) detached_tasks: Arc<Mutex<JoinSet<()>>>,
     pub(super) event_handlers: Arc<Vec<Arc<dyn super::EventHandler>>>,
 }
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpvClient<W, N, S> {
+/// The background task of a running client.
+pub(super) struct SyncLoop {
+    /// Tells this loop apart from the ones `run` starts after it.
+    pub(super) id: u64,
+    pub(super) task: JoinHandle<()>,
+    /// Stops the loop and the tasks that act on its events.
+    pub(super) shutdown: CancellationToken,
+    /// The tasks delivering events to the handlers. They outlive the loop, so the
+    /// handlers also hear the peers the network drops while it stops.
+    pub(super) monitors: Vec<JoinHandle<()>>,
+    /// Stops `monitors`.
+    pub(super) monitor_shutdown: CancellationToken,
+}
+
+impl<W: WalletInterface, N: NetworkManager> Clone for DashSpvClient<W, N> {
     fn clone(&self) -> Self {
         Self {
             config: Arc::clone(&self.config),
@@ -126,13 +141,15 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> Clone for DashSpv
             wallet: Arc::clone(&self.wallet),
             masternode_engine: self.masternode_engine.clone(),
             sync_coordinator: Arc::clone(&self.sync_coordinator),
+            sync_loop: Arc::clone(&self.sync_loop),
             running: Arc::clone(&self.running),
+            detached_tasks: Arc::clone(&self.detached_tasks),
             event_handlers: Arc::clone(&self.event_handlers),
         }
     }
 }
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     // ============ Simple Getters ============
 
     /// Get a reference to the wallet.
@@ -145,38 +162,35 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
         self.config.read().await.network
     }
 
-    /// Get access to storage manager (requires locking).
-    pub fn storage(&self) -> Arc<Mutex<S>> {
-        self.storage.clone()
-    }
-
     // ============ State Queries ============
 
-    /// Check if the client is running.
+    /// Check if the client is running. Does not wait for an ongoing `run` or `stop`.
     pub fn is_running(&self) -> bool {
-        *self.running.borrow()
+        self.running.load(Ordering::Acquire)
     }
 
-    /// Returns the current chain tip hash if available.
-    pub async fn tip_hash(&self) -> Option<dashcore::BlockHash> {
-        let storage = self.storage.lock().await;
-        storage.get_tip().await.map(|tip| *tip.hash())
+    pub async fn tip_header(&self) -> Option<BlockHeaderTip> {
+        self.storage.lock().await.get_tip().await
     }
 
-    /// Returns the current chain tip height (absolute), accounting for checkpoint base.
-    pub async fn tip_height(&self) -> u32 {
-        self.storage.lock().await.get_tip_height().await.unwrap_or(0)
+    pub async fn header_at(&self, height: u32) -> StorageResult<Option<HashedBlockHeader>> {
+        self.storage.lock().await.get_header(height).await
+    }
+
+    pub async fn header_height(&self, hash: &dashcore::BlockHash) -> StorageResult<Option<u32>> {
+        self.storage.lock().await.get_header_height_by_hash(hash).await
     }
 
     // ============ Storage Operations ============
 
-    /// Clear all persisted storage (headers, filters, state, sync state) and reset in-memory state.
+    /// Stop the client and clear all persisted storage (headers, filters, state, sync state)
+    /// and the in-memory state derived from it.
     pub async fn clear_storage(&self) -> Result<()> {
-        // Wipe on-disk persistence fully
-        {
-            let mut storage = self.storage.lock().await;
-            storage.clear().await.map_err(SpvError::Storage)?;
-        }
+        self.stop().await;
+
+        self.storage.lock().await.clear().await?;
+
+        self.sync_coordinator.lock().await.reset_progress();
 
         Ok(())
     }

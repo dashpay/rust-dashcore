@@ -50,11 +50,14 @@ impl TransactionRouter {
             TxType::AssetUnlock => TransactionType::AssetUnlock,
             TxType::Coinbase => TransactionType::Coinbase,
             TxType::QuorumCommitment | TxType::MnhfSignal => TransactionType::Ignored,
-            // Classic and pre-DIP-0002 transactions are classified by shape. So are special
-            // types we can't parse yet: they may still spend or pay wallet coins, so they are
-            // checked across every fund-bearing account.
+            // Classic and pre-DIP-0002 transactions are classified by shape. So are the shared
+            // masternode types and special types we can't parse yet: they may still spend or
+            // pay wallet coins, so they are checked across every fund-bearing account.
             TxType::Classic
             | TxType::ClassicalWithNonStandardVersionTypeBytes(_)
+            | TxType::ProviderDissolve
+            | TxType::ProviderUpdateShare
+            | TxType::ProviderUpdateSharedRegistrar
             | TxType::Unknown(_) => {
                 if tx.is_coin_base() {
                     TransactionType::Coinbase

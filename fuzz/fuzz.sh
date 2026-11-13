@@ -31,7 +31,8 @@ cargo --version
 rustc --version
 
 # Ensure we don't trigger ThinLTO/internalization issues with honggfuzz's link flags
-export RUSTFLAGS="${RUSTFLAGS:-} -C lto=no"
+# `bitcoin_hashes` weakens its hashes under `hashes_fuzz`, not `fuzzing`
+export RUSTFLAGS="${RUSTFLAGS:-} -C lto=no --cfg=hashes_fuzz"
 
 # Testing
 cargo install --force honggfuzz --no-default-features

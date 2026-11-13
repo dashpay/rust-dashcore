@@ -5,6 +5,7 @@ use std::process;
 use std::sync::Arc;
 
 use clap::{Parser, ValueEnum};
+use dash_spv::chain::CheckpointManager;
 use dash_spv::{
     ClientConfig, DashSpvClient, DevnetConfig, LevelFilter, LlmqDevnetParams, MempoolStrategy,
     Network, ValidationMode,
@@ -118,6 +119,17 @@ struct Args {
     /// Use 'now' for the latest checkpoint.
     #[arg(short, long, value_name = "HEIGHT")]
     start_height: Option<String>,
+
+    /// Wallet birth height. Header, filter-header and filter sync anchor at the
+    /// nearest checkpoint at or before this height instead of genesis, unless
+    /// `--start-height` sets the anchor explicitly. Use 'now' for the latest
+    /// checkpoint (a brand-new wallet with no prior history). 'now' moves forward
+    /// whenever the bundled checkpoints are refreshed, so pass the logged numeric
+    /// height on later runs against the same data directory. Defaults to 0, which
+    /// scans every block an HD wallet can have used: on mainnet sync still anchors
+    /// at the checkpoint below HD wallet activation rather than at genesis.
+    #[arg(long, value_name = "HEIGHT")]
+    birth_height: Option<String>,
 
     /// Disable log file output (enables console logging as fallback)
     #[arg(long)]
@@ -249,34 +261,46 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         config = config.with_user_agent(user_agent);
     }
 
+    // Resolve the wallet birth height, mapping 'now' to the latest checkpoint.
+    let birth_height = resolve_birth_height(&args.birth_height, config.network)?;
+    tracing::info!("Wallet birth height: {}", birth_height);
+
     // Create the wallet manager
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(config.network);
     wallet_manager.create_wallet_from_mnemonic(
         mnemonic_phrase.as_str(),
-        0,
+        birth_height,
         key_wallet::wallet::initialization::WalletAccountCreationOptions::default(),
     )?;
     let wallet = Arc::new(tokio::sync::RwLock::new(wallet_manager));
 
     // Create network manager
-    let network_manager = match dash_spv::network::manager::PeerNetworkManager::new(&config).await {
-        Ok(nm) => nm,
-        Err(e) => {
-            eprintln!("Failed to create network manager: {}", e);
-            process::exit(1);
-        }
-    };
+    let network_manager = dash_spv::network::PeerNetworkManager::new(&config).await;
 
-    let storage_manager = match dash_spv::storage::DiskStorageManager::new(&config).await {
-        Ok(sm) => sm,
-        Err(e) => {
-            eprintln!("Failed to create disk storage manager: {}", e);
-            process::exit(1);
-        }
-    };
-    run_client(config, network_manager, storage_manager, wallet).await?;
+    run_client(config, network_manager, wallet).await?;
 
     Ok(())
+}
+
+/// Resolve the `--birth-height` argument into a concrete block height.
+///
+/// `None` means genesis (0). `now`/`latest` resolves to the highest bundled
+/// checkpoint for the network, which is the right anchor for a brand-new wallet
+/// with no prior on-chain history. A numeric value is taken verbatim and gets
+/// snapped to the nearest checkpoint at or before it during sync anchoring.
+fn resolve_birth_height(arg: &Option<String>, network: Network) -> Result<u32, String> {
+    let Some(value) = arg else {
+        return Ok(0);
+    };
+
+    if value == "now" || value == "latest" {
+        return Ok(CheckpointManager::for_network(network)
+            .last_checkpoint_before_height(u32::MAX)
+            .map(|checkpoint| checkpoint.height())
+            .unwrap_or(0));
+    }
+
+    value.parse::<u32>().map_err(|e| format!("Invalid birth height '{}': {}", value, e))
 }
 
 fn build_client_config(args: &Args, data_dir: PathBuf) -> Result<ClientConfig, String> {
@@ -369,9 +393,9 @@ fn parse_llmq_devnet_params(raw: &str) -> Result<LlmqDevnetParams, String> {
     let (size_str, threshold_str) = raw
         .split_once(':')
         .ok_or_else(|| format!("--llmq-devnet-params expects SIZE:THRESHOLD, got '{}'", raw))?;
-    let size: u32 =
+    let size: u16 =
         size_str.parse().map_err(|e| format!("invalid LLMQ_DEVNET size '{}': {}", size_str, e))?;
-    let threshold: u32 = threshold_str
+    let threshold: u16 = threshold_str
         .parse()
         .map_err(|e| format!("invalid LLMQ_DEVNET threshold '{}': {}", threshold_str, e))?;
     Ok(LlmqDevnetParams {
@@ -380,41 +404,30 @@ fn parse_llmq_devnet_params(raw: &str) -> Result<LlmqDevnetParams, String> {
     })
 }
 
-async fn run_client<S: dash_spv::storage::StorageManager>(
+async fn run_client(
     config: ClientConfig,
-    network_manager: dash_spv::network::manager::PeerNetworkManager,
-    storage_manager: S,
+    network_manager: dash_spv::network::PeerNetworkManager,
     wallet: Arc<tokio::sync::RwLock<WalletManager<ManagedWalletInfo>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Create and start the client
-    let client =
-        match DashSpvClient::<
-            WalletManager<ManagedWalletInfo>,
-            dash_spv::network::manager::PeerNetworkManager,
-            S,
-        >::new(
-            config.clone(), network_manager, storage_manager, wallet.clone(), Vec::new()
-        )
-        .await
-        {
-            Ok(client) => client,
-            Err(e) => {
-                eprintln!("Failed to create SPV client: {}", e);
-                process::exit(1);
-            }
-        };
-
-    let stop_client = client.clone();
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            tracing::debug!("Shutdown signal received");
-            if let Err(e) = stop_client.stop().await {
-                tracing::warn!("Error during ctrl-c stop: {}", e);
-            }
+    let client = match DashSpvClient::<
+        WalletManager<ManagedWalletInfo>,
+        dash_spv::network::PeerNetworkManager,
+    >::new(config.clone(), network_manager, wallet.clone(), Vec::new())
+    .await
+    {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("Failed to create SPV client: {}", e);
+            process::exit(1);
         }
-    });
+    };
 
     client.run().await?;
+
+    // Sync in the background until Ctrl-C.
+    tokio::signal::ctrl_c().await?;
+    client.stop().await;
 
     Ok(())
 }
@@ -435,6 +448,39 @@ mod tests {
         let mut argv = vec!["--mnemonic-file", "/dev/null"];
         argv.extend_from_slice(extra);
         parse(&argv).expect("parse")
+    }
+
+    #[test]
+    fn birth_height_resolves_none_now_and_numeric() {
+        // Unspecified means genesis, preserving the full-scan default.
+        assert_eq!(resolve_birth_height(&None, Network::Mainnet).unwrap(), 0);
+
+        // A numeric value is taken verbatim (nearest-checkpoint snapping happens later).
+        assert_eq!(
+            resolve_birth_height(&Some("123456".to_string()), Network::Mainnet).unwrap(),
+            123456
+        );
+
+        // 'now'/'latest' resolve to the highest bundled checkpoint for the network.
+        let latest = CheckpointManager::for_network(Network::Mainnet)
+            .last_checkpoint_before_height(u32::MAX)
+            .expect("mainnet has checkpoints")
+            .height();
+        assert!(latest > 0);
+        assert_eq!(
+            resolve_birth_height(&Some("now".to_string()), Network::Mainnet).unwrap(),
+            latest
+        );
+        assert_eq!(
+            resolve_birth_height(&Some("latest".to_string()), Network::Mainnet).unwrap(),
+            latest
+        );
+
+        // Without bundled checkpoints 'now' falls back to genesis, the only valid anchor.
+        assert_eq!(resolve_birth_height(&Some("now".to_string()), Network::Devnet).unwrap(), 0);
+
+        // Non-numeric junk is rejected.
+        assert!(resolve_birth_height(&Some("abc".to_string()), Network::Mainnet).is_err());
     }
 
     #[test]

@@ -9,7 +9,7 @@
 
   <p>
     <a href="https://crates.io/crates/dash"><img alt="Crate Info" src="https://img.shields.io/crates/v/dash.svg"/></a>
-    <a href="https://github.com/dashpay/rust-dashcore/blob/main/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
+    <a href="https://github.com/dashpay/rust-dashcore/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/dashpay/rust-dashcore"/></a>
     <a href="https://github.com/dashpay/rust-dashcore/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/dashpay/rust-dashcore/workflows/Continuous%20integration/badge.svg"></a>
     <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/main"><img alt="Coverage (main)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/main/graph/badge.svg"/></a>
     <a href="https://codecov.io/gh/dashpay/rust-dashcore/branch/dev"><img alt="Coverage (dev)" src="https://codecov.io/gh/dashpay/rust-dashcore/branch/dev/graph/badge.svg"/></a>
@@ -27,7 +27,6 @@
 | core | dashcore, dashcore_hashes, dashcore-private | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=core)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=core) |
 | spv | dash-spv | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=spv)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=spv) |
 | wallet | key-wallet | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=wallet)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=wallet) |
-| ffi | dash-spv-ffi, key-wallet-ffi | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=ffi)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=ffi) |
 | rpc | dashcore-rpc, dashcore-rpc-json | [![codecov](https://codecov.io/gh/dashpay/rust-dashcore/graph/badge.svg?flag=rpc)](https://codecov.io/gh/dashpay/rust-dashcore?flags[0]=rpc) |
 
 </details>
@@ -42,10 +41,8 @@ Supports (or should support)
 * De/serialization of blocks and transactions
 * Script de/serialization
 * Private keys and address creation, de/serialization and validation (including full BIP32 support)
-* PSBT creation, manipulation, merging and finalization
 * Pay-to-contract support as in Appendix A of the [Blockstream sidechains whitepaper](https://www.blockstream.com/sidechains.pdf)
 * JSONRPC interaction with Dash Core
-* FFI bindings for C/Swift integration (dash-spv-ffi, key-wallet-ffi)
 * High-level wallet management with transaction building and UTXO management
 * Dash special transaction data types, including DIP4 coinbase payloads and
   quorum commitments
@@ -60,9 +57,7 @@ This workspace contains reusable building blocks for applications that need to
 verify Dash-specific data without making an RPC call for every operation.
 `dashcore` provides the protocol types, hashing, simplified masternode list and
 LLMQ machinery, while `dash-spv` adds peer synchronization, persistent header
-and compact-filter storage, and ChainLock and InstantSend processing. The
-`dash-spv-ffi` crate exposes the SPV client through a C-compatible API suitable
-for C, C++, Swift, and other languages that can call a C ABI.
+and compact-filter storage, and ChainLock and InstantSend processing.
 
 These components do not together form a standalone implementation of all Dash
 Core consensus rules. See the consensus limitations below before choosing a
@@ -135,7 +130,6 @@ See `client/examples/` for more usage examples.
 This library provides comprehensive wallet functionality through multiple components:
 
 * **key-wallet**: Low-level cryptographic primitives for HD wallets, mnemonic generation, and key derivation; and high-level wallet management with transaction building, UTXO tracking, and coin selection
-* **key-wallet-ffi**: C/Swift FFI bindings for mobile integration
 * **dash-spv**: SPV (Simplified Payment Verification) client implementation
 
 # Supported Dash Core Versions

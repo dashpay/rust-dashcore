@@ -6,12 +6,12 @@
 
 //! The legacy asset lock decoder.
 //!
-//! Before this crate read special payloads strictly through their length prefix, as Dash Core
-//! does, it read an asset lock's payload whatever length the prefix announced. Dash Platform
-//! accepted, and charged for, instant asset lock proofs decoded that way, and has to keep decoding
-//! them that way to agree with its older binaries and to replay its chain. This module keeps that
-//! legacy framing apart from the transaction decoder, so that the transaction decoder can follow
-//! Dash Core while the legacy framing stays as it is.
+//! Earlier releases of this crate read an asset lock's payload whatever length its prefix
+//! announced; the crate now reads every special payload strictly through its prefix, as Dash Core
+//! does. Dash Platform accepted, and charged for, instant asset lock proofs decoded the earlier
+//! way, and has to keep decoding them that way to agree with its older binaries and to replay its
+//! chain. This module keeps that legacy framing apart from the transaction decoder, so that the
+//! transaction decoder can follow Dash Core while the legacy framing stays as it is.
 
 use crate::blockdata::transaction::Transaction;
 use crate::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
@@ -26,21 +26,23 @@ impl Transaction {
     /// Deserializes a transaction with the legacy asset lock framing: an asset lock's payload is
     /// read after its length prefix, whatever length the prefix announces.
     ///
-    /// For an asset lock (a version of at least 3 when read as an `i16`, and type 8) the prefix
-    /// must be a minimally encoded CompactSize, but its value is ignored: the payload, a version
-    /// byte and the credit outputs, is decoded from the bytes after it and must end `bytes`. Any
-    /// other transaction is decoded by [`deserialize`](encode::deserialize).
+    /// For an asset lock (type 8 at a version of at least 3 when read as an `i16`, the versions
+    /// Dash Core reads a payload from) the prefix must be a minimally encoded CompactSize, but its
+    /// value is ignored: the payload, a version byte and the credit outputs, is decoded from the
+    /// bytes after it and must end `bytes`. Any other transaction, including type 8 below version
+    /// 3, is decoded by [`deserialize`](encode::deserialize).
     ///
     /// This is a legacy decoder. Prefer [`deserialize`](encode::deserialize), which reads a
     /// payload through its length prefix as Dash Core does. This one is for callers that must keep
-    /// accepting the asset locks that earlier releases of this crate accepted, such as Dash
-    /// Platform decoding instant asset lock proofs, whose InstantSend lock and signature do not
-    /// cover the prefix.
+    /// reading asset lock payloads as earlier releases of this crate did, such as Dash Platform
+    /// decoding instant asset lock proofs, whose InstantSend lock and state transition signature
+    /// do not cover the prefix. It is not deprecated: such callers have nothing to move to.
     ///
     /// Its framing must never change, or its callers would stop agreeing with what they accepted
-    /// before. It shares no code with the transaction and asset lock payload decoders, so a new
-    /// transaction rule or payload layout there leaves it as it is. It reads inputs, outputs,
-    /// witnesses and CompactSizes with this crate's decoders.
+    /// before. Its asset lock path shares no code with the transaction and asset lock payload
+    /// decoders, so a new transaction rule or payload layout there leaves it as it is. It does
+    /// read inputs, outputs, witnesses, lock times and CompactSizes with this crate's decoders, so
+    /// a change to those reaches it too.
     pub fn deserialize_with_legacy_asset_lock_framing(
         bytes: &[u8],
     ) -> Result<Transaction, encode::Error> {

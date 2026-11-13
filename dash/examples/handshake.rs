@@ -5,11 +5,11 @@ use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpStream};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, process};
 
+use dashcore::Network;
 use dashcore::consensus::{Decodable, encode};
+use dashcore::key::rand;
 use dashcore::network::{address, constants, message, message_network};
-use dashcore::secp256k1::rand::Rng;
-use dashcore::{Network, secp256k1};
-use secp256k1::rand;
+use rand::Rng;
 
 fn main() {
     // This example establishes a connection to a Bitcoin node, sends the initial
@@ -90,7 +90,7 @@ fn build_version_message(address: SocketAddr) -> message::NetworkMessage {
     let addr_from = address::Address::new(&my_address, constants::ServiceFlags::NONE);
 
     // "Node random nonce, randomly generated every time a version packet is sent. This nonce is used to detect connections to self."
-    let nonce: u64 = rand::thread_rng().r#gen();
+    let nonce: u64 = rand::rng().random();
 
     // "User Agent (0x00 if string is 0 bytes long)"
     let user_agent = String::from("rust-example");

@@ -8,7 +8,7 @@
 //!
 //! - `config.rs` - Client configuration
 //! - `core.rs` - Core `DashSpvClient` struct definition and simple accessors
-//! - `lifecycle.rs` - Client lifecycle (new, start, stop, shutdown)
+//! - `lifecycle.rs` - Client lifecycle (new, stop)
 //! - `events.rs` - Event emission and progress tracking receivers
 //! - `queries.rs` - Peer, masternode, and balance queries
 //! - `transactions.rs` - Transaction operations (e.g., broadcast)
@@ -40,21 +40,16 @@ mod config_test;
 mod tests {
     use super::{ClientConfig, DashSpvClient};
     use crate::client::config::MempoolStrategy;
-    use crate::storage::DiskStorageManager;
     use crate::test_utils::MockNetworkManager;
     use crate::Network;
-    use dashcore::bls_sig_utils::BLSSignature;
-    use dashcore::hash_types::{
-        MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums,
-    };
-    use dashcore::hashes::Hash;
-    use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet_manager::WalletManager;
     use std::sync::Arc;
+    use std::time::Duration;
     use tempfile::TempDir;
     use tokio::sync::RwLock;
+    use tokio::time::{sleep, timeout};
 
     const TEST_MNEMONIC: &str =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -83,17 +78,12 @@ mod tests {
             .with_storage_path(temp_dir.path());
         config.start_from_height = start_from_height;
 
-        let storage = DiskStorageManager::new(&config).await.expect("Failed to create storage");
-        let client = DashSpvClient::new(
-            config,
-            MockNetworkManager::new(),
-            storage,
-            wallet,
-            vec![Arc::new(())],
-        )
-        .await
-        .expect("client construction must succeed");
-        (client.tip_height().await, client.tip_hash().await)
+        let client =
+            DashSpvClient::new(config, MockNetworkManager::new(), wallet, vec![Arc::new(())])
+                .await
+                .expect("client construction must succeed");
+        let tip = client.tip_header().await;
+        (tip.as_ref().map_or(0, |tip| tip.height()), tip.map(|tip| *tip.hash()))
     }
 
     #[tokio::test]
@@ -121,81 +111,54 @@ mod tests {
         assert_eq!(anchored_tip(120_000, Some(60_000)).await.0, 50_000);
     }
 
+    /// A failed sync loop is stopped by a task of its own, and `stop` waits for
+    /// it, so it no longer holds the storage once `stop` returns.
+    #[tokio::test]
+    async fn stop_waits_for_the_stop_of_a_failed_loop() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = ClientConfig::testnet()
+            .without_filters()
+            .without_masternodes()
+            .with_storage_path(temp_dir.path());
+        let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
+        let client =
+            DashSpvClient::new(config, MockNetworkManager::new(), wallet, vec![Arc::new(())])
+                .await
+                .expect("client construction must succeed");
+
+        client.run().await.expect("client must start");
+        client.network.close_network_events().await;
+
+        timeout(Duration::from_secs(5), async {
+            while client.detached_tasks.lock().await.is_empty() {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the failed loop must be stopped by a detached task");
+
+        client.stop().await;
+        assert_eq!(Arc::strong_count(&client.storage), 1);
+    }
+
     #[tokio::test]
     async fn client_exposes_shared_wallet_manager() {
+        let temp_dir = TempDir::new().unwrap();
         let config = ClientConfig::mainnet()
             .without_filters()
             .without_masternodes()
             .with_mempool_tracking(MempoolStrategy::FetchAll)
-            .with_storage_path(TempDir::new().unwrap().path());
+            .with_storage_path(temp_dir.path());
 
         let network_manager = MockNetworkManager::new();
-        let storage =
-            DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
         let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
-        let client =
-            DashSpvClient::new(config, network_manager, storage, wallet, vec![Arc::new(())])
-                .await
-                .expect("client construction must succeed");
+        let client = DashSpvClient::new(config, network_manager, wallet, vec![Arc::new(())])
+            .await
+            .expect("client construction must succeed");
 
         // Verify the wallet is accessible
         let wallet_ref = client.wallet();
         let _wallet_guard = wallet_ref.read().await;
-    }
-
-    /// The client reports the coinbase payload the masternode list engine
-    /// kept, and nothing while masternode sync is off.
-    #[tokio::test]
-    async fn latest_coinbase_reports_what_the_masternode_list_engine_kept() {
-        let make_client = |config: ClientConfig| async move {
-            let storage =
-                DiskStorageManager::with_temp_dir().await.expect("Failed to create tmp storage");
-            let wallet =
-                Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
-            DashSpvClient::new(
-                config,
-                MockNetworkManager::new(),
-                storage,
-                wallet,
-                vec![Arc::new(())],
-            )
-            .await
-            .expect("client construction must succeed")
-        };
-        let storage_dir = TempDir::new().unwrap();
-
-        let without_masternodes = make_client(
-            ClientConfig::mainnet()
-                .without_filters()
-                .without_masternodes()
-                .with_storage_path(storage_dir.path()),
-        )
-        .await;
-        assert_eq!(without_masternodes.latest_coinbase().await, None);
-
-        let with_masternodes = make_client(
-            ClientConfig::mainnet().without_filters().with_storage_path(storage_dir.path()),
-        )
-        .await;
-        assert_eq!(with_masternodes.latest_coinbase().await, None);
-
-        let coinbase = CoinbasePayload {
-            version: 4,
-            height: 2_400_000,
-            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
-            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
-            best_cl_height: Some(0),
-            best_cl_signature: Some(BLSSignature::from([0; 96])),
-            asset_locked_amount: Some(0),
-            merkle_root_asset_unlocks: Some(MerkleRootAssetUnlocks::all_zeros()),
-        };
-        with_masternodes
-            .masternode_list_engine()
-            .expect("masternode sync is on")
-            .write()
-            .await
-            .latest_coinbase = Some(coinbase.clone());
-        assert_eq!(with_masternodes.latest_coinbase().await, Some(coinbase));
     }
 }

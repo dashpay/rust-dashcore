@@ -2,13 +2,13 @@
 
 use core::convert::TryInto;
 
-use anyhow::{anyhow, bail};
-use hashes::{Hash, ripemd160, sha256, sha256d};
+use anyhow::{anyhow, ensure};
+use hashes::{hash160, sha256d};
 
 use crate::PublicKey as ECDSAPublicKey;
+use crate::crypto::ecdsa::{ECDSA_REC_SIG_LEN, EcdsaPublicKey, EcdsaSecretKey};
 use crate::prelude::Vec;
-use crate::secp256k1::ecdsa::{RecoverableSignature, RecoveryId};
-use crate::secp256k1::{Message, Secp256k1, SecretKey};
+use crate::sign_message;
 
 /// verifies the ECDSA signature
 /// The provided signature must be recoverable. Which means: it must contain the recovery byte as a prefix
@@ -17,16 +17,13 @@ pub fn verify_data_signature(
     signature: &[u8],
     public_key: &[u8],
 ) -> Result<(), anyhow::Error> {
-    let data_hash = double_sha(data);
-
-    let msg =
-        Message::from_digest(data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?);
-    let sig: RecoverableSignature = RecoverableSignature::from_compact_signature(signature)?;
+    let data_hash: [u8; 32] =
+        double_sha(data).try_into().map_err(|_| anyhow!("Invalid hash length"))?;
+    let sig = sign_message::from_slice(signature)?;
 
     let pub_key = ECDSAPublicKey::from_slice(public_key).map_err(anyhow::Error::msg)?;
-    let secp = Secp256k1::new();
 
-    secp.verify_ecdsa(&msg, &sig.to_standard(), &pub_key.inner).map_err(anyhow::Error::msg)
+    pub_key.inner.verify(&data_hash, sig.signature()?).map_err(anyhow::Error::msg)
 }
 
 /// verifies the the hash signature. From provided signature and hash recovers the public key
@@ -37,94 +34,39 @@ pub fn verify_hash_signature(
     data_signature: &[u8],
     public_key_id: &[u8],
 ) -> Result<(), anyhow::Error> {
-    let signature: RecoverableSignature =
-        RecoverableSignature::from_compact_signature(data_signature)?;
+    let signature = sign_message::from_slice(data_signature)?;
 
-    let secp = Secp256k1::new();
-    let msg =
-        Message::from_digest(data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?);
-    let recovered_public_key = secp.recover_ecdsa(&msg, &signature).map_err(anyhow::Error::msg)?;
+    let data_hash: &[u8; 32] = data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?;
+    let recovered_public_key =
+        EcdsaPublicKey::recover(data_hash, &signature).map_err(anyhow::Error::msg)?;
 
-    let recovered_compressed_public_key = recovered_public_key.serialize();
-    let hash_recovered_key = ripemd160_sha256(&recovered_compressed_public_key);
-    let are_equal = public_key_id == hash_recovered_key;
-
-    if are_equal {
-        Ok(())
-    } else {
-        bail!("the signature isn't valid")
-    }
+    let hash_recovered_key = ECDSAPublicKey::new(recovered_public_key).pubkey_hash();
+    ensure!(public_key_id == hash_recovered_key.as_byte_array(), "the signature isn't valid");
+    Ok(())
 }
 
 /// sign and get the ECDSA signature
-pub fn sign(data: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyhow::Error> {
+pub fn sign(data: &[u8], private_key: &[u8]) -> Result<[u8; ECDSA_REC_SIG_LEN], anyhow::Error> {
     let data_hash = double_sha(data);
     sign_hash(&data_hash, private_key)
 }
 
 /// signs the hash of data and get the ECDSA signature
-pub fn sign_hash(data_hash: &[u8], private_key: &[u8]) -> Result<[u8; 65], anyhow::Error> {
-    let pk = SecretKey::from_slice(private_key)
+pub fn sign_hash(
+    data_hash: &[u8],
+    private_key: &[u8],
+) -> Result<[u8; ECDSA_REC_SIG_LEN], anyhow::Error> {
+    // Borrow the caller's bytes; a by-value `[u8; 32]` would leave an unwiped
+    // copy of the secret key on the stack.
+    let private_key: &[u8; 32] = private_key
+        .try_into()
+        .map_err(|_| anyhow!("Invalid ECDSA private key: must be 32 bytes"))?;
+    let pk = EcdsaSecretKey::from_bytes(private_key)
         .map_err(|e| anyhow!("Invalid ECDSA private key: {}", e))?;
 
-    // TODO enable support for features in rust-dpp and allow to use global objects (SECP256K1)
-    let secp = Secp256k1::new();
-    let msg =
-        Message::from_digest(data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?);
+    let data_hash: &[u8; 32] = data_hash.try_into().map_err(|_| anyhow!("Invalid hash length"))?;
 
-    let signature = secp
-        .sign_ecdsa_recoverable(&msg, &pk)
-        // TODO the compression flag should be obtained from the private key type
-        .to_compact_signature(true);
-    Ok(signature)
-}
-
-/// converts the signature from/to compact format. Compact format is when the signature
-/// is prefixed by the recovery byte
-pub trait CompactSignature
-where
-    Self: Sized,
-{
-    /// Converts the Signature with Recovery byte to the compact format where
-    /// the first byte of signature is occupied by the recovery byte
-    fn to_compact_signature(&self, is_compressed: bool) -> [u8; 65];
-    /// Creates the Self from compacted version of signature
-    fn from_compact_signature(signature: impl AsRef<[u8]>) -> Result<Self, anyhow::Error>;
-}
-
-impl CompactSignature for RecoverableSignature {
-    fn from_compact_signature(signature: impl AsRef<[u8]>) -> Result<Self, anyhow::Error> {
-        if signature.as_ref().len() != 65 {
-            bail!("the signature must be 65 bytes long")
-        }
-
-        let recovery_byte = signature.as_ref()[0];
-        let number = u8::from_be(recovery_byte) as i32;
-        let mut i = number - 27 - 4;
-        if i < 0 {
-            i += 4;
-        }
-        if !((i == 0) || (i == 1) || (i == 2) || (i == 3)) {
-            bail!("the recovery number must be between 0..4, got: '{}'", i);
-        }
-
-        RecoverableSignature::from_compact(
-            &signature.as_ref()[1..],
-            RecoveryId::try_from(i).unwrap(),
-        )
-        .map_err(anyhow::Error::msg)
-    }
-
-    fn to_compact_signature(&self, is_compressed: bool) -> [u8; 65] {
-        let (recovery_byte, signature) = self.serialize_compact();
-        let mut val = <RecoveryId as Into<i32>>::into(recovery_byte) + 27 + 4;
-        if !is_compressed {
-            val -= 4;
-        }
-        let prefix = val.to_le_bytes()[0];
-        let compact_signature = [&[prefix], signature.as_slice()].concat();
-        compact_signature.try_into().unwrap()
-    }
+    Ok(pk.sign_recoverable(data_hash).to_bytes())
 }
 
 /// calculates double sha256 on data
@@ -134,14 +76,14 @@ pub fn double_sha(payload: impl AsRef<[u8]>) -> Vec<u8> {
 
 /// calculates the RIPEMD169(SHA256(data))
 pub fn ripemd160_sha256(data: &[u8]) -> Vec<u8> {
-    let hash = sha256::Hash::hash(data).to_byte_array();
-    ripemd160::Hash::hash(&hash).to_byte_array().to_vec()
+    hash160::Hash::hash(data).to_byte_array().to_vec()
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::PublicKey;
+    use crate::crypto::ecdsa::EcdsaSecretKey;
     use crate::internal_macros::hex;
 
     struct Keys {
@@ -179,6 +121,33 @@ mod test {
             .expect("verification shouldn't fail")
     }
 
+    /// Pins the deterministic (RFC 6979) signature so the key handling in
+    /// `sign_hash` can change without changing its output.
+    #[test]
+    fn sign_hash_output_is_unchanged() {
+        let k = get_keys();
+        let data_hash = double_sha(hex!("fafafa"));
+
+        let signature = sign_hash(&data_hash, &k.private_key).expect("signing shouldn't fail");
+
+        assert_eq!(
+            signature.to_vec(),
+            hex!(
+                "208f7395d4f8d36f8b53c3b8b34edfda5b618f3ec53e8b9f1f508e75dc8fc8569329909bd47bcd17bd19eab6c0027f66dbbb7b76f7abb7ee4ed89f97212b0e37cf"
+            )
+        );
+    }
+
+    #[test]
+    fn sign_hash_rejects_wrong_private_key_length() {
+        let k = get_keys();
+        let data_hash = double_sha(hex!("fafafa"));
+
+        let result = sign_hash(&data_hash, &k.private_key[..31]);
+
+        assert_error_contains!(result, "must be 32 bytes");
+    }
+
     #[test]
     fn invalid_signature_for_different_data() {
         let k = get_keys();
@@ -188,22 +157,20 @@ mod test {
         let signature = sign(&data, &k.private_key).expect("singing shouldn't fail");
         let verification_result =
             verify_data_signature(&incorrect_data, &signature, &k.public_key_compressed);
-        assert_error_contains!(verification_result, "signature failed verification");
+        assert_error_contains!(verification_result, "signature verification failed");
     }
 
     #[test]
     fn signature_not_verified_with_different_public_key() {
         let k = get_keys();
-        let mut rng = crate::secp256k1::rand::thread_rng();
-        let secp = Secp256k1::new();
-        let (_, different_public_key) = secp.generate_keypair(&mut rng);
+        let different_public_key = EcdsaSecretKey::generate().public_key();
         let data = hex!("fafafa");
 
         let signature = sign(&data, &k.private_key).expect("signing shouldn't fail");
         let verification_result =
-            verify_data_signature(&data, &signature, &different_public_key.serialize());
+            verify_data_signature(&data, &signature, &different_public_key.to_compressed());
 
-        assert_error_contains!(verification_result, "signature failed verification")
+        assert_error_contains!(verification_result, "signature verification failed")
     }
 
     #[test]
@@ -249,9 +216,7 @@ mod test {
     #[test]
     fn should_fail_validation_with_incorrect_public_key() {
         let k = get_keys();
-        let mut rng = crate::secp256k1::rand::thread_rng();
-        let secp = Secp256k1::new();
-        let (_, different_public_key) = secp.generate_keypair(&mut rng);
+        let different_public_key = EcdsaSecretKey::generate().public_key();
         let data = hex!("fafafa");
         let signature = sign(&data, &k.private_key).expect("signing shouldn't fail");
 
@@ -260,7 +225,7 @@ mod test {
         let validation_result = verify_hash_signature(
             &data_hash,
             &signature,
-            &ripemd160_sha256(&different_public_key.serialize()),
+            &ripemd160_sha256(&different_public_key.to_compressed()),
         );
 
         assert_error_contains!(validation_result, "the signature isn't valid")
@@ -269,17 +234,16 @@ mod test {
     #[test]
     fn should_fail_with_non_recoverable_signature() {
         let k = get_keys();
-        let secp = Secp256k1::new();
         let data = hex!("fafafa");
         let data_hash = double_sha(&data);
-        let secret_key = SecretKey::from_slice(&k.private_key).unwrap();
+        let secret_key =
+            EcdsaSecretKey::from_bytes(k.private_key.as_slice().try_into().unwrap()).unwrap();
 
-        let unrecoverable_signature =
-            secp.sign_ecdsa(&Message::from_digest(data_hash.try_into().unwrap()), &secret_key);
-        let unrecoverable_signature_bytes = unrecoverable_signature.serialize_compact();
+        let unrecoverable_signature = secret_key.sign(data_hash.as_slice().try_into().unwrap());
+        let unrecoverable_signature_bytes = unrecoverable_signature.to_bytes();
         let validation_result =
             verify_data_signature(&data, &unrecoverable_signature_bytes, &k.public_key_compressed);
 
-        assert_error_contains!(validation_result, "the signature must be 65 bytes long")
+        assert_error_contains!(validation_result, "length not 65 bytes")
     }
 }

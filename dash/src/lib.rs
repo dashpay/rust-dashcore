@@ -30,14 +30,12 @@
 //!
 //! ## Available feature flags
 //!
-//! * `secp-recovery` - enables calculating public key from a signature and message.
 //! * `signer` - enables singing and validation ECDSA helpers.
-//! * `base64` - (dependency), enables encoding of PSBTs and message signatures.
+//! * `base64` - (dependency), enables encoding of message signatures.
 //! * `unstable` - enables unstable features for testing.
 //! * `rand` - (dependency), makes it more convenient to generate random values.
 //! * `bincode` - (dependency), implements bincode serialization and deserialization.
 //! * `serde` - (dependency), implements `serde`-based serialization and deserialization.
-//! * `secp-lowmemory` - optimizations for low-memory devices.
 //!
 
 // Experimental features we need.
@@ -63,16 +61,10 @@ extern crate alloc;
 
 #[cfg(feature = "base64")]
 pub extern crate base64;
-pub extern crate bech32;
-#[cfg(feature = "bitcoinconsensus")]
-pub extern crate bitcoinconsensus;
 pub extern crate dashcore_hashes as hashes;
-pub extern crate secp256k1;
 
-#[cfg(feature = "blsful")]
-pub use blsful;
-#[cfg(feature = "ed25519-dalek")]
-pub use ed25519_dalek;
+#[cfg(feature = "eddsa")]
+pub use dashcore_crypto::eddsa;
 
 #[cfg(feature = "serde")]
 #[macro_use]
@@ -86,7 +78,6 @@ pub mod test_utils;
 #[macro_use]
 mod test_macros;
 mod internal_macros;
-mod parse;
 #[cfg(feature = "serde")]
 pub mod serde_utils;
 
@@ -94,7 +85,7 @@ pub mod serde_utils;
 pub mod network;
 pub mod address;
 pub mod amount;
-pub mod base58;
+pub use dashcore_crypto::base58;
 pub mod bip152;
 pub mod bip158;
 pub mod blockdata;
@@ -114,7 +105,6 @@ pub mod sign_message;
 pub mod signer;
 pub mod sml;
 pub mod string;
-pub mod taproot;
 pub mod util;
 
 #[cfg(feature = "serde")]
@@ -139,7 +129,7 @@ pub use crate::ephemerealdata::instant_lock::InstantLock;
 pub use crate::error::Error;
 pub use crate::hash_types::{
     BlockHash, FilterHash, ProTxHash, PubkeyHash, QuorumHash, QuorumSigningRequestId, ScriptHash,
-    TxMerkleNode, Txid, WPubkeyHash, WScriptHash, Wtxid,
+    TxMerkleNode, Txid,
 };
 pub use crate::merkle_tree::MerkleBlock;
 pub use crate::network::constants::{Network, ParseNetworkError};
@@ -157,7 +147,7 @@ pub mod prelude {
 
     pub use std::io::sink;
 
-    pub use internals::hex::display::DisplayHex;
+    pub use hex_conservative::DisplayHex;
 
     pub type CoreBlockHeight = u32;
 }

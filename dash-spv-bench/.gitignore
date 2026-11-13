@@ -1,6 +1,5 @@
 bench-results/
 bench-storage/
-profiles/
 
 *.lock
 
@@ -16,9 +15,6 @@ chain-data/
 .scenario.*.yml
 results/
 .bin/
-
-# FlameGraph tooling clone (run.sh --flame), fetched on demand.
-.flamegraph/
 
 # Wallet mnemonics (one BIP39 phrase per line) — secrets, never committed.
 wallets.txt

@@ -1,24 +1,26 @@
 //! Storage abstraction for the Dash SPV client.
 
-pub mod types;
-
 mod block_headers;
 mod blocks;
 mod filter_headers;
 mod filters;
+mod header_hash_index;
 mod io;
 mod lockfile;
 mod masternode;
 mod metadata;
-mod peers;
+mod migrator;
 mod segments;
+
 use crate::error::StorageResult;
 use crate::storage::lockfile::LockFile;
+use crate::storage::migrator::StorageMigrator;
 use crate::types::{HashedBlock, HashedBlockHeader};
 use crate::ClientConfig;
 use async_trait::async_trait;
 use dashcore::hash_types::FilterHeader;
 use dashcore::prelude::CoreBlockHeight;
+use serde::de::DeserializeOwned;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,11 +33,8 @@ pub use crate::storage::block_headers::{
 pub use crate::storage::blocks::{BlockStorage, PersistentBlockStorage};
 pub use crate::storage::filter_headers::{FilterHeaderStorage, PersistentFilterHeaderStorage};
 pub use crate::storage::filters::{FilterStorage, PersistentFilterStorage};
-pub use crate::storage::masternode::{MasternodeStateStorage, PersistentMasternodeStateStorage};
+pub use crate::storage::masternode::{MasternodeStorage, PersistentMasternodeStorage};
 pub use crate::storage::metadata::{MetadataStorage, PersistentMetadataStorage};
-pub use crate::storage::peers::{PeerStorage, PersistentPeerStorage};
-
-pub use types::*;
 
 #[async_trait]
 pub trait PersistentStorage: Sized {
@@ -53,7 +52,7 @@ pub trait StorageManager:
     + FilterStorage
     + BlockStorage
     + MetadataStorage
-    + MasternodeStateStorage
+    + MasternodeStorage
     + Send
     + Sync
     + 'static
@@ -61,8 +60,15 @@ pub trait StorageManager:
     /// Deletes in-disk and in-memory data
     async fn clear(&mut self) -> StorageResult<()>;
 
+    /// Drops the block headers, filter headers, filters, blocks and masternode
+    /// engine snapshots above `height`.
+    async fn truncate_above(&mut self, height: u32) -> StorageResult<()>;
+
+    /// Starts the background tasks, restarting them after a [`Self::stop`].
+    async fn start(&mut self);
+
     /// Stops all background tasks and persists the data.
-    async fn shutdown(&mut self);
+    async fn stop(&mut self);
 
     /// Returns shared access to the block headers storage.
     fn block_headers(&self) -> Arc<RwLock<PersistentBlockHeaderStorage>>;
@@ -78,11 +84,15 @@ pub trait StorageManager:
 
     /// Returns shared access to the metadata storage.
     fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>>;
+
+    fn masternodes(&self)
+        -> Arc<RwLock<PersistentMasternodeStorage<PersistentBlockHeaderStorage>>>;
 }
 
 /// Disk-based storage manager with segmented files and async background saving.
 /// Only one instance of DiskStorageManager working on the same storage path
-/// can exist at a time.
+/// can exist at a time. The background saving runs from [`StorageManager::start`]
+/// until [`StorageManager::stop`] or drop.
 pub struct DiskStorageManager {
     storage_path: PathBuf,
 
@@ -91,7 +101,7 @@ pub struct DiskStorageManager {
     filters: Arc<RwLock<PersistentFilterStorage>>,
     blocks: Arc<RwLock<PersistentBlockStorage>>,
     metadata: Arc<RwLock<PersistentMetadataStorage>>,
-    masternodestate: Arc<RwLock<PersistentMasternodeStateStorage>>,
+    masternodes: Arc<RwLock<PersistentMasternodeStorage<PersistentBlockHeaderStorage>>>,
 
     // Background worker
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -132,30 +142,34 @@ impl DiskStorageManager {
 
         let lock_file = LockFile::new(lock_file)?;
 
-        let mut storage = Self {
+        StorageMigrator::migrate(&storage_path).await?;
+
+        let block_headers =
+            Arc::new(RwLock::new(PersistentBlockHeaderStorage::open(&storage_path).await?));
+
+        Ok(Self {
             storage_path: storage_path.clone(),
 
-            block_headers: Arc::new(RwLock::new(
-                PersistentBlockHeaderStorage::open(&storage_path).await?,
-            )),
             filter_headers: Arc::new(RwLock::new(
                 PersistentFilterHeaderStorage::open(&storage_path).await?,
             )),
             filters: Arc::new(RwLock::new(PersistentFilterStorage::open(&storage_path).await?)),
             blocks: Arc::new(RwLock::new(PersistentBlockStorage::open(&storage_path).await?)),
             metadata: Arc::new(RwLock::new(PersistentMetadataStorage::open(&storage_path).await?)),
-            masternodestate: Arc::new(RwLock::new(
-                PersistentMasternodeStateStorage::open(&storage_path).await?,
+            masternodes: Arc::new(RwLock::new(
+                PersistentMasternodeStorage::open(
+                    &storage_path,
+                    Arc::clone(&block_headers),
+                    config.network,
+                )
+                .await,
             )),
+            block_headers,
 
             worker_handle: None,
 
             _lock_file: lock_file,
-        };
-
-        storage.start_worker().await;
-
-        Ok(storage)
+        })
     }
 
     #[cfg(test)]
@@ -168,12 +182,15 @@ impl DiskStorageManager {
 
     /// Start the background worker saving data every 5 seconds
     async fn start_worker(&mut self) {
+        if self.worker_handle.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return;
+        }
+
         let block_headers = Arc::clone(&self.block_headers);
         let filter_headers = Arc::clone(&self.filter_headers);
         let filters = Arc::clone(&self.filters);
         let blocks = Arc::clone(&self.blocks);
         let metadata = Arc::clone(&self.metadata);
-        let masternodestate = Arc::clone(&self.masternodestate);
 
         let storage_path = self.storage_path.clone();
 
@@ -188,7 +205,6 @@ impl DiskStorageManager {
                 let _ = filters.write().await.persist(&storage_path).await;
                 let _ = blocks.write().await.persist(&storage_path).await;
                 let _ = metadata.write().await.persist(&storage_path).await;
-                let _ = masternodestate.write().await.persist(&storage_path).await;
             }
         });
 
@@ -196,8 +212,8 @@ impl DiskStorageManager {
     }
 
     /// Stop the background worker without forcing a save.
-    fn stop_worker(&self) {
-        if let Some(handle) = &self.worker_handle {
+    fn stop_worker(&mut self) {
+        if let Some(handle) = self.worker_handle.take() {
             handle.abort();
         }
     }
@@ -210,14 +226,39 @@ impl DiskStorageManager {
         let _ = self.filters.write().await.persist(storage_path).await;
         let _ = self.blocks.write().await.persist(storage_path).await;
         let _ = self.metadata.write().await.persist(storage_path).await;
-        let _ = self.masternodestate.write().await.persist(storage_path).await;
+        let _ = self.masternodes.write().await.persist().await;
+    }
+}
+
+/// Aborts the background worker without saving, use [`StorageManager::stop`] to persist.
+impl Drop for DiskStorageManager {
+    fn drop(&mut self) {
+        self.stop_worker();
     }
 }
 
 #[async_trait]
 impl StorageManager for DiskStorageManager {
+    async fn truncate_above(&mut self, height: u32) -> StorageResult<()> {
+        let chain = async {
+            BlockHeaderStorage::truncate_above(self, height).await?;
+            FilterHeaderStorage::truncate_above(self, height).await?;
+            FilterStorage::truncate_above(self, height).await?;
+            BlockStorage::truncate_above(self, height).await
+        }
+        .await;
+
+        // The engine goes last, as it looks rotated cycles up in the headers,
+        // and even when the chain fails part way, so it never holds lists
+        // above the stored tip.
+        let masternodes = MasternodeStorage::truncate_above(self, height).await;
+
+        chain.and(masternodes)
+    }
+
     async fn clear(&mut self) -> StorageResult<()> {
         // First, stop the background worker to avoid races with file deletion
+        let worker_was_running = self.worker_handle.is_some();
         self.stop_worker();
 
         // Remove all files and directories under storage_path
@@ -240,6 +281,8 @@ impl StorageManager for DiskStorageManager {
         // Instantiate storages again once persisted data has been cleared
         let storage_path = &self.storage_path;
 
+        StorageMigrator::migrate(storage_path).await?;
+
         self.block_headers =
             Arc::new(RwLock::new(PersistentBlockHeaderStorage::open(storage_path).await?));
         self.filter_headers =
@@ -247,17 +290,20 @@ impl StorageManager for DiskStorageManager {
         self.filters = Arc::new(RwLock::new(PersistentFilterStorage::open(storage_path).await?));
         self.blocks = Arc::new(RwLock::new(PersistentBlockStorage::open(storage_path).await?));
         self.metadata = Arc::new(RwLock::new(PersistentMetadataStorage::open(storage_path).await?));
-        self.masternodestate =
-            Arc::new(RwLock::new(PersistentMasternodeStateStorage::open(storage_path).await?));
+        self.masternodes.write().await.clear(Arc::clone(&self.block_headers)).await;
 
-        // Restart the background worker for future operations
-        self.start_worker().await;
+        if worker_was_running {
+            self.start_worker().await;
+        }
 
         Ok(())
     }
 
-    /// Shutdown the storage manager.
-    async fn shutdown(&mut self) {
+    async fn start(&mut self) {
+        self.start_worker().await;
+    }
+
+    async fn stop(&mut self) {
         self.stop_worker();
 
         self.persist().await;
@@ -281,6 +327,12 @@ impl StorageManager for DiskStorageManager {
 
     fn metadata(&self) -> Arc<RwLock<PersistentMetadataStorage>> {
         Arc::clone(&self.metadata)
+    }
+
+    fn masternodes(
+        &self,
+    ) -> Arc<RwLock<PersistentMasternodeStorage<PersistentBlockHeaderStorage>>> {
+        Arc::clone(&self.masternodes)
     }
 }
 
@@ -314,10 +366,6 @@ impl BlockHeaderStorage for DiskStorageManager {
         self.block_headers.read().await.get_start_height().await
     }
 
-    async fn get_stored_headers_len(&self) -> u32 {
-        self.block_headers.read().await.get_stored_headers_len().await
-    }
-
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,
@@ -332,10 +380,6 @@ impl BlockHeaderStorage for DiskStorageManager {
 
 #[async_trait]
 impl FilterHeaderStorage for DiskStorageManager {
-    async fn store_filter_headers(&mut self, headers: &[FilterHeader]) -> StorageResult<()> {
-        self.filter_headers.write().await.store_filter_headers(headers).await
-    }
-
     async fn store_filter_headers_at_height(
         &mut self,
         headers: &[FilterHeader],
@@ -386,10 +430,6 @@ impl filters::FilterStorage for DiskStorageManager {
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.filters.write().await.truncate_above(target_height).await
     }
-
-    async fn set_committed_height(&mut self, height: u32) {
-        self.filters.write().await.set_committed_height(height).await;
-    }
 }
 
 #[async_trait]
@@ -405,10 +445,6 @@ impl BlockStorage for DiskStorageManager {
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.blocks.write().await.truncate_above(target_height).await
     }
-
-    async fn set_committed_height(&mut self, height: u32) {
-        self.blocks.write().await.set_committed_height(height).await;
-    }
 }
 
 #[async_trait]
@@ -417,7 +453,10 @@ impl metadata::MetadataStorage for DiskStorageManager {
         self.metadata.write().await.store_metadata(key, value).await
     }
 
-    async fn load_metadata(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
+    async fn load_metadata<T: DeserializeOwned + Send>(
+        &self,
+        key: &str,
+    ) -> StorageResult<Option<T>> {
         self.metadata.read().await.load_metadata(key).await
     }
 
@@ -431,13 +470,9 @@ impl metadata::MetadataStorage for DiskStorageManager {
 }
 
 #[async_trait]
-impl masternode::MasternodeStateStorage for DiskStorageManager {
-    async fn store_masternode_state(&mut self, state: &MasternodeState) -> StorageResult<()> {
-        self.masternodestate.write().await.store_masternode_state(state).await
-    }
-
-    async fn load_masternode_state(&self) -> StorageResult<Option<MasternodeState>> {
-        self.masternodestate.read().await.load_masternode_state().await
+impl masternode::MasternodeStorage for DiskStorageManager {
+    async fn truncate_above(&mut self, height: CoreBlockHeight) -> StorageResult<()> {
+        self.masternodes.write().await.truncate_above(height).await
     }
 }
 
@@ -487,6 +522,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_worker_runs_from_start_until_drop() {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        assert!(storage.worker_handle.is_none());
+
+        storage.start().await;
+        let block_headers = Arc::downgrade(&storage.block_headers());
+        drop(storage);
+        tokio::task::yield_now().await;
+
+        // Only the worker could still hold the storages.
+        assert!(block_headers.upgrade().is_none());
+    }
+
+    #[tokio::test]
     async fn test_store_load_headers() -> Result<(), Box<dyn std::error::Error>> {
         // Create a temporary directory for the test
         let temp_dir = TempDir::new()?;
@@ -519,7 +568,7 @@ mod tests {
         let non_existing_header = storage.get_header(non_existing_height).await.unwrap();
         assert!(non_existing_header.is_none());
 
-        storage.shutdown().await;
+        storage.stop().await;
         drop(storage);
         let storage = DiskStorageManager::new(&config).await.expect("Unable to open storage");
 
@@ -545,7 +594,7 @@ mod tests {
 
         check_storage(&storage, &headers).await?;
 
-        storage.shutdown().await;
+        storage.stop().await;
         drop(storage);
 
         let storage = DiskStorageManager::new(&config).await?;
@@ -558,7 +607,8 @@ mod tests {
             storage: &DiskStorageManager,
             headers: &[HashedBlockHeader],
         ) -> StorageResult<()> {
-            assert_eq!(storage.get_stored_headers_len().await, headers.len() as u32);
+            assert_eq!(storage.get_start_height().await, Some(CHECKPOINT_HEIGHT));
+            assert_eq!(storage.get_tip_height().await, Some(CHECKPOINT_HEIGHT + 99));
 
             let header_at_base = storage.get_header(CHECKPOINT_HEIGHT).await?;
             assert_eq!(header_at_base, Some(headers[0].clone()));
@@ -607,7 +657,7 @@ mod tests {
                 assert_eq!(height, Some(i as u32), "Height mismatch for header {}", i);
             }
 
-            storage.shutdown().await;
+            storage.stop().await;
         }
 
         // Test persistence - reload storage and verify index still works
@@ -684,9 +734,12 @@ mod tests {
         let storage2 = DiskStorageManager::new(&config).await;
         assert!(storage2.is_err(), "Second storage manager should fail");
 
-        // Lock file removed when storage drops
+        // Lock file removed when storage drops (on Unix: elsewhere it stays, see `LockFile`)
         drop(storage1);
+        #[cfg(unix)]
         assert!(!lock_path.exists(), "Lock file should be removed after storage drops");
+        #[cfg(not(unix))]
+        assert!(lock_path.exists(), "Lock file should stay after storage drops");
 
         // Can reopen storage after previous one dropped
         let storage3 = DiskStorageManager::new(&config).await;

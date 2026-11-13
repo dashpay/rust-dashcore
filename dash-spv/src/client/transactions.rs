@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use crate::error::{NetworkError, Result, SpvError};
 use crate::network::NetworkManager;
-use crate::storage::StorageManager;
 use crate::sync::{BroadcastResult, SyncEvent};
 use dashcore::network::message::NetworkMessage;
 use key_wallet_manager::WalletInterface;
@@ -16,7 +15,7 @@ use super::DashSpvClient;
 /// `Uncertain` event has time to propagate through the event bus.
 const AWAIT_GRACE: Duration = Duration::from_secs(5);
 
-impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, N, S> {
+impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Broadcast a transaction to the network.
     ///
     /// With mempool tracking enabled (the default), the transaction is sent to
@@ -30,21 +29,19 @@ impl<W: WalletInterface, N: NetworkManager, S: StorageManager> DashSpvClient<W, 
     /// With mempool tracking disabled there is no acceptance tracking and the
     /// transaction is simply sent to all connected peers.
     pub async fn broadcast_transaction(&self, tx: &dashcore::Transaction) -> Result<()> {
-        let network_guard = self.network.lock().await;
-
-        if network_guard.peer_count() == 0 {
+        if self.network.connected_count().await == 0 {
             return Err(SpvError::Network(NetworkError::NotConnected));
         }
 
         if !self.config.read().await.enable_mempool_tracking {
             // Legacy untracked path: fan out to every peer.
-            network_guard.broadcast(NetworkMessage::Tx(tx.clone())).await?;
+            self.network.broadcast(NetworkMessage::Tx(Box::new(tx.clone()))).await?;
         }
 
         // Inject locally so the mempool manager picks it up through handle_tx.
         // With tracking enabled the manager performs the actual (targeted)
         // network send when it processes this message.
-        network_guard.dispatch_local(NetworkMessage::Tx(tx.clone())).await;
+        self.network.dispatch_local(NetworkMessage::Tx(Box::new(tx.clone()))).await;
 
         Ok(())
     }

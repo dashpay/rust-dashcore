@@ -60,6 +60,10 @@ fn test_wallet_creation_from_mnemonic() {
         }
         _ => panic!("Expected mnemonic wallet type"),
     }
+
+    // `wallet_seed_bytes` returns the BIP39 seed (empty passphrase)
+    let seed = wallet.wallet_seed_bytes().expect("mnemonic wallet has a seed");
+    assert_eq!(seed, mnemonic.to_seed(""));
 }
 
 #[test]
@@ -89,15 +93,19 @@ fn test_wallet_creation_from_seed() {
         }
         _ => panic!("Expected seed wallet type"),
     }
+
+    // `wallet_seed_bytes` returns the stored seed bytes
+    let zeroizing_seed = wallet.wallet_seed_bytes().expect("seed wallet has a seed");
+    assert_eq!(*zeroizing_seed, *seed.as_bytes());
 }
 
 #[test]
 fn test_wallet_creation_from_extended_key() {
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let seed = mnemonic.to_seed("");
-    let root_key = RootExtendedPrivKey::new_master(&seed).unwrap();
+    let root_key = RootExtendedPrivKey::new_master(&seed[..]).unwrap();
     let master_key = root_key.to_extended_priv_key(Network::Testnet);
-    let master_private_key = master_key.private_key;
+    let master_private_key = master_key.private_key.clone();
 
     let wallet = Wallet::from_extended_key(
         master_key,
@@ -125,7 +133,7 @@ fn test_wallet_creation_watch_only() {
     // First create a normal wallet to get the public key
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let seed = mnemonic.to_seed("");
-    let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
+    let root_priv_key = RootExtendedPrivKey::new_master(&seed[..]).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
     let master_xpub = root_pub_key.to_extended_pub_key(Network::Testnet);
 
@@ -141,6 +149,7 @@ fn test_wallet_creation_watch_only() {
     assert!(matches!(wallet.wallet_type, WalletType::WatchOnly));
     assert!(wallet.is_watch_only());
     assert!(wallet.root_extended_pub_key().is_err());
+    assert!(wallet.wallet_seed_bytes().is_none());
 
     // But the wallet id must still equal the hash of the source root xpub
     // (`from_xpub` derives the id from the xpub at construction time).
@@ -154,7 +163,7 @@ fn test_wallet_creation_watch_only() {
 fn test_wallet_id_computation() {
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let seed = mnemonic.to_seed("");
-    let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
+    let root_priv_key = RootExtendedPrivKey::new_master(&seed[..]).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
 
     let wallet_id =
@@ -356,7 +365,7 @@ fn test_wallet_deterministic_key_derivation() {
 fn test_wallet_external_signable() {
     let mnemonic = Mnemonic::from_phrase(TEST_MNEMONIC).unwrap();
     let seed = mnemonic.to_seed("");
-    let root_priv_key = RootExtendedPrivKey::new_master(&seed).unwrap();
+    let root_priv_key = RootExtendedPrivKey::new_master(&seed[..]).unwrap();
     let root_pub_key = root_priv_key.to_root_extended_pub_key();
 
     // Convert root public key to extended public key for the network

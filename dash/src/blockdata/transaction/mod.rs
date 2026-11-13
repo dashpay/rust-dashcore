@@ -36,19 +36,18 @@ use core::default::Default;
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{Hash, sha256d};
+use hashes::{HashEngine, sha256d};
 
 use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
-#[cfg(feature = "bitcoinconsensus")]
-use crate::blockdata::script;
 use crate::blockdata::script::Script;
+use crate::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
 pub use crate::blockdata::transaction::special_transaction::{TransactionPayload, TransactionType};
 use crate::blockdata::transaction::txin::TxIn;
 use crate::blockdata::transaction::txout::TxOut;
 use crate::blockdata::witness::Witness;
 use crate::consensus::encode::VarInt;
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::hash_types::{InputsHash, Txid, Wtxid};
+use crate::hash_types::{InputsHash, Txid};
 use crate::prelude::*;
 pub use crate::transaction::outpoint::*;
 use crate::{ScriptBuf, Weight, io};
@@ -78,15 +77,15 @@ impl<E> EncodeSigningDataResult<E> {
     ///
     /// ```rust
     /// # use dashcore::consensus::deserialize;
-    /// # use dashcore::hashes::{Hash, hex::FromHex};
-    /// # use dashcore::sighash::{LegacySighash, SighashCache};
+    /// # use dashcore::hashes::sha256d;
+    /// # use dashcore::sighash::SighashCache;
     /// # use dashcore::Transaction;
-    /// # let mut writer = LegacySighash::engine();
+    /// # let mut writer = sha256d::Hash::engine();
     /// # let input_index = 0;
     /// # let script_pubkey = dashcore::ScriptBuf::new();
     /// # let sighash_u32 = 0u32;
     /// # const SOME_TX: &'static str = "0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000";
-    /// # let raw_tx = Vec::from_hex(SOME_TX).unwrap();
+    /// # let raw_tx = hex_conservative::decode_to_vec(SOME_TX).unwrap();
     /// # let tx: Transaction = deserialize(&raw_tx).unwrap();
     /// let cache = SighashCache::new(&tx);
     /// if cache.legacy_encode_signing_data_to(&mut writer, input_index, &script_pubkey, sighash_u32)
@@ -132,10 +131,7 @@ impl<E> EncodeSigningDataResult<E> {
 /// format.
 ///
 /// There is one major exception to this: to avoid deserialization ambiguity,
-/// if the transaction has no inputs, it is serialized in the BIP141 style. Be
-/// aware that this differs from the transaction format in PSBT, which _never_
-/// uses BIP141. (Ordinarily there is no conflict, since in PSBT transactions
-/// are always unsigned and therefore their inputs have empty witnesses.)
+/// if the transaction has no inputs, it is serialized in the BIP141 style.
 ///
 /// The specific ambiguity is that Segwit uses the flag bytes `0001` where an old
 /// serializer would read the number of transaction inputs. The old serializer
@@ -237,47 +233,78 @@ impl Transaction {
         cloned_tx.txid().into()
     }
 
-    /// Computes the txid. For non-segwit transactions this will be identical
-    /// to the output of `wtxid()`, but for segwit transactions,
-    /// this will give the correct txid (not including witnesses) while `wtxid`
-    /// will also hash witnesses.
+    /// Computes the txid. Witnesses are not hashed.
+    ///
+    /// For an asset unlock with payload version 2 or higher the quorum signing info is zeroed
+    /// before hashing, as Core does, so every re-signed instance of one withdrawal shares one
+    /// txid. [`Self::instance_hash`] tells those instances apart.
     pub fn txid(&self) -> Txid {
-        let mut enc = Txid::engine();
-        self.version.consensus_encode(&mut enc).expect("engines don't error");
-        self.tx_type().to_u16().consensus_encode(&mut enc).expect("engines don't error");
-        self.input.consensus_encode(&mut enc).expect("engines don't error");
-        self.output.consensus_encode(&mut enc).expect("engines don't error");
-        self.lock_time.consensus_encode(&mut enc).expect("engines don't error");
-        if let Some(payload) = &self.special_transaction_payload {
-            // Pre-DIP-0002 transactions have no payload section on the wire — keep
-            // the txid bit-identical to the on-chain bytes by skipping the section.
-            if !matches!(
-                payload,
-                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)
-            ) {
-                let mut buf = Vec::new();
-                payload.consensus_encode(&mut buf).expect("engines don't error");
-                // this is so we get the size of the payload
-                buf.consensus_encode(&mut enc).expect("engines don't error");
-            }
+        if !self.has_stable_txid() {
+            return self.instance_hash();
         }
+        let mut bytes = Vec::new();
+        self.encode_txid_data(&mut bytes).expect("vecs don't error");
+        let quorum_info_start = bytes.len() - AssetUnlockPayload::QUORUM_INFO_SIZE;
+        bytes[quorum_info_start..].fill(0);
+        Txid::from_raw_hash(sha256d::Hash::hash(&bytes))
+    }
 
-        Txid::from_engine(enc)
+    /// The hash of the full serialization, without witnesses. It equals [`Self::txid`] except
+    /// for asset unlocks with payload version 2 or higher, which are relayed by this hash.
+    pub fn instance_hash(&self) -> Txid {
+        let mut enc = sha256d::Hash::engine();
+        self.encode_txid_data(&mut enc).expect("engines don't error");
+        Txid::from_raw_hash(enc.finalize())
+    }
+
+    /// Whether the txid excludes the quorum signing info of an asset unlock payload.
+    ///
+    /// Judged from the payload bytes, as Core does, so a payload kept raw counts too.
+    fn has_stable_txid(&self) -> bool {
+        let Some(payload) = &self.special_transaction_payload else {
+            return false;
+        };
+        if (self.version as i16) < 3 || payload.get_type() != TransactionType::AssetUnlock {
+            return false;
+        }
+        let bytes = encode::serialize(payload);
+        bytes.len() == AssetUnlockPayload::SIZE
+            && bytes[0] >= AssetUnlockPayload::STABLE_TXID_VERSION
+    }
+
+    /// Encodes the version and the transaction type as one 32-bit field, as Core does.
+    pub(crate) fn consensus_encode_version_and_type<W: io::Write + ?Sized>(
+        &self,
+        w: &mut W,
+    ) -> Result<usize, io::Error> {
+        // Core writes `nVersion | (nType << 16)` with a signed 16-bit `nVersion`, so a negative
+        // version sign-extends and overwrites the type with `0xffff`.
+        let tx_type = if (self.version as i16) < 0 {
+            u16::MAX
+        } else {
+            self.tx_type().to_u16()
+        };
+        Ok(self.version.consensus_encode(w)? + tx_type.consensus_encode(w)?)
+    }
+
+    fn encode_txid_data<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<(), io::Error> {
+        self.consensus_encode_version_and_type(w)?;
+        self.input.consensus_encode(w)?;
+        self.output.consensus_encode(w)?;
+        self.lock_time.consensus_encode(w)?;
+        if let Some(payload) = self.payload_section() {
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf)?;
+            // this is so we get the size of the payload
+            buf.consensus_encode(w)?;
+        }
+        Ok(())
     }
 
     /// Get the transaction type. If a classical transaction this would be 0.
     /// Otherwise it is gotten by association from the payload type.
     pub fn tx_type(&self) -> TransactionType {
         TransactionType::from_optional_payload(&self.special_transaction_payload)
-    }
-
-    /// Computes SegWit-version of the transaction id (wtxid). For transaction with the witness
-    /// data this hash includes witness, for pre-witness transaction it is equal to the normal
-    /// value returned by txid() function.
-    pub fn wtxid(&self) -> Wtxid {
-        let mut enc = Wtxid::engine();
-        self.consensus_encode(&mut enc).expect("engines don't error");
-        Wtxid::from_engine(enc)
     }
 
     /// Encodes the signing data from which a signature hash for a given input index with a given
@@ -293,9 +320,9 @@ impl Transaction {
     ///
     /// # Warning
     ///
-    /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    ///   have the information to determine.
+    /// - `script_pubkey` is the script code. As in Dash Core, every OP_CODESEPARATOR opcode in it
+    ///   is left out of the signing data. Passing only the part of the script after the last
+    ///   executed OP_CODESEPARATOR is up to the caller, since choosing it needs script evaluation.
     /// - Does NOT handle the sighash single bug, you should either handle that manually or use
     ///   `Self::signature_hash()` instead.
     ///
@@ -315,9 +342,9 @@ impl Transaction {
     ///
     /// # Warning
     ///
-    /// - Does NOT attempt to support OP_CODESEPARATOR. In general this would require evaluating
-    ///   `script_pubkey` to determine which separators get evaluated and which don't, which we don't
-    ///   have the information to determine.
+    /// - `script_pubkey` is the script code. As in Dash Core, every OP_CODESEPARATOR opcode in it
+    ///   is left out of the signing data. Passing only the part of the script after the last
+    ///   executed OP_CODESEPARATOR is up to the caller, since choosing it needs script evaluation.
     /// - Does NOT handle the sighash single bug (see "Returns" section)
     ///
     /// # Returns
@@ -361,11 +388,11 @@ impl Transaction {
 
     /// This will hash all input outpoints
     pub fn hash_inputs(&self) -> InputsHash {
-        let mut enc = InputsHash::engine();
+        let mut enc = sha256d::Hash::engine();
         for input in self.input.iter() {
             input.previous_output.consensus_encode(&mut enc).expect("engines don't error");
         }
-        InputsHash::from_engine(enc)
+        InputsHash::from_raw_hash(enc.finalize())
     }
 
     /// Returns the "weight" of this transaction, as defined by BIP141.
@@ -379,10 +406,6 @@ impl Transaction {
     /// cannot be unambiguously serialized; we make a choice that adds two extra bytes. For more
     /// details see [BIP 141](https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki)
     /// which uses a "input count" of `0x00` as a `marker` for a Segwit-encoded transaction.
-    ///
-    /// If you need to use 0-input transactions, we strongly recommend you do so using the PSBT
-    /// API. The unsigned transaction encoded within PSBT is always a non-segwit transaction
-    /// and can therefore avoid this ambiguity.
     #[inline]
     pub fn weight(&self) -> Weight {
         Weight::from_wu(self.scaled_size(WITNESS_SCALE_FACTOR) as u64)
@@ -419,7 +442,7 @@ impl Transaction {
     #[inline]
     pub fn vsize(&self) -> usize {
         // No overflow because it's computed from data in memory
-        self.weight().to_vbytes_ceil() as usize
+        self.weight().to_vb_ceil() as usize
     }
 
     /// Returns the size of this transaction excluding the witness data.
@@ -498,10 +521,8 @@ impl Transaction {
     /// Returns the serialized length of the special transaction payload section, length
     /// prefix included, or 0 when there is none.
     pub fn special_transaction_len(&self) -> usize {
-        match self.special_transaction_payload.as_ref() {
-            // Pre-DIP-0002 transactions have no payload section on the wire.
-            None
-            | Some(TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)) => 0,
+        match self.payload_section() {
+            None => 0,
             Some(payload) => {
                 let size = payload.size();
                 VarInt(size as u64).len() + size
@@ -509,38 +530,19 @@ impl Transaction {
         }
     }
 
-    /// Shorthand for [`Self::verify_with_flags`] with flag [`bitcoinconsensus::VERIFY_ALL`].
-    #[cfg(feature = "bitcoinconsensus")]
-    pub fn verify<S>(&self, spent: S) -> Result<(), script::Error>
-    where
-        S: FnMut(&OutPoint) -> Option<TxOut>,
-    {
-        self.verify_with_flags(spent, ::bitcoinconsensus::VERIFY_ALL)
-    }
-
-    /// Verify that this transaction is able to spend its inputs.
-    /// The `spent` closure should not return the same [`TxOut`] twice!
-    #[cfg(feature = "bitcoinconsensus")]
-    pub fn verify_with_flags<S, F>(&self, mut spent: S, flags: F) -> Result<(), script::Error>
-    where
-        S: FnMut(&OutPoint) -> Option<TxOut>,
-        F: Into<u32>,
-    {
-        let tx = encode::serialize(self);
-        let flags: u32 = flags.into();
-        for (idx, input) in self.input.iter().enumerate() {
-            if let Some(output) = spent(&input.previous_output) {
-                output.script_pubkey.verify_with_flags(
-                    idx,
-                    crate::Amount::from_sat(output.value),
-                    tx.as_slice(),
-                    flags,
-                )?;
-            } else {
-                return Err(script::Error::UnknownSpentOutput(input.previous_output));
+    /// The payload written after `lock_time`, if any.
+    ///
+    /// As in Dash Core, only transactions from version 3 have a payload section, the
+    /// condition the decoder uses too. Pre-DIP-0002 transactions have none on the wire,
+    /// not even a length prefix.
+    fn payload_section(&self) -> Option<&TransactionPayload> {
+        match &self.special_transaction_payload {
+            Some(TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)) => {
+                None
             }
+            Some(payload) if self.version as i16 >= 3 => Some(payload),
+            _ => None,
         }
-        Ok(())
     }
 
     /// Is this a coin base transaction?
@@ -601,8 +603,7 @@ impl Transaction {
 impl Encodable for Transaction {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.version.consensus_encode(w)?;
-        len += self.tx_type().to_u16().consensus_encode(w)?;
+        len += self.consensus_encode_version_and_type(w)?;
         // To avoid serialization ambiguity, no inputs means we use BIP141 serialization (see
         // `Transaction` docs for full explanation).
         let mut have_witness = self.input.is_empty();
@@ -642,19 +643,24 @@ impl Encodable for Transaction {
             }
         }
         len += self.lock_time.consensus_encode(w)?;
-        if let Some(payload) = &self.special_transaction_payload {
-            // Pre-DIP-0002 transactions have no payload section on the wire (not even
-            // a length prefix). Skip the encoding block entirely so re-serialization
-            // matches the on-chain bytes verbatim.
-            if !matches!(
-                payload,
-                TransactionPayload::ClassicalWithNonStandardVersionTypeBytesPayloadType(_)
-            ) {
-                let mut buf = Vec::new();
-                payload.consensus_encode(&mut buf)?;
-                // this is so we get the size of the payload
-                len += buf.consensus_encode(w)?;
-            }
+        len += self.encode_special_payload(w)?;
+        Ok(len)
+    }
+}
+
+impl Transaction {
+    /// Writes the special transaction payload section that follows `lock_time`: the payload
+    /// with its length prefix, or nothing when the transaction has no payload section.
+    pub(crate) fn encode_special_payload<W: io::Write + ?Sized>(
+        &self,
+        w: &mut W,
+    ) -> Result<usize, io::Error> {
+        let mut len = 0;
+        if let Some(payload) = self.payload_section() {
+            let mut buf = Vec::new();
+            payload.consensus_encode(&mut buf)?;
+            // this is so we get the size of the payload
+            len += buf.consensus_encode(w)?;
         }
         Ok(len)
     }
@@ -677,11 +683,12 @@ impl Decodable for Transaction {
         } else {
             // Below version 3 transactions are logically Classic, but at least one mainnet
             // tx put non-zero bytes in the type slot. Preserve the raw u16 so
-            // consensus_encode/txid keep matching the on-chain bytes.
+            // consensus_encode/txid keep matching the on-chain bytes. A negative version is
+            // the exception: `consensus_encode_version_and_type` writes `0xffff` as Core does.
             TransactionType::ClassicalWithNonStandardVersionTypeBytes(special_transaction_type_u16)
         };
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
-        // segwit
+        // BIP144 form, still read for the asset locks Dash Platform has accepted (see `Witness`).
         let mut segwit = input.is_empty();
         // Forcing segwit to false for special transaction types that legitimately have no inputs.
         // Dash Core doesn't support BIP141 SegWit.
@@ -750,70 +757,6 @@ pub struct InputWeightPrediction {
 }
 
 impl InputWeightPrediction {
-    /// Input weight prediction corresponding to spending of P2WPKH output with the largest possible
-    /// DER-encoded signature.
-    ///
-    /// If the input in your transaction uses P2WPKH you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    ///
-    /// This is useful when you **do not** use [signature grinding] and want to ensure you are not
-    /// under-paying. See [`ground_p2wpkh`](Self::ground_p2wpkh) if you do use signature grinding.
-    ///
-    /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
-    pub const P2WPKH_MAX: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 73 + 1 + 33,
-    };
-
-    /// Input weight prediction corresponding to spending of taproot output using the key and
-    /// default sighash.
-    ///
-    /// If the input in your transaction uses Taproot key spend you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    pub const P2TR_KEY_DEFAULT_SIGHASH: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 64,
-    };
-
-    /// Input weight prediction corresponding to spending of taproot output using the key and
-    /// **non**-default sighash.
-    ///
-    /// If the input in your transaction uses Taproot key spend you can use this instead of
-    /// [`InputWeightPrediction::new`].
-    pub const P2TR_KEY_NON_DEFAULT_SIGHASH: Self = InputWeightPrediction {
-        script_size: 0,
-        witness_size: 1 + 1 + 65,
-    };
-
-    /// Input weight prediction corresponding to spending of P2WPKH output using [signature
-    /// grinding].
-    ///
-    /// If the input in your transaction uses P2WPKH and you use signature grinding you can use this
-    /// instead of [`InputWeightPrediction::new`]. See [`P2WPKH_MAX`](Self::P2WPKH_MAX) if you don't
-    /// use signature grinding.
-    ///
-    /// Note: `bytes_to_grind` is usually `1` because of exponential cost of higher values.
-    ///
-    /// # Panics
-    ///
-    /// The function panics in const context and debug builds if `bytes_to_grind` is higher than 62.
-    ///
-    /// [signature grinding]: https://bitcoin.stackexchange.com/questions/111660/what-is-signature-grinding
-    pub const fn ground_p2wpkh(bytes_to_grind: usize) -> Self {
-        // Written to trigger const/debug panic for unreasonably high values.
-        let der_signature_size = 10 + (62 - bytes_to_grind);
-        let witness_size = 1 // length of element count varint
-            + 1 // length of element size varint (max signature length is 73B)
-            + der_signature_size
-            + 1 // sighash flag
-            + 1 // length of element size varint
-            + 33; // length of (always-compressed) public key
-        InputWeightPrediction {
-            script_size: 0,
-            witness_size,
-        }
-    }
-
     /// Computes the prediction for a single input.
     pub fn new<T>(input_script_len: usize, witness_element_lengths: T) -> Self
     where
@@ -968,11 +911,16 @@ const fn predict_weight_internal(
 
 #[cfg(test)]
 mod tests {
-    use hashes::hex::FromHex;
 
     use super::*;
     use crate::blockdata::constants::WITNESS_SCALE_FACTOR;
+    use crate::blockdata::transaction::special_transaction::provider_dissolve::ProviderDissolvePayload;
+    use crate::blockdata::transaction::special_transaction::provider_update_share::ProviderUpdateSharePayload;
+    use crate::blockdata::transaction::special_transaction::provider_update_shared_registrar::ProviderUpdateSharedRegistrarPayload;
+    use crate::bls_sig_utils::BLSPublicKey;
     use crate::consensus::encode::{deserialize, serialize};
+    use crate::crypto::ecdsa::EcdsaRecSignature;
+    use crate::hash_types::PubkeyHash;
     use crate::internal_macros::hex;
     use crate::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::test_utils::UNASSIGNED_SPECIAL_TX_TYPE;
@@ -985,7 +933,7 @@ mod tests {
 
         let genesis = constants::genesis_block(Network::Mainnet);
         assert!(genesis.txdata[0].is_coin_base());
-        let tx_bytes = Vec::from_hex("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
+        let tx_bytes = hex_conservative::decode_to_vec("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
         assert!(!tx.is_coin_base());
     }
@@ -1014,10 +962,6 @@ mod tests {
 
         assert_eq!(
             format!("{:x}", realtx.txid()),
-            "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string()
-        );
-        assert_eq!(
-            format!("{:x}", realtx.wtxid()),
             "a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7".to_string()
         );
         assert_eq!(realtx.check_weight().to_wu() as usize, tx_bytes.len() * WITNESS_SCALE_FACTOR);
@@ -1056,10 +1000,6 @@ mod tests {
             format!("{:x}", realtx.txid()),
             "f5864806e3565c34d1b41e716f72609d00b55ea5eac5b924c9719a842ef42206".to_string()
         );
-        assert_eq!(
-            format!("{:x}", realtx.wtxid()),
-            "80b7d8a82d5d5bf92905b06f2014dd699e03837ca172e3a59d51426ebbe3e7f5".to_string()
-        );
         const EXPECTED_WEIGHT: Weight = Weight::from_wu(442);
         assert_eq!(realtx.check_weight(), EXPECTED_WEIGHT);
         assert_eq!(realtx.size(), tx_bytes.len());
@@ -1084,36 +1024,41 @@ mod tests {
         assert_eq!(tx_without_witness.strippedsize(), expected_strippedsize);
     }
 
-    #[test]
-    fn test_transaction_version() {
-        let tx_bytes = Vec::from_hex("ffff00000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
-        let tx: Result<Transaction, _> = deserialize(&tx_bytes);
-        assert!(tx.is_ok());
-        let realtx = tx.unwrap();
-        assert_eq!(realtx.version, 65535);
+    // Txids come from Dash Core's `decoderawtransaction`. Each is the hash of `core_prefix`
+    // followed by the body, which is how Core re-serializes the transaction.
+    #[test_case("00000000", "00000000", "9b7c56736423e75d639f682da7c9c4bf361ac2ff8f8d2f8910d9b2bd235aa0a4"; "version 0")]
+    #[test_case("ffff0000", "ffffffff", "189a3513dfd68d0690f9df57ea75becb4f11cf131bc52062937c71e607cce320"; "version 0xffff")]
+    #[test_case("ffff2a00", "ffffffff", "189a3513dfd68d0690f9df57ea75becb4f11cf131bc52062937c71e607cce320"; "version 0xffff with type bytes")]
+    #[test_case("feff0000", "feffffff", "54b620358ea89d4462b43f35b17390fde53f1e42a018b6d8ea44862236cf8faa"; "version 0xfffe")]
+    #[test_case("00803412", "0080ffff", "d880b6c7fb308681f4635fd3dd702b385702143c12c815407d9ef13ec368405d"; "version 0x8000 with type bytes")]
+    #[test_case("0180ffff", "0180ffff", "5ee78961752d2cbce4baf0d97d18b377502a09647b5dc3bbdf63b75949b18f00"; "version 0x8001 with type 0xffff")]
+    fn test_transaction_version(wire_prefix: &str, core_prefix: &str, core_txid: &str) {
+        let body = "0100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
+        let wire = hex!(&format!("{wire_prefix}{body}"));
+        let tx: Transaction = deserialize(&wire).unwrap();
+        assert_eq!(tx.version, u16::from_le_bytes([wire[0], wire[1]]));
 
-        let tx2_bytes = Vec::from_hex("000000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
-        let tx2: Result<Transaction, _> = deserialize(&tx2_bytes);
-        assert!(tx2.is_ok());
-        let realtx2 = tx2.unwrap();
-        assert_eq!(realtx2.version, 0);
+        assert_eq!(serialize(&tx), hex!(&format!("{core_prefix}{body}")));
+        assert_eq!(tx.txid(), core_txid.parse::<Txid>().unwrap());
     }
 
-    #[test_case(0; "version 0")]
-    #[test_case(1; "version 1")]
-    #[test_case(2; "version 2")]
-    #[test_case(0xffff; "negative version")]
-    fn test_pre_dip2_classical_with_non_standard_version_type_bytes_roundtrip(version: u16) {
+    #[test_case(0, "660b9a1c39fe564be27f61ef3693eb42a98ff6b431bd58e621ae6a0e45222c59"; "version 0")]
+    #[test_case(1, "1f5b3653e1e04b624b7930ab5706a7a6bf8329c2728f90226e129b2b38442ce5"; "version 1")]
+    #[test_case(2, "f5989d547a24559a3c0592a3fbc832f50c4db9782676dc722b121286043de90a"; "version 2")]
+    fn test_pre_dip2_classical_with_non_standard_version_type_bytes_roundtrip(
+        version: u16,
+        core_txid: &str,
+    ) {
         use crate::blockdata::transaction::special_transaction::{
             TransactionPayload, TransactionType,
         };
 
-        // Same tx as `test_transaction_version`'s second case, but with the on-wire
+        // Same tx as the "version 0" case of `test_transaction_version`, but with the on-wire
         // `nTxType` slot set to a non-zero u16 (0x2A in little-endian => 0x002A).
         // Below version 3 these bytes are ignored by consensus but still part of the
         // serialized transaction and therefore part of the txid pre-image. Bytes 2..4
         // are the `nTxType` field; bytes 0..2 are the version.
-        let mut tx_bytes = Vec::from_hex("00002a000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
+        let mut tx_bytes = hex_conservative::decode_to_vec("00002a000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000").unwrap();
         tx_bytes[0..2].copy_from_slice(&version.to_le_bytes());
         let tx: Transaction =
             deserialize(&tx_bytes).expect("decoder must accept pre-DIP-0002 raw type bytes");
@@ -1135,7 +1080,12 @@ mod tests {
         // The txid must match the txid computed from the original on-wire bytes
         // (double-SHA256 of the serialized transaction). Since the encoder now
         // reproduces the input bytes exactly, the txid is the hash of those bytes.
-        assert_eq!(tx.txid(), Txid::hash(&tx_bytes), "txid must hash the original bytes");
+        assert_eq!(
+            tx.txid(),
+            Txid::from_raw_hash(sha256d::Hash::hash(&tx_bytes)),
+            "txid must hash the original bytes"
+        );
+        assert_eq!(tx.txid(), core_txid.parse::<Txid>().unwrap());
 
         // The txid must differ from the same transaction with type bytes zeroed —
         // proves we no longer collapse different on-chain transactions to one id.
@@ -1179,7 +1129,7 @@ mod tests {
         assert_eq!(decoded.tx_type(), TransactionType::Unknown(UNASSIGNED_SPECIAL_TX_TYPE));
         assert_eq!(decoded, tx);
         assert_eq!(serialize(&decoded), bytes);
-        assert_eq!(decoded.txid(), Txid::hash(&bytes));
+        assert_eq!(decoded.txid(), Txid::from_raw_hash(sha256d::Hash::hash(&bytes)));
         assert_eq!(decoded.size(), bytes.len());
     }
 
@@ -1239,7 +1189,7 @@ mod tests {
     #[test_case(TransactionType::ProviderUpdateRevocation, [revocation_bytes(), vec![0]].concat(), true ; "trailing byte")]
     #[test_case(TransactionType::ProviderUpdateRevocation, revocation_bytes()[..100].to_vec(), true ; "truncated")]
     #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(1), false ; "known llmq type")]
-    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), true ; "unknown llmq type re-encodes differently")]
+    #[test_case(TransactionType::QuorumCommitment, quorum_commitment_bytes(200), false ; "unknown llmq type")]
     fn known_type_payload_decodes_typed_or_stays_raw(
         tx_type: TransactionType,
         payload: Vec<u8>,
@@ -1265,7 +1215,7 @@ mod tests {
         assert_eq!(payload.get_type(), TransactionType::Unknown(0));
     }
 
-    #[cfg(feature = "bincode")]
+    #[cfg(all(feature = "serde", feature = "bincode"))]
     const CONFIG: bincode::config::Configuration = bincode::config::standard();
 
     /// A raw payload persisted by an earlier version decodes typed once its layout is known.
@@ -1299,9 +1249,89 @@ mod tests {
         assert_eq!(serialize(&decoded), bytes);
     }
 
+    #[test_case(10, TransactionPayload::ProviderDissolvePayloadType(ProviderDissolvePayload {
+        version: 1,
+        pro_tx_hash: Txid::all_zeros(),
+        actor_index: 0,
+        signatures: vec![EcdsaRecSignature::from([1; 65])],
+    }); "ProDisTx")]
+    #[test_case(11, TransactionPayload::ProviderUpdateSharePayloadType(ProviderUpdateSharePayload {
+        version: 1,
+        pro_tx_hash: Txid::all_zeros(),
+        share_index: 0,
+        script_reward: ScriptBuf::new(),
+        inputs_hash: InputsHash::all_zeros(),
+        payload_sig: vec![1; 65],
+    }); "ProUpShareTx")]
+    #[test_case(12, TransactionPayload::ProviderUpdateSharedRegistrarPayloadType(
+        ProviderUpdateSharedRegistrarPayload {
+            version: 1,
+            pro_tx_hash: Txid::all_zeros(),
+            operator_public_key: BLSPublicKey::from([1; 48]),
+            voting_key_hash: PubkeyHash::all_zeros(),
+            inputs_hash: InputsHash::all_zeros(),
+            signatures: vec![EcdsaRecSignature::from([1; 65])],
+        }
+    ); "ProUpSharedRegTx")]
+    fn shared_masternode_types_decode_typed(tx_type: u16, payload: TransactionPayload) {
+        let tx = Transaction {
+            special_transaction_payload: Some(payload),
+            ..unknown_special_tx(vec![TxIn::default()])
+        };
+        let bytes = serialize(&tx);
+        assert_eq!(&bytes[2..4], &tx_type.to_le_bytes());
+
+        let decoded: Transaction = deserialize(&bytes).unwrap();
+        assert_eq!(decoded, tx);
+        assert_eq!(decoded.tx_type().to_u16(), tx_type);
+        assert_eq!(decoded.size(), bytes.len());
+    }
+
+    #[test]
+    fn payload_is_written_only_from_version_3() {
+        let payload =
+            TransactionPayload::ProviderUpdateSharePayloadType(ProviderUpdateSharePayload {
+                version: 1,
+                pro_tx_hash: Txid::all_zeros(),
+                share_index: 0,
+                script_reward: ScriptBuf::new(),
+                inputs_hash: InputsHash::all_zeros(),
+                payload_sig: vec![1; 65],
+            });
+        let v3 = Transaction {
+            special_transaction_payload: Some(payload),
+            ..unknown_special_tx(vec![TxIn::default()])
+        };
+        let v2 = Transaction {
+            version: 2,
+            ..v3.clone()
+        };
+        let without_payload = Transaction {
+            version: 2,
+            special_transaction_payload: None,
+            ..v3.clone()
+        };
+
+        // Below version 3 the bytes end at `lock_time`, as Dash Core writes them. Only
+        // the type field, which is part of the version, differs from no payload at all.
+        let mut expected = serialize(&without_payload);
+        expected[2..4].copy_from_slice(&v2.tx_type().to_u16().to_le_bytes());
+        let bytes = serialize(&v2);
+        assert_eq!(bytes, expected);
+        assert_eq!(v2.size(), bytes.len());
+        assert_eq!(v2.special_transaction_len(), 0);
+        assert_eq!(v2.txid(), Txid::from_raw_hash(sha256d::Hash::hash(&bytes)));
+
+        // From version 3 the payload follows with its length prefix.
+        let bytes = serialize(&v3);
+        assert_eq!(bytes.len(), expected.len() + v3.special_transaction_len());
+        assert_eq!(v3.size(), bytes.len());
+        assert_eq!(v3.txid(), Txid::from_raw_hash(sha256d::Hash::hash(&bytes)));
+    }
+
     #[test]
     fn tx_no_input_deserialization() {
-        let tx_bytes = Vec::from_hex(
+        let tx_bytes = hex_conservative::decode_to_vec(
             "010000000001000100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000"
         ).unwrap();
         let tx: Transaction = deserialize(&tx_bytes).expect("deserialize tx");
@@ -1315,7 +1345,7 @@ mod tests {
 
     #[test]
     fn test_ntxid() {
-        let tx_bytes = Vec::from_hex("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
+        let tx_bytes = hex_conservative::decode_to_vec("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
         let mut tx: Transaction = deserialize(&tx_bytes).unwrap();
 
         let old_ntxid = tx.ntxid();
@@ -1367,10 +1397,6 @@ mod tests {
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
         assert_eq!(
-            format!("{:x}", tx.wtxid()),
-            "d6ac4a5e61657c4c604dcde855a1db74ec6b3e54f32695d72c5e11c7761ea1b4"
-        );
-        assert_eq!(
             format!("{:x}", tx.txid()),
             "9652aa62b0e748caeec40c4cb7bc17c6792435cc3dfe447dd1ca24f912a1c6ec"
         );
@@ -1388,10 +1414,6 @@ mod tests {
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
 
         assert_eq!(
-            format!("{:x}", tx.wtxid()),
-            "971ed48a62c143bbd9c87f4bafa2ef213cfa106c6e140f111931d0be307468dd"
-        );
-        assert_eq!(
             format!("{:x}", tx.txid()),
             "971ed48a62c143bbd9c87f4bafa2ef213cfa106c6e140f111931d0be307468dd"
         );
@@ -1400,7 +1422,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_txn_encode_decode() {
-        let tx_bytes = Vec::from_hex("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
+        let tx_bytes = hex_conservative::decode_to_vec("0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000").unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
         serde_round_trip!(tx);
     }
@@ -1410,84 +1432,13 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_segwit_tx_decode() {
-        let tx_bytes = Vec::from_hex("010000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff3603da1b0e00045503bd5704c7dd8a0d0ced13bb5785010800000000000a636b706f6f6c122f4e696e6a61506f6f6c2f5345475749542fffffffff02b4e5a212000000001976a914876fbb82ec05caa6af7a3b5e5a983aae6c6cc6d688ac0000000000000000266a24aa21a9edf91c46b49eb8a29089980f02ee6b57e7d63d33b18b4fddac2bcd7db2a39837040120000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let tx_bytes = hex_conservative::decode_to_vec("010000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff3603da1b0e00045503bd5704c7dd8a0d0ced13bb5785010800000000000a636b706f6f6c122f4e696e6a61506f6f6c2f5345475749542fffffffff02b4e5a212000000001976a914876fbb82ec05caa6af7a3b5e5a983aae6c6cc6d688ac0000000000000000266a24aa21a9edf91c46b49eb8a29089980f02ee6b57e7d63d33b18b4fddac2bcd7db2a39837040120000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
         let tx: Transaction = deserialize(&tx_bytes).unwrap();
         assert_eq!(tx.weight(), Weight::from_wu(780));
         serde_round_trip!(tx);
 
         let consensus_encoded = serialize(&tx);
         assert_eq!(consensus_encoded, tx_bytes);
-    }
-
-    #[test]
-    #[cfg(feature = "bitcoinconsensus")]
-    fn test_transaction_verify() {
-        use std::collections::HashMap;
-
-        use hashes::hex::FromHex;
-
-        use crate::blockdata::script;
-        use crate::blockdata::witness::Witness;
-
-        // a random recent segwit transaction from blockchain using both old and segwit inputs
-        let mut spending: Transaction = deserialize(Vec::from_hex("020000000001031cfbc8f54fbfa4a33a30068841371f80dbfe166211242213188428f437445c91000000006a47304402206fbcec8d2d2e740d824d3d36cc345b37d9f65d665a99f5bd5c9e8d42270a03a8022013959632492332200c2908459547bf8dbf97c65ab1a28dec377d6f1d41d3d63e012103d7279dfb90ce17fe139ba60a7c41ddf605b25e1c07a4ddcb9dfef4e7d6710f48feffffff476222484f5e35b3f0e43f65fc76e21d8be7818dd6a989c160b1e5039b7835fc00000000171600140914414d3c94af70ac7e25407b0689e0baa10c77feffffffa83d954a62568bbc99cc644c62eb7383d7c2a2563041a0aeb891a6a4055895570000000017160014795d04cc2d4f31480d9a3710993fbd80d04301dffeffffff06fef72f000000000017a91476fd7035cd26f1a32a5ab979e056713aac25796887a5000f00000000001976a914b8332d502a529571c6af4be66399cd33379071c588ac3fda0500000000001976a914fc1d692f8de10ae33295f090bea5fe49527d975c88ac522e1b00000000001976a914808406b54d1044c429ac54c0e189b0d8061667e088ac6eb68501000000001976a914dfab6085f3a8fb3e6710206a5a959313c5618f4d88acbba20000000000001976a914eb3026552d7e3f3073457d0bee5d4757de48160d88ac0002483045022100bee24b63212939d33d513e767bc79300051f7a0d433c3fcf1e0e3bf03b9eb1d70220588dc45a9ce3a939103b4459ce47500b64e23ab118dfc03c9caa7d6bfc32b9c601210354fd80328da0f9ae6eef2b3a81f74f9a6f66761fadf96f1d1d22b1fd6845876402483045022100e29c7e3a5efc10da6269e5fc20b6a1cb8beb92130cc52c67e46ef40aaa5cac5f0220644dd1b049727d991aece98a105563416e10a5ac4221abac7d16931842d5c322012103960b87412d6e169f30e12106bdf70122aabb9eb61f455518322a18b920a4dfa887d30700")
-            .unwrap().as_slice()).unwrap();
-        let spent1: Transaction = deserialize(Vec::from_hex("020000000001040aacd2c49f5f3c0968cfa8caf9d5761436d95385252e3abb4de8f5dcf8a582f20000000017160014bcadb2baea98af0d9a902e53a7e9adff43b191e9feffffff96cd3c93cac3db114aafe753122bd7d1afa5aa4155ae04b3256344ecca69d72001000000171600141d9984579ceb5c67ebfbfb47124f056662fe7adbfeffffffc878dd74d3a44072eae6178bb94b9253177db1a5aaa6d068eb0e4db7631762e20000000017160014df2a48cdc53dae1aba7aa71cb1f9de089d75aac3feffffffe49f99275bc8363f5f593f4eec371c51f62c34ff11cc6d8d778787d340d6896c0100000017160014229b3b297a0587e03375ab4174ef56eeb0968735feffffff03360d0f00000000001976a9149f44b06f6ee92ddbc4686f71afe528c09727a5c788ac24281b00000000001976a9140277b4f68ff20307a2a9f9b4487a38b501eb955888ac227c0000000000001976a9148020cd422f55eef8747a9d418f5441030f7c9c7788ac0247304402204aa3bd9682f9a8e101505f6358aacd1749ecf53a62b8370b97d59243b3d6984f02200384ad449870b0e6e89c92505880411285ecd41cf11e7439b973f13bad97e53901210205b392ffcb83124b1c7ce6dd594688198ef600d34500a7f3552d67947bbe392802473044022033dfd8d190a4ae36b9f60999b217c775b96eb10dee3a1ff50fb6a75325719106022005872e4e36d194e49ced2ebcf8bb9d843d842e7b7e0eb042f4028396088d292f012103c9d7cbf369410b090480de2aa15c6c73d91b9ffa7d88b90724614b70be41e98e0247304402207d952de9e59e4684efed069797e3e2d993e9f98ec8a9ccd599de43005fe3f713022076d190cc93d9513fc061b1ba565afac574e02027c9efbfa1d7b71ab8dbb21e0501210313ad44bc030cc6cb111798c2bf3d2139418d751c1e79ec4e837ce360cc03b97a024730440220029e75edb5e9413eb98d684d62a077b17fa5b7cc19349c1e8cc6c4733b7b7452022048d4b9cae594f03741029ff841e35996ef233701c1ea9aa55c301362ea2e2f68012103590657108a72feb8dc1dec022cf6a230bb23dc7aaa52f4032384853b9f8388baf9d20700")
-            .unwrap().as_slice()).unwrap();
-        let spent2: Transaction = deserialize(Vec::from_hex("0200000000010166c3d39490dc827a2594c7b17b7d37445e1f4b372179649cd2ce4475e3641bbb0100000017160014e69aa750e9bff1aca1e32e57328b641b611fc817fdffffff01e87c5d010000000017a914f3890da1b99e44cd3d52f7bcea6a1351658ea7be87024830450221009eb97597953dc288de30060ba02d4e91b2bde1af2ecf679c7f5ab5989549aa8002202a98f8c3bd1a5a31c0d72950dd6e2e3870c6c5819a6c3db740e91ebbbc5ef4800121023f3d3b8e74b807e32217dea2c75c8d0bd46b8665b3a2d9b3cb310959de52a09bc9d20700")
-            .unwrap().as_slice()).unwrap();
-        let spent3: Transaction = deserialize(Vec::from_hex("01000000027a1120a30cef95422638e8dab9dedf720ec614b1b21e451a4957a5969afb869d000000006a47304402200ecc318a829a6cad4aa9db152adbf09b0cd2de36f47b53f5dade3bc7ef086ca702205722cda7404edd6012eedd79b2d6f24c0a0c657df1a442d0a2166614fb164a4701210372f4b97b34e9c408741cd1fc97bcc7ffdda6941213ccfde1cb4075c0f17aab06ffffffffc23b43e5a18e5a66087c0d5e64d58e8e21fcf83ce3f5e4f7ecb902b0e80a7fb6010000006b483045022100f10076a0ea4b4cf8816ed27a1065883efca230933bf2ff81d5db6258691ff75202206b001ef87624e76244377f57f0c84bc5127d0dd3f6e0ef28b276f176badb223a01210309a3a61776afd39de4ed29b622cd399d99ecd942909c36a8696cfd22fc5b5a1affffffff0200127a000000000017a914f895e1dd9b29cb228e9b06a15204e3b57feaf7cc8769311d09000000001976a9144d00da12aaa51849d2583ae64525d4a06cd70fde88ac00000000")
-            .unwrap().as_slice()).unwrap();
-
-        let mut spent = HashMap::new();
-        spent.insert(spent1.txid(), spent1);
-        spent.insert(spent2.txid(), spent2);
-        spent.insert(spent3.txid(), spent3);
-        let mut spent2 = spent.clone();
-        let mut spent3 = spent.clone();
-
-        spending
-            .verify(|point: &OutPoint| {
-                if let Some(tx) = spent.remove(&point.txid) {
-                    return tx.output.get(point.vout as usize).cloned();
-                }
-                None
-            })
-            .unwrap();
-
-        // test that we fail with repeated use of same input
-        let mut double_spending = spending.clone();
-        let re_use = double_spending.input[0].clone();
-        double_spending.input.push(re_use);
-
-        assert!(
-            double_spending
-                .verify(|point: &OutPoint| {
-                    if let Some(tx) = spent2.remove(&point.txid) {
-                        return tx.output.get(point.vout as usize).cloned();
-                    }
-                    None
-                })
-                .is_err()
-        );
-
-        // test that we get a failure if we corrupt a signature
-        let mut witness: Vec<_> = spending.input[1].witness.to_vec();
-        witness[0][10] = 42;
-        spending.input[1].witness = Witness::from_slice(witness.as_slice());
-        match spending
-            .verify(|point: &OutPoint| {
-                if let Some(tx) = spent3.remove(&point.txid) {
-                    return tx.output.get(point.vout as usize).cloned();
-                }
-                None
-            })
-            .err()
-            .unwrap()
-        {
-            script::Error::BitcoinConsensus(_) => {}
-            _ => panic!("Wrong error type"),
-        }
     }
 
     #[test]
@@ -1500,7 +1451,8 @@ mod tests {
             special_transaction_payload: None,
         };
 
-        let pk_data = Vec::from_hex("b8e2d839dd21088b78bebfea3e3e632181197982").unwrap();
+        let pk_data =
+            hex_conservative::decode_to_vec("b8e2d839dd21088b78bebfea3e3e632181197982").unwrap();
 
         let mut pk_array: [u8; 20] = [0; 20];
         for (index, kek) in pk_array.iter_mut().enumerate() {
@@ -1523,7 +1475,7 @@ mod tests {
     #[test]
     fn deserialize_serialize_coinbase_transaction_in_dml() {
         let block_hex = include_str!("../../../tests/data/test_DML_diffs/DML_0_2221605.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
+        let data = hex_conservative::decode_to_vec(block_hex).expect("decode hex");
         let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
         if let NetworkMessage::MnListDiff(diff) = mn_list_diff.payload {
             let serialized = serialize(&diff.coinbase_tx);

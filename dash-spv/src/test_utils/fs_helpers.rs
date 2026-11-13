@@ -32,7 +32,12 @@ pub fn retain_test_dir(src: &Path, label: &str) {
     if !retain_always && !std::thread::panicking() {
         return;
     }
+    copy_to_retain_dir(src, label);
+}
 
+/// When `DASHD_TEST_RETAIN_DIR` is set, copy `src` to a test-named subdirectory now, whether or
+/// not the thread is panicking.
+pub(super) fn copy_to_retain_dir(src: &Path, label: &str) {
     let Ok(retain_dir) = std::env::var("DASHD_TEST_RETAIN_DIR") else {
         return;
     };

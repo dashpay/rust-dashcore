@@ -10,12 +10,12 @@ on:
 
 jobs:
   conflict-check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
     permissions:
       pull-requests: write
     steps:
       - name: Check for merge conflicts and label
-        uses: eps1lon/actions-label-merge-conflict@v3
+        uses: eps1lon/actions-label-merge-conflict@v3.1.0
         with:
           dirtyLabel: "merge-conflict"
           repoToken: "${{ secrets.GITHUB_TOKEN }}"

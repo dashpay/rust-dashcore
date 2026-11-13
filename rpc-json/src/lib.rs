@@ -31,13 +31,12 @@ use dashcore::address;
 use dashcore::address::NetworkUnchecked;
 use dashcore::block::Version;
 use dashcore::consensus::encode;
-use dashcore::hashes::hex::Error::InvalidChar;
 use dashcore::hashes::sha256;
 use dashcore::{
     Address, Amount, BlockHash, PrivateKey, ProTxHash, PublicKey, QuorumHash, Script, ScriptBuf,
     SignedAmount, Transaction, TxMerkleNode, Txid, bip158,
 };
-use hex::FromHexError;
+use hex_conservative::DecodeVariableLengthBytesError;
 use key_wallet::bip32;
 use serde::de::Error as SerdeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -183,9 +182,9 @@ impl Eq for ScanningDetails {}
 pub struct CoinbaseTxDetails {
     pub version: usize,
     pub height: i32,
-    #[serde(rename = "merkleRootMNList", with = "hex")]
+    #[serde(rename = "merkleRootMNList", with = "serde_hex")]
     merkle_root_mn_list: Vec<u8>,
-    #[serde(rename = "merkleRootQuorums", with = "hex")]
+    #[serde(rename = "merkleRootQuorums", with = "serde_hex")]
     merkle_root_quorums: Vec<u8>,
 }
 
@@ -193,7 +192,7 @@ pub struct CoinbaseTxDetails {
 pub struct GetBestChainLockResult {
     pub blockhash: BlockHash,
     pub height: u32,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub signature: Vec<u8>,
     pub known_block: bool,
 }
@@ -231,7 +230,7 @@ pub struct GetBlockHeaderResult {
     pub confirmations: i32,
     pub height: usize,
     pub version: Version,
-    #[serde(default, with = "hex")]
+    #[serde(default, with = "serde_hex")]
     pub version_hex: Vec<u8>,
     #[serde(rename = "merkleroot")]
     pub merkle_root: TxMerkleNode,
@@ -241,7 +240,7 @@ pub struct GetBlockHeaderResult {
     pub nonce: u32,
     pub bits: String,
     pub difficulty: f64,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub chainwork: Vec<u8>,
     pub n_tx: usize,
     #[serde(rename = "previousblockhash")]
@@ -433,9 +432,6 @@ pub enum BlockStatsFields {
     MinTxSize,
     Outs,
     Subsidy,
-    SegWitTotalSize,
-    SegWitTotalWeight,
-    SegWitTxs,
     Time,
     TotalOut,
     TotalSize,
@@ -467,9 +463,6 @@ impl BlockStatsFields {
             BlockStatsFields::MinTxSize => "minfeerate",
             BlockStatsFields::Outs => "outs",
             BlockStatsFields::Subsidy => "subsidy",
-            BlockStatsFields::SegWitTotalSize => "swtotal_size",
-            BlockStatsFields::SegWitTotalWeight => "swtotal_weight",
-            BlockStatsFields::SegWitTxs => "swtxs",
             BlockStatsFields::Time => "time",
             BlockStatsFields::TotalOut => "total_out",
             BlockStatsFields::TotalSize => "total_size",
@@ -515,7 +508,7 @@ pub struct GetMiningInfoResult {
 #[serde(rename_all = "camelCase")]
 pub struct GetRawTransactionResultVinScriptSig {
     pub asm: String,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
 }
 
@@ -554,7 +547,7 @@ impl GetRawTransactionResultVin {
 #[serde(rename_all = "camelCase")]
 pub struct GetRawTransactionResultVoutScriptPubKey {
     pub asm: String,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
     #[serde(rename = "reqSigs")]
     pub req_sigs: Option<usize>,
@@ -597,7 +590,7 @@ pub struct GetRawTransactionResult {
     pub extra_payload_size: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
     pub extra_payload: Option<Vec<u8>>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
     pub blockhash: Option<BlockHash>,
     pub height: Option<i32>,
@@ -613,7 +606,7 @@ pub struct GetRawTransactionResult {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct GetBlockFilterResult {
     pub header: dashcore::FilterHash,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub filter: Vec<u8>,
 }
 
@@ -808,7 +801,7 @@ pub struct ListReceivedByAddressResult {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct SignRawTransactionResult {
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
     pub complete: bool,
 }
@@ -883,10 +876,6 @@ pub enum ScriptPubkeyType {
     ScriptHash,
     MultiSig,
     NullData,
-    Witness_v0_KeyHash,
-    Witness_v0_ScriptHash,
-    Witness_v1_Taproot,
-    Witness_Unknown,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -968,7 +957,7 @@ pub struct GetBlockchainInfoResult {
     #[serde(rename = "initialblockdownload")]
     pub initial_block_download: bool,
     /// Total amount of work in active chain, in hexadecimal
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub chainwork: Vec<u8>,
     /// The estimated size of the block and undo files on disk
     pub size_on_disk: u64,
@@ -1008,11 +997,10 @@ pub enum ImportMultiRequestScriptPubkey<'a> {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct GetMempoolEntryResult {
-    /// Virtual transaction size as defined in BIP 141. This is different from actual serialized
-    /// size for witness transactions as witness data is discounted.
+    /// Virtual transaction size.
     #[serde(alias = "vsize")]
     pub size: u64,
-    /// Transaction weight as defined in BIP 141. Added in Core v0.19.0.
+    /// Transaction weight.
     pub weight: Option<u64>,
     /// Local time transaction entered pool in seconds since 1 Jan 1970 GMT
     pub time: u64,
@@ -1096,8 +1084,6 @@ pub struct ImportMultiRequest<'a> {
     pub script_pubkey: Option<ImportMultiRequestScriptPubkey<'a>>,
     #[serde(rename = "redeemscript", skip_serializing_if = "Option::is_none")]
     pub redeem_script: Option<&'a Script>,
-    #[serde(rename = "witnessscript", skip_serializing_if = "Option::is_none")]
-    pub witness_script: Option<&'a Script>,
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     pub pubkeys: &'a [PublicKey],
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
@@ -1437,10 +1423,8 @@ pub enum GetBlockTemplateCapabilities {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GetBlockTemplateRules {
-    SegWit,
     Signet,
     Csv,
-    Taproot,
 }
 
 /// Enum to represent client-side supported features.
@@ -1495,7 +1479,7 @@ pub struct GetBlockTemplateResult {
     // TODO figure out what is the data is represented to coinbasetxn
     // pub coinbasetxn:
     /// The number which valid hashes must be less than, in big-endian
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub target: Vec<u8>,
     /// The minimum timestamp appropriate for the next block time. Expressed as
     /// UNIX timestamp.
@@ -1507,7 +1491,7 @@ pub struct GetBlockTemplateResult {
     // TODO figure out what is the data is represented to value
     // pub value:
     /// A range of valid nonces
-    #[serde(with = "hex", rename = "noncerange")]
+    #[serde(with = "serde_hex", rename = "noncerange")]
     pub nonce_range: Vec<u8>,
     /// Block sigops limit
     #[serde(rename = "sigoplimit")]
@@ -1521,9 +1505,9 @@ pub struct GetBlockTemplateResult {
     #[serde(rename = "curtime")]
     pub current_time: u64,
     /// The compressed difficulty in hexadecimal
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub bits: Vec<u8>,
-    #[serde(with = "hex", rename = "previousbits")]
+    #[serde(with = "serde_hex", rename = "previousbits")]
     pub previous_bits: Vec<u8>,
     /// The height of the block we will be mining: `current height + 1`
     pub height: u64,
@@ -1542,7 +1526,7 @@ pub struct GetBlockTemplateResult {
 /// Models a single transaction entry in the result of "getblocktemplate"
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct GetBlockTemplateResultTransaction {
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub data: Vec<u8>,
     pub hash: BlockHash,
     /// Transactions that must be in present in the final block if this one is.
@@ -1712,14 +1696,22 @@ impl serde::Serialize for SigHashType {
     where
         S: Serializer,
     {
-        serializer.serialize_str(match self.0 {
+        // Dash Core's RPC only names the standard flags; a non-standard one cannot be spelled.
+        let name = match self.0 {
             dashcore::EcdsaSighashType::All => "ALL",
             dashcore::EcdsaSighashType::None => "NONE",
             dashcore::EcdsaSighashType::Single => "SINGLE",
             dashcore::EcdsaSighashType::AllPlusAnyoneCanPay => "ALL|ANYONECANPAY",
             dashcore::EcdsaSighashType::NonePlusAnyoneCanPay => "NONE|ANYONECANPAY",
             dashcore::EcdsaSighashType::SinglePlusAnyoneCanPay => "SINGLE|ANYONECANPAY",
-        })
+            dashcore::EcdsaSighashType::NonStandard(n) => {
+                return Err(serde::ser::Error::custom(format!(
+                    "non-standard sighash type {} has no RPC spelling",
+                    n.to_u32()
+                )));
+            }
+        };
+        serializer.serialize_str(name)
     }
 }
 
@@ -1758,7 +1750,7 @@ pub struct FundRawTransactionOptions {
 #[derive(Deserialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FundRawTransactionResult {
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub hex: Vec<u8>,
     #[serde(with = "dashcore::amount::serde::as_btc")]
     pub fee: Amount,
@@ -1867,12 +1859,10 @@ pub struct GetNetTotalsResultUploadTarget {
 #[serde(rename_all = "kebab-case")]
 pub enum AddressType {
     Legacy,
-    P2shSegwit,
-    Bech32,
 }
 
 /// Used to represent arguments that can either be an address or a public key.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PubKeyOrAddress<'a> {
     Address(&'a Address),
     PubKey(&'a PublicKey),
@@ -2216,7 +2206,7 @@ pub struct DMNState {
     /// extended-address ProTx version on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payouts: Option<Vec<DMNPayout>>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub pub_key_operator: Vec<u8>,
     #[serde(default, deserialize_with = "deserialize_address_optional")]
     pub operator_payout_address: Option<[u8; 20]>,
@@ -2303,6 +2293,10 @@ pub struct DMNStateDiff {
     /// Setting it clears [`DMNState::payout_address`] on [`DMNState::apply_diff`].
     pub payouts: Option<Vec<DMNPayout>>,
     pub pub_key_operator: Option<Vec<u8>>,
+    /// `None` = unchanged, `Some(None)` = cleared, `Some(Some(_))` = set. Core prints no field
+    /// when it empties the payout (an operator key change, a revocation, a ProUpServTx without
+    /// one), so from Core that change reads as `None`; `Some(None)` comes from an empty string
+    /// or from [`DMNState::compare_to_newer_dmn_state`].
     pub operator_payout_address: Option<Option<[u8; 20]>>,
     pub platform_node_id: Option<[u8; 20]>,
     #[deprecated(note = "Core 23+ nested addresses.platform_p2p should be used instead")]
@@ -2336,6 +2330,7 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
             payout_address,
             payouts,
             pub_key_operator,
+            operator_payout_address,
             addresses,
         } = value;
 
@@ -2369,12 +2364,27 @@ impl TryFrom<DMNStateDiffIntermediate> for DMNStateDiff {
                 })
             })
             .transpose()?;
-        let operator_payout_address = None;
+        // Core prints no field when it empties the operator payout. An empty string reads as
+        // cleared rather than failing the whole list diff.
+        let operator_payout_address = operator_payout_address
+            .map(|address| {
+                if address.is_empty() {
+                    return Ok(None);
+                }
+                let address = Address::from_str(address.as_str())?;
+                address.payload_to_vec().try_into().map(Some).map_err(|_| {
+                    encode::Error::InvalidVectorSize {
+                        expected: 20,
+                        actual: address.payload_to_vec().len(),
+                    }
+                })
+            })
+            .transpose()?;
 
         let platform_node_id = platform_node_id
             .map(|address| {
-                let address =
-                    hex::decode(address).map_err(|_| encode::Error::Hex(InvalidChar(0)))?;
+                let address = hex_conservative::decode_to_vec(&address)
+                    .map_err(|_| encode::Error::ParseFailed("invalid hex in platform node id"))?;
                 let len = address.len();
                 address.try_into().map_err(|_| encode::Error::InvalidVectorSize {
                     expected: 20,
@@ -2448,10 +2458,10 @@ impl DMNState {
     /// when they match.
     ///
     /// A field that goes from `Some` to `None` with nothing replacing it (the legacy platform
-    /// ports, `owner_address`, `platform_node_id`, or both payout fields at once) cannot be
-    /// expressed: the diff leaves it out and applying it keeps the old value. Core makes none of
-    /// those transitions except on revoking an extended-address Evo, whose printed ports turn
-    /// to `-1`, and Core's own diff does not print that change either.
+    /// ports, `owner_address`, `platform_node_id`, `pose_revived_height`, or both payout fields
+    /// at once) cannot be expressed: the diff leaves it out and applying it keeps the old value.
+    /// Core makes none of those transitions except on revoking an extended-address Evo, whose
+    /// printed ports turn to `-1`, and Core's own diff does not print that change either.
     pub fn compare_to_newer_dmn_state(&self, newer: &DMNState) -> Option<DMNStateDiff> {
         let mut has_diff = false;
         let diff = DMNStateDiff {
@@ -2576,6 +2586,10 @@ impl DMNState {
     /// they keep their last value, while Core's full state prints `-1`; which value that is
     /// can depend on how Core batched the changes before the revocation, because the diff
     /// doesn't say whether the Evo was extended-address when it was reset.
+    ///
+    /// The operator payout keeps the last value a diff set: Core prints none when it empties
+    /// the payout (an operator key change, a revocation, a ProUpServTx without one), so only a
+    /// full state shows that.
     pub fn apply_diff(&mut self, diff: DMNStateDiff) {
         let DMNStateDiff {
             service,
@@ -2596,7 +2610,9 @@ impl DMNState {
             addresses,
             ..
         } = diff;
-        self.pose_revived_height = pose_revived_height;
+        if let Some(pose_revived_height) = pose_revived_height {
+            self.pose_revived_height = Some(pose_revived_height);
+        }
         if let Some(pose_ban_height) = pose_ban_height {
             self.pose_ban_height = pose_ban_height;
         }
@@ -2686,7 +2702,7 @@ pub struct MasternodeStatus {
     pub pro_tx_hash: ProTxHash,
     #[serde(rename = "type")]
     pub node_type: String,
-    #[serde(rename = "collateralHash", with = "hex")]
+    #[serde(rename = "collateralHash", with = "serde_hex")]
     pub collateral_hash: Vec<u8>,
     #[serde(rename = "collateralIndex")]
     pub collateral_index: u32,
@@ -2943,7 +2959,7 @@ pub struct QuorumListResultInternal<T> {
 #[serde(rename_all = "camelCase")]
 pub struct QuorumMember {
     pub pro_tx_hash: ProTxHash,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub pub_key_operator: Vec<u8>,
     pub valid: bool,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
@@ -2958,10 +2974,10 @@ pub struct QuorumInfoResult {
     pub quorum_type: QuorumType,
     pub quorum_hash: QuorumHash,
     pub quorum_index: u32,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub mined_block: Vec<u8>,
     pub members: Vec<QuorumMember>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub quorum_public_key: Vec<u8>,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
     pub secret_key_share: Option<Vec<u8>>,
@@ -3088,13 +3104,13 @@ pub struct QuorumSignature {
     pub llmq_type: QuorumType,
     pub quorum_hash: QuorumHash,
     pub quorum_member: Option<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub id: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub msg_hash: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub sign_hash: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub signature: Vec<u8>,
 }
 
@@ -3112,9 +3128,9 @@ pub struct QuorumMemberOf {
     #[serde(rename = "type", deserialize_with = "deserialize_quorum_type")]
     pub quorum_type: QuorumType,
     pub quorum_hash: QuorumHash,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub mined_block: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub quorum_public_key: Vec<u8>,
     pub is_valid_member: bool,
     pub member_index: u32,
@@ -3135,13 +3151,13 @@ pub struct QuorumSnapshot {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuorumMasternodeListItem {
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub pro_reg_tx_hash: Vec<u8>,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub confirmed_hash: Vec<u8>,
     #[serde_as(serialize_as = "DisplayFromStr", deserialize_as = "ServiceOrUnspecified")]
     pub service: SocketAddr,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub pub_key_operator: Vec<u8>,
     #[serde_as(as = "Bytes")]
     pub voting_address: Vec<u8>,
@@ -3163,9 +3179,9 @@ pub struct MasternodeDiff {
     pub mn_list: Vec<QuorumMasternodeListItem>,
     pub deleted_quorums: Vec<QuorumItemDeleted>,
     pub new_quorums: Vec<QuorumMinableCommitments>,
-    #[serde(rename = "merkleRootMNList", with = "hex")]
+    #[serde(rename = "merkleRootMNList", with = "serde_hex")]
     pub merkle_root_mn_list: Vec<u8>,
-    #[serde(rename = "merkleRootQuorums", with = "hex")]
+    #[serde(rename = "merkleRootQuorums", with = "serde_hex")]
     pub merkle_root_quorums: Vec<u8>,
 }
 
@@ -3212,6 +3228,8 @@ pub struct DMNStateDiffIntermediate {
     pub payouts: Option<Vec<DMNPayout>>,
     #[serde(default, deserialize_with = "deserialize_hex_opt")]
     pub pub_key_operator: Option<Vec<u8>>,
+    #[serde(default)]
+    pub operator_payout_address: Option<String>,
     // Three-state: missing field = None, `null` = Some(None), object = Some(Some(_)).
     #[serde(default, deserialize_with = "deserialize_addresses_2opt")]
     pub addresses: Option<Option<MasternodeAddresses>>,
@@ -3328,7 +3346,7 @@ pub struct ProTxInfo {
     pub mn_type: Option<String>,
     #[serde(rename = "proTxHash")]
     pub pro_tx_hash: ProTxHash,
-    #[serde(with = "hex")]
+    #[serde(with = "serde_hex")]
     pub collateral_hash: Vec<u8>,
     pub collateral_index: u32,
     /// `None` when Core prints no `collateralAddress`: the collateral output has no address (a
@@ -3372,8 +3390,27 @@ pub enum ProTxRevokeReason {
 
 // Custom deserializer functions.
 
+/// Serializes byte vectors as lowercase hex strings, for
+/// `#[serde(with = "serde_hex")]`.
+mod serde_hex {
+    use hex_conservative::DisplayHex;
+    use serde::de::Error as _;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::HexError;
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&bytes.as_hex())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        hex_conservative::decode_to_vec(&s).map_err(|e| D::Error::custom(HexError::from(e)))
+    }
+}
+
 #[derive(Debug)]
-pub struct HexError(FromHexError);
+pub struct HexError(DecodeVariableLengthBytesError);
 
 impl Display for HexError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -3383,8 +3420,8 @@ impl Display for HexError {
 
 impl Error for HexError {}
 
-impl From<FromHexError> for HexError {
-    fn from(err: FromHexError) -> HexError {
+impl From<DecodeVariableLengthBytesError> for HexError {
+    fn from(err: DecodeVariableLengthBytesError) -> HexError {
         HexError(err)
     }
 }
@@ -3394,7 +3431,7 @@ where
     D: Deserializer<'de>,
 {
     match String::deserialize(deserializer) {
-        Ok(s) => match hex::decode(s) {
+        Ok(s) => match hex_conservative::decode_to_vec(&s) {
             Ok(v) => Ok(Some(v)),
             Err(err) => Err(D::Error::custom(HexError::from(err))),
         },
@@ -3409,7 +3446,7 @@ where
     D: Deserializer<'de>,
 {
     match String::deserialize(deserializer) {
-        Ok(s) => match hex::decode(s) {
+        Ok(s) => match hex_conservative::decode_to_vec(&s) {
             Ok(v) => match v.clone().try_into() {
                 Ok(array) => Ok(Some(array)),
                 Err(_) => Err(D::Error::custom(ArrayConversionError(v))),
@@ -3630,7 +3667,6 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
 
-    use dashcore::hashes::Hash;
     use dashcore::{PubkeyHash, ScriptBuf, ScriptHash};
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -3641,6 +3677,23 @@ mod tests {
         MasternodeListDiff, MasternodeStatus, MnSyncStatus, ProTxInfo, QuorumMasternodeListItem,
         QuorumType, SoftforkInfo, SoftforkType, deserialize_u32_opt, parse_host_port,
     };
+    use hex_conservative::DisplayHex;
+
+    #[test]
+    fn serde_hex_round_trips() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct Wrapper {
+            #[serde(with = "crate::serde_hex")]
+            bytes: Vec<u8>,
+        }
+
+        let wrapper = Wrapper {
+            bytes: vec![0x00, 0xab, 0xcd, 0xef],
+        };
+        let json = serde_json::to_value(&wrapper).unwrap();
+        assert_eq!(json, json!({ "bytes": "00abcdef" }));
+        assert_eq!(serde_json::from_value::<Wrapper>(json).unwrap(), wrapper);
+    }
 
     #[test]
     fn test_deserialize_u32_opt() {
@@ -3811,7 +3864,7 @@ mod tests {
 
         assert_eq!(
             "8ed3f0c208efbcfc815cbfb94490dc68cf2e29d44dd9f8a91e20e06057aa110d7062c8ab7ccc85a9ff0c88760157f563".to_string(),
-            hex::encode(result.added_mns[0].state.pub_key_operator.clone()),
+            result.added_mns[0].state.pub_key_operator.to_lower_hex_string(),
             "invalid pub_key_operator"
         );
     }
@@ -4260,6 +4313,28 @@ mod tests {
                 .expect("-1 platform ports must not fail the diff");
         assert_eq!(diff.legacy_platform_p2p_port, None);
         assert_eq!(diff.legacy_platform_http_port, None);
+    }
+
+    #[test]
+    fn dmn_state_diff_reads_an_empty_operator_payout_address_as_cleared() {
+        // Core prints no field when it empties the operator payout; an empty string, should a
+        // Core version print one, means the same and must not fail the whole list diff.
+        let diff: DMNStateDiff = serde_json::from_value(json!({"operatorPayoutAddress": ""}))
+            .expect("an empty operator payout address must not fail the diff");
+        assert_eq!(diff.operator_payout_address, Some(None));
+
+        let mut state = core_v24_listdiff().added_mns[1].state.clone();
+        state.operator_payout_address = Some([0x77; 20]);
+        state.apply_diff(diff);
+        assert_eq!(state.operator_payout_address, None);
+    }
+
+    #[test]
+    fn dmn_state_diff_rejects_a_malformed_operator_payout_address() {
+        let diff = serde_json::from_value::<DMNStateDiff>(
+            json!({"operatorPayoutAddress": "not-an-address"}),
+        );
+        assert!(diff.is_err(), "a malformed operator payout address must not read as absent");
     }
 
     #[test]
@@ -4748,7 +4823,7 @@ mod tests {
     }
 
     fn hash160(hex: &str) -> [u8; 20] {
-        hex::decode(hex).expect("valid hex").try_into().expect("20 bytes")
+        hex_conservative::decode_to_vec(hex).expect("valid hex").try_into().expect("20 bytes")
     }
 
     #[test]
@@ -4956,12 +5031,22 @@ mod tests {
     }
 
     #[test]
+    fn compare_then_apply_round_trips_an_unchanged_pose_revived_height() {
+        // A ProUpRegTx changing the voting key of a masternode revived earlier.
+        let mut older = core_v24_listdiff().added_mns[1].state.clone();
+        older.pose_revived_height = Some(1200);
+        let mut newer = older.clone();
+        newer.voting_address = [0xee; 20];
+        assert_compare_then_apply_round_trips(&older, &newer);
+    }
+
+    #[test]
     fn compare_then_apply_round_trips_shared_masternode() {
         // A ProUpSharedRegTx changing the voting and operator keys.
         let older = core_v24_listdiff().added_mns[0].state.clone();
         let mut newer = older.clone();
         newer.voting_address = [0xee; 20];
-        newer.pub_key_operator = hex::decode("a792ce1af5f7bb9281053b3934cb8b08d00d075a56498e1a525388ce467f188e8a80911fd96a20982baa9b9678452534").expect("valid hex");
+        newer.pub_key_operator = hex_conservative::decode_to_vec("a792ce1af5f7bb9281053b3934cb8b08d00d075a56498e1a525388ce467f188e8a80911fd96a20982baa9b9678452534").expect("valid hex");
 
         let diff = older.compare_to_newer_dmn_state(&newer).expect("the states differ");
         assert_eq!(diff.owner_address, None);
@@ -5318,6 +5403,51 @@ mod tests {
         assert_eq!(bip9.status, Bip9SoftforkStatus::Active);
         assert_eq!(bip9.since, 432);
         assert_eq!(bip9.timeout, i64::MAX as u64);
+    }
+
+    /// A version bits deployment of Core v24 while it is signalled, from regtest run with
+    /// `-vbparams=testdummy:0:9999999999:0:100:80`, at heights 150 and 250. These states carry
+    /// the optional fields: `bit`, `statistics`, `activation_height` and `signalling`.
+    #[test]
+    fn deserialize_signalled_deployments_from_core_v24() {
+        let signalling = "#".repeat(51);
+        let started: SoftforkInfo = serde_json::from_value(json!({
+            "type": "bip9", "active": false,
+            "bip9": {
+                "bit": 28, "start_time": 0, "timeout": 9999999999u64, "ehf": false,
+                "min_activation_height": 0, "status": "started", "since": 100,
+                "status_next": "started",
+                "statistics": {
+                    "period": 100, "elapsed": 51, "count": 51, "threshold": 80, "possible": true
+                },
+                "signalling": signalling
+            }
+        }))
+        .expect("expected to deserialize json");
+        let bip9 = started.bip9.expect("a bip9 deployment reports its state");
+        assert_eq!(bip9.status, Bip9SoftforkStatus::Started);
+        assert_eq!(bip9.bit, Some(28));
+        let statistics = bip9.statistics.expect("a started deployment reports statistics");
+        assert_eq!(statistics.threshold, Some(80));
+        assert_eq!(statistics.possible, Some(true));
+
+        let locked_in: SoftforkInfo = serde_json::from_value(json!({
+            "type": "bip9", "active": false,
+            "bip9": {
+                "bit": 28, "start_time": 0, "timeout": 9999999999u64, "ehf": false,
+                "activation_height": 300, "min_activation_height": 0, "status": "locked_in",
+                "since": 200, "status_next": "locked_in",
+                "statistics": { "period": 100, "elapsed": 51, "count": 51 },
+                "signalling": signalling
+            }
+        }))
+        .expect("expected to deserialize json");
+        let bip9 = locked_in.bip9.expect("a bip9 deployment reports its state");
+        assert_eq!(bip9.status, Bip9SoftforkStatus::LockedIn);
+        assert_eq!(bip9.since, 200);
+        let statistics = bip9.statistics.expect("a locked in deployment reports statistics");
+        assert_eq!(statistics.threshold, None);
+        assert_eq!(statistics.count, Some(51));
     }
 
     #[test]

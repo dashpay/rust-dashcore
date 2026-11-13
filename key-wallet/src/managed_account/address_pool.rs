@@ -6,7 +6,6 @@
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
 use core::fmt;
-use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -15,6 +14,10 @@ use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey}
 use crate::error::{Error, Result};
 use crate::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
 use crate::Network;
+use dashcore::address::Payload;
+#[cfg(feature = "eddsa")]
+use dashcore::eddsa::{EddsaPkBytes, EddsaPkHash};
+use dashcore::hashes::hash160;
 use dashcore::{Address, AddressType, ScriptBuf};
 
 /// Types of public keys used in the address pool
@@ -132,13 +135,11 @@ impl KeySource {
     pub fn derive_at_path(&self, path: &DerivationPath) -> Result<DerivedKey> {
         match self {
             KeySource::Private(xprv) => {
-                let secp = Secp256k1::new();
-                let child = xprv.derive_priv(&secp, path).map_err(Error::Bip32)?;
-                Ok(DerivedKey::ECDSA(ExtendedPubKey::from_priv(&secp, &child)))
+                let child = xprv.derive_priv(path).map_err(Error::Bip32)?;
+                Ok(DerivedKey::ECDSA(ExtendedPubKey::from_priv(&child)))
             }
             KeySource::Public(xpub) => {
-                let secp = Secp256k1::new();
-                let derived = xpub.derive_pub(&secp, path).map_err(Error::Bip32)?;
+                let derived = xpub.derive_pub(path).map_err(Error::Bip32)?;
                 Ok(DerivedKey::ECDSA(derived))
             }
             #[cfg(feature = "bls")]
@@ -152,7 +153,10 @@ impl KeySource {
                         Error::InvalidParameter(format!("BLS derivation error: {:?}", e))
                     })?;
                 }
-                Ok(DerivedKey::BLS(derived.public_key_bytes().to_vec()))
+                let public_key_bytes = derived.public_key_bytes().map_err(|e| {
+                    Error::InvalidParameter(format!("BLS derivation error: {:?}", e))
+                })?;
+                Ok(DerivedKey::BLS(public_key_bytes.to_vec()))
             }
             #[cfg(feature = "bls")]
             KeySource::BLSPublic(xpub) => {
@@ -467,6 +471,12 @@ impl AddressPool {
         Ok(new_addresses)
     }
 
+    /// Generate every address up to and including `index`
+    pub fn generate_up_to(&mut self, index: u32, key_source: &KeySource) -> Result<Vec<Address>> {
+        let next = self.highest_generated.map_or(0, |highest| highest + 1);
+        self.generate_addresses((index + 1).saturating_sub(next), key_source, true)
+    }
+
     /// Generate a specific address at an index
     pub(crate) fn generate_address_at_index(
         &mut self,
@@ -522,11 +532,9 @@ impl AddressPool {
             }
             DerivedKey::BLS(public_key_bytes) => {
                 // BLS addresses use Hash160 of the public key bytes
-                use dashcore::hashes::{hash160, Hash};
                 let pubkey_hash = hash160::Hash::hash(&public_key_bytes);
 
                 // Create P2PKH address from the hash
-                use dashcore::address::Payload;
                 let payload = Payload::PubkeyHash(pubkey_hash.into());
                 let address = Address::new(self.network, payload);
 
@@ -547,10 +555,8 @@ impl AddressPool {
                             public_key_bytes.len()
                         ))
                     })?;
-                let node_id = crate::derivation_slip10::tenderdash_node_id(pubkey_arr);
-
-                use dashcore::address::Payload;
-                use dashcore::hashes::Hash;
+                let node_id =
+                    EddsaPkHash::from(EddsaPkBytes::from_bytes(*pubkey_arr)).to_canonical_bytes();
                 let payload = Payload::PubkeyHash(dashcore::PubkeyHash::from_byte_array(node_id));
                 let address = Address::new(self.network, payload);
 
@@ -922,7 +928,7 @@ impl AddressPool {
     {
         let mut found = Vec::new();
 
-        for (_, info) in self.addresses.iter_mut() {
+        for info in self.addresses.values_mut() {
             if !info.is_used() && check_fn(&info.address) {
                 info.mark_used();
                 self.used_indices.insert(info.index);
@@ -1334,15 +1340,14 @@ mod tests {
     fn test_key_source() -> KeySource {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let seed = mnemonic.to_seed("");
-        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
-        let secp = Secp256k1::new();
         let path = DerivationPath::from(vec![
             ChildNumber::from_hardened_idx(44).unwrap(),
             ChildNumber::from_hardened_idx(1).unwrap(),
             ChildNumber::from_hardened_idx(0).unwrap(),
         ]);
-        let account_key = master.derive_priv(&secp, &path).unwrap();
+        let account_key = master.derive_priv(&path).unwrap();
 
         KeySource::Private(account_key)
     }
@@ -1362,6 +1367,27 @@ mod tests {
         assert_eq!(addresses.len(), 10);
         assert_eq!(pool.highest_generated, Some(9));
         assert_eq!(pool.addresses.len(), 10);
+    }
+
+    #[test]
+    fn test_generate_up_to() {
+        let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+        let key_source = test_key_source();
+        let mut pool = AddressPool::new(
+            base_path,
+            AddressPoolType::External,
+            5,
+            Network::Testnet,
+            &key_source,
+        )
+        .unwrap();
+
+        assert_eq!(pool.generate_up_to(29, &key_source).unwrap().len(), 25);
+        assert_eq!(pool.highest_generated, Some(29));
+        assert_eq!(pool.addresses.len(), 30);
+
+        assert!(pool.generate_up_to(10, &key_source).unwrap().is_empty());
+        assert_eq!(pool.highest_generated, Some(29));
     }
 
     #[test]

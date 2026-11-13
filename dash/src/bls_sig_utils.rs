@@ -1,213 +1,124 @@
-// Rust Dash Library
-// Written by
-//   The Rust Dash developers
 //
-// To the extent possible under law, the author(s) have dedicated all
-// copyright and related and neighboring rights to this software to
-// the public domain worldwide. This software is distributed without
-// any warranty.
-//
-// You should have received a copy of the CC0 Public Domain Dedication
-// along with this software.
-// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+// This file is a part of rust-dashcore.
+// SPDX-License-Identifier: CC0-1.0
+// See the accompanying file LICENSE or https://creativecommons.org/publicdomain/zero/1.0
 //
 
-//! Dash BLS elements
-//! Convenience wrappers around fixed size arrays of 48 and 96 bytes representing the public key
-//! and signature.
-//!
+//! BLS12-381 public key and signatures.
 
-#[cfg(feature = "bincode")]
-use bincode::{Decode, Encode};
-#[cfg(feature = "bls")]
-use blsful::{Bls12381G2Impl, Pairing};
-use hex::{FromHexError, ToHex};
-use internals::impl_array_newtype;
+use core::fmt;
+use core::str::FromStr;
 
-use crate::core::fmt;
-use crate::internal_macros::impl_bytes_newtype;
-use crate::prelude::String;
-#[cfg(feature = "bls")]
-use crate::sml::quorum_validation_error::QuorumValidationError;
+pub use dashcore_crypto::bls::BlsSigBytes as BLSSignature;
+pub use dashcore_crypto::bls::*;
+use hex_conservative::DisplayHex;
 
-/// A BLS Public key is 48 bytes in the scheme used for Dash Core
-#[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct BLSPublicKey([u8; 48]);
+/// A BLS public key (48 bytes) as carried in Dash payloads and masternode lists.
+///
+/// Its own type rather than an alias of [`BlsPkBytes`] so that serde writes it as a hex string
+/// in every format, binary ones included, as it did before the BLS backend moved to
+/// `dashcore-crypto`: data persisted through binary serde keeps decoding. Convert into a
+/// [`BlsPkBytes`] for cryptographic operations.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "bincode", derive(bincode::Encode, bincode::Decode))]
+pub struct BLSPublicKey([u8; BLS_PK_LEN]);
+
+impl Default for BLSPublicKey {
+    fn default() -> Self {
+        Self([0; BLS_PK_LEN])
+    }
+}
 
 impl BLSPublicKey {
+    /// Wraps the raw key bytes.
+    pub const fn from_bytes(bytes: [u8; BLS_PK_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// Copies out the raw key bytes.
+    pub const fn to_bytes(self) -> [u8; BLS_PK_LEN] {
+        self.0
+    }
+
+    /// Borrows the raw key bytes.
+    pub const fn as_bytes(&self) -> &[u8; BLS_PK_LEN] {
+        &self.0
+    }
+
+    /// Reads the key from a hex string.
+    pub fn from_hex(s: &str) -> Result<Self, hex_conservative::DecodeFixedLengthBytesError> {
+        hex_conservative::decode_to_array(s).map(Self)
+    }
+
+    /// Returns `true` when every byte is zero.
     pub fn is_zeroed(&self) -> bool {
-        self.0 == [0; 48]
+        self.0 == [0; BLS_PK_LEN]
+    }
+
+    /// Pairs the key with the scheme to read it under, see [`BlsPkBytes::as_scheme`].
+    #[cfg(feature = "bls")]
+    pub fn as_scheme(self, scheme: BlsScheme) -> BlsPublicKey {
+        BlsPkBytes::from(self).as_scheme(scheme)
     }
 }
 
-impl_array_newtype!(BLSPublicKey, u8, 48);
-
-#[cfg(feature = "bls")]
-impl TryFrom<BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl> {
-    type Error = QuorumValidationError;
-
-    fn try_from(value: BLSPublicKey) -> Result<Self, Self::Error> {
-        Self::try_from(value.0.as_slice())
-            .map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
+impl From<[u8; BLS_PK_LEN]> for BLSPublicKey {
+    fn from(bytes: [u8; BLS_PK_LEN]) -> Self {
+        Self(bytes)
     }
 }
 
-#[cfg(feature = "bls")]
-impl TryFrom<&BLSPublicKey> for blsful::PublicKey<Bls12381G2Impl> {
-    type Error = QuorumValidationError;
+impl TryFrom<&[u8]> for BLSPublicKey {
+    type Error = core::array::TryFromSliceError;
 
-    fn try_from(value: &BLSPublicKey) -> Result<Self, Self::Error> {
-        Self::try_from(value.0.as_slice())
-            .map_err(|e| QuorumValidationError::InvalidBLSPublicKey(e.to_string()))
+    fn try_from(slice: &[u8]) -> Result<Self, Self::Error> {
+        <[u8; BLS_PK_LEN]>::try_from(slice).map(Self)
     }
 }
 
-impl BLSPublicKey {
-    /// Create a new BLS Public Key from a hex string
-    pub fn from_hex(s: &str) -> Result<BLSPublicKey, FromHexError> {
-        hex::decode(s).map(|v| {
-            let mut payload: [u8; 48] = [0; 48];
-            payload.copy_from_slice(v.as_slice());
-            Self(payload)
-        })
+impl From<BlsPkBytes> for BLSPublicKey {
+    fn from(key: BlsPkBytes) -> Self {
+        Self(key.to_bytes())
     }
 }
 
-#[cfg(feature = "serde")]
-crate::serde_utils::serde_string_impl!(BLSPublicKey, "a BLS Public Key");
+impl From<BLSPublicKey> for BlsPkBytes {
+    fn from(key: BLSPublicKey) -> Self {
+        BlsPkBytes::from_bytes(key.0)
+    }
+}
 
-impl core::str::FromStr for BLSPublicKey {
-    type Err = FromHexError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        BLSPublicKey::from_hex(s)
+impl AsRef<[u8; BLS_PK_LEN]> for BLSPublicKey {
+    fn as_ref(&self) -> &[u8; BLS_PK_LEN] {
+        &self.0
     }
 }
 
 impl fmt::Display for BLSPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.encode_hex::<String>())
+        fmt::Display::fmt(&self.0.as_hex(), f)
     }
 }
 
-/// A BLS Signature is 96 bytes in the scheme used for Dash Core
-#[rustversion::attr(since(1.48), derive(PartialEq, Eq, Ord, PartialOrd, Hash))]
-#[derive(Clone, Copy)]
-#[cfg_attr(feature = "bincode", derive(Encode, Decode))]
-pub struct BLSSignature([u8; 96]);
-
-impl BLSSignature {
-    pub fn is_zeroed(&self) -> bool {
-        self.0 == [0; 96]
+impl fmt::Debug for BLSPublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "BLSPublicKey({self})")
     }
 }
 
-#[cfg(feature = "bls")]
-impl TryFrom<BLSSignature> for blsful::Signature<Bls12381G2Impl> {
-    type Error = QuorumValidationError;
+impl FromStr for BLSPublicKey {
+    type Err = hex_conservative::DecodeFixedLengthBytesError;
 
-    fn try_from(value: BLSSignature) -> Result<Self, Self::Error> {
-        let Some(g2_element) =
-            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
-                .into_option()
-        else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
-            // We should not error because the signature could be given by an invalid source
-        };
-
-        Ok(blsful::Signature::Basic(g2_element))
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_hex(s)
     }
 }
 
-#[cfg(feature = "bls")]
-impl TryFrom<&BLSSignature> for blsful::Signature<Bls12381G2Impl> {
-    type Error = QuorumValidationError;
-
-    fn try_from(value: &BLSSignature) -> Result<Self, Self::Error> {
-        let Some(g2_element) =
-            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
-                .into_option()
-        else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
-            // We should not error because the signature could be given by an invalid source
-        };
-
-        Ok(blsful::Signature::Basic(g2_element))
-    }
-}
-
-#[cfg(feature = "bls")]
-impl TryFrom<BLSSignature> for blsful::MultiSignature<Bls12381G2Impl> {
-    type Error = QuorumValidationError;
-
-    fn try_from(value: BLSSignature) -> Result<Self, Self::Error> {
-        let Some(g2_element) =
-            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
-                .into_option()
-        else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
-            // We should not error because the signature could be given by an invalid source
-        };
-
-        Ok(blsful::MultiSignature::Basic(g2_element))
-    }
-}
-
-#[cfg(feature = "bls")]
-impl TryFrom<&BLSSignature> for blsful::MultiSignature<Bls12381G2Impl> {
-    type Error = QuorumValidationError;
-
-    fn try_from(value: &BLSSignature) -> Result<Self, Self::Error> {
-        let Some(g2_element) =
-            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
-                .into_option()
-        else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
-            // We should not error because the signature could be given by an invalid source
-        };
-
-        Ok(blsful::MultiSignature::Basic(g2_element))
-    }
-}
-
-#[cfg(feature = "bls")]
-impl TryFrom<BLSSignature> for blsful::AggregateSignature<Bls12381G2Impl> {
-    type Error = QuorumValidationError;
-
-    fn try_from(value: BLSSignature) -> Result<Self, Self::Error> {
-        let Some(g2_element) =
-            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
-                .into_option()
-        else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
-            // We should not error because the signature could be given by an invalid source
-        };
-
-        Ok(blsful::AggregateSignature::Basic(g2_element))
-    }
-}
-
-#[cfg(feature = "bls")]
-impl TryFrom<&BLSSignature> for blsful::AggregateSignature<Bls12381G2Impl> {
-    type Error = QuorumValidationError;
-
-    fn try_from(value: &BLSSignature) -> Result<Self, Self::Error> {
-        let Some(g2_element) =
-            <Bls12381G2Impl as Pairing>::Signature::from_compressed(&value.to_bytes())
-                .into_option()
-        else {
-            return Err(QuorumValidationError::InvalidBLSSignature(hex::encode(value.to_bytes())));
-            // We should not error because the signature could be given by an invalid source
-        };
-
-        Ok(blsful::AggregateSignature::Basic(g2_element))
-    }
-}
-
-impl_array_newtype!(BLSSignature, u8, 96);
-impl_bytes_newtype!(BLSSignature, 96);
+// A hex string in every format, as before the BLS backend moved to `dashcore-crypto`.
+#[cfg(feature = "serde")]
+crate::serde_utils::serde_string_serialize_impl!(BLSPublicKey, "a BLS public key");
+#[cfg(feature = "serde")]
+crate::serde_utils::serde_string_deserialize_impl!(BLSPublicKey, "a BLS public key");
 
 macro_rules! impl_elementencode {
     ($element:ident, $len:expr) => {
@@ -216,7 +127,7 @@ macro_rules! impl_elementencode {
                 &self,
                 w: &mut W,
             ) -> Result<usize, $crate::io::Error> {
-                self.0.consensus_encode(w)
+                self.as_bytes().consensus_encode(w)
             }
         }
 
@@ -226,57 +137,41 @@ macro_rules! impl_elementencode {
             ) -> Result<Self, $crate::consensus::encode::Error> {
                 let mut data: [u8; $len] = [0u8; $len];
                 r.read_exact(&mut data)?;
-                Ok($element(data))
+                Ok($element::from_bytes(data))
             }
         }
     };
 }
-
-#[rustversion::before(1.48)]
-macro_rules! impl_eq_ord_hash {
-    ($element:ident, $len:expr) => {
-        #[rustversion::before(1.48)]
-        impl core::hash::Hash for $element {
-            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-                self.0.to_vec().hash(state)
-            }
-        }
-
-        #[rustversion::before(1.48)]
-        impl core::cmp::PartialEq<$element> for $element {
-            fn eq(&self, other: &$element) -> bool {
-                for i in 0..$len {
-                    if self[i] != other[i] {
-                        return false;
-                    }
-                }
-                true
-            }
-        }
-
-        #[rustversion::before(1.48)]
-        impl core::cmp::Eq for $element {}
-
-        #[rustversion::before(1.48)]
-        impl core::cmp::PartialOrd for $element {
-            fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-                self.0.to_vec().partial_cmp(&other.0.to_vec())
-            }
-        }
-
-        #[rustversion::before(1.48)]
-        impl core::cmp::Ord for $element {
-            fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-                self.0.to_vec().cmp(&other.0.to_vec())
-            }
-        }
-    };
-}
-
-#[rustversion::before(1.48)]
-impl_eq_ord_hash!(BLSPublicKey, 48);
-#[rustversion::before(1.48)]
-impl_eq_ord_hash!(BLSSignature, 96);
 
 impl_elementencode!(BLSPublicKey, 48);
 impl_elementencode!(BLSSignature, 96);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Binary serde (e.g. `bincode::serde`, used to persist wallet records) writes the key as
+    /// its hex string. Fixed bytes so a change of the stored layout can't go unnoticed.
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn binary_serde_writes_the_hex_string() {
+        let key = BLSPublicKey::from_bytes(core::array::from_fn(|i| i as u8));
+        let config = bincode::config::standard();
+
+        let bytes = bincode::serde::encode_to_vec(key, config).expect("serialize key");
+        let mut expected = vec![96u8];
+        expected.extend_from_slice(key.to_string().as_bytes());
+        assert_eq!(bytes, expected);
+
+        let (back, _): (BLSPublicKey, _) =
+            bincode::serde::decode_from_slice(&bytes, config).expect("deserialize key");
+        assert_eq!(back, key);
+    }
+
+    #[test]
+    fn converts_to_and_from_bls_pk_bytes() {
+        let key = BLSPublicKey::from_bytes([7; BLS_PK_LEN]);
+        assert_eq!(BLSPublicKey::from(BlsPkBytes::from(key)), key);
+        assert_eq!(key.to_string().parse::<BLSPublicKey>().unwrap(), key);
+    }
+}

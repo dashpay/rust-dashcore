@@ -251,8 +251,10 @@ mod tests {
         assert!(message.relay);
         assert_eq!(
             &message.mn_auth_challenge.to_vec(),
-            &hex::decode("6a4bbaa5155fa3ed24b60975d2b7b9860ccd64ff39c128622184b794256a0cba")
-                .expect("expected to get vec")
+            &hex_conservative::decode_to_vec(
+                "6a4bbaa5155fa3ed24b60975d2b7b9860ccd64ff39c128622184b794256a0cba"
+            )
+            .expect("expected to get vec")
         );
         assert!(!message.masternode_connection);
         assert_eq!(serialize(&message), from_sat);

@@ -9,36 +9,18 @@
 //! - Different serialization format (no xpub/xprv, custom encoding)
 
 use core::fmt;
-pub use dashcore::ed25519_dalek::{SigningKey, VerifyingKey};
+use std::error;
+
+use dashcore::eddsa::{EddsaPkBytes, EddsaPublicKey, EddsaSecretKey, EddsaSkBytes};
 use dashcore::Network;
-use dashcore_hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
+use dashcore_hashes::{hash160, sha512, Hash, HashEngine, Hmac, HmacEngine};
 #[cfg(feature = "serde")]
 use serde;
-use std::error;
+
 // Re-export ChainCode, Fingerprint and ChildNumber from bip32
 use crate::bip32::{ChainCode, ChildNumber, Fingerprint};
-
-// Re-export ed25519-dalek types as our public API
-pub use dashcore::ed25519_dalek::SigningKey as Ed25519PrivateKey;
-pub use dashcore::ed25519_dalek::VerifyingKey as Ed25519PublicKey;
-
 // Use DerivationPath from bip32
 pub use crate::bip32::DerivationPath;
-
-/// Compute the Tenderdash/CometBFT node ID for an Ed25519 public key: the
-/// first 20 bytes of a single SHA-256 of the 32-byte public key.
-///
-/// This is the canonical value of the `platform_node_id` field in ProRegTx /
-/// ProUpServTx payloads for evonodes: it is what dashmate derives from
-/// `node_key.json` and what Tenderdash announces on the platform P2P network,
-/// so it is the only value that can match an on-chain registration.
-///
-/// Note this is **not** `hash160` (SHA-256 + RIPEMD-160). Dash uses hash160
-/// for the ECDSA owner/voting key hashes in the same payload, but the
-/// platform node id follows the CometBFT node-ID convention.
-pub fn tenderdash_node_id(ed25519_public_key_bytes: &[u8; 32]) -> [u8; 20] {
-    dashcore::PlatformNodeId::from_ed25519_public_key(ed25519_public_key_bytes).to_byte_array()
-}
 
 /// Extended Ed25519 private key for SLIP-0010
 #[derive(Clone)]
@@ -51,24 +33,18 @@ pub struct ExtendedEd25519PrivKey {
     pub parent_fingerprint: Fingerprint,
     /// Child number used to derive this key
     pub child_number: ChildNumber,
-    /// The Ed25519 private key (seed bytes, not the SigningKey itself)
-    pub private_key: [u8; 32],
+    /// The Ed25519 private key (the seed the key expands from)
+    pub private_key: EddsaSkBytes,
     /// Chain code for derivation
     pub chain_code: ChainCode,
 }
 
-// Hand-written instead of derived so the raw secret bytes are compared in
-// constant time (a derived `==` on `[u8; 32]` short-circuits on the first
-// differing byte, leaking how much of the secret matches).
+// Hand-written so the secret is compared in constant time, which
+// `EddsaSkBytes` does; a derived `==` would short-circuit on the first
+// differing byte and leak how much of it matches.
 impl PartialEq for ExtendedEd25519PrivKey {
     fn eq(&self, other: &Self) -> bool {
-        let mut diff = 0u8;
-        for (a, b) in self.private_key.iter().zip(other.private_key.iter()) {
-            diff |= a ^ b;
-        }
-        // black_box keeps the compiler from turning the fold back into an
-        // early-exit comparison.
-        core::hint::black_box(diff) == 0
+        self.private_key == other.private_key
             && self.network == other.network
             && self.depth == other.depth
             && self.parent_fingerprint == other.parent_fingerprint
@@ -110,13 +86,14 @@ impl ExtendedEd25519PrivKey {
             return Err(Error::InvalidSeedLength(seed.len()));
         }
 
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"ed25519 seed");
+        let mut hmac_engine: HmacEngine<sha512::HashEngine> = HmacEngine::new(b"ed25519 seed");
         hmac_engine.input(seed);
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
         let hmac_bytes = hmac_result.as_byte_array();
 
         // First 32 bytes are the private key seed
-        let private_key: [u8; 32] = hmac_bytes[..32].try_into().expect("HMAC output is 64 bytes");
+        let private_key =
+            EddsaSkBytes::from_bytes(hmac_bytes[..32].try_into().expect("HMAC output is 64 bytes"));
 
         // Last 32 bytes are the chain code
         let chain_code =
@@ -150,19 +127,26 @@ impl ExtendedEd25519PrivKey {
         if !child.is_hardened() {
             return Err(Error::NonHardenedNotSupported);
         }
+        // SLIP-10 indices are 32-bit; `u32::from` would collapse every DIP-14
+        // 256-bit child to the same key.
+        if child.is_256_bits() {
+            return Err(Error::InvalidChildNumberFormat);
+        }
 
-        let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(self.chain_code.as_ref());
+        let mut hmac_engine: HmacEngine<sha512::HashEngine> =
+            HmacEngine::new(self.chain_code.as_ref());
 
         // For Ed25519: data = 0x00 || private_key || index
         hmac_engine.input(&[0x00]);
-        hmac_engine.input(self.private_key.as_ref());
+        hmac_engine.input(self.private_key.as_bytes());
         hmac_engine.input(&u32::from(child).to_be_bytes());
 
-        let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+        let hmac_result: Hmac<sha512::Hash> = hmac_engine.finalize();
         let hmac_bytes = hmac_result.as_byte_array();
 
         // First 32 bytes become the new private key seed
-        let private_key: [u8; 32] = hmac_bytes[..32].try_into().expect("HMAC output is 64 bytes");
+        let private_key =
+            EddsaSkBytes::from_bytes(hmac_bytes[..32].try_into().expect("HMAC output is 64 bytes"));
 
         // Last 32 bytes become the new chain code
         let chain_code =
@@ -182,24 +166,21 @@ impl ExtendedEd25519PrivKey {
     }
 
     /// Get the public key for this private key
-    pub fn public_key(&self) -> Result<VerifyingKey, Error> {
-        let signing_key = SigningKey::from_bytes(&self.private_key);
-        Ok(signing_key.verifying_key())
+    pub fn public_key(&self) -> Result<EddsaPkBytes, Error> {
+        Ok(EddsaSecretKey::from(self.private_key.clone()).public_key().into())
     }
 
     /// Get the fingerprint of this key
     pub fn fingerprint(&self) -> Result<Fingerprint, Error> {
-        use dashcore_hashes::{hash160, Hash};
-
         let pubkey = self.public_key()?;
         let hash = hash160::Hash::hash(&pubkey.to_bytes());
-        Ok(Fingerprint::from_bytes(hash[..4].try_into().expect("hash160 has enough bytes")))
+        Ok(Fingerprint::from_bytes(
+            hash.as_byte_array()[..4].try_into().expect("hash160 has enough bytes"),
+        ))
     }
 
     /// Get identifier (hash160 of public key)
     pub fn identifier(&self) -> Result<[u8; 20], Error> {
-        use dashcore_hashes::{hash160, Hash};
-
         let pubkey = self.public_key()?;
         let hash = hash160::Hash::hash(&pubkey.to_bytes());
         Ok(hash.to_byte_array())
@@ -229,7 +210,7 @@ impl ExtendedEd25519PrivKey {
 
         // Private key with 0x00 prefix (33 bytes)
         result.push(0x00);
-        result.extend_from_slice(self.private_key.as_ref());
+        result.extend_from_slice(self.private_key.as_bytes());
 
         result
     }
@@ -281,8 +262,9 @@ impl ExtendedEd25519PrivKey {
             return Err(Error::InvalidPrivateKeyPrefix);
         }
 
-        let private_key: [u8; 32] =
-            data[46..78].try_into().map_err(|_| Error::WrongExtendedKeyLength(data.len()))?;
+        let private_key = EddsaSkBytes::from_bytes(
+            data[46..78].try_into().map_err(|_| Error::WrongExtendedKeyLength(data.len()))?,
+        );
 
         Ok(ExtendedEd25519PrivKey {
             network,
@@ -295,6 +277,7 @@ impl ExtendedEd25519PrivKey {
     }
 }
 
+/// Shows the position of the key, never the private key or the chain code.
 impl fmt::Debug for ExtendedEd25519PrivKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ExtendedEd25519PrivKey")
@@ -302,8 +285,7 @@ impl fmt::Debug for ExtendedEd25519PrivKey {
             .field("depth", &self.depth)
             .field("parent_fingerprint", &self.parent_fingerprint)
             .field("child_number", &self.child_number)
-            .field("chain_code", &self.chain_code)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -319,7 +301,7 @@ pub struct ExtendedEd25519PubKey {
     /// Child number used to derive this key
     pub child_number: ChildNumber,
     /// The Ed25519 public key
-    pub public_key: VerifyingKey,
+    pub public_key: EddsaPkBytes,
     /// Chain code for derivation
     pub chain_code: ChainCode,
 }
@@ -339,17 +321,15 @@ impl ExtendedEd25519PubKey {
 
     /// Get the fingerprint of this key
     pub fn fingerprint(&self) -> Fingerprint {
-        use dashcore_hashes::{hash160, Hash};
-
-        let hash = hash160::Hash::hash(self.public_key.as_ref());
-        Fingerprint::from_bytes(hash[..4].try_into().expect("hash160 has enough bytes"))
+        let hash = hash160::Hash::hash(self.public_key.as_bytes());
+        Fingerprint::from_bytes(
+            hash.as_byte_array()[..4].try_into().expect("hash160 has enough bytes"),
+        )
     }
 
     /// Get identifier (hash160 of public key)
     pub fn identifier(&self) -> [u8; 20] {
-        use dashcore_hashes::{hash160, Hash};
-
-        let hash = hash160::Hash::hash(self.public_key.as_ref());
+        let hash = hash160::Hash::hash(self.public_key.as_bytes());
         hash.to_byte_array()
     }
 
@@ -377,7 +357,7 @@ impl ExtendedEd25519PubKey {
 
         // Public key with 0x00 prefix for consistency (33 bytes)
         result.push(0x00);
-        result.extend_from_slice(self.public_key.as_ref());
+        result.extend_from_slice(self.public_key.as_bytes());
 
         result
     }
@@ -426,8 +406,8 @@ impl ExtendedEd25519PubKey {
 
         let public_key_bytes: [u8; 32] =
             data[46..78].try_into().map_err(|_| Error::WrongExtendedKeyLength(data.len()))?;
-        let public_key = VerifyingKey::from_bytes(&public_key_bytes)
-            .map_err(|e| Error::Ed25519Error(e.to_string()))?;
+        let public_key = EddsaPkBytes::from_bytes(public_key_bytes);
+        EddsaPublicKey::try_from(public_key).map_err(|e| Error::Ed25519Error(e.to_string()))?;
 
         Ok(ExtendedEd25519PubKey {
             network,
@@ -573,7 +553,7 @@ impl bincode::Encode for ExtendedEd25519PrivKey {
         self.depth.encode(encoder)?;
         self.parent_fingerprint.encode(encoder)?;
         self.child_number.encode(encoder)?;
-        self.private_key.encode(encoder)?;
+        self.private_key.as_bytes().encode(encoder)?;
         self.chain_code.encode(encoder)?;
         Ok(())
     }
@@ -589,7 +569,7 @@ impl<C> bincode::Decode<C> for ExtendedEd25519PrivKey {
             depth: u8::decode(decoder)?,
             parent_fingerprint: Fingerprint::decode(decoder)?,
             child_number: ChildNumber::decode(decoder)?,
-            private_key: <[u8; 32]>::decode(decoder)?,
+            private_key: EddsaSkBytes::from_bytes(<[u8; 32]>::decode(decoder)?),
             chain_code: ChainCode::decode(decoder)?,
         })
     }
@@ -621,7 +601,8 @@ impl<C> bincode::Decode<C> for ExtendedEd25519PubKey {
         let parent_fingerprint = Fingerprint::decode(decoder)?;
         let child_number = ChildNumber::decode(decoder)?;
         let public_key_bytes = <[u8; 32]>::decode(decoder)?;
-        let public_key = VerifyingKey::from_bytes(&public_key_bytes)
+        let public_key = EddsaPkBytes::from_bytes(public_key_bytes);
+        EddsaPublicKey::try_from(public_key)
             .map_err(|e| bincode::error::DecodeError::OtherString(e.to_string()))?;
         let chain_code = ChainCode::decode(decoder)?;
 
@@ -659,6 +640,7 @@ impl<'de, C> bincode::BorrowDecode<'de, C> for ExtendedEd25519PubKey {
 #[cfg(test)]
 mod test {
     use super::*;
+    use hex_conservative::DisplayHex;
 
     const CASE_1_SEED: &str = "000102030405060708090a0b0c0d0e0f";
 
@@ -792,29 +774,29 @@ mod test {
             current = current.ckd_priv(child_number).unwrap();
         }
 
-        current.private_key
+        *current.private_key.to_bytes()
     }
 
     fn derive_ed25519_private_key_hex(seed_hex: &str, indexes: &[u32]) -> String {
-        let seed = hex::decode(seed_hex).unwrap();
+        let seed = hex_conservative::decode_to_vec(seed_hex).unwrap();
 
         let private_key = derive_ed25519_private_key(&seed, indexes);
 
-        hex::encode(private_key)
+        private_key.to_lower_hex_string()
     }
 
     #[test]
     fn test_zeroize_clears_key_material() {
         use zeroize::Zeroize;
 
-        let seed = hex::decode(CASE_1_SEED).unwrap();
+        let seed = hex_conservative::decode_to_vec(CASE_1_SEED).unwrap();
         let mut key = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
-        assert_ne!(key.private_key, [0u8; 32]);
+        assert_ne!(*key.private_key.to_bytes(), [0u8; 32]);
         assert_ne!(key.chain_code.as_ref(), &[0u8; 32]);
 
         key.zeroize();
 
-        assert_eq!(key.private_key, [0u8; 32]);
+        assert_eq!(*key.private_key.to_bytes(), [0u8; 32]);
         assert_eq!(key.chain_code.as_ref(), &[0u8; 32]);
         assert_eq!(key.depth, 0);
         assert_eq!(key.parent_fingerprint, Fingerprint::default());
@@ -822,7 +804,7 @@ mod test {
 
     #[test]
     fn test_partial_eq_matches_field_equality() {
-        let seed = hex::decode(CASE_1_SEED).unwrap();
+        let seed = hex_conservative::decode_to_vec(CASE_1_SEED).unwrap();
         let master = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
 
         assert_eq!(master, master.clone());
@@ -834,5 +816,22 @@ mod test {
         let mut other_network = master.clone();
         other_network.network = Network::Testnet;
         assert_ne!(master, other_network);
+    }
+
+    /// SLIP-10 indices are 32-bit, so a DIP-14 256-bit child is refused instead of deriving every
+    /// such child to the same key.
+    #[test]
+    fn test_256_bit_children_are_refused() {
+        let master = ExtendedEd25519PrivKey::new_master(
+            Network::Mainnet,
+            &hex_conservative::decode_to_vec(CASE_1_SEED).unwrap(),
+        )
+        .unwrap();
+        let child = ChildNumber::from_hardened_idx_256([0x35; 32]);
+        assert!(matches!(master.ckd_priv(child), Err(Error::InvalidChildNumberFormat)));
+        assert!(matches!(
+            master.derive_priv(&[ChildNumber::from_hardened_idx(9).unwrap(), child]),
+            Err(Error::InvalidChildNumberFormat)
+        ));
     }
 }

@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use dash_spv::sync::SyncState;
+use dash_spv::SyncState;
 use dashcore::Amount;
 use key_wallet::transaction_checking::TransactionContext;
 

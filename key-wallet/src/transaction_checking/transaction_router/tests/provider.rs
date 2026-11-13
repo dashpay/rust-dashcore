@@ -18,7 +18,6 @@ use dashcore::blockdata::transaction::special_transaction::provider_update_servi
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::BLSSignature;
-use dashcore::hashes::Hash;
 use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::{BlockHash, OutPoint, ScriptBuf, TxIn, TxOut, Txid};
 use std::net::SocketAddr;
@@ -213,7 +212,7 @@ async fn test_provider_registration_transaction_routing_check_owner_only() {
                     .payload()
                     .as_pubkey_hash()
                     .expect("Owner address should be P2PKH"),
-                operator_public_key: operator_public_key.0.to_compressed().into(),
+                operator_public_key,
                 voting_key_hash: *voting_address
                     .payload()
                     .as_pubkey_hash()
@@ -350,7 +349,7 @@ async fn test_provider_registration_transaction_routing_check_voting_only() {
                     .payload()
                     .as_pubkey_hash()
                     .expect("Owner address should be P2PKH"),
-                operator_public_key: operator_public_key.0.to_compressed().into(),
+                operator_public_key,
                 voting_key_hash: *voting_address
                     .payload()
                     .as_pubkey_hash()
@@ -488,7 +487,7 @@ async fn test_provider_registration_transaction_routing_check_operator_only() {
                     .payload()
                     .as_pubkey_hash()
                     .expect("Owner address should be P2PKH"),
-                operator_public_key: operator_public_key.0.to_compressed().into(),
+                operator_public_key,
                 voting_key_hash: *voting_address
                     .payload()
                     .as_pubkey_hash()
@@ -694,7 +693,7 @@ async fn test_provider_registration_transaction_routing_check_platform_only() {
                     .payload()
                     .as_pubkey_hash()
                     .expect("Owner address should be P2PKH"),
-                operator_public_key: operator_public_key.0.to_compressed().into(),
+                operator_public_key,
                 voting_key_hash: *voting_address
                     .payload()
                     .as_pubkey_hash()
@@ -829,7 +828,7 @@ async fn test_provider_update_registrar_with_voting_and_operator() {
         version: 1,
         pro_tx_hash: Txid::from_byte_array([1u8; 32]),
         provider_mode: 0,
-        operator_public_key: operator_public_key.0.to_compressed().into(),
+        operator_public_key,
         voting_key_hash: *voting_address
             .payload()
             .as_pubkey_hash()

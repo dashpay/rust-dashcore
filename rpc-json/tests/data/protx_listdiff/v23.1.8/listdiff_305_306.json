@@ -1,0 +1,27 @@
+{
+  "baseHeight": 305,
+  "blockHeight": 306,
+  "addedMNs": [],
+  "removedMNs": [],
+  "updatedMNs": [
+    {
+      "edf27b823c51820c5e6ac81b1973838ae33f440c021ac569c11bd39e7f2f448f": {
+        "version": 2,
+        "service": "127.0.0.1:30000",
+        "PoSeRevivedHeight": 306,
+        "PoSeBanHeight": -1,
+        "operatorPayoutAddress": "yabAqcVFPhbKdjJBq7jNDiPWX6TtNVtor6",
+        "addresses": {
+          "core_p2p": [
+            "127.0.0.1:30000"
+          ]
+        }
+      }
+    },
+    {
+      "62fe8d4603be148dbf1140323e1280e2e1da075d1b44d341ded74690b6e6ee04": {
+        "lastPaidHeight": 306
+      }
+    }
+  ]
+}

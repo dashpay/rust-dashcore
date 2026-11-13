@@ -1,6 +1,6 @@
 use std::io::{self, IsTerminal, Write};
 
-use dash_spv::sync::{ProgressPercentage, SyncProgress};
+use dash_spv::{ProgressPercentage, SyncProgress};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use tracing_subscriber::fmt::MakeWriter;
 

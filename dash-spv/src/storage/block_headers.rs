@@ -1,10 +1,10 @@
 //! Header storage operations for DiskStorageManager.
 
-use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
 use crate::error::StorageResult;
+use crate::storage::header_hash_index::HeaderHashIndex;
 use crate::storage::segments::SegmentCache;
 use crate::storage::PersistentStorage;
 use crate::types::HashedBlockHeader;
@@ -83,8 +83,6 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
 
     async fn get_start_height(&self) -> Option<u32>;
 
-    async fn get_stored_headers_len(&self) -> u32;
-
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,
@@ -93,7 +91,7 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
     /// Drop all headers with `height > target_height`.
     ///
     /// Truncating above the current tip is a no-op, truncating below
-    /// `start_height` returns an error. Changes are applied in-memory and
+    /// `start_height` drops everything. Changes are applied in-memory and
     /// flushed on the next `persist`.
     ///
     /// The truncation is not durable until the next successful `persist` call.
@@ -104,7 +102,7 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
 
 pub struct PersistentBlockHeaderStorage {
     block_headers: RwLock<SegmentCache<HashedBlockHeader>>,
-    header_hash_index: HashMap<BlockHash, u32>,
+    header_hash_index: HeaderHashIndex,
 }
 
 impl PersistentBlockHeaderStorage {
@@ -120,14 +118,14 @@ impl PersistentStorage for PersistentBlockHeaderStorage {
         let mut block_headers: SegmentCache<HashedBlockHeader> =
             SegmentCache::load_or_new(&segments_folder).await?;
 
-        let mut header_hash_index = HashMap::new();
+        let mut header_hash_index = HeaderHashIndex::default();
 
         if let (Some(start), Some(end)) = (block_headers.start_height(), block_headers.tip_height())
         {
             let headers = block_headers.get_items(start..end + 1).await?;
             for (i, header) in headers.iter().enumerate() {
                 let height = start + i as u32;
-                header_hash_index.insert(*header.hash(), height);
+                header_hash_index.insert(header.hash(), height);
             }
         }
 
@@ -165,7 +163,7 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         self.block_headers.write().await.store_items_at_height(headers, height).await?;
 
         for header in headers {
-            self.header_hash_index.insert(*header.hash(), height);
+            self.header_hash_index.insert(header.hash(), height);
             height += 1;
         }
 
@@ -193,29 +191,21 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         self.block_headers.read().await.start_height()
     }
 
-    async fn get_stored_headers_len(&self) -> u32 {
-        let block_headers = self.block_headers.read().await;
-
-        let start_height = if let Some(start_height) = block_headers.start_height() {
-            start_height
-        } else {
-            return 0;
-        };
-
-        let end_height = if let Some(end_height) = block_headers.tip_height() {
-            end_height
-        } else {
-            return 0;
-        };
-
-        end_height - start_height + 1
-    }
-
     async fn get_header_height_by_hash(
         &self,
         hash: &dashcore::BlockHash,
     ) -> StorageResult<Option<u32>> {
-        Ok(self.header_hash_index.get(hash).copied())
+        let heights = self.header_hash_index.get(hash);
+        if heights.is_empty() {
+            return Ok(None);
+        }
+        let mut block_headers = self.block_headers.write().await;
+        for height in heights {
+            if block_headers.get_item(height).await?.is_some_and(|header| header.hash() == hash) {
+                return Ok(Some(height));
+            }
+        }
+        Ok(None)
     }
 
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
@@ -224,7 +214,7 @@ impl BlockHeaderStorage for PersistentBlockHeaderStorage {
         block_headers.truncate_above(target_height).await?;
         drop(block_headers);
         if needs_index_prune {
-            self.header_hash_index.retain(|_, h| *h <= target_height);
+            self.header_hash_index.truncate_above(target_height);
         }
         Ok(())
     }

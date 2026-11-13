@@ -20,13 +20,12 @@ use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::managed_core_keys_account::ManagedCoreKeysAccount;
 use crate::managed_account::reservation::{ReservationSet, ReservationToken};
-use crate::managed_account::transaction_record::{
-    InputDetail, OutputDetail, OutputRole, TransactionDirection,
-};
+use crate::managed_account::transaction_record::{InputDetail, OutputDetail, OutputRole};
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{AccountMatch, TransactionContext};
 use crate::utxo::Utxo;
 use crate::wallet::balance::WalletCoreBalance;
+use crate::wallet::managed_wallet_info::wallet_info_interface::Truncation;
 use crate::{ExtendedPubKey, Network};
 use dashcore::blockdata::transaction::OutPoint;
 use dashcore::prelude::CoreBlockHeight;
@@ -65,6 +64,16 @@ pub struct ManagedCoreFundsAccount {
     /// Ours, but spent before the funding arrived, so never in `utxos` (#649).
     /// Input matching falls back to these.
     pub(crate) spent_before_funded: BTreeMap<OutPoint, Utxo>,
+    /// Ours, but kept out of `utxos` by a wallet-level spent-output claim
+    /// alone (`ManagedWalletInfo::spent_claims`). Input matching falls back to
+    /// these, so that the spender the claim stands for resolves its input
+    /// when it arrives. Not a guard: an entry goes with its claim, and is not
+    /// serialized.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) claim_guarded_outputs: BTreeMap<OutPoint, Utxo>,
+    /// The UTXOs removed by each spend not yet chainlocked, so a fork that drops
+    /// the spend can put them back.
+    unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
     /// Outpoints reserved by in-flight transaction builds so concurrent builds
     /// do not select the same UTXO before the first build's transaction is
     /// processed. Empty after a restart, where chain and mempool sync
@@ -107,6 +116,8 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             spent_before_funded: BTreeMap::new(),
+            claim_guarded_outputs: BTreeMap::new(),
+            unsettled_spends: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
     }
@@ -135,6 +146,8 @@ impl ManagedCoreFundsAccount {
             utxos: BTreeMap::new(),
             spent_outpoints: HashSet::new(),
             spent_before_funded: BTreeMap::new(),
+            claim_guarded_outputs: BTreeMap::new(),
+            unsettled_spends: BTreeMap::new(),
             reservations: ReservationSet::default(),
         }
     }
@@ -190,8 +203,51 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Check if an outpoint was spent by a previously recorded transaction.
-    fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
+    pub(crate) fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
+    }
+
+    /// Fill `claim_guarded_outputs` for a claim restored after its funding:
+    /// the account holds the funding transaction's full record, the output
+    /// pays one of its addresses, and the outpoint is neither in `utxos` nor
+    /// marked by a record of this account.
+    pub(crate) fn keep_recorded_output_for_claim(&mut self, outpoint: &OutPoint) {
+        if self.utxos.contains_key(outpoint) || self.spent_outpoints.contains(outpoint) {
+            return;
+        }
+        let Some(record) = self.keys.transactions().get(&outpoint.txid) else {
+            return;
+        };
+        let Some(output) = record.transaction.output.get(outpoint.vout as usize) else {
+            return;
+        };
+        let Ok(address) = Address::from_script(&output.script_pubkey, self.keys.network()) else {
+            return;
+        };
+        if !self.keys.contains_address(&address) {
+            return;
+        }
+        let utxo = Utxo::new(
+            *outpoint,
+            output.clone(),
+            address,
+            record.context.block_info().map_or(0, |info| info.height),
+            record.transaction.is_coin_base(),
+        );
+        self.claim_guarded_outputs.insert(*outpoint, utxo);
+    }
+
+    /// The recorded transaction spending `outpoint`, unless a ChainLock made it
+    /// final and no fork can drop it.
+    fn unsettled_spender_of(&self, outpoint: &OutPoint) -> Option<Txid> {
+        self.keys
+            .transactions()
+            .values()
+            .find(|record| {
+                record.transaction.input.iter().any(|input| input.previous_output == *outpoint)
+            })
+            .filter(|record| !record.context.is_chain_locked())
+            .map(|record| record.txid)
     }
 
     /// Collect the outpoints among `tx`'s inputs that this account holds as a
@@ -211,10 +267,107 @@ impl ManagedCoreFundsAccount {
         }
     }
 
+    /// Take in `output`, an output paying one of this account's addresses,
+    /// the same way whether a processed transaction or
+    /// `ManagedWalletInfo::restore_utxos` brings it, and return whether it was
+    /// credited to `utxos`.
+    ///
+    /// An output already known spent is held back instead, as given: under
+    /// its spender while this account has an unsettled record spending it,
+    /// so a fork dropping the spend gives it back; in `spent_before_funded`
+    /// when the spend was observed in an earlier-processed block
+    /// (`observed_spent`, dashpay/rust-dashcore#649) or it is already held
+    /// there. When `spent_claims` is given, an output it names that this
+    /// account does not already hold is kept in `claim_guarded_outputs`.
+    ///
+    /// A credited output first gets its context flags from `credit`. It then
+    /// keeps the InstantSend lock and trust of any copy it replaces, the
+    /// account's own or one of `copies` another account held, and takes their
+    /// coin lock in place of its own, and it leaves `claim_guarded_outputs`.
+    pub(crate) fn take_in_output(
+        &mut self,
+        mut output: Utxo,
+        mut copies: Vec<Utxo>,
+        observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: Option<&BTreeMap<OutPoint, Option<Txid>>>,
+        credit: impl FnOnce(&mut Utxo),
+    ) -> bool {
+        let outpoint = output.outpoint;
+        // Check if this outpoint was already spent by a transaction we've seen.
+        // This handles out-of-order block processing during rescan where a
+        // spending transaction at a higher height may be processed before
+        // the transaction that created the UTXO.
+        // TODO: This is mostly needed for wallet rescan from storage with the
+        //       there is a timing issue with event processing which might lead to
+        //       invalid UTXO set / balances. There might be a way around it.
+        if self.is_outpoint_spent(&outpoint) {
+            tracing::debug!(
+                outpoint = %outpoint,
+                "Skipping UTXO already spent by previously processed transaction"
+            );
+            // Held under its spend, so a fork dropping the spend
+            // gives it back.
+            if let Some(spender) = self.unsettled_spender_of(&outpoint) {
+                self.unsettled_spends.entry(spender).or_default().push(output);
+            }
+            return false;
+        }
+
+        // #649 spend-first ordering: the spend was observed in an
+        // earlier-processed block, so this output is genuinely spent
+        // on-chain even though this account has never seen it before —
+        // never insert it, so the record built below is born correct.
+        if observed_spent.contains_key(&outpoint)
+            || self.spent_before_funded.contains_key(&outpoint)
+        {
+            tracing::debug!(
+                outpoint = %outpoint,
+                "Skipping UTXO already observed spent in an earlier-processed block (#649)"
+            );
+            self.spent_before_funded.insert(outpoint, output);
+            return false;
+        }
+
+        // Held back by a claim alone, so its spender is still to be
+        // recorded: keep the output to resolve that input. Checked
+        // after the observed spends, whose replay of the spending
+        // block depends on `spent_before_funded`. A coin already
+        // held is past guarding and goes on following its funding.
+        if spent_claims.is_some_and(|claims| claims.contains_key(&outpoint))
+            && !self.utxos.contains_key(&outpoint)
+        {
+            tracing::debug!(outpoint = %outpoint, "Skipping UTXO guarded by a spent-output claim");
+            self.claim_guarded_outputs.insert(outpoint, output);
+            return false;
+        }
+
+        credit(&mut output);
+        // Reprocessing (e.g. mempool→block) rebuilds this UTXO from
+        // scratch, so carry forward flags that must not regress. An
+        // InstantSend lock is permanent for a txid (DIP-0010) and
+        // trust only ever settles, so both latch monotonically. A
+        // coin reservation is orthogonal to chain context and is kept
+        // as-is. `is_confirmed` stays freshly derived so a reorg can
+        // still downgrade it.
+        copies.extend(self.utxos.get(&outpoint).cloned());
+        if !copies.is_empty() {
+            output.is_instantlocked |= copies.iter().any(|copy| copy.is_instantlocked);
+            output.is_trusted |= copies.iter().any(|copy| copy.is_trusted);
+            output.is_locked = copies.iter().any(|copy| copy.is_locked);
+        }
+        self.claim_guarded_outputs.remove(&outpoint);
+        self.utxos.insert(outpoint, output);
+        true
+    }
+
     /// Add new UTXOs for received outputs, remove spent ones.
     ///
     /// Skips any output whose outpoint is already in `observed_spent` — it is
     /// spent on-chain (dashpay/rust-dashcore#649), so the record stays consistent.
+    ///
+    /// `spent_claims` is the wallet-level `ManagedWalletInfo::spent_claims`
+    /// view: an output it names is kept in `claim_guarded_outputs` instead of
+    /// being credited, unless the account already holds it as a UTXO.
     ///
     /// `external_final_parents` carries the wallet-level view of the inputs:
     /// outpoints that a *sibling* account of the same wallet holds as final.
@@ -226,6 +379,7 @@ impl ManagedCoreFundsAccount {
         account_match: &AccountMatch,
         context: TransactionContext,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) {
         // Update UTXOs only for spendable account types
@@ -317,45 +471,6 @@ impl ManagedCoreFundsAccount {
                                 vout: vout as u32,
                             };
 
-                            // Check if this outpoint was already spent by a transaction we've seen.
-                            // This handles out-of-order block processing during rescan where a
-                            // spending transaction at a higher height may be processed before
-                            // the transaction that created the UTXO.
-                            // TODO: This is mostly needed for wallet rescan from storage with the
-                            //       there is a timing issue with event processing which might lead to
-                            //       invalid UTXO set / balances. There might be a way around it.
-                            if self.is_outpoint_spent(&outpoint) {
-                                tracing::debug!(
-                                    outpoint = %outpoint,
-                                    "Skipping UTXO already spent by previously processed transaction"
-                                );
-                                continue;
-                            }
-
-                            // #649 spend-first ordering: the spend was observed in an
-                            // earlier-processed block, so this output is genuinely spent
-                            // on-chain even though this account has never seen it before —
-                            // never insert it, so the record built below is born correct.
-                            if observed_spent.contains_key(&outpoint)
-                                || self.spent_before_funded.contains_key(&outpoint)
-                            {
-                                tracing::debug!(
-                                    outpoint = %outpoint,
-                                    "Skipping UTXO already observed spent in an earlier-processed block (#649)"
-                                );
-                                self.spent_before_funded.insert(
-                                    outpoint,
-                                    Utxo::new(
-                                        outpoint,
-                                        output.clone(),
-                                        addr.clone(),
-                                        context.block_info().map_or(0, |i| i.height),
-                                        tx.is_coin_base(),
-                                    ),
-                                );
-                                continue;
-                            }
-
                             // Flag outputs from a "trusted" mempool transaction we created —
                             // one whose inputs all spend our own final UTXOs and which pays
                             // this output back to one of our internal (change) addresses.
@@ -364,31 +479,25 @@ impl ManagedCoreFundsAccount {
                             // before the parent transaction settles.
                             let is_trusted_output =
                                 all_inputs_final_and_ours && change_addrs.contains(&addr);
-                            let txout = dashcore::TxOut {
-                                value: output.value,
-                                script_pubkey: output.script_pubkey.clone(),
-                            };
-                            let block_height = context.block_info().map_or(0, |info| info.height);
-                            let mut utxo =
-                                Utxo::new(outpoint, txout, addr, block_height, tx.is_coin_base());
-                            utxo.is_confirmed = context.confirmed();
-                            utxo.is_instantlocked =
-                                matches!(context, TransactionContext::InstantSend(_));
-                            utxo.is_trusted = is_trusted_output;
-                            // Reprocessing (e.g. mempool→block) rebuilds this UTXO from
-                            // scratch, so carry forward flags that must not regress. An
-                            // InstantSend lock is permanent for a txid (DIP-0010) and
-                            // trust only ever settles, so both latch monotonically. A
-                            // coin reservation is orthogonal to chain context and is kept
-                            // as-is. `is_confirmed` stays freshly derived so a reorg can
-                            // still downgrade it.
-                            if let Some(prior) = self.utxos.get(&outpoint) {
-                                utxo.is_instantlocked |= prior.is_instantlocked;
-                                utxo.is_trusted |= prior.is_trusted;
-                                utxo.is_locked = prior.is_locked;
-                            }
-                            self.utxos.insert(outpoint, utxo);
-                            utxos_changed = true;
+                            let received = Utxo::new(
+                                outpoint,
+                                output.clone(),
+                                addr,
+                                context.block_info().map_or(0, |info| info.height),
+                                tx.is_coin_base(),
+                            );
+                            utxos_changed |= self.take_in_output(
+                                received,
+                                Vec::new(),
+                                observed_spent,
+                                Some(spent_claims),
+                                |utxo| {
+                                    utxo.is_confirmed = context.confirmed();
+                                    utxo.is_instantlocked =
+                                        matches!(context, TransactionContext::InstantSend(_));
+                                    utxo.is_trusted = is_trusted_output;
+                                },
+                            );
                         }
                     }
                 }
@@ -400,16 +509,27 @@ impl ManagedCoreFundsAccount {
                 self.reservations.release(tx.input.iter().map(|input| &input.previous_output));
                 for input in &tx.input {
                     self.spent_outpoints.insert(input.previous_output);
-                    self.spent_before_funded.remove(&input.previous_output);
+                    // An output held as spent before it was funded is spent here
+                    // too, so a fork dropping this spend gives it back as well.
+                    if let Some(held) = self.spent_before_funded.remove(&input.previous_output) {
+                        self.unsettled_spends.entry(txid).or_default().push(held);
+                    }
+                    // Not kept under the spend: a fork dropping it must not credit
+                    // a coin that only a claim kept out of `utxos`.
+                    self.claim_guarded_outputs.remove(&input.previous_output);
 
-                    if self.utxos.remove(&input.previous_output).is_some() {
+                    if let Some(spent) = self.utxos.remove(&input.previous_output) {
                         tracing::debug!(
                             outpoint = %input.previous_output,
                             txid = %tx.txid(),
                             "Removed spent UTXO"
                         );
+                        self.unsettled_spends.entry(txid).or_default().push(spent);
                         utxos_changed = true;
                     }
+                }
+                if context.is_chain_locked() {
+                    self.unsettled_spends.remove(&txid);
                 }
 
                 if utxos_changed {
@@ -487,10 +607,12 @@ impl ManagedCoreFundsAccount {
             self.utxos.remove(&outpoint);
         }
         self.spent_before_funded.retain(|outpoint, _| !abandoned.contains(&outpoint.txid));
+        self.claim_guarded_outputs.retain(|outpoint, _| !abandoned.contains(&outpoint.txid));
 
         let mut records = 0;
         let mut freed: HashSet<OutPoint> = HashSet::new();
         for txid in abandoned {
+            self.unsettled_spends.remove(txid);
             if let Some(record) = self.keys.transactions_mut().remove(txid) {
                 records += 1;
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
@@ -506,6 +628,90 @@ impl ManagedCoreFundsAccount {
         AbandonRemoval {
             utxos,
             records,
+        }
+    }
+
+    /// Drop the transactions recorded in blocks above `height`, like
+    /// [`Self::apply_abandon`], and put back the coins they spent from
+    /// transactions the fork keeps, along with the ones held in
+    /// `spent_before_funded` for a spend in `dropped_spends`, the spends observed
+    /// above `height`.
+    ///
+    /// A transaction in `instant_locked` is final for its txid and is mined
+    /// again, so it is kept as unconfirmed instead: its outputs stay, and the
+    /// coins it spent stay spent.
+    ///
+    /// A coin named in `spent_claims`, the wallet-level claims, is not put back
+    /// but kept aside for input matching, as at restore.
+    pub(crate) fn truncate_above(
+        &mut self,
+        height: CoreBlockHeight,
+        dropped_spends: &BTreeSet<OutPoint>,
+        instant_locked: &HashSet<Txid>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
+    ) -> Truncation {
+        let (unconfirmed, dropped): (BTreeSet<Txid>, BTreeSet<Txid>) = self
+            .keys
+            .transactions()
+            .values()
+            .filter(|record| record.height().is_some_and(|block| block > height))
+            .map(|record| record.txid)
+            .partition(|txid| instant_locked.contains(txid));
+        for txid in &unconfirmed {
+            if let Some(record) = self.keys.transactions_mut().get_mut(txid) {
+                record.update_context(TransactionContext::Mempool);
+            }
+        }
+        for utxo in self.utxos.values_mut().filter(|utxo| unconfirmed.contains(&utxo.outpoint.txid))
+        {
+            utxo.mark_unconfirmed_instant_locked();
+        }
+        let mut spent: Vec<Utxo> = dropped
+            .iter()
+            .filter_map(|txid| self.unsettled_spends.remove(txid))
+            .flatten()
+            .collect();
+        self.apply_abandon(&dropped);
+        spent.extend(
+            dropped_spends.iter().filter_map(|outpoint| self.spent_before_funded.remove(outpoint)),
+        );
+
+        let mut restored = Vec::new();
+        for mut utxo in spent {
+            let outpoint = utxo.outpoint;
+            // A fork changes no claim, so a claimed coin is not given back.
+            if dropped.contains(&outpoint.txid)
+                || self.spent_outpoints.contains(&outpoint)
+                || spent_claims.contains_key(&outpoint)
+            {
+                continue;
+            }
+            if unconfirmed.contains(&outpoint.txid) {
+                utxo.mark_unconfirmed_instant_locked();
+            } else {
+                // Spent in a block, so funded in one the fork keeps.
+                utxo.is_confirmed = true;
+                if let Some(height) =
+                    self.keys.transactions().get(&outpoint.txid).and_then(|parent| parent.height())
+                {
+                    utxo.height = height;
+                }
+            }
+            self.utxos.insert(outpoint, utxo);
+            restored.push(outpoint);
+        }
+        // A claimed coin whose spender the fork dropped is kept aside again,
+        // so the spend is still matched when it is mined again.
+        for outpoint in spent_claims.keys() {
+            self.keep_recorded_output_for_claim(outpoint);
+        }
+        if !restored.is_empty() {
+            self.keys.bump_monitor_revision();
+        }
+        Truncation {
+            txids: dropped.into_iter().collect(),
+            unconfirmed_txids: unconfirmed.into_iter().collect(),
+            restored_outpoints: restored,
         }
     }
 
@@ -655,6 +861,8 @@ impl ManagedCoreFundsAccount {
                 changed = true;
             }
             self.spent_before_funded.retain(|outpoint, _| outpoint.txid != *loser);
+            self.claim_guarded_outputs.retain(|outpoint, _| outpoint.txid != *loser);
+            self.unsettled_spends.remove(loser);
             if let Some(record) = self.keys.transactions_mut().remove(loser) {
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
@@ -714,6 +922,7 @@ impl ManagedCoreFundsAccount {
     ///   immutable; further events are redundant), or
     /// - the existing record's context already matches and confirmation
     ///   status didn't change.
+    #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn confirm_transaction(
         &mut self,
         tx: &Transaction,
@@ -721,6 +930,7 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> Option<TransactionRecord> {
         let txid = tx.txid();
@@ -740,6 +950,7 @@ impl ManagedCoreFundsAccount {
                 context,
                 transaction_type,
                 observed_spent,
+                spent_claims,
                 external_final_parents,
             );
             return Some(record);
@@ -780,7 +991,14 @@ impl ManagedCoreFundsAccount {
         // chainlock catches up.
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        self.update_utxos(
+            tx,
+            account_match,
+            context,
+            observed_spent,
+            spent_claims,
+            external_final_parents,
+        );
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -804,6 +1022,7 @@ impl ManagedCoreFundsAccount {
     /// under `unconfirmed` merely because the sibling account's UTXOs are
     /// invisible from here. Callers driving a single account directly pass an
     /// empty set and get the account-local behavior.
+    #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -811,6 +1030,7 @@ impl ManagedCoreFundsAccount {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> TransactionRecord {
         let net_amount = account_match.received as i64 - account_match.sent as i64;
@@ -829,7 +1049,7 @@ impl ManagedCoreFundsAccount {
             .collect();
 
         // Input details must be built before `update_utxos` removes spent UTXOs
-        // and drops the `spent_before_funded` entry for the same outpoint.
+        // and drops the `spent_before_funded` or `claim_guarded_outputs` entry for that outpoint.
         let mut input_details = Vec::new();
         if !tx.is_coin_base() {
             for (idx, input) in tx.input.iter().enumerate() {
@@ -837,6 +1057,7 @@ impl ManagedCoreFundsAccount {
                     .utxos
                     .get(&input.previous_output)
                     .or_else(|| self.spent_before_funded.get(&input.previous_output))
+                    .or_else(|| self.claim_guarded_outputs.get(&input.previous_output))
                 {
                     input_details.push(InputDetail {
                         index: idx as u32,
@@ -849,8 +1070,8 @@ impl ManagedCoreFundsAccount {
 
         // Marks a transaction that spends our coins. `input_details` (built
         // above) and `account_match.sent` (built in `check_transaction_with_index`)
-        // both resolve each input against `self.utxos` and then
-        // `self.spent_before_funded` on this account, with no mutation of either
+        // both resolve each input against `self.utxos`, `self.spent_before_funded`
+        // and then `self.claim_guarded_outputs` on this account, with no mutation
         // between the two lookups, so they populate together; keeping both keeps
         // this robust should the two call sites ever compute over different
         // snapshots.
@@ -889,20 +1110,8 @@ impl ManagedCoreFundsAccount {
             });
         }
 
-        // Determine direction
-        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
-        let has_our_outputs = output_details
-            .iter()
-            .any(|d| d.role == OutputRole::Received || d.role == OutputRole::Change);
-        let direction = if transaction_type == TransactionType::CoinJoin {
-            TransactionDirection::CoinJoin
-        } else if !has_sent && has_inputs && has_our_outputs {
-            TransactionDirection::Internal
-        } else if has_inputs {
-            TransactionDirection::Outgoing
-        } else {
-            TransactionDirection::Incoming
-        };
+        let direction =
+            TransactionRecord::direction_for(transaction_type, has_inputs, &output_details);
 
         let tx_record = TransactionRecord::new(
             tx.clone(),
@@ -925,7 +1134,14 @@ impl ManagedCoreFundsAccount {
         // feature is on (we want to keep the full record).
         #[cfg(not(feature = "keep-finalized-transactions"))]
         let drop_now = context.is_chain_locked();
-        self.update_utxos(tx, account_match, context, observed_spent, external_final_parents);
+        self.update_utxos(
+            tx,
+            account_match,
+            context,
+            observed_spent,
+            spent_claims,
+            external_final_parents,
+        );
         #[cfg(not(feature = "keep-finalized-transactions"))]
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
@@ -956,6 +1172,17 @@ impl ManagedCoreFundsAccount {
         self.utxos.values().filter(|utxo| utxo.is_spendable(last_processed_height)).collect()
     }
 
+    /// Forget the UTXOs `txid` spent: a chainlocked spend is final, so no fork
+    /// gives them back.
+    pub(crate) fn settle_spend(&mut self, txid: &Txid) {
+        self.unsettled_spends.remove(txid);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unsettled_spends(&self) -> &BTreeMap<Txid, Vec<Utxo>> {
+        &self.unsettled_spends
+    }
+
     /// Promote any `InBlock` records at height `<= cl_height` to
     /// [`TransactionContext::InChainLockedBlock`] and return the
     /// promoted txids.
@@ -968,7 +1195,11 @@ impl ManagedCoreFundsAccount {
     /// spentness or maturity, only the certainty of its parent
     /// transaction.
     pub(crate) fn apply_chain_lock(&mut self, cl_height: CoreBlockHeight) -> Vec<Txid> {
-        self.keys.apply_chain_lock(cl_height)
+        let promoted = self.keys.apply_chain_lock(cl_height);
+        for txid in &promoted {
+            self.unsettled_spends.remove(txid);
+        }
+        promoted
     }
 
     /// Update the account balance.
@@ -1324,6 +1555,8 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             utxos: BTreeMap<OutPoint, Utxo>,
             #[serde(default)]
             spent_before_funded: BTreeMap<OutPoint, Utxo>,
+            #[serde(default)]
+            unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -1336,6 +1569,8 @@ impl<'de> Deserialize<'de> for ManagedCoreFundsAccount {
             utxos: helper.utxos,
             spent_outpoints,
             spent_before_funded: helper.spent_before_funded,
+            claim_guarded_outputs: BTreeMap::new(),
+            unsettled_spends: helper.unsettled_spends,
             reservations: ReservationSet::default(),
         })
     }
@@ -1376,9 +1611,9 @@ mod conflict_sweep_walk_tests {
     use super::*;
     use crate::account::AccountType;
     use crate::account::StandardAccountType;
+    use crate::managed_account::transaction_record::TransactionDirection;
     use crate::transaction_checking::BlockInfo;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
-    use dashcore::hashes::Hash;
     use dashcore::ScriptBuf;
     use dashcore::{BlockHash, TxIn, TxOut, Witness};
 

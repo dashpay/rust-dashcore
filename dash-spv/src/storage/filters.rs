@@ -44,24 +44,13 @@ pub trait FilterStorage: Send + Sync + 'static {
     /// Drop all filters with `height > target_height`.
     ///
     /// Truncating above the current tip is a no-op, truncating below
-    /// `start_height` returns an error. Changes are applied in-memory and
+    /// `start_height` drops everything. Changes are applied in-memory and
     /// flushed on the next `persist`.
     ///
     /// The truncation is not durable until the next successful `persist` call.
     /// A crash between `truncate_above` and `persist` may leave orphaned segment
     /// files on disk and cause the storage to reopen at the pre-truncation tip.
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()>;
-
-    /// Declare the highest filter height that has been scanned and committed
-    /// for every wallet, allowing the storage to stop holding those filters in
-    /// memory.
-    ///
-    /// Filters at or below this height stay readable: `load_filters` reloads
-    /// them from disk on demand. The watermark may move backwards when a
-    /// rescan rolls the scan position back.
-    ///
-    /// Defaults to a no-op for implementations that hold no in-memory cache.
-    async fn set_committed_height(&mut self, _height: u32) {}
 }
 
 pub struct PersistentFilterStorage {
@@ -115,15 +104,11 @@ impl FilterStorage for PersistentFilterStorage {
     }
 
     async fn clear_filters(&mut self) -> StorageResult<()> {
-        self.filters.write().await.clear()
+        self.filters.write().await.clear().await
     }
 
     async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         self.filters.write().await.truncate_above(target_height).await
-    }
-
-    async fn set_committed_height(&mut self, height: u32) {
-        self.filters.write().await.set_committed_height(height);
     }
 }
 
@@ -176,7 +161,7 @@ mod tests {
 
         storage.persist(tmp_dir.path()).await.unwrap();
         let segment_file =
-            tmp_dir.path().join(PersistentFilterStorage::FOLDER_NAME).join("segment_0000.dat");
+            tmp_dir.path().join(PersistentFilterStorage::FOLDER_NAME).join("segment_000000.dat");
         assert!(segment_file.exists());
 
         // The start height survives a reload.

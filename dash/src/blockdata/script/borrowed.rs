@@ -1,27 +1,21 @@
 // Written in 2014 by Andrew Poelstra <apoelstra@wpsoftware.net>
 // SPDX-License-Identifier: CC0-1.0
 
-use core::convert::{TryFrom, TryInto};
 use core::fmt;
 use core::ops::{Index, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive};
 
-use hashes::Hash;
-use secp256k1::{Secp256k1, Verification};
+use hashes::hash160;
 
-use crate::address::WitnessVersion;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
-#[cfg(feature = "bitcoinconsensus")]
-use crate::blockdata::script::Error;
 use crate::blockdata::script::{
     Builder, Instruction, InstructionIndices, Instructions, ScriptBuf, bytes_to_asm_fmt,
 };
 use crate::consensus::Encodable;
-use crate::hash_types::{ScriptHash, WScriptHash};
-use crate::key::{PublicKey, UntweakedPublicKey};
+use crate::hash_types::ScriptHash;
+use crate::key::PublicKey;
 use crate::policy::DUST_RELAY_TX_FEE;
 use crate::prelude::*;
-use crate::taproot::{LeafVersion, TapLeafHash, TapNodeHash};
 
 /// Bitcoin script slice.
 ///
@@ -129,19 +123,7 @@ impl Script {
     /// Returns 160-bit hash of the script.
     #[inline]
     pub fn script_hash(&self) -> ScriptHash {
-        ScriptHash::hash(self.as_bytes())
-    }
-
-    /// Returns 256-bit hash of the script for P2WSH outputs.
-    #[inline]
-    pub fn wscript_hash(&self) -> WScriptHash {
-        WScriptHash::hash(self.as_bytes())
-    }
-
-    /// Computes leaf hash of tapscript.
-    #[inline]
-    pub fn tapscript_leaf_hash(&self) -> TapLeafHash {
-        TapLeafHash::from_script(self, LeafVersion::TapScript)
+        ScriptHash::from_raw_hash(hash160::Hash::hash(self.as_bytes()))
     }
 
     /// Returns the length in bytes of the script.
@@ -166,32 +148,6 @@ impl Script {
     #[inline]
     pub fn bytes(&self) -> Bytes<'_> {
         Bytes(self.as_bytes().iter().copied())
-    }
-
-    /// Computes the P2WSH output corresponding to this witnessScript (aka the "witness redeem
-    /// script").
-    #[inline]
-    pub fn to_v0_p2wsh(&self) -> ScriptBuf {
-        ScriptBuf::new_v0_p2wsh(&self.wscript_hash())
-    }
-
-    /// Computes P2TR output with a given internal key and a single script spending path equal to
-    /// the current script, assuming that the script is a Tapscript.
-    #[inline]
-    pub fn to_v1_p2tr<C: Verification>(
-        &self,
-        secp: &Secp256k1<C>,
-        internal_key: UntweakedPublicKey,
-    ) -> ScriptBuf {
-        let leaf_hash = self.tapscript_leaf_hash();
-        let merkle_root = TapNodeHash::from(leaf_hash);
-        ScriptBuf::new_v1_p2tr(secp, internal_key, Some(merkle_root))
-    }
-
-    /// Returns witness version of the script, if any, assuming the script is a `scriptPubkey`.
-    #[inline]
-    pub fn witness_version(&self) -> Option<WitnessVersion> {
-        self.0.first().and_then(|opcode| WitnessVersion::try_from(opcodes::All::from(*opcode)).ok())
     }
 
     /// Checks whether a script pubkey is a P2SH output.
@@ -257,59 +213,6 @@ impl Script {
         }
     }
 
-    /// Checks whether a script pubkey is a Segregated Witness (segwit) program.
-    #[inline]
-    pub fn is_witness_program(&self) -> bool {
-        // A scriptPubKey (or redeemScript as defined in BIP16/P2SH) that consists of a 1-byte
-        // push opcode (for 0 to 16) followed by a data push between 2 and 40 bytes gets a new
-        // special meaning. The value of the first push is called the "version byte". The following
-        // byte vector pushed is called the "witness program".
-        let script_len = self.0.len();
-        if !(4..=42).contains(&script_len) {
-            return false;
-        }
-        let ver_opcode = opcodes::All::from(self.0[0]); // Version 0 or PUSHNUM_1-PUSHNUM_16
-        let push_opbyte = self.0[1]; // Second byte push opcode 2-40 bytes
-        WitnessVersion::try_from(ver_opcode).is_ok()
-            && push_opbyte >= OP_PUSHBYTES_2.to_u8()
-            && push_opbyte <= OP_PUSHBYTES_40.to_u8()
-            // Check that the rest of the script has the correct size
-            && script_len - 2 == push_opbyte as usize
-    }
-
-    /// Checks whether a script pubkey is a P2WSH output.
-    #[inline]
-    pub fn is_v0_p2wsh(&self) -> bool {
-        self.0.len() == 34
-            && self.witness_version() == Some(WitnessVersion::V0)
-            && self.0[1] == OP_PUSHBYTES_32.to_u8()
-    }
-
-    /// Checks whether a script pubkey is a P2WPKH output.
-    #[inline]
-    pub fn is_v0_p2wpkh(&self) -> bool {
-        self.0.len() == 22
-            && self.witness_version() == Some(WitnessVersion::V0)
-            && self.0[1] == OP_PUSHBYTES_20.to_u8()
-    }
-
-    /// Returns P2WPKH byte slice if this script is P2WPKH, otherwise None.
-    pub fn v0_p2wpkh(&self) -> Option<&[u8; 20]> {
-        if self.is_v0_p2wpkh() {
-            Some(self.0[2..].try_into().expect("is_v0_p2wpkh checks the length"))
-        } else {
-            None
-        }
-    }
-
-    /// Checks whether a script pubkey is a P2TR output.
-    #[inline]
-    pub fn is_v1_p2tr(&self) -> bool {
-        self.0.len() == 34
-            && self.witness_version() == Some(WitnessVersion::V1)
-            && self.0[1] == OP_PUSHBYTES_32.to_u8()
-    }
-
     /// Check if this is an OP_RETURN output.
     #[inline]
     pub fn is_op_return(&self) -> bool {
@@ -327,7 +230,7 @@ impl Script {
         match self.0.first() {
             Some(b) => {
                 let first = opcodes::All::from(*b);
-                let class = first.classify(opcodes::ClassifyContext::Legacy);
+                let class = first.classify();
 
                 class == ReturnOp || class == IllegalOp
             }
@@ -343,10 +246,6 @@ impl Script {
         let sats = DUST_RELAY_TX_FEE as u64 / 1000 * // The default dust relay fee is 3000 satoshi/kB (i.e. 3 sat/vByte)
         if self.is_op_return() {
             0
-        } else if self.is_witness_program() {
-            32 + 4 + 1 + (107 / 4) + 4 + // The spend cost copied from Core
-            8 + // The serialized size of the TxOut's amount field
-            self.consensus_encode(&mut sink()).expect("sinks don't error") as u64 // The serialized size of this script_pubkey
         } else {
             32 + 4 + 1 + 107 + 4 + // The spend cost copied from Core
             8 + // The serialized size of the TxOut's amount field
@@ -402,46 +301,6 @@ impl Script {
     #[inline]
     pub fn instruction_indices_minimal(&self) -> InstructionIndices<'_> {
         InstructionIndices::from_instructions(self.instructions_minimal())
-    }
-
-    /// Shorthand for [`Self::verify_with_flags`] with flag [bitcoinconsensus::VERIFY_ALL].
-    ///
-    /// # Parameters
-    ///  * `index` - The input index in spending which is spending this transaction.
-    ///  * `amount` - The amount this script guards.
-    ///  * `spending_tx` - The transaction that attempts to spend the output holding this script.
-    #[cfg(feature = "bitcoinconsensus")]
-    pub fn verify(
-        &self,
-        index: usize,
-        amount: crate::Amount,
-        spending_tx: &[u8],
-    ) -> Result<(), Error> {
-        self.verify_with_flags(index, amount, spending_tx, bitcoinconsensus::VERIFY_ALL)
-    }
-
-    /// Verifies spend of an input script.
-    ///
-    /// # Parameters
-    ///  * `index` - The input index in spending which is spending this transaction.
-    ///  * `amount` - The amount this script guards.
-    ///  * `spending_tx` - The transaction that attempts to spend the output holding this script.
-    ///  * `flags` - Verification flags, see [`bitcoinconsensus::VERIFY_ALL`] and similar.
-    #[cfg(feature = "bitcoinconsensus")]
-    pub fn verify_with_flags<F: Into<u32>>(
-        &self,
-        index: usize,
-        amount: crate::Amount,
-        spending_tx: &[u8],
-        flags: F,
-    ) -> Result<(), Error> {
-        Ok(bitcoinconsensus::verify_with_flags(
-            &self.0[..],
-            amount.to_sat(),
-            spending_tx,
-            index,
-            flags.into(),
-        )?)
     }
 
     /// Writes the assembly decoding of the script to the formatter.

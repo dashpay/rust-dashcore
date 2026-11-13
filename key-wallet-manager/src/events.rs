@@ -180,9 +180,9 @@ fn format_account_balances(map: &BTreeMap<AccountType, WalletCoreBalance>) -> St
 /// consumers can persist the record(s) and balance atomically.
 #[derive(Debug, Clone)]
 pub enum WalletEvent {
-    /// First time the wallet sees an off-chain wallet-relevant transaction
-    /// (mempool, or directly via an InstantSend lock — in that case
-    /// `record.context` is `InstantSend(..)`).
+    /// An off-chain transaction was detected or its accounting details were corrected.
+    /// Corrections retain the transaction's own confirmation context; consumers upsert by account and txid.
+    /// Lock-only updates use `TransactionInstantLocked`.
     TransactionDetected {
         /// ID of the affected wallet.
         wallet_id: WalletId,
@@ -273,17 +273,21 @@ pub enum WalletEvent {
         /// possibly-invisible transaction also claims — so guessing either
         /// re-credits a coin the chain has already spent or leaves a
         /// genuinely free one stranded as spent forever. Wallet-scoped
-        /// rather than attributed per removed transaction: a consumer holds
-        /// every input of every transaction it deletes here, so it only
-        /// needs to know which of them came free, not which removal freed
+        /// rather than attributed per removed transaction: a consumer only
+        /// needs to know which coins came free, not which removal freed
         /// which.
+        ///
+        /// An outpoint whose spent-output claim named a removed transaction
+        /// is released too, and either kind is listed only once nothing in
+        /// the wallet guards it any more — see
+        /// `WalletConflictSweep::released_outpoints` in key-wallet.
         ///
         /// One pre-existing limitation, inherited from `release_spent_marks`
         /// rather than introduced with this field: it decides what stays
         /// spent from the wallet's *live* records, and under the default
         /// `keep-finalized-transactions = off` a chainlocked record is pruned
-        /// to just its txid. So if this wallet ever recorded a second spend
-        /// of a coin an already-pruned chainlocked transaction took — which
+        /// to just its txid. So if an account ever recorded a second spend
+        /// of a coin its own already-pruned chainlocked transaction took — which
         /// needs that second spend to arrive after the pruning, since
         /// otherwise the chainlocked arrival would have swept it — and that
         /// second spend is later swept on a different input, the coin is
@@ -292,6 +296,35 @@ pub enum WalletEvent {
         /// this layer.
         released_outpoints: Vec<OutPoint>,
         /// Wallet balance after the removal.
+        balance: WalletCoreBalance,
+        /// Post-event balance **snapshots** for accounts whose balance
+        /// changed as a result of this event. Each value is the account's
+        /// full balance after the change — not a delta.
+        account_balances: BTreeMap<AccountType, WalletCoreBalance>,
+    },
+    /// A fork replaced the chain above `height`, and the wallet dropped what it
+    /// recorded from the blocks above it, as if they were never processed. The
+    /// new branch is then processed from `height`. Only a wallet that processed
+    /// a block above `height` gets it.
+    ///
+    /// A consumer mirroring wallet state to disk must delete the removed
+    /// transactions with any UTXO they created, move the unconfirmed ones back
+    /// to the mempool with their UTXOs, mark the restored coins unspent, and
+    /// lower its synced height to `height` when it is above it.
+    ChainTruncated {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// Height of the last block the fork keeps.
+        height: CoreBlockHeight,
+        /// Transactions removed: they were recorded in blocks above `height`.
+        txids: Vec<Txid>,
+        /// InstantSend-locked transactions recorded in blocks above `height`,
+        /// kept as unconfirmed: the network mines them again, so the coins they
+        /// spent stay spent and their outputs stay InstantSend-locked.
+        unconfirmed_txids: Vec<Txid>,
+        /// Coins the removed transactions spent, unspent again.
+        restored_outpoints: Vec<OutPoint>,
+        /// Wallet balance after the truncation.
         balance: WalletCoreBalance,
         /// Post-event balance **snapshots** for accounts whose balance
         /// changed as a result of this event. Each value is the account's
@@ -412,6 +445,10 @@ impl WalletEvent {
                 wallet_id,
                 ..
             }
+            | WalletEvent::ChainTruncated {
+                wallet_id,
+                ..
+            }
             | WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 ..
@@ -477,6 +514,24 @@ impl fmt::Display for WalletEvent {
                 superseded_by,
                 winner_mined_height,
                 released_outpoints.len(),
+                balance,
+                format_account_balances(account_balances),
+            ),
+            WalletEvent::ChainTruncated {
+                height,
+                txids,
+                unconfirmed_txids,
+                restored_outpoints,
+                balance,
+                account_balances,
+                ..
+            } => write!(
+                f,
+                "ChainTruncated(height={}, removed={}, unconfirmed={}, restored={}, balance={}, account_balances={})",
+                height,
+                txids.len(),
+                unconfirmed_txids.len(),
+                restored_outpoints.len(),
                 balance,
                 format_account_balances(account_balances),
             ),

@@ -8,6 +8,10 @@ use crate::error::Error;
 use crate::transaction_checking::transaction_router::TransactionType;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::Address;
+#[cfg(feature = "serde")]
+use core::str::FromStr;
+#[cfg(feature = "serde")]
+use dashcore::address::NetworkUnchecked;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::Txid;
 #[cfg(feature = "serde")]
@@ -33,6 +37,7 @@ pub struct InputDetail {
 /// The index references `transaction.output[index]`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "StoredOutputDetail"))]
 pub struct OutputDetail {
     /// Index into the transaction's output array
     pub index: u32,
@@ -42,6 +47,52 @@ pub struct OutputDetail {
     pub address: Option<Address>,
     /// Value in satoshis
     pub value: u64,
+}
+
+/// `OutputDetail` as stored, with the address still unparsed.
+#[cfg(feature = "serde")]
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct StoredOutputDetail {
+    index: u32,
+    role: OutputRole,
+    address: Option<String>,
+    value: u64,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<StoredOutputDetail> for OutputDetail {
+    type Error = String;
+
+    /// Loads an unparsable counterparty address as `None`, since it is only informational.
+    /// An unparsable address on one of our own outputs fails the load.
+    fn try_from(stored: StoredOutputDetail) -> Result<Self, Self::Error> {
+        let address = match stored.address {
+            None => None,
+            Some(text) => match Address::<NetworkUnchecked>::from_str(&text) {
+                Ok(address) => Some(address.assume_checked()),
+                Err(err) if matches!(stored.role, OutputRole::Received | OutputRole::Change) => {
+                    return Err(format!(
+                        "unparsable address {text} of own output {}: {err}",
+                        stored.index
+                    ));
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "Dropping unparsable address {text} of output {}: {err}",
+                        stored.index
+                    );
+                    None
+                }
+            },
+        };
+        Ok(OutputDetail {
+            index: stored.index,
+            role: stored.role,
+            address,
+            value: stored.value,
+        })
+    }
 }
 
 /// Role of a transaction output from the wallet's perspective
@@ -131,6 +182,44 @@ impl TransactionRecord {
         }
     }
 
+    /// Derive account-local flow from attributed inputs and owned outputs.
+    pub(crate) fn recompute_net_and_direction(&mut self) {
+        let owned: i64 = self
+            .output_details
+            .iter()
+            .filter(|o| matches!(o.role, OutputRole::Received | OutputRole::Change))
+            .map(|o| o.value as i64)
+            .sum();
+        let spent: i64 = self.input_details.iter().map(|i| i.value as i64).sum();
+        self.net_amount = owned - spent;
+        self.direction = Self::direction_for(
+            self.transaction_type,
+            !self.input_details.is_empty(),
+            &self.output_details,
+        );
+    }
+
+    /// Classify account-local flow consistently for initial records and late-input corrections.
+    pub(crate) fn direction_for(
+        transaction_type: TransactionType,
+        has_inputs: bool,
+        output_details: &[OutputDetail],
+    ) -> TransactionDirection {
+        let has_sent = output_details.iter().any(|d| d.role == OutputRole::Sent);
+        let has_our_outputs = output_details
+            .iter()
+            .any(|d| matches!(d.role, OutputRole::Received | OutputRole::Change));
+        if transaction_type == TransactionType::CoinJoin {
+            TransactionDirection::CoinJoin
+        } else if !has_sent && has_inputs && has_our_outputs {
+            TransactionDirection::Internal
+        } else if has_inputs {
+            TransactionDirection::Outgoing
+        } else {
+            TransactionDirection::Incoming
+        }
+    }
+
     /// Calculate the number of confirmations based on current chain height
     pub fn confirmations(&self, current_height: u32) -> u32 {
         match self.context.block_info() {
@@ -203,7 +292,10 @@ impl TransactionRecord {
 mod tests {
     use super::*;
     use crate::account::StandardAccountType;
-    use dashcore::hashes::Hash;
+    #[cfg(feature = "serde")]
+    use bincode::config;
+    #[cfg(feature = "serde")]
+    use bincode::serde::{decode_from_slice, encode_to_vec};
     use dashcore::BlockHash;
 
     fn test_account_type() -> AccountType {
@@ -369,5 +461,71 @@ mod tests {
         let max_label = "x".repeat(MAX_LABEL_LENGTH);
         record.set_label(max_label.clone()).unwrap();
         assert_eq!(record.label, max_label);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_output_detail_address_serde() {
+        let bincode_config = config::standard();
+        let witness = "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx";
+        let cases = [
+            (OutputRole::Received, Some("XgjvsEewx8SHii5SFYM856eU2qGrJuZ3AN"), true),
+            (OutputRole::Change, Some("yWZBnVvSxS5xSq27dHVAJpuqbt7vvwGFL1"), true),
+            (OutputRole::Sent, Some("XgjvsEewx8SHii5SFYM856eU2qGrJuZ3AN"), true),
+            (OutputRole::Sent, None, true),
+            (OutputRole::Unspendable, None, true),
+            (OutputRole::Sent, Some(witness), false),
+            (OutputRole::Sent, Some("ds1qw508d6qejxtdg4y5r3zarvary0c5xw7kdmvh9f"), false),
+            (
+                OutputRole::Sent,
+                Some("dsrt1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqwl4t5d"),
+                false,
+            ),
+            (OutputRole::Unspendable, Some(witness), false),
+            (OutputRole::Received, Some(witness), false),
+            (OutputRole::Change, Some(witness), false),
+        ];
+
+        for (role, stored, parses) in cases {
+            let stored_detail = StoredOutputDetail {
+                index: 3,
+                role,
+                address: stored.map(String::from),
+                value: 12_345,
+            };
+            let bytes = encode_to_vec(&stored_detail, bincode_config).unwrap();
+            let json = serde_json::to_string(&stored_detail).unwrap();
+            let from_bincode = decode_from_slice::<OutputDetail, _>(&bytes, bincode_config);
+            let from_json = serde_json::from_str::<OutputDetail>(&json);
+
+            if !parses && matches!(role, OutputRole::Received | OutputRole::Change) {
+                assert!(from_bincode.is_err(), "{role:?} {stored:?}");
+                assert!(from_json.is_err(), "{role:?} {stored:?}");
+                continue;
+            }
+
+            let (from_bincode, _) = from_bincode.unwrap();
+            let from_json = from_json.unwrap();
+            let expected = stored.filter(|_| parses).map(String::from);
+            for detail in [&from_bincode, &from_json] {
+                assert_eq!(detail.index, 3, "{role:?} {stored:?}");
+                assert_eq!(detail.role, role, "{role:?} {stored:?}");
+                assert_eq!(detail.value, 12_345, "{role:?} {stored:?}");
+                assert_eq!(
+                    detail.address.as_ref().map(Address::to_string),
+                    expected,
+                    "{role:?} {stored:?}"
+                );
+            }
+
+            if parses {
+                assert_eq!(
+                    encode_to_vec(&from_bincode, bincode_config).unwrap(),
+                    bytes,
+                    "{role:?} {stored:?}"
+                );
+                assert_eq!(serde_json::to_string(&from_json).unwrap(), json, "{role:?} {stored:?}");
+            }
+        }
     }
 }

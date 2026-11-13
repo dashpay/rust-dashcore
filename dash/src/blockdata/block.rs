@@ -10,8 +10,9 @@
 //!
 
 use core::fmt;
+use std::collections::HashSet;
 
-use hashes::{Hash, HashEngine};
+use hashes::HashEngine;
 
 use super::Weight;
 use crate::blockdata::script;
@@ -19,7 +20,7 @@ use crate::blockdata::transaction::Transaction;
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::error::Error::{self, BlockBadProofOfWork, BlockBadTarget};
 pub use crate::hash_types::BlockHash;
-use crate::hash_types::{TxMerkleNode, WitnessCommitment, WitnessMerkleNode, Wtxid};
+use crate::hash_types::{BlockHashEngine, TxMerkleNode};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::pow::{CompactTarget, Target, Work};
 use crate::prelude::*;
@@ -57,9 +58,9 @@ impl_consensus_encoding!(Header, version, prev_blockhash, merkle_root, time, bit
 impl Header {
     /// Returns the block hash.
     pub fn block_hash(&self) -> BlockHash {
-        let mut engine = BlockHash::engine();
+        let mut engine = BlockHashEngine::default();
         self.consensus_encode(&mut engine).expect("engines don't error");
-        BlockHash::from_engine(engine)
+        BlockHash::from_raw_hash(engine.finalize())
     }
 
     /// Computes the target (range [0, T] inclusive) that a blockhash must land in to be valid.
@@ -213,81 +214,28 @@ impl Block {
     }
 
     /// Checks if merkle root of header matches merkle root of the transaction list.
+    ///
+    /// Returns `false` if any txid appears more than once: repeating the trailing
+    /// transactions keeps the merkle root unchanged (CVE-2012-2459).
     pub fn check_merkle_root(&self) -> bool {
-        match self.compute_merkle_root() {
-            Some(merkle_root) => self.header.merkle_root == merkle_root,
-            None => false,
-        }
-    }
+        let mut seen = HashSet::with_capacity(self.txdata.len());
+        let mut hashes = Vec::with_capacity(self.txdata.len());
 
-    /// Checks if witness commitment in coinbase matches the transaction list.
-    pub fn check_witness_commitment(&self) -> bool {
-        const MAGIC: [u8; 6] = [0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
-        // Witness commitment is optional if there are no transactions using SegWit in the block.
-        if self.txdata.iter().all(|t| t.input.iter().all(|i| i.witness.is_empty())) {
-            return true;
-        }
-
-        if self.txdata.is_empty() {
-            return false;
-        }
-
-        let coinbase = &self.txdata[0];
-        if !coinbase.is_coin_base() {
-            return false;
-        }
-
-        // Commitment is in the last output that starts with magic bytes.
-        if let Some(pos) = coinbase
-            .output
-            .iter()
-            .rposition(|o| o.script_pubkey.len() >= 38 && o.script_pubkey.as_bytes()[0..6] == MAGIC)
-        {
-            let commitment = WitnessCommitment::from_slice(
-                &coinbase.output[pos].script_pubkey.as_bytes()[6..38],
-            )
-            .unwrap();
-            // Witness reserved value is in coinbase input witness.
-            let witness_vec: Vec<_> = coinbase.input[0].witness.iter().collect();
-            if witness_vec.len() == 1
-                && witness_vec[0].len() == 32
-                && let Some(witness_root) = self.witness_root()
-            {
-                return commitment
-                    == Self::compute_witness_commitment(&witness_root, witness_vec[0]);
+        for tx in &self.txdata {
+            let txid = tx.txid();
+            if !seen.insert(txid) {
+                return false;
             }
+            hashes.push(txid.to_raw_hash());
         }
 
-        false
+        merkle_tree::calculate_root(hashes.into_iter()).map(TxMerkleNode::from_raw_hash)
+            == Some(self.header.merkle_root)
     }
 
     /// Computes the transaction merkle root.
     pub fn compute_merkle_root(&self) -> Option<TxMerkleNode> {
         let hashes = self.txdata.iter().map(|obj| obj.txid().to_raw_hash());
-        merkle_tree::calculate_root(hashes).map(|h| h.into())
-    }
-
-    /// Computes the witness commitment for the block's transaction list.
-    pub fn compute_witness_commitment(
-        witness_root: &WitnessMerkleNode,
-        witness_reserved_value: &[u8],
-    ) -> WitnessCommitment {
-        let mut encoder = WitnessCommitment::engine();
-        witness_root.consensus_encode(&mut encoder).expect("engines don't error");
-        encoder.input(witness_reserved_value);
-        WitnessCommitment::from_engine(encoder)
-    }
-
-    /// Computes the merkle root of transactions hashed for witness.
-    pub fn witness_root(&self) -> Option<WitnessMerkleNode> {
-        let hashes = self.txdata.iter().enumerate().map(|(i, t)| {
-            if i == 0 {
-                // Replace the first hash with zeroes.
-                Wtxid::all_zeros().to_raw_hash()
-            } else {
-                t.wtxid().to_raw_hash()
-            }
-        });
         merkle_tree::calculate_root(hashes).map(|h| h.into())
     }
 
@@ -312,7 +260,7 @@ impl Block {
 
     /// Returns the weight of the block.
     pub fn weight(&self) -> Weight {
-        let base_weight = Weight::from_non_witness_data_size(self.base_size() as u64);
+        let base_weight = Weight::from_vb_unchecked(self.base_size() as u64);
         let txs_weight: Weight = self.txdata.iter().map(Transaction::weight).sum();
         base_weight + txs_weight
     }
@@ -419,7 +367,6 @@ impl From<&Block> for BlockHash {
 
 #[cfg(test)]
 mod tests {
-    use hashes::hex::FromHex;
 
     use super::*;
     use crate::consensus::encode::{deserialize, serialize};
@@ -440,7 +387,7 @@ mod tests {
         const BAD_HEX: &str = "0200000035ab154183570282ce9afc0b494c9fc6a3cfea05aa8c1add2ecc56490000000038ba3d78e4500a5a7570dbe61960398add4410d278b21cd9708e6d9743f374d544fc055227f1001c29c1ea3b0101000000010000000000000000000000000000000000000000000000000000000000000000ffffffff3d09a08601112233445566000427f1001c046a510100522cfabe6d6d0000000000000000000068692066726f6d20706f6f6c7365727665726aac1eeeed88ffffffff0100f2052a010000001976a914912e2b234f941f30b18afbb4fa46171214bf66c888ac00000000";
         let bad: Block = deserialize(&hex!(BAD_HEX)).unwrap();
 
-        let push = Vec::<u8>::from_hex("a08601112233445566").unwrap();
+        let push = hex_conservative::decode_to_vec("a08601112233445566").unwrap();
         assert_eq!(bad.bip34_block_height(), Err(super::Bip34Error::UnexpectedPush(push)));
     }
 
@@ -488,13 +435,7 @@ mod tests {
 
         assert_eq!(real_decode.size(), some_block.len());
         assert_eq!(real_decode.strippedsize(), some_block.len());
-        assert_eq!(
-            real_decode.weight(),
-            Weight::from_non_witness_data_size(some_block.len() as u64)
-        );
-
-        // should be also ok for a non-witness block as commitment is optional in that case
-        assert!(real_decode.check_witness_commitment());
+        assert_eq!(real_decode.weight(), Weight::from_vb_unchecked(some_block.len() as u64));
 
         assert_eq!(serialize(&real_decode), some_block);
     }
@@ -539,54 +480,9 @@ mod tests {
 
         assert_eq!(real_decode.size(), some_block.len());
         assert_eq!(real_decode.strippedsize(), some_block.len());
-        assert_eq!(
-            real_decode.weight(),
-            Weight::from_non_witness_data_size(some_block.len() as u64)
-        );
-
-        // should be also ok for a non-witness block as commitment is optional in that case
-        assert!(real_decode.check_witness_commitment());
+        assert_eq!(real_decode.weight(), Weight::from_vb_unchecked(some_block.len() as u64));
 
         assert_eq!(serialize(&real_decode), some_block);
-    }
-
-    // Check testnet block 000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b
-    #[ignore]
-    #[test]
-    fn segwit_block_test() {
-        let segwit_block = include_bytes!("../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw").to_vec();
-
-        let decode: Result<Block, _> = deserialize(&segwit_block);
-
-        let prevhash = hex!("2aa2f2ca794ccbd40c16e2f3333f6b8b683f9e7179b2c4d74906000000000000");
-        let merkle = hex!("10bc26e70a2f672ad420a6153dd0c28b40a6002c55531bfc99bf8994a8e8f67e");
-        let work = Work::from(0x257c3becdacc64_u64);
-
-        assert!(decode.is_ok());
-        let real_decode = decode.unwrap();
-        assert_eq!(real_decode.header.version, Version(Version::USE_VERSION_BITS as i32)); // VERSIONBITS but no bits set
-        assert_eq!(serialize(&real_decode.header.prev_blockhash), prevhash);
-        assert_eq!(serialize(&real_decode.header.merkle_root), merkle);
-        assert_eq!(real_decode.header.merkle_root, real_decode.compute_merkle_root().unwrap());
-        assert_eq!(real_decode.header.time, 1472004949);
-        assert_eq!(real_decode.header.bits, CompactTarget::from_consensus(0x1a06d450));
-        assert_eq!(real_decode.header.nonce, 1879759182);
-        assert_eq!(real_decode.header.work(), work);
-        assert_eq!(
-            real_decode.header.validate_pow(real_decode.header.target()).unwrap(),
-            real_decode.block_hash()
-        );
-        assert_eq!(real_decode.header.difficulty(), 2456598);
-        assert_eq!(real_decode.header.difficulty_float(), 2456598.4399242126);
-        // [test] TODO: check the transaction data
-
-        assert_eq!(real_decode.size(), segwit_block.len());
-        assert_eq!(real_decode.strippedsize(), 4283);
-        assert_eq!(real_decode.weight(), Weight::from_wu(17168));
-
-        assert!(real_decode.check_witness_commitment());
-
-        assert_eq!(serialize(&real_decode), segwit_block);
     }
 
     #[test]
@@ -659,10 +555,26 @@ mod tests {
             }
         }
 
-        let segwit_signal = Version(0x20000000 ^ 1 << 1);
-        assert!(!segwit_signal.is_signalling_soft_fork(0));
-        assert!(segwit_signal.is_signalling_soft_fork(1));
-        assert!(!segwit_signal.is_signalling_soft_fork(2));
+        let bit1_signal = Version(0x20000000 ^ 1 << 1);
+        assert!(!bit1_signal.is_signalling_soft_fork(0));
+        assert!(bit1_signal.is_signalling_soft_fork(1));
+        assert!(!bit1_signal.is_signalling_soft_fork(2));
+    }
+
+    /// Repeating the trailing transaction keeps the merkle root, so only the
+    /// repeated txid shows that the block is not the one the header commits to.
+    #[test]
+    fn check_merkle_root_rejects_repeated_txid() {
+        let address = crate::Address::dummy(crate::Network::Testnet, 0);
+        let mut txdata = vec![Transaction::dummy_coinbase(&address, 50)];
+        txdata.extend((0..2).map(|i| Transaction::dummy(&address, i..i + 1, &[10])));
+        let mut block = Block::dummy(100, txdata);
+        block.header.merkle_root = block.compute_merkle_root().unwrap();
+        assert!(block.check_merkle_root());
+
+        block.txdata.push(block.txdata[2].clone());
+        assert_eq!(block.compute_merkle_root(), Some(block.header.merkle_root));
+        assert!(!block.check_merkle_root());
     }
 }
 
@@ -677,9 +589,9 @@ mod benches {
     #[bench]
     pub fn bench_stream_reader(bh: &mut Bencher) {
         let big_block = include_bytes!(
-            "../../tests/data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw"
+            "../../tests/data/testnet_block_000000008650f09124958e7352f844f9c15705171ac38ee6668534c5c238b916.raw"
         );
-        assert_eq!(big_block.len(), 1_381_836);
+        assert_eq!(big_block.len(), 3_669);
         let big_block = black_box(big_block);
 
         bh.iter(|| {
@@ -692,7 +604,7 @@ mod benches {
     #[bench]
     pub fn bench_block_serialize(bh: &mut Bencher) {
         let raw_block = include_bytes!(
-            "../../tests/data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw"
+            "../../tests/data/testnet_block_000000008650f09124958e7352f844f9c15705171ac38ee6668534c5c238b916.raw"
         );
 
         let block: Block = deserialize(&raw_block[..]).unwrap();
@@ -709,7 +621,7 @@ mod benches {
     #[bench]
     pub fn bench_block_serialize_logic(bh: &mut Bencher) {
         let raw_block = include_bytes!(
-            "../../tests/data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw"
+            "../../tests/data/testnet_block_000000008650f09124958e7352f844f9c15705171ac38ee6668534c5c238b916.raw"
         );
 
         let block: Block = deserialize(&raw_block[..]).unwrap();
@@ -723,7 +635,7 @@ mod benches {
     #[bench]
     pub fn bench_block_deserialize(bh: &mut Bencher) {
         let raw_block = include_bytes!(
-            "../../tests/data/mainnet_block_000000000000000000000c835b2adcaedc20fdf6ee440009c249452c726dafae.raw"
+            "../../tests/data/testnet_block_000000008650f09124958e7352f844f9c15705171ac38ee6668534c5c238b916.raw"
         );
 
         bh.iter(|| {

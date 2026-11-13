@@ -219,7 +219,6 @@ impl Decodable for QuorumCommitmentPayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use crate::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use crate::consensus::{Encodable, deserialize, serialize};
@@ -239,7 +238,7 @@ mod tests {
                 height: 0,
                 finalization_commitment: QuorumEntry {
                     version: 1,
-                    llmq_type: LLMQType::LlmqtypeUnknown,
+                    llmq_type: LLMQType::LlmqtypeUnknown(0),
                     quorum_hash: QuorumHash::all_zeros(),
                     quorum_index: None,
                     signers: vec![true, false, true, true, false],
@@ -261,7 +260,7 @@ mod tests {
                 height: 0,
                 finalization_commitment: QuorumEntry {
                     version: 2,
-                    llmq_type: LLMQType::LlmqtypeUnknown,
+                    llmq_type: LLMQType::LlmqtypeUnknown(0),
                     quorum_hash: QuorumHash::all_zeros(),
                     quorum_index: Some(1),
                     signers: vec![true, false, true, true, false, true, false],
@@ -281,7 +280,7 @@ mod tests {
     #[test]
     fn deserialize_serialize_mn_list_diff() {
         let block_hex = include_str!("../../../../tests/data/test_DML_diffs/DML_0_2221605.hex");
-        let data = hex::decode(block_hex).expect("decode hex");
+        let data = hex_conservative::decode_to_vec(block_hex).expect("decode hex");
         let mn_list_diff: RawNetworkMessage = deserialize(&data).expect("deserialize MnListDiff");
         if let NetworkMessage::MnListDiff(diff) = mn_list_diff.payload {
             let quorum = diff.new_quorums.first().expect("expected a quorum");

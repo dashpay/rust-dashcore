@@ -1,4 +1,4 @@
-use hashes::{Hash, sha256d};
+use hashes::sha256d;
 
 use crate::sml::masternode_list_entry::MasternodeListEntry;
 
@@ -12,10 +12,10 @@ impl MasternodeListEntry {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use crate::consensus::deserialize;
     use crate::network::message_sml::MnListDiff;
+    use hex_conservative::DisplayHex;
 
     // Ground-truth entry hashes produced by Dash Core's `CSimplifiedMNListEntry::CalcHash`
     // (`CHashWriter(SER_GETHASH, ...)`) for the matching entries in this fixture. `SER_GETHASH`
@@ -44,11 +44,13 @@ mod tests {
             let entry = diff
                 .new_masternodes
                 .iter()
-                .find(|e| hex::encode(e.pro_reg_tx_hash.to_byte_array()) == pro_reg_tx_hash_hex)
+                .find(|e| {
+                    e.pro_reg_tx_hash.to_byte_array().to_lower_hex_string() == pro_reg_tx_hash_hex
+                })
                 .expect("expected entry present in fixture");
 
             assert_eq!(
-                hex::encode(entry.calculate_entry_hash().to_byte_array()),
+                entry.calculate_entry_hash().to_byte_array().to_lower_hex_string(),
                 expected_entry_hash_hex,
                 "entry hash for {} must match Dash Core's CalcHash",
                 pro_reg_tx_hash_hex

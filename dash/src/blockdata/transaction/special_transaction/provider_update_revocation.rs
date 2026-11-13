@@ -38,7 +38,7 @@
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::Hash;
+use hashes::{HashEngine, sha256d};
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::bls_sig_utils::BLSSignature;
@@ -97,9 +97,9 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRevocationPayload 
     }
 
     fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
-        let mut engine = SpecialTransactionPayloadHash::engine();
+        let mut engine = sha256d::Hash::engine();
         self.base_payload_data_encode(&mut engine).expect("engines don't error");
-        SpecialTransactionPayloadHash::from_engine(engine)
+        SpecialTransactionPayloadHash::from_raw_hash(engine.finalize())
     }
 }
 
@@ -132,7 +132,6 @@ impl Decodable for ProviderUpdateRevocationPayload {
 
 #[cfg(test)]
 mod tests {
-    use hashes::Hash;
 
     use crate::Txid;
     use crate::bls_sig_utils::BLSSignature;

@@ -309,6 +309,10 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// without wallet-level block processing. The wallet checker uses
     /// `Self::record_transaction_with_observed_spends` instead, which
     /// reconciles the record against the wallet-level observed-spent set.
+    ///
+    /// Spent-output claims are wallet-level state too, so this entry point
+    /// does not see them: an output restored as spent with
+    /// `ManagedWalletInfo::restore_spent_outpoints` is credited here.
     pub fn record_transaction(
         &mut self,
         tx: &Transaction,
@@ -322,6 +326,7 @@ impl<'a> ManagedAccountRefMut<'a> {
             context,
             transaction_type,
             &BTreeMap::new(),
+            &BTreeMap::new(),
             &BTreeSet::new(),
         )
     }
@@ -331,8 +336,12 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// (dashpay/rust-dashcore#649); only the funds variant consults it (keys
     /// accounts track no UTXOs/output details).
     ///
+    /// `spent_claims` is the wallet-level `ManagedWalletInfo::spent_claims`
+    /// view; an output it names is not credited.
+    ///
     /// `external_final_parents` is the wallet-level view of input parents held
     /// by sibling accounts, used for the trusted-self-send determination.
+    #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn record_transaction_with_observed_spends(
         &mut self,
         tx: &Transaction,
@@ -340,6 +349,7 @@ impl<'a> ManagedAccountRefMut<'a> {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> TransactionRecord {
         match self {
@@ -349,6 +359,7 @@ impl<'a> ManagedAccountRefMut<'a> {
                 context,
                 transaction_type,
                 observed_spent,
+                spent_claims,
                 external_final_parents,
             ),
             ManagedAccountRefMut::Keys(a) => {
@@ -366,6 +377,10 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// pre-#649 behavior, appropriate for callers driving an account directly
     /// without wallet-level block processing. The wallet checker uses
     /// `Self::confirm_transaction_with_observed_spends` instead.
+    ///
+    /// Spent-output claims are wallet-level state too, so this entry point
+    /// does not see them: an output restored as spent with
+    /// `ManagedWalletInfo::restore_spent_outpoints` is credited here.
     pub fn confirm_transaction(
         &mut self,
         tx: &Transaction,
@@ -379,6 +394,7 @@ impl<'a> ManagedAccountRefMut<'a> {
             context,
             transaction_type,
             &BTreeMap::new(),
+            &BTreeMap::new(),
             &BTreeSet::new(),
         )
     }
@@ -387,8 +403,12 @@ impl<'a> ManagedAccountRefMut<'a> {
     /// against `observed_spent` — the wallet-level `observed_spent_outpoints`
     /// view (dashpay/rust-dashcore#649); only the funds variant consults it.
     ///
+    /// `spent_claims` is the wallet-level `ManagedWalletInfo::spent_claims`
+    /// view; an output it names is not credited.
+    ///
     /// `external_final_parents` is the wallet-level view of input parents held
     /// by sibling accounts, used for the trusted-self-send determination.
+    #[expect(clippy::too_many_arguments, reason = "one argument per wallet-level view")]
     pub(crate) fn confirm_transaction_with_observed_spends(
         &mut self,
         tx: &Transaction,
@@ -396,6 +416,7 @@ impl<'a> ManagedAccountRefMut<'a> {
         context: TransactionContext,
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
+        spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
     ) -> Option<TransactionRecord> {
         match self {
@@ -405,6 +426,7 @@ impl<'a> ManagedAccountRefMut<'a> {
                 context,
                 transaction_type,
                 observed_spent,
+                spent_claims,
                 external_final_parents,
             ),
             ManagedAccountRefMut::Keys(a) => {

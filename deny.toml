@@ -1,6 +1,11 @@
 # cargo-deny configuration
 # https://embarkstudios.github.io/cargo-deny/
 
+[graph]
+# The bench is an internal tool, and its optional profilers pull in crates the
+# shipped crates never use.
+exclude = ["dash-spv-bench"]
+
 [advisories]
 version = 2
 db-path = "~/.cargo/advisory-db"
@@ -8,12 +13,6 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 ignore = [
     # serde_cbor is unmaintained but only used in fuzz targets
     "RUSTSEC-2021-0127",
-    # bincode is unmaintained but used throughout the codebase, need to find a solution here.
-    # https://rustsec.org/advisories/RUSTSEC-2025-0141.html
-    "RUSTSEC-2025-0141",
-    # rand 0.8.5 is pulled in by blsful (pinned git dep). Upgrading requires blsful to update
-    # its rand dependency to >= 0.9.3. Tracked in https://github.com/dashpay/rust-dashcore/issues/638.
-    "RUSTSEC-2026-0097",
 ]
 
 [licenses]
@@ -30,6 +29,7 @@ allow = [
     "MPL-2.0",
     "Unicode-3.0",
     "MITNFA",
+    "BSL-1.0",
 ]
 confidence-threshold = 0.8
 
@@ -37,6 +37,16 @@ confidence-threshold = 0.8
 multiple-versions = "warn"
 wildcards = "allow"
 highlight = "all"
+deny = [
+    # Hex goes through `hex-conservative` 1.x.
+    { crate = "hex", reason = "use `hex-conservative` 1.x instead" },
+    { crate = "hex_lit", reason = "use `hex!` from `hex-conservative` 1.x instead" },
+    { crate = "hex-literal", reason = "use `hex!` from `hex-conservative` 1.x instead" },
+]
+skip = [
+    # Older releases still come in through upstream crates (`bitcoin_hashes` 0.14 via `bip39`, 0.16 via `bip324`).
+    { crate = "hex-conservative:<1.0.0", reason = "depended on by rust-bitcoin crates" },
+]
 
 [sources]
 unknown-registry = "deny"

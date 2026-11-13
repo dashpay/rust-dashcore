@@ -15,12 +15,10 @@ use dashcore::blockdata::opcodes;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
+use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 use dashcore::sighash::{EcdsaSighashType, LegacySighash, SighashCache};
 use dashcore::Address;
 use dashcore::{Network, TxIn, TxOut};
-use dashcore_hashes::Hash;
-use secp256k1::ecdsa::Signature;
-use secp256k1::{Message, PublicKey, Secp256k1};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
@@ -157,6 +155,11 @@ impl TransactionBuilder {
     /// must therefore not be held across an `await` between `add_funding` and
     /// `build_signed` or `assemble_unsigned`, since suspending there reopens the
     /// read-then-reserve window for a concurrent build.
+    ///
+    /// A change address already set by [`set_change_address`](Self::set_change_address)
+    /// wins: the funding account is only asked for one when the builder has none.
+    /// Deriving unconditionally would both discard the caller's choice and burn a
+    /// pool address, since `next_change_address` advances the pool state.
     pub fn add_funding(self, funds_acc: &mut ManagedCoreFundsAccount, acc: &Account) -> Self {
         self.fund_from(funds_acc, acc, true)
     }
@@ -356,9 +359,8 @@ impl TransactionBuilder {
     ///
     /// The flat 546 this replaces is exactly this formula for a 34-byte P2PKH output, so nothing
     /// moves for the ordinary path. It matters for `change_to_first_input`, where change is
-    /// routed to whatever script VIN0 uses: a 43-byte output has a 573-duff threshold, so a
-    /// 550-duff change output would have passed a flat 546 check and then been rejected as dust
-    /// by the network.
+    /// routed to whatever script VIN0 uses, such as a 32-byte P2SH output with a 540-duff
+    /// threshold.
     fn dust_threshold(output_size: usize) -> u64 {
         3 * (output_size as u64 + 148)
     }
@@ -445,8 +447,84 @@ impl TransactionBuilder {
     ///
     /// [`add_funding`]: Self::add_funding
     fn assemble_unsigned(
-        mut self,
+        self,
     ) -> Result<(Transaction, Vec<Utxo>, Option<ReservationToken>), BuilderError> {
+        let trial = self.require_final_inputs.then(|| self.with_waiting_coins());
+        let funding = self.funding.clone();
+        let current_height = self.current_height;
+
+        let (transaction, selected_inputs) = match self.prepare() {
+            Ok(prepared) => prepared,
+            // Waiting coins can only make up for a funding failure.
+            Err(
+                e @ (BuilderError::InsufficientFunds {
+                    ..
+                }
+                | BuilderError::CoinSelection(_)
+                | BuilderError::TooManyInputs {
+                    ..
+                }),
+            ) => {
+                if let Some(Ok((_, inputs))) = trial.map(Self::prepare) {
+                    let waiting = inputs
+                        .iter()
+                        .filter(|utxo| !(utxo.is_confirmed || utxo.is_instantlocked))
+                        .map(Utxo::value)
+                        .sum();
+
+                    return Err(BuilderError::FundsAwaitingFinality {
+                        waiting,
+                    });
+                }
+
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
+
+        // Reserve the chosen inputs so a concurrent build skips them until the
+        // broadcast transaction is processed back into the wallet (which
+        // releases the reservation) or the TTL backstop reclaims it. Each
+        // account reserves the inputs it contributed, since its own set is the
+        // one its coin selection consults. Keep the stamped owner token so the
+        // caller can release only this reservation if the build is later
+        // abandoned (see `release_if_owner`).
+        let reservation_token = (!funding.is_empty()).then(|| {
+            let owner = ReservationToken::next();
+            for (reservations, candidates) in &funding {
+                let outpoints: Vec<OutPoint> = selected_inputs
+                    .iter()
+                    .map(|utxo| utxo.outpoint)
+                    .filter(|outpoint| candidates.contains(outpoint))
+                    .collect();
+                reservations.reserve(&outpoints, current_height, owner);
+            }
+            owner
+        });
+
+        Ok((transaction, selected_inputs, reservation_token))
+    }
+
+    /// This build with non-final coins as candidates too.
+    fn with_waiting_coins(&self) -> Self {
+        Self {
+            inputs: self.inputs.clone(),
+            change_addr: self.change_addr.clone(),
+            outputs: self.outputs.clone(),
+            fee_rate: self.fee_rate,
+            current_height: self.current_height,
+            selection_strategy: self.selection_strategy,
+            require_final_inputs: false,
+            preserve_output_order: self.preserve_output_order,
+            change_to_first_input: self.change_to_first_input,
+            special_payload: self.special_payload.clone(),
+            payload_finalizer: None,
+            funding: self.funding.clone(),
+        }
+    }
+
+    /// Select inputs and build the unsigned transaction, without reserving them.
+    fn prepare(mut self) -> Result<(Transaction, Vec<Utxo>), BuilderError> {
         if let Some(TransactionPayload::AssetLockPayloadType(p)) = &self.special_payload {
             if p.credit_outputs.is_empty() {
                 return Err(BuilderError::NoOutputs);
@@ -663,27 +741,7 @@ impl TransactionBuilder {
             special_transaction_payload: self.special_payload,
         };
 
-        // Reserve the chosen inputs so a concurrent build skips them until the
-        // broadcast transaction is processed back into the wallet (which
-        // releases the reservation) or the TTL backstop reclaims it. Each
-        // account reserves the inputs it contributed, since its own set is the
-        // one its coin selection consults. Keep the stamped owner token so the
-        // caller can release only this reservation if the build is later
-        // abandoned (see `release_if_owner`).
-        let reservation_token = (!self.funding.is_empty()).then(|| {
-            let owner = ReservationToken::next();
-            for (reservations, candidates) in &self.funding {
-                let outpoints: Vec<OutPoint> = selected_inputs
-                    .iter()
-                    .map(|utxo| utxo.outpoint)
-                    .filter(|outpoint| candidates.contains(outpoint))
-                    .collect();
-                reservations.reserve(&outpoints, self.current_height, owner);
-            }
-            owner
-        });
-
-        return Ok((transaction, selected_inputs, reservation_token));
+        return Ok((transaction, selected_inputs));
 
         // BIP-69: Sort outputs by amount first, then by scriptPubKey
         // lexicographically.
@@ -934,16 +992,10 @@ pub trait TransactionSigner {
         for (sighash, path) in tasks {
             let (sig, pubkey) = self.sig_and_pubkey(sighash, path).await?;
 
-            let mut sig_bytes = sig.serialize_der().to_vec();
-            sig_bytes.push(EcdsaSighashType::All.to_u32() as u8);
-
-            let script_sig =
-                Builder::new()
-                    .push_slice(<&PushBytes>::try_from(sig_bytes.as_slice()).map_err(|_| {
-                        BuilderError::SigningFailed("invalid signature length".into())
-                    })?)
-                    .push_slice(pubkey.serialize())
-                    .into_script();
+            let script_sig = Builder::new()
+                .push_slice(dashcore::ecdsa::Signature::sighash_all(sig.into()).serialize())
+                .push_key(&dashcore::PublicKey::new(pubkey))
+                .into_script();
 
             signatures.push(script_sig);
         }
@@ -959,7 +1011,7 @@ pub trait TransactionSigner {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError>;
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError>;
 }
 
 #[async_trait::async_trait]
@@ -968,21 +1020,18 @@ impl TransactionSigner for Wallet {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError> {
-        let secp = Secp256k1::new();
-
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError> {
         let root_xpriv =
             self.root_extended_priv_key().map_err(|_| BuilderError::WatchOnlyWallet)?;
 
         let root_ext_priv = root_xpriv.to_extended_priv_key(self.network);
-        let derived_xpriv = root_ext_priv.derive_priv(&secp, &path).map_err(|e| {
+        let derived_xpriv = root_ext_priv.derive_priv(&path).map_err(|e| {
             BuilderError::SigningFailed(format!("couldn't derive extended priv key: {}", e))
         })?;
-        let key = derived_xpriv.private_key;
+        let key = &derived_xpriv.private_key;
 
-        let message = Message::from_digest(*sighash.as_byte_array());
-        let signature = secp.sign_ecdsa(&message, &key);
-        let pubkey = PublicKey::from_secret_key(&secp, &key);
+        let signature = key.sign(sighash.as_byte_array());
+        let pubkey = key.public_key();
 
         Ok((signature, pubkey))
     }
@@ -994,7 +1043,7 @@ impl<S: Signer> TransactionSigner for S {
         &self,
         sighash: LegacySighash,
         path: DerivationPath,
-    ) -> Result<(Signature, PublicKey), BuilderError> {
+    ) -> Result<(EcdsaSignature, EcdsaPublicKey), BuilderError> {
         if !self.supports(crate::signer::SignerMethod::Digest) {
             return Err(BuilderError::SigningFailed(format!(
                 "signer does not support required method {:?}",
@@ -1043,6 +1092,10 @@ pub enum BuilderError {
         len: usize,
         max: usize,
     },
+    /// Only non-final coins would fund the build, `waiting` duffs of them.
+    FundsAwaitingFinality {
+        waiting: u64,
+    },
 }
 
 impl fmt::Display for BuilderError {
@@ -1075,6 +1128,11 @@ impl fmt::Display for BuilderError {
             } => {
                 write!(f, "OP_RETURN payload too large: {len} bytes (max {max})")
             }
+            Self::FundsAwaitingFinality {
+                waiting,
+            } => {
+                write!(f, "Funds awaiting finality: {waiting} duffs of coins not final yet")
+            }
         }
     }
 }
@@ -1089,8 +1147,7 @@ mod tests {
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore::consensus::serialize;
     use dashcore::{OutPoint, Txid};
-    use dashcore_hashes::{sha256d, Hash};
-    use hex;
+    use dashcore_hashes::sha256d;
 
     fn op_return_script(data: &[u8]) -> ScriptBuf {
         let push_bytes = <&PushBytes>::try_from(data).expect("test OP_RETURN bytes");
@@ -1261,7 +1318,7 @@ mod tests {
     fn test_asset_lock_transaction() {
         // Test based on DSTransactionTests.m testAssetLockTx1
         use dashcore::consensus::Decodable;
-        let hex_data = hex::decode("0300080001eecf4e8f1ffd3a3a4e5033d618231fd05e5f08c1a727aac420f9a26db9bf39eb010000006a473044022026f169570532332f857cb64a0b7d9c0837d6f031633e1d6c395d7c03b799460302207eba4c4575a66803cecf50b61ff5f2efc2bd4e61dff00d9d4847aa3d8b1a5e550121036cd0b73d304bacc80fa747d254fbc5f0bf944dd8c8b925cd161bb499b790d08d0000000002317dd0be030000002321022ca85dba11c4e5a6da3a00e73a08765319a5d66c2f6434b288494337b0c9ed2dac6df29c3b00000000026a000000000046010200e1f505000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac6d11a735000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac").unwrap();
+        let hex_data = hex_conservative::decode_to_vec("0300080001eecf4e8f1ffd3a3a4e5033d618231fd05e5f08c1a727aac420f9a26db9bf39eb010000006a473044022026f169570532332f857cb64a0b7d9c0837d6f031633e1d6c395d7c03b799460302207eba4c4575a66803cecf50b61ff5f2efc2bd4e61dff00d9d4847aa3d8b1a5e550121036cd0b73d304bacc80fa747d254fbc5f0bf944dd8c8b925cd161bb499b790d08d0000000002317dd0be030000002321022ca85dba11c4e5a6da3a00e73a08765319a5d66c2f6434b288494337b0c9ed2dac6df29c3b00000000026a000000000046010200e1f505000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac6d11a735000000001976a9147c75beb097957cc09537b615dde9ea6807719cdf88ac").unwrap();
 
         let mut cursor = std::io::Cursor::new(hex_data);
         let tx = Transaction::consensus_decode(&mut cursor).unwrap();
@@ -1288,7 +1345,7 @@ mod tests {
     fn test_coinbase_transaction() {
         // Test based on DSTransactionTests.m testCoinbaseTransaction
         use dashcore::consensus::Decodable;
-        let hex_data = hex::decode("03000500010000000000000000000000000000000000000000000000000000000000000000ffffffff0502f6050105ffffffff0200c11a3d050000002321038df098a36af5f1b7271e32ad52947f64c1ad70c16a8a1a987105eaab5daa7ad2ac00c11a3d050000001976a914bfb885c89c83cd44992a8ade29b610e6ddf00c5788ac00000000260100f6050000aaaec8d6a8535a01bd844817dea1faed66f6c397b1dcaec5fe8c5af025023c35").unwrap();
+        let hex_data = hex_conservative::decode_to_vec("03000500010000000000000000000000000000000000000000000000000000000000000000ffffffff0502f6050105ffffffff0200c11a3d050000002321038df098a36af5f1b7271e32ad52947f64c1ad70c16a8a1a987105eaab5daa7ad2ac00c11a3d050000001976a914bfb885c89c83cd44992a8ade29b610e6ddf00c5788ac00000000260100f6050000aaaec8d6a8535a01bd844817dea1faed66f6c397b1dcaec5fe8c5af025023c35").unwrap();
 
         let mut cursor = std::io::Cursor::new(hex_data);
         let tx = Transaction::consensus_decode(&mut cursor).unwrap();
@@ -1298,7 +1355,7 @@ mod tests {
         // Check if it's a coinbase transaction by checking if first input has null previous_output
         assert_eq!(
             tx.input[0].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[0u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([0u8; 32]))
         );
         assert_eq!(tx.input[0].previous_output.vout, 0xffffffff);
         assert_eq!(tx.output.len(), 2);
@@ -1337,6 +1394,34 @@ mod tests {
 
         // estimate_transaction_size was removed in the new builder API; if a
         // future test needs full-size estimation, derive it from a real build.
+    }
+
+    #[test_case::test_case(800_000, true; "waiting coins cover it")]
+    #[test_case::test_case(2_000_000, false; "nothing covers it")]
+    fn test_funds_awaiting_finality(amount: u64, covered: bool) {
+        let utxos = vec![
+            Utxo::dummy(0, 400_000, 100, false, true),
+            Utxo::dummy(1, 600_000, 100, false, false),
+        ];
+
+        let result = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_change_address(Address::dummy(Network::Testnet, 0))
+            .add_inputs(utxos)
+            .add_output(&Address::dummy(Network::Testnet, 1), amount)
+            .require_final_inputs()
+            .build_unsigned_reserved();
+
+        if covered {
+            assert!(matches!(
+                result,
+                Err(BuilderError::FundsAwaitingFinality {
+                    waiting: 600_000
+                })
+            ));
+        } else {
+            assert!(matches!(result, Err(BuilderError::CoinSelection(_))));
+        }
     }
 
     #[test]
@@ -1542,9 +1627,9 @@ mod tests {
     }
 
     #[test]
-    fn test_change_to_first_input_sizes_larger_routing_script() {
+    fn test_change_to_first_input_sizes_p2sh_routing_script() {
         let routed_address =
-            Address::p2wsh(&Builder::new().push_int(1).into_script(), Network::Testnet);
+            Address::p2sh(&Builder::new().push_int(1).into_script(), Network::Testnet).unwrap();
         let mut routed_input = Utxo::dummy(0x01, 100_000, 100, false, true);
         routed_input.address = routed_address.clone();
         routed_input.txout.script_pubkey = routed_address.script_pubkey();
@@ -1559,11 +1644,11 @@ mod tests {
             .change_to_first_input();
 
         let routed_output_size = serialized_script_output_size(&routed_address.script_pubkey());
-        assert!(routed_output_size > CHANGE_OUTPUT_SIZE);
+        assert!(routed_output_size < CHANGE_OUTPUT_SIZE);
         assert_eq!(builder.estimated_change_output_size(), routed_output_size);
 
         let (tx, fee, _reservation) =
-            builder.build_unsigned_reserved().expect("witness-routed change transaction");
+            builder.build_unsigned_reserved().expect("P2SH-routed change transaction");
         assert_eq!(tx.output.len(), 2);
         assert!(tx
             .output
@@ -1577,7 +1662,7 @@ mod tests {
             as u64;
         assert!(
             fee >= signed_size,
-            "fee {fee} must cover the larger routed output at signed size {signed_size}"
+            "fee {fee} must cover the routed output at signed size {signed_size}"
         );
     }
 
@@ -1659,7 +1744,7 @@ mod tests {
             546,
             "P2PKH change must keep the historical 546-duff threshold"
         );
-        // A 43-byte output (e.g. P2WSH) costs the same 148-byte input to spend, so its threshold
+        // A 43-byte output costs the same 148-byte input to spend, so its threshold
         // is 3 * (43 + 148). A 550-duff change output clears 546 but is dust at this size.
         assert_eq!(TransactionBuilder::dust_threshold(43), 573);
         assert!(550 > TransactionBuilder::dust_threshold(CHANGE_OUTPUT_SIZE));
@@ -1731,7 +1816,7 @@ mod tests {
         // Test that inputs are sorted according to BIP-69
         let mut utxo1 = Utxo::new(
             OutPoint {
-                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[2u8; 32]).unwrap()),
+                txid: Txid::from_raw_hash(sha256d::Hash::from_byte_array([2u8; 32])),
                 vout: 1,
             },
             TxOut {
@@ -1746,7 +1831,7 @@ mod tests {
 
         let mut utxo2 = Utxo::new(
             OutPoint {
-                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
+                txid: Txid::from_raw_hash(sha256d::Hash::from_byte_array([1u8; 32])),
                 vout: 2,
             },
             TxOut {
@@ -1761,7 +1846,7 @@ mod tests {
 
         let mut utxo3 = Utxo::new(
             OutPoint {
-                txid: Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap()),
+                txid: Txid::from_raw_hash(sha256d::Hash::from_byte_array([1u8; 32])),
                 vout: 0,
             },
             TxOut {
@@ -1794,19 +1879,19 @@ mod tests {
         // Expected order: [1u8; 32]:0, [1u8; 32]:2, [2u8; 32]:1
         assert_eq!(
             tx.input[0].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([1u8; 32]))
         );
         assert_eq!(tx.input[0].previous_output.vout, 0);
 
         assert_eq!(
             tx.input[1].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[1u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([1u8; 32]))
         );
         assert_eq!(tx.input[1].previous_output.vout, 2);
 
         assert_eq!(
             tx.input[2].previous_output.txid,
-            Txid::from_raw_hash(sha256d::Hash::from_slice(&[2u8; 32]).unwrap())
+            Txid::from_raw_hash(sha256d::Hash::from_byte_array([2u8; 32]))
         );
         assert_eq!(tx.input[2].previous_output.vout, 1);
     }
@@ -1877,12 +1962,29 @@ mod tests {
 
         funds.reservations().reserve(&[reserved.outpoint], 200, ReservationToken::next());
 
-        let builder =
-            TransactionBuilder::new().set_current_height(200).add_funding(&mut funds, &account);
+        // Set change address to test the branch that avoids it being replaced
+        // by add_funding()
+        let explicit = Address::dummy(Network::Testnet, 1);
+        let builder = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_change_address(explicit.clone())
+            .add_funding(&mut funds, &account);
 
         let candidates: Vec<OutPoint> = builder.inputs.iter().map(|utxo| utxo.outpoint).collect();
         assert!(!candidates.contains(&reserved.outpoint));
         assert!(candidates.contains(&free.outpoint));
+
+        assert_eq!(
+            builder.change_addr.as_ref(),
+            Some(&explicit),
+            "funding must not override a change address the caller chose"
+        );
+        // Nor may it burn a pool address to derive one it then discards.
+        let mut control = ManagedCoreFundsAccount::dummy_bip44();
+        assert_eq!(
+            funds.next_change_address(Some(&account.account_xpub), true).expect("change address"),
+            control.next_change_address(Some(&account.account_xpub), true).expect("change address"),
+        );
     }
 
     #[test]

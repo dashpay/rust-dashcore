@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dash_spv::sync::{ProgressPercentage, SyncEvent};
 use dash_spv::Network;
+use dash_spv::{ProgressPercentage, SyncEvent};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
 use tokio::sync::broadcast::error::TryRecvError;
@@ -25,6 +25,7 @@ async fn test_wallet_sync() {
 
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
+    assert_eq!(client_handle.client.latest_coinbase().await, None);
 }
 
 /// Verify that syncing with a wallet that has no on-chain activity results in zero

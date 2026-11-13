@@ -31,17 +31,9 @@ pub enum SmlError {
         found: BlockHash,
     },
 
-    /// Error indicating an unknown issue.
-    #[error("An unknown SML error occurred")]
-    UnknownError,
-
     /// Error indicating something that should never happen.
     #[error("Corrupted code execution: {0}")]
     CorruptedCodeExecution(String),
-
-    /// Error indicating that a required feature is not turned on.
-    #[error("Feature not turned on: {0}")]
-    FeatureNotTurnedOn(String),
 
     /// Error indicating that an invalid index was provided in the signature set.
     #[error("Invalid index in quorum signature set: {0}")]
@@ -50,4 +42,10 @@ pub enum SmlError {
     /// Error indicating the quorum signature set is incomplete (some slots were not filled).
     #[error("Incomplete quorum signature set; not all slots were filled")]
     IncompleteSignatureSet,
+
+    #[error("The MnListDiff merkle proof does not prove the coinbase of block {0}")]
+    InvalidCoinbaseProof(BlockHash),
+
+    #[error("The coinbase of block {0} does not commit to the lists the MnListDiff builds")]
+    CoinbaseCommitmentMismatch(BlockHash),
 }

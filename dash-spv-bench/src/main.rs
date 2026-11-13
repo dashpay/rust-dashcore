@@ -1,5 +1,7 @@
 mod dashboard;
 mod metrics;
+#[cfg(target_os = "linux")]
+mod profile;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -7,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use dash_spv::storage::DiskStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient, EventHandler};
 use dashcore::Network;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
@@ -38,6 +39,17 @@ fn load_mnemonics() -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn proc_status_kb(field: &str) -> Option<u64> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix(field))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 #[tokio::main]
@@ -77,6 +89,9 @@ async fn main() -> Result<()> {
                 .with_filter(file_filter),
         )
         .init();
+
+    #[cfg(target_os = "linux")]
+    let profilers = profile::start();
 
     let mode = env_or("BENCH_MODE", "local").trim().to_ascii_lowercase();
     let (network, remote) = match mode.as_str() {
@@ -134,9 +149,6 @@ async fn main() -> Result<()> {
         config.add_peer(*addr);
     }
 
-    let storage_manager =
-        DiskStorageManager::new(&config).await.map_err(|e| anyhow!("storage manager: {e}"))?;
-
     let mut wallet_manager = WalletManager::<ManagedWalletInfo>::new(network);
     let birth_height = start_height.unwrap_or(0);
     let mut wallet_ids = Vec::with_capacity(mnemonics.len());
@@ -154,26 +166,14 @@ async fn main() -> Result<()> {
     let wallet_probe = wallet.clone();
 
     let handler = Arc::new(BenchEventHandler::new(dashboard.clone()));
-    let network = dash_spv::network::PeerNetworkManager::new(&config)
-        .await
-        .map_err(|e| anyhow!("network new: {e}"))?;
+    let network = dash_spv::network::PeerNetworkManager::new(&config).await;
 
-    let client = DashSpvClient::new(
-        config,
-        network,
-        storage_manager,
-        wallet,
-        vec![handler.clone() as Arc<dyn EventHandler>],
-    )
-    .await
-    .map_err(|e| anyhow!("client new: {e}"))?;
+    let client =
+        DashSpvClient::new(config, network, wallet, vec![handler.clone() as Arc<dyn EventHandler>])
+            .await
+            .map_err(|e| anyhow!("client new: {e}"))?;
 
-    let run_client = client.clone();
-    let run_handle = tokio::spawn(async move {
-        if let Err(e) = run_client.run().await {
-            tracing::error!("client run() exited with error: {e}");
-        }
-    });
+    client.run().await.map_err(|e| anyhow!("client run: {e}"))?;
 
     tokio::select! {
         _ = handler.wait_done() => {}
@@ -182,12 +182,17 @@ async fn main() -> Result<()> {
     }
     let m = handler.snapshot();
 
-    let _ = client.shutdown().await;
-    run_handle.abort();
-    let _ = run_handle.await;
+    client.stop().await;
+
+    let peak_rss_kb = proc_status_kb("VmHWM:");
+    #[cfg(target_os = "linux")]
+    profilers.finish(&output_dir);
 
     use std::fmt::Write as _;
     let mut report = format!("{m}\n");
+    if let Some(kb) = peak_rss_kb {
+        let _ = writeln!(report, "peak_rss_mib:         {}", kb / 1024);
+    }
 
     if !wallet_ids.is_empty() {
         use key_wallet_manager::WalletInterface;

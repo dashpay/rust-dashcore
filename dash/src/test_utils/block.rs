@@ -1,7 +1,5 @@
 use std::ops::Range;
 
-use hashes::Hash;
-
 use crate::{
     Block, BlockHash, CompactTarget, Header, Transaction, TxMerkleNode,
     bip158::{BlockFilter, BlockFilterWriter},
@@ -35,6 +33,25 @@ impl Header {
             bits: CompactTarget::from_consensus(0x1d00ffff),
             nonce: height,
         }
+    }
+
+    /// Mainnet headers 1999976 to 2000005: 24 headers of history for Dark Gravity Wave,
+    /// then six whose `bits` it reproduces.
+    pub fn mainnet_fixture() -> Vec<Self> {
+        include_str!("../../tests/data/mainnet_headers_1999976.txt")
+            .lines()
+            .map(|line| {
+                let [_, hash, header] = line.split(' ').collect::<Vec<_>>()[..] else {
+                    panic!("height, hash and header");
+                };
+                let header: Header = crate::consensus::deserialize(
+                    &hex_conservative::decode_to_vec(header).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(header.block_hash().to_string(), hash);
+                header
+            })
+            .collect()
     }
 
     pub fn dummy_batch(height_range: Range<u32>) -> Vec<Self> {

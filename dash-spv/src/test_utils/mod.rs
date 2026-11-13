@@ -5,6 +5,7 @@ mod context;
 mod event_handler;
 mod filter;
 mod fs_helpers;
+mod header_storage;
 pub(crate) mod masternode_network;
 mod network;
 mod node;
@@ -19,7 +20,10 @@ pub const SYNC_TIMEOUT: Duration = Duration::from_secs(180);
 pub use context::DashdTestContext;
 pub use event_handler::TestEventHandler;
 pub use fs_helpers::retain_test_dir;
-pub use masternode_network::MasternodeTestContext;
+pub use header_storage::MockHeaderStorage;
+pub use masternode_network::{
+    ControllerInfo, MasternodeInfo, MasternodeTestContext, NetworkMetadata,
+};
 pub use network::{test_socket_address, MockNetworkManager};
 pub use node::{DashCoreNode, TestChain, WalletFile};
 pub use wallet::{
@@ -28,3 +32,28 @@ pub use wallet::{
 };
 
 pub(crate) use node::DashCoreConfig;
+
+pub use crate::sml_engine::{FeedError, MasternodeListEngine, WORK_DIFF_DEPTH};
+
+/// Storage types for tests and benches that open the client's storage directly.
+pub use crate::storage::{
+    BlockHeaderStorage, BlockStorage, DiskStorageManager, FilterHeaderStorage, FilterStorage,
+    MasternodeStorage, MetadataStorage, PersistentBlockHeaderStorage, PersistentBlockStorage,
+    PersistentFilterHeaderStorage, PersistentFilterStorage, PersistentMasternodeStorage,
+    PersistentMetadataStorage, PersistentStorage, StorageManager,
+};
+
+/// The client's masternode list engine, for tests that inspect its state.
+pub fn masternode_list_engine<W, N>(
+    client: &crate::client::DashSpvClient<W, N>,
+) -> crate::error::Result<
+    std::sync::Arc<
+        tokio::sync::RwLock<MasternodeListEngine<crate::storage::PersistentBlockHeaderStorage>>,
+    >,
+>
+where
+    W: key_wallet_manager::WalletInterface,
+    N: crate::network::NetworkManager,
+{
+    client.masternode_list_engine()
+}

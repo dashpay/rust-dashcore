@@ -3,7 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
-    io::BufReader,
+    io::{BufReader, Seek, SeekFrom},
     ops::Range,
     path::{Path, PathBuf},
     time::Instant,
@@ -15,33 +15,40 @@ use dashcore::{
     hash_types::FilterHeader,
     Block, BlockHash, CompactTarget,
 };
-use dashcore_hashes::Hash;
 
 use crate::{
     error::StorageResult,
-    storage::io::atomic_write,
+    storage::io::atomic_write_items,
     types::{HashedBlock, HashedBlockHeader},
     StorageError,
 };
 
-pub trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
+pub(super) trait Persistable: Sized + Encodable + Decodable + PartialEq + Clone {
     const SEGMENT_PREFIX: &'static str = "segment";
     const DATA_FILE_EXTENSION: &'static str = "dat";
+    const ITEMS_PER_SEGMENT: u32;
+    /// The encoded size of every item, when it is fixed.
+    const ENCODED_SIZE: Option<u64> = None;
 
     fn segment_file_name(segment_id: u32) -> String {
-        format!("{}_{:04}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
+        format!("{}_{:06}.{}", Self::SEGMENT_PREFIX, segment_id, Self::DATA_FILE_EXTENSION)
     }
 
     fn sentinel() -> Self;
 }
 
 impl Persistable for Vec<u8> {
+    const ITEMS_PER_SEGMENT: u32 = 2_000;
+
     fn sentinel() -> Self {
         vec![]
     }
 }
 
 impl Persistable for HashedBlockHeader {
+    const ITEMS_PER_SEGMENT: u32 = 10_000;
+    const ENCODED_SIZE: Option<u64> = Some(112);
+
     fn sentinel() -> Self {
         let header = BlockHeader {
             version: Version::from_consensus(i32::MAX), // Invalid version
@@ -57,12 +64,17 @@ impl Persistable for HashedBlockHeader {
 }
 
 impl Persistable for FilterHeader {
+    const ITEMS_PER_SEGMENT: u32 = 50_000;
+    const ENCODED_SIZE: Option<u64> = Some(32);
+
     fn sentinel() -> Self {
         FilterHeader::from_byte_array([0u8; 32])
     }
 }
 
 impl Persistable for HashedBlock {
+    const ITEMS_PER_SEGMENT: u32 = 1_000;
+
     fn sentinel() -> Self {
         let block = Block {
             header: *HashedBlockHeader::sentinel().header(),
@@ -76,37 +88,22 @@ impl Persistable for HashedBlock {
 #[derive(Debug)]
 pub struct SegmentCache<I: Persistable> {
     segments: HashMap<u32, Segment<I>>,
-    evicted: HashMap<u32, Segment<I>>,
     tip_height: Option<u32>,
     start_height: Option<u32>,
     segments_dir: PathBuf,
-    /// Segment ids whose backing files must be removed on the next `persist`.
-    /// Populated by `truncate_above` for segments that are dropped entirely.
-    to_delete: HashSet<u32>,
-    /// Highest height whose items are durably persisted *and* fully consumed
-    /// by every reader, as declared by the owning sync manager through
-    /// [`SegmentCache::set_committed_height`].
-    ///
-    /// `None` — the default — disables committed-height release entirely, so a
-    /// cache whose owner never declares a watermark keeps exactly the residency
-    /// behavior it had before this field existed.
-    committed_height: Option<u32>,
 }
 
 impl<I: Persistable> SegmentCache<I> {
-    const MAX_ACTIVE_SEGMENTS: usize = 10;
+    const MAX_ACTIVE_SEGMENTS: usize = 2;
 
     pub async fn load_or_new(segments_dir: impl Into<PathBuf>) -> StorageResult<Self> {
         let segments_dir = segments_dir.into();
 
         let mut cache = Self {
             segments: HashMap::with_capacity(Self::MAX_ACTIVE_SEGMENTS),
-            evicted: HashMap::new(),
             tip_height: None,
             start_height: None,
             segments_dir: segments_dir.clone(),
-            to_delete: HashSet::new(),
-            committed_height: None,
         };
 
         // Building the metadata
@@ -144,13 +141,13 @@ impl<I: Persistable> SegmentCache<I> {
     }
 
     /// Parse the segment id out of a segment file name of the form
-    /// `{SEGMENT_PREFIX}_{id:04}.{DATA_FILE_EXTENSION}` (see
+    /// `{SEGMENT_PREFIX}_{id:06}.{DATA_FILE_EXTENSION}` (see
     /// [`Persistable::segment_file_name`]).
     ///
     /// The entire remaining component between the `{prefix}_` and
     /// `.{extension}` fixtures must parse as a `u32`, so trailing junk
-    /// (`segment_0000junk.dat`) is rejected and ids longer than the
-    /// zero-padding width (`segment_100000.dat`) are accepted, not truncated.
+    /// (`segment_000000junk.dat`) is rejected and ids longer than the
+    /// zero-padding width (`segment_1000000.dat`) are accepted, not truncated.
     fn parse_segment_id(file_name: &str) -> Option<u32> {
         let separator = format!("{}_", I::SEGMENT_PREFIX);
         let suffix = format!(".{}", I::DATA_FILE_EXTENSION);
@@ -183,38 +180,35 @@ impl<I: Persistable> SegmentCache<I> {
         &'a mut self,
         segment_id: &u32,
     ) -> StorageResult<&'a mut Segment<I>> {
-        let segments_len = self.segments.len();
-
         if self.segments.contains_key(segment_id) {
+            tracing::trace!(
+                "SegmentCache<{}>: segment {segment_id} cache hit",
+                std::any::type_name::<I>()
+            );
             let segment =
                 self.segments.get_mut(segment_id).expect("We already checked that it exists");
             return Ok(segment);
         }
 
-        if segments_len >= Self::MAX_ACTIVE_SEGMENTS {
+        if self.segments.len() >= Self::MAX_ACTIVE_SEGMENTS {
             let key_to_evict =
-                self.segments.iter_mut().min_by_key(|(_, s)| s.last_accessed).map(|(k, v)| (*k, v));
+                self.segments.iter().min_by_key(|(_, s)| s.last_accessed).map(|(k, _)| *k);
 
-            if let Some((key, _)) = key_to_evict {
-                if let Some(segment) = self.segments.remove(&key) {
-                    if segment.state == SegmentState::Dirty {
-                        self.evicted.insert(key, segment);
-                    }
+            if let Some(key) = key_to_evict {
+                if let Some(segment) = self.segments.get_mut(&key) {
+                    segment.persist(&self.segments_dir).await?;
                 }
+                self.segments.remove(&key);
             }
         }
 
-        // If the segment is already in the to_persist map, load it from there.
-        // If the segment is queued for deletion, return a fresh empty segment.
-        // The next `persist` will atomically overwrite the stale file.
-        // Otherwise, load it from disk.
-        let segment = if let Some(segment) = self.evicted.remove(segment_id) {
-            segment
-        } else if self.to_delete.remove(segment_id) {
-            Segment::new(*segment_id, vec![], SegmentState::Dirty)
-        } else {
-            Segment::load(&self.segments_dir, *segment_id).await?
-        };
+        let segment = Segment::load(&self.segments_dir, *segment_id).await?;
+        if segment.state == SegmentState::Clean {
+            tracing::trace!(
+                "SegmentCache<{}>: segment {segment_id} cache miss",
+                std::any::type_name::<I>()
+            );
+        }
 
         let segment = self.segments.entry(*segment_id).or_insert(segment);
         Ok(segment)
@@ -223,19 +217,17 @@ impl<I: Persistable> SegmentCache<I> {
     /// Load a contiguous range of items by height.
     ///
     /// Returns `StorageError::InvalidArgument` when the requested range extends
-    /// into a segment queued for deletion by a prior `truncate_above` (before
-    /// the next `persist`). Callers reading across a truncation boundary must
-    /// clamp their range to `tip_height` first, or fall back to per-item reads
-    /// via `get_item`, which returns `Ok(None)` for those slots.
+    /// above the tip. Callers reading across a truncation boundary must clamp
+    /// their range to `tip_height` first, or fall back to per-item reads via
+    /// `get_item`, which returns `Ok(None)` for those slots.
     pub async fn get_items(&mut self, height_range: Range<u32>) -> StorageResult<Vec<I>> {
         debug_assert!(height_range.start < height_range.end);
 
         let start = height_range.start;
         let end = height_range.end;
 
-        // Reject ranges that extend past the current tip. After a within-segment
-        // `truncate_above`, the boundary segment is not in `to_delete` so the
-        // loop guard below cannot catch overruns into its sentinel tail.
+        // Reject ranges that extend past the current tip, including the
+        // sentinel tail a `truncate_above` leaves in the boundary segment.
         if end > self.next_height() {
             return Err(StorageError::InvalidArgument(format!(
                 "get_items range {height_range:?} extends above tip {:?}",
@@ -268,16 +260,6 @@ impl<I: Persistable> SegmentCache<I> {
         let end_segment = Self::height_to_segment_id(end - 1);
 
         for segment_id in start_segment..=end_segment {
-            // Same guard as `get_item`: a segment queued for deletion holds
-            // nothing but sentinels by construction. Loading it via
-            // `get_segment_mut` would consume the deletion intent and queue
-            // an all-sentinel rewrite, so refuse the read instead.
-            if self.to_delete.contains(&segment_id) {
-                return Err(StorageError::InvalidArgument(format!(
-                    "get_items range {height_range:?} extends into segment {segment_id} queued for deletion"
-                )));
-            }
-
             let segment = self.get_segment_mut(&segment_id).await?;
 
             let seg_start = if segment_id == start_segment {
@@ -326,34 +308,37 @@ impl<I: Persistable> SegmentCache<I> {
     /// Get a single item by height. Returns `None` for sentinel (empty) slots.
     /// Unlike `get_items()`, this does not assert dense storage, safe for sparse data.
     ///
-    /// For heights in a segment queued for deletion by a prior `truncate_above`
-    /// (before the next `persist`), this returns `Ok(None)` rather than the
+    /// For heights above the tip this returns `Ok(None)` rather than the
     /// `StorageError::InvalidArgument` that `get_items` returns. Callers must
     /// not interpret `Ok(None)` here as a fallback for an error from `get_items`.
     /// The two APIs report truncated slots differently by design.
     pub async fn get_item(&mut self, height: u32) -> StorageResult<Option<I>> {
-        let segment_id = Self::height_to_segment_id(height);
-
-        // A segment queued for deletion holds nothing but sentinels by
-        // construction. Short-circuit so a read above the truncated tip does
-        // not consume the deletion intent in `get_segment_mut` and replace
-        // the stale on-disk file with a fresh all-sentinel blob.
-        if self.to_delete.contains(&segment_id) {
+        // Loading a segment outside the stored range would create it empty and
+        // the next `persist` would write it back.
+        if self.start_height.is_none_or(|start| height < start)
+            || self.tip_height.is_none_or(|tip| height > tip)
+        {
             return Ok(None);
         }
-
+        let segment_id = Self::height_to_segment_id(height);
         let offset = Self::height_to_offset(height);
-        let segment = self.get_segment_mut(&segment_id).await?;
-        let item = segment.get_single(offset);
-        if *item == I::sentinel() {
-            Ok(None)
-        } else {
-            Ok(Some(item.clone()))
-        }
-    }
 
-    pub async fn store_items(&mut self, items: &[I]) -> StorageResult<()> {
-        self.store_items_at_height(items, self.next_height()).await
+        // A fixed-size item of a segment that is not resident is read on its
+        // own, without loading the segment.
+        let item = match I::ENCODED_SIZE {
+            Some(size) if !self.segments.contains_key(&segment_id) => {
+                let mut file =
+                    File::open(self.segments_dir.join(I::segment_file_name(segment_id)))?;
+
+                file.seek(SeekFrom::Start(offset as u64 * size))?;
+
+                I::consensus_decode(&mut BufReader::new(file))
+                    .map_err(|e| StorageError::ReadFailed(format!("Failed to decode item: {e}")))?
+            }
+            _ => self.get_segment_mut(&segment_id).await?.get_single(offset).clone(),
+        };
+
+        Ok(Some(item).filter(|item| *item != I::sentinel()))
     }
 
     pub async fn store_items_at_height(
@@ -402,19 +387,17 @@ impl<I: Persistable> SegmentCache<I> {
 
     /// Truncate the cache so that no items above `target_height` remain.
     ///
-    /// Segments entirely above the target are dropped from memory and queued for
-    /// deletion on the next `persist`. The segment containing `target_height + 1`
+    /// Segments entirely above the target are dropped from memory and their
+    /// files deleted. The segment containing `target_height + 1`
     /// has its tail slots reset to `I::sentinel()` so subsequent `Segment::insert`
     /// calls into the same range remain sound.
     ///
-    /// Returns an error if `target_height` is below `start_height`, since the
-    /// resulting cache would have a hole below its origin. Callers must guard
-    /// against truncating an empty cache except as a no-op (no error).
+    /// A `target_height` below `start_height` drops every item, as
+    /// [`Self::clear`] does.
     ///
-    /// The truncation is not durable until the next successful `persist` call.
-    /// A crash between `truncate_above` and `persist` may leave orphaned segment
-    /// files on disk, causing `tip_height` to be recomputed from stale data on
-    /// restart and the cache to reopen at the pre-truncation tip.
+    /// The reset of the boundary segment is not durable until the next
+    /// successful `persist` call. A crash in between reopens the cache with the
+    /// boundary segment's pre-truncation items.
     pub async fn truncate_above(&mut self, target_height: u32) -> StorageResult<()> {
         let tip = match self.tip_height {
             Some(tip) => tip,
@@ -425,43 +408,26 @@ impl<I: Persistable> SegmentCache<I> {
             return Ok(());
         }
 
-        if let Some(start) = self.start_height {
-            if target_height < start {
-                return Err(StorageError::InvalidArgument(format!(
-                    "truncate_above({target_height}) below start_height ({start})"
-                )));
-            }
+        if self.start_height.is_some_and(|start| target_height < start) {
+            return self.clear().await;
         }
 
         let boundary_segment_id = Self::height_to_segment_id(target_height);
         let boundary_offset = Self::height_to_offset(target_height);
         let max_segment_id = Self::height_to_segment_id(tip);
 
-        // Load the boundary segment first so any disk I/O error is surfaced
-        // before mutating cache state. After this point only infallible
-        // in-memory operations run, so the function cannot leave the cache
-        // in a half-truncated state.
+        // Load the boundary segment first so a read error is surfaced before
+        // mutating cache state.
         if boundary_offset + 1 < Segment::<I>::ITEMS_PER_SEGMENT {
             let segment = self.get_segment_mut(&boundary_segment_id).await?;
             segment.reset_above(boundary_offset);
         }
 
-        for segment_id in (boundary_segment_id + 1)..=max_segment_id {
-            self.segments.remove(&segment_id);
-            self.evicted.remove(&segment_id);
-            self.to_delete.insert(segment_id);
+        for id in (boundary_segment_id + 1)..=max_segment_id {
+            self.remove_segment(id).await?;
         }
 
         self.tip_height = Some(target_height);
-
-        // The watermark must never claim heights that no longer exist: a
-        // rescan re-reads this range, and a stale high watermark would keep
-        // releasing segments it is actively refilling.
-        if let Some(committed) = self.committed_height {
-            if committed > target_height {
-                self.committed_height = Some(target_height);
-            }
-        }
 
         Ok(())
     }
@@ -469,18 +435,15 @@ impl<I: Persistable> SegmentCache<I> {
     /// Drop every stored item, leaving the cache empty.
     ///
     /// All backing segment files — including segments not currently resident
-    /// in memory — are queued for deletion on the next `persist`. Like
-    /// `truncate_above`, the deletion is not durable until that `persist`
-    /// succeeds; a crash in between leaves the old files on disk and the
-    /// cache reopens with the pre-clear contents.
+    /// in memory — are deleted.
     ///
     /// The directory scan runs to completion *before* any cache state is
     /// mutated: a failed scan must not leave the cache reporting empty while
     /// persisted segment files survive on disk, since those would resurrect
     /// after restart. A missing segments directory is treated as an empty
     /// (already-cleared) cache; any other I/O error is propagated.
-    pub fn clear(&mut self) -> StorageResult<()> {
-        // Queue every on-disk segment file, discovered by directory scan since
+    pub async fn clear(&mut self) -> StorageResult<()> {
+        // Collect every on-disk segment file, discovered by directory scan since
         // only up to MAX_ACTIVE_SEGMENTS of them are resident in memory.
         let mut to_delete = HashSet::new();
         match fs::read_dir(&self.segments_dir) {
@@ -499,20 +462,17 @@ impl<I: Persistable> SegmentCache<I> {
             Err(e) => return Err(StorageError::Io(e)),
         }
 
-        // Scan succeeded — now it is safe to mutate cache state. Resident and
-        // evicted segments may be dirty and not persisted yet, so the scan
-        // above cannot see them. Queue their ids too; `persist` ignores
-        // missing files.
+        // Scan succeeded — now it is safe to mutate cache state. Resident
+        // segments may be dirty and not persisted yet, so the scan above
+        // cannot see them; `remove_segment` ignores their missing files.
         to_delete.extend(self.segments.keys().copied());
-        to_delete.extend(self.evicted.keys().copied());
 
-        self.to_delete.extend(to_delete);
-        self.segments.clear();
-        self.evicted.clear();
+        for id in to_delete {
+            self.remove_segment(id).await?;
+        }
+
         self.tip_height = None;
         self.start_height = None;
-        // Nothing is stored, so nothing is committed.
-        self.committed_height = None;
 
         Ok(())
     }
@@ -520,150 +480,24 @@ impl<I: Persistable> SegmentCache<I> {
     pub async fn persist(&mut self, segments_dir: impl Into<PathBuf>) {
         let segments_dir = segments_dir.into();
 
-        let mut failed = HashSet::new();
-        for id in self.to_delete.drain() {
-            let path = segments_dir.join(I::segment_file_name(id));
-            match tokio::fs::remove_file(&path).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => {
-                    tracing::error!("Failed to delete segment file {:?}: {}", path, e);
-                    failed.insert(id);
-                }
-            }
-        }
-        self.to_delete.extend(failed);
-
-        for (id, segments) in self.evicted.iter_mut() {
-            if let Err(e) = segments.persist(&segments_dir).await {
-                tracing::error!("Failed to persist segment with id {id}: {e}");
-            }
-        }
-
-        self.evicted.clear();
-
         for (id, segments) in self.segments.iter_mut() {
             if let Err(e) = segments.persist(&segments_dir).await {
                 tracing::error!("Failed to persist segment with id {id}: {e}");
             }
         }
+    }
 
-        // After the writes above, so segments cleaned by *this* pass are
-        // eligible immediately. A segment whose persist failed is still Dirty
-        // and is therefore skipped.
-        let released = self.release_committed_segments();
-        if released > 0 {
-            tracing::debug!(
-                "SegmentCache: released {} committed segment(s) below height {:?}; {} resident",
-                released,
-                self.committed_height,
-                self.segments.len(),
-            );
+    async fn remove_segment(&mut self, id: u32) -> StorageResult<()> {
+        self.segments.remove(&id);
+
+        let path = self.segments_dir.join(I::segment_file_name(id));
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(StorageError::WriteFailed(format!(
+                "Failed to delete segment file {path:?}: {e}"
+            ))),
         }
-    }
-
-    /// Declare the highest height whose items are durably persisted and fully
-    /// consumed, so the cache may stop holding them in memory.
-    ///
-    /// Segments lying *entirely* at or below `height` are released from memory
-    /// by the next [`SegmentCache::persist`], once they are `Clean`. The
-    /// on-disk file remains the source of truth and a later read of a released
-    /// height transparently reloads the segment through the same lazy path used
-    /// for any never-resident segment — the data a reader observes is
-    /// unchanged, only the resident-set size is.
-    ///
-    /// The watermark may move **backwards**: a wallet rescan rolls it back
-    /// before re-reading lower heights. A regression only ever narrows the
-    /// release window, so it is always safe. Callers therefore assign rather
-    /// than accumulate, and no monotonicity is enforced here.
-    pub fn set_committed_height(&mut self, height: u32) {
-        self.committed_height = Some(height);
-    }
-
-    /// The committed-height watermark, or `None` when the owner has never
-    /// declared one (in which case no committed-height release occurs).
-    ///
-    /// Test-only for now — nothing reads the watermark back in production.
-    /// Promote it to an unconditional accessor when a caller needs it.
-    #[cfg(test)]
-    #[inline]
-    pub fn committed_height(&self) -> Option<u32> {
-        self.committed_height
-    }
-
-    /// Sorted ids of the segments currently held in memory. Test-only hook for
-    /// asserting residency from the storage wrappers.
-    #[cfg(test)]
-    pub(crate) fn resident_segment_ids(&self) -> Vec<u32> {
-        let mut ids: Vec<u32> = self.segments.keys().copied().collect();
-        ids.sort_unstable();
-        ids
-    }
-
-    /// Release the in-memory items of every fully-committed clean segment,
-    /// keeping the on-disk file as the source of truth.
-    ///
-    /// This is what stops a long backfill from pinning every segment it ever
-    /// touched. `MAX_ACTIVE_SEGMENTS` alone cannot: a scan spanning fewer than
-    /// ten segments never trips the LRU, so every downloaded item stays
-    /// resident until the process dies.
-    ///
-    /// Releasing a `Clean` segment is invisible to readers. `Clean` is reachable
-    /// only via [`Segment::load`] from an existing file or a successful
-    /// [`Segment::persist`], so a clean segment's items are byte-identical to
-    /// its backing file, and `get_segment_mut` reloads exactly those bytes on
-    /// the next access.
-    ///
-    /// Three classes are deliberately kept:
-    /// - `Dirty` segments — their contents exist *only* in memory, so dropping
-    ///   them would lose data outright.
-    /// - The segment holding the sync frontier (`tip_height`) — it is still
-    ///   being written, and releasing it would force a reload on the very next
-    ///   store.
-    /// - Any segment not entirely at or below the watermark, so a partially
-    ///   committed segment is never released out from under an active reader.
-    ///
-    /// Segments queued in `to_delete` cannot appear here: both `truncate_above`
-    /// and `clear` remove a segment from `self.segments` in the same step that
-    /// queues it, so the two sets are disjoint by construction.
-    ///
-    /// Returns the number of segments released.
-    fn release_committed_segments(&mut self) -> usize {
-        let Some(committed) = self.committed_height else {
-            return 0;
-        };
-
-        // Still-written frontier; never release it.
-        let frontier_segment = self.tip_height.map(Self::height_to_segment_id);
-
-        let items_per_segment = Segment::<I>::ITEMS_PER_SEGMENT as u64;
-        let committed = committed as u64;
-
-        // Widened to u64 so a segment id near u32::MAX cannot overflow the
-        // range arithmetic; such a segment simply fails the comparison.
-        let releasable: Vec<u32> = self
-            .segments
-            .iter()
-            .filter(|(id, segment)| {
-                if segment.state != SegmentState::Clean {
-                    return false;
-                }
-
-                if Some(**id) == frontier_segment {
-                    return false;
-                }
-
-                let last_height = (**id as u64) * items_per_segment + items_per_segment - 1;
-                last_height <= committed
-            })
-            .map(|(id, _)| *id)
-            .collect();
-
-        for id in &releasable {
-            self.segments.remove(id);
-        }
-
-        releasable.len()
     }
 
     #[inline]
@@ -702,7 +536,7 @@ pub struct Segment<I: Persistable> {
 }
 
 impl<I: Persistable> Segment<I> {
-    const ITEMS_PER_SEGMENT: u32 = 50_000;
+    const ITEMS_PER_SEGMENT: u32 = I::ITEMS_PER_SEGMENT;
 
     fn new(segment_id: u32, mut items: Vec<I>, state: SegmentState) -> Self {
         debug_assert!(items.len() <= Self::ITEMS_PER_SEGMENT as usize);
@@ -788,15 +622,7 @@ impl<I: Persistable> Segment<I> {
             return Err(StorageError::WriteFailed(format!("Failed to persist segment: {}", e)));
         }
 
-        let mut buffer = Vec::new();
-
-        for item in self.items.iter() {
-            item.consensus_encode(&mut buffer).map_err(|e| {
-                StorageError::WriteFailed(format!("Failed to encode segment item: {}", e))
-            })?;
-        }
-
-        atomic_write(&path, &buffer).await?;
+        atomic_write_items(&path, &self.items).await?;
 
         self.state = SegmentState::Clean;
         Ok(())
@@ -904,11 +730,14 @@ mod tests {
             segment.insert(FilterHeader::dummy(i), 0);
         }
 
+        assert!(tmp_dir.path().join(FilterHeader::segment_file_name(0)).exists());
+
         for i in 0..=MAX_SEGMENTS {
             assert_eq!(cache.segments.len(), MAX_SEGMENTS as usize);
 
             let segment = cache.get_segment_mut(&i).await.expect("Failed to load segment");
 
+            assert!(segment.state == SegmentState::Clean);
             assert_eq!(segment.get(0..1), [FilterHeader::dummy(i)]);
         }
     }
@@ -949,7 +778,7 @@ mod tests {
 
         let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT * 2 + ITEMS_PER_SEGMENT / 2);
 
-        cache.store_items(&items).await.expect("Failed to store items");
+        cache.store_items_at_height(&items, 0).await.expect("Failed to store items");
 
         assert_eq!(
             items[0..ITEMS_PER_SEGMENT as usize],
@@ -1109,9 +938,8 @@ mod tests {
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         cache.truncate_above(ITEMS_PER_SEGMENT - 1).await.unwrap();
 
-        // Re-store into the dropped segment BEFORE persist runs. Without the
-        // to_delete check in get_segment_mut, the stale on-disk file would be
-        // loaded and the insert would hit the sentinel debug_assert.
+        // Re-store into the dropped segment before persist runs: its file is
+        // gone, so the insert starts from an empty segment.
         let replacement = FilterHeader::dummy_batch(500..505);
         cache.store_items_at_height(&replacement, ITEMS_PER_SEGMENT).await.unwrap();
         assert_eq!(cache.tip_height(), Some(ITEMS_PER_SEGMENT + 4));
@@ -1143,10 +971,10 @@ mod tests {
 
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         cache.truncate_above(ITEMS_PER_SEGMENT - 1).await.unwrap();
+        assert!(!dropped_segment_file.exists());
 
-        // Reading above the truncated tip must not cancel the pending deletion.
-        // Without the to_delete short-circuit in get_item, this read would
-        // remove the entry from to_delete and queue an all-sentinel rewrite.
+        // Reading above the truncated tip must not bring the segment back as an
+        // all-sentinel file on the next persist.
         assert_eq!(cache.get_item(ITEMS_PER_SEGMENT + 2).await.unwrap(), None);
         assert_eq!(cache.get_item(ITEMS_PER_SEGMENT).await.unwrap(), None);
 
@@ -1172,9 +1000,8 @@ mod tests {
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         cache.truncate_above(ITEMS_PER_SEGMENT - 1).await.unwrap();
 
-        // A range read that spans into a segment queued for deletion must
-        // error rather than consuming the deletion intent and handing back
-        // sentinels.
+        // A range read that spans into the dropped segment must error rather
+        // than bring it back as sentinels.
         assert!(matches!(
             cache.get_items(ITEMS_PER_SEGMENT..ITEMS_PER_SEGMENT + 5).await,
             Err(StorageError::InvalidArgument(_))
@@ -1194,9 +1021,9 @@ mod tests {
         cache.store_items_at_height(&items, 0).await.unwrap();
         cache.truncate_above(9).await.unwrap();
 
-        // The boundary segment is not in `to_delete`, but reading past the
-        // truncated tip would land in its sentinel tail. Fail fast instead of
-        // panicking on the `last_valid_offset` debug_assert.
+        // Reading past the truncated tip would land in the boundary segment's
+        // sentinel tail. Fail fast instead of panicking on the
+        // `last_valid_offset` debug_assert.
         assert!(matches!(cache.get_items(0..15).await, Err(StorageError::InvalidArgument(_))));
         assert!(matches!(cache.get_items(8..11).await, Err(StorageError::InvalidArgument(_))));
 
@@ -1228,7 +1055,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_truncate_below_start_errors() {
+    async fn test_truncate_below_start_clears() {
         let tmp_dir = TempDir::new().unwrap();
 
         let items = FilterHeader::dummy_batch(0..5);
@@ -1237,9 +1064,9 @@ mod tests {
         cache.store_items_at_height(&items, 10).await.unwrap();
         assert_eq!(cache.start_height(), Some(10));
 
-        assert!(cache.truncate_above(5).await.is_err());
-        assert_eq!(cache.tip_height(), Some(14));
-        assert_eq!(cache.start_height(), Some(10));
+        cache.truncate_above(5).await.unwrap();
+        assert_eq!(cache.tip_height(), None);
+        assert_eq!(cache.start_height(), None);
     }
 
     #[tokio::test]
@@ -1351,14 +1178,16 @@ mod tests {
 
         // Reopen (so only the min/max segments are resident) and clear.
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        cache.clear().unwrap();
+        cache.clear().await.unwrap();
+        assert!(!file_0.exists());
+        assert!(!file_1.exists());
 
         assert_eq!(cache.tip_height(), None);
         assert_eq!(cache.start_height(), None);
         assert_eq!(cache.get_item(3).await.unwrap(), None);
         assert!(cache.get_items(0..5).await.is_err());
 
-        // The deletion becomes durable on persist.
+        // Reads after the clear must not bring the files back.
         cache.persist(tmp_dir.path()).await;
         assert!(!file_0.exists());
         assert!(!file_1.exists());
@@ -1392,7 +1221,7 @@ mod tests {
         // without an intervening persist.
         let more = FilterHeader::dummy_batch(100..105);
         cache.store_items_at_height(&more, 10).await.unwrap();
-        cache.clear().unwrap();
+        cache.clear().await.unwrap();
 
         assert_eq!(cache.tip_height(), None);
         assert_eq!(cache.start_height(), None);
@@ -1409,19 +1238,19 @@ mod tests {
     fn test_parse_segment_id() {
         type Cache = SegmentCache<FilterHeader>;
 
-        // Round-trips the writer's `{prefix}_{id:04}.{ext}` format for a range
+        // Round-trips the writer's `{prefix}_{id:06}.{ext}` format for a range
         // of ids, including ones wider than the zero-padding.
-        for id in [0u32, 1, 42, 9999, 10_000, 100_000, u32::MAX] {
+        for id in [0u32, 1, 42, 999_999, 1_000_000, u32::MAX] {
             assert_eq!(Cache::parse_segment_id(&FilterHeader::segment_file_name(id)), Some(id));
         }
 
         // Zero-padded low ids parse to their numeric value, not truncated.
-        assert_eq!(Cache::parse_segment_id("segment_0000.dat"), Some(0));
-        assert_eq!(Cache::parse_segment_id("segment_0005.dat"), Some(5));
+        assert_eq!(Cache::parse_segment_id("segment_000000.dat"), Some(0));
+        assert_eq!(Cache::parse_segment_id("segment_000005.dat"), Some(5));
 
         // Ids wider than the padding are accepted whole, never truncated to
-        // the first four digits.
-        assert_eq!(Cache::parse_segment_id("segment_100000.dat"), Some(100_000));
+        // the first six digits.
+        assert_eq!(Cache::parse_segment_id("segment_1000000.dat"), Some(1_000_000));
 
         // Trailing junk between the id and the extension is rejected rather
         // than silently parsed as a prefix of the component.
@@ -1442,206 +1271,6 @@ mod tests {
             SegmentCache::<Vec<u8>>::parse_segment_id(&<Vec<u8>>::segment_file_name(7)),
             Some(7)
         );
-    }
-
-    /// The headline guarantee: a committed, clean segment is dropped from
-    /// memory on persist, and a later read transparently reloads it from disk
-    /// byte-identically.
-    ///
-    /// This is the leak that pinned a 350k-block backfill in RAM: the scan
-    /// spans fewer than `MAX_ACTIVE_SEGMENTS`, so the LRU never fires and every
-    /// item stays resident until the process dies.
-    #[tokio::test]
-    async fn test_release_committed_segments_reloads_from_disk() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
-
-        // Dense across segments 0 and 1, plus a few items into segment 2 so the
-        // frontier lives above the range we expect to be released.
-        let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT * 2 + 5);
-
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        cache.store_items_at_height(&items, 0).await.unwrap();
-        cache.persist(tmp_dir.path()).await;
-
-        // Baseline: without a watermark nothing is released, which is exactly
-        // the pre-fix behavior.
-        assert_eq!(cache.committed_height(), None);
-        assert_eq!(cache.segments.len(), 3, "no watermark declared, so nothing is released");
-
-        // Segments 0 and 1 are now fully committed (their last heights are
-        // ITEMS_PER_SEGMENT-1 and 2*ITEMS_PER_SEGMENT-1).
-        cache.set_committed_height(ITEMS_PER_SEGMENT * 2 - 1);
-        cache.persist(tmp_dir.path()).await;
-
-        assert!(!cache.segments.contains_key(&0), "committed clean segment 0 must be released");
-        assert!(!cache.segments.contains_key(&1), "committed clean segment 1 must be released");
-        assert!(cache.segments.contains_key(&2), "frontier segment must stay resident");
-        assert_eq!(cache.segments.len(), 1);
-
-        // The cache-level watermarks are unaffected by residency.
-        assert_eq!(cache.start_height(), Some(0));
-        assert_eq!(cache.tip_height(), Some(ITEMS_PER_SEGMENT * 2 + 4));
-
-        // Reading the released range reloads both segments from disk and
-        // returns exactly the bytes that were written.
-        let reread = cache.get_items(0..ITEMS_PER_SEGMENT * 2).await.unwrap();
-        assert_eq!(reread, items[0..(ITEMS_PER_SEGMENT * 2) as usize]);
-
-        // Single-item reads across the boundary agree too.
-        assert_eq!(cache.get_item(0).await.unwrap(), Some(items[0]));
-        assert_eq!(
-            cache.get_item(ITEMS_PER_SEGMENT).await.unwrap(),
-            Some(items[ITEMS_PER_SEGMENT as usize])
-        );
-    }
-
-    /// Never release a segment that is dirty (its items exist only in memory),
-    /// the frontier segment (still being written), or a segment only partially
-    /// below the watermark.
-    #[tokio::test]
-    async fn test_release_skips_dirty_frontier_and_partial_segments() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
-
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-
-        // Sparse writes into segments 0, 1 and 2.
-        cache.store_items_at_height(&FilterHeader::dummy_batch(0..1), 10).await.unwrap();
-        cache
-            .store_items_at_height(&FilterHeader::dummy_batch(1..2), ITEMS_PER_SEGMENT + 10)
-            .await
-            .unwrap();
-        cache
-            .store_items_at_height(&FilterHeader::dummy_batch(2..3), ITEMS_PER_SEGMENT * 2 + 10)
-            .await
-            .unwrap();
-
-        // A watermark above everything, but nothing has been persisted yet, so
-        // all three segments are Dirty and none may be released.
-        cache.set_committed_height(u32::MAX);
-        let released = cache.release_committed_segments();
-        assert_eq!(released, 0, "dirty segments must never be released");
-        assert_eq!(cache.segments.len(), 3);
-
-        cache.persist(tmp_dir.path()).await;
-        // persist() cleaned all three, then released every non-frontier one.
-        assert_eq!(cache.segments.keys().copied().collect::<Vec<_>>(), vec![2]);
-
-        // Now verify the partial-coverage rule: a watermark inside segment 0
-        // does not release it, because its upper heights are not yet committed.
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        let _ = cache.get_segment_mut(&0).await.unwrap();
-        assert!(cache.segments.contains_key(&0));
-
-        cache.set_committed_height(ITEMS_PER_SEGMENT - 2); // one short of the segment's last height
-        assert_eq!(cache.release_committed_segments(), 0, "partially committed segment must stay");
-        assert!(cache.segments.contains_key(&0));
-
-        cache.set_committed_height(ITEMS_PER_SEGMENT - 1); // exactly the last height
-        assert_eq!(cache.release_committed_segments(), 1, "fully committed segment is releasable");
-        assert!(!cache.segments.contains_key(&0));
-    }
-
-    /// The rescan path re-reads heights far below the watermark. Those segments
-    /// were released, so this exercises the lazy reload under the access
-    /// pattern `reset_for_rescan` / `start_download` produce.
-    #[tokio::test]
-    async fn test_released_segments_serve_a_rescan_reread() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
-
-        let items = FilterHeader::dummy_batch(0..ITEMS_PER_SEGMENT * 2 + 5);
-
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        cache.store_items_at_height(&items, 0).await.unwrap();
-        cache.set_committed_height(ITEMS_PER_SEGMENT * 2 - 1);
-        cache.persist(tmp_dir.path()).await;
-        assert_eq!(cache.segments.len(), 1);
-
-        // A wallet appears behind the scan: the manager rolls the watermark
-        // back and re-reads from a low height.
-        cache.set_committed_height(0);
-        let rescanned = cache.get_items(5..ITEMS_PER_SEGMENT + 5).await.unwrap();
-        assert_eq!(rescanned, items[5..(ITEMS_PER_SEGMENT + 5) as usize]);
-
-        // With the watermark rolled back, the re-read segments are retained
-        // rather than being dropped again underneath the rescan.
-        cache.persist(tmp_dir.path()).await;
-        assert!(cache.segments.contains_key(&0), "rolled-back watermark must stop re-release");
-
-        // And the data still round-trips after a full reopen.
-        let mut reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        assert_eq!(reloaded.tip_height(), Some(ITEMS_PER_SEGMENT * 2 + 4));
-        assert_eq!(
-            reloaded.get_items(0..ITEMS_PER_SEGMENT * 2 + 5).await.unwrap(),
-            items,
-            "released-then-reloaded data must survive a process restart byte-identically"
-        );
-    }
-
-    /// The watermark must never outlive the data it refers to: `truncate_above`
-    /// clamps it and `clear` drops it, so a later scan of the same range is not
-    /// released out from under itself.
-    #[tokio::test]
-    async fn test_committed_height_follows_truncate_and_clear() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        let items = FilterHeader::dummy_batch(0..30);
-
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        cache.store_items_at_height(&items, 0).await.unwrap();
-
-        cache.set_committed_height(25);
-        assert_eq!(cache.committed_height(), Some(25));
-
-        // Truncating above a height below the watermark clamps it.
-        cache.truncate_above(10).await.unwrap();
-        assert_eq!(cache.committed_height(), Some(10));
-
-        // Truncating above the watermark leaves it alone.
-        cache.set_committed_height(5);
-        cache.truncate_above(8).await.unwrap();
-        assert_eq!(cache.committed_height(), Some(5));
-
-        cache.clear().unwrap();
-        assert_eq!(cache.committed_height(), None, "an empty cache has nothing committed");
-    }
-
-    /// A released segment must still accept new writes into its unused slots,
-    /// reloading the existing contents first rather than silently starting from
-    /// a blank segment (which would drop the persisted items on the next write).
-    #[tokio::test]
-    async fn test_store_into_released_segment_preserves_existing_items() {
-        let tmp_dir = TempDir::new().unwrap();
-
-        const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
-
-        let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        cache.store_items_at_height(&FilterHeader::dummy_batch(0..10), 0).await.unwrap();
-        cache
-            .store_items_at_height(&FilterHeader::dummy_batch(50..55), ITEMS_PER_SEGMENT)
-            .await
-            .unwrap();
-
-        cache.set_committed_height(ITEMS_PER_SEGMENT - 1);
-        cache.persist(tmp_dir.path()).await;
-        assert!(!cache.segments.contains_key(&0), "segment 0 released");
-
-        // Write into a gap in the released segment.
-        cache.store_items_at_height(&FilterHeader::dummy_batch(90..95), 100).await.unwrap();
-
-        // Both the reloaded originals and the new items are present.
-        assert_eq!(cache.get_items(0..10).await.unwrap(), FilterHeader::dummy_batch(0..10));
-        assert_eq!(cache.get_items(100..105).await.unwrap(), FilterHeader::dummy_batch(90..95));
-
-        cache.persist(tmp_dir.path()).await;
-        let mut reloaded = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
-        assert_eq!(reloaded.get_items(0..10).await.unwrap(), FilterHeader::dummy_batch(0..10));
-        assert_eq!(reloaded.get_items(100..105).await.unwrap(), FilterHeader::dummy_batch(90..95));
     }
 
     #[test]

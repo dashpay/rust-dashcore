@@ -20,13 +20,13 @@ use serde_json::{self, Value};
 
 use crate::Error::UnexpectedStructure;
 use crate::dashcore::address::NetworkUnchecked;
-use crate::dashcore::secp256k1::hashes::hex::DisplayHex;
+use crate::dashcore::prelude::DisplayHex;
 use crate::dashcore::{ScriptBuf, block, consensus};
 use crate::error::*;
 use crate::json;
 use crate::queryable;
-use dashcore::hashes::hex::FromHex;
-use dashcore::secp256k1::ecdsa::Signature;
+use dashcore::ecdsa::EcdsaSignature;
+use dashcore::hashes::Hash;
 use dashcore::{
     Address, Amount, Block, OutPoint, PrivateKey, ProTxHash, PublicKey, QuorumHash, Transaction,
 };
@@ -158,7 +158,7 @@ pub trait RawTx: Sized + Clone {
 
 impl RawTx for &Transaction {
     fn raw_hex(self) -> String {
-        hex::encode(consensus::encode::serialize(&self))
+        consensus::encode::serialize(&self).to_lower_hex_string()
     }
 }
 
@@ -317,7 +317,7 @@ pub trait RpcApi: Sized {
 
     fn get_block(&self, hash: &BlockHash) -> Result<Block> {
         let hex: String = self.call("getblock", &[into_json(hash)?, 0.into()])?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -336,7 +336,7 @@ pub trait RpcApi: Sized {
 
     fn get_block_header(&self, hash: &BlockHash) -> Result<block::Header> {
         let hex: String = self.call("getblockheader", &[into_json(hash)?, false.into()])?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -450,7 +450,7 @@ pub trait RpcApi: Sized {
     ) -> Result<Transaction> {
         let mut args = [into_json(txid)?, into_json(false)?, opt_into_json(block_hash)?];
         let hex: String = self.call("getrawtransaction", handle_defaults(&mut args, &[null()]))?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -589,7 +589,7 @@ pub trait RpcApi: Sized {
     ) -> Result<Vec<u8>> {
         let mut args = [into_json(txids)?, opt_into_json(block_hash)?];
         let hex: String = self.call("gettxoutproof", handle_defaults(&mut args, &[null()]))?;
-        Ok(FromHex::from_hex(&hex)?)
+        Ok(hex_conservative::decode_to_vec(&hex)?)
     }
 
     fn import_public_key(
@@ -740,7 +740,7 @@ pub trait RpcApi: Sized {
         locktime: Option<i64>,
     ) -> Result<Transaction> {
         let hex: String = self.create_raw_transaction_hex(utxos, outs, locktime)?;
-        let bytes: Vec<u8> = FromHex::from_hex(&hex)?;
+        let bytes: Vec<u8> = hex_conservative::decode_to_vec(&hex)?;
         Ok(dashcore::consensus::encode::deserialize(&bytes)?)
     }
 
@@ -797,7 +797,7 @@ pub trait RpcApi: Sized {
     fn verify_message(
         &self,
         address: &Address,
-        signature: &Signature,
+        signature: &EcdsaSignature,
         message: &str,
     ) -> Result<bool> {
         let args = [address.to_string().into(), signature.to_string().into(), into_json(message)?];
@@ -898,7 +898,7 @@ pub trait RpcApi: Sized {
     }
 
     /// Attempts to add a node to the addnode list.
-    /// Nodes added using addnode (or -connect) are protected from DoS disconnection and are not required to be full nodes/support SegWit as other outbound peers are (though such peers will not be synced from).
+    /// Nodes added using addnode (or -connect) are protected from DoS disconnection and are not required to be full nodes as other outbound peers are (though such peers will not be synced from).
     fn add_node(&self, addr: &str) -> Result<()> {
         self.call("addnode", &[into_json(addr)?, into_json("add")?])
     }
@@ -1637,7 +1637,7 @@ pub trait RpcApi: Sized {
     fn submit_chain_lock(&self, chain_lock: &ChainLock) -> Result<u32> {
         let mut args = [
             into_json(chain_lock.block_hash)?,
-            into_json(hex::encode(chain_lock.signature.as_bytes()))?,
+            into_json(chain_lock.signature.as_bytes().to_lower_hex_string())?,
             into_json(chain_lock.block_height)?,
         ];
         self.call::<u32>("submitchainlock", handle_defaults(&mut args, &[null()]))
@@ -1676,8 +1676,19 @@ impl fmt::Debug for Client {
 impl Client {
     /// Creates a client to a dashd JSON-RPC server.
     ///
-    /// Can only return [Err] when using cookie authentication.
+    /// Returns [Err] for an invalid or `https://` URL, or when the cookie file can't be read.
+    /// The transport speaks plaintext HTTP only (dashd has no TLS RPC), so an `https://` URL is
+    /// rejected rather than sending the credentials unencrypted to port 443.
     pub fn new(url: &str, auth: Auth) -> Result<Self> {
+        if url.split_once("://").is_some_and(|(scheme, _)| scheme == "https") {
+            return Err(super::error::Error::JsonRpc(
+                jsonrpc::simple_http::Error::InvalidUrl {
+                    url: url.to_owned(),
+                    reason: "https is not supported, the transport is plaintext HTTP",
+                }
+                .into(),
+            ));
+        }
         let (user, pass) = auth.get_user_pass()?;
         jsonrpc::client::Client::simple_http(url, user, pass)
             .map(|client| Client {
@@ -1741,18 +1752,28 @@ fn log_response(cmd: &str, resp: &Result<jsonrpc::Response>) {
 
 #[cfg(test)]
 mod tests {
+    use test_case::test_case;
+
     use super::*;
 
     #[test]
     fn test_raw_tx() {
         use dashcore::consensus::encode;
         let client = Client::new("http://localhost/", Auth::None).unwrap();
-        let tx: Transaction = encode::deserialize(&Vec::<u8>::from_hex("0200000001586bd02815cf5faabfec986a4e50d25dbee089bd2758621e61c5fab06c334af0000000006b483045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c012103dae30a4d7870cd87b45dd53e6012f71318fdd059c1c2623b8cc73f8af287bb2dfeffffff021dc4260c010000001976a914f602e88b2b5901d8aab15ebe4a97cf92ec6e03b388ac00e1f505000000001976a914687ffeffe8cf4e4c038da46a9b1d37db385a472d88acfd211500").unwrap()).unwrap();
+        let tx: Transaction = encode::deserialize(&hex_conservative::decode_to_vec("0200000001586bd02815cf5faabfec986a4e50d25dbee089bd2758621e61c5fab06c334af0000000006b483045022100e85425f6d7c589972ee061413bcf08dc8c8e589ce37b217535a42af924f0e4d602205c9ba9cb14ef15513c9d946fa1c4b797883e748e8c32171bdf6166583946e35c012103dae30a4d7870cd87b45dd53e6012f71318fdd059c1c2623b8cc73f8af287bb2dfeffffff021dc4260c010000001976a914f602e88b2b5901d8aab15ebe4a97cf92ec6e03b388ac00e1f505000000001976a914687ffeffe8cf4e4c038da46a9b1d37db385a472d88acfd211500").unwrap()).unwrap();
 
         assert!(client.send_raw_transaction(&tx).is_err());
         assert!(client.send_raw_transaction(&encode::serialize(&tx)).is_err());
         assert!(client.send_raw_transaction("deadbeef").is_err());
         assert!(client.send_raw_transaction("deadbeef".to_owned()).is_err());
+    }
+
+    #[test_case("https://127.0.0.1:9998/", false; "https is rejected")]
+    #[test_case("http://127.0.0.1:9998/", true; "http is accepted")]
+    #[test_case("127.0.0.1:9998", true; "no scheme is accepted")]
+    fn new_accepts_only_plaintext_urls(url: &str, accepted: bool) {
+        let auth = Auth::UserPass("user".into(), "pass".into());
+        assert_eq!(Client::new(url, auth).is_ok(), accepted);
     }
 
     fn test_handle_defaults_inner() -> Result<()> {

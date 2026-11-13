@@ -7,7 +7,9 @@ use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
 use crate::Error;
-use hex;
+use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSecretKey};
+use hex_conservative::DisplayHex;
+use zeroize::Zeroizing;
 
 impl Wallet {
     /// Get a bip44 account and index
@@ -101,13 +103,13 @@ impl Wallet {
         matches!(self.wallet_type, WalletType::Seed { .. } | WalletType::Mnemonic { .. })
     }
 
-    /// Get the wallet's 64-byte seed, if it has one.
+    /// Get the wallet's 64-byte seed, if it has one, wiped when dropped.
     ///
     /// For mnemonic wallets this is the BIP39 seed (empty passphrase — the
     /// same convention wallet construction uses to derive the root key).
     /// Wallets created from an extended private key, watch-only wallets and
     /// external-signable wallets have no seed and return `None`.
-    pub fn wallet_seed_bytes(&self) -> Option<[u8; 64]> {
+    pub fn wallet_seed_bytes(&self) -> Option<Zeroizing<[u8; 64]>> {
         match &self.wallet_type {
             WalletType::Mnemonic {
                 mnemonic,
@@ -116,7 +118,7 @@ impl Wallet {
             WalletType::Seed {
                 seed,
                 ..
-            } => Some(*seed.as_bytes()),
+            } => Some(Zeroizing::new(*seed.as_bytes())),
             WalletType::ExtendedPrivKey(_)
             | WalletType::ExternalSignable
             | WalletType::WatchOnly => None,
@@ -373,8 +375,6 @@ impl Wallet {
         &self,
         path: &crate::DerivationPath,
     ) -> Result<crate::bip32::ExtendedPrivKey> {
-        use secp256k1::Secp256k1;
-
         let master = match &self.wallet_type {
             WalletType::Mnemonic {
                 root_extended_private_key,
@@ -397,8 +397,7 @@ impl Wallet {
             }
         };
 
-        let secp = Secp256k1::new();
-        master.derive_priv(&secp, path).map_err(|e| e.into())
+        master.derive_priv(path).map_err(|e| e.into())
     }
 
     /// Derive a private key at a specific derivation path
@@ -410,10 +409,11 @@ impl Wallet {
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
-    /// The private key (SecretKey), or an error if the wallet is watch-only or path is invalid
-    pub fn derive_private_key(&self, path: &crate::DerivationPath) -> Result<secp256k1::SecretKey> {
+    /// The private key, or an error if the wallet is watch-only or the path
+    /// is invalid.
+    pub fn derive_private_key(&self, path: &crate::DerivationPath) -> Result<EcdsaSecretKey> {
         let extended = self.derive_extended_private_key(path)?;
-        Ok(extended.private_key)
+        Ok(extended.private_key.clone())
     }
 
     /// Derive a private key at a specific derivation path and return as WIF
@@ -430,12 +430,7 @@ impl Wallet {
         let private_key = self.derive_private_key(path)?;
 
         // Convert to WIF format
-        use dashcore::PrivateKey as DashPrivateKey;
-        let dash_key = DashPrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: private_key,
-        };
+        let dash_key = dashcore::PrivateKey::new(private_key, self.network);
         Ok(dash_key.to_wif())
     }
 
@@ -461,8 +456,6 @@ impl Wallet {
         &self,
         path: &crate::DerivationPath,
     ) -> Result<crate::bip32::ExtendedPubKey> {
-        use secp256k1::Secp256k1;
-
         // Check if the path contains hardened derivation
         let has_hardened = path.into_iter().any(|child| child.is_hardened());
 
@@ -476,8 +469,7 @@ impl Wallet {
             // For hardened paths, derive the extended private key first, then get extended public key
             let extended_private = self.derive_extended_private_key(path)?;
             use crate::bip32::ExtendedPubKey;
-            let secp = Secp256k1::new();
-            Ok(ExtendedPubKey::from_priv(&secp, &extended_private))
+            Ok(ExtendedPubKey::from_priv(&extended_private))
         } else {
             // For non-hardened paths, derive from the root public key. Watch-only and
             // external-signable unit variants have no root key on hand — surface a
@@ -491,9 +483,8 @@ impl Wallet {
                         .to_string(),
                 )
             })?;
-            let secp = Secp256k1::new();
             let xpub = root_xpub.to_extended_pub_key(self.network);
-            xpub.derive_pub(&secp, path).map_err(|e| e.into())
+            xpub.derive_pub(path).map_err(|e| e.into())
         }
     }
 
@@ -507,9 +498,9 @@ impl Wallet {
     /// * `path` - The derivation path (e.g., "m/44'/5'/0'/0/0")
     ///
     /// # Returns
-    /// The public key (secp256k1::PublicKey), or an error if the path cannot be
-    /// derived for this wallet type.
-    pub fn derive_public_key(&self, path: &crate::DerivationPath) -> Result<secp256k1::PublicKey> {
+    /// The public key, or an error if the path cannot be derived for this
+    /// wallet type.
+    pub fn derive_public_key(&self, path: &crate::DerivationPath) -> Result<EcdsaPublicKey> {
         // Check if the path contains hardened derivation
         let has_hardened = path.into_iter().any(|child| child.is_hardened());
 
@@ -522,9 +513,8 @@ impl Wallet {
         if has_hardened {
             // For hardened paths, derive the private key first, then get public key
             let private_key = self.derive_private_key(path)?;
-            use secp256k1::Secp256k1;
-            let secp = Secp256k1::new();
-            Ok(secp256k1::PublicKey::from_secret_key(&secp, &private_key))
+
+            Ok(private_key.public_key())
         } else {
             // For non-hardened paths, derive directly from public key
             let extended = self.derive_extended_public_key(path)?;
@@ -549,8 +539,8 @@ impl Wallet {
         let public_key = self.derive_public_key(path)?;
 
         // Return as hex string
-        let serialized = public_key.serialize(); // compressed
-        Ok(hex::encode(serialized))
+        let serialized = public_key.to_compressed();
+        Ok(serialized.to_lower_hex_string())
     }
 
     /// Get the extended public key for a specific account type

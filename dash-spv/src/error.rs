@@ -1,5 +1,7 @@
 //! Error types for the Dash SPV client.
 
+use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
+use dashcore::QuorumHash;
 use std::io;
 use thiserror::Error;
 
@@ -63,6 +65,9 @@ pub enum NetworkError {
 
     #[error("Address parse error: {0}")]
     AddressParse(String),
+
+    #[error("V2 handshake failed: {0}")]
+    V2HandshakeFailed(String),
 }
 
 /// Storage-related errors.
@@ -99,6 +104,15 @@ pub enum ValidationError {
     #[error("Invalid proof of work")]
     InvalidProofOfWork,
 
+    #[error(
+        "Invalid difficulty at height {height}: bits {actual:#010x}, required {required:#010x}"
+    )]
+    InvalidDifficulty {
+        height: u32,
+        actual: u32,
+        required: u32,
+    },
+
     #[error("Invalid header chain: {0}")]
     InvalidHeaderChain(String),
 
@@ -110,6 +124,12 @@ pub enum ValidationError {
 
     #[error("Invalid filter header chain: {0}")]
     InvalidFilterHeaderChain(String),
+
+    #[error("Invalid merkle root: {0}")]
+    InvalidMerkleRoot(String),
+
+    #[error("Quorum {0} is not verified: {1}")]
+    QuorumNotVerified(QuorumHash, LLMQEntryVerificationStatus),
 }
 
 /// Synchronization-related errors.

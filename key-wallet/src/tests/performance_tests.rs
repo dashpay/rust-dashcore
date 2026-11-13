@@ -7,7 +7,6 @@ use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
 use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
 use crate::Network;
-use secp256k1::Secp256k1;
 use std::time::{Duration, Instant};
 
 /// Performance metrics structure
@@ -56,8 +55,7 @@ impl PerformanceMetrics {
 fn test_key_derivation_performance() {
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
-    let secp = Secp256k1::new();
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     let iterations = 1000;
     let mut times = Vec::new();
@@ -72,7 +70,7 @@ fn test_key_derivation_performance() {
         ]);
 
         let start = Instant::now();
-        let _key = master.derive_priv(&secp, &path).unwrap();
+        let _key = master.derive_priv(&path).unwrap();
         times.push(start.elapsed());
     }
 
@@ -158,43 +156,6 @@ fn test_wallet_recovery_performance() {
 }
 
 #[test]
-fn test_address_generation_batch_performance() {
-    use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
-
-    let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
-    let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
-
-    let secp = Secp256k1::new();
-    let account_path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(44).unwrap(),
-        ChildNumber::from_hardened_idx(5).unwrap(),
-        ChildNumber::from_hardened_idx(0).unwrap(),
-    ]);
-    let account_key = master.derive_priv(&secp, &account_path).unwrap();
-    let key_source = KeySource::Private(account_key);
-
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
-    let mut pool =
-        AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet, &key_source)
-            .unwrap();
-
-    // Batch generation test
-    let batch_sizes = vec![10, 50, 100, 500];
-
-    for batch_size in batch_sizes {
-        let start = Instant::now();
-        let _addresses = pool.generate_addresses(batch_size, &key_source, true).unwrap();
-        let elapsed = start.elapsed();
-
-        let ops_per_second = batch_size as f64 / elapsed.as_secs_f64();
-
-        // Assert batch performance
-        assert!(ops_per_second > 100.0, "Should generate >100 addresses/sec");
-    }
-}
-
-#[test]
 fn test_large_wallet_memory_usage() {
     let mut wallet = Wallet::new_random(
         Network::Testnet,
@@ -229,7 +190,7 @@ fn test_concurrent_derivation_performance() {
 
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
-    let master = Arc::new(ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap());
+    let master = Arc::new(ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap());
 
     let num_threads = 4;
     let iterations_per_thread = 250;
@@ -241,7 +202,6 @@ fn test_concurrent_derivation_performance() {
         let master_clone = Arc::clone(&master);
 
         let handle = thread::spawn(move || {
-            let secp = Secp256k1::new();
             let mut times = Vec::new();
 
             for i in 0..iterations_per_thread {
@@ -253,7 +213,7 @@ fn test_concurrent_derivation_performance() {
                 ]);
 
                 let thread_start = Instant::now();
-                let _key = master_clone.derive_priv(&secp, &path).unwrap();
+                let _key = master_clone.derive_priv(&path).unwrap();
                 times.push(thread_start.elapsed());
             }
 
@@ -307,15 +267,14 @@ fn test_gap_limit_scan_performance() {
 
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
-    let secp = Secp256k1::new();
     let account_path = DerivationPath::from(vec![
         ChildNumber::from_hardened_idx(44).unwrap(),
         ChildNumber::from_hardened_idx(5).unwrap(),
         ChildNumber::from_hardened_idx(0).unwrap(),
     ]);
-    let account_key = master.derive_priv(&secp, &account_path).unwrap();
+    let account_key = master.derive_priv(&account_path).unwrap();
     let key_source = KeySource::Private(account_key);
 
     let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
@@ -346,8 +305,7 @@ fn test_worst_case_derivation_path() {
     // Test performance with maximum depth derivation path
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
-    let secp = Secp256k1::new();
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     // Build a very deep path
     let mut path = DerivationPath::master();
@@ -360,7 +318,7 @@ fn test_worst_case_derivation_path() {
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let _key = master.derive_priv(&secp, &path).unwrap();
+        let _key = master.derive_priv(&path).unwrap();
         times.push(start.elapsed());
     }
 

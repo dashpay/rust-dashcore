@@ -1,0 +1,19 @@
+description: "3 ideal local peers behind an unstable, bufferbloated client link: ~700ms idle RTT, a download rate that swings from 80 Mbit to near zero for minutes, and a queue deep enough to hold tens of MB. Modelled on a real run that kicked peers in a loop."
+cpus: "0-3"
+max_peers: 3
+peers:
+  - { count: 3 }
+
+client:
+  latency_ms: 650
+  jitter_ms: 150
+  rate_kbit: 16000
+  limit_pkts: 25000
+  rate_profile:
+    - { secs: 60, rate_kbit: 16000 }
+    - { secs: 30, rate_kbit: 2400 }
+    - { secs: 45, rate_kbit: 80000 }
+    - { secs: 20, rate_kbit: 800 }
+    - { secs: 60, rate_kbit: 24000 }
+    - { secs: 90, rate_kbit: 100 }
+    - { secs: 40, rate_kbit: 8000 }

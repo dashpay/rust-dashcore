@@ -14,7 +14,6 @@ use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
 use dashcore::hash_types::{MerkleRootMasternodeList, MerkleRootQuorums};
-use dashcore::hashes::Hash;
 use dashcore::sml::masternode_list_entry::MasternodeNetInfo;
 use dashcore::test_utils::UNASSIGNED_SPECIAL_TX_TYPE;
 use dashcore::Txid;

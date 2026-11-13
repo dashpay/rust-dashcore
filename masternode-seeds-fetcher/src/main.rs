@@ -33,13 +33,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::peer::Peer;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use dash_network_seeds::{
     CoreStatus, MasternodeSeed, MasternodeType, PlatformStatus, Reachability,
 };
-use dash_spv::network::Peer;
-use dashcore::hashes::Hash;
 use dashcore::network::Address;
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
@@ -53,6 +52,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
+mod peer;
 mod probe;
 
 // ---------- CLI ----------
@@ -231,7 +231,7 @@ async fn gather_candidate_peers(
     let mut list: Vec<SocketAddr> = out.into_iter().collect();
     // Shuffle so we do not always hit the same peer first across runs.
     use rand::seq::SliceRandom;
-    list.shuffle(&mut rand::thread_rng());
+    list.shuffle(&mut rand::rng());
     list.truncate(max.saturating_mul(4).max(max));
     list
 }
@@ -256,7 +256,7 @@ async fn fetch_from_peer(peer_addr: SocketAddr, network: Network) -> Result<MnLi
     .with_context(|| format!("sending getmnlistd to {}", peer_addr))?;
 
     let diff = wait_for_message(&mut peer, Duration::from_secs(120), |m| match m {
-        NetworkMessage::MnListDiff(d) => Some(d.clone()),
+        NetworkMessage::MnListDiff(d) => Some((**d).clone()),
         _ => None,
     })
     .await
@@ -375,7 +375,6 @@ where
                     | NetworkMessage::SendHeaders2
                     | NetworkMessage::SendCmpct(_)
                     | NetworkMessage::SendAddrV2
-                    | NetworkMessage::WtxidRelay
                     | NetworkMessage::FeeFilter(_)
                     | NetworkMessage::SendDsq(_) => { /* ignore */ }
                     _ => {}

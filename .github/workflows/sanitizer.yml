@@ -8,22 +8,22 @@ on:
       - dev
   pull_request:
     paths:
-      - 'key-wallet-ffi/**'
-      - 'dash-spv-ffi/**'
-      - 'dashcore/**'
-      - 'dashcore_hashes/**'
+      - 'dash/**'
+      - 'hashes/**'
+      - 'crypto/**'
+      - 'internals/**'
+      - 'dash-network/**'
       - 'key-wallet/**'
+      - 'key-wallet-manager/**'
       - 'dash-spv/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/sanitizer.yml'
+      - 'Justfile'
+      - 'mod.just'
 
 permissions:
   contents: read
-
-# Pinned nightly: nightly-2026-07-14 (rustc daf2e5e18) ICEs while expanding the
-# libtest harness for dash-spv-ffi ("attribute is missing tokens:
-# rustc_test_entrypoint_marker" in rustc_ast/src/attr/mod.rs). Bump or restore
-# the floating `nightly` once a fixed nightly ships.
-env:
-  SANITIZER_TOOLCHAIN: nightly-2026-07-13
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,45 +34,30 @@ jobs:
     name: Address Sanitizer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: ${{ env.SANITIZER_TOOLCHAIN }}
           components: rust-src
 
-      - name: Run tests with ASAN
-        env:
-          RUST_BACKTRACE: 1
-          RUSTFLAGS: "-Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes"
-          ASAN_OPTIONS: "symbolize=1:allow_addr2line=1"
-          LSAN_OPTIONS: "fast_unwind_on_malloc=0"
-          SKIP_DASHD_TESTS: 1
-        run: |
-          # FFI crates (C interop)
-          cargo "+$SANITIZER_TOOLCHAIN" test -Zbuild-std --target x86_64-unknown-linux-gnu \
-            -p key-wallet-ffi -p dash-spv-ffi --lib --tests
+      - uses: taiki-e/install-action@v2.89.1
+        with:
+          tool: just
 
-          # Core crypto crates (unsafe optimizations)
-          cargo "+$SANITIZER_TOOLCHAIN" test -Zbuild-std --target x86_64-unknown-linux-gnu \
-            -p dashcore -p dashcore_hashes --lib --tests
+      - name: Run tests with ASAN
+        run: just asan
 
   tsan:
     name: Thread Sanitizer
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: ${{ env.SANITIZER_TOOLCHAIN }}
           components: rust-src
 
+      - uses: taiki-e/install-action@v2.89.1
+        with:
+          tool: just
+
       - name: Run tests with TSAN
-        env:
-          RUST_BACKTRACE: 1
-          RUSTFLAGS: "-Zsanitizer=thread -Cdebuginfo=2"
-          TSAN_OPTIONS: "second_deadlock_stack=1"
-          SKIP_DASHD_TESTS: 1
-        run: |
-          # Async crate with concurrent code
-          cargo "+$SANITIZER_TOOLCHAIN" test -Zbuild-std --target x86_64-unknown-linux-gnu \
-            -p dash-spv --lib --tests
+        run: just tsan

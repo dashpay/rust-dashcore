@@ -1,7 +1,10 @@
-use dash_spv::sync::{MasternodesProgress, SyncEvent, SyncProgress, SyncState};
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use dash_spv::test_utils::{BlockHeaderStorage, MasternodeListEngine};
+use dash_spv::{MasternodesProgress, SyncEvent, SyncProgress, SyncState};
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Txid;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet_manager::WalletEvent;
@@ -11,6 +14,82 @@ use tokio::sync::{broadcast, watch};
 use tokio::time;
 
 use super::setup::{TestContext, SYNC_TIMEOUT};
+
+/// Files under each top-level entry of the storage at `root`, a top-level file counting as one.
+pub(super) fn storage_snapshot(root: &Path) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return counts;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let files = if path.is_dir() {
+            walkdir_count(&path)
+        } else {
+            1
+        };
+        counts.insert(entry.file_name().to_string_lossy().into_owned(), files);
+    }
+    counts
+}
+
+fn walkdir_count(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|e| {
+            let path = e.path();
+            if path.is_dir() {
+                walkdir_count(&path)
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
+    ("block_headers", "headers synced to the tip"),
+    ("filter_headers", "filter headers synced to the tip"),
+    ("metadata", "sync checkpoints"),
+    ("version.json", "the storage version system"),
+    ("masternodes", "the masternode engine snapshot this session stored"),
+];
+
+pub(super) fn assert_storage_persisted(snapshot: &BTreeMap<String, usize>, what: &str) {
+    let missing: Vec<String> = EXPECTED_STORAGE
+        .iter()
+        .filter(|(dir, _)| snapshot.get(*dir).is_none_or(|files| *files == 0))
+        .map(|(dir, why)| format!("  {dir}/ — {why}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{what}: {} storage director{} empty or absent after a clean shutdown:\n{}\n\nstorage holds {snapshot:?}",
+        missing.len(),
+        if missing.len() == 1 { "y is" } else { "ies are" },
+        missing.join("\n"),
+    );
+}
+
+pub(super) fn assert_storage_did_not_shrink(
+    before: &BTreeMap<String, usize>,
+    after: &BTreeMap<String, usize>,
+    what: &str,
+) {
+    for (dir, before_count) in before {
+        match after.get(dir) {
+            None => panic!(
+                "{what}: storage directory {dir:?} disappeared across the restart\n  before: {before:?}\n  after:  {after:?}"
+            ),
+            Some(after_count) if after_count < before_count => panic!(
+                "{what}: storage directory {dir:?} shrank across the restart, {before_count} -> {after_count}\n  before: {before:?}\n  after:  {after:?}"
+            ),
+            Some(_) => {}
+        }
+    }
+}
 
 /// Mine a DKG cycle and wait for the SPV to surface a `MasternodeStateUpdated`
 /// event above `baseline_height`.
@@ -24,8 +103,10 @@ pub(super) async fn mine_dkg_cycle_and_wait(
 }
 
 /// Assert every rotated quorum across all stored cycles is `Verified`.
-pub(super) fn assert_all_rotated_quorums_verified(engine: &MasternodeListEngine) {
-    for (cycle_key, cycle_quorums) in &engine.rotated_quorums_per_cycle {
+pub(super) fn assert_all_rotated_quorums_verified<H: BlockHeaderStorage>(
+    engine: &MasternodeListEngine<H>,
+) {
+    for (cycle_key, cycle_quorums) in engine.rotated_quorums_per_cycle() {
         for (idx, entry) in cycle_quorums {
             assert!(
                 matches!(entry.verified, LLMQEntryVerificationStatus::Verified),

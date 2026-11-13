@@ -61,9 +61,9 @@ use serde;
 use crate::blockdata::opcodes::all::*;
 use crate::blockdata::opcodes::{self};
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::hash_types::{ScriptHash, WScriptHash};
+use crate::hash_types::ScriptHash;
+use crate::io;
 use crate::prelude::*;
-use crate::{OutPoint, io};
 
 mod borrowed;
 mod builder;
@@ -344,24 +344,6 @@ impl From<&Script> for ScriptHash {
     }
 }
 
-impl From<ScriptBuf> for WScriptHash {
-    fn from(script: ScriptBuf) -> WScriptHash {
-        script.wscript_hash()
-    }
-}
-
-impl From<&ScriptBuf> for WScriptHash {
-    fn from(script: &ScriptBuf) -> WScriptHash {
-        script.wscript_hash()
-    }
-}
-
-impl From<&Script> for WScriptHash {
-    fn from(script: &Script) -> WScriptHash {
-        script.wscript_hash()
-    }
-}
-
 impl AsRef<Script> for Script {
     #[inline]
     fn as_ref(&self) -> &Script {
@@ -585,8 +567,6 @@ impl<'de> serde::Deserialize<'de> for ScriptBuf {
     {
         use core::fmt::Formatter;
 
-        use hashes::hex::FromHex;
-
         if deserializer.is_human_readable() {
             struct Visitor;
             impl<'de> serde::de::Visitor<'de> for Visitor {
@@ -600,7 +580,7 @@ impl<'de> serde::Deserialize<'de> for ScriptBuf {
                 where
                     E: serde::de::Error,
                 {
-                    let v = Vec::from_hex(v).map_err(E::custom)?;
+                    let v = hex_conservative::decode_to_vec(v).map_err(E::custom)?;
                     Ok(ScriptBuf::from(v))
                 }
             }
@@ -690,9 +670,7 @@ pub fn bytes_to_asm_fmt(script: &[u8], f: &mut dyn fmt::Write) -> fmt::Result {
     while let Some(byte) = iter.next() {
         let opcode = opcodes::All::from(*byte);
 
-        let data_len = if let opcodes::Class::PushBytes(n) =
-            opcode.classify(opcodes::ClassifyContext::Legacy)
-        {
+        let data_len = if let opcodes::Class::PushBytes(n) = opcode.classify() {
             n as usize
         } else {
             match opcode {
@@ -727,9 +705,9 @@ pub fn bytes_to_asm_fmt(script: &[u8], f: &mut dyn fmt::Write) -> fmt::Result {
         if data_len > 0 {
             f.write_str(" ")?;
             if data_len <= iter.len() {
-                for ch in iter.by_ref().take(data_len) {
-                    write!(f, "{:02x}", ch)?;
-                }
+                let (data, rest) = iter.as_slice().split_at(data_len);
+                write!(f, "{:x}", data.as_hex())?;
+                iter = rest.iter();
             } else {
                 f.write_str("<push past end>")?;
                 break;
@@ -752,33 +730,15 @@ pub enum Error {
     EarlyEndOfScript,
     /// Tried to read an array off the stack as a number when it was more than 4 bytes.
     NumericOverflow,
-    /// Error validating the script with bitcoinconsensus library.
-    #[cfg(feature = "bitcoinconsensus")]
-    BitcoinConsensus(bitcoinconsensus::Error),
-    /// Can not find the spent output.
-    UnknownSpentOutput(OutPoint),
-    /// Can not serialize the spending transaction.
-    Serialization,
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        #[cfg(feature = "bitcoinconsensus")]
-        use internals::write_err;
-
         match *self {
             Error::NonMinimalPush => f.write_str("non-minimal datapush"),
             Error::EarlyEndOfScript => f.write_str("unexpected end of script"),
             Error::NumericOverflow => {
                 f.write_str("numeric overflow (number on stack larger than 4 bytes)")
-            }
-            #[cfg(feature = "bitcoinconsensus")]
-            Error::BitcoinConsensus(ref e) => {
-                write_err!(f, "bitcoinconsensus verification failed"; e)
-            }
-            Error::UnknownSpentOutput(ref point) => write!(f, "unknown spent output: {}", point),
-            Error::Serialization => {
-                f.write_str("can not serialize the spending transaction in Transaction::verify()")
             }
         }
     }
@@ -789,13 +749,7 @@ impl std::error::Error for Error {
         use self::Error::*;
 
         match *self {
-            NonMinimalPush
-            | EarlyEndOfScript
-            | NumericOverflow
-            | UnknownSpentOutput(_)
-            | Serialization => None,
-            #[cfg(feature = "bitcoinconsensus")]
-            BitcoinConsensus(_) => None,
+            NonMinimalPush | EarlyEndOfScript | NumericOverflow => None,
         }
     }
 }
@@ -813,13 +767,5 @@ impl From<UintError> for Error {
             UintError::EarlyEndOfScript => Error::EarlyEndOfScript,
             UintError::NumericOverflow => Error::NumericOverflow,
         }
-    }
-}
-
-#[cfg(feature = "bitcoinconsensus")]
-#[doc(hidden)]
-impl From<bitcoinconsensus::Error> for Error {
-    fn from(err: bitcoinconsensus::Error) -> Error {
-        Error::BitcoinConsensus(err)
     }
 }

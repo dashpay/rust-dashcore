@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use bincode_derive::{Decode, Encode};
 use core::fmt;
 use core::str::FromStr;
-use dashcore_hashes::hex::FromHex;
+use hex_conservative::DisplayHex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zeroize::Zeroize;
@@ -53,19 +53,14 @@ impl Seed {
 
     /// Create a seed from hex string
     pub fn from_hex(hex_str: &str) -> Result<Self> {
-        let bytes = Vec::<u8>::from_hex(hex_str)
+        let bytes = hex_conservative::decode_to_vec(hex_str)
             .map_err(|e| Error::InvalidParameter(format!("Invalid hex: {}", e)))?;
         Self::from_slice(&bytes)
     }
 
     /// Convert to hex string
     pub fn to_hex(&self) -> String {
-        use core::fmt::Write;
-        let mut s = String::new();
-        for byte in &self.0 {
-            write!(&mut s, "{:02x}", byte).unwrap();
-        }
-        s
+        self.0.to_lower_hex_string()
     }
 
     /// Check if the seed is all zeros (empty/invalid)
@@ -77,7 +72,7 @@ impl Seed {
     #[cfg(feature = "getrandom")]
     pub fn random() -> Result<Self> {
         let mut bytes = [0u8; 64];
-        getrandom::getrandom(&mut bytes).map_err(|e| {
+        getrandom::fill(&mut bytes).map_err(|e| {
             Error::InvalidParameter(format!("Failed to generate random seed: {}", e))
         })?;
         Ok(Self(bytes))
@@ -117,17 +112,7 @@ impl fmt::Debug for Seed {
 
 impl fmt::Display for Seed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Show first and last 4 bytes in hex
-        use core::fmt::Write;
-        let mut start = String::new();
-        let mut end = String::new();
-        for byte in &self.0[..4] {
-            write!(&mut start, "{:02x}", byte).unwrap();
-        }
-        for byte in &self.0[60..] {
-            write!(&mut end, "{:02x}", byte).unwrap();
-        }
-        write!(f, "Seed({}...{})", start, end)
+        fmt::Debug::fmt(self, f)
     }
 }
 
@@ -259,7 +244,7 @@ mod tests {
 
         let seed = Seed::new(bytes);
         let display = format!("{}", seed);
-        assert_eq!(display, "Seed(deadbeef...cafebabe)");
+        assert_eq!(display, "Seed(***)");
 
         let debug = format!("{:?}", seed);
         assert_eq!(debug, "Seed(***)");

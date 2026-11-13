@@ -64,7 +64,8 @@ ManagedCoreFundsAccount (Mutable)
 ├── balance: WalletCoreBalance
 ├── transactions: BTreeMap<Txid, TransactionRecord>
 ├── utxos: BTreeMap<OutPoint, Utxo>
-└── spent_outpoints: HashSet<OutPoint>  // private, rebuilt on deserialization
+├── spent_outpoints: HashSet<OutPoint>  // private, rebuilt on deserialization
+└── claim_guarded_outputs: BTreeMap<OutPoint, Utxo>  // not serialized; outputs a wallet-level claim (ManagedWalletInfo::spent_claims, see restore_spent_outpoints) keeps out of utxos, for input matching
 ```
 
 ### Address Pool Architecture
@@ -173,7 +174,6 @@ Tests are organized by functionality:
 - `src/tests/edge_case_tests.rs`: Edge case coverage
 - `src/tests/performance_tests.rs`: Performance benchmarks
 - `src/mnemonic_tests.rs`: Mnemonic generation and validation
-- `src/bip38_tests.rs`: BIP38 encryption/decryption
 
 ### Test Patterns
 
@@ -367,23 +367,7 @@ managed_account.mark_addresses_used(&tx);
 
 ## Common Integration Points
 
-### 1. FFI Bindings (key-wallet-ffi)
-```rust
-// Expose safe C interfaces
-#[no_mangle]
-pub extern "C" fn wallet_from_mnemonic(
-    mnemonic: *const c_char,
-    network: u8
-) -> *mut Wallet
-```
-
-### 2. Swift Integration
-```swift
-// Swift SDK uses the FFI bindings
-let wallet = DashWallet(mnemonic: "...", network: .mainnet)
-```
-
-### 3. RPC Integration
+### 1. RPC Integration
 ```rust
 // Sync with Dash Core node
 let client = RpcClient::new(url)?;
@@ -420,10 +404,9 @@ println!("Checking accounts: {:?}", relevant_accounts);
 ## Future Considerations
 
 ### Planned Improvements
-1. **Schnorr/Taproot Support**: Preparation for future Dash upgrades
-2. **Descriptor Wallets**: Support for output script descriptors
-3. **Multi-signature**: Native multisig account types
-4. **Lightning Network**: Payment channel key management
+1. **Descriptor Wallets**: Support for output script descriptors
+2. **Multi-signature**: Native multisig account types
+3. **Lightning Network**: Payment channel key management
 
 ### Maintenance Guidelines
 1. Keep test vectors updated with Dash Core
@@ -451,7 +434,7 @@ The crate uses a custom `Error` type with specific variants:
 
 ## Version Compatibility
 
-- Minimum Supported Rust Version (MSRV): 1.89
+- Minimum Supported Rust Version (MSRV): `rust-version` in the workspace `Cargo.toml`
 - Compatible with Dash Core: 0.18.0 - 0.23.x
 - Follows semantic versioning (currently 0.x.x = unstable API)
 

@@ -37,7 +37,7 @@ const PRO_REG_TX: &str = "0300010001ca9a43051750da7c5f858008f2ff7732d15691e48eb7
 const NOT_CONSUMED: &str = "data not consumed entirely when explicitly deserializing";
 
 fn hex_bytes(hex: &str) -> Vec<u8> {
-    hex::decode(hex).expect("vector is hex")
+    hex_conservative::decode_to_vec(hex).expect("vector is hex")
 }
 
 fn tx_bytes(parts: &[&str]) -> Vec<u8> {

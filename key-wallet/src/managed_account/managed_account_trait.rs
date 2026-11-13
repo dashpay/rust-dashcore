@@ -7,6 +7,12 @@
 
 use std::collections::BTreeMap;
 
+#[cfg(feature = "bls")]
+use dashcore::bls_sig_utils::{BLSPublicKey, BlsScheme};
+#[cfg(feature = "eddsa")]
+use dashcore::eddsa::{EddsaPkBytes, EddsaPublicKey};
+use dashcore::{Address, ScriptBuf, Txid};
+
 use crate::account::TransactionRecord;
 #[cfg(feature = "bls")]
 use crate::derivation_bls_bip32::ExtendedBLSPubKey;
@@ -18,7 +24,6 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::AddressInfo;
 use crate::ExtendedPubKey;
 use crate::Network;
-use dashcore::{Address, ScriptBuf, Txid};
 
 /// Common trait for "core" managed account types — both funds-bearing
 /// (`ManagedCoreFundsAccount`) and keys-only (`ManagedCoreKeysAccount`).
@@ -400,7 +405,7 @@ pub trait ManagedAccountTrait {
         &mut self,
         account_xpub: Option<ExtendedBLSPubKey>,
         add_to_state: bool,
-    ) -> Result<dashcore::blsful::PublicKey<dashcore::blsful::Bls12381G2Impl>, &'static str> {
+    ) -> Result<BLSPublicKey, &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderOperatorKeys {
                 addresses,
@@ -421,14 +426,12 @@ pub trait ManagedAccountTrait {
 
                 addresses.mark_index_used(info.index);
 
-                use dashcore::blsful::{Bls12381G2Impl, PublicKey, SerializationFormat};
-                let public_key = PublicKey::<Bls12381G2Impl>::from_bytes_with_mode(
-                    &pub_key_bytes,
-                    SerializationFormat::Modern,
-                )
-                .map_err(|_| "Failed to deserialize BLS public key")?;
-
-                Ok(public_key)
+                BLSPublicKey::try_from(pub_key_bytes.as_slice())
+                    .map_err(|_| "BLS public key was not 48 bytes")?
+                    .as_scheme(BlsScheme::Modern)
+                    .canonicalize()
+                    .map(BLSPublicKey::from)
+                    .map_err(|_| "Failed to deserialize BLS public key")
             }
             _ => Err("This method only works for ProviderOperatorKeys accounts"),
         }
@@ -440,7 +443,7 @@ pub trait ManagedAccountTrait {
         &mut self,
         account_xpriv: crate::derivation_slip10::ExtendedEd25519PrivKey,
         add_to_state: bool,
-    ) -> Result<(crate::derivation_slip10::VerifyingKey, AddressInfo), &'static str> {
+    ) -> Result<(EddsaPkBytes, AddressInfo), &'static str> {
         match self.managed_account_type_mut() {
             ManagedAccountType::ProviderPlatformKeys {
                 addresses,
@@ -458,10 +461,11 @@ pub trait ManagedAccountTrait {
 
                 addresses.mark_index_used(info.index);
 
-                let verifying_key = crate::derivation_slip10::VerifyingKey::from_bytes(
-                    &pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
-                )
-                .map_err(|_| "Failed to deserialize EdDSA public key")?;
+                let verifying_key = EddsaPkBytes::from_bytes(
+                    pub_key_bytes.try_into().map_err(|_| "Invalid EdDSA public key length")?,
+                );
+                EddsaPublicKey::try_from(verifying_key)
+                    .map_err(|_| "Failed to deserialize EdDSA public key")?;
 
                 Ok((verifying_key, info))
             }
@@ -488,13 +492,12 @@ pub trait ManagedAccountTrait {
 
         pool.mark_index_used(info.index);
 
-        let secp = secp256k1::Secp256k1::new();
         let root_ext_priv = root_xpriv.to_extended_priv_key(network);
         let derived_xpriv =
-            root_ext_priv.derive_priv(&secp, &info.path).map_err(|_| "Key derivation failed")?;
+            root_ext_priv.derive_priv(&info.path).map_err(|_| "Key derivation failed")?;
 
         let mut private_key = [0u8; 32];
-        private_key.copy_from_slice(&derived_xpriv.private_key[..]);
+        private_key.copy_from_slice(&derived_xpriv.private_key.to_bytes()[..]);
         Ok(private_key)
     }
 

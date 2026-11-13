@@ -1,42 +1,52 @@
 [package]
 name = "dashcore_hashes"
-version = { workspace = true}
-authors = ["Samuel Westrich <sam@dash.org>"]
-license = "CC0-1.0"
-repository = "https://github.com/rust-dashcore/dash_hashes/"
-documentation = "https://docs.rs/dash_hashes/"
 description = "Hash functions used by the rust-dash eccosystem"
-categories = ["algorithms"]
-keywords = [ "crypto", "dash", "hash", "digest" ]
-readme = "README.md"
+authors = ["Samuel Westrich <sam@dash.org>"]
 edition = "2021"
+categories = ["algorithms"]
+keywords = ["crypto", "dash", "hash", "digest"]
+readme = "README.md"
 exclude = ["tests", "contrib"]
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 default = []
-schemars = ["actual-schemars"]
-serde-std = ["serde/std"]
-x11 = ["rs-x11-hash"]
+serde = ["dep:serde", "bitcoin_hashes/serde"]
+serde-std = ["serde", "serde/std"]
+x11 = ["dep:dash-pow"]
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-internals = { path = "../internals", package = "dashcore-private" }
-
-# Only enable this if you explicitly do not want to use "std", otherwise enable "serde-std".
-serde = { version = "1.0.219", default-features = false, optional = true }
-# Do NOT use this as a feature! Use the `schemars` feature instead. Can only be used with "std" enabled.
-actual-schemars = { package = "schemars", version = "1.0", optional = true }
-
-rs-x11-hash = { version = "0.1.8", optional = true }
 bincode = { workspace = true, optional = true }
+bitcoin_hashes = { workspace = true, features = ["std", "hex"] }
+hex-conservative = { workspace = true }
+serde = { workspace = true, optional = true }
+
+# `dash-pow` supports hardware acceleration on platforms that meet system requirements. All other platforms must use `portable`.
+dash-pow = { workspace = true, optional = true }
+
+[target.'cfg(all(target_arch = "aarch64", not(all(target_feature = "neon", target_feature = "aes"))))'.dependencies]
+dash-pow = { workspace = true, optional = true, features = ["portable"] }
+
+[target.'cfg(all(target_arch = "x86_64", not(all(target_feature = "aes", target_feature = "avx", target_feature = "avx2", target_feature = "bmi1", target_feature = "bmi2", target_feature = "f16c", target_feature = "fma", target_feature = "lzcnt", target_feature = "movbe", target_feature = "xsave"))))'.dependencies]
+dash-pow = { workspace = true, optional = true, features = ["portable"] }
+
+[target.'cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))'.dependencies]
+dash-pow = { workspace = true, optional = true, features = ["portable"] }
+
+[target.'cfg(not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "wasm32")))'.dependencies]
+dash-pow = { workspace = true, optional = true, features = ["portable"] }
 
 [dev-dependencies]
-serde_test = "1.0"
-criterion = "0.5"
-test-case = "3.3"
+serde_test = { workspace = true }
+criterion = { workspace = true }
+test-case = { workspace = true }
 
 [target.wasm32-unknown-unknown.dev-dependencies]
 wasm-bindgen-test = "0.3"
@@ -49,5 +59,10 @@ harness = false
 name = "siphash"
 harness = false
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bench)', 'cfg(fuzzing)'] }
+[[bench]]
+name = "x11"
+harness = false
+required-features = ["x11"]
+
+[lints]
+workspace = true

@@ -12,7 +12,7 @@ listAllTargetFiles() {
 
 listTargetFiles() {
   # Exclude targets that don't work in CI
-  listAllTargetFiles | grep -v 'deserialize_transaction\|deserialize_prefilled_transaction\|deserialize_psbt'
+  listAllTargetFiles | grep -v 'deserialize_transaction\|deserialize_prefilled_transaction'
 }
 
 targetFileToName() {

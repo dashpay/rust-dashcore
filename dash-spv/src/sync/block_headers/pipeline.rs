@@ -4,15 +4,14 @@
 //! downloaded in parallel from multiple peers. Each segment tracks its own
 //! progress and buffers headers until ready for ordered storage.
 
-use std::sync::Arc;
-
 #[cfg(test)]
 use dashcore::block::Header;
 use dashcore::BlockHash;
+use std::sync::Arc;
 
 use crate::chain::CheckpointManager;
 use crate::error::SyncResult;
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::sync::block_headers::segment_state::SegmentState;
 use crate::types::HashedBlockHeader;
 
@@ -30,7 +29,7 @@ pub struct HeadersPipeline {
     /// Index of the next segment to store (all previous must be complete).
     next_to_store: usize,
     /// Checkpoint manager reference.
-    checkpoint_manager: Arc<CheckpointManager>,
+    checkpoint_manager: &'static CheckpointManager,
     /// Whether the pipeline has been initialized.
     initialized: bool,
 }
@@ -47,7 +46,7 @@ impl std::fmt::Debug for HeadersPipeline {
 
 impl HeadersPipeline {
     /// Create a new headers pipeline with the given checkpoint manager.
-    pub fn new(checkpoint_manager: Arc<CheckpointManager>) -> Self {
+    pub fn new(checkpoint_manager: &'static CheckpointManager) -> Self {
         Self {
             segments: Vec::new(),
             next_to_store: 0,
@@ -62,9 +61,6 @@ impl HeadersPipeline {
         self.next_to_store = 0;
         self.initialized = true;
 
-        // Get checkpoint heights and find which ones are relevant
-        let checkpoint_heights = self.checkpoint_manager.checkpoint_heights();
-
         // Find checkpoints between current_height and target_height
         let mut boundaries: Vec<(u32, BlockHash)> = Vec::new();
 
@@ -72,11 +68,10 @@ impl HeadersPipeline {
         boundaries.push((current_height, current_hash));
 
         // Add checkpoints that are above current_height
-        for &height in checkpoint_heights {
+        for checkpoint in self.checkpoint_manager.checkpoints() {
+            let height = checkpoint.height();
             if height > current_height && height <= target_height {
-                if let Some(cp) = self.checkpoint_manager.get_checkpoint(height) {
-                    boundaries.push((height, cp.block_hash));
-                }
+                boundaries.push((height, *checkpoint.hash()));
             }
         }
 
@@ -121,20 +116,18 @@ impl HeadersPipeline {
         self.segments.len()
     }
 
-    /// Send pending requests for active segments.
-    /// Returns the number of requests sent.
-    pub fn send_pending(&mut self, requests: &RequestSender) -> SyncResult<usize> {
+    /// Declare each non-complete segment's `getheaders`. Safe to call freely since the
+    /// broker de-duplicates; returns the number of segments declared.
+    pub async fn send_pending(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<usize> {
         let mut sent = 0;
         let window_end = (self.next_to_store + ACTIVE_SEGMENT_WINDOW).min(self.segments.len());
         for segment in &mut self.segments[self.next_to_store..window_end] {
             // Skip completed segments
-            if segment.complete {
+            if !segment.can_send() {
                 continue;
             }
-            while segment.can_send() {
-                segment.send_request(requests)?;
-                sent += 1;
-            }
+            segment.send_request(network).await;
+            sent += 1;
         }
         Ok(sent)
     }
@@ -148,10 +141,7 @@ impl HeadersPipeline {
             // Route to the tip segment (target_height is None) if it has in-flight requests.
             // Middle segments complete via checkpoint validation, not empty responses.
             for segment in &mut self.segments {
-                if !segment.complete
-                    && segment.target_height.is_none()
-                    && segment.coordinator.active_count() > 0
-                {
+                if !segment.complete && segment.target_height.is_none() {
                     tracing::debug!(
                         "Routing empty response to tip segment {} at height {}",
                         segment.segment_id,
@@ -180,10 +170,6 @@ impl HeadersPipeline {
                 if segment.complete && segment.target_height.is_none() {
                     segment.complete = false;
                     self.next_to_store = idx;
-                    // A headers announcement may contain multiple consecutive headers. The
-                    // coordinator tracks the response by its first previous hash, just like a
-                    // requested headers batch.
-                    segment.coordinator.mark_sent(&[prev_hash]);
                     tracing::debug!(
                         "Tip segment {} receiving post-sync headers, reset for continued processing",
                         segment.segment_id
@@ -268,23 +254,12 @@ impl HeadersPipeline {
         self.segments.iter().map(|s| s.buffered_headers.len() as u32).sum()
     }
 
-    /// Check for timeouts in all segments.
-    pub fn handle_timeouts(&mut self) {
-        for segment in &mut self.segments {
-            segment.handle_timeouts();
-        }
-    }
-
-    /// Drop only per-peer in-flight bookkeeping across every segment.
-    ///
-    /// Buffered headers, segment topology, and per-segment validated tip state
-    /// are preserved. `next_to_store` and `initialized` stay put so a reconnect
-    /// can resume sending `GetHeaders` from each segment's preserved
-    /// `current_tip_hash` without re-fetching what we already have.
-    pub fn clear_in_flight(&mut self) {
-        for segment in &mut self.segments {
-            segment.clear_in_flight();
-        }
+    /// Locator of the non-complete tip segment, used to key an empty `headers` response.
+    pub(super) fn active_tip_locator(&self) -> Option<BlockHash> {
+        self.segments
+            .iter()
+            .find(|s| !s.complete && s.target_height.is_none())
+            .map(|s| s.current_tip_hash)
     }
 
     /// Check if pipeline is initialized.
@@ -333,12 +308,10 @@ impl HeadersPipeline {
         false
     }
 
-    /// Check if the tip segment has active requests in flight.
+    /// A non-complete tip segment re-declares its `getheaders` each tick, so another
+    /// catch-up request would be redundant.
     pub fn tip_segment_has_pending_request(&self) -> bool {
-        self.segments
-            .iter()
-            .find(|s| s.target_height.is_none())
-            .is_some_and(|s| !s.complete && s.coordinator.active_count() > 0)
+        self.segments.iter().find(|s| s.target_height.is_none()).is_some_and(|s| !s.complete)
     }
 
     #[cfg(test)]
@@ -352,25 +325,35 @@ impl HeadersPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::checkpoints::{mainnet_checkpoints, testnet_checkpoints};
-    use tokio::sync::mpsc::unbounded_channel;
+    use dashcore::network::constants::NetworkExt;
+    use dashcore::Network;
 
-    use crate::network::{NetworkRequest, RequestSender};
     use crate::sync::block_headers::segment_state::SegmentState;
+    use crate::test_utils::MockNetworkManager;
+    use dashcore::network::message::NetworkMessage;
 
-    fn create_test_checkpoint_manager(is_testnet: bool) -> Arc<CheckpointManager> {
-        let checkpoints = if is_testnet {
-            testnet_checkpoints()
+    fn create_test_checkpoint_manager(is_testnet: bool) -> &'static CheckpointManager {
+        let network = if is_testnet {
+            Network::Testnet
         } else {
-            mainnet_checkpoints()
+            Network::Mainnet
         };
-        Arc::new(CheckpointManager::new(checkpoints))
+        CheckpointManager::for_network(network)
     }
 
-    fn create_test_request_sender(
-    ) -> (RequestSender, tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>) {
-        let (tx, rx) = unbounded_channel();
-        (RequestSender::new(tx), rx)
+    fn testnet_genesis_hash() -> BlockHash {
+        Network::Testnet.known_genesis_block_hash()
+    }
+
+    async fn declared_locators(mock: &MockNetworkManager) -> Vec<BlockHash> {
+        mock.sent_messages()
+            .await
+            .iter()
+            .map(|msg| match msg {
+                NetworkMessage::GetHeaders(request) => request.locator_hashes[0],
+                other => panic!("Expected GetHeaders, got {other:?}"),
+            })
+            .collect()
     }
 
     #[test]
@@ -385,11 +368,9 @@ mod tests {
     #[test]
     fn test_pipeline_init_testnet() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
-        // Get genesis hash for testnet
-        let genesis = cm.get_checkpoint(0).unwrap();
-        pipeline.init(0, genesis.block_hash, 1_200_000);
+        pipeline.init(0, testnet_genesis_hash(), 1_200_000);
 
         assert!(pipeline.is_initialized());
         // Should have segments: 0->500k, 500k->800k, 800k->1.1M, 1.1M->tip
@@ -399,11 +380,11 @@ mod tests {
     #[test]
     fn test_pipeline_init_from_middle() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
         // Start from checkpoint 500k
-        let cp_500k = cm.get_checkpoint(500_000).unwrap();
-        pipeline.init(500_000, cp_500k.block_hash, 1_200_000);
+        let cp_500k = cm.last_checkpoint_before_height(500_000).unwrap();
+        pipeline.init(500_000, *cp_500k.hash(), 1_200_000);
 
         // Should have fewer segments since we're starting from 500k
         assert!(pipeline.is_initialized());
@@ -411,52 +392,45 @@ mod tests {
         assert!(pipeline.segment_count() >= 2);
     }
 
-    #[test]
-    fn test_pipeline_send_pending() {
+    #[tokio::test]
+    async fn test_pipeline_send_pending() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
-        let genesis = cm.get_checkpoint(0).unwrap();
-        pipeline.init(0, genesis.block_hash, 1_200_000);
+        pipeline.init(0, testnet_genesis_hash(), 1_200_000);
 
-        let (sender, mut rx) = create_test_request_sender();
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
 
-        let sent = pipeline.send_pending(&sender).unwrap();
+        let sent = pipeline.send_pending(&network).await.unwrap();
 
         assert_eq!(sent, ACTIVE_SEGMENT_WINDOW.min(pipeline.segment_count()));
 
-        assert!(pipeline.segments[..sent]
-            .iter()
-            .all(|segment| segment.coordinator.active_count() == 1));
-        assert!(pipeline.segments[sent..]
-            .iter()
-            .all(|segment| segment.coordinator.active_count() == 0));
-
-        // Verify messages were queued
-        let mut count = 0;
-        while rx.try_recv().is_ok() {
-            count += 1;
-        }
-        assert_eq!(count, sent);
+        assert_eq!(
+            declared_locators(&mock).await,
+            pipeline.segments[..sent].iter().map(|s| s.current_tip_hash).collect::<Vec<_>>()
+        );
+        mock.clear_sent().await;
 
         if pipeline.segment_count() > ACTIVE_SEGMENT_WINDOW {
             pipeline.segments[0].complete = true;
             pipeline.next_to_store = 1;
 
-            assert_eq!(pipeline.send_pending(&sender).unwrap(), 1);
-            assert_eq!(pipeline.segments[ACTIVE_SEGMENT_WINDOW].coordinator.active_count(), 1);
-            assert!(rx.try_recv().is_ok());
-            assert!(rx.try_recv().is_err());
+            // A tick re-declares the whole window; what matters is that draining the
+            // head exposed the next segment.
+            assert_eq!(pipeline.send_pending(&network).await.unwrap(), ACTIVE_SEGMENT_WINDOW);
+            assert!(declared_locators(&mock)
+                .await
+                .contains(&pipeline.segments[ACTIVE_SEGMENT_WINDOW].current_tip_hash));
         }
     }
 
     #[test]
     fn test_pipeline_is_complete_initially() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
-        let genesis = cm.get_checkpoint(0).unwrap();
-        pipeline.init(0, genesis.block_hash, 1_200_000);
+        pipeline.init(0, testnet_genesis_hash(), 1_200_000);
 
         assert!(!pipeline.is_complete());
     }
@@ -464,10 +438,9 @@ mod tests {
     #[test]
     fn test_take_ready_to_store_empty() {
         let cm = create_test_checkpoint_manager(true);
-        let mut pipeline = HeadersPipeline::new(cm.clone());
+        let mut pipeline = HeadersPipeline::new(cm);
 
-        let genesis = cm.get_checkpoint(0).unwrap();
-        pipeline.init(0, genesis.block_hash, 1_200_000);
+        pipeline.init(0, testnet_genesis_hash(), 1_200_000);
 
         let ready = pipeline.take_ready_to_store();
         assert!(ready.is_empty());
@@ -525,12 +498,11 @@ mod tests {
         assert_eq!(pipeline.segments[0].current_tip_hash, *headers[1].hash());
         assert_eq!(pipeline.segments[0].current_height, 1002);
         assert_eq!(pipeline.segments[0].buffered_headers, headers);
-        assert_eq!(pipeline.segments[0].coordinator.active_count(), 0);
         assert_eq!(pipeline.next_to_store, 0);
     }
 
-    #[test]
-    fn test_draining_active_window_exposes_next_segment_for_refill() {
+    #[tokio::test]
+    async fn test_draining_active_window_exposes_next_segment_for_refill() {
         let mut segments = Vec::new();
         for id in 0..ACTIVE_SEGMENT_WINDOW {
             let start_hash = BlockHash::dummy(id as u32);
@@ -551,25 +523,20 @@ mod tests {
         let cm = create_test_checkpoint_manager(true);
         let mut pipeline = HeadersPipeline::new(cm);
         pipeline.set_segments_for_test(segments);
-        let (sender, mut rx) = create_test_request_sender();
 
-        assert_eq!(pipeline.send_pending(&sender).unwrap(), 0);
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+
+        assert_eq!(pipeline.send_pending(&network).await.unwrap(), 0);
         assert_eq!(pipeline.take_ready_to_store().len(), ACTIVE_SEGMENT_WINDOW);
         assert_eq!(pipeline.next_to_store, ACTIVE_SEGMENT_WINDOW);
-        assert_eq!(pipeline.send_pending(&sender).unwrap(), 1);
+        assert_eq!(pipeline.send_pending(&network).await.unwrap(), 1);
 
-        match rx.try_recv().expect("newly exposed segment was not requested") {
-            NetworkRequest::SendMessage(
-                dashcore::network::message::NetworkMessage::GetHeaders(request),
-            ) => {
-                assert_eq!(
-                    request.locator_hashes[0],
-                    BlockHash::dummy(ACTIVE_SEGMENT_WINDOW as u32)
-                )
-            }
-            other => panic!("Expected GetHeaders, got {other:?}"),
-        }
-        assert!(rx.try_recv().is_err());
+        assert_eq!(
+            declared_locators(&mock).await,
+            vec![BlockHash::dummy(ACTIVE_SEGMENT_WINDOW as u32)],
+            "newly exposed segment was not requested"
+        );
     }
 
     #[test]
@@ -597,9 +564,6 @@ mod tests {
         // Create a header whose prev_blockhash is the shared hash
         let mut header = Header::dummy(1);
         header.prev_blockhash = shared_hash;
-
-        // Mark segment 1 request as in-flight so receive works
-        pipeline.segments[1].coordinator.mark_sent(&[shared_hash]);
 
         // Route headers should go to segment 1, not the completed segment 0
         let matched = pipeline.receive_headers(&[header.into()]).unwrap();
@@ -636,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_in_flight_preserves_buffers_across_segments() {
+    fn test_disconnect_preserves_segment_chain_state() {
         let shared_hash = BlockHash::dummy(42);
 
         let mut completed =
@@ -644,25 +608,20 @@ mod tests {
         completed.complete = true;
         completed.current_height = 100;
         completed.current_tip_hash = shared_hash;
-        // Buffered headers on a complete-but-not-yet-drained segment must survive.
         let mut completed_header = Header::dummy(1);
         completed_header.prev_blockhash = BlockHash::dummy(0);
         completed.buffered_headers.push(HashedBlockHeader::from(completed_header));
 
         let mut mid = SegmentState::new(1, 100, shared_hash, Some(200), None);
-        mid.coordinator.mark_sent(&[shared_hash]);
         let mut mid_header = Header::dummy(2);
         mid_header.prev_blockhash = shared_hash;
         mid.receive_headers(&[mid_header.into()]).unwrap();
         let mid_preserved_tip = mid.current_tip_hash;
         let mid_preserved_height = mid.current_height;
         let mid_preserved_buffered = mid.buffered_headers.len();
-        // Simulate a fresh in-flight follow-up request for this segment.
-        mid.coordinator.mark_sent(&[mid_preserved_tip]);
 
         let tip_hash = BlockHash::dummy(99);
-        let mut tip = SegmentState::new(2, 500, tip_hash, None, None);
-        tip.coordinator.mark_sent(&[tip_hash]);
+        let tip = SegmentState::new(2, 500, tip_hash, None, None);
 
         let cm = create_test_checkpoint_manager(true);
         let mut pipeline = HeadersPipeline::new(cm);
@@ -670,9 +629,6 @@ mod tests {
         pipeline.next_to_store = 0;
         pipeline.segments = vec![completed, mid, tip];
 
-        pipeline.clear_in_flight();
-
-        // initialized and next_to_store stay put.
         assert!(pipeline.is_initialized());
         assert_eq!(pipeline.next_to_store, 0);
 
@@ -681,19 +637,14 @@ mod tests {
         assert_eq!(pipeline.segments[0].buffered_headers.len(), 1);
         assert_eq!(pipeline.segments[0].current_tip_hash, shared_hash);
 
-        // Mid-download segment: validated chain state preserved; coordinator wiped.
         assert_eq!(pipeline.segments[1].current_tip_hash, mid_preserved_tip);
         assert_eq!(pipeline.segments[1].current_height, mid_preserved_height);
         assert_eq!(pipeline.segments[1].buffered_headers.len(), mid_preserved_buffered);
         assert!(!pipeline.segments[1].complete);
-        assert_eq!(pipeline.segments[1].coordinator.active_count(), 0);
-        assert_eq!(pipeline.segments[1].coordinator.pending_count(), 0);
         // can_send returns true so a fresh GetHeaders can resume from preserved tip.
         assert!(pipeline.segments[1].can_send());
 
-        // Tip segment: in-flight cleared, preserved hash/height intact.
         assert_eq!(pipeline.segments[2].current_tip_hash, tip_hash);
-        assert_eq!(pipeline.segments[2].coordinator.active_count(), 0);
         assert!(pipeline.segments[2].can_send());
     }
 

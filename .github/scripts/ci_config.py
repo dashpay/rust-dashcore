@@ -5,10 +5,11 @@ Used by GitHub Actions workflows for test management.
 
 Subcommands:
     verify-groups    Check all workspace crates are assigned to test groups
-    run-group        Run tests for all crates in a group
+    run-group        Run tests for all crates in some groups, or in every group
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -17,6 +18,12 @@ import sys
 from pathlib import Path
 
 import yaml
+
+# Groups whose tests run against a regtest dashd
+DASHD_GROUPS = {"spv"}
+ROOT = Path(__file__).resolve().parents[2]
+# Absolute, as cargo runs each crate's tests from that crate's directory
+DASHD_TEST_RETAIN_DIR = ROOT / "target" / "dashd-test-logs"
 
 
 def get_workspace_metadata():
@@ -127,48 +134,64 @@ def verify_groups(args):
     return 0
 
 
+def dashd_env():
+    """Return dashd's env vars, fetching it and the test data if missing."""
+    path = ROOT / "contrib" / "setup-dashd.py"
+    spec = importlib.util.spec_from_file_location("setup_dashd", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.setup()
+
+
 def run_group_tests(args):
-    """Run tests for all crates in a group."""
+    """Run tests for all crates in the given groups, or in every group."""
     config = load_yaml(args.groups_file)
     groups = config.get("groups", {})
 
-    if args.group not in groups:
-        github_error(f"Unknown group: {args.group}")
+    selected = args.groups or list(groups)
+    unknown = [group for group in selected if group not in groups]
+    if unknown:
+        github_error(f"Unknown group: {', '.join(unknown)}")
         return 1
 
-    crates = groups[args.group] or []
-    failed = []
-    coverage = getattr(args, "coverage", False)
+    env = os.environ.copy()
+    if DASHD_GROUPS.intersection(selected):
+        env.update(dashd_env())
+        if not env.get("DASHD_TEST_RETAIN_DIR"):
+            env["DASHD_TEST_RETAIN_DIR"] = str(DASHD_TEST_RETAIN_DIR)
 
+    coverage = args.coverage
     if coverage:
-        github_output("crate_flags", args.group)
+        github_output("crate_flags", ",".join(selected))
 
-    for crate in crates:
-        github_group_start(f"Testing {crate}")
+    failed = []
+    for group in selected:
+        for crate in groups[group] or []:
+            github_group_start(f"Testing {crate}")
 
-        try:
-            if coverage:
-                cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
-            else:
-                cmd = ["cargo", "test", "-p", crate, "--all-features"]
-            result = subprocess.run(cmd)
+            try:
+                if coverage:
+                    cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
+                else:
+                    cmd = ["cargo", "test", "-p", crate, "--all-features"]
+                result = subprocess.run(cmd, env=env)
 
-            if (
-                result.returncode == 0
-                and not coverage
-                and crate == "key-wallet-manager"
-            ):
-                result = subprocess.run(["cargo", "test", "-p", crate])
+                if (
+                    result.returncode == 0
+                    and not coverage
+                    and crate == "key-wallet-manager"
+                ):
+                    result = subprocess.run(["cargo", "test", "-p", crate], env=env)
 
-            if result.returncode != 0:
-                failed.append(crate)
-                github_error(f"Test failed for {crate} on {args.os}")
-        finally:
-            github_group_end()
+                if result.returncode != 0:
+                    failed.append(crate)
+                    github_error(f"Test failed for {crate} on {args.os}")
+            finally:
+                github_group_end()
 
     if failed:
         print("\n" + "=" * 40)
-        print(f"FAILED TESTS ({args.group} on {args.os}):")
+        print(f"FAILED TESTS ({', '.join(selected)} on {args.os}):")
         for f in failed:
             print(f"  - {f}")
         print("=" * 40)
@@ -190,9 +213,13 @@ def main():
 
     subparsers.add_parser("verify-groups", help="Verify all crates assigned to groups")
 
-    run_group_parser = subparsers.add_parser("run-group", help="Run tests for a group")
-    run_group_parser.add_argument("group", help="Group name")
-    run_group_parser.add_argument("--os", default="ubuntu-latest", help="OS name")
+    run_group_parser = subparsers.add_parser(
+        "run-group", help="Run tests for some groups, or for every group"
+    )
+    run_group_parser.add_argument("groups", nargs="*", help="Group names (default: all)")
+    run_group_parser.add_argument(
+        "--os", default=os.environ.get("CI_OS", "local"), help="OS name for error messages"
+    )
     run_group_parser.add_argument(
         "--coverage",
         action="store_true",

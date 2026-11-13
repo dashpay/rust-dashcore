@@ -1,13 +1,19 @@
 use dash_spv::network::NetworkEvent;
-use dash_spv::sync::{ProgressPercentage, SyncEvent, SyncProgress, SyncState};
 use dash_spv::test_utils::DashCoreNode;
-use dashcore::Txid;
+use dash_spv::{ProgressPercentage, SyncEvent, SyncProgress, SyncState};
+use dashcore::address::NetworkUnchecked;
+use dashcore::{Address, Txid};
+use key_wallet::account::ManagedAccountTrait;
 use key_wallet::transaction_checking::TransactionContext;
+use key_wallet::wallet::managed_wallet_info::transaction_builder::{
+    BuilderError, TransactionBuilder,
+};
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletEvent;
 use key_wallet_manager::{WalletId, WalletManager};
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, watch, RwLock};
@@ -68,6 +74,30 @@ pub(super) async fn wait_for_sync(
             }
         }
     }
+}
+
+/// Wait for the next `SyncComplete` and check it reached `target_height`.
+///
+/// Unlike [`wait_for_sync`], a value left over from a previous run cannot
+/// satisfy it, so it also works right after restarting a client.
+pub(super) async fn wait_for_sync_complete(
+    sync_event_receiver: &mut broadcast::Receiver<SyncEvent>,
+    target_height: u32,
+) {
+    tokio::time::timeout(SYNC_TIMEOUT, async {
+        loop {
+            if let Ok(SyncEvent::SyncComplete {
+                header_tip,
+                ..
+            }) = sync_event_receiver.recv().await
+            {
+                assert_eq!(header_tip, target_height);
+                return;
+            }
+        }
+    })
+    .await
+    .expect("Timeout waiting for SyncComplete");
 }
 
 /// Count all unique transactions across wallet accounts.
@@ -186,6 +216,50 @@ pub(super) async fn wait_for_network_event(
                 }
             }
         }
+    }
+}
+
+/// The peer set an event handler rebuilds from the connect and disconnect events
+/// it was given, checked against the list in every `PeersUpdated`.
+#[derive(Default)]
+pub(super) struct PeerTracker {
+    pub(super) peers: HashSet<SocketAddr>,
+    /// The peers in the latest `PeersUpdated` since the last `reset_lists`.
+    pub(super) listed: Option<HashSet<SocketAddr>>,
+    /// Whether a `PeersUpdated` with no peers arrived since the last `reset_lists`.
+    pub(super) emptied: bool,
+}
+
+impl PeerTracker {
+    /// Applies every event `receiver` has queued.
+    pub(super) fn update(&mut self, receiver: &mut broadcast::Receiver<NetworkEvent>) {
+        loop {
+            match receiver.try_recv() {
+                Ok(NetworkEvent::PeerConnected(addr)) => {
+                    self.peers.insert(addr);
+                }
+                Ok(NetworkEvent::PeerDisconnected(addr)) => {
+                    self.peers.remove(&addr);
+                }
+                Ok(NetworkEvent::PeersUpdated {
+                    addresses,
+                    ..
+                }) => {
+                    let listed: HashSet<_> = addresses.into_iter().collect();
+                    assert_eq!(listed, self.peers, "the list disagrees with the peer events");
+                    self.emptied |= listed.is_empty();
+                    self.listed = Some(listed);
+                }
+                Err(broadcast::error::TryRecvError::Empty) => return,
+                Err(e) => panic!("network events lost: {e}"),
+            }
+        }
+    }
+
+    /// Forgets the lists received so far, so later checks only see new ones.
+    pub(super) fn reset_lists(&mut self) {
+        self.listed = None;
+        self.emptied = false;
     }
 }
 
@@ -449,4 +523,31 @@ pub(super) async fn wait_for_network_event_both(
         wait_for_network_event(&mut b.network_event_receiver, pred_clone, max_wait),
     );
     r_a && r_b
+}
+
+/// Build and sign a payment of `amount` to `destination` from account 0.
+pub(super) async fn build_and_sign(
+    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    wallet_id: &WalletId,
+    destination: &Address,
+    amount: u64,
+) -> Result<(dashcore::Transaction, u64), BuilderError> {
+    let dest_unchecked: Address<NetworkUnchecked> =
+        destination.to_string().parse().expect("destination address");
+
+    let mut wallet_lock = wallet.write().await;
+    let (w, info) = wallet_lock.get_wallet_and_info_mut(wallet_id).expect("wallet present");
+
+    let height = info.last_processed_height();
+    let network = w.network;
+    let account = w.get_bip44_account(0).expect("account 0").clone();
+    let funds_account = info.accounts.standard_bip44_accounts.get_mut(&0).expect("account 0");
+    let dest = dest_unchecked.require_network(network).expect("destination network");
+
+    TransactionBuilder::new()
+        .set_current_height(height)
+        .add_funding(funds_account, &account)
+        .add_output(&dest, amount)
+        .build_signed(w, |a| funds_account.address_derivation_path(&a))
+        .await
 }

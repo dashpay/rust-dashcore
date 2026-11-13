@@ -6,23 +6,21 @@ use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey}
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 use crate::mnemonic::Mnemonic;
 use crate::Network;
-use secp256k1::Secp256k1;
 use std::collections::HashSet;
 
 fn test_key_source() -> (KeySource, ExtendedPubKey) {
     let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
     .unwrap();
     let seed = mnemonic.to_seed("");
-    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+    let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
-    let secp = Secp256k1::new();
     let path = DerivationPath::from(vec![
         ChildNumber::from_hardened_idx(44).unwrap(),
         ChildNumber::from_hardened_idx(1).unwrap(),
         ChildNumber::from_hardened_idx(0).unwrap(),
     ]);
-    let account_key = master.derive_priv(&secp, &path).unwrap();
-    let xpub = ExtendedPubKey::from_priv(&secp, &account_key);
+    let account_key = master.derive_priv(&path).unwrap();
+    let xpub = ExtendedPubKey::from_priv(&account_key);
 
     (KeySource::Private(account_key), xpub)
 }

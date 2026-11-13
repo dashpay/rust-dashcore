@@ -7,14 +7,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::sml_engine::MasternodeListEngine;
+use crate::storage::BlockHeaderStorage;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
-use dashcore::hashes::Hash;
-use dashcore::sml::masternode_list_engine::MasternodeListEngine;
 use dashcore::Txid;
 use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
+use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Validator};
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -35,8 +36,6 @@ const PENDING_TTL: Duration = Duration::from_secs(3600);
 /// Entry in the InstantLock cache.
 #[derive(Debug, Clone)]
 pub struct InstantLockEntry {
-    /// The InstantLock data.
-    pub instant_lock: InstantLock,
     /// When the InstantLock was received.
     pub received_at: SystemTime,
     /// Whether the BLS signature was validated.
@@ -99,11 +98,11 @@ impl PendingInstantLock {
 /// - Validates InstantLocks when masternode engine is available
 /// - Queues InstantLocks for later validation when engine not ready
 /// - Emits InstantLockReceived events
-pub struct InstantSendManager {
+pub struct InstantSendManager<H: BlockHeaderStorage> {
     /// Current progress of the manager.
     pub(super) progress: InstantSendProgress,
     /// Shared Masternode list engine.
-    engine: Arc<RwLock<MasternodeListEngine>>,
+    engine: Arc<RwLock<MasternodeListEngine<H>>>,
     /// InstantLocks indexed by txid.
     instantlocks: HashMap<Txid, InstantLockEntry>,
     /// Pending InstantLocks awaiting the quorum data required to verify them.
@@ -119,9 +118,9 @@ pub struct InstantSendManager {
     pub(super) last_validated_engine_height: Option<u32>,
 }
 
-impl InstantSendManager {
+impl<H: BlockHeaderStorage> InstantSendManager<H> {
     /// Create a new InstantSend manager.
-    pub fn new(engine: Arc<RwLock<MasternodeListEngine>>) -> Self {
+    pub(crate) fn new(engine: Arc<RwLock<MasternodeListEngine<H>>>) -> Self {
         Self {
             progress: InstantSendProgress::default(),
             engine,
@@ -146,15 +145,32 @@ impl InstantSendManager {
             return Ok(vec![]);
         }
 
-        // Structural validation
-        if !self.validate_structure(instantlock) {
-            tracing::warn!("Invalid InstantLock structure for txid {}", txid);
+        // A malformed lock is dropped before it is queued or cached, so it can
+        // neither stay pending nor shadow the genuine lock for its txid.
+        if let Err(e) = InstantLockStructureValidator.validate(instantlock) {
+            tracing::warn!("Invalid InstantLock for txid {}: {}", txid, e);
             self.progress.add_invalid(1);
             return Ok(vec![]);
         }
 
-        // Try to validate with masternode engine
-        let validated = self.validate_signature(instantlock).await;
+        // Until the engine knows the lock's cycle, or when its signature does not
+        // verify, the engine may only lack its quorum yet: the lock is kept pending.
+        let engine = self.engine.read().await;
+        let result = engine
+            .rotated_quorums_of_cycle(&instantlock.cyclehash)
+            .map(|quorums| InstantLockValidator::new(quorums).validate(instantlock));
+        drop(engine);
+        let validated = match result {
+            Some(Ok(())) => true,
+            Some(Err(e)) => {
+                tracing::warn!("InstantLock for txid {} not verified yet: {}", txid, e);
+                false
+            }
+            None => {
+                tracing::debug!("InstantLock for txid {} is of a cycle not known yet", txid);
+                false
+            }
+        };
 
         if validated {
             self.progress.add_valid(1);
@@ -168,7 +184,6 @@ impl InstantSendManager {
 
         // Store in cache
         let entry = InstantLockEntry {
-            instant_lock: instantlock.clone(),
             received_at: SystemTime::now(),
             validated,
         };
@@ -178,52 +193,6 @@ impl InstantSendManager {
             instant_lock: instantlock.clone(),
             validated,
         }])
-    }
-
-    /// Validate the structural integrity of an InstantLock.
-    fn validate_structure(&self, instantlock: &InstantLock) -> bool {
-        // Must have at least one input
-        if instantlock.inputs.is_empty() {
-            return false;
-        }
-
-        // Txid must not be null
-        if instantlock.txid == Txid::all_zeros() {
-            return false;
-        }
-
-        // Signature must not be zeroed
-        if instantlock.signature.is_zeroed() {
-            return false;
-        }
-
-        true
-    }
-
-    /// Validate the InstantLock BLS signature using the masternode engine.
-    async fn validate_signature(&self, instantlock: &InstantLock) -> bool {
-        let engine = self.engine.read().await;
-
-        match engine.verify_is_lock(instantlock) {
-            Ok(()) => {
-                tracing::info!(
-                    "InstantLock signature verified for txid {} (cyclehash={})",
-                    instantlock.txid,
-                    instantlock.cyclehash
-                );
-                true
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "InstantLock signature verification failed for txid {} (cyclehash={}, inputs={}): {}",
-                    instantlock.txid,
-                    instantlock.cyclehash,
-                    instantlock.inputs.len(),
-                    e
-                );
-                false
-            }
-        }
     }
 
     /// Queue an InstantLock for later validation.
@@ -288,7 +257,11 @@ impl InstantSendManager {
                 continue;
             }
 
-            let validated = self.validate_signature(&pending_lock.instant_lock).await;
+            let lock = &pending_lock.instant_lock;
+            let validated =
+                self.engine.read().await.rotated_quorums_of_cycle(&lock.cyclehash).is_some_and(
+                    |quorums| InstantLockValidator::new(quorums).validate(lock).is_ok(),
+                );
 
             if validated {
                 self.progress.add_valid(1);
@@ -373,28 +346,13 @@ impl InstantSendManager {
         }
     }
 
-    /// Get an InstantLock by transaction ID.
-    pub fn get_instantlock(&self, txid: &Txid) -> Option<&InstantLockEntry> {
-        self.instantlocks.get(txid)
-    }
-
-    /// Check if a transaction has a validated InstantLock.
-    pub fn is_transaction_locked(&self, txid: &Txid) -> bool {
-        self.instantlocks.get(txid).map(|e| e.validated).unwrap_or(false)
-    }
-
     /// Get the number of pending InstantLocks awaiting validation.
     pub fn pending_count(&self) -> usize {
         self.pending_instantlocks.len()
     }
-
-    /// Get the number of cached InstantLocks.
-    pub fn cached_count(&self) -> usize {
-        self.instantlocks.len()
-    }
 }
 
-impl std::fmt::Debug for InstantSendManager {
+impl<H: BlockHeaderStorage> std::fmt::Debug for InstantSendManager<H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InstantSendManager")
             .field("progress", &self.progress)
@@ -406,20 +364,21 @@ impl std::fmt::Debug for InstantSendManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, RequestSender};
+    use crate::network::{MessageType, NetworkManager};
+    use crate::sml_engine::test_support::TestEngine;
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
+    use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::CycleHash;
-    use dashcore::hashes::Hash;
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::{BlockHash, OutPoint};
-    use tokio::sync::mpsc::unbounded_channel;
+    use test_case::test_case;
 
     /// Insert an empty masternode list at `height` so the shared engine reports a
     /// new tip height. Empty lists carry no rotated quorums, so InstantLock
     /// verification still fails — which is exactly what we want when exercising
     /// the "engine advanced but the needed quorum is still absent" path.
-    async fn advance_engine_height(manager: &InstantSendManager, height: u32) {
+    async fn advance_engine_height(manager: &TestInstantSendManager, height: u32) {
         let mut engine = manager.engine.write().await;
         engine.masternode_lists.insert(
             height,
@@ -427,9 +386,8 @@ mod tests {
         );
     }
 
-    fn no_op_requests() -> RequestSender {
-        let (tx, _rx) = unbounded_channel();
-        RequestSender::new(tx)
+    fn no_op_network() -> Arc<dyn NetworkManager> {
+        Arc::new(crate::test_utils::MockNetworkManager::new())
     }
 
     /// A pending lock whose `first_seen` is the current instant. Expiry is
@@ -459,18 +417,18 @@ mod tests {
     fn create_test_instantlock(txid: Txid) -> InstantLock {
         InstantLock {
             version: 1,
-            inputs: vec![OutPoint::default()],
+            inputs: vec![OutPoint::new(Txid::from_byte_array([2u8; 32]), 0)],
             txid,
             cyclehash: CycleHash::all_zeros(),
             signature: BLSSignature::from([1u8; 96]), // Non-zero signature
         }
     }
 
-    fn create_test_manager() -> InstantSendManager {
-        let engine = Arc::new(RwLock::new(MasternodeListEngine::default_for_network(
-            dashcore::Network::Testnet,
-        )));
-        InstantSendManager::new(engine)
+    type TestInstantSendManager = InstantSendManager<MockHeaderStorage>;
+
+    fn create_test_manager() -> TestInstantSendManager {
+        let engine = TestEngine::empty(dashcore::Network::Testnet);
+        InstantSendManager::new(Arc::new(RwLock::new(engine)))
     }
 
     #[tokio::test]
@@ -478,7 +436,7 @@ mod tests {
         let manager = create_test_manager();
         assert_eq!(manager.identifier(), ManagerIdentifier::InstantSend);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
-        assert_eq!(manager.wanted_message_types(), vec![MessageType::ISLock, MessageType::Inv]);
+        assert_eq!(manager.wanted_message_types(), [MessageType::IsDLock, MessageType::Inv]);
     }
 
     /// Buffered `MasternodeStateUpdated` events delivered during
@@ -487,9 +445,9 @@ mod tests {
     /// `MasternodesManager` re-emits the event after reconnect.
     #[tokio::test]
     async fn test_handle_sync_event_drops_masternode_state_updated_in_waiting_for_connections() {
-        use crate::network::RequestSender;
+        use crate::network::NetworkManager;
         use crate::sync::SyncEvent;
-        use tokio::sync::mpsc::unbounded_channel;
+        use crate::test_utils::MockNetworkManager;
 
         let mut manager = create_test_manager();
         manager.set_state(SyncState::WaitingForConnections);
@@ -498,8 +456,8 @@ mod tests {
             height: 100,
             qr_info_result: None,
         };
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.handle_sync_event(&event, &RequestSender::new(tx)).await.unwrap();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.handle_sync_event(&event, &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
@@ -522,6 +480,30 @@ mod tests {
         assert_eq!(events2.len(), 0);
     }
 
+    #[test_case(|lock| lock.txid = Txid::all_zeros(); "null txid")]
+    #[test_case(|lock| lock.signature = BLSSignature::from([0; 96]); "zero signature")]
+    #[test_case(|lock| lock.inputs.clear(); "no inputs")]
+    #[test_case(|lock| lock.inputs[0].txid = Txid::all_zeros(); "null input txid")]
+    #[tokio::test]
+    async fn a_malformed_lock_of_an_unknown_cycle_is_dropped(malform: fn(&mut InstantLock)) {
+        let mut manager = create_test_manager();
+        let txid = Txid::from_byte_array([1u8; 32]);
+        let mut malformed = create_test_instantlock(txid);
+        malform(&mut malformed);
+
+        let events = manager.process_instantlock(&malformed).await.unwrap();
+
+        assert!(events.is_empty(), "no InstantLockReceived for a malformed lock");
+        assert_eq!(manager.pending_count(), 0, "a malformed lock is not kept pending");
+        assert!(manager.instantlocks.is_empty(), "a malformed lock is not cached");
+        assert_eq!(manager.progress.invalid(), 1);
+
+        // Not cached, so the well-formed lock for the transaction still gets in.
+        let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(manager.pending_count(), 1);
+    }
+
     #[tokio::test]
     async fn test_instantsend_pending_queue() {
         let mut manager = create_test_manager();
@@ -532,41 +514,6 @@ mod tests {
         let _ = manager.process_instantlock(&islock).await.unwrap();
 
         assert_eq!(manager.pending_count(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_instantsend_structural_validation() {
-        let manager = create_test_manager();
-
-        // Valid structure
-        let txid = Txid::from_byte_array([1u8; 32]);
-        let valid = create_test_instantlock(txid);
-        assert!(manager.validate_structure(&valid));
-
-        // Empty inputs
-        let mut invalid = create_test_instantlock(txid);
-        invalid.inputs = vec![];
-        assert!(!manager.validate_structure(&invalid));
-
-        // Null txid
-        let invalid_txid = InstantLock {
-            version: 1,
-            inputs: vec![OutPoint::default()],
-            txid: Txid::all_zeros(),
-            cyclehash: CycleHash::all_zeros(),
-            signature: BLSSignature::from([1u8; 96]),
-        };
-        assert!(!manager.validate_structure(&invalid_txid));
-
-        // Zeroed signature
-        let invalid_sig = InstantLock {
-            version: 1,
-            inputs: vec![OutPoint::default()],
-            txid: Txid::from_byte_array([1u8; 32]),
-            cyclehash: CycleHash::all_zeros(),
-            signature: BLSSignature::from([0u8; 96]),
-        };
-        assert!(!manager.validate_structure(&invalid_sig));
     }
 
     #[tokio::test]
@@ -598,11 +545,11 @@ mod tests {
         let _ = manager.process_instantlock(&islock).await.unwrap();
 
         // Should be retrievable by txid
-        assert!(manager.get_instantlock(&txid).is_some());
+        assert!(manager.instantlocks.contains_key(&txid));
 
         // Unknown txid
         let unknown = Txid::from_byte_array([2u8; 32]);
-        assert!(manager.get_instantlock(&unknown).is_none());
+        assert!(!manager.instantlocks.contains_key(&unknown));
     }
 
     #[tokio::test]
@@ -619,7 +566,7 @@ mod tests {
         }
 
         // Should be capped at MAX_CACHE_SIZE
-        assert!(manager.cached_count() <= MAX_CACHE_SIZE);
+        assert!(manager.instantlocks.len() <= MAX_CACHE_SIZE);
     }
 
     /// A queued InstantLock must be re-validated by `tick` as soon as the
@@ -630,7 +577,7 @@ mod tests {
     #[tokio::test]
     async fn test_tick_revalidates_pending_when_engine_advances() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         // A lock arrives before quorum sync: the empty engine can't verify it,
         // so it is queued.
@@ -641,7 +588,7 @@ mod tests {
 
         // Engine has not advanced yet (still empty): tick must not re-validate,
         // and the pending-validation marker stays untouched.
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 1);
         assert_eq!(manager.last_validated_engine_height, None);
@@ -650,19 +597,19 @@ mod tests {
         // The needed rotated quorum is still absent, so the lock is re-queued,
         // but the marker records the height we validated against.
         advance_engine_height(&manager, 200).await;
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 1);
         assert_eq!(manager.last_validated_engine_height, Some(200));
 
         // No further advance: tick must not spend work re-validating again.
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.last_validated_engine_height, Some(200));
 
         // Another advance re-arms re-validation.
         advance_engine_height(&manager, 201).await;
-        let _ = manager.tick(&requests).await.unwrap();
+        let _ = manager.tick(&network).await.unwrap();
         assert_eq!(manager.last_validated_engine_height, Some(201));
     }
 
@@ -673,7 +620,7 @@ mod tests {
     #[tokio::test]
     async fn test_tick_skips_revalidation_without_engine_advance() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         // Engine at height 100, but the marker is deliberately set ABOVE it so
         // the advancement gate (current > last) stays closed. If `validate_pending`
@@ -684,7 +631,7 @@ mod tests {
 
         manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([7u8; 32])));
 
-        let events = manager.tick(&requests).await.unwrap();
+        let events = manager.tick(&network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 1);
         assert_eq!(manager.last_validated_engine_height, Some(150));
@@ -702,7 +649,7 @@ mod tests {
     #[tokio::test]
     async fn test_tick_expires_pending_without_engine_advance() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         // Close the advancement gate: engine at 100, already validated at 100.
         // `validate_pending` therefore cannot run this tick.
@@ -713,7 +660,7 @@ mod tests {
 
         // Drive the tick with a `now` past the lock's TTL so the cheap expiry
         // pass drops it without back-dating `first_seen`.
-        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
+        let events = manager.tick_at(past_ttl(), &network).await.unwrap();
 
         assert!(events.is_empty());
         // Expired purely by the advancement-independent pass.
@@ -734,14 +681,14 @@ mod tests {
     #[tokio::test]
     async fn test_tick_transitions_synced_when_last_pending_resolved() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         manager.set_state(SyncState::Syncing);
         manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([4u8; 32])));
 
         // A `now` past the lock's TTL expires it during the tick, draining the
         // last pending lock and forcing the synced-state transition.
-        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
+        let events = manager.tick_at(past_ttl(), &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 0);
@@ -763,12 +710,12 @@ mod tests {
         let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(manager.pending_count(), 1);
-        assert!(manager.get_instantlock(&txid).is_some());
+        assert!(manager.instantlocks.contains_key(&txid));
 
         // Disconnect must clear the queue AND the unvalidated cache entry.
         manager.on_disconnect();
         assert_eq!(manager.pending_count(), 0);
-        assert!(manager.get_instantlock(&txid).is_none());
+        assert!(!manager.instantlocks.contains_key(&txid));
 
         // Re-announcement of the same txid is processed fresh, not deduped away.
         let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
@@ -784,7 +731,7 @@ mod tests {
     #[tokio::test]
     async fn test_pending_expires_after_ttl_on_revalidation() {
         let mut manager = create_test_manager();
-        let requests = no_op_requests();
+        let network = no_op_network();
 
         manager.pending_instantlocks.push(fresh_pending(Txid::from_byte_array([9u8; 32])));
 
@@ -792,7 +739,7 @@ mod tests {
         // unverifiable, so it is dropped and counted invalid regardless of the
         // engine advancing to height 300.
         advance_engine_height(&manager, 300).await;
-        let events = manager.tick_at(past_ttl(), &requests).await.unwrap();
+        let events = manager.tick_at(past_ttl(), &network).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.pending_count(), 0);

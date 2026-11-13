@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use dash_spv::{
-    storage::{BlockHeaderStorage, DiskStorageManager, StorageManager},
-    ClientConfig, Hash,
+    test_utils::{BlockHeaderStorage, DiskStorageManager, StorageManager},
+    ClientConfig,
 };
 use dashcore::{block::Version, BlockHash, CompactTarget, Header};
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -14,7 +14,7 @@ fn create_test_header(height: u32) -> Header {
     Header {
         version: Version::from_consensus(1),
         prev_blockhash: BlockHash::all_zeros(),
-        merkle_root: dashcore_hashes::sha256d::Hash::all_zeros().into(),
+        merkle_root: dashcore_hashes::sha256d::Hash::from_byte_array([0; 32]).into(),
         time: height,
         bits: CompactTarget::from_consensus(0x207fffff),
         nonce: height,
@@ -66,7 +66,7 @@ fn bench_disk_storage(c: &mut Criterion) {
 
     c.bench_function("storage/disk/get", |b| {
         b.to_async(&rt).iter_batched(
-            || rng.gen::<u32>() % NUM_ELEMENTS,
+            || rng.random::<u32>() % NUM_ELEMENTS,
             async |height| {
                 let _ = storage.get_header(height).await.unwrap();
             },
@@ -88,7 +88,7 @@ fn bench_disk_storage(c: &mut Criterion) {
     });
 
     rt.block_on(async {
-        storage.shutdown().await;
+        storage.stop().await;
     });
 }
 

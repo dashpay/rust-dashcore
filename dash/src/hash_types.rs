@@ -28,13 +28,12 @@ macro_rules! impl_hashencode {
     ($hashtype:ident) => {
         impl $crate::consensus::Encodable for $hashtype {
             fn consensus_encode<W: $crate::io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, $crate::io::Error> {
-                self.0.consensus_encode(w)
+                self.to_byte_array().consensus_encode(w)
             }
         }
 
         impl $crate::consensus::Decodable for $hashtype {
             fn consensus_decode<R: $crate::io::Read + ?Sized>(r: &mut R) -> Result<Self, $crate::consensus::encode::Error> {
-                use $crate::hashes::Hash;
                 Ok(Self::from_byte_array(<<$hashtype as $crate::hashes::Hash>::Bytes>::consensus_decode(r)?))
             }
         }
@@ -47,14 +46,12 @@ macro_rules! impl_asref_push_bytes {
         $(
             impl AsRef<$crate::blockdata::script::PushBytes> for $hashtype {
                 fn as_ref(&self) -> &$crate::blockdata::script::PushBytes {
-                    use $crate::hashes::Hash;
                     self.as_byte_array().into()
                 }
             }
 
             impl From<$hashtype> for $crate::blockdata::script::PushBytesBuf {
                 fn from(hash: $hashtype) -> Self {
-                    use $crate::hashes::Hash;
                     hash.as_byte_array().into()
                 }
             }
@@ -66,18 +63,38 @@ macro_rules! impl_asref_push_bytes {
 pub use newtypes::*;
 
 mod newtypes {
+    pub use dashcore_crypto::eddsa::EddsaPkHash;
+    pub use dashcore_crypto::key::PubkeyHash;
 
-    use core::str::FromStr;
     use std::cmp::Ordering;
 
     #[cfg(feature = "core-block-hash-use-x11")]
     use hashes::hash_x11;
-    use hashes::hex::Error;
-    use hashes::{Hash, hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
+    use hashes::{hash_newtype, hash_newtype_no_ord, hash160, sha256, sha256d};
+    use hex_conservative::DecodeFixedLengthBytesError as Error;
 
     use crate::alloc::string::ToString;
     use crate::prelude::String;
     use crate::transaction::special_transaction::quorum_commitment::QuorumEntry;
+
+    /// Adds `from_hex`/`to_hex`, both in the wrapped hash's display order.
+    ///
+    /// That order is not always the newtype's own `FromStr` order (see `ProTxHash`).
+    macro_rules! impl_inner_hex {
+        ($($newtype:ident($inner:ty)),* $(,)?) => {$(
+            impl $newtype {
+                /// Parses hex in the wrapped hash's display order.
+                pub fn from_hex(s: &str) -> Result<Self, Error> {
+                    s.parse::<$inner>().map(Self)
+                }
+
+                /// Formats as hex in the wrapped hash's display order.
+                pub fn to_hex(&self) -> String {
+                    self.0.to_string()
+                }
+            }
+        )*};
+    }
 
     #[cfg(feature = "core-block-hash-use-x11")]
     hash_newtype! {
@@ -90,28 +107,21 @@ mod newtypes {
         pub struct BlockHash(sha256d::Hash);
     }
 
+    /// Engine of the hash that [`BlockHash`] wraps.
+    #[cfg(feature = "core-block-hash-use-x11")]
+    pub(crate) type BlockHashEngine = hash_x11::HashEngine;
+    #[cfg(not(feature = "core-block-hash-use-x11"))]
+    pub(crate) type BlockHashEngine = sha256d::HashEngine;
+
     hash_newtype! {
         /// A dash transaction hash/transaction ID.
         pub struct Txid(sha256d::Hash);
 
-        /// A dash witness transaction ID.
-        pub struct Wtxid(sha256d::Hash);
-
-        /// A hash of a public key.
-        pub struct PubkeyHash(hash160::Hash);
         /// A hash of Dash Script bytecode.
         pub struct ScriptHash(hash160::Hash);
-        /// SegWit version of a public key hash.
-        pub struct WPubkeyHash(hash160::Hash);
-        /// SegWit version of a Dash Script bytecode hash.
-        pub struct WScriptHash(sha256::Hash);
 
         /// A hash of the Merkle tree branch or root for transactions
         pub struct TxMerkleNode(sha256d::Hash);
-        /// A hash corresponding to the Merkle tree root for witness data
-        pub struct WitnessMerkleNode(sha256d::Hash);
-        /// A hash corresponding to the witness structure commitment in the coinbase transaction
-        pub struct WitnessCommitment(sha256d::Hash);
         /// XpubIdentifier as defined in BIP-32.
         pub struct XpubIdentifier(hash160::Hash);
 
@@ -186,11 +196,9 @@ mod newtypes {
     pub type CycleHash = BlockHash;
 
     impl_hashencode!(Txid);
-    impl_hashencode!(Wtxid);
     impl_hashencode!(BlockHash);
 
     impl_hashencode!(TxMerkleNode);
-    impl_hashencode!(WitnessMerkleNode);
 
     impl_hashencode!(FilterHash);
     impl_hashencode!(FilterHeader);
@@ -219,43 +227,26 @@ mod newtypes {
     impl_hashencode!(ProTxHash);
     impl_hashencode!(Sha256dHash);
 
-    impl_asref_push_bytes!(PubkeyHash, ScriptHash, WPubkeyHash, WScriptHash);
+    impl_asref_push_bytes!(PubkeyHash, ScriptHash);
 
-    impl Txid {
-        /// Create a Txid from a string
-        pub fn from_hex(s: &str) -> Result<Txid, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a Txid to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
+    impl crate::consensus::Encodable for EddsaPkHash {
+        fn consensus_encode<W: crate::io::Write + ?Sized>(
+            &self,
+            w: &mut W,
+        ) -> Result<usize, crate::io::Error> {
+            self.as_bytes().consensus_encode(w)
         }
     }
 
-    impl ProTxHash {
-        /// Create a ProTxHash from a string
-        pub fn from_hex(s: &str) -> Result<ProTxHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a ProTxHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
+    impl crate::consensus::Decodable for EddsaPkHash {
+        fn consensus_decode<R: crate::io::Read + ?Sized>(
+            r: &mut R,
+        ) -> Result<Self, crate::consensus::encode::Error> {
+            Ok(Self::from_bytes(<[u8; 20]>::consensus_decode(r)?))
         }
     }
 
     impl ScoreHash {
-        /// Create a ScoreHash from a string
-        pub fn from_hex(s: &str) -> Result<ScoreHash, Error> {
-            Ok(Self(sha256::Hash::from_str(s)?))
-        }
-
-        /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-
         /// Creates a score based on the optional confirmed hash and the quorum modifier.
         ///
         /// # Arguments
@@ -275,21 +266,11 @@ mod newtypes {
                 bytes.append(&mut confirmed_hash_hashed_with_pro_reg_tx.to_byte_array().to_vec());
             }
             bytes.append(&mut modifier.to_byte_array().to_vec());
-            Self::hash(bytes.as_slice())
+            Self::from_raw_hash(sha256::Hash::hash(bytes.as_slice()))
         }
     }
 
     impl QuorumOrderingHash {
-        /// Create a ScoreHash from a string
-        pub fn from_hex(s: &str) -> Result<QuorumOrderingHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a ScoreHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-
         /// Creates an ordering hash based on the quorum and request id.
         ///
         /// # Arguments
@@ -299,10 +280,10 @@ mod newtypes {
         /// # Returns
         /// * A hashed score derived from the input values.
         pub fn create(quorum: &QuorumEntry, request_id: &QuorumSigningRequestId) -> Self {
-            let mut bytes = vec![quorum.llmq_type as u8];
+            let mut bytes = vec![quorum.llmq_type.index()];
             bytes.extend_from_slice(quorum.quorum_hash.as_byte_array());
             bytes.extend_from_slice(request_id.as_byte_array());
-            Self::hash(bytes.as_slice())
+            Self::from_raw_hash(sha256d::Hash::hash(bytes.as_slice()))
         }
     }
 
@@ -312,67 +293,32 @@ mod newtypes {
         }
     }
 
-    impl ConfirmedHash {
-        /// Create a ConfirmedHash from a string
-        pub fn from_hex(s: &str) -> Result<ConfirmedHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
-
     impl ConfirmedHashHashedWithProRegTx {
-        /// Create a ConfirmedHash from a string
-        pub fn from_hex(s: &str) -> Result<ConfirmedHashHashedWithProRegTx, Error> {
-            Ok(Self(sha256::Hash::from_str(s)?))
-        }
-
-        /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-
         /// Hashes the members
         pub fn hash_members(pro_tx_hash: &ProTxHash, confirmed_hash: &ConfirmedHash) -> Self {
-            Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
+            Self::from_raw_hash(sha256::Hash::hash(
+                &[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat(),
+            ))
         }
         /// Hashes the members
         pub fn hash_members_confirmed_hash_optional(
             pro_tx_hash: &ProTxHash,
             confirmed_hash: Option<&ConfirmedHash>,
         ) -> Option<Self> {
-            confirmed_hash.map(|confirmed_hash| {
-                Self::hash(&[pro_tx_hash.to_byte_array(), confirmed_hash.to_byte_array()].concat())
-            })
+            confirmed_hash.map(|confirmed_hash| Self::hash_members(pro_tx_hash, confirmed_hash))
         }
     }
 
-    impl Sha256dHash {
-        /// Create a Sha256dHash from a string
-        pub fn from_hex(s: &str) -> Result<Sha256dHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert a ConfirmedHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
-
-    impl InputsHash {
-        /// Create an InputsHash from a string
-        pub fn from_hex(s: &str) -> Result<InputsHash, Error> {
-            Ok(Self(sha256d::Hash::from_str(s)?))
-        }
-
-        /// Convert an InputsHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
+    impl_inner_hex!(
+        Txid(sha256d::Hash),
+        ProTxHash(sha256d::Hash),
+        ScoreHash(sha256::Hash),
+        QuorumOrderingHash(sha256d::Hash),
+        ConfirmedHash(sha256d::Hash),
+        ConfirmedHashHashedWithProRegTx(sha256::Hash),
+        Sha256dHash(sha256d::Hash),
+        InputsHash(sha256d::Hash),
+    );
 
     impl SpecialTransactionPayloadHash {
         /// Create a SpecialTransactionPayloadHash from a string
@@ -380,24 +326,75 @@ mod newtypes {
             self.0.to_string()
         }
     }
-
-    impl PubkeyHash {
-        /// Create a PubkeyHash from a string
-        pub fn from_hex(s: &str) -> Result<PubkeyHash, Error> {
-            Ok(Self(hash160::Hash::from_str(s)?))
-        }
-
-        /// Convert a PubkeyHash to a string
-        pub fn to_hex(&self) -> String {
-            self.0.to_string()
-        }
-    }
 }
 
-#[cfg(all(test, feature = "serde"))]
+#[cfg(test)]
 mod tests {
+    use core::str::FromStr;
+
     use super::*;
+    use crate::consensus::{deserialize, serialize};
+    use dashcore_crypto::eddsa::EddsaPkBytes;
+    use hashes::{sha256, sha256d};
+
+    #[cfg(feature = "serde")]
     use serde_derive::{Deserialize, Serialize};
+
+    #[test]
+    fn from_hex_follows_the_inner_hash() {
+        let s = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let d = sha256d::Hash::from_str(s).unwrap();
+        let single = sha256::Hash::from_str(s).unwrap();
+
+        assert_eq!(Txid::from_hex(s).unwrap(), Txid::from_raw_hash(d));
+        assert_eq!(ProTxHash::from_hex(s).unwrap(), ProTxHash::from_raw_hash(d));
+        assert_eq!(ScoreHash::from_hex(s).unwrap(), ScoreHash::from_raw_hash(single));
+
+        // `ProTxHash` displays forward, so its `FromStr` reads the other way
+        // round.
+        assert_ne!(ProTxHash::from_hex(s).unwrap(), ProTxHash::from_str(s).unwrap());
+        assert_eq!(ProTxHash::from_hex(s).unwrap().to_hex(), s);
+
+        assert!(Txid::from_hex(&s[2..]).is_err());
+        assert!(Txid::from_hex(&s.replace('1', "g")).is_err());
+    }
+
+    #[test]
+    fn consensus_round_trip() {
+        let mut wire = [0u8; 20];
+        for (i, byte) in wire.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+
+        let node_id = EddsaPkHash::from_bytes(wire);
+        let encoded = serialize(&node_id);
+        assert_eq!(encoded.len(), 20);
+        assert_eq!(encoded, wire, "the stored order is the wire order");
+        let decoded: EddsaPkHash = deserialize(&encoded).expect("decode node id");
+        assert_eq!(decoded, node_id);
+    }
+
+    /// Mainnet evonode example from issue #887: the ProRegTx wire bytes carry
+    /// the `uint160` internal (reversed) order, while the canonical id — as
+    /// dashmate/Tenderdash derive and display it — is the byte-reversal.
+    #[test]
+    fn consensus_decode_yields_canonical_order() {
+        let wire_bytes = crate::internal_macros::hex!("8cb97997a418f4814a63d3564b9574a393437968");
+        let node_id: EddsaPkHash = deserialize(&wire_bytes).expect("decode node id");
+        assert_eq!(node_id.to_string(), "68794393a374954b56d3634a81f418a49779b98c");
+        assert_eq!(serialize(&node_id), wire_bytes, "re-encoding restores wire order");
+    }
+
+    /// A node id decoded from the wire must compare equal to one derived from
+    /// the matching Ed25519 public key — the mismatch reported in issue #887.
+    #[test]
+    fn decoded_wire_id_matches_derived_id() {
+        let public_key = [7u8; 32];
+        let derived = EddsaPkHash::from(EddsaPkBytes::from_bytes(public_key));
+
+        let decoded: EddsaPkHash = deserialize(&derived.to_bytes()).expect("decode node id");
+        assert_eq!(decoded, derived);
+    }
 
     /// Regression test for the bug where hash newtypes' `Deserialize` errored
     /// with "bad hex string length 32 (expected 64)" (or similar) when an
@@ -408,6 +405,7 @@ mod tests {
     /// replayed into the HR branch as raw bytes — which the previous
     /// string-only `HexVisitor` rejected because `from_str` saw 32 UTF-8 chars
     /// instead of the expected 64-char hex form.
+    #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip_through_internally_tagged_enum() {
         #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -485,6 +483,7 @@ mod tests {
     /// 20-byte hash (PubkeyHash) goes through the same path. Smaller hash
     /// length exercises a different `raw_len_bytes` / `hex_len_bytes`
     /// disambiguation in the visitor.
+    #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip_through_internally_tagged_enum_pubkey_hash() {
         #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -499,7 +498,7 @@ mod tests {
         }
 
         let original = Tagged::A(WithPubkeyHash {
-            pkh: PubkeyHash::from_hex("e8b43025641eea4fd21190f01bd870ef90f1a8b1").unwrap(),
+            pkh: PubkeyHash::from_str("e8b43025641eea4fd21190f01bd870ef90f1a8b1").unwrap(),
         });
 
         let value = serde_json::to_value(&original).unwrap();

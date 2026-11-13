@@ -20,7 +20,6 @@ use core::fmt;
 
 #[cfg(feature = "bincode")]
 use bincode_derive::{Decode, Encode};
-use secp256k1::Secp256k1;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -86,8 +85,7 @@ impl Account {
         account_xpriv: ExtendedPrivKey,
         network: Network,
     ) -> Result<Self> {
-        let secp = Secp256k1::new();
-        let account_xpub = ExtendedPubKey::from_priv(&secp, &account_xpriv);
+        let account_xpub = ExtendedPubKey::from_priv(&account_xpriv);
 
         Ok(Self {
             parent_wallet_id,
@@ -160,7 +158,7 @@ impl AccountTrait for Account {
     }
 
     fn get_public_key_bytes(&self) -> Vec<u8> {
-        self.account_xpub.public_key.serialize().to_vec()
+        self.account_xpub.public_key.to_compressed().to_vec()
     }
 }
 
@@ -197,9 +195,8 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
             return Err(Error::WatchOnly);
         }
 
-        let secp = Secp256k1::new();
         let path = self.derivation_path()?;
-        master_xpriv.derive_priv(&secp, &path).map_err(Error::Bip32)
+        master_xpriv.derive_priv(&path).map_err(Error::Bip32)
     }
 
     /// Derive a child private key at a specific path from the account
@@ -215,8 +212,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
             return Err(Error::WatchOnly);
         }
 
-        let secp = Secp256k1::new();
-        account_xpriv.derive_priv(&secp, child_path).map_err(Error::Bip32)
+        account_xpriv.derive_priv(child_path).map_err(Error::Bip32)
     }
 
     /// Derive a child public key at a specific path from the account
@@ -226,8 +222,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
         &self,
         child_path: &DerivationPath,
     ) -> std::result::Result<ExtendedPubKey, Error> {
-        let secp = Secp256k1::new();
-        self.account_xpub.derive_pub(&secp, child_path).map_err(Error::Bip32)
+        self.account_xpub.derive_pub(child_path).map_err(Error::Bip32)
     }
 
     /// Derive an address at a specific **chain** (external/internal) and **index**.
@@ -308,8 +303,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
             } else {
                 self.derive_child_xpriv_from_account_xpriv(&priv_key, &derivation_path)?
             };
-            let secp = Secp256k1::new();
-            Ok(ExtendedPubKey::from_priv(&secp, &xpriv))
+            Ok(ExtendedPubKey::from_priv(&xpriv))
         } else {
             self.derive_child_xpub(&derivation_path)
         }
@@ -322,11 +316,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
     ) -> std::result::Result<dashcore::PrivateKey, Error> {
         let xpriv = self.derive_from_master_xpriv_extended_xpriv_at(master_xpriv, index)?;
         // Wrap into dashcore::PrivateKey with compressed=true
-        Ok(dashcore::PrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: xpriv.private_key,
-        })
+        Ok(dashcore::PrivateKey::new(xpriv.private_key.clone(), self.network))
     }
 
     fn derive_from_seed_extended_xpriv_at(
@@ -344,11 +334,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
         index: u32,
     ) -> std::result::Result<dashcore::PrivateKey, Error> {
         let xpriv = self.derive_from_seed_extended_xpriv_at(seed, index)?;
-        Ok(dashcore::PrivateKey {
-            compressed: true,
-            network: self.network,
-            inner: xpriv.private_key,
-        })
+        Ok(dashcore::PrivateKey::new(xpriv.private_key.clone(), self.network))
     }
 }
 
@@ -405,16 +391,15 @@ mod tests {
     pub(crate) fn test_account() -> Account {
         let mnemonic = Mnemonic::from_phrase("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap();
         let seed = mnemonic.to_seed("");
-        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed).unwrap();
+        let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
         // Derive account key (m/44'/1'/0')
-        let secp = Secp256k1::new();
         let path = DerivationPath::from(vec![
             ChildNumber::from_hardened_idx(44).unwrap(),
             ChildNumber::from_hardened_idx(1).unwrap(),
             ChildNumber::from_hardened_idx(0).unwrap(),
         ]);
-        let account_xpriv = master.derive_priv(&secp, &path).unwrap();
+        let account_xpriv = master.derive_priv(&path).unwrap();
 
         Account::from_xpriv(
             None,

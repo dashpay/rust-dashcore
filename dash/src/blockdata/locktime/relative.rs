@@ -7,11 +7,12 @@
 //! whether bit 22 of the `u32` consensus value is set.
 //!
 
-use core::convert::TryFrom;
 use core::fmt;
 
-use crate::parse::impl_parse_str_from_int_infallible;
-use crate::prelude::*;
+pub use bitcoin_units::locktime::relative::{
+    NumberOf512Seconds as Time, NumberOfBlocks as Height, TimeOverflowError,
+};
+
 #[cfg(doc)]
 use crate::relative;
 
@@ -44,10 +45,10 @@ impl LockTime {
     ///
     /// # let height = 100;       // 100 blocks.
     /// # let intervals = 70;     // Approx 10 hours.
-    /// # let current_height = || Height::from(height + 10);
+    /// # let current_height = || Height::from_count(height + 10);
     /// # let current_time = || Time::from_512_second_intervals(intervals + 10);
-    /// # let lock = LockTime::from(Height::from(height));
-    /// # let test_lock = LockTime::from(Height::from(height+10));
+    /// # let lock = LockTime::from(Height::from_count(height));
+    /// # let test_lock = LockTime::from(Height::from_count(height+10));
     ///
     /// // Users that have chain data can get the current height and time to check against a lock.
     /// let height_and_time = (current_time(), current_height());  // tuple order does not matter.
@@ -82,8 +83,8 @@ impl LockTime {
     /// # use dashcore::locktime::relative::{LockTime, Height, Time};
     ///
     /// # let height = 100;       // 100 blocks.
-    /// # let lock = LockTime::from(Height::from(height));
-    /// # let test_lock = LockTime::from(Height::from(height+10));
+    /// # let lock = LockTime::from(Height::from_count(height));
+    /// # let test_lock = LockTime::from(Height::from_count(height+10));
     ///
     /// assert!(lock.is_implied_by(test_lock));
     /// ```
@@ -92,8 +93,8 @@ impl LockTime {
         use LockTime::*;
 
         match (*self, other) {
-            (Blocks(this), Blocks(other)) => this.value() <= other.value(),
-            (Time(this), Time(other)) => this.value() <= other.value(),
+            (Blocks(this), Blocks(other)) => this <= other,
+            (Time(this), Time(other)) => this <= other,
             _ => false, // Not the same units.
         }
     }
@@ -110,15 +111,15 @@ impl LockTime {
     /// # use dashcore::locktime::relative::{LockTime, Height, Time};
     ///
     /// let height: u16 = 100;
-    /// let lock = LockTime::from(Height::from(height));
-    /// assert!(lock.is_satisfied_by_height(Height::from(height+1)).expect("a height"));
+    /// let lock = LockTime::from(Height::from_count(height));
+    /// assert!(lock.is_satisfied_by_height(Height::from_count(height+1)).expect("a height"));
     /// ```
     #[inline]
     pub fn is_satisfied_by_height(&self, h: Height) -> Result<bool, Error> {
         use LockTime::*;
 
         match *self {
-            Blocks(ref height) => Ok(height.value() <= h.value()),
+            Blocks(ref height) => Ok(*height <= h),
             Time(ref time) => Err(Error::IncompatibleTime(*self, *time)),
         }
     }
@@ -143,7 +144,7 @@ impl LockTime {
         use LockTime::*;
 
         match *self {
-            Time(ref time) => Ok(time.value() <= t.value()),
+            Time(ref time) => Ok(*time <= t),
             Blocks(ref height) => Err(Error::IncompatibleHeight(*self, *height)),
         }
     }
@@ -181,132 +182,10 @@ impl fmt::Display for LockTime {
     }
 }
 
-/// A relative lock time lock-by-blockheight value.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Height(u16);
-
-impl Height {
-    /// Relative block height 0, can be included in any block.
-    pub const ZERO: Self = Height(0);
-
-    /// The minimum relative block height (0), can be included in any block.
-    pub const MIN: Self = Self::ZERO;
-
-    /// The maximum relative block height.
-    pub const MAX: Self = Height(u16::MAX);
-
-    /// The minimum relative block height (0), can be included in any block.
-    ///
-    /// This is provided for consistency with Rust 1.41.1, newer code should use [`Height::MIN`].
-    pub const fn min_value() -> Self {
-        Self::MIN
-    }
-
-    /// The maximum relative block height.
-    ///
-    /// This is provided for consistency with Rust 1.41.1, newer code should use [`Height::MAX`].
-    pub const fn max_value() -> Self {
-        Self::MAX
-    }
-
-    /// Returns the inner `u16` value.
-    #[inline]
-    pub fn value(self) -> u16 {
-        self.0
-    }
-}
-
-impl From<u16> for Height {
-    #[inline]
-    fn from(value: u16) -> Self {
-        Height(value)
-    }
-}
-
-impl_parse_str_from_int_infallible!(Height, u16, from);
-
-impl fmt::Display for Height {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-/// A relative lock time lock-by-blocktime value.
-///
-/// For BIP 68 relative lock-by-blocktime locks, time is measure in 512 second intervals.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Time(u16);
-
-impl Time {
-    /// Relative block time 0, can be included in any block.
-    pub const ZERO: Self = Time(0);
-
-    /// The minimum relative block time (0), can be included in any block.
-    pub const MIN: Self = Time::ZERO;
-
-    /// The maximum relative block time (33,554,432 seconds or approx 388 days).
-    pub const MAX: Self = Time(u16::MAX);
-
-    /// The minimum relative block time.
-    ///
-    /// This is provided for consistency with Rust 1.41.1, newer code should use [`Time::MIN`].
-    pub const fn min_value() -> Self {
-        Self::MIN
-    }
-
-    /// The maximum relative block time.
-    ///
-    /// This is provided for consistency with Rust 1.41.1, newer code should use [`Time::MAX`].
-    pub const fn max_value() -> Self {
-        Self::MAX
-    }
-
-    /// Create a [`Time`] using time intervals where each interval is equivalent to 512 seconds.
-    ///
-    /// Encoding finer granularity of time for relative lock-times is not supported in Bitcoin.
-    #[inline]
-    pub fn from_512_second_intervals(intervals: u16) -> Self {
-        Time(intervals)
-    }
-
-    /// Create a [`Time`] from seconds, converting the seconds into 512 second interval with ceiling
-    /// division.
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if the input cannot be encoded in 16 bits.
-    #[inline]
-    pub fn from_seconds_ceil(seconds: u32) -> Result<Self, Error> {
-        if let Ok(interval) = u16::try_from(seconds.div_ceil(512)) {
-            Ok(Time::from_512_second_intervals(interval))
-        } else {
-            Err(Error::IntegerOverflow(seconds))
-        }
-    }
-
-    /// Returns the inner `u16` value.
-    #[inline]
-    pub fn value(self) -> u16 {
-        self.0
-    }
-}
-
-impl_parse_str_from_int_infallible!(Time, u16, from_512_second_intervals);
-
-impl fmt::Display for Time {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
 /// Errors related to relative lock times.
 #[derive(Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Input time in seconds was too large to be encoded to a 16 bit 512 second interval.
-    IntegerOverflow(u32),
     /// Tried to satisfy a lock-by-blocktime lock using a height value.
     IncompatibleHeight(LockTime, Height),
     /// Tried to satisfy a lock-by-blockheight lock using a time value.
@@ -316,11 +195,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Self::IntegerOverflow(val) => write!(
-                f,
-                "{} seconds is too large to be encoded to a 16 bit 512 second interval",
-                val
-            ),
             Self::IncompatibleHeight(lock, height) => {
                 write!(f, "tried to satisfy lock {} with height: {}", lock, height)
             }
@@ -336,7 +210,7 @@ impl std::error::Error for Error {
         use self::Error::*;
 
         match *self {
-            IntegerOverflow(_) | IncompatibleHeight(_, _) | IncompatibleTime(_, _) => None,
+            IncompatibleHeight(_, _) | IncompatibleTime(_, _) => None,
         }
     }
 }
@@ -347,19 +221,19 @@ mod tests {
 
     #[test]
     fn satisfied_by_height() {
-        let height = Height::from(10);
+        let height = Height::from_count(10);
         let time = Time::from_512_second_intervals(70);
 
         let lock = LockTime::from(height);
 
-        assert!(!lock.is_satisfied_by(Height::from(9), time));
-        assert!(lock.is_satisfied_by(Height::from(10), time));
-        assert!(lock.is_satisfied_by(Height::from(11), time));
+        assert!(!lock.is_satisfied_by(Height::from_count(9), time));
+        assert!(lock.is_satisfied_by(Height::from_count(10), time));
+        assert!(lock.is_satisfied_by(Height::from_count(11), time));
     }
 
     #[test]
     fn satisfied_by_time() {
-        let height = Height::from(10);
+        let height = Height::from_count(10);
         let time = Time::from_512_second_intervals(70);
 
         let lock = LockTime::from(time);
@@ -371,12 +245,12 @@ mod tests {
 
     #[test]
     fn height_correctly_implies() {
-        let height = Height::from(10);
+        let height = Height::from_count(10);
         let lock = LockTime::from(height);
 
-        assert!(!lock.is_implied_by(LockTime::from(Height::from(9))));
-        assert!(lock.is_implied_by(LockTime::from(Height::from(10))));
-        assert!(lock.is_implied_by(LockTime::from(Height::from(11))));
+        assert!(!lock.is_implied_by(LockTime::from(Height::from_count(9))));
+        assert!(lock.is_implied_by(LockTime::from(Height::from_count(10))));
+        assert!(lock.is_implied_by(LockTime::from(Height::from_count(11))));
     }
 
     #[test]
@@ -392,7 +266,7 @@ mod tests {
     #[test]
     fn incorrect_units_do_not_imply() {
         let time = Time::from_512_second_intervals(70);
-        let height = Height::from(10);
+        let height = Height::from_count(10);
 
         let lock = LockTime::from(time);
         assert!(!lock.is_implied_by(LockTime::from(height)));

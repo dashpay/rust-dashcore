@@ -1,8 +1,11 @@
 use crate::bls_sig_utils::BLSSignature;
+use std::sync::Arc;
 
 use crate::Network;
+use crate::QuorumHash;
 use crate::network::constants::NetworkExt;
 use crate::network::message_sml::MnListDiff;
+use crate::prelude::CoreBlockHeight;
 use crate::sml::error::SmlError;
 use crate::sml::llmq_entry_verification::{
     LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
@@ -12,75 +15,21 @@ use crate::sml::masternode_list::MasternodeList;
 use crate::sml::quorum_entry::qualified_quorum_entry::{
     QualifiedQuorumEntry, VerifyingChainLockSignaturesType,
 };
-use crate::{BlockHash, QuorumHash};
-use hashes::Hash;
 use std::collections::BTreeMap;
 
-pub trait TryFromWithBlockHashLookup<T>: Sized {
-    type Error;
-    fn try_from_with_block_hash_lookup<F>(
-        value: T,
-        block_hash_lookup: F,
-        network: Network,
-    ) -> Result<Self, Self::Error>
-    where
-        F: Fn(&BlockHash) -> Option<u32>;
-}
-
-pub trait TryIntoWithBlockHashLookup<T>: Sized {
-    type Error;
-
-    /// Converts `self` into `T`, using a block hash lookup function.
-    fn try_into_with_block_hash_lookup<F>(
-        self,
-        block_hash_lookup: F,
-        network: Network,
-    ) -> Result<T, Self::Error>
-    where
-        F: Fn(&BlockHash) -> Option<u32>;
-}
-
-impl<T, U> TryIntoWithBlockHashLookup<U> for T
-where
-    U: TryFromWithBlockHashLookup<T>,
-{
-    type Error = U::Error;
-
-    fn try_into_with_block_hash_lookup<F>(
-        self,
-        block_hash_lookup: F,
-        network: Network,
-    ) -> Result<U, Self::Error>
-    where
-        F: Fn(&BlockHash) -> Option<u32>,
-    {
-        U::try_from_with_block_hash_lookup(self, block_hash_lookup, network)
-    }
-}
-
-impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
-    type Error = SmlError;
-
-    fn try_from_with_block_hash_lookup<F>(
+impl MasternodeList {
+    /// The list a diff from the genesis block builds, known at `known_height`.
+    pub fn from_diff(
         diff: MnListDiff,
-        block_hash_lookup: F,
+        known_height: CoreBlockHeight,
         network: Network,
-    ) -> Result<Self, Self::Error>
-    where
-        F: Fn(&BlockHash) -> Option<u32>,
-    {
-        if let Some(genesis_block_hash) = network.known_genesis_block_hash() {
-            // Check if the base block is the genesis block
-            if diff.base_block_hash != genesis_block_hash
-                && diff.base_block_hash.as_byte_array() != &[0; 32]
-            {
-                return Err(SmlError::BaseBlockNotGenesis(diff.base_block_hash));
-            }
+    ) -> Result<Self, SmlError> {
+        // Check if the base block is the genesis block
+        if diff.base_block_hash != network.known_genesis_block_hash()
+            && diff.base_block_hash.as_byte_array() != &[0; 32]
+        {
+            return Err(SmlError::BaseBlockNotGenesis(diff.base_block_hash));
         }
-
-        // Lookup block height
-        let known_height = block_hash_lookup(&diff.block_hash)
-            .ok_or(SmlError::BlockHashLookupFailed(diff.block_hash))?;
 
         // Ensure the `MnListDiff` is valid
         if diff.merkle_hashes.is_empty() || diff.new_masternodes.is_empty() {
@@ -91,7 +40,7 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
         let masternodes = diff
             .new_masternodes
             .into_iter()
-            .map(|entry| (entry.pro_reg_tx_hash.reverse(), entry.into()))
+            .map(|entry| (entry.pro_reg_tx_hash.reverse(), Arc::new(entry.into())))
             .collect::<BTreeMap<_, _>>();
 
         // Build a vector of optional signatures with slots matching new_quorums length
@@ -118,13 +67,13 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
 
         let quorums = diff.new_quorums.into_iter().enumerate().fold(
             BTreeMap::new(),
-            |mut map: BTreeMap<LLMQType, BTreeMap<QuorumHash, QualifiedQuorumEntry>>,
+            |mut map: BTreeMap<LLMQType, BTreeMap<QuorumHash, Arc<QualifiedQuorumEntry>>>,
              (idx, quorum)| {
                 map.entry(quorum.llmq_type).or_default().insert(quorum.quorum_hash, {
                     let entry_hash = quorum.calculate_entry_hash();
                     let commitment_hash = quorum.calculate_commitment_hash();
 
-                    QualifiedQuorumEntry {
+                    Arc::new(QualifiedQuorumEntry {
                         quorum_entry: quorum,
                         verified: LLMQEntryVerificationStatus::Skipped(
                             LLMQEntryVerificationSkipStatus::NotMarkedForVerification,
@@ -137,21 +86,13 @@ impl TryFromWithBlockHashLookup<MnListDiff> for MasternodeList {
                             .flatten()
                             .copied()
                             .map(VerifyingChainLockSignaturesType::NonRotating),
-                    }
+                    })
                 });
                 map
             },
         );
 
-        // Construct `MasternodeList`
-        Ok(MasternodeList {
-            block_hash: diff.block_hash,
-            known_height,
-            masternode_merkle_root: diff.merkle_hashes.first().cloned(),
-            llmq_merkle_root: None, // Adjust based on real data availability
-            masternodes,
-            quorums,
-        })
+        Ok(MasternodeList::build(masternodes, quorums, diff.block_hash, known_height).build())
     }
 }
 
@@ -174,11 +115,7 @@ mod tests {
         let post_v20_height = 2_227_096;
         assert!(post_v20_height >= Network::Mainnet.v20_activation_height());
 
-        let result = MasternodeList::try_from_with_block_hash_lookup(
-            diff,
-            |_| Some(post_v20_height),
-            Network::Mainnet,
-        );
+        let result = MasternodeList::from_diff(diff, post_v20_height, Network::Mainnet);
 
         assert!(
             matches!(result, Err(SmlError::IncompleteSignatureSet)),
@@ -200,11 +137,7 @@ mod tests {
         let pre_v20_height = 1_900_000;
         assert!(pre_v20_height < Network::Mainnet.v20_activation_height());
 
-        let result = MasternodeList::try_from_with_block_hash_lookup(
-            diff,
-            |_| Some(pre_v20_height),
-            Network::Mainnet,
-        );
+        let result = MasternodeList::from_diff(diff, pre_v20_height, Network::Mainnet);
 
         assert!(
             result.is_ok(),

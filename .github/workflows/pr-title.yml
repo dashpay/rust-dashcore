@@ -13,9 +13,9 @@ concurrency:
 
 jobs:
   check-title:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: amannn/action-semantic-pull-request@v6
+      - uses: amannn/action-semantic-pull-request@v6.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -26,5 +26,6 @@ jobs:
             docs
             feat
             fix
+            perf
             refactor
             test

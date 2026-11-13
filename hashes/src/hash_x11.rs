@@ -1,77 +1,93 @@
-// Rust Dash Library
-// Originally written in 2014 by
-//     Dmitrii Golubev <dmitrii.golubev@dash.org>
-//     For Dash
-// Updated for Dash in 2022 by
-//     The Dash Core Developers
 //
-// To the extent possible under law, the author(s) have dedicated all
-// copyright and related and neighboring rights to this software to
-// the public domain worldwide. This software is distributed without
-// any warranty.
-//
-// You should have received a copy of the CC0 Public Domain Dedication
-// along with this software.
-// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+// This file is a part of rust-dashcore.
+// SPDX-License-Identifier: CC0-1.0
+// See the accompanying file LICENSE or https://creativecommons.org/publicdomain/zero/1.0
 //
 
-//! An implementation of a hash engine to support the X1 hash,
-//! which is a wrapper around the rs-x11-hash library.
+//! An implementation of a hash engine wrapper for the proof of work hash.
 
 use core::ops::Index;
 use core::slice::SliceIndex;
 use core::str;
 use std::io;
-use std::vec::Vec;
 
-use crate::{hex, Error, HashEngine as _};
+use dash_pow::__deps::digest::Digest;
+use dash_pow::X11;
 
-crate::internal_macros::hash_type! {
-    256,
-    true,
-    "Output of the X11 hash function.",
-    "crate::util::json_hex_string::len_32"
-}
+use crate::{FromSliceError, HashEngine as _};
 
-/// Output of the X11 hash function
-fn from_engine(e: HashEngine) -> Hash {
-    Hash(e.midstate().to_byte_array())
-}
+/// Output of the X11 hash function.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct Hash([u8; 32]);
 
-/// A hashing engine of X11 algorithm, which bytes can be serialized into
-#[derive(Clone, Default)]
-pub struct HashEngine {
-    buf: Vec<u8>,
-    length: usize,
-}
+crate::hex_fmt_impl!(<Hash as crate::Hash>::DISPLAY_BACKWARD, 32, Hash);
+crate::serde_impl!(Hash, 32);
+crate::bincode_impl!(Hash, 32);
+crate::borrow_slice_impl!(Hash);
 
-impl crate::HashEngine for HashEngine {
-    type MidState = Midstate;
-
-    const BLOCK_SIZE: usize = 32;
-
-    fn midstate(&self) -> Self::MidState {
-        Midstate(rs_x11_hash::get_x11_hash(self.buf.as_slice()))
+impl Hash {
+    /// Hashes some bytes.
+    #[allow(clippy::self_named_constructors)] // Hash is a noun and a verb.
+    pub fn hash(data: &[u8]) -> Self {
+        let mut engine = Self::engine();
+        engine.input(data);
+        engine.finalize()
     }
 
-    fn input(&mut self, data: &[u8]) {
-        self.buf.extend_from_slice(data);
+    /// Constructs a new engine.
+    pub fn engine() -> HashEngine {
+        HashEngine::default()
     }
 
-    fn n_bytes_hashed(&self) -> usize {
-        self.length
+    /// Finalizes a hash engine to produce a hash.
+    pub fn from_engine(e: HashEngine) -> Self {
+        Hash(e.hasher.finalize().into())
+    }
+
+    /// Constructs a new hash from the underlying byte array.
+    pub const fn from_byte_array(bytes: [u8; 32]) -> Self {
+        Hash(bytes)
+    }
+
+    /// Returns the underlying byte array.
+    pub const fn to_byte_array(self) -> [u8; 32] {
+        self.0
+    }
+
+    /// Returns a reference to the underlying byte array.
+    pub const fn as_byte_array(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Constructs a new hash from a slice, failing unless it is 32 bytes long.
+    pub fn from_slice(sl: &[u8]) -> Result<Self, FromSliceError> {
+        crate::util::slice_to_array(sl).map(Hash)
+    }
+
+    /// Returns the hash with every byte set to zero.
+    pub const fn all_zeros() -> Self {
+        Hash([0; 32])
     }
 }
 
-/// Output of the X11 hash function
-#[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Hash)]
-pub struct Midstate(pub [u8; 32]);
+impl str::FromStr for Hash {
+    type Err = hex_conservative::DecodeFixedLengthBytesError;
 
-crate::internal_macros::arr_newtype_fmt_impl!(Midstate, 32);
-serde_impl!(Midstate, 32);
-borrow_slice_impl!(Midstate);
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut bytes: [u8; 32] = hex_conservative::decode_to_array(s)?;
+        bytes.reverse();
+        Ok(Hash(bytes))
+    }
+}
 
-impl<I: SliceIndex<[u8]>> Index<I> for Midstate {
+impl AsRef<[u8; 32]> for Hash {
+    fn as_ref(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl<I: SliceIndex<[u8]>> Index<I> for Hash {
     type Output = I::Output;
 
     #[inline]
@@ -80,56 +96,53 @@ impl<I: SliceIndex<[u8]>> Index<I> for Midstate {
     }
 }
 
-impl str::FromStr for Midstate {
-    type Err = hex::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        hex::FromHex::from_hex(s)
+impl From<Hash> for [u8; 32] {
+    fn from(hash: Hash) -> [u8; 32] {
+        hash.0
     }
 }
 
-impl Midstate {
-    /// Length of the midstate, in bytes.
-    const LEN: usize = 32;
+impl crate::Hash for Hash {
+    type Bytes = [u8; 32];
 
-    /// Flag indicating whether user-visible serializations of this hash
-    /// should be backward. For some reason Satoshi decided this should be
-    /// true for `Sha256dHash`, so here we are.
     const DISPLAY_BACKWARD: bool = true;
 
-    /// Construct a new [`Midstate`] from the inner value.
-    pub const fn from_byte_array(inner: [u8; 32]) -> Self {
-        Midstate(inner)
+    fn from_byte_array(bytes: [u8; 32]) -> Self {
+        Self::from_byte_array(bytes)
     }
 
-    /// Copies a byte slice into the [`Midstate`] object.
-    pub fn from_slice(sl: &[u8]) -> Result<Midstate, Error> {
-        if sl.len() != Self::LEN {
-            Err(Error::InvalidLength(Self::LEN, sl.len()))
-        } else {
-            let mut ret = [0; 32];
-            ret.copy_from_slice(sl);
-            Ok(Midstate(ret))
-        }
+    fn to_byte_array(self) -> [u8; 32] {
+        self.to_byte_array()
     }
 
-    /// Unwraps the [`Midstate`] and returns the underlying byte array.
-    pub fn to_byte_array(self) -> [u8; 32] {
-        self.0
-    }
-
-    /// Unwraps the [`Midstate`] and returns the underlying byte array.
-    pub fn into_inner(self) -> [u8; 32] {
-        self.0
+    fn as_byte_array(&self) -> &[u8; 32] {
+        self.as_byte_array()
     }
 }
 
-impl hex::FromHex for Midstate {
-    fn from_byte_iter<I>(iter: I) -> Result<Self, hex::Error>
-    where
-        I: Iterator<Item = Result<u8, hex::Error>> + ExactSizeIterator + DoubleEndedIterator,
-    {
-        // DISPLAY_BACKWARD is true
-        Ok(Midstate::from_byte_array(hex::FromHex::from_byte_iter(iter.rev())?))
+/// An X11 hashing engine.
+#[derive(Clone, Default)]
+pub struct HashEngine {
+    hasher: X11,
+    length: u64,
+}
+
+impl crate::HashEngine for HashEngine {
+    type Hash = Hash;
+
+    const BLOCK_SIZE: usize = 32;
+
+    fn input(&mut self, data: &[u8]) {
+        self.hasher.update(data);
+        self.length += data.len() as u64;
+    }
+
+    fn n_bytes_hashed(&self) -> u64 {
+        self.length
+    }
+
+    fn finalize(self) -> Hash {
+        Hash::from_engine(self)
     }
 }
 
@@ -138,7 +151,31 @@ impl io::Write for HashEngine {
         self.input(buf);
         Ok(buf.len())
     }
+
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hex_conservative::hex;
+    use test_case::test_case;
+
+    use crate::{hash_x11, HashEngine};
+
+    #[test_case(&[], hex!("51b572209083576ea221c27e62b4e22063257571ccb6cc3dc3cd17eb67584eba"); "empty")]
+    #[test_case(&hex!("020000002cc0081be5039a54b686d24d5d8747ee9770d9973ec1ace02e5c0500000000008d7139724b11c52995db4370284c998b9114154b120ad3486f1a360a1d4253d310d40e55b8f70a1be8e32300"), hex!("f29c0f286fd8071669286c6987eb941181134ff5f3978bf89f34070000000000"); "header")]
+    #[test_case(&(0..123).collect::<Vec<u8>>(), hex!("132ead25e64bf5cda54d198b3dc77bd7032e856f724dcd39c503ef3183462b5d"); "123 bytes")]
+    fn hash(data: &[u8], expected: [u8; 32]) {
+        assert_eq!(hash_x11::Hash::hash(data).to_byte_array(), expected);
+        assert_eq!(hash_x11::Hash::from_slice(&expected).map(|h| h.to_byte_array()), Ok(expected));
+
+        let mut engine = hash_x11::Hash::engine();
+        let (head, tail) = data.split_at(data.len() / 2);
+        engine.input(head);
+        engine.input(tail);
+        assert_eq!(engine.n_bytes_hashed(), data.len() as u64);
+        assert_eq!(engine.finalize().to_byte_array(), expected);
     }
 }

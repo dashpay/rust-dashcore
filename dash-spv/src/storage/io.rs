@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{StorageError, StorageResult};
-use tokio::io::AsyncWriteExt;
+use dashcore::consensus::Encodable;
+use tokio::io::{AsyncWriteExt, BufWriter};
 
 /// Get the temporary file path for atomic writes.
 /// Uses process ID and a counter to ensure uniqueness even with concurrent writes.
@@ -22,6 +23,38 @@ fn get_temp_path(path: &Path) -> PathBuf {
 /// Atomically write data to a file.
 /// Uses temporary file + sync + rename pattern for crash resilience.
 pub(crate) async fn atomic_write(path: &Path, data: &[u8]) -> StorageResult<()> {
+    atomic_write_with(path, |mut file| async move {
+        file.write_all(data).await?;
+        file.sync_all().await
+    })
+    .await
+}
+
+/// Like [`atomic_write`], but encodes `items` into the file one at a time
+/// instead of into a buffer holding all of them.
+pub(crate) async fn atomic_write_items<I: Encodable>(
+    path: &Path,
+    items: &[I],
+) -> StorageResult<()> {
+    atomic_write_with(path, |file| async move {
+        let mut writer = BufWriter::with_capacity(1 << 20, file);
+        let mut encoded = Vec::new();
+        for item in items {
+            encoded.clear();
+            item.consensus_encode(&mut encoded)?;
+            writer.write_all(&encoded).await?;
+        }
+        writer.flush().await?;
+        writer.into_inner().sync_all().await
+    })
+    .await
+}
+
+async fn atomic_write_with<F, Fut>(path: &Path, write: F) -> StorageResult<()>
+where
+    F: FnOnce(tokio::fs::File) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<()>>,
+{
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -32,14 +65,7 @@ pub(crate) async fn atomic_write(path: &Path, data: &[u8]) -> StorageResult<()> 
     let temp_path = get_temp_path(path);
 
     // Write to temporary file
-    let write_result = async {
-        let mut file = tokio::fs::File::create(&temp_path).await?;
-        file.write_all(data).await?;
-        file.sync_all().await?;
-
-        Ok::<(), std::io::Error>(())
-    }
-    .await;
+    let write_result = async { write(tokio::fs::File::create(&temp_path).await?).await }.await;
 
     // Clean up temp file on error
     if let Err(e) = write_result {
@@ -61,6 +87,18 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_atomic_write_items_matches_encoding_all_at_once() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("items.dat");
+        let items = vec![vec![1u8, 2, 3], vec![], vec![4u8; 300]];
+
+        atomic_write_items(&path, &items).await.unwrap();
+
+        let expected: Vec<u8> = items.iter().flat_map(dashcore::consensus::serialize).collect();
+        assert_eq!(fs::read(&path).unwrap(), expected);
+    }
 
     #[test]
     fn test_get_temp_path_uniqueness() {

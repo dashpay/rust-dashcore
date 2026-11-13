@@ -1,6 +1,6 @@
+use crate::hash_types::Sha256dHash;
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::sha256d;
 use thiserror::Error;
 
 use crate::QuorumHash;
@@ -17,9 +17,6 @@ pub enum MessageVerificationError {
     #[error("Required cycle not present to verify instant send: {0}")]
     CycleHashNotPresent(CycleHash),
 
-    #[error("Required cycle present but has no quorum: {0}")]
-    CycleHashEmpty(CycleHash),
-
     #[error("Quorum with index {0} not found in cycle {1}")]
     QuorumIndexNotFound(u16, CycleHash),
 
@@ -34,7 +31,7 @@ pub enum MessageVerificationError {
     )]
     ThresholdSignatureNotValid(
         Box<BLSSignature>,
-        Box<sha256d::Hash>,
+        Box<Sha256dHash>,
         Box<BLSPublicKey>,
         QuorumHash,
         LLMQType,
@@ -67,6 +64,23 @@ impl From<QuorumValidationError> for MessageVerificationError {
                 MessageVerificationError::InvalidBLSSignature(signature)
             }
             error => MessageVerificationError::Generic(error.to_string()),
+        }
+    }
+}
+
+#[cfg(feature = "bls")]
+impl From<crate::bls_sig_utils::BlsError> for MessageVerificationError {
+    fn from(e: crate::bls_sig_utils::BlsError) -> Self {
+        use crate::bls_sig_utils::BlsError;
+
+        match e {
+            BlsError::InvalidPublicKey(s) => Self::InvalidBLSPublicKey(s),
+            BlsError::InvalidSignature(s) => Self::InvalidBLSSignature(s),
+            BlsError::InvalidSecretKey => {
+                Self::InvalidBLSPublicKey("invalid secret key".to_string())
+            }
+            BlsError::InvalidTweak => Self::InvalidBLSPublicKey("invalid tweak".to_string()),
+            BlsError::VerificationFailed(s) => Self::InvalidBLSSignature(s),
         }
     }
 }

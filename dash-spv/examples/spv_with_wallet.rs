@@ -3,7 +3,6 @@
 //! This example shows how to integrate the SPV client with a wallet manager.
 
 use dash_spv::network::PeerNetworkManager;
-use dash_spv::storage::DiskStorageManager;
 use dash_spv::{ClientConfig, DashSpvClient, LevelFilter};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::WalletManager;
@@ -21,17 +20,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_validation_mode(dash_spv::ValidationMode::Full);
 
     // Create network manager
-    let network_manager = PeerNetworkManager::new(&config).await?;
-
-    // Create storage manager - use disk storage for persistence
-    let storage_manager = DiskStorageManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the SPV client with all components
-    let client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await?;
+    let client = DashSpvClient::new(config, network_manager, wallet, vec![]).await?;
 
     // The wallet will automatically be notified of:
     // - New blocks via process_block()
@@ -40,6 +35,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - Compact filter checks via check_compact_filter()
 
     client.run().await?;
+
+    // Sync in the background until Ctrl-C.
+    tokio::signal::ctrl_c().await?;
+    client.stop().await;
 
     println!("Done!");
     Ok(())

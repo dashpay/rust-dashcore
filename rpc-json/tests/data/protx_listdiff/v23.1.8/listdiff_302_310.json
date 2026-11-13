@@ -1,0 +1,31 @@
+{
+  "baseHeight": 302,
+  "blockHeight": 310,
+  "addedMNs": [],
+  "removedMNs": [],
+  "updatedMNs": [
+    {
+      "06b9004fc63be0fd7a1a552b2f794335883452feafa38f3b93733d10ad326570": {
+        "version": 1,
+        "service": "[::]:0",
+        "lastPaidHeight": 310,
+        "PoSeBanHeight": 310,
+        "pubKeyOperator": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "edf27b823c51820c5e6ac81b1973838ae33f440c021ac569c11bd39e7f2f448f": {
+        "version": 2,
+        "lastPaidHeight": 309,
+        "PoSeRevivedHeight": 306,
+        "operatorPayoutAddress": "yabAqcVFPhbKdjJBq7jNDiPWX6TtNVtor6",
+        "pubKeyOperator": "addc6462c3952dad61e3c2c49369a4b540016a505d2835a34319666a22260db5685aab809a88fc0d99a1a4ef107e80b6"
+      }
+    },
+    {
+      "62fe8d4603be148dbf1140323e1280e2e1da075d1b44d341ded74690b6e6ee04": {
+        "lastPaidHeight": 308
+      }
+    }
+  ]
+}

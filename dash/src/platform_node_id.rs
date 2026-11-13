@@ -1,15 +1,7 @@
-// Rust Dash Library
-// Written by
-//   The Rust Dash developers
 //
-// To the extent possible under law, the author(s) have dedicated all
-// copyright and related and neighboring rights to this software to
-// the public domain worldwide. This software is distributed without
-// any warranty.
-//
-// You should have received a copy of the CC0 Public Domain Dedication
-// along with this software.
-// If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+// This file is a part of rust-dashcore.
+// SPDX-License-Identifier: CC0-1.0
+// See the accompanying file LICENSE or https://creativecommons.org/publicdomain/zero/1.0
 //
 
 //! Dash Platform (Tenderdash/CometBFT) node ID.
@@ -28,12 +20,12 @@
 
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
-use hashes::{Hash, sha256};
+use hashes::sha256;
 use internals::impl_array_newtype;
 
 use crate::consensus::{Decodable, Encodable, encode};
-use crate::internal_macros::impl_bytes_newtype;
 use crate::io;
+use internals::impl_bytes_newtype;
 
 /// A Dash Platform (Tenderdash/CometBFT) node ID.
 ///
@@ -71,6 +63,13 @@ impl PlatformNodeId {
         let mut bytes = [0u8; 20];
         bytes.copy_from_slice(&digest.to_byte_array()[..20]);
         PlatformNodeId(bytes)
+    }
+}
+
+/// The node ID of an Ed25519 public key hash, in canonical order.
+impl From<dashcore_crypto::eddsa::EddsaPkHash> for PlatformNodeId {
+    fn from(hash: dashcore_crypto::eddsa::EddsaPkHash) -> Self {
+        PlatformNodeId(hash.to_canonical_bytes())
     }
 }
 
@@ -144,8 +143,6 @@ mod tests {
     #[cfg(feature = "bincode")]
     #[test]
     fn bincode_layout_matches_pubkey_hash() {
-        use hashes::Hash;
-
         let bytes = [0xCD; 20];
         let config = bincode::config::standard();
         let node_id_bytes = bincode::encode_to_vec(PlatformNodeId::from_byte_array(bytes), config)
@@ -174,6 +171,32 @@ mod tests {
         assert_eq!(json, format!("\"{}\"", "11".repeat(20)));
         let back: PlatformNodeId = serde_json::from_str(&json).expect("deserialize node id");
         assert_eq!(back, node_id);
+    }
+
+    /// Binary serde (e.g. `bincode::serde`, used to persist wallet records) writes the canonical
+    /// bytes. Fixed bytes so a change of the stored layout can't go unnoticed.
+    #[cfg(all(feature = "serde", feature = "bincode"))]
+    #[test]
+    fn binary_serde_writes_the_canonical_bytes() {
+        let canonical: [u8; 20] = core::array::from_fn(|i| i as u8);
+        let node_id = PlatformNodeId::from_byte_array(canonical);
+        let config = bincode::config::standard();
+
+        let bytes = bincode::serde::encode_to_vec(node_id, config).expect("serialize node id");
+        let mut expected = vec![20u8];
+        expected.extend_from_slice(&canonical);
+        assert_eq!(bytes, expected);
+
+        let (back, _): (PlatformNodeId, _) =
+            bincode::serde::decode_from_slice(&bytes, config).expect("deserialize node id");
+        assert_eq!(back, node_id);
+    }
+
+    #[test]
+    fn eddsa_pk_hash_converts_in_canonical_order() {
+        let canonical: [u8; 20] = core::array::from_fn(|i| i as u8);
+        let hash = dashcore_crypto::eddsa::EddsaPkHash::from_canonical_bytes(canonical);
+        assert_eq!(PlatformNodeId::from(hash).to_byte_array(), canonical);
     }
 
     #[test]

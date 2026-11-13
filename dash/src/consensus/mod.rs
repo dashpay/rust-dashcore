@@ -19,11 +19,9 @@
 //!
 
 pub mod encode;
-pub mod params;
 #[cfg(feature = "serde")]
 pub mod serde;
 
 pub use self::encode::{
     Decodable, Encodable, ReadExt, WriteExt, deserialize, deserialize_partial, serialize,
 };
-pub use self::params::Params;

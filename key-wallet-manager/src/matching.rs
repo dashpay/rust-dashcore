@@ -42,6 +42,20 @@ pub fn check_compact_filters_for_elements(
     extra_elements: &[Vec<u8>],
     min_height: CoreBlockHeight,
 ) -> BTreeSet<FilterMatchKey> {
+    check_compact_filters_shard(input, script_pubkeys, extra_elements, min_height, 0, 1)
+}
+
+/// [`check_compact_filters_for_elements`] over one shard of `input`: the filters at
+/// positions `shard`, `shard + shards`, ... of its iteration order, so `shards`
+/// callers split one map between them without copying it.
+pub fn check_compact_filters_shard(
+    input: &HashMap<FilterMatchKey, BlockFilter>,
+    script_pubkeys: &[ScriptBuf],
+    extra_elements: &[Vec<u8>],
+    min_height: CoreBlockHeight,
+    shard: usize,
+    shards: usize,
+) -> BTreeSet<FilterMatchKey> {
     // Group the scripts and bare elements by length once; the same query is
     // reused across every filter.
     let mut query: FilterQuery = script_pubkeys.iter().map(|s| s.as_bytes()).collect();
@@ -67,14 +81,16 @@ pub fn check_compact_filters_for_elements(
     };
 
     #[cfg(feature = "parallel-filters")]
-    {
-        input.into_par_iter().filter_map(match_filter).collect()
+    if shards == 1 {
+        return input.into_par_iter().filter_map(match_filter).collect();
     }
 
-    #[cfg(not(feature = "parallel-filters"))]
-    {
-        input.iter().filter_map(match_filter).collect()
-    }
+    input
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % shards == shard)
+        .filter_map(|(_, entry)| match_filter(entry))
+        .collect()
 }
 
 #[cfg(test)]

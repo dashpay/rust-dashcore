@@ -6,14 +6,14 @@
 #[cfg(feature = "bincode")]
 use bincode::{Decode, Encode};
 use core::fmt::Debug;
-use hashes::{Hash, HashEngine};
+use hashes::{HashEngine, sha256d};
 pub use std::vec::Vec;
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::Encodable;
 use crate::hash_types::QuorumSigningSignId;
 use crate::internal_macros::impl_consensus_encoding;
-use crate::sml::llmq_type::LLMQType;
+use crate::sml::llmq_type::{LLMQ_SIGN_HEIGHT_OFFSET, LLMQType};
 use crate::{BlockHash, QuorumHash, QuorumSigningRequestId, VarInt, io};
 
 const CL_REQUEST_ID_PREFIX: &str = "clsig";
@@ -39,7 +39,7 @@ impl_consensus_encoding!(ChainLock, block_height, block_hash, signature);
 impl ChainLock {
     /// Returns quorum signing request ID
     pub fn request_id(&self) -> Result<QuorumSigningRequestId, io::Error> {
-        let mut engine = QuorumSigningRequestId::engine();
+        let mut engine = sha256d::Hash::engine();
 
         // Prefix
         let prefix_len = VarInt(CL_REQUEST_ID_PREFIX.len() as u64);
@@ -50,7 +50,12 @@ impl ChainLock {
         // Inputs
         engine.input(&self.block_height.to_le_bytes());
 
-        Ok(QuorumSigningRequestId::from_engine(engine))
+        Ok(QuorumSigningRequestId::from_raw_hash(engine.finalize()))
+    }
+
+    /// Height of the masternode list that holds the quorum signing this ChainLock.
+    pub fn signing_height(&self) -> u32 {
+        self.block_height.saturating_sub(LLMQ_SIGN_HEIGHT_OFFSET)
     }
 
     pub fn sign_id(
@@ -59,21 +64,19 @@ impl ChainLock {
         quorum_hash: QuorumHash,
         precomputed_request_id: Option<QuorumSigningRequestId>,
     ) -> Result<QuorumSigningSignId, io::Error> {
-        let mut engine = QuorumSigningSignId::engine();
+        let mut engine = sha256d::Hash::engine();
 
-        engine.input(&[quorum_type as u8]);
+        engine.input(&[quorum_type.index()]);
         engine.input(quorum_hash.as_byte_array());
         engine.input(precomputed_request_id.unwrap_or(self.request_id()?).as_byte_array());
         engine.input(self.block_hash.as_byte_array());
 
-        Ok(QuorumSigningSignId::from_engine(engine))
+        Ok(QuorumSigningSignId::from_raw_hash(engine.finalize()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-
-    use hex::FromHex;
 
     use super::*;
     use crate::consensus::deserialize;
@@ -111,7 +114,7 @@ mod tests {
         let expected_request_id =
             "5d92e094e2aa582b76e8bf519f42c5e8fc141bbe548e9660726f744adad03966";
 
-        let vec = Vec::from_hex(hex).unwrap();
+        let vec = hex_conservative::decode_to_vec(hex).unwrap();
 
         let chain_lokc: ChainLock = deserialize(&vec).unwrap();
 

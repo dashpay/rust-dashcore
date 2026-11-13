@@ -14,7 +14,7 @@ use super::batch::FiltersBatch;
 use super::block_match_tracker::{BlockMatchTracker, BlockTrackResult};
 use super::pipeline::FiltersPipeline;
 use crate::error::SyncResult;
-use crate::network::RequestSender;
+use crate::network::NetworkManager;
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
 use crate::sync::filters::util::get_prev_filter_header;
 use crate::sync::{FiltersProgress, SyncEvent, SyncManager, SyncState};
@@ -23,9 +23,41 @@ use crate::validation::{FilterValidationInput, FilterValidator, Validator};
 use crate::sync::progress::ProgressPercentage;
 use dashcore::hash_types::FilterHeader;
 use key_wallet_manager::WalletInterface;
-use key_wallet_manager::{check_compact_filters_for_elements, FilterMatchKey, WalletId};
+use key_wallet_manager::{check_compact_filters_shard, FilterMatchKey, WalletId};
 use tokio::sync::RwLock;
 
+/// Fewest filters worth a task of their own.
+const MATCH_CHUNK: usize = 256;
+
+/// Matches `filters` against the scripts and elements on tokio tasks, one shard of the
+/// map per runtime worker, so a 5000-filter batch is not matched on one core.
+async fn match_filters(
+    filters: &Arc<HashMap<FilterMatchKey, BlockFilter>>,
+    scripts: Vec<ScriptBuf>,
+    elements: Vec<Vec<u8>>,
+    min_height: u32,
+) -> BTreeSet<FilterMatchKey> {
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let shards = filters.len().div_ceil(MATCH_CHUNK).clamp(1, workers);
+    let scripts: Arc<[ScriptBuf]> = scripts.into();
+    let elements: Arc<[Vec<u8>]> = elements.into();
+    let tasks: Vec<_> = (0..shards)
+        .map(|shard| {
+            let (filters, scripts, elements) =
+                (Arc::clone(filters), Arc::clone(&scripts), Arc::clone(&elements));
+            tokio::spawn(async move {
+                check_compact_filters_shard(
+                    &filters, &scripts, &elements, min_height, shard, shards,
+                )
+            })
+        })
+        .collect();
+    let mut matches = BTreeSet::new();
+    for task in tasks {
+        matches.extend(task.await.expect("filter matching task panicked"));
+    }
+    matches
+}
 /// Batch size for processing filters.
 const BATCH_PROCESSING_SIZE: u32 = 5000;
 
@@ -44,13 +76,10 @@ struct WalletScanState {
 
 /// Maximum number of batches to scan ahead while waiting for blocks.
 ///
-/// Raising this does not buy more throughput while a batch is stalled on a block.
-/// Every scanned batch queues its matched blocks into one FIFO download window,
-/// so a deeper lookahead fills that window with blocks belonging to batches that
-/// cannot commit for a long time, ahead of the blocks the committing batch is
-/// actually waiting on. Block downloads would have to be ordered by height
-/// before this could go higher.
-const MAX_LOOKAHEAD_BATCHES: usize = 3;
+/// Each commit waits a network round trip for its matched blocks, so the lookahead
+/// is what keeps blocks in flight. Blocks are drained first and in declaration
+/// (height) order, so a deep lookahead no longer delays the committing batch.
+const MAX_LOOKAHEAD_BATCHES: usize = 16;
 
 /// Filters manager for downloading and matching compact block filters.
 ///
@@ -91,21 +120,8 @@ pub struct FiltersManager<
     /// `BlockProcessed` and the per-wallet record of which wallets already
     /// have a given processed block applied.
     pub(super) tracker: BlockMatchTracker,
-    /// Scripts already forward-rescanned but still awaiting the combined
-    /// backward sweep over the committed range (#846). Held at the manager
-    /// level and carried across batch commits: intermediate commits only
-    /// accumulate here, and `try_commit_batches` runs the sweep when the
-    /// forward pipeline drains — the committing batch is the last one active
-    /// and no lookahead can extend past it — so script-carrying commits share
-    /// one walk of the stored history instead of walking it once per commit.
-    /// Deliberately survives `reset_for_rescan`: the restarted scan covers
-    /// heights above its entry point, while these scripts still owe a pass
-    /// over the committed prefix below it.
-    backward_scripts: HashMap<WalletId, HashSet<ScriptBuf>>,
-    /// Number of committed-range sweeps that reached the chunk walk in
-    /// `rescan_committed_range`. Diagnostic counter; the sweep-coalescing
-    /// regression test asserts on it.
-    pub(super) committed_range_sweeps: u64,
+    /// Scripts found by processed blocks since the last tick, rescanned together.
+    pub(super) pending_new_scripts: BTreeMap<WalletId, Vec<ScriptBuf>>,
 }
 
 impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: WalletInterface>
@@ -150,8 +166,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             active_batches: BTreeMap::new(),
             processing_height: 0,
             tracker: BlockMatchTracker::new(),
-            backward_scripts: HashMap::new(),
-            committed_range_sweeps: 0,
+            pending_new_scripts: BTreeMap::new(),
         }
     }
 
@@ -177,11 +192,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         self.tracker.clear();
         self.pending_batches.clear();
         self.filter_pipeline = FiltersPipeline::new();
-        // `backward_scripts` is kept: the restarted scan covers heights above
-        // its entry point with the wallet's current script set, while the
-        // accumulated scripts still owe a sweep of the committed prefix below
-        // it. They get that sweep when the restarted scan's forward pipeline
-        // drains.
     }
 
     async fn load_filters(
@@ -210,7 +220,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     /// Initialize the filter download state and begin downloading from the current position.
     pub(super) async fn start_download(
         &mut self,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         debug_assert!(self.is_idle(), "manager should have no in-flight state on start");
 
@@ -357,7 +367,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         if download_start <= self.progress.filter_header_tip_height() {
             self.filter_pipeline.init(download_start, self.progress.filter_header_tip_height());
             let header_storage = self.header_storage.read().await;
-            self.filter_pipeline.send_pending(requests, &*header_storage).await?;
+            self.filter_pipeline.send_pending(network, &*header_storage).await?;
             drop(header_storage);
         } else {
             // No new filters to download, scanning stored filters only
@@ -389,11 +399,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
         self.active_batches.insert(scan_start, batch);
         self.progress.update_committed_height(scan_start.saturating_sub(1));
-        // Roll the storage watermark back in step with the scan position. This
-        // is also the rescan entry point (the `tick` trigger resets progress
-        // and re-enters here), so it keeps storage from releasing the range
-        // this scan is about to re-read.
-        self.filter_storage.write().await.set_committed_height(scan_start.saturating_sub(1)).await;
 
         // Only scan if all filters for the batch are already loaded
         if self.progress.stored_height() >= batch_end {
@@ -566,25 +571,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             && self.progress.committed_height() >= self.progress.filter_header_tip_height()
             && self.progress.committed_height() >= self.progress.target_height()
         {
-            // A block delivered after its batch committed derives scripts with
-            // no active batch to route them to, so they land in the accumulator
-            // instead. It is in-memory only and nothing looks below the
-            // committed frontier again, so sweep here rather than wait for a
-            // next commit that may never come.
-            if !self.backward_scripts.is_empty() {
-                let backward_scripts = std::mem::take(&mut self.backward_scripts);
-                let sweep_start = self.progress.committed_height().saturating_add(1);
-                events.extend(self.rescan_committed_range(sweep_start, &backward_scripts).await?);
-            }
-
-            // Blocks that sweep found are charged to no batch, so the commit
-            // gate cannot hold completion — gate on the tracker. Their
-            // `BlockProcessed` re-enters here, and a round deriving no new
-            // scripts is the fixpoint.
-            if self.tracker.has_blocks_in_flight() {
-                return Ok(events);
-            }
-
             // Blocks applied after the last commit leave processed records that
             // no commit will prune.
             self.tracker.prune_at_or_below(self.progress.committed_height());
@@ -620,89 +606,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 break;
             }
 
-            // Check if rescan is needed and not done
-            if !batch.rescan_complete() {
-                // Take per-wallet collected scripts from the batch
-                let scripts_by_wallet = self
-                    .active_batches
-                    .get_mut(&batch_start)
-                    .map(|b| b.take_collected_scripts())
-                    .unwrap_or_default();
-
-                if !scripts_by_wallet.is_empty() {
-                    // Rescan current batch
-                    events.extend(self.rescan_batch(batch_start, &scripts_by_wallet).await?);
-
-                    // Also rescan later batches that are already scanned
-                    let later_batches: Vec<u32> = self
-                        .active_batches
-                        .iter()
-                        .filter(|(&start, batch)| start > batch_start && batch.scanned())
-                        .map(|(&start, _)| start)
-                        .collect();
-
-                    for later_start in later_batches {
-                        events.extend(self.rescan_batch(later_start, &scripts_by_wallet).await?);
-                    }
-
-                    // Newly derived scripts also have to reach ranges that
-                    // already committed: those blocks were matched against a
-                    // watch set that predates these scripts, and nothing else
-                    // ever looks below `committed_height` again (#846). That
-                    // backward sweep walks stored history — the expensive
-                    // direction — so defer it: accumulate the scripts at the
-                    // manager level, across batch commits, and sweep below.
-                    for (wallet_id, scripts) in scripts_by_wallet {
-                        self.backward_scripts.entry(wallet_id).or_default().extend(scripts);
-                    }
-                    if let Some(batch) = self.active_batches.get(&batch_start) {
-                        if batch.pending_blocks() > 0 {
-                            // Forward rescan found blocks; converge the
-                            // forward direction first.
-                            break;
-                        }
-                    }
-                }
-
-                events.extend(self.reconcile_untested_scripts(batch_start).await?);
-                if let Some(batch) = self.active_batches.get(&batch_start) {
-                    if batch.pending_blocks() > 0 {
-                        // Reconciliation found blocks; converge before committing.
-                        break;
-                    }
-                }
-
-                // The backward sweep waits for the forward pipeline to drain:
-                // it runs only when this batch is the last one active and no
-                // lookahead batch can be created past it. Commits before that
-                // point leave the accumulated scripts in place, so a sync's
-                // script-carrying commits share one walk of the stored
-                // history — plus one walk per follow-up round whose block
-                // processing derives genuinely new scripts — instead of
-                // walking it once per commit. Hits attribute to this batch,
-                // so scripts their processing derives re-enter through
-                // `collected_scripts` above and only genuinely new scripts
-                // get a follow-up sweep.
-                let forward_drained = self.active_batches.len() == 1
-                    && self.active_batches.get(&batch_start).is_some_and(|b| {
-                        b.end_height() >= self.progress.filter_header_tip_height()
-                    });
-                if forward_drained && !self.backward_scripts.is_empty() {
-                    let backward_scripts = std::mem::take(&mut self.backward_scripts);
-                    events
-                        .extend(self.rescan_committed_range(batch_start, &backward_scripts).await?);
-
-                    // Check if the backward sweep found more blocks
-                    if let Some(batch) = self.active_batches.get(&batch_start) {
-                        if batch.pending_blocks() > 0 {
-                            // Found more blocks, can't commit yet
-                            break;
-                        }
-                    }
-                }
-                // Mark rescan as complete
-                if let Some(batch) = self.active_batches.get_mut(&batch_start) {
-                    batch.mark_rescan_complete();
+            events.extend(self.reconcile_untested_scripts(batch_start).await?);
+            if let Some(batch) = self.active_batches.get(&batch_start) {
+                if batch.pending_blocks() > 0 {
+                    // Reconciliation found blocks; converge before committing.
+                    break;
                 }
             }
 
@@ -759,13 +667,6 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         }
                     }
                 }
-                // A batch commits only once every matched block in it has been
-                // downloaded and applied, so filters at or below `end` are
-                // fully consumed. Let storage release them from memory on the
-                // next persist; they remain readable through `load_filters`,
-                // which reloads from disk. The wallet guard above is out of
-                // scope here and no storage guard is held.
-                self.filter_storage.write().await.set_committed_height(end).await;
             }
             // Drop processed-wallet records for the committed range. Below the
             // new committed_height a new wallet can only get here via the
@@ -856,49 +757,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         Ok(events)
     }
 
-    /// Route scripts derived at `height` to the active batch covering that
-    /// height, or to the backward accumulator when none does. Routing by
-    /// height rather than by the block's in-flight record is what keeps the
-    /// scripts of a re-delivered block, whose record was consumed by the
-    /// first delivery.
-    ///
-    /// Returns how many scripts were routed.
-    pub(super) fn collect_new_scripts(
-        &mut self,
-        height: u32,
-        new_scripts: &BTreeMap<WalletId, Vec<ScriptBuf>>,
-    ) -> usize {
-        let target = self
-            .active_batches
-            .range(..=height)
-            .next_back()
-            .filter(|(_, batch)| batch.end_height() >= height)
-            .map(|(&start, _)| start);
-
-        let mut routed = 0;
-        for (wallet_id, scripts) in new_scripts {
-            if scripts.is_empty() {
-                continue;
-            }
-            routed += scripts.len();
-            match target.and_then(|start| self.active_batches.get_mut(&start)) {
-                Some(batch) => batch.add_scripts_for_wallet(*wallet_id, scripts.iter().cloned()),
-                // Its range has committed: only the sweep can still test these.
-                None => self
-                    .backward_scripts
-                    .entry(*wallet_id)
-                    .or_default()
-                    .extend(scripts.iter().cloned()),
-            }
-        }
-        routed
-    }
-
     /// Re-test anything the wallet watches that this batch has never been
-    /// matched against, before letting it commit. Closing the loop on wallet
-    /// state does not depend on a `new_scripts` notification arriving; a
-    /// script the wallet has dropped from `scan_script_pubkeys_for` is still
-    /// not re-tested.
+    /// matched against, before letting it commit. A script the wallet has
+    /// dropped from `scan_script_pubkeys_for` is not re-tested.
     async fn reconcile_untested_scripts(&mut self, batch_start: u32) -> SyncResult<Vec<SyncEvent>> {
         let Some(batch) = self.active_batches.get(&batch_start) else {
             return Ok(vec![]);
@@ -933,9 +794,29 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             untested.values().map(HashSet::len).sum::<usize>(),
         );
         // Same accounting as any other newly derived script.
-        let events = self.rescan_batch(batch_start, &untested).await?;
-        for (wallet_id, scripts) in untested {
-            self.backward_scripts.entry(wallet_id).or_default().extend(scripts);
+        self.rescan_batch(batch_start, &untested).await
+    }
+
+    /// Match freshly derived scripts against every already-scanned active batch now, so
+    /// their blocks are requested in parallel instead of one batch at a time at commit.
+    pub(super) async fn rescan_active_batches(
+        &mut self,
+        new_scripts: &BTreeMap<WalletId, Vec<ScriptBuf>>,
+    ) -> SyncResult<Vec<SyncEvent>> {
+        let mut events = Vec::new();
+        let starts: Vec<u32> =
+            self.active_batches.iter().filter(|(_, b)| b.scanned()).map(|(s, _)| *s).collect();
+        for batch_start in starts {
+            let Some(batch) = self.active_batches.get(&batch_start) else {
+                continue;
+            };
+            let untested: HashMap<WalletId, HashSet<ScriptBuf>> = new_scripts
+                .iter()
+                .filter(|(id, _)| batch.scanned_wallets().contains_key(*id))
+                .map(|(id, scripts)| (*id, batch.untested(id, scripts).cloned().collect()))
+                .filter(|(_, scripts): &(WalletId, HashSet<ScriptBuf>)| !scripts.is_empty())
+                .collect();
+            events.extend(self.rescan_batch(batch_start, &untested).await?);
         }
         Ok(events)
     }
@@ -977,7 +858,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         if batch.filters().is_empty() {
             return Ok(vec![]);
         }
-        let batch_filters = batch.filters();
+        let batch_filters = batch.shared_filters();
 
         // Per-wallet `synced_height` snapshot so heights below the wallet's
         // own progress are skipped during the rescan, plus the bare
@@ -995,43 +876,18 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
         let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
         for (wallet_id, scripts) in new_scripts {
-            let elements = filter_elements.get(wallet_id).map(Vec::as_slice).unwrap_or(&[]);
+            let elements = filter_elements.remove(wallet_id).unwrap_or_default();
             if scripts.is_empty() && elements.is_empty() {
                 continue;
             }
             let scripts_vec: Vec<ScriptBuf> = scripts.iter().cloned().collect();
             let min_synced = synced_heights.get(wallet_id).copied().unwrap_or(0);
-            let matches = check_compact_filters_for_elements(
-                batch_filters,
-                &scripts_vec,
-                elements,
-                min_synced,
-            );
+            let matches = match_filters(&batch_filters, scripts_vec, elements, min_synced).await;
             for key in matches {
                 block_to_wallets.entry(key).or_default().insert(*wallet_id);
             }
         }
 
-        Ok(self.queue_new_script_matches(batch_start, block_to_wallets, "Rescan"))
-    }
-
-    /// Queue filter matches driven by newly derived scripts for
-    /// (re-)download — the shared tail of `rescan_batch` and
-    /// `rescan_committed_range`.
-    ///
-    /// These matches come from scripts that did not exist when their block
-    /// was first processed, so a processed record must not suppress the
-    /// re-download: the block has to be re-applied against the extended
-    /// pools (`track_for_new_scripts`). Genuinely new blocks are charged to
-    /// `batch_start`'s `pending_blocks` accounting so its commit waits for
-    /// them; blocks already on their way still get a fresh `BlocksNeeded`
-    /// so the pipeline merges late wallet ids into its pending wallet set.
-    fn queue_new_script_matches(
-        &mut self,
-        batch_start: u32,
-        block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>>,
-        context: &str,
-    ) -> Vec<SyncEvent> {
         let mut events = Vec::new();
         let mut blocks_needed: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
         let mut new_blocks_count = 0;
@@ -1062,7 +918,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             if let Some(batch) = self.active_batches.get_mut(&batch_start) {
                 batch.set_pending_blocks(batch.pending_blocks() + new_blocks_count);
             }
-            tracing::info!("{} found {} additional blocks", context, new_blocks_count);
+            tracing::info!("Rescan found {} additional blocks", new_blocks_count);
         }
         if !blocks_needed.is_empty() {
             events.push(SyncEvent::BlocksNeeded {
@@ -1070,7 +926,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             });
         }
 
-        events
+        Ok(events)
     }
 
     /// Scan a specific batch, matching its filters against each behind-wallet's
@@ -1154,17 +1010,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
 
         // Single-pass union-then-attribute: build the union of all scripts
-        // and bare elements across behind wallets, run the filters once, then
-        // for each matched block re-test per-wallet queries to attribute the
-        // match correctly.
+        // across behind wallets, run the filters once, then for each matched
+        // block re-test per-wallet scripts to attribute the match correctly.
         let union_scripts: Vec<ScriptBuf> =
             wallet_states.iter().flat_map(|s| s.scripts.iter().cloned()).collect();
         let union_elements: Vec<Vec<u8>> =
             wallet_states.iter().flat_map(|s| s.elements.iter().cloned()).collect();
         let min_synced = wallet_states.iter().map(|s| s.synced).min().unwrap_or(0);
 
-        // Pre-group each wallet's scripts and bare elements by length once;
-        // reused across every matched filter.
+        // Pre-group each wallet's scripts by length once; reused across every matched filter.
         let wallet_queries: Vec<(WalletId, u32, FilterQuery)> = wallet_states
             .iter()
             .map(|s| {
@@ -1180,14 +1034,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             let Some(batch) = self.active_batches.get(&batch_start) else {
                 return Ok(events);
             };
-            let batch_filters = batch.filters();
+            let batch_filters = batch.shared_filters();
 
-            let matches = check_compact_filters_for_elements(
-                batch_filters,
-                &union_scripts,
-                &union_elements,
-                min_synced,
-            );
+            let matches =
+                match_filters(&batch_filters, union_scripts, union_elements, min_synced).await;
             let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> =
                 BTreeMap::new();
             for key in matches {
@@ -1274,108 +1124,12 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         Ok(events)
     }
 
-    /// Re-test newly derived scriptPubKeys against the already-committed
-    /// filter range below `batch_start` (#846).
-    ///
-    /// A committed batch is gone from `active_batches` and every wallet's
-    /// `synced_height` has advanced past it, so `rescan_batch` can never
-    /// reach it again — but a script derived later by gap-limit maintenance
-    /// (CoinJoin index↔height inversions being the concrete case) may pay
-    /// out inside that range. The filters themselves are address-independent
-    /// BIP-158 commitments and are all persisted, so the committed range is
-    /// re-tested from storage — no network traffic — and only genuinely
-    /// matching blocks are re-downloaded, via the same
-    /// `track_for_new_scripts` path `rescan_batch` uses.
-    ///
-    /// Called by `try_commit_batches` once the forward pipeline has drained,
-    /// with the scripts accumulated in `backward_scripts` across every
-    /// commit since the previous sweep. Matched blocks attribute to the
-    /// committing batch at `batch_start`: its `pending_blocks` accounting
-    /// defers the commit, and scripts their processing derives collect into
-    /// that batch, so the existing commit-time fixpoint loop covers the
-    /// backward direction too.
-    ///
-    /// Deliberately matches only `new_scripts` — not the wallets' bare
-    /// filter elements — since those were already watched when the range
-    /// was originally scanned; including them would re-download previously
-    /// processed blocks across the whole history.
-    pub(super) async fn rescan_committed_range(
-        &mut self,
-        batch_start: u32,
-        new_scripts: &HashMap<WalletId, HashSet<ScriptBuf>>,
-    ) -> SyncResult<Vec<SyncEvent>> {
-        let Some(range_end) = batch_start.checked_sub(1) else {
-            return Ok(vec![]);
-        };
-
-        let wallet_queries: Vec<(WalletId, Vec<ScriptBuf>)> = new_scripts
-            .iter()
-            .filter(|(_, scripts)| !scripts.is_empty())
-            .map(|(id, scripts)| (*id, scripts.iter().cloned().collect()))
-            .collect();
-        if wallet_queries.is_empty() {
-            return Ok(vec![]);
-        }
-
-        // Nothing relevant can precede the earliest wallet birth height, and
-        // nothing is loadable below the first stored filter.
-        let wallet_base = self.wallet.read().await.earliest_required_height().await;
-        let Some(filter_base) = self.filter_storage.read().await.filter_start_height().await else {
-            return Ok(vec![]);
-        };
-        let range_start = wallet_base.max(filter_base);
-        if range_start > range_end {
-            return Ok(vec![]);
-        }
-
-        self.committed_range_sweeps += 1;
-        tracing::info!(
-            "Rescan committed filters ({}-{}) for new scripts across {} wallets (sweep #{})",
-            range_start,
-            range_end,
-            wallet_queries.len(),
-            self.committed_range_sweeps
-        );
-
-        let mut block_to_wallets: BTreeMap<FilterMatchKey, BTreeSet<WalletId>> = BTreeMap::new();
-        let mut chunk_start = range_start;
-        while chunk_start <= range_end {
-            let chunk_end = (chunk_start + BATCH_PROCESSING_SIZE - 1).min(range_end);
-            // A chunk the storage cannot serve (e.g. filters pruned or never
-            // stored for a sub-range) is skipped rather than failing the
-            // commit: the sweep is best-effort recovery over whatever
-            // history is locally available.
-            let filters = match self.load_filters(chunk_start, chunk_end).await {
-                Ok(filters) => filters,
-                Err(e) => {
-                    tracing::warn!(
-                        "Committed-range rescan skipping {}-{}: {}",
-                        chunk_start,
-                        chunk_end,
-                        e
-                    );
-                    chunk_start = chunk_end + 1;
-                    continue;
-                }
-            };
-            for (wallet_id, scripts) in &wallet_queries {
-                let matches = check_compact_filters_for_elements(&filters, scripts, &[], 0);
-                for key in matches {
-                    block_to_wallets.entry(key).or_default().insert(*wallet_id);
-                }
-            }
-            chunk_start = chunk_end + 1;
-        }
-
-        Ok(self.queue_new_script_matches(batch_start, block_to_wallets, "Committed-range rescan"))
-    }
-
     /// Handle notification that new filter headers are available.
     /// Used by both FilterHeadersSyncComplete and FilterHeadersStored events.
     pub(super) async fn handle_new_filter_headers(
         &mut self,
         tip_height: u32,
-        requests: &RequestSender,
+        network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         self.progress.update_filter_header_tip_height(tip_height);
         self.update_target_height(tip_height);
@@ -1393,7 +1147,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                 self.filter_pipeline.extend_target(tip_height);
                 if self.progress.stored_height() < self.progress.filter_header_tip_height() {
                     let header_storage = self.header_storage.read().await;
-                    self.filter_pipeline.send_pending(requests, &*header_storage).await?;
+                    self.filter_pipeline.send_pending(network, &*header_storage).await?;
                 }
 
                 // Extend the processing boundary to the new tip whether or not a
@@ -1427,7 +1181,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     self.filter_pipeline.extend_target(tip_height);
                     return Ok(vec![]);
                 }
-                return self.start_download(requests).await;
+                return self.start_download(network).await;
             }
             _ => {}
         }
@@ -1449,24 +1203,23 @@ mod coinjoin_gap_discovery_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{Message, MessageType, NetworkRequest, RequestSender};
+    use crate::network::MessageType;
     use crate::storage::{
         BlockHeaderStorage, DiskStorageManager, PersistentBlockHeaderStorage,
         PersistentFilterHeaderStorage, PersistentFilterStorage, StorageManager,
     };
     use crate::sync::{ManagerIdentifier, SyncManagerProgress};
+    use crate::test_utils::MockNetworkManager;
     use crate::types::HashedBlockHeader;
     use dashcore::bip158::BlockFilter;
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_filter::CFilter;
     use dashcore::{Address, Header};
     use dashcore::{Block, Network, Transaction};
-    use dashcore_hashes::Hash;
     use key_wallet_manager::test_utils::{
         MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };
     use std::net::SocketAddr;
-    use tokio::sync::mpsc::unbounded_channel;
 
     type TestFiltersManager = FiltersManager<
         PersistentBlockHeaderStorage,
@@ -1565,17 +1318,15 @@ mod tests {
             .unwrap();
     }
 
-    /// Drain every `GetCFilters` request queued on `rx`.
-    fn drain_getcfilters(rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetworkRequest>) -> usize {
-        let mut count = 0;
-        while let Ok(request) = rx.try_recv() {
-            let (NetworkRequest::SendMessage(msg)
-            | NetworkRequest::SendMessageToPeer(msg, _)
-            | NetworkRequest::BroadcastMessage(msg)) = request;
-            if matches!(msg, NetworkMessage::GetCFilters(_)) {
-                count += 1;
-            }
-        }
+    /// Drain every `GetCFilters` request sent on `mock`.
+    async fn drain_getcfilters(mock: &MockNetworkManager) -> usize {
+        let count = mock
+            .sent_messages()
+            .await
+            .iter()
+            .filter(|msg| matches!(msg, NetworkMessage::GetCFilters(_)))
+            .count();
+        mock.clear_sent().await;
         count
     }
 
@@ -1831,7 +1582,6 @@ mod tests {
         let mut batch1 = FiltersBatch::new(0, 4999, HashMap::new());
         batch1.set_pending_blocks(0);
         batch1.mark_scanned();
-        batch1.mark_rescan_complete();
 
         manager.active_batches.insert(0, batch1);
 
@@ -1858,7 +1608,6 @@ mod tests {
         let mut batch1 = FiltersBatch::new(0, 4999, HashMap::new());
         batch1.set_pending_blocks(0);
         batch1.mark_scanned();
-        batch1.mark_rescan_complete();
         batch1.set_scanned_wallets(BTreeMap::from([(MOCK_WALLET_ID, 0)]));
         manager.active_batches.insert(0, batch1);
 
@@ -1873,7 +1622,6 @@ mod tests {
         let mut batch2 = FiltersBatch::new(5000, 9999, HashMap::new());
         batch2.set_pending_blocks(0);
         batch2.mark_scanned();
-        batch2.mark_rescan_complete();
         manager.active_batches.insert(5000, batch2);
 
         manager.try_commit_batches().await.unwrap();
@@ -1902,7 +1650,6 @@ mod tests {
         let mut batch = FiltersBatch::new(0, 4999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
         manager.active_batches.insert(0, batch);
 
@@ -1940,7 +1687,6 @@ mod tests {
         let mut batch = FiltersBatch::new(5000, 9999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
         manager.active_batches.insert(5000, batch);
 
@@ -1981,7 +1727,6 @@ mod tests {
         let mut batch = FiltersBatch::new(205_000, 209_999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         batch.set_scanned_wallets(BTreeMap::from([(wallet_b, 0)]));
         manager.active_batches.insert(205_000, batch);
 
@@ -2010,7 +1755,6 @@ mod tests {
         let mut batch1 = FiltersBatch::new(0, 4999, HashMap::new());
         batch1.set_pending_blocks(0);
         batch1.mark_scanned();
-        batch1.mark_rescan_complete();
         batch1.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
         manager.active_batches.insert(0, batch1);
 
@@ -2022,7 +1766,6 @@ mod tests {
         let mut batch2 = FiltersBatch::new(5000, 9999, HashMap::new());
         batch2.set_pending_blocks(0);
         batch2.mark_scanned();
-        batch2.mark_rescan_complete();
         batch2.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
         manager.active_batches.insert(5000, batch2);
 
@@ -2068,7 +1811,6 @@ mod tests {
         let mut batch = FiltersBatch::new(5000, 9999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0), (wallet_b, 0)]));
         manager.active_batches.insert(5000, batch);
 
@@ -2118,7 +1860,6 @@ mod tests {
         let mut batch = FiltersBatch::new(5000, 9999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
         manager.active_batches.insert(5000, batch);
 
@@ -2175,7 +1916,6 @@ mod tests {
         let mut batch = FiltersBatch::new(1000, 5999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
         manager.active_batches.insert(1000, batch);
 
@@ -2205,7 +1945,6 @@ mod tests {
         let mut batch = FiltersBatch::new(200_000, 204_999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         batch.set_scanned_wallets(BTreeMap::from([(wallet_b, 0)]));
         manager.active_batches.insert(200_000, batch);
 
@@ -2243,7 +1982,6 @@ mod tests {
         let mut batch = FiltersBatch::new(0, 4999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 3)]));
         manager.active_batches.insert(0, batch);
 
@@ -2612,7 +2350,6 @@ mod tests {
         // Mark batch ready so commit can run, then commit.
         if let Some(b) = manager.active_batches.get_mut(&0) {
             b.set_pending_blocks(0);
-            b.mark_rescan_complete();
         }
         manager.try_commit_batches().await.unwrap();
 
@@ -2806,7 +2543,6 @@ mod tests {
         let mut batch = FiltersBatch::new(0, 4999, HashMap::new());
         batch.set_pending_blocks(0);
         batch.mark_scanned();
-        batch.mark_rescan_complete();
         manager.active_batches.insert(0, batch);
 
         manager.try_commit_batches().await.unwrap();
@@ -2852,8 +2588,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (tx, _rx) = unbounded_channel();
-        let _ = manager.tick(&RequestSender::new(tx)).await.unwrap();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let _ = manager.tick(&requests).await.unwrap();
 
         // Batch must start at 151, not at 0.
         assert!(manager.active_batches.contains_key(&151));
@@ -2932,12 +2668,10 @@ mod tests {
         let mut batch1 = FiltersBatch::new(0, 4999, HashMap::new());
         batch1.set_pending_blocks(0);
         batch1.mark_scanned();
-        batch1.mark_rescan_complete();
 
         let mut batch2 = FiltersBatch::new(5000, 9999, HashMap::new());
         batch2.set_pending_blocks(0);
         batch2.mark_scanned();
-        batch2.mark_rescan_complete();
 
         manager.active_batches.insert(5000, batch2); // Insert higher one first
         manager.active_batches.insert(0, batch1);
@@ -3063,73 +2797,6 @@ mod tests {
         assert!(manager.is_idle());
     }
 
-    #[tokio::test]
-    async fn test_batch_collects_scripts() {
-        use crate::sync::filters::batch::FiltersBatch;
-        use dashcore::Network;
-
-        let mut batch = FiltersBatch::new(0, 4999, HashMap::new());
-
-        // Initially empty
-        assert!(batch.take_collected_scripts().is_empty());
-
-        // Add scripts using test utility
-        let script1 = dashcore::Address::dummy(Network::Testnet, 1).script_pubkey();
-        let script2 = dashcore::Address::dummy(Network::Testnet, 2).script_pubkey();
-        let wallet_id: WalletId = [7; 32];
-
-        batch.add_scripts_for_wallet(wallet_id, [script1.clone(), script2.clone()]);
-
-        let collected = batch.take_collected_scripts();
-        let for_wallet = collected.get(&wallet_id).expect("wallet entry");
-        assert_eq!(for_wallet.len(), 2);
-        assert!(for_wallet.contains(&script1));
-        assert!(for_wallet.contains(&script2));
-
-        // After take, should be empty
-        assert!(batch.take_collected_scripts().is_empty());
-    }
-
-    /// Proves that scripts from a block with no in-flight record — every
-    /// delivery after the first — reach the batch covering their height, and
-    /// the backward accumulator when no active batch does.
-    #[tokio::test]
-    async fn test_new_scripts_route_by_height_with_no_in_flight_record() {
-        use crate::sync::filters::batch::FiltersBatch;
-        use dashcore::Network;
-
-        let mut manager = create_test_manager().await;
-        manager.active_batches.insert(0, FiltersBatch::new(0, 4999, HashMap::new()));
-        manager.active_batches.insert(5000, FiltersBatch::new(5000, 9999, HashMap::new()));
-
-        let wallet_id: WalletId = [7; 32];
-        let covered = Address::dummy(Network::Testnet, 1).script_pubkey();
-        let below = Address::dummy(Network::Testnet, 2).script_pubkey();
-
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
-        let block_processed = |height: u32, script: &ScriptBuf| SyncEvent::BlockProcessed {
-            block_hash: Header::dummy(height).block_hash(),
-            height,
-            wallets: BTreeSet::from([wallet_id]),
-            new_scripts: BTreeMap::from([(wallet_id, vec![script.clone()])]),
-            confirmed_txids: vec![],
-        };
-
-        manager.handle_sync_event(&block_processed(6000, &covered), &requests).await.unwrap();
-
-        let lower = manager.active_batches.get_mut(&0).unwrap().take_collected_scripts();
-        assert!(lower.is_empty(), "scripts must not land in a batch that cannot match them");
-        let covering = manager.active_batches.get_mut(&5000).unwrap().take_collected_scripts();
-        assert!(covering.get(&wallet_id).is_some_and(|s| s.contains(&covered)));
-        assert!(manager.backward_scripts.is_empty());
-
-        manager.active_batches.remove(&0);
-        manager.handle_sync_event(&block_processed(120, &below), &requests).await.unwrap();
-        assert!(manager.active_batches.get_mut(&5000).unwrap().take_collected_scripts().is_empty());
-        assert!(manager.backward_scripts.get(&wallet_id).is_some_and(|s| s.contains(&below)));
-    }
-
     /// Proves a batch with no filters still marks the scripts tested, so
     /// reconciliation does not hand it the same set on every commit attempt.
     #[tokio::test]
@@ -3208,89 +2875,6 @@ mod tests {
         );
     }
 
-    /// Proves the tip is not reported synced while scripts sit in the backward
-    /// accumulator with no batch left to sweep them: the sweep runs here, and
-    /// completion waits for the block it finds.
-    #[tokio::test]
-    async fn test_tip_sweeps_stranded_backward_scripts_before_completing() {
-        let wallet_id: WalletId = [3; 32];
-        let watched = Address::dummy(Network::Testnet, 31);
-
-        let mut multi = MultiMockWallet::new();
-        multi.insert_wallet(
-            wallet_id,
-            MockWalletState {
-                addresses: vec![watched.clone()],
-                synced_height: 9,
-                last_processed_height: 9,
-                account_generation: 0,
-            },
-        );
-        let mut manager = create_multi_test_manager(Arc::new(RwLock::new(multi))).await;
-        manager.set_state(SyncState::Syncing);
-
-        // Every height at or below the committed frontier has its header and
-        // filter persisted; only height 4 pays `watched`.
-        let paying = Block::dummy(4, vec![Transaction::dummy(&watched, 0..0, &[4])]);
-        let paying_filter = BlockFilter::dummy(&paying);
-        let key = FilterMatchKey::new(4, paying.block_hash());
-        {
-            let mut header_storage = manager.header_storage.write().await;
-            let mut filter_storage = manager.filter_storage.write().await;
-            for height in 0..=9u32 {
-                let (header, bytes) = if height == 4 {
-                    (paying.header, paying_filter.content.clone())
-                } else {
-                    let filler = Block::dummy(height, vec![]);
-                    (filler.header, BlockFilter::dummy(&filler).content)
-                };
-                header_storage.store_headers_at_height(&[header.into()], height).await.unwrap();
-                filter_storage.store_filter(height, &bytes).await.unwrap();
-            }
-        }
-
-        // At the tip with nothing active: the last commit left
-        // `processing_height` past the tip, so no lookahead batch is created
-        // and the completion branch is reached.
-        manager.processing_height = 10;
-        manager.progress.update_stored_height(9);
-        manager.progress.update_committed_height(9);
-        manager.progress.update_filter_header_tip_height(9);
-        manager.progress.update_target_height(9);
-        manager.backward_scripts.entry(wallet_id).or_default().insert(watched.script_pubkey());
-
-        let events = manager.try_process_batch().await.unwrap();
-        assert!(
-            events.iter().any(|e| match e {
-                SyncEvent::BlocksNeeded {
-                    blocks,
-                } => blocks.contains_key(&key),
-                _ => false,
-            }),
-            "the tip sweep must find the block paying the stranded script"
-        );
-        assert!(
-            !events.iter().any(|e| matches!(e, SyncEvent::FiltersSyncComplete { .. })),
-            "completion must wait for that block to be applied"
-        );
-        assert!(manager.backward_scripts.is_empty(), "the sweep consumes the accumulator");
-
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
-        let processed = SyncEvent::BlockProcessed {
-            block_hash: paying.block_hash(),
-            height: 4,
-            wallets: BTreeSet::from([wallet_id]),
-            new_scripts: BTreeMap::new(),
-            confirmed_txids: vec![],
-        };
-        let events = manager.handle_sync_event(&processed, &requests).await.unwrap();
-        assert!(
-            events.iter().any(|e| matches!(e, SyncEvent::FiltersSyncComplete { .. })),
-            "completion follows once the sweep's block is applied"
-        );
-    }
-
     #[tokio::test]
     async fn test_start_download_waits_when_filter_headers_insufficient() {
         let mut manager = create_test_manager().await;
@@ -3303,8 +2887,8 @@ mod tests {
         // Chain tip higher so the Synced early-return is not taken
         manager.progress.update_target_height(1000);
 
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.start_download(&requests).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::WaitForEvents);
@@ -3332,8 +2916,8 @@ mod tests {
         manager.progress.update_filter_header_tip_height(100);
         manager.progress.update_target_height(1000);
 
-        let (tx, _rx) = unbounded_channel();
-        let events = manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let events = manager.start_download(&requests).await.unwrap();
 
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(!manager.is_idle());
@@ -3384,8 +2968,9 @@ mod tests {
         // Wallet committed far below the stored region, so scan_start = 100.
         manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 99);
 
-        let (tx, mut rx) = unbounded_channel();
-        let events = manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        let events = manager.start_download(&requests).await.unwrap();
 
         assert!(events.is_empty());
         assert_eq!(manager.state(), SyncState::Syncing);
@@ -3407,8 +2992,8 @@ mod tests {
         // ...and both the store cursor and the download restart from
         // scan_start rather than stored_filters_tip + 1.
         assert_eq!(manager.next_batch_to_store, 100);
-        match rx.try_recv().expect("a filter request must have been sent") {
-            NetworkRequest::SendMessage(NetworkMessage::GetCFilters(gcf)) => {
+        match mock.sent_messages().await.first().expect("a filter request must have been sent") {
+            NetworkMessage::GetCFilters(gcf) => {
                 assert_eq!(gcf.start_height, 100);
             }
             other => panic!("Expected GetCFilters, got {:?}", other),
@@ -3446,8 +3031,9 @@ mod tests {
 
         manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 99);
 
-        let (tx, mut rx) = unbounded_channel();
-        manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        manager.start_download(&requests).await.unwrap();
 
         assert_eq!(manager.state(), SyncState::Syncing);
 
@@ -3466,7 +3052,7 @@ mod tests {
         // Nothing left to download: everything through the filter header tip
         // is already stored.
         assert_eq!(manager.next_batch_to_store, 1001);
-        assert!(rx.try_recv().is_err(), "no filter request expected");
+        assert!(mock.sent_messages().await.is_empty(), "no filter request expected");
     }
 
     /// Genesis-only storage: a single filter at height 0, scanning from 0.
@@ -3501,8 +3087,9 @@ mod tests {
         manager.progress.update_target_height(0);
         // Wallet at genesis: scan_start = 0.
 
-        let (tx, mut rx) = unbounded_channel();
-        manager.start_download(&RequestSender::new(tx)).await.unwrap();
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        manager.start_download(&requests).await.unwrap();
 
         // The lone filter was NOT discarded...
         assert_eq!(manager.filter_storage.read().await.filter_tip_height().await.unwrap(), 0);
@@ -3519,7 +3106,10 @@ mod tests {
         // ...and the download frontier sits above the stored tip, so no
         // filter request goes out for the already-stored genesis height.
         assert_eq!(manager.next_batch_to_store, 1);
-        assert!(rx.try_recv().is_err(), "no filter request expected for the genesis-only store");
+        assert!(
+            mock.sent_messages().await.is_empty(),
+            "no filter request expected for the genesis-only store"
+        );
     }
 
     #[tokio::test]
@@ -3540,8 +3130,7 @@ mod tests {
         // stops it before creating any batch or emitting an event.
         manager.active_batches.insert(101, FiltersBatch::new(101, 200, HashMap::new()));
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // New filter headers arrive at 150: committed(100) < tip(150)
         let events = manager.handle_new_filter_headers(150, &requests).await.unwrap();
@@ -3576,8 +3165,7 @@ mod tests {
         manager.progress.update_filter_header_tip_height(100);
         manager.progress.update_target_height(100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
 
@@ -3625,8 +3213,7 @@ mod tests {
         manager.progress.update_filter_header_tip_height(100);
         manager.progress.update_target_height(100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Boot already synced: start_download detects the synced state and
         // returns early, but must still advance the scan frontier.
@@ -3663,8 +3250,7 @@ mod tests {
         assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
 
         manager.set_state(SyncState::WaitForEvents);
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Must extend the target and leave the surviving work alone.
         let events = manager.handle_new_filter_headers(200, &requests).await.unwrap();
@@ -3706,8 +3292,7 @@ mod tests {
         assert!(!manager.is_idle(), "the invariant start_download asserts says otherwise");
 
         manager.set_state(SyncState::WaitingForConnections);
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Must resume rather than start a fresh download over the top of it.
         let events = manager.start_sync(&requests).await.unwrap();
@@ -3742,8 +3327,7 @@ mod tests {
         // Fully-synced restart: `start_sync` requires `WaitingForConnections`.
         manager.set_state(SyncState::WaitingForConnections);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Reconnect: the already-synced branch reports completion and anchors the
         // store/processing cursors at the frontier.
@@ -3778,7 +3362,7 @@ mod tests {
             filter: boundary_filter.content.clone(),
         };
         manager
-            .handle_message(Message::new(peer, NetworkMessage::CFilter(cfilter)), &requests)
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
             .await
             .unwrap();
 
@@ -3802,8 +3386,7 @@ mod tests {
         assert_eq!(manager.wallet.read().await.last_processed_height(), 0);
 
         manager.set_state(SyncState::WaitingForConnections);
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
         manager.start_sync(&requests).await.unwrap();
 
         assert_eq!(manager.state(), SyncState::Synced);
@@ -3825,8 +3408,8 @@ mod tests {
         // Fully-synced boot leaves the manager in its default state.
         assert_eq!(manager.state(), SyncState::WaitForEvents);
 
-        let (tx, mut rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
 
         // Filter header sync completing at the stored tip reports Synced via
         // `start_download`'s early return, anchoring the frontier cursors.
@@ -3863,10 +3446,7 @@ mod tests {
 
         // Only the boundary body may be requested: a pipeline left unparked
         // would re-request every filter from height 1 here.
-        while let Ok(request) = rx.try_recv() {
-            let (NetworkRequest::SendMessage(msg)
-            | NetworkRequest::SendMessageToPeer(msg, _)
-            | NetworkRequest::BroadcastMessage(msg)) = request;
+        for msg in mock.sent_messages().await {
             if let NetworkMessage::GetCFilters(get) = msg {
                 assert_eq!(get.start_height, 101, "unexpected filter re-download");
             }
@@ -3880,7 +3460,7 @@ mod tests {
             filter: boundary_filter.content.clone(),
         };
         manager
-            .handle_message(Message::new(peer, NetworkMessage::CFilter(cfilter)), &requests)
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
             .await
             .unwrap();
 
@@ -3906,8 +3486,8 @@ mod tests {
         manager.progress.update_filter_header_tip_height(101);
         manager.set_state(SyncState::WaitingForConnections);
 
-        let (tx, mut rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
 
         // Reconnect delegates to the download path, which must request the
         // boundary body at 101 rather than parking without asking for it.
@@ -3917,10 +3497,7 @@ mod tests {
         assert!(manager.active_batches.contains_key(&101));
 
         let mut requested_boundary = false;
-        while let Ok(request) = rx.try_recv() {
-            let (NetworkRequest::SendMessage(msg)
-            | NetworkRequest::SendMessageToPeer(msg, _)
-            | NetworkRequest::BroadcastMessage(msg)) = request;
+        for msg in mock.sent_messages().await {
             if let NetworkMessage::GetCFilters(get) = msg {
                 assert_eq!(get.start_height, 101, "unexpected filter re-download");
                 requested_boundary = true;
@@ -3936,7 +3513,7 @@ mod tests {
             filter: boundary_filter.content.clone(),
         };
         manager
-            .handle_message(Message::new(peer, NetworkMessage::CFilter(cfilter)), &requests)
+            .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
             .await
             .unwrap();
 
@@ -3960,8 +3537,7 @@ mod tests {
         manager.progress.update_target_height(100);
         manager.filter_pipeline.init(101, 100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
 
@@ -4034,8 +3610,7 @@ mod tests {
         // MockWallet defaults to synced_height=0, so wallets_behind(100) = {MOCK_WALLET_ID}.
         assert_eq!(manager.wallet.read().await.synced_height(), 0);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Sanity: the pre-populated stale processed record is present, so
         // `track` for the same wallet would short-circuit to AlreadyProcessed.
@@ -4096,8 +3671,7 @@ mod tests {
         manager.progress.update_filter_header_tip_height(200);
         manager.progress.update_target_height(200);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.tick(&requests).await.unwrap();
 
@@ -4142,8 +3716,7 @@ mod tests {
         manager.wallet.write().await.set_addresses(vec![Address::dummy(Network::Regtest, 7)]);
         assert_eq!(manager.wallet.read().await.wallet_synced_height(&MOCK_WALLET_ID), 0);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
         assert!(
@@ -4180,22 +3753,38 @@ mod tests {
         manager.filter_storage.write().await.clear_filters().await.unwrap();
         manager.progress.update_stored_height(0);
 
-        let (tx, mut rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
 
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
 
         assert_eq!(
-            drain_getcfilters(&mut rx),
+            drain_getcfilters(&mock).await,
             1,
             "the initial download issues exactly one getcfilters"
         );
 
+        // The mock drops duplicate requests, so check the in-flight receipts survive instead.
+        let headers =
+            manager.header_storage.read().await.load_headers(200_000..200_011).await.unwrap();
+        let filter = BlockFilter::new(&[0u8; 32]);
+        for (idx, header) in headers.iter().enumerate().take(10) {
+            manager.filter_pipeline.receive_with_data(
+                200_000 + idx as u32,
+                *header.hash(),
+                &filter.content,
+            );
+        }
+
         manager.tick(&requests).await.unwrap();
 
         assert_eq!(
-            drain_getcfilters(&mut rx),
-            0,
+            manager.filter_pipeline.receive_with_data(
+                200_010,
+                *headers[10].hash(),
+                &filter.content
+            ),
+            Some(200_000),
             "a tick re-requested filters that were still in flight"
         );
     }
@@ -4219,8 +3808,7 @@ mod tests {
         let mut manager = create_multi_test_manager(multi.clone()).await;
         seed_anchored_storage(&manager, 200_000, 10).await;
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Reach the frontier with only wallet A present.
         manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
@@ -4259,8 +3847,7 @@ mod tests {
         assert_eq!(manager.progress.committed_height(), 0);
         assert_eq!(manager.state(), SyncState::WaitForEvents);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.tick(&requests).await.unwrap();
 
@@ -4280,8 +3867,7 @@ mod tests {
         // Wallet behind committed — would normally trip the trigger.
         assert!(!manager.wallet.read().await.wallets_behind(100).is_empty());
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.tick(&requests).await.unwrap();
 
@@ -4370,8 +3956,7 @@ mod tests {
         manager.progress.update_target_height(1000);
         manager.filter_pipeline.init(101, 100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // committed(0) < tip(100) fires the guard even though stored == tip.
         // Because stored >= tip, send_pending is skipped (no downloads needed).
@@ -4422,8 +4007,7 @@ mod tests {
         manager.progress.update_target_height(101);
         manager.active_batches.insert(0, FiltersBatch::new(0, 100, HashMap::new()));
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // New block 101 arrives: tip grows past the in-flight rescan boundary.
         manager.handle_new_filter_headers(101, &requests).await.unwrap();
@@ -4448,8 +4032,7 @@ mod tests {
         manager.progress.update_target_height(1000);
         manager.filter_pipeline.init(101, 100);
 
-        let (tx, _rx) = unbounded_channel();
-        let requests = RequestSender::new(tx);
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         let events = manager.handle_new_filter_headers(100, &requests).await.unwrap();
 

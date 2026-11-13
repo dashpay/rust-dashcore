@@ -29,7 +29,7 @@
 //!
 //! The special transaction type used for ProUpRegTx Transactions is 3.
 
-use hashes::Hash;
+use hashes::{HashEngine, sha256d};
 
 use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
 use crate::blockdata::transaction::special_transaction::provider_registration::{
@@ -126,9 +126,9 @@ impl SpecialTransactionBasePayloadEncodable for ProviderUpdateRegistrarPayload {
     }
 
     fn base_payload_hash(&self) -> SpecialTransactionPayloadHash {
-        let mut engine = SpecialTransactionPayloadHash::engine();
+        let mut engine = sha256d::Hash::engine();
         self.base_payload_data_encode(&mut engine).expect("engines don't error");
-        SpecialTransactionPayloadHash::from_engine(engine)
+        SpecialTransactionPayloadHash::from_raw_hash(engine.finalize())
     }
 }
 
@@ -372,8 +372,6 @@ impl<'de> serde::Deserialize<'de> for ProviderUpdateRegistrarPayload {
 mod tests {
     use core::str::FromStr;
 
-    use hashes::Hash;
-
     use crate::blockdata::transaction::special_transaction::SpecialTransactionBasePayloadEncodable;
     use crate::blockdata::transaction::special_transaction::provider_registration::MasternodePayoutShare;
     use crate::bls_sig_utils::BLSPublicKey;
@@ -384,6 +382,7 @@ mod tests {
     use crate::transaction::special_transaction::TransactionPayload::ProviderUpdateRegistrarPayloadType;
     use crate::transaction::special_transaction::provider_update_registrar::ProviderUpdateRegistrarPayload;
     use crate::{Network, PubkeyHash, ScriptBuf, Transaction, Txid};
+    use hex_conservative::DisplayHex;
 
     #[test]
     fn test_provider_update_registrar_transaction() {
@@ -424,13 +423,19 @@ mod tests {
         let operator_key_hex = "139b654f0b1c031e1cf2b934c2d895178875cfe7c6a4f6758f02bc66eea7fc292d0040701acbe31f5e14a911cb061a2f";
         assert_eq!(
             operator_key_hex,
-            hex::encode(expected_provider_update_registrar_payload.operator_public_key)
+            expected_provider_update_registrar_payload
+                .operator_public_key
+                .as_bytes()
+                .to_lower_hex_string()
         );
 
         let voting_key_hash_hex = "6cc4a7bb877a80c11ae06b988d98305773f93b98";
         assert_eq!(
             voting_key_hash_hex,
-            hex::encode(expected_provider_update_registrar_payload.voting_key_hash)
+            expected_provider_update_registrar_payload
+                .voting_key_hash
+                .as_byte_array()
+                .to_lower_hex_string()
         );
 
         let inputs_hash_hex = "cf2b940faa8c46c7981f5bd082e5409bf08cffe3bccfa04093eb152f7a857f2d";
@@ -447,7 +452,7 @@ mod tests {
         );
 
         // We should verify the script payouts match
-        let pubkey_hash = PubkeyHash::from_hex("56bcf3cac49235537d6ce0fb3214d8850a6db777")
+        let pubkey_hash = PubkeyHash::from_str("56bcf3cac49235537d6ce0fb3214d8850a6db777")
             .expect("expected to get pubkey hash");
         let script_payout = ScriptBuf::new_p2pkh(&pubkey_hash);
         assert_eq!(expected_provider_update_registrar_payload.script_payout, script_payout);
@@ -474,7 +479,7 @@ mod tests {
                     pro_tx_hash,
                     provider_mode,
                     operator_public_key: BLSPublicKey::from_hex(operator_key_hex).unwrap(),
-                    voting_key_hash: PubkeyHash::from_hex(voting_key_hash_hex).unwrap(),
+                    voting_key_hash: PubkeyHash::from_str(voting_key_hash_hex).unwrap(),
                     script_payout,
                     inputs_hash: InputsHash::from_hex(inputs_hash_hex).unwrap(),
                     payload_sig,

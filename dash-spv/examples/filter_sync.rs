@@ -1,7 +1,6 @@
 //! BIP157 filter synchronization example.
 
 use dash_spv::network::PeerNetworkManager;
-use dash_spv::storage::DiskStorageManager;
 use dash_spv::{init_console_logging, ClientConfig, DashSpvClient, LevelFilter};
 use dashcore::Address;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
@@ -26,22 +25,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .without_masternodes(); // Skip masternode sync for this example
 
     // Create network manager
-    let network_manager = PeerNetworkManager::new(&config).await?;
-
-    // Create storage manager
-    let storage_manager = DiskStorageManager::new(&config).await?;
+    let network_manager = PeerNetworkManager::new(&config).await;
 
     // Create wallet manager
     let wallet = Arc::new(RwLock::new(WalletManager::<ManagedWalletInfo>::new(config.network)));
 
     // Create the client
-    let client =
-        DashSpvClient::new(config, network_manager, storage_manager, wallet, vec![]).await?;
+    let client = DashSpvClient::new(config, network_manager, wallet, vec![]).await?;
 
     println!("Starting synchronization with filter support...");
     println!("Watching address: {:?}", watch_address);
 
     client.run().await?;
+
+    // Sync in the background until Ctrl-C.
+    tokio::signal::ctrl_c().await?;
+    client.stop().await;
 
     println!("Done!");
     Ok(())

@@ -30,11 +30,15 @@ mod performance_tests;
 
 mod provider_key_derivation_tests;
 
+mod restore_utxos_tests;
+
 mod special_transaction_matching_tests;
 
 mod special_transaction_tests;
 
 mod transaction_tests;
+
+mod truncate_above_tests;
 
 mod spent_outpoints_tests;
 
