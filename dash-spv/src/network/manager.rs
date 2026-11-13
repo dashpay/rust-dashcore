@@ -930,7 +930,9 @@ impl Supervisor {
             }
 
             let new_addr = peer.addr();
-            let slow = slow.filter(|_| replaced.is_none());
+            // Our link can stall while the candidates are dialed, and then `slow` is stale.
+            let stalled = self.state.link_stalled.load(Ordering::Relaxed);
+            let slow = slow.filter(|_| replaced.is_none() && !stalled);
             match self.state.connected.admit(peer, &self.shutdown, self.state.max_peers, slow).await
             {
                 Admission::Joined => accepted += 1,
@@ -2226,9 +2228,10 @@ mod tests {
     }
 
     /// Peer 2 serves a fifth of peer 1's rate, then both go silent and the supervisor starts
-    /// `start_at` seconds in. Past the judge's hold it must not dial. When the peers deliver
-    /// again, the held back swap goes ahead.
+    /// `start_at` seconds in. While the judge holds them it must not swap peer 2 out, nor dial
+    /// once the hold began. When the peers deliver again, the held back swap goes ahead.
     #[test_case(REQUEST_TIMEOUT.as_secs() + 2, 0; "a round during the stall dials nobody")]
+    #[test_case(REQUEST_TIMEOUT.as_secs() - 2, 1; "a stall during the dial keeps the slow peer")]
     #[tokio::test(start_paused = true)]
     async fn no_slow_peer_is_swapped_out_while_our_link_stalls(start_at: u64, dials: usize) {
         let replacement = HandshakingPeer::listen().await;
