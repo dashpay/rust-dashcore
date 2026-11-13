@@ -6,244 +6,332 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.46.0 - 2026-11-13
+
+### Highlights
+
+- **SPV network rewrite:** one `PeerNetworkManager` routes requests, controls flow by bytes in flight and swaps slow peers, which roughly halves mainnet sync time. Peers can talk over BIP324 v2 encrypted transport, and peer events stay consistent across `stop` (#902, #264, #1325, #1327).
+- **Verified masternode lists:** every `MnListDiff` is checked against its block's coinbase before it applies, headers are checked against Dark Gravity Wave difficulty, ChainLocks are only verified with a verified quorum, and masternode sync recovers from bad, missing or refused diffs (#1200, #1161, #1168, #1211, #1258, #1254, #1284, #1306, #1307, #1308).
+- **Faster restarts:** the masternode list engine is persisted as one compact snapshot instead of replaying stored messages, masternode lists share their maps and stay within a retention window, storage is versioned, and the checkpoints are generated from the network (#1221, #1227, #1066, #1072, #1084, #375).
+- **Base SDK and rust-bitcoin crates:** keys, signatures, hashes, units, BLS and EdDSA, proof of work and network parameters come from `bitcoin-crypto`, `bitcoin_hashes` 1.x, `bitcoin_units`, `dash-pkc`, `dash-pow` and `dash-params` (#1036, #1108, #1151, #1214, #1223, #1288, #1320).
+- **Smaller surface:** the `key-wallet-ffi` and `dash-spv-ffi` crates, SegWit and Taproot, BIP38, the vendored PSBT code and the `bitcoinconsensus` feature are removed, and `dash-spv` keeps its storage and sync modules private (#776, #1251, #400, #1111, #1041, #1318, #1176, #1189).
+- **Secret hygiene:** mnemonic phrases, seeds and secret keys are returned in wiped buffers and no longer copied unwiped, and `Debug` and `Display` output no longer show chain codes, seeds or mnemonic words (#1225, #1265, #1266, #1267, #1271, #1274, #1279).
+
 ### Added
 
-- `ServiceFlags::P2P_V2` in `dashcore`, Dash Core's `NODE_P2P_V2` (bit 12) for the BIP324 transport
+- BIP324 v2 encrypted P2P transport in `dash-spv`, chosen with `ClientConfig::with_transport_preference` (`V2Preferred` by default, `V2Only` or `V1Only`), and `NetworkMessage::consensus_encode_v2` and `consensus_decode_v2` in `dashcore`. It needs `bip324` 0.11.1 (#264, #1310) @PastaPastaPasta
+- `ServiceFlags::P2P_V2` in `dashcore`, Dash Core's `NODE_P2P_V2` (bit 12) for the BIP324 transport (#1255) @PastaPastaPasta
 - Restore externally persisted spent-output claims with `ManagedWalletInfo::restore_spent_outpoints` in `key-wallet`.
   Claims are held once per wallet and guard every account that holds funds, including one added later.
-  It returns the restored outpoints the wallet still holds as UTXOs, which stay credited.
-- `key-wallet-ffi` transaction records expose the version 3 (DIP-0026) owner payouts of a ProRegTx
-  and ProUpRegTx (`payouts`), a shared registration's collateral shares and terms, and ProUpShareTx
-  payloads (`provider_update_share`); a version 3 payload's `script_payout` is empty
-- Make `PublicKey::with_serialized` public
+  It returns the restored outpoints the wallet still holds as UTXOs, which stay credited. (#1112) @lklimek
+- Restore UTXOs from host storage into the account that owns their address with `ManagedWalletInfo::restore_utxos` in `key-wallet`. UTXOs no account reaches are returned to the caller (#1295) @PastaPastaPasta
+- Extend the CoinJoin address pools of a fresh wallet before its first sync with `ManagedWalletInfo::extend_coinjoin_pools`, for wallets migrated from DashSync (#1105) @romchornyi
+- `BuilderError::FundsAwaitingFinality` tells when only coins awaiting finality would fund a build restricted to final inputs (#1192) @ZocoLini
+- Make `ManagedWalletInfo::transaction_is_settled` public (#1186) @ZocoLini
+- DIP-13 application session authentication and encryption paths in `key-wallet` (#1049) @PastaPastaPasta
+- `TxIn::claimed_p2pkh_address` returns the P2PKH address an input's scriptSig claims to spend from. The signature is not verified (#1282) @xdustinface
+- `CoinbasePayload::from_coinbase_tx` reads a coinbase payload of a newer version as far as this crate knows its layout (#1306) @shumkov
+- `BlsSignature::is_valid` and `CoinbasePayload::chain_lock_candidate` (#1284) @PastaPastaPasta
+- Make `PublicKey::with_serialized` public (#1144) @kwvg
 - `EcdsaPublicKey`, `EcdsaSecretKey`, `EcdsaSignature`, `EcdsaRecSignature`,
-  `EcdsaError` and the `ECDSA_*_LEN` constants in `dashcore::ecdsa`
-- `EcdsaSecretKey::generate` with the `rand` feature
-- `EcdsaSignature::is_low_s`
-- `TryFrom<&[u8]>` for `PublicKey`
-- `Network::chain_params` in `dash-network`, the network's chain parameters
+  `EcdsaError` and the `ECDSA_*_LEN` constants in `dashcore::ecdsa` (#1151) @kwvg
+- `EcdsaSecretKey::generate` with the `rand` feature (#1151) @kwvg
+- `EcdsaSignature::is_low_s` (#1214) @kwvg
+- `TryFrom<&[u8]>` for `PublicKey` (#1151) @kwvg
+- `Network::chain_params` in `dash-network`, the network's chain parameters (#1223) @kwvg
 - `Network::addr_params` in `dash-network`, the network's address and key
-  prefixes
+  prefixes (#1223) @kwvg
 - `pow::MAINNET_DGW_TOLERANT_HEIGHT`, the last mainnet height whose bits need
-  only be within 50% of Dark Gravity Wave's
+  only be within 50% of Dark Gravity Wave's (#1223) @kwvg
 - `LLMQType::dkg_interval`, `LLMQType::active_window` and
-  `LLMQType::dkg_window_at_cycle`
+  `LLMQType::dkg_window_at_cycle` (#1223) @kwvg
 - `LlmqParams`, re-exported from `dash-params`, and
-  `From<dash_params::LlmqType>` for `LLMQType`
+  `From<dash_params::LlmqType>` for `LLMQType` (#1223) @kwvg
 - `ExtNetInfo::validate_ports_and_duplicates` in `dashcore`, which checks a version-3 address map
   against the port and duplicate-entry rules of Dash Core v24 and returns Core's status for the
-  first rule it breaks, `ExtNetInfoError::Duplicate` or `ExtNetInfoError::BadPort`
-- `NetInfoEntry::port` in `dashcore`
+  first rule it breaks, `ExtNetInfoError::Duplicate` or `ExtNetInfoError::BadPort` (#1226) @shumkov
+- `NetInfoEntry::port` in `dashcore` (#1226) @shumkov
+- **Breaking:** decode and encode special transaction types 10, 11 and 12 (#1156) @ZocoLini
+- **Breaking:** a stable txid for version 2 asset unlocks, `Transaction::instance_hash` and `MSG_ASSET_UNLOCK` (#1157) @ZocoLini
+- Version the `dash-spv` storage and migrate it on start (#1084) @ZocoLini
+- `--birth-height` flag for the `dash-spv` CLI, which anchors the sync at the nearest checkpoint at or before it (#849) @xdustinface
+- The `generate-checkpoints` binary, which builds the checkpoint files from the network (#375) @ZocoLini
+- Trace segment cache hits and misses in `dash-spv` (#1089) @ZocoLini
 
 ### Changed
 
+- **Breaking:** rewrite the `dash-spv` network layer around one `PeerNetworkManager` that de-duplicates and requeues requests, controls flow by bytes in flight, picks the least loaded peer, swaps slow peers and hedges stalled block requests. Mainnet sync takes about half the time. `DownloadCoordinator`, `MessageDispatcher`, `PeerPool`, peer reputation and peer storage are removed, framing moves to `RawNetworkMessageCodec` in `dashcore` behind a new `tokio` feature, and `rayon` is no longer used by `dash-spv` (#902) @ZocoLini
+- **Breaking:** `NetworkEvent::PeersUpdated` loses `connected_count`. Use `addresses.len()`. Its `addresses` always list the current peers, and the event after `stop` lists none (#1327) @xdustinface
+- **Breaking:** `dash-spv` persists the masternode list engine as one snapshot instead of replaying the stored `MnListDiff` and `QRInfo` messages on every start. Each shared entry is written once, and a snapshot that fails to read but still decodes is kept. The first start after upgrading syncs the masternode lists once. `get_quorum_at_height` only resolves heights within the engine's retention window (#1221, #1227, #1246, #1247) @ZocoLini @xdustinface
+- **Breaking:** `DashSpvClient::latest_coinbase()` returns the coinbase payload of the newest diff the masternode list engine validated, instead of the unverified payload of the newest diff. The engine snapshot keeps it across restarts (#1202) @ZocoLini
+- **Breaking:** resolve masternode engine heights from the header storage, which moves the masternode list engine into `dash-spv` (#1094) @ZocoLini
+- **Breaking:** verify quorums inside the masternode list engine (#1076) @ZocoLini
+- **Breaking:** share masternode and quorum maps between masternode lists (#1066) @ZocoLini
+- Keep masternode lists within a retention window as the tip moves (#1072) @ZocoLini
+- Keep the QRInfo cycle layout in the masternode list engine (#1061) @ZocoLini
+- **Breaking:** generate the checkpoints from the network. A checkpoint is its height and the 25 headers that end at it, so the difficulty of the headers after it is checked from the first one on. This fixes the `time` and `bits` of the mainnet checkpoint at 750000 (#375) @ZocoLini
+- **Breaking:** make the storage of `dash-spv` private and add header queries to `DashSpvClient` (#1176) @ZocoLini
+- **Breaking:** make the `sync` module of `dash-spv` private. Its public types are re-exported at the crate root, and unused manager methods are removed (#1189) @ZocoLini
+- **Breaking:** make the `validation` module of `dash-spv` private, and deny the `unnameable_types` lint across the workspace (#1248) @ZocoLini
+- **Breaking:** truncate the whole storage above a fork in one call (#1203) @ZocoLini
+- **Breaking:** wallets roll back above a fork: `WalletInfoInterface::truncate_above` and `WalletInterface::truncate_above` are new required methods, with `WalletEvent::ChainTruncated` and `TruncateBelowChainLock` errors (#1104) @ZocoLini
+- **Breaking:** make `DashSpvClient::is_running` synchronous (#1177) @ZocoLini
+- **Breaking:** `DerivationPath::application_encryption_path` takes the DIP-13 rotation level and returns a `Result`. The old layout is `application_encryption_path_without_rotation` (#1250) @PastaPastaPasta
+- **Breaking:** `Mnemonic::phrase`, `Mnemonic::to_seed` and `Wallet::wallet_seed_bytes` return `Zeroizing` buffers (#1266) @PastaPastaPasta
+- **Breaking:** the CLI and logging dependencies of `dash-spv` are optional, behind the `cli` and `logging` features, and shared dependencies are defined in the workspace (#1289) @ZocoLini
+- **Breaking:** bump `rand` to 0.9, `getrandom` to 0.4 and `secp256k1` to 0.33, and drop the `secp256k1` context (#1042) @kwvg
+- **Breaking:** BLS types sit behind newtypes in the `dashcore-crypto` crate and use `dash-pkc` instead of the `blsful` fork (#1036) @kwvg
+- **Breaking:** EdDSA types sit behind newtypes and use `dash-pkc` (#1056) @kwvg
+- Backport rust-bitcoin#5680, drop the unconstructed Ed25519 error variants and the base58 module (#1053) @kwvg
 - **Breaking:** `LLMQType::params` returns `LlmqParams`, whose DKG fields are
   flat `u16`s (`dkg_interval`, `dkg_mining_window_start`, …), and
-  `LlmqDevnetParams` takes `u16`s
+  `LlmqDevnetParams` takes `u16`s (#1223) @kwvg
 - **Breaking:** `next_work_required` and `bits_meet_required` are free
-  functions in `pow` that take a `Network`
+  functions in `pow` that take a `Network` (#1223) @kwvg
 - **Breaking:** `NetworkExt::known_genesis_block_hash` returns a `BlockHash`
-  instead of an `Option`, and `Network::from_magic` is no longer `const`
+  instead of an `Option`, and `Network::from_magic` is no longer `const` (#1223) @kwvg
 - DNS seeds are fully qualified with a trailing dot, regtest queries
   `dummySeed.invalid.`, and testnet and regtest enable every LLMQ type Dash
   Core runs on them. As in Dash Core, regtest retires `llmq_test_instantsend`
-  at its `DIP0024QuorumsHeight`
+  at its `DIP0024QuorumsHeight` (#1223) @kwvg
 - **Breaking:** `dashcore_hashes` re-exports the hash primitives (`sha1`,
   `sha256`, `sha256d`, `sha512`, `sha512_256`, `ripemd160`, `hash160`, `hmac`,
-  `siphash24`, `cmp`) from `bitcoin_hashes` 0.14. The raw types no longer
+  `siphash24`, `cmp`) from `bitcoin_hashes` 1.x, taken from the same
+  `rust-bitcoin` revision as `bitcoin-crypto`. The raw types no longer
   implement bincode or accept byte and sequence forms in serde, and `Error` is
-  `FromSliceError`
+  `FromSliceError` (#1108, #1320) @kwvg @xdustinface
+- **Breaking:** hash newtypes no longer have `hash`, `engine` or `from_engine`, and gain const
+  `from_byte_array`, `to_byte_array` and `as_byte_array`. Hash through the inner type, as in
+  `Txid::from_raw_hash(sha256d::Hash::hash(..))`. `HashEngine` uses `finalize()` without
+  `midstate()`, `HmacEngine<T>` takes the engine type, and `sha256t_hash_newtype!` and
+  `siphash24::State` are removed (#1320) @xdustinface
 - **Breaking:** hex goes through `hex-conservative` 1.x, so `HexToArrayError`
   and `HexToBytesError` become `DecodeFixedLengthBytesError` and
   `DecodeVariableLengthBytesError` wherever `from_hex`, `FromStr` or a hex
-  error variant carried them. The raw hash types still report the 0.2 errors,
-  found under `dashcore_hashes::bitcoin_hashes::hex`
+  error variant carried them (#1110) @kwvg
 - **Breaking:** `BlsPkBytes::from_hex` and `BlsSigBytes::from_hex` report
   `DecodeFixedLengthBytesError` instead of `hex::FromHexError`, and
-  `dashcore_rpc_json::HexError` wraps `DecodeVariableLengthBytesError`
-- **Breaking:** hashes honour the format precision, so `{:.8}` prints 8 digits
+  `dashcore_rpc_json::HexError` wraps `DecodeVariableLengthBytesError` (#1115) @kwvg
+- **Breaking:** hashes honour the format precision, so `{:.8}` prints 8 digits (#1108) @kwvg
 - **Breaking:** `hash_x11::Midstate` is replaced by `[u8; 32]`, and
-  `hash_x11::HashEngine::n_bytes_hashed()` returns the bytes written
+  `hash_x11::HashEngine::n_bytes_hashed()` returns the bytes written (#1110) @kwvg
+- **Breaking:** the absolute and relative lock time types, `Weight` and `ParseIntError` re-export
+  `bitcoin_units`. Absolute `Time` is `MedianTimePast`, relative `Height` and `Time` are
+  `NumberOfBlocks` and `NumberOf512Seconds`, and `absolute::LockTime::is_satisfied_by` requires a
+  median time past greater than the lock, as Dash Core does (#1288) @kwvg
 - **Breaking:** `EcdsaSighashType` comes from `bitcoin-crypto` and gains a
   `NonStandard` variant, which `from_consensus` returns for non-standard flags
   and which displays, parses and serializes as `0xNN`. The `from_standard` error
-  is `NonStandardSighashTypeError`, `TapSighashType` converts through `TryFrom`,
-  and `sighash::Error` no longer derives `Copy`, `PartialOrd`, `Ord` or `Hash`
-- **Breaking:** the taproot types come from `bitcoin-crypto`. `Signature`
-  fields are renamed to `signature` and `sighash_type`, and `taproot::Error` is
-  `SigFromSliceError`, without a `Secp256k1` variant
+  is `NonStandardSighashTypeError`, and `sighash::Error` no longer derives `Copy`,
+  `PartialOrd`, `Ord` or `Hash` (#1108) @kwvg
 - **Breaking:** `ecdsa::Signature` and `ecdsa::SerializedSignature` come from
   `bitcoin-crypto`. `Signature` fields and human-readable serde keys are
   renamed from `sig` and `hash_ty` to `signature` and `sighash_type`.
   `signature` is a `secp256k1` signature.
   `DecodeError` and `ParseSignatureError` replace `ecdsa::Error`. Formatting
-  flags apply to the whole encoding instead of being ignored
+  flags apply to the whole encoding instead of being ignored (#1151) @kwvg
 - **Breaking:** the `dashcore::ecdsa` newtypes replace the `secp256k1` keys and
   signatures in `PublicKey`, `PrivateKey`, `ExtendedPrivKey`, `ExtendedPubKey`,
   `RootExtendedPrivKey`, `RootExtendedPubKey`, `Wallet` key derivation,
   `AssetLockCreditKeys` and `Signer`. `EcdsaPublicKey` converts into
-  `XOnlyPublicKey` and `EcdsaSecretKey` into `Keypair`
-- **Breaking:** `key::XOnlyPublicKey`, `Keypair`, `Parity`, `TweakedPublicKey`
-  and `UntweakedPublicKey` come from `bitcoin-crypto`, whose `XOnlyPublicKey`
-  keeps its parity. `TweakedKeyPair` and `UntweakedKeyPair` are renamed to
-  `TweakedKeypair` and `UntweakedKeypair`
-- **Breaking:** `TaprootError::InvalidInternalKey` and
-  `TaprootBuilderError::InvalidInternalKey` no longer hold a `secp256k1::Error`
+  `XOnlyPublicKey` and `EcdsaSecretKey` into `Keypair` (#1151) @kwvg
+- **Breaking:** `key::XOnlyPublicKey`, `Keypair` and `Parity` come from `bitcoin-crypto`, whose
+  `XOnlyPublicKey` keeps its parity (#1151) @kwvg
 - **Breaking:** `PrivateKey` is no longer `Copy`. `to_bytes` and `to_wif` take
-  `&self` instead of `self`
+  `&self` instead of `self` (#1151) @kwvg
 - **Breaking:** `Ecdsa(EcdsaError)` replaces `key::Error::Secp256k1` and
   `bip32::Error::Secp256k1`. `MessageSignatureError::InvalidEncoding` holds an
   `EcdsaError` instead of a `secp256k1::Error`. Failed verification reads
-  "signature verification failed" instead of "signature failed verification"
+  "signature verification failed" instead of "signature failed verification" (#1151) @kwvg
 - **Breaking:** `dashcore::eddsa` uses the `dash-pkc` types, so `EddsaPkBytes`
   and `EddsaSkBytes` no longer implement `BaseCodec` and `EddsaError` changes
   shape. Use `EddsaPublicKey::try_from`, `EddsaPkHash::from` and
   `EddsaSecretKey::public_key` instead of `EddsaPkBytes::validate`,
-  `EddsaPkBytes::hash` and `EddsaSkBytes::public_key`
+  `EddsaPkBytes::hash` and `EddsaSkBytes::public_key` (#1108) @kwvg
 - **Breaking:** `dashcore-crypto` re-exports `dash-pkc` 0.2.
   `EddsaPublicKey::verify` and `EddsaSecretKey::sign` are renamed to
   `verify_message` and `sign_message`, the BLS and ECDSA types under
   `dash_pkc` split signing and verification into `_digest` and `_message`
   methods, and `dash_pkc`'s `BlsPkBytes`, `BlsSigBytes` and `BlsSkBytes` lose
-  their scheme parameter
+  their scheme parameter (#1214) @kwvg
 - **Breaking:** `EcdsaPublicKey::verify`, and `signer::verify_data_signature`
   with it, accept a high-S signature like its low-S twin, as Dash Core does.
-  Check `EcdsaSignature::is_low_s` to refuse malleable signatures
+  Check `EcdsaSignature::is_low_s` to refuse malleable signatures (#1214) @kwvg
 - **Breaking:** `dash-pow` replaces `rs-x11-hash` for X11, so
   `dashcore_hashes` loses its `rs-x11-hash` feature and no longer needs a C
   toolchain. X11 hashes inputs of any length, where `rs-x11-hash` always read
   80 bytes. AES runs in hardware when the build enables the target features
-  `dash-pow` needs, and in software otherwise
+  `dash-pow` needs, and in software otherwise (#1214) @kwvg
   - Cargo ignores a dependency's profile overrides, so set `opt-level = 3`
     under `[profile.dev.package.dash-pow]` to keep debug builds fast enough
     for header sync
 - **Breaking:** `QualifiedMasternodeListEntry::entry_hash` and
-  `MessageVerificationError::ThresholdSignatureNotValid` hold `Sha256dHash`
-- **Breaking:** `dashcore::base58` is `base58ck` 0.5.0, so `Base58CkString`
-  replaces the `encode_*` functions and the `Base58` error variants carry
-  `base58::DecodeCheckError`
+  `MessageVerificationError::ThresholdSignatureNotValid` hold `Sha256dHash` (#1108) @kwvg
+- **Breaking:** `dashcore::base58` is `base58ck` 0.5.0, taken through `bitcoin-crypto`, so
+  `Base58CkString` replaces the `encode_*` functions, `decode` without a checksum is gone and the
+  `Base58` error variants carry `base58::DecodeCheckError` (#1108, #1224) @kwvg @PastaPastaPasta
 - **Breaking:** `Work` and `Target` display as 64-digit hex instead of decimal,
-  and their hex formatting ignores width and fill
+  and their hex formatting ignores width and fill (#1142) @kwvg
 - **Breaking:** `Target::difficulty` returns 0 for a zero target instead of
   panicking, and `Work` addition and subtraction wrap instead of panicking on
-  overflow in debug builds
+  overflow in debug builds (#1142) @kwvg
 - **Breaking:** `ExtendedPrivKey::new_master` rejects seeds outside 16 to 64
   bytes with `bip32::Error::InvalidSeedLength`, which
-  `RootExtendedPrivKey::new_master` returns instead of `InvalidParameter`
-- **Breaking:** `EcdsaRecSignature` rejects headers above 34 when read
-- Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-ffi`,
-  `dash-spv-bench`, `git-state` and `masternode-seeds-fetcher` to CC0-1.0
-- All workspace crates declare a MSRV of 1.89
+  `RootExtendedPrivKey::new_master` returns instead of `InvalidParameter` (#1144) @kwvg
+- **Breaking:** `EcdsaRecSignature` rejects headers above 34 when read (#1151) @kwvg
+- **Breaking:** set consensus params to Dash Core's values (#1160) @ZocoLini
+- Relicense `dash-network`, `dash-network-seeds`, `dash-spv`, `dash-spv-bench`, `git-state` and
+  `masternode-seeds-fetcher` to CC0-1.0 (#1108) @kwvg
+- All workspace crates declare a MSRV of 1.89 (#1108) @kwvg
 - `ManagedWalletInfo::sweep_conflicts` and `abandon_transaction_with_spends` in `key-wallet` release
   a restored spent-output claim that names a transaction they remove. `released_outpoints` of a
-  sweep, as `WalletEvent::TransactionsSwept` and the `dash-spv-ffi` swept callback carry it, lists
-  an outpoint only once no claim and no account's own spent mark guards it.
+  sweep, as `WalletEvent::TransactionsSwept` carries it, lists an outpoint only once no claim and
+  no account's own spent mark guards it. (#1112) @lklimek
 - Human-readable serde of `PublicKey`, `ShortId` and `PlatformNodeId` also
-  accepts raw bytes, and their deserialization errors read differently
+  accepts raw bytes, and their deserialization errors read differently (#1151) @kwvg
 - `RootExtendedPubKey` now supports hybrid SEC1 public keys in human-readable
-  serde, and writes them back compressed
+  serde, and writes them back compressed (#1151) @kwvg
+- `dash-spv` wraps its user agent in `/` delimiters and caps it at 256 bytes, devnet user agents
+  name `dash-spv`, and `DevnetConfig::validate` rejects a devnet name whose user agent would be
+  longer (#1311) @xdustinface
+- Reconcile late inputs and publish accounting corrections in `key-wallet` (#1082) @lklimek
+- Drop the committed-range sweep and the collected-scripts rescan from `dash-spv` (#1016) @ZocoLini
+- Store each segment type with its own segment size, stream segments to disk, keep two segments resident, persist a dirty segment when it is evicted and delete dropped segment files right away (#1092, #1088, #1086, #1087, #1090) @ZocoLini
+- Index header hashes by groups of their first bytes (#1095) @ZocoLini
+- Box the large `NetworkMessage` payloads (#1098) @ZocoLini
+- Validate a non-rotating quorum once (#1067) @ZocoLini
+- Stop requesting work-block lists for retired quorum types (#1080) @ZocoLini
+- Update `jsonrpc` to 0.21, `base64` to 0.23 and `pprof` to 0.15 (#1316, #1317, #1313)
+- Refresh masternode seed files (#1107, #1285)
 
 ### Fixed
 
+- **Breaking:** verify every `MnListDiff` against its block's coinbase before applying it, so a peer can no longer inject quorum keys. `MasternodeList::verify_coinbase_roots` replaces `has_valid_mn_list_root` and `has_valid_llmq_list_root` (#1200) @ZocoLini
+- **Breaking:** validate header difficulty against Dark Gravity Wave, so past the last checkpoint a peer can no longer serve a chain of minimal difficulty. `BlockHeaderValidator::new` takes the network and the headers the batch extends (#1161) @ZocoLini
+- Only verify ChainLocks with a verified quorum (#1168) @PastaPastaPasta
+- Check received blocks against their header merkle root (#1169) @PastaPastaPasta
+- Reject CFHeaders batches that don't connect to the stored filter headers (#1166) @PastaPastaPasta
+- **Breaking:** a refused or interrupted QRInfo leaves the masternode list engine as it was, and a header storage failure is no longer taken for a refusal (#1211) @shumkov
+- **Breaking:** keep masternode sync live on bad or missing diffs. Only a diff that contradicts itself or its block header bans the peer (#1258) @xdustinface
+- Keep retrying QRInfo on an empty masternode list engine instead of stopping for the life of the process (#1254) @xdustinface
+- Take the member-selection ChainLock of a non-rotating quorum from the work block's coinbase, as Dash Core does (#1284) @PastaPastaPasta
+- Read a coinbase payload of a newer version, so masternode sync keeps working when a network activates a new CbTx layout (#1306) @shumkov
+- **Breaking:** bound partial merkle trees by Dash's block size, 33,333 transactions instead of Bitcoin's 16,666. `blockdata::constants::MAX_BLOCK_SIZE` replaces `MAX_BLOCK_WEIGHT` and `MIN_TRANSACTION_WEIGHT` (#1307) @shumkov
+- **Breaking:** keep the type byte of quorum types this crate does not know, so their commitments hash as in Dash Core. `LLMQType::LlmqtypeUnknown` becomes `LlmqtypeUnknown(u8)` (#1308) @shumkov
+- Fetch the work-block lists a tip update's quorums need (#1150) @PastaPastaPasta
+- Replay a first QRInfo before the diffs built on its lists (#1091) @ZocoLini
+- Defer a ChainLock until the masternode lists reach it, and keep it pending until its header is stored (#1063, #1159) @ZocoLini
+- Follow the network onto a branch that replaces stored blocks (#1102) @ZocoLini
+- Let a stopped client start again, stop a client that is still starting, run the storage worker only between start and stop, and make `stop` wait for the tasks the sync loop detaches (#1097, #1101, #1183, #1178) @ZocoLini
+- Keep peer events consistent across `stop`, so event handlers no longer see departed peers as connected (#1325) @xdustinface
 - Off Unix (Windows), `dash-spv` no longer deletes its data-directory lock file when the lock is
   dropped: when Windows deletes with POSIX semantics, an opener holding the deleted file and a
   later opener of a new file at the path could both hold the lock, and otherwise a later opener
-  failed to open the path until every handle to the deleted file closed
-- In `key-wallet`, `Seed`'s `Display` no longer prints the seed's first and last 4 bytes (it now
-  matches its `Debug`, `Seed(***)`), `RootExtendedPubKey`'s `Debug` no longer prints the chain code,
-  and the `Debug` of `ChainCode` and `Fingerprint` no longer ends with a stray `)`
-- `Debug` output of `ExtendedPrivKey`, `ExtendedBLSPrivKey` and `ExtendedEd25519PrivKey` in
-  `key-wallet` no longer prints the chain code, and `Mnemonic` and `RootExtendedPrivKey` have a
-  `Debug` that prints no words, chain code or key; a logged `{:?}` of them exposed the chain code
-  (and, for `Mnemonic` built with bip39 2.2.0, which the version requirement still allows, the
-  word indices)
+  failed to open the path until every handle to the deleted file closed (#1263) @PastaPastaPasta
 - The `dash-spv` data-directory lock is exclusive: a refused open no longer truncates the holder's
   lock file (its PID), and on Unix an opener that locks a lock file its holder has just unlinked
-  opens it again instead of holding a lock no later opener sees
-- `key-wallet` attributes a provider transaction to the wallet when it pays one of the wallet's
-  scripts through a version 3 (DIP-0026) payout, a shared collateral's refund or reward script, or a
-  ProUpShareTx reward script; only the legacy `script_payout` was checked
-- **Breaking:** `Inventory::CompactBlock` is inventory type 20, Dash Core's `MSG_CMPCT_BLOCK`;
-  it was encoded and decoded as Bitcoin's 4, which Dash Core doesn't define
-- Treat `SIGHASH_SINGLE` flags with `ANYONECANPAY` set, such as `0x83`, as
-  single when checking for the legacy `SIGHASH_SINGLE` bug
-- `transaction_sighash` in `key-wallet-ffi` hashes non-standard flags as given
-  and rejects flags above `0xff`
-- Reject 256-bit child numbers in `key-wallet` with an odd number of hex digits
-- **Breaking:** a header whose nBits is negative or overflows now has zero
-  work. Previously it decoded to `Target::ZERO`, whose `to_work()` returned the
-  maximum work, so it outweighed any valid chain in chainwork comparisons
-- **Breaking:** `Target::from_compact` returns `Target::ZERO` for overflowing
-  nBits instead of a wrapped value
-- Reject WIF keys whose compression flag is not `0x01`, with
-  `key::Error::InvalidWifCompressionFlag`
-- Accept an IL of zero in `key-wallet` private child derivation
-- `transaction_sign_input` in `key-wallet-ffi` rejects flags above `0xff`
+  opens it again instead of holding a lock no later opener sees (#1257) @PastaPastaPasta
 - `dash-spv` drops the masternode lists, and the rotated quorum cycles, built
   above a fork it follows, so they no longer answer for blocks that left the
-  chain
+  chain (#1201) @shumkov
 - `dash-spv` no longer follows a fork that branches off below the newest
-  checkpoint its stored chain reaches
-- `dash_spv_ffi_config_add_peer` defaults devnet peers to the devnet port,
-  19799, instead of 29999
+  checkpoint its stored chain reaches (#1201) @shumkov
+- In `key-wallet`, `Seed`'s `Display` no longer prints the seed's first and last 4 bytes (it now
+  matches its `Debug`, `Seed(***)`), `RootExtendedPubKey`'s `Debug` no longer prints the chain code,
+  and the `Debug` of `ChainCode` and `Fingerprint` no longer ends with a stray `)` (#1267) @PastaPastaPasta
+- `Debug` output of `ExtendedPrivKey`, `ExtendedBLSPrivKey` and `ExtendedEd25519PrivKey` in
+  `key-wallet` no longer prints the chain code, and `Mnemonic` and `RootExtendedPrivKey` have a
+  `Debug` that prints no words, chain code or key (#1265) @PastaPastaPasta
+- `key-wallet` wipes the copies of a mnemonic phrase it makes while normalizing, parsing and
+  bincode-decoding it (#1271, #1274, #1279) @PastaPastaPasta
+- Signing a hash and parsing a WIF key no longer leave copies of the secret key in memory (#1225) @lklimek
+- `key-wallet` attributes a provider transaction to the wallet when it pays one of the wallet's
+  scripts through a version 3 (DIP-0026) payout, a shared collateral's refund or reward script, or a
+  ProUpShareTx reward script; only the legacy `script_payout` was checked (#1256) @PastaPastaPasta
+- Correct retained spender amounts and direction when late funding reveals owned inputs,
+  including newly discovered owned outputs and InstantSend locks received through live SPV
+  after account import. Preserve spender context and suppress duplicate lock notifications. (#1106) @lklimek
+- Load an unparsable address of a sent output as `None` instead of failing to load the whole transaction record (#1280) @xdustinface
+- **Breaking:** `Inventory::CompactBlock` is inventory type 20, Dash Core's `MSG_CMPCT_BLOCK`;
+  it was encoded and decoded as Bitcoin's 4, which Dash Core doesn't define (#1255) @PastaPastaPasta
+- Build compact block short IDs from the instance hash, as Dash Core does (#1319) @PastaPastaPasta
+- Sign-extend a negative transaction version over the type, as Dash Core does, so such transactions get Core's txid and sighash (#1281) @xdustinface
+- Leave `OP_CODESEPARATOR` out of the legacy sighash script code, as Dash Core does (#1269) @PastaPastaPasta
+- Write a transaction's special payload only from version 3, as Dash Core does (#1273) @PastaPastaPasta
+- Keep the stored serde index of every transaction payload variant (#1175) @lklimek
+- Treat `SIGHASH_SINGLE` flags with `ANYONECANPAY` set, such as `0x83`, as
+  single when checking for the legacy `SIGHASH_SINGLE` bug (#1108) @kwvg
+- **Breaking:** a header whose nBits is negative or overflows now has zero
+  work. Previously it decoded to `Target::ZERO`, whose `to_work()` returned the
+  maximum work, so it outweighed any valid chain in chainwork comparisons (#1142) @kwvg
+- **Breaking:** `Target::from_compact` returns `Target::ZERO` for overflowing
+  nBits instead of a wrapped value (#1142) @kwvg
+- Reject WIF keys whose compression flag is not `0x01`, with
+  `key::Error::InvalidWifCompressionFlag` (#1144) @kwvg
+- Accept an IL of zero in `key-wallet` private child derivation (#1144) @kwvg
+- Reject 256-bit child numbers in `key-wallet` with an odd number of hex digits (#1110) @kwvg
+- Refuse DIP-14 256-bit children in BLS and SLIP-10 derivation (#1051) @PastaPastaPasta
+- Construct `root_private_key` with `from_secret_bytes` (#1048) @kwvg
+- **Breaking:** decode `operatorPayoutAddress` and keep `PoSeRevivedHeight` in masternode list diffs in `rpc-json` (#1179) @shumkov
+- Reject `https` URLs in `dashcore-rpc`, whose transport is plaintext HTTP (#1141) @ZocoLini
 
 ### Removed
 
+- **Breaking:** remove the `key-wallet-ffi` crate and the `ffi` feature of `dash-network` (#776) @xdustinface
+- **Breaking:** remove the `dash-spv-ffi` crate, the C bindings for the SPV client (#1251) @ZocoLini
+- **Breaking:** remove BIP141 (SegWit) and BIP341 (Taproot) support: the `taproot` module, SegWit
+  addresses and scripts, `Wtxid`, `NetworkMessage::WtxidRelay` and version 2 compact blocks. `Witness`
+  and BIP144 decoding stay for legacy asset locks (#400) @xdustinface
+- **Breaking:** remove the `bitcoinconsensus` feature, `Script::verify`, `Transaction::verify` and
+  their `_with_flags` variants (#1318) @xdustinface
+- **Breaking:** remove the unused vendored PSBT implementation from `key-wallet` (#1041) @ZocoLini
 - **Breaking:** remove the Bitcoin-only `Inventory::WTx`, `Inventory::WitnessTransaction` and
   `Inventory::WitnessBlock` (types 4, 5, `0x40000001` and `0x40000002` now decode as
   `Inventory::Unknown`) and `ServiceFlags::GETUTXO` and `ServiceFlags::WITNESS`, none of which
-  Dash Core defines
-- **Breaking:** remove the `dash-spv-ffi` crate, the C bindings for the SPV client
+  Dash Core defines (#1255) @PastaPastaPasta
 - **Breaking:** remove BIP38 from `key-wallet` (the `bip38` feature, `Bip38EncryptedKey`,
   `Bip38Mode`, `encrypt_private_key`, `generate_intermediate_code` and the `Wallet` BIP38
-  export/import methods) and the unimplemented `bip38_*` functions from `key-wallet-ffi`
+  export/import methods) (#1111) @kwvg
 - **Breaking:** remove the `hex` re-export from `dashcore_hashes`. Depend on
   `hex-conservative` 1.x directly, where `decode_to_array` and `decode_to_vec`
-  replace `FromHex`
+  replace `FromHex` (#1110) @kwvg
 - **Breaking:** remove `forward_hex` and `backward_hex` from the hash types,
-  and the `schemars` feature from `dashcore_hashes`
+  and the `schemars` feature from `dashcore_hashes` (#1110) @kwvg
 - **Breaking:** remove `from_bytes_ref` and `from_bytes_mut` from
-  `hash_x11::Hash`
+  `hash_x11::Hash` (#1110) @kwvg
 - **Breaking:** remove the `hex` module from `dashcore-private`, and the
   `btreemap_byte_values`, `btreemap_as_seq`, `btreemap_as_seq_byte_values` and
-  `hex_bytes` serde helpers from `dashcore::serde_utils`
+  `hex_bytes` serde helpers from `dashcore::serde_utils` (#1110) @kwvg
 - **Breaking:** remove ordering from `PublicKey`, `ExtendedPubKey` and
-  `PubKeyOrAddress`, and `PublicKey::to_sort_key` and `SortKey` with it
+  `PubKeyOrAddress`, and `PublicKey::to_sort_key` and `SortKey` with it (#1144) @kwvg
 - **Breaking:** remove `PublicKey::read_from` and
-  `Witness::push_bitcoin_signature`
+  `Witness::push_bitcoin_signature` (#1144) @kwvg
 - **Breaking:** remove `key::Error::NotSupported`,
-  `bip32::Error::NotSupported` and `dashcore_rpc::Error::Secp256k1`
+  `bip32::Error::NotSupported` and `dashcore_rpc::Error::Secp256k1` (#1144) @kwvg
 - **Breaking:** remove `signer::CompactSignature`. Use `EcdsaRecSignature`
-  instead
+  instead (#1151) @kwvg
 - **Breaking:** remove `bip32::PublicKey`, `bip32::PrivateKey`,
-  `key_wallet::Error::Secp256k1` and `Index<RangeFull>` for `PrivateKey`
+  `key_wallet::Error::Secp256k1` and `Index<RangeFull>` for `PrivateKey` (#1151) @kwvg
 - **Breaking:** remove the `secp256k1` re-exports from `dashcore` and
-  `dashcore-crypto`, `key::Secp256k1`, `key::Verification` and
-  `TaprootError::InvalidParity`
+  `dashcore-crypto`, `key::Secp256k1` and `key::Verification` (#1151) @kwvg
 - **Breaking:** remove the `secp-recovery` and `secp-lowmemory` features.
-  Message signature recovery is always available
+  Message signature recovery is always available (#1151) @kwvg
 - **Breaking:** remove `MessageSignature`. Signed messages are
   `EcdsaRecSignature`s, which carry the key compression, and the
   `sign_message` functions `from_slice`, `from_base64`, `to_base64`,
-  `recover_pubkey` and `is_signed_by_address` replace its methods
+  `recover_pubkey` and `is_signed_by_address` replace its methods (#1151) @kwvg
 - **Breaking:** remove `consensus::Params`, superseded by
-  `Network::chain_params` and the `pow` functions
+  `Network::chain_params` and the `pow` functions (#1223) @kwvg
 - **Breaking:** remove `LLMQParams`, `DKGParams`, the `LLMQ_*` and `DKG_*`
-  constants and `dkg_rotation_params`, superseded by `LLMQType::params`
+  constants and `dkg_rotation_params`, superseded by `LLMQType::params` (#1223) @kwvg
 - **Breaking:** remove the `PUBKEY_ADDRESS_PREFIX_*` and
-  `SCRIPT_ADDRESS_PREFIX_*` constants, superseded by `Network::addr_params`
+  `SCRIPT_ADDRESS_PREFIX_*` constants, superseded by `Network::addr_params` (#1223) @kwvg
 - **Breaking:** remove the unused `LLMQType::get_dkg_windows_in_range`,
   `NetworkLLMQExt::get_all_dkg_windows`, `NetworkLLMQExt::is_llmq_type`,
-  `DKGWindow::llmq_type` and `From<&LLMQType> for u64`
+  `DKGWindow::llmq_type` and `From<&LLMQType> for u64` (#1223) @kwvg
 - **Breaking:** remove the unused `TARGET_BLOCK_SPACING`,
   `DIFFCHANGE_INTERVAL`, `DIFFCHANGE_TIMESPAN`, `SUBSIDY_HALVING_INTERVAL` and
-  `MAX_SCRIPTNUM_VALUE` constants
-
-### Fixed
-
-- Correct retained spender amounts and direction when late funding reveals owned inputs,
-  including newly discovered owned outputs and InstantSend locks received through live SPV
-  after account import. Preserve spender context and suppress duplicate lock notifications.
+  `MAX_SCRIPTNUM_VALUE` constants (#1223) @kwvg
 
 ## 0.45.0 - 2026-10-21
 
