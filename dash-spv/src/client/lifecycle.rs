@@ -282,7 +282,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Recover from a storage corruption the sync loop `loop_id` read back:
     /// stop the client, wipe the storage and run again, so the client syncs
     /// it again. A loop that was stopped or replaced in the meantime is left
-    /// alone.
+    /// alone. A failed wipe leaves the client stopped and returns the error.
     ///
     /// Boxed because the client it runs again can recover from a corruption too.
     pub(super) fn handle_corruption(
@@ -298,9 +298,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             self.stop_locked(corrupted).await;
 
             tracing::warn!("Storage corrupted, wiping it and syncing again: {}", error);
-            if let Err(e) = self.storage.lock().await.clear().await {
-                tracing::warn!("Corrupted storage not wiped: {}", e);
-            }
+            self.storage.lock().await.clear().await?;
             self.sync_coordinator.lock().await.reset_progress();
 
             self.run_locked(&mut sync_loop).await

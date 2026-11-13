@@ -167,10 +167,14 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     Ok(SyncEvent::StorageCorrupted { error }) = corruption_rx.recv() => {
                         loop_shutdown.cancel();
                         let recovering = client.clone();
+                        let handlers = handlers.clone();
 
                         client.detached_tasks.lock().await.spawn(async move {
                             if let Err(e) = recovering.handle_corruption(error, loop_id).await {
                                 tracing::warn!("Error recovering from the corruption: {}", e);
+                                for handler in handlers.iter() {
+                                    handler.on_error(&e.to_string());
+                                }
                             }
                         });
 
