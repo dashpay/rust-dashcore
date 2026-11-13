@@ -745,12 +745,16 @@ impl ManagedCoreFundsAccount {
 
         // Check inputs (sent) - rely on tracked UTXOs to determine spends
         if !tx.is_coin_base() {
+            let spent_by_tx = self.unsettled_spends.get(&tx.txid());
             for input in &tx.input {
                 if let Some(utxo) = self
                     .utxos
                     .get(&input.previous_output)
                     .or_else(|| self.spent_before_funded.get(&input.previous_output))
                     .or_else(|| self.claim_guarded_outputs.get(&input.previous_output))
+                    .or_else(|| {
+                        spent_by_tx?.iter().find(|utxo| utxo.outpoint == input.previous_output)
+                    })
                 {
                     sent = sent.saturating_add(utxo.txout.value);
 

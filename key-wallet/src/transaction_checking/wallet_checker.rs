@@ -465,16 +465,6 @@ impl ManagedWalletInfo {
                         result.new_records.push(record);
                     }
                 }
-                // A spend with no change matches only through coins its first
-                // sighting removed, so its record sits outside `affected_accounts`.
-                for mut account in self.accounts.all_accounts_mut() {
-                    if let Some(record) = account.transactions_mut().get_mut(&txid) {
-                        if !record.is_confirmed() && !record.context.is_instant_send() {
-                            record.update_context(context.clone());
-                            result.updated_records.push(record.clone());
-                        }
-                    }
-                }
                 self.attribute_late_inputs(tx, &mut result);
                 if update_balance {
                     self.update_balance();
@@ -550,11 +540,6 @@ impl ManagedWalletInfo {
                     }
                 }
             }
-        }
-        // Records outside `affected_accounts`, such as the funding record of a
-        // spend with no change, still take the block.
-        if !is_new {
-            self.promote_stored_transaction_context(&txid, &context, &relevant_types, &mut result);
         }
         self.use_involved_addresses(wallet, &result.affected_accounts, &mut result.new_addresses);
 

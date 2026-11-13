@@ -848,7 +848,7 @@ async fn test_spend_only_block_promotion_is_idempotent() {
 
     let second = manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
     assert!(second.new_txids.is_empty());
-    assert!(second.existing_txids.is_empty());
+    assert_eq!(second.existing_txids, vec![asset_lock_tx.txid()]);
     assert_no_events(&mut rx);
 }
 

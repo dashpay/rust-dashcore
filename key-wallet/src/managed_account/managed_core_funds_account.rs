@@ -74,8 +74,9 @@ pub struct ManagedCoreFundsAccount {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) claim_guarded_outputs: BTreeMap<OutPoint, Utxo>,
     /// The UTXOs removed by each spend not yet chainlocked, so a fork that drops
-    /// the spend can put them back.
-    unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
+    /// the spend can put them back. Input matching falls back to these, so the
+    /// spender still matches this account when it is seen again.
+    pub(crate) unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
     /// Outpoints reserved by in-flight transaction builds so concurrent builds
     /// do not select the same UTXO before the first build's transaction is
     /// processed. Empty after a restart, where chain and mempool sync
