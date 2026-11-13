@@ -137,8 +137,7 @@ pub(crate) async fn atomic_write(path: &Path, data: &[u8]) -> StorageResult<()> 
 }
 
 /// Blocking version of `atomic_write` without `sync_all`, for use inside `spawn_blocking`.
-/// Skipping the sync makes the migration several times faster. A power loss can then leave
-/// the file truncated, which its checksum detects.
+/// Skipping the sync makes the migration several times faster
 pub(crate) fn atomic_write_blocking(path: &Path, data: &[u8]) -> StorageResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
