@@ -17,7 +17,7 @@ use dashcore::{
 use futures::lock::Mutex;
 use rand::Rng;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(test)]
@@ -137,6 +137,23 @@ impl Decoder for SizedCodec {
     }
 }
 
+/// Frames messages and records whether the bytes of an unfinished one are buffered.
+struct TrackedCodec {
+    codec: SizedCodec,
+    partial: Arc<AtomicBool>,
+}
+
+impl Decoder for TrackedCodec {
+    type Item = (RawNetworkMessage, u64);
+    type Error = encode::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let frame = self.codec.decode(src);
+        self.partial.store(!src.is_empty(), Ordering::Relaxed);
+        frame
+    }
+}
+
 /// The socket's write half, framing each message for the connection's transport.
 struct PeerWriter {
     half: OwnedWriteHalf,
@@ -172,7 +189,30 @@ impl PeerWriter {
 /// the peer's version packet.
 type LinkReader = Either<ProtocolSessionReader<OwnedReadHalf>, OwnedReadHalf>;
 
-type PeerReader = FramedRead<CountingReader<LinkReader>, SizedCodec>;
+type PeerReader = FramedRead<CountingReader<LinkReader>, TrackedCodec>;
+
+/// Returns a connection's reader with the counters the peer reads: the bytes read from
+/// the socket, and whether the bytes of an unfinished message are buffered.
+fn peer_reader(
+    reader: LinkReader,
+    codec: SizedCodec,
+    state: Arc<NetworkState>,
+) -> (PeerReader, Arc<AtomicU64>, Arc<AtomicBool>) {
+    let peer_bytes = Arc::new(AtomicU64::new(0));
+    let partial = Arc::new(AtomicBool::new(false));
+    let reader = FramedRead::new(
+        CountingReader {
+            inner: reader,
+            state,
+            peer_bytes: peer_bytes.clone(),
+        },
+        TrackedCodec {
+            codec,
+            partial: partial.clone(),
+        },
+    );
+    (reader, peer_bytes, partial)
+}
 
 /// A TCP connection with its transport negotiated, ready for the version handshake.
 struct Link {
@@ -304,6 +344,7 @@ pub struct ConnectedPeer {
     version: VersionMessage,
     lag_ms: AtomicU32,
     bytes: Arc<AtomicU64>,
+    partial: Arc<AtomicBool>,
 }
 
 pub struct DisconnectedPeer {
@@ -346,6 +387,11 @@ impl ConnectedPeer {
         self.bytes.load(Ordering::Relaxed)
     }
 
+    /// Whether part of a message has arrived and the rest has not.
+    pub fn partial_message(&self) -> bool {
+        self.partial.load(Ordering::Relaxed)
+    }
+
     pub fn in_flight_bytes(&self) -> u64 {
         self.handle.in_flight_bytes()
     }
@@ -370,27 +416,71 @@ impl ConnectedPeer {
     /// The far end discards what it reads, so sends succeed.
     #[cfg(test)]
     pub(crate) async fn for_test(id: PeerId) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
-        let addr = listener.local_addr().expect("bound address");
-        let stream = TcpStream::connect(addr).await.expect("connect loopback");
-        let (mut far, _) = listener.accept().await.expect("accept loopback");
+        let (link, mut far) = test_link().await;
         tokio::spawn(async move { io::copy(&mut far, &mut io::sink()).await });
-        let link = Link::v1(stream, Network::Regtest.magic());
+        let ledger = Arc::new(Ledger::new(Arc::new(ResponseCosts::new())));
+        Self::from_test_parts(
+            id,
+            Arc::new(Mutex::new(link.writer)),
+            ledger,
+            (Arc::new(AtomicU64::new(0)), Arc::new(AtomicBool::new(false))),
+            CancellationToken::new(),
+        )
+    }
+
+    /// A handshaken connection `id` over a loopback socket, its reader started as
+    /// `connect` starts it. Returns the far end's write half, which feeds the reader.
+    #[cfg(test)]
+    pub(crate) async fn for_test_reading(
+        id: PeerId,
+        state: Arc<NetworkState>,
+    ) -> (Self, OwnedWriteHalf) {
+        let (link, far) = test_link().await;
+        let (mut far_read, far_write) = far.into_split();
+        tokio::spawn(async move { io::copy(&mut far_read, &mut io::sink()).await });
+        let (reader, bytes, partial) = peer_reader(link.reader, link.codec, state.clone());
+        let writer = Arc::new(Mutex::new(link.writer));
+        let ledger = Arc::new(Ledger::new(state.costs.clone()));
+        let token = CancellationToken::new();
+        let magic = Network::Regtest.magic();
+        spawn_reader(id, magic, reader, writer.clone(), state, token.clone(), ledger.clone());
+        (Self::from_test_parts(id, writer, ledger, (bytes, partial), token), far_write)
+    }
+
+    #[cfg(test)]
+    fn from_test_parts(
+        id: PeerId,
+        writer: Arc<Mutex<PeerWriter>>,
+        ledger: Arc<Ledger>,
+        (bytes, partial): (Arc<AtomicU64>, Arc<AtomicBool>),
+        token: CancellationToken,
+    ) -> Self {
         ConnectedPeer {
             handle: PeerHandle {
                 id,
-                writer: Arc::new(Mutex::new(link.writer)),
-                ledger: Arc::new(Ledger::new(Arc::new(ResponseCosts::new()))),
+                writer,
+                ledger,
                 cap: Arc::new(AtomicU64::new(INITIAL_CAP_BYTES)),
                 serving_rate: Arc::new(AtomicU64::new(0)),
                 headers2: false,
-                token: CancellationToken::new(),
+                token,
             },
             version: build_version(id.addr(), "test"),
             lag_ms: AtomicU32::new(1),
-            bytes: Arc::new(AtomicU64::new(0)),
+            bytes,
+            partial,
         }
     }
+}
+
+/// A V1 link over a loopback socket, and the socket's far end.
+#[cfg(test)]
+async fn test_link() -> (Link, TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+    let addr = listener.local_addr().expect("bound address");
+    let stream = TcpStream::connect(addr).await.expect("connect loopback");
+    let (far, _) = listener.accept().await.expect("accept loopback");
+    (Link::v1(stream, Network::Regtest.magic()), far)
 }
 
 impl DisconnectedPeer {
@@ -484,15 +574,7 @@ impl DisconnectedPeer {
         } else {
             1
         };
-        let peer_bytes = Arc::new(AtomicU64::new(0));
-        let mut reader = FramedRead::new(
-            CountingReader {
-                inner: reader,
-                state: state.clone(),
-                peer_bytes: peer_bytes.clone(),
-            },
-            codec,
-        );
+        let (mut reader, peer_bytes, partial) = peer_reader(reader, codec, state.clone());
 
         handshake_send(
             &mut writer,
@@ -614,6 +696,7 @@ impl DisconnectedPeer {
             version,
             lag_ms: AtomicU32::new(lag_ms),
             bytes: peer_bytes,
+            partial,
         })
     }
 }
@@ -756,6 +839,8 @@ async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> Net
 mod tests {
     use std::io::{Error as IoError, ErrorKind};
 
+    use test_case::test_case;
+
     use super::*;
 
     fn io_error(kind: ErrorKind) -> ProtocolError {
@@ -792,5 +877,26 @@ mod tests {
         let straddling =
             wire_agent(&format!("{}é{}", "a".repeat(MAX_USER_AGENT_LEN - 3), "b".repeat(10)));
         assert_eq!(straddling, format!("/{}/", "a".repeat(MAX_USER_AGENT_LEN - 3)));
+    }
+
+    /// Whether the codec reports an unfinished message after the first `n` bytes of two
+    /// 32-byte pings arrive.
+    #[test_case(1 => true; "part of a header")]
+    #[test_case(24 => true; "a header without its payload")]
+    #[test_case(32 => false; "a whole ping")]
+    #[test_case(40 => true; "a whole ping and part of the next")]
+    fn the_codec_tracks_an_unfinished_message(n: usize) -> bool {
+        let magic = Network::Regtest.magic();
+        let ping = encode::serialize(&RawNetworkMessage {
+            magic,
+            payload: NetworkMessage::Ping(1),
+        });
+        let mut codec = TrackedCodec {
+            codec: SizedCodec::V1,
+            partial: Arc::new(AtomicBool::new(false)),
+        };
+        let mut src = BytesMut::from(&[ping.clone(), ping].concat()[..n]);
+        while codec.decode(&mut src).unwrap().is_some() {}
+        codec.partial.load(Ordering::Relaxed)
     }
 }

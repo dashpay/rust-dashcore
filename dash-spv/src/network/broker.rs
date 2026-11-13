@@ -12,6 +12,10 @@ use crate::network::costs::ResponseCosts;
 use crate::network::peer::{PeerHandle, PeerId};
 
 const KICKING_ATTEMPTS: u32 = 2;
+/// How many timeouts a request lives on bytes of a message still arriving, without an
+/// answer. A big answer on a slow link must fit, but a message that never finishes must
+/// not keep its request alive forever.
+const ANSWER_TIMEOUTS: u32 = 6;
 const HEDGE_AFTER: Duration = Duration::from_secs(2);
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
@@ -62,8 +66,12 @@ struct OnWire {
     /// The connection, not the address: a late close of an old connection must not
     /// pull back the work of a new one to the same address.
     peer: PeerId,
-    /// Refreshed by every piece of a streaming response.
+    /// Refreshed by every answer and by bytes of a message still arriving, since a big
+    /// answer can take longer than a timeout to arrive.
     last_progress: Instant,
+    /// Refreshed only by answers, so a block still arriving slowly can be hedged and a
+    /// message that never finishes cannot keep the request alive forever.
+    last_answer: Instant,
     msg: NetworkMessage,
     height: u32,
     hedge: Option<PeerId>,
@@ -205,18 +213,33 @@ impl Broker {
 
     /// Peers answer in order, so any answer is progress on all of its requests.
     pub async fn progress(&self, peer: PeerId) {
+        self.refresh(&[peer], true).await;
+    }
+
+    /// Bytes of a message still arriving from any of `peers` are progress on their requests.
+    pub async fn receiving(&self, peers: &[PeerId]) {
+        if !peers.is_empty() {
+            self.refresh(peers, false).await;
+        }
+    }
+
+    async fn refresh(&self, peers: &[PeerId], answered: bool) {
         let now = Instant::now();
         for state in self.requests.lock().await.values_mut() {
             if let ReqState::OnWire(o) = state {
-                if o.peer == peer {
+                if peers.contains(&o.peer) {
                     o.last_progress = now;
+                    if answered {
+                        o.last_answer = now;
+                    }
                 }
             }
         }
     }
 
-    /// Returns the peers to kick for a stalled request. A request that already
-    /// stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
+    /// Returns the peers to kick for a stalled request. A request stalls after a timeout
+    /// without progress, or after [`ANSWER_TIMEOUTS`] timeouts without an answer. A request
+    /// that already stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
     pub async fn expire(&self, timeout: impl Fn(&PeerId) -> Duration) -> HashSet<PeerId> {
         let now = Instant::now();
         let mut culprits = HashSet::new();
@@ -225,7 +248,10 @@ impl Broker {
             let ReqState::OnWire(o) = state else {
                 continue;
             };
-            if now.duration_since(o.last_progress) <= timeout(&o.peer) {
+            let timeout = timeout(&o.peer);
+            if now.duration_since(o.last_progress) <= timeout
+                && now.duration_since(o.last_answer) <= timeout * ANSWER_TIMEOUTS
+            {
                 continue;
             }
             if o.attempts < KICKING_ATTEMPTS {
@@ -317,6 +343,7 @@ impl Broker {
                             msg: msg.clone(),
                             height,
                             last_progress: Instant::now(),
+                            last_answer: Instant::now(),
                             hedge: None,
                             attempts: attempts + 1,
                         }));
@@ -337,7 +364,7 @@ impl Broker {
         sent
     }
 
-    /// Endgame: asks a second peer for the lowest block on the wire once its peer delivered
+    /// Endgame: asks a second peer for the lowest block on the wire once its peer answered
     /// nothing for [`HEDGE_AFTER`], and returns its height. Blocks are processed in height
     /// order, so only the lowest one holds up progress and a second copy of any other is wasted.
     pub async fn hedge(&self, peers: &[PeerHandle]) -> Option<u32> {
@@ -352,7 +379,7 @@ impl Broker {
                     _ => None,
                 })
                 .min_by_key(|(_, o)| o.height)?;
-            if o.hedge.is_some() || o.last_progress.elapsed() < HEDGE_AFTER {
+            if o.hedge.is_some() || o.last_answer.elapsed() < HEDGE_AFTER {
                 return None;
             }
             let peer = peers
@@ -378,12 +405,21 @@ impl Broker {
             let on_wire = OnWire {
                 peer,
                 last_progress: Instant::now(),
+                last_answer: Instant::now(),
                 msg: msg.clone(),
                 height: 0,
                 hedge: None,
                 attempts: 1,
             };
             reqs.insert(key, ReqState::OnWire(Box::new(on_wire)));
+        }
+    }
+
+    #[cfg(test)]
+    pub async fn carrier_of(&self, key: &RequestKey) -> Option<PeerId> {
+        match self.requests.lock().await.get(key) {
+            Some(ReqState::OnWire(o)) => Some(o.peer),
+            _ => None,
         }
     }
 
@@ -766,8 +802,9 @@ mod tests {
         tokio::time::advance(HEDGE_AFTER / 2).await;
         assert_eq!(broker.hedge(&peers).await, None, "the slow peer is still delivering");
 
+        broker.receiving(&[slow[0].id()]).await;
         tokio::time::advance(HEDGE_AFTER / 2).await;
-        assert_eq!(broker.hedge(&peers).await, Some(10));
+        assert_eq!(broker.hedge(&peers).await, Some(10), "a block still arriving is hedged");
         assert_eq!(broker.hedge(&peers).await, None, "later blocks wait for the lowest");
         assert_eq!(hedged_blocks().await, [10]);
 

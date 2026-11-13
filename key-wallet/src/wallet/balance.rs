@@ -23,7 +23,8 @@ pub struct WalletCoreBalance {
     unconfirmed: u64,
     /// Immature balance (UTXOs without enough confirmations for maturity, e.g. 100 for coinbase).
     immature: u64,
-    /// Locked balance (UTXOs reserved for specific purposes like CoinJoin).
+    /// Locked balance: coins the wallet will not spend, such as masternode
+    /// collateral (see `ManagedWalletInfo::locked_outpoints`).
     locked: u64,
 }
 

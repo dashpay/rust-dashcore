@@ -54,13 +54,18 @@ fn test_locked_utxos_in_locked_balance() {
     let mut wallet_info = ManagedWalletInfo::dummy(3);
     let mut account = ManagedCoreFundsAccount::dummy_bip44();
 
-    let mut utxo = Utxo::dummy(1, 100_000, 1000, false, true);
-    utxo.is_locked = true;
+    let utxo = Utxo::dummy(1, 100_000, 1000, false, true);
+    let outpoint = utxo.outpoint;
     account.utxos.insert(utxo.outpoint, utxo);
     wallet_info.accounts.insert(account).unwrap();
 
     assert_eq!(wallet_info.balance, WalletCoreBalance::default());
     wallet_info.update_last_processed_height(1100);
+    assert_eq!(wallet_info.balance, WalletCoreBalance::new(100_000, 0, 0, 0));
+
+    // A held coin is locked through the wallet's lock set, which moves its
+    // value to the locked bucket.
+    assert!(wallet_info.lock_outpoint(outpoint));
     let expected = WalletCoreBalance::new(0, 0, 0, 100_000);
     assert_eq!(wallet_info.balance, expected);
 }

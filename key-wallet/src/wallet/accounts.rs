@@ -62,6 +62,20 @@ impl Wallet {
             )));
         }
 
+        let xpub = &account.account_xpub;
+        if !account_type.is_contact_owned()
+            && self.accounts.all_accounts().iter().any(|a| {
+                !a.account_type.is_contact_owned()
+                    && a.account_xpub.public_key == xpub.public_key
+                    && a.account_xpub.chain_code == xpub.chain_code
+            })
+        {
+            return Err(Error::InvalidParameter(format!(
+                "Extended public key of {:?} is already used by another account",
+                account_type
+            )));
+        }
+
         // Insert into the collection
         self.accounts.insert(account).map_err(|e| Error::InvalidParameter(e.to_string()))
     }
