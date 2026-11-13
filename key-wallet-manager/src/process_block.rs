@@ -741,13 +741,12 @@ mod tests {
     use key_wallet::account::StandardAccountType;
     use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
     use key_wallet::managed_account::address_pool::AddressPoolType;
-    use key_wallet::managed_account::managed_account_type::ManagedAccountType;
     use key_wallet::managed_account::managed_core_funds_account::ManagedCoreFundsAccount;
     use key_wallet::managed_account::transaction_record::OutputRole;
     use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-    use key_wallet::{AccountType, AddressPool, Mnemonic};
+    use key_wallet::{AccountType, Mnemonic};
     use std::collections::HashMap;
 
     const HEIGHT: CoreBlockHeight = 100;
@@ -776,19 +775,6 @@ mod tests {
             .expect("BIP44 account 0")
     }
 
-    fn external_pool(
-        manager: &WalletManager<ManagedWalletInfo>,
-        wallet_id: &WalletId,
-    ) -> AddressPool {
-        match account(manager, wallet_id).managed_account_type() {
-            ManagedAccountType::Standard {
-                external_addresses,
-                ..
-            } => external_addresses.clone(),
-            other => panic!("BIP44 account 0 has an unexpected type {other:?}"),
-        }
-    }
-
     /// `late` pays index 0 and an index past the window. `extending` pays inside the
     /// window and extends it over that index. In a later block than `late`, it leaves
     /// `late`'s far output to the filter rescan, which delivers `late`'s block again.
@@ -796,7 +782,8 @@ mod tests {
         manager: &WalletManager<ManagedWalletInfo>,
         wallet_id: &WalletId,
     ) -> (Transaction, Transaction) {
-        let gap = external_pool(manager, wallet_id).gap_limit;
+        let gap =
+            account(manager, wallet_id).external_gap_limit().expect("BIP44 external gap limit");
         let far = gap + gap / 3;
         let bip44 = AccountType::Standard {
             index: 0,
