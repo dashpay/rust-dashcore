@@ -18,6 +18,7 @@ use key_wallet::account::StandardAccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
+use key_wallet::managed_account::managed_core_funds_account::ManagedCoreFundsAccount;
 use key_wallet::transaction_checking::{TransactionRouter, TransactionType};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
@@ -561,11 +562,11 @@ async fn setup_known_mempool_spend_only_asset_lock(
     (manager, wallet_id, asset_lock_tx, funding_outpoint, wallets)
 }
 
-/// An asset lock that spends a whole wallet coin into the wallet's own top-up
-/// address has no change, so the funding account matches it only by the coin
-/// its mempool sighting already removed.
-#[tokio::test]
-async fn test_instant_send_lock_reaches_the_funding_record_of_a_changeless_asset_lock() {
+/// A wallet holding, from the mempool, an asset lock that spends a whole wallet
+/// coin into the wallet's own top-up address. It has no change, so the funding
+/// account matches it only by the coin its mempool sighting already removed.
+async fn setup_mempool_changeless_asset_lock(
+) -> (WalletManager<ManagedWalletInfo>, WalletId, Transaction, BTreeSet<WalletId>) {
     let (mut manager, wallet_id, _default_addr) = setup_manager_with_wallet();
     let (funding_address, topup_address) = {
         let accounts = &manager.get_wallet_info(&wallet_id).expect("wallet info").accounts;
@@ -625,25 +626,68 @@ async fn test_instant_send_lock_reaches_the_funding_record_of_a_changeless_asset
             }]),
         )),
     };
-    let txid = asset_lock_tx.txid();
     manager.process_mempool_transaction(&asset_lock_tx, None).await;
+    (manager, wallet_id, asset_lock_tx, wallets)
+}
 
-    manager.process_mempool_instant_send_lock(&asset_lock_tx, dummy_instant_lock(txid)).await;
-
-    let context = &manager
+/// The BIP44 account 0 of `wallet_id`.
+fn funding_account(
+    manager: &WalletManager<ManagedWalletInfo>,
+    wallet_id: WalletId,
+) -> &ManagedCoreFundsAccount {
+    manager
         .get_wallet_info(&wallet_id)
         .expect("wallet info")
         .accounts
         .standard_bip44_accounts
         .get(&0)
         .expect("BIP44 account 0")
-        .transactions()
-        .get(&txid)
-        .expect("funding record")
-        .context;
+}
+
+#[tokio::test]
+async fn test_instant_send_lock_and_block_reach_the_funding_record_of_a_changeless_asset_lock() {
+    let (mut manager, wallet_id, asset_lock_tx, wallets) =
+        setup_mempool_changeless_asset_lock().await;
+    let txid = asset_lock_tx.txid();
+
+    manager.process_mempool_instant_send_lock(&asset_lock_tx, dummy_instant_lock(txid)).await;
+
+    let funding_context = |manager: &WalletManager<ManagedWalletInfo>| {
+        funding_account(manager, wallet_id)
+            .transactions()
+            .get(&txid)
+            .expect("funding record")
+            .context
+            .clone()
+    };
+    let context = funding_context(&manager);
     assert!(
         matches!(context, TransactionContext::InstantSend(_)),
         "funding record must carry the lock, got {context:?}"
+    );
+
+    let block = make_block(vec![asset_lock_tx], 0x48, 4_100);
+    manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+
+    let context = funding_context(&manager);
+    assert!(
+        matches!(&context, TransactionContext::InBlock(info) if info.height() == 401),
+        "funding record must take the block, got {context:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_chainlocked_block_finalizes_the_funding_record_of_a_changeless_asset_lock() {
+    let (mut manager, wallet_id, asset_lock_tx, wallets) =
+        setup_mempool_changeless_asset_lock().await;
+    manager.apply_chain_lock(ChainLock::dummy(500));
+
+    let block = make_block(vec![asset_lock_tx.clone()], 0x49, 4_200);
+    manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
+
+    assert!(
+        funding_account(&manager, wallet_id).transaction_is_finalized(&asset_lock_tx.txid()),
+        "funding record must be finalized by the chainlocked block"
     );
 }
 

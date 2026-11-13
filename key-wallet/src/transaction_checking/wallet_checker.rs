@@ -489,6 +489,11 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 }
             }
         }
+        // Records outside `affected_accounts`, such as the funding record of a
+        // spend with no change, still take the block.
+        if !is_new {
+            self.promote_stored_transaction_context(&txid, &context, &relevant_types, &mut result);
+        }
         self.use_involved_addresses(wallet, &result.affected_accounts, &mut result.new_addresses);
 
         self.attribute_late_inputs(tx, &mut result);
