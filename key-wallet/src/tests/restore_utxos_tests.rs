@@ -229,7 +229,6 @@ fn a_copy_another_account_holds_is_taken_out_on_restore() {
     let (_, utxo) = funded(&coinjoin_address(&ctx, 0), 0, 100_000);
     let bip44 = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
     bip44.utxos.insert(utxo.outpoint, utxo.clone());
-    let bip44_revision = bip44.monitor_revision();
 
     let unmatched =
         ctx.managed_wallet.restore_utxos(&ctx.wallet, [utxo.clone()]).expect("restores");
@@ -238,7 +237,6 @@ fn a_copy_another_account_holds_is_taken_out_on_restore() {
     let accounts = &ctx.managed_wallet.accounts;
     assert!(accounts.coinjoin_accounts[&0].utxos.contains_key(&utxo.outpoint));
     assert!(!accounts.standard_bip44_accounts[&0].utxos.contains_key(&utxo.outpoint));
-    assert!(accounts.standard_bip44_accounts[&0].monitor_revision() > bip44_revision);
     ctx.managed_wallet.update_balance();
     assert_eq!(ctx.managed_wallet.balance.total(), 100_000);
 }

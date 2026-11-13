@@ -123,15 +123,13 @@ impl ManagedWalletInfo {
                         let adopted_indices =
                             &TransactionRecord::owned_indices(&record.output_details) - &before;
                         let adopted = outputs.iter().filter(|d| adopted_indices.contains(&d.index));
-                        if funds.take_in_mined_outputs(
+                        funds.take_in_mined_outputs(
                             &record.transaction,
                             &record.context,
                             adopted,
                             &self.observed_spent_outpoints,
                             &self.spent_claims,
-                        ) {
-                            funds.bump_monitor_revision();
-                        }
+                        );
                     }
                     result
                         .updated_records
@@ -168,7 +166,6 @@ impl ManagedWalletInfo {
             if matches!(key_source, KeySource::NoKeySource) {
                 continue;
             }
-            let rev_before = new_addresses.len();
             for pool in account.managed_account_type_mut().address_pools_mut() {
                 let pool_type = pool.pool_type;
                 match pool.maintain_gap_limit(&key_source) {
@@ -188,9 +185,6 @@ impl ManagedWalletInfo {
                         );
                     }
                 }
-            }
-            if new_addresses.len() > rev_before {
-                account.bump_monitor_revision();
             }
         }
         new_addresses.len() > derived_before

@@ -126,14 +126,6 @@ impl<'a> ManagedAccountRef<'a> {
         }
     }
 
-    /// Return the current monitor revision.
-    pub fn monitor_revision(self) -> u64 {
-        match self {
-            ManagedAccountRef::Funds(a) => a.monitor_revision(),
-            ManagedAccountRef::Keys(a) => a.monitor_revision(),
-        }
-    }
-
     /// Whether `address` belongs to this account.
     pub fn contains_address(self, address: &Address) -> bool {
         match self {
@@ -279,23 +271,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         match self {
             ManagedAccountRefMut::Funds(a) => a.mark_address_used(address),
             ManagedAccountRefMut::Keys(a) => a.mark_address_used(address),
-        }
-    }
-
-    /// Bump the monitor revision counter — call this when the monitored
-    /// address set changes (e.g. new addresses generated).
-    pub fn bump_monitor_revision(&mut self) {
-        match self {
-            ManagedAccountRefMut::Funds(a) => a.bump_monitor_revision(),
-            ManagedAccountRefMut::Keys(a) => a.bump_monitor_revision(),
-        }
-    }
-
-    /// Return the current monitor revision.
-    pub fn monitor_revision(&self) -> u64 {
-        match self {
-            ManagedAccountRefMut::Funds(a) => a.monitor_revision(),
-            ManagedAccountRefMut::Keys(a) => a.monitor_revision(),
         }
     }
 

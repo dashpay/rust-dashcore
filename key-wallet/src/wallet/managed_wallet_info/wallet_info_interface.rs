@@ -305,12 +305,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
 
     fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight>;
-
-    /// Return the aggregated monitor revision across all accounts.
-    /// Increments whenever the monitored address set changes.
-    fn monitor_revision(&self) -> u64 {
-        0
-    }
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -696,10 +690,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
             self.update_balance();
         }
         any_changed || swept
-    }
-
-    fn monitor_revision(&self) -> u64 {
-        self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
     }
 
     fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight> {

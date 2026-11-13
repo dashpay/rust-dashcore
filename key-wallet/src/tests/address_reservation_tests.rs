@@ -5,7 +5,6 @@
 
 use crate::account::{Account, AccountType, ManagedCoreFundsAccount};
 use crate::managed_account::address_pool::KeySource;
-use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::mnemonic::Mnemonic;
 use crate::test_utils::TestWalletContext;
@@ -20,12 +19,6 @@ async fn test_reserved_receive_address_promotes_on_funding() {
     let mut ctx = TestWalletContext::new_random();
     let xpub = ctx.xpub;
 
-    let revision_before = ctx
-        .managed_wallet
-        .first_bip44_managed_account_mut()
-        .expect("managed account")
-        .monitor_revision();
-
     let a = ctx
         .managed_wallet
         .first_bip44_managed_account_mut()
@@ -38,15 +31,6 @@ async fn test_reserved_receive_address_promotes_on_funding() {
         .expect("managed account")
         .next_receive_address_and_reserve(Some(&xpub), 1_000)
         .expect("reserve b");
-
-    // Each reservation must bump the monitor revision so observers re-read the
-    // address set.
-    let revision_after_reserve = ctx
-        .managed_wallet
-        .first_bip44_managed_account_mut()
-        .expect("managed account")
-        .monitor_revision();
-    assert!(revision_after_reserve > revision_before);
 
     // Two sequential receive hand-outs return distinct addresses: reserving the
     // first removes it from the available pool seen by the second.
@@ -62,10 +46,7 @@ async fn test_reserved_receive_address_promotes_on_funding() {
     // `a` is used now, so its reservation is already gone: releasing is a no-op.
     assert!(!acc.release_receive_reservation(&a));
     // `b` is still reserved, so releasing it returns it to the available pool
-    // and bumps the monitor revision again.
-    let revision_before_release = acc.monitor_revision();
     assert!(acc.release_receive_reservation(&b));
-    assert!(acc.monitor_revision() > revision_before_release);
 
     // Releasing an address the pool has never seen is a no-op.
     let stray = Address::from_str("yTb47qEBpNmgXvYYsHEN4nh8yJwa5iC4Cs")
@@ -122,17 +103,13 @@ fn test_sweep_expired_receive_reservations_reclaims_through_account() {
 
     let acc = ctx.managed_wallet.first_bip44_managed_account_mut().expect("managed account");
     let reserved = acc.next_receive_address_and_reserve(Some(&xpub), 1_000).expect("reserve");
-    let revision_after_reserve = acc.monitor_revision();
 
-    // A sweep before the ttl elapses leaves the reservation intact and does not
-    // bump the monitor revision.
+    // A sweep before the ttl elapses leaves the reservation intact.
     assert_eq!(acc.sweep_expired_receive_reservations(1_000, 500), 0);
-    assert_eq!(acc.monitor_revision(), revision_after_reserve);
 
-    // Once the reservation is older than the ttl it is reclaimed, the revision
-    // bumps, and releasing the now-available address is a no-op.
+    // Once the reservation is older than the ttl it is reclaimed, and releasing
+    // the now-available address is a no-op.
     assert_eq!(acc.sweep_expired_receive_reservations(2_000, 500), 1);
-    assert!(acc.monitor_revision() > revision_after_reserve);
     assert!(!acc.release_receive_reservation(&reserved));
 }
 

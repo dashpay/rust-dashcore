@@ -1,4 +1,5 @@
 use super::manager::MEMPOOL_TX_EXPIRY;
+use crate::client::config::MempoolStrategy;
 use crate::error::SyncResult;
 use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
 use crate::sync::{
@@ -123,7 +124,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 ..
             } => {
                 // Remove confirmed transactions from mempool.
-                // Bloom filter rebuild is handled by the tick's revision check.
+                // Bloom filter rebuild is handled by the tick's monitor hash check.
                 if !confirmed_txids.is_empty() {
                     return Ok(self.remove_confirmed(confirmed_txids));
                 }
@@ -158,19 +159,15 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
 
         // Rebuild bloom filter if the wallet's monitored set has changed.
         //
-        // We poll the revision counter rather than using push-based wallet events
-        // for simplicity: the revision lives on `ManagedCoreFundsAccount` and auto-bumps
-        // on address generation and UTXO mutations, giving us a single source of
-        // truth without needing event emission after every wallet operation.
-        // Adding a push-based approach would require a new `select!` branch in the
-        // shared `SyncManager::run` loop or a `WalletEvent` bridge — complexity
-        // that isn't justified given the 100ms tick latency is negligible for bloom
-        // filter rebuilds and the read lock is non-contending.
-        let current_revision = self.wallet.read().await.monitor_revision();
-        if current_revision != self.last_monitor_revision {
-            tracing::info!("Wallet monitor revision changed, rebuilding bloom filter");
-            self.rebuild_filter(network).await?;
-            self.last_monitor_revision = current_revision;
+        // The hash covers exactly what the filter is built from, so polling it
+        // catches every change without the wallet having to signal one.
+        if self.strategy == MempoolStrategy::BloomFilter {
+            let current_hash = self.wallet.read().await.monitor_hash();
+            if current_hash != self.last_monitor_hash {
+                tracing::info!("Wallet monitored set changed, rebuilding bloom filter");
+                self.rebuild_filter(network).await?;
+                self.last_monitor_hash = current_hash;
+            }
         }
 
         Ok(events)
@@ -184,7 +181,6 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::config::MempoolStrategy;
     use crate::sync::BroadcastConfig;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
     use key_wallet_manager::test_utils::MockWallet;
@@ -762,7 +758,7 @@ mod tests {
         network_mock.clear_sent().await;
 
         // BlockProcessed does not eagerly rebuild — the tick handles it via
-        // the revision check. Verify no FilterLoad is sent from the event handler.
+        // the monitor hash check. Verify no FilterLoad is sent from the event handler.
         let event = SyncEvent::BlockProcessed {
             block_hash: dashcore::BlockHash::all_zeros(),
             height: 1001,
@@ -803,7 +799,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tick_rebuilds_filter_when_monitor_revision_changes() {
+    async fn test_tick_rebuilds_filter_when_monitor_hash_changes() {
         let addr = {
             let script = dashcore::ScriptBuf::from_bytes(vec![
                 0x76, 0xa9, 0x14, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
@@ -814,7 +810,7 @@ mod tests {
 
         let mut mock = MockWallet::new();
         mock.set_addresses(vec![addr.clone()]);
-        let initial_revision = mock.monitor_revision();
+        let initial_hash = mock.monitor_hash();
         let wallet = Arc::new(RwLock::new(mock));
         let network_mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = network_mock.clone();
@@ -823,14 +819,27 @@ mod tests {
             wallet.clone(),
             MempoolStrategy::BloomFilter,
             1000,
-            initial_revision,
+            initial_hash,
             BroadcastConfig::default(),
         );
 
         let peer = test_socket_address(1);
         manager.handle_peer_connected(peer);
 
-        // Activate — this snapshots the monitor revision
+        // Sync discovers addresses before the filters complete
+        {
+            let sync_addr = dashcore::Address::from_script(
+                &dashcore::ScriptBuf::from_bytes(vec![
+                    0x76, 0xa9, 0x14, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef,
+                    0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0x88, 0xac,
+                ]),
+                dashcore::Network::Testnet,
+            )
+            .unwrap();
+            wallet.write().await.set_addresses(vec![addr.clone(), sync_addr]);
+        }
+
+        // Activate — this snapshots the monitor hash
         let sync = SyncEvent::FiltersSyncComplete {
             tip_height: 1000,
         };
@@ -840,14 +849,14 @@ mod tests {
         // Drain activation messages
         network_mock.clear_sent().await;
 
-        // tick with unchanged revision should not rebuild
+        // tick with unchanged hash should not rebuild
         manager.tick(&network).await.unwrap();
         assert!(
             network_mock.sent_to_messages().await.is_empty(),
-            "no messages expected when revision unchanged"
+            "no messages expected when hash unchanged"
         );
 
-        // Simulate wallet adding new addresses (bumps revision)
+        // Simulate wallet adding new addresses (changes the monitor hash)
         {
             let mut w = wallet.write().await;
             let addr2 = dashcore::Address::from_script(
@@ -870,14 +879,14 @@ mod tests {
                 found_filter_load = true;
             }
         }
-        assert!(found_filter_load, "expected FilterLoad after monitor revision change");
+        assert!(found_filter_load, "expected FilterLoad after monitor hash change");
 
-        // Subsequent tick should not rebuild again (revision was snapshotted)
+        // Subsequent tick should not rebuild again (hash was snapshotted)
         network_mock.clear_sent().await;
         manager.tick(&network).await.unwrap();
         assert!(
             network_mock.sent_to_messages().await.is_empty(),
-            "no messages expected after revision re-snapshot"
+            "no messages expected after hash re-snapshot"
         );
     }
 
@@ -904,7 +913,7 @@ mod tests {
         manager.handle_sync_event(&sync, &network).await.unwrap();
         network_mock.clear_sent().await;
 
-        // Bump revision
+        // Change the monitored set
         {
             let mut w = wallet.write().await;
             w.set_addresses(vec![dashcore::Address::dummy(dashcore::Network::Testnet, 0)]);
@@ -918,7 +927,7 @@ mod tests {
                 found_filter = true;
             }
         }
-        assert!(!found_filter, "FetchAll should not send filter messages on revision change");
+        assert!(!found_filter, "FetchAll should not send filter messages on monitor hash change");
     }
 
     #[tokio::test]
@@ -933,7 +942,7 @@ mod tests {
 
         let mut mock = MockWallet::new();
         mock.set_addresses(vec![addr]);
-        let initial_revision = mock.monitor_revision();
+        let initial_hash = mock.monitor_hash();
         let wallet = Arc::new(RwLock::new(mock));
         let network_mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = network_mock.clone();
@@ -942,7 +951,7 @@ mod tests {
             wallet.clone(),
             MempoolStrategy::BloomFilter,
             1000,
-            initial_revision,
+            initial_hash,
             BroadcastConfig::default(),
         );
 
@@ -964,7 +973,7 @@ mod tests {
             }]);
         }
 
-        // tick should detect the revision change and rebuild
+        // tick should detect the monitor hash change and rebuild
         manager.tick(&network).await.unwrap();
 
         let found_filter_load = network_mock
@@ -985,7 +994,7 @@ mod tests {
         ]);
         let addr = dashcore::Address::from_script(&script, dashcore::Network::Testnet).unwrap();
         mock.set_addresses(vec![addr]);
-        let initial_revision = mock.monitor_revision();
+        let initial_hash = mock.monitor_hash();
         let wallet = Arc::new(RwLock::new(mock));
         let network_mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = network_mock.clone();
@@ -994,7 +1003,7 @@ mod tests {
             wallet.clone(),
             MempoolStrategy::BloomFilter,
             1000,
-            initial_revision,
+            initial_hash,
             BroadcastConfig::default(),
         );
 
@@ -1024,8 +1033,7 @@ mod tests {
             .any(|(_, msg)| matches!(msg, NetworkMessage::FilterLoad(_)));
         assert!(!has_filter_load, "handle_tx should not eagerly rebuild filter");
 
-        // But the next tick should catch it if the wallet revision changed
-        // (MockWallet bumps revision when set_mempool_relevant triggers processing)
+        // But the next tick should catch it if the monitored set changed
         {
             let mut w = wallet.write().await;
             w.set_addresses(vec![dashcore::Address::dummy(dashcore::Network::Testnet, 0)]);
@@ -1037,6 +1045,6 @@ mod tests {
             .await
             .into_iter()
             .any(|(_, msg)| matches!(msg, NetworkMessage::FilterLoad(_)));
-        assert!(found_filter_load, "tick should rebuild after revision change");
+        assert!(found_filter_load, "tick should rebuild after the monitored set changed");
     }
 }

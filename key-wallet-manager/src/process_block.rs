@@ -398,10 +398,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.watched_outpoints()
     }
 
-    fn monitor_revision(&self) -> u64 {
-        self.monitor_revision()
-    }
-
     async fn earliest_required_height(&self) -> CoreBlockHeight {
         self.wallet_infos.values().map(|info| info.birth_height()).min().unwrap_or(0)
     }
@@ -742,12 +738,10 @@ mod tests {
         BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
     };
     use key_wallet::account::ManagedAccountTrait as _;
-    use key_wallet::account::StandardAccountType;
     use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
     use key_wallet::managed_account::address_pool::AddressPoolType;
     use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
-    use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
     use key_wallet::{AccountType, Mnemonic};
     use std::collections::HashMap;
@@ -1240,103 +1234,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_monitor_revision_bumps_and_stability() {
+    async fn test_monitor_hash_follows_the_filter_contents() {
         let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
-        let mut expected_rev = 0u64;
-        assert_eq!(manager.monitor_revision(), expected_rev);
+        let empty = manager.monitor_hash();
 
-        // create_wallet_from_mnemonic bumps
         let wallet_id = manager
             .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
             .unwrap();
-        expected_rev += 1;
-        assert_eq!(manager.monitor_revision(), expected_rev, "after create_wallet_from_mnemonic");
+        let after_wallet = manager.monitor_hash();
+        assert_ne!(after_wallet, empty, "after create_wallet_from_mnemonic");
 
-        // create_account bumps
-        manager
-            .create_account(
-                &wallet_id,
-                AccountType::Standard {
-                    index: 1,
-                    standard_account_type: StandardAccountType::BIP44Account,
-                },
-                None,
-            )
-            .unwrap();
-        expected_rev += 1;
-        assert_eq!(manager.monitor_revision(), expected_rev, "after create_account");
-
-        // get_receive_address bumps (when address is generated)
-        let address =
-            manager.next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, true);
-        if address.is_some() {
-            expected_rev += 1;
-            assert_eq!(manager.monitor_revision(), expected_rev, "after get_receive_address");
-        }
-
-        // get_change_address bumps (when address is generated)
-        let address =
-            manager.next_change_address(&wallet_id, 0, AccountTypePreference::BIP44, true);
-        if address.is_some() {
-            expected_rev += 1;
-            assert_eq!(manager.monitor_revision(), expected_rev, "after get_change_address");
-        }
-
-        // `update_wallet_last_processed_height` does not bump the monitor revision.
         manager.update_wallet_last_processed_height(&wallet_id, 1000);
         assert_eq!(
-            manager.monitor_revision(),
-            expected_rev,
+            manager.monitor_hash(),
+            after_wallet,
             "after update_wallet_last_processed_height"
         );
 
-        // process_mempool_transaction bumps from UTXO changes and possibly
-        // new addresses generated via gap limit maintenance
-        let rev_before_mempool = manager.monitor_revision();
+        let (wallet, info) = manager.get_wallet_and_info_mut(&wallet_id).unwrap();
+        let account = info.first_bip44_managed_account_mut().unwrap();
+        let key_source =
+            wallet.key_source_for_account(account.managed_account_type().to_account_type());
+        let gap_limit = account.external_gap_limit().unwrap();
+        let generated = account.set_gap_limit(gap_limit + 1, &key_source).unwrap();
+        assert!(!generated.is_empty());
+        let after_generation = manager.monitor_hash();
+        assert_ne!(after_generation, after_wallet, "generating addresses changes the hash");
+
         let addr = manager.monitored_addresses()[0].clone();
         let tx = create_tx_paying_to(&addr, 0xd0);
         let _result = manager.process_mempool_transaction(&tx, None).await;
-        assert!(
-            manager.monitor_revision() > rev_before_mempool,
-            "mempool tx paying to our address should bump revision (UTXO added)"
-        );
-        let rev_after_mempool = manager.monitor_revision();
+        let after_mempool = manager.monitor_hash();
+        assert_ne!(after_mempool, after_generation, "mempool tx paying to our address adds a UTXO");
 
-        // process_instant_send_lock does NOT bump (no outpoint set change)
         manager.process_instant_send_lock(dummy_instant_lock(tx.txid()));
-        assert_eq!(
-            manager.monitor_revision(),
-            rev_after_mempool,
-            "after process_instant_send_lock"
-        );
+        assert_eq!(manager.monitor_hash(), after_mempool, "after process_instant_send_lock");
 
-        // process_block_for_wallets bumps from UTXO changes and possibly new addresses
-        let rev_before_block = manager.monitor_revision();
         let tx2 = create_tx_paying_to(&addr, 0xd1);
         let block = make_block(vec![tx2]);
         let block_wallets = BTreeSet::from([wallet_id]);
         let _result = manager
             .process_block_for_wallets(&block, block.block_hash(), 100, &block_wallets)
             .await;
-        assert!(
-            manager.monitor_revision() > rev_before_block,
-            "block with tx paying to our address should bump revision (UTXO added)"
+        let after_block = manager.monitor_hash();
+        assert_ne!(
+            after_block, after_mempool,
+            "block paying to an already used address adds a UTXO"
         );
 
-        // remove_wallet absorbs the wallet's account-level revision + 1
-        let rev_before_remove = manager.monitor_revision();
         manager.remove_wallet(&wallet_id).unwrap();
-        assert!(
-            manager.monitor_revision() > rev_before_remove,
-            "remove_wallet should bump revision"
-        );
-
-        // create_wallet_with_random_mnemonic bumps structural revision
-        let rev_before = manager.monitor_revision();
-        manager.create_wallet_with_random_mnemonic(WalletAccountCreationOptions::Default).unwrap();
-        assert!(
-            manager.monitor_revision() > rev_before,
-            "create_wallet_with_random_mnemonic should bump revision"
-        );
+        assert_eq!(manager.monitor_hash(), empty, "after remove_wallet");
     }
 }

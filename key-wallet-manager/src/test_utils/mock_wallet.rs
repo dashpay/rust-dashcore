@@ -42,8 +42,6 @@ pub struct MockWallet {
     /// Captured `InstantLock` payloads from both `process_mempool_transaction` and
     /// `process_instant_send_lock`, for test assertions.
     pub processed_instant_locks: InstantLockCaptures,
-    /// Monitor revision counter for staleness detection.
-    monitor_revision: u64,
     reapply_heights: BTreeMap<u32, BTreeSet<u32>>,
     /// Addresses the wallet derives the first time it processes each height.
     derived_addresses: BTreeMap<u32, Vec<Address>>,
@@ -73,7 +71,6 @@ impl MockWallet {
             mempool_new_addresses: Vec::new(),
             status_changes: Arc::new(Mutex::new(Vec::new())),
             processed_instant_locks: Arc::new(Mutex::new(Vec::new())),
-            monitor_revision: 0,
             reapply_heights: BTreeMap::new(),
             derived_addresses: BTreeMap::new(),
         }
@@ -102,13 +99,11 @@ impl MockWallet {
     /// Set the addresses returned by monitored_addresses.
     pub fn set_addresses(&mut self, addresses: Vec<Address>) {
         self.addresses = addresses;
-        self.monitor_revision += 1;
     }
 
     /// Set the outpoints returned by watched_outpoints.
     pub fn set_outpoints(&mut self, outpoints: Vec<OutPoint>) {
         self.outpoints = outpoints;
-        self.monitor_revision += 1;
     }
 
     /// Set the net amount returned by process_mempool_transaction.
@@ -161,7 +156,6 @@ impl WalletInterface for MockWallet {
             .collect();
         let mut new_scripts = BTreeMap::new();
         if !derived.is_empty() {
-            self.monitor_revision += 1;
             new_scripts
                 .insert(self.wallet_id, derived.iter().map(Address::script_pubkey).collect());
             self.addresses.extend(derived);
@@ -272,10 +266,6 @@ impl WalletInterface for MockWallet {
         if wallet_id == &self.wallet_id && height > self.last_processed_height {
             self.last_processed_height = height;
         }
-    }
-
-    fn monitor_revision(&self) -> u64 {
-        self.monitor_revision
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
