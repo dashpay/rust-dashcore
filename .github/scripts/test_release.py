@@ -150,10 +150,16 @@ class BumpTests(unittest.TestCase):
         moved_on = set_workspace_version(CARGO_TOML, "0.47.0")
         self.assertIsNone(bump(moved_on, CHANGELOG, CHANGELOG, "0.46.0"))
 
-    def test_refuses_an_unreleased_section_or_dev_behind_the_release(self):
-        with_unreleased = HEADER + "## Unreleased\n\n- Pending (#2) @a\n\n## 0.45.0 - 2026-10-21\n"
+    def test_bumps_a_dev_that_already_has_the_section(self):
+        cargo_toml, changelog, version = bump(CARGO_TOML, CHANGELOG, CHANGELOG, "0.46.0")
+        self.assertEqual((workspace_version(cargo_toml), changelog, version), ("0.47.0", CHANGELOG, "0.47.0"))
+
+    def test_refuses_a_section_that_is_not_a_release_or_dev_behind_the_release(self):
         behind = set_workspace_version(CARGO_TOML, "0.45.0")
-        for cargo_toml, changelog in ((CARGO_TOML, with_unreleased), (behind, HEADER)):
+        cases = [(behind, HEADER)]
+        for heading in ("## Unreleased", "## [Unreleased]", "## unreleased", "## 0.47.0"):
+            cases.append((CARGO_TOML, HEADER + heading + "\n\n- Pending (#2) @a\n\n## 0.45.0 - 2026-10-21\n"))
+        for cargo_toml, changelog in cases:
             with self.subTest(changelog=changelog), self.assertRaises(ReleaseError):
                 bump(cargo_toml, changelog, CHANGELOG, "0.46.0")
 
