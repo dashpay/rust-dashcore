@@ -887,26 +887,12 @@ mod tests {
     }
 
     fn spend_first_output_of(tx: &Transaction) -> Transaction {
-        Transaction {
-            version: 2,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: tx.txid(),
-                    vout: 0,
-                },
-                script_sig: ScriptBuf::new(),
-                sequence: u32::MAX,
-                witness: Witness::default(),
-            }],
-            output: vec![TxOut {
-                value: tx.output[0].value,
-                script_pubkey: ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array(
-                    [0x77; 20],
-                )),
-            }],
-            special_transaction_payload: None,
-        }
+        let mut spend = spending([OutPoint::new(tx.txid(), 0)]);
+        spend.output[0] = TxOut {
+            value: tx.output[0].value,
+            script_pubkey: ScriptBuf::new_p2pkh(&dashcore::PubkeyHash::from_byte_array([0x77; 20])),
+        };
+        spend
     }
 
     fn make_block(txdata: Vec<Transaction>) -> Block {
