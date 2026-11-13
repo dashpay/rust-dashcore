@@ -15,7 +15,7 @@ const KICKING_ATTEMPTS: u32 = 2;
 /// How many timeouts a request lives on bytes of a message still arriving, without an
 /// answer. A big answer on a slow link must fit, but a message that never finishes must
 /// not keep its request alive forever.
-const ANSWER_TIMEOUTS: u32 = 6;
+pub(super) const ANSWER_TIMEOUTS: u32 = 6;
 const HEDGE_AFTER: Duration = Duration::from_secs(2);
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
