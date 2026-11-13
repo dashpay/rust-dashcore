@@ -1573,20 +1573,7 @@ mod tests {
         }
     }
 
-    /// A framed `cfilter` for a peer to receive. Its block hash is not the stop hash of
-    /// [`get_cfilters`], so it settles no charge and the peer's work stays in flight.
-    fn unsettling_filter() -> Vec<u8> {
-        serialize(&RawNetworkMessage {
-            magic: Network::Regtest.magic(),
-            payload: NetworkMessage::CFilter(CFilter {
-                filter_type: 0,
-                block_hash: BlockHash::dummy(1),
-                filter: vec![0; 32 * 1024],
-            }),
-        })
-    }
-
-    /// A connected peer that receives a run of [`unsettling_filter`]s at its own rate.
+    /// A connected peer that receives a run of framed `cfilter`s at its own rate.
     struct Feeder {
         id: PeerId,
         handle: PeerHandle,
@@ -1638,7 +1625,16 @@ mod tests {
     /// Feeds every peer at its rate for `ticks` flow controller ticks, with work up to its
     /// cap, as bulk download keeps it.
     async fn feed(net: &PeerNetworkManager, feeders: &mut [Feeder], ticks: u32) {
-        let frame = unsettling_filter();
+        // Its block hash is not the stop hash of `get_cfilters`, so it settles no charge and
+        // the peers' work stays in flight.
+        let frame = serialize(&RawNetworkMessage {
+            magic: Network::Regtest.magic(),
+            payload: NetworkMessage::CFilter(CFilter {
+                filter_type: 0,
+                block_hash: BlockHash::dummy(1),
+                filter: vec![0; 32 * 1024],
+            }),
+        });
         for _ in 0..ticks {
             for feeder in feeders.iter() {
                 while feeder.handle.in_flight_bytes() < feeder.handle.cap() {
