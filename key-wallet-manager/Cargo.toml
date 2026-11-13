@@ -47,6 +47,7 @@ key-wallet = { workspace = true, features = ["test-utils", "bincode"] }
 dashcore = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 criterion = { workspace = true }
+test-case = { workspace = true }
 
 [[bench]]
 name = "filter_scan"

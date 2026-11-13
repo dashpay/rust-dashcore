@@ -18,11 +18,11 @@ use key_wallet::account::StandardAccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
-use key_wallet::managed_account::managed_core_funds_account::ManagedCoreFundsAccount;
 use key_wallet::transaction_checking::{BlockInfo, TransactionRouter, TransactionType};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
 use std::collections::{BTreeMap, BTreeSet};
+use test_case::test_case;
 
 fn make_block(txdata: Vec<Transaction>, seed: u8, time: u32) -> Block {
     Block {
@@ -598,71 +598,35 @@ async fn setup_known_mempool_spend_only_asset_lock(
     (manager, wallet_id, asset_lock_tx, funding_outpoint, wallets)
 }
 
-/// The BIP44 account 0 of `wallet_id`.
-fn funding_account(
-    manager: &WalletManager<ManagedWalletInfo>,
-    wallet_id: WalletId,
-) -> &ManagedCoreFundsAccount {
+#[test_case(AssetLockCredit::External, 1 ; "external credit")]
+#[test_case(AssetLockCredit::WalletTopUp, 2 ; "wallet top-up credit")]
+#[tokio::test]
+async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo(
+    credit: AssetLockCredit,
+    expected_updated: usize,
+) {
+    let (mut manager, wallet_id, asset_lock_tx, funding_outpoint, wallets) =
+        setup_known_mempool_spend_only_asset_lock(credit).await;
+
     manager
+        .process_mempool_instant_send_lock(&asset_lock_tx, dummy_instant_lock(asset_lock_tx.txid()))
+        .await;
+    let locked_context = &manager
         .get_wallet_info(&wallet_id)
         .expect("wallet info")
         .accounts
         .standard_bip44_accounts
         .get(&0)
         .expect("BIP44 account 0")
-}
-
-#[tokio::test]
-async fn test_instant_send_lock_and_block_reach_the_funding_record_of_a_changeless_asset_lock() {
-    let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
-        setup_known_mempool_spend_only_asset_lock(AssetLockCredit::WalletTopUp).await;
-    let txid = asset_lock_tx.txid();
-
-    manager.process_mempool_instant_send_lock(&asset_lock_tx, dummy_instant_lock(txid)).await;
-
-    let funding_context = |manager: &WalletManager<ManagedWalletInfo>| {
-        funding_account(manager, wallet_id)
-            .transactions()
-            .get(&txid)
-            .expect("funding record")
-            .context
-            .clone()
-    };
-    let context = funding_context(&manager);
+        .transactions()
+        .get(&asset_lock_tx.txid())
+        .expect("mempool record must remain stored")
+        .context;
     assert!(
-        matches!(context, TransactionContext::InstantSend(_)),
-        "funding record must carry the lock, got {context:?}"
+        matches!(locked_context, TransactionContext::InstantSend(_)),
+        "known spend-only transaction must take its InstantSend lock, got {locked_context:?}"
     );
 
-    let block = make_block(vec![asset_lock_tx], 0x48, 4_100);
-    manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
-
-    let context = funding_context(&manager);
-    assert!(
-        matches!(&context, TransactionContext::InBlock(info) if info.height() == 401),
-        "funding record must take the block, got {context:?}"
-    );
-}
-
-#[tokio::test]
-async fn test_chainlocked_block_finalizes_the_funding_record_of_a_changeless_asset_lock() {
-    let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
-        setup_known_mempool_spend_only_asset_lock(AssetLockCredit::WalletTopUp).await;
-    manager.apply_chain_lock(ChainLock::dummy(500));
-
-    let block = make_block(vec![asset_lock_tx.clone()], 0x49, 4_200);
-    manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
-
-    assert!(
-        funding_account(&manager, wallet_id).transaction_is_finalized(&asset_lock_tx.txid()),
-        "funding record must be finalized by the chainlocked block"
-    );
-}
-
-#[tokio::test]
-async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo() {
-    let (mut manager, wallet_id, asset_lock_tx, funding_outpoint, wallets) =
-        setup_known_mempool_spend_only_asset_lock(AssetLockCredit::External).await;
     let mut rx = manager.subscribe_events();
     let block = make_block(vec![asset_lock_tx.clone()], 0x45, 4_100);
 
@@ -706,14 +670,19 @@ async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo() {
     );
     let updated =
         updated.unwrap_or_else(|| panic!("BlockProcessed update expected: {block_events:?}"));
-    assert_eq!(updated.len(), 1);
-    assert_eq!(updated[0].txid, asset_lock_tx.txid());
+    assert_eq!(updated.len(), expected_updated);
+    assert!(updated.iter().all(|record| record.txid == asset_lock_tx.txid()));
 }
 
+#[test_case(AssetLockCredit::External, 1 ; "external credit")]
+#[test_case(AssetLockCredit::WalletTopUp, 2 ; "wallet top-up credit")]
 #[tokio::test]
-async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction() {
+async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction(
+    credit: AssetLockCredit,
+    expected_updated: usize,
+) {
     let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
-        setup_known_mempool_spend_only_asset_lock(AssetLockCredit::External).await;
+        setup_known_mempool_spend_only_asset_lock(credit).await;
     manager.apply_chain_lock(ChainLock::dummy(500));
     let mut rx = manager.subscribe_events();
     let block = make_block(vec![asset_lock_tx.clone()], 0x46, 4_200);
@@ -733,11 +702,11 @@ async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction() 
         .unwrap_or_else(|| panic!("chainlocked BlockProcessed update expected: {events:?}"));
 
     assert_eq!(block_result.existing_txids, vec![asset_lock_tx.txid()]);
-    assert_eq!(updated.len(), 1);
-    assert!(matches!(
-        updated[0].context,
+    assert_eq!(updated.len(), expected_updated);
+    assert!(updated.iter().all(|record| matches!(
+        record.context,
         TransactionContext::InChainLockedBlock(info) if info.height() == 401
-    ));
+    )));
 
     let account = manager
         .get_wallet_info(&wallet_id)
