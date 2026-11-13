@@ -93,6 +93,8 @@ jobs:
             - Bump the workspace version to `${{ steps.bump.outputs.version }}`.
             - Add the `${{ needs.publish.outputs.version }}` changelog section, identical to the one on `master`.
 
+            This PR goes into `dev` only. The release is the tag `v${{ needs.publish.outputs.version }}` on ${{ github.sha }}, where the workspace version stays `${{ needs.publish.outputs.version }}`.
+
             Opened by `.github/workflows/release.yml`.
           labels: release
           add-paths: |
