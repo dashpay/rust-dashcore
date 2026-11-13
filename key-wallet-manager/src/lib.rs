@@ -800,8 +800,6 @@ fn current_timestamp() -> u64 {
 #[cfg(test)]
 mod event_tests;
 #[cfg(test)]
-mod rescan_tests;
-#[cfg(test)]
 mod test_helpers;
 
 #[cfg(any(test, feature = "test-utils"))]
