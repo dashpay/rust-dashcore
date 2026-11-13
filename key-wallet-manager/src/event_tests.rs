@@ -561,6 +561,92 @@ async fn setup_known_mempool_spend_only_asset_lock(
     (manager, wallet_id, asset_lock_tx, funding_outpoint, wallets)
 }
 
+/// An asset lock that spends a whole wallet coin into the wallet's own top-up
+/// address has no change, so the funding account matches it only by the coin
+/// its mempool sighting already removed.
+#[tokio::test]
+async fn test_instant_send_lock_reaches_the_funding_record_of_a_changeless_asset_lock() {
+    let (mut manager, wallet_id, _default_addr) = setup_manager_with_wallet();
+    let (funding_address, topup_address) = {
+        let accounts = &manager.get_wallet_info(&wallet_id).expect("wallet info").accounts;
+        let funding_address = match accounts
+            .standard_bip44_accounts
+            .get(&0)
+            .expect("BIP44 account 0")
+            .managed_account_type()
+        {
+            ManagedAccountType::Standard {
+                external_addresses,
+                ..
+            } => external_addresses.address_at_index(0).expect("BIP44 receive address 0"),
+            other => panic!("expected Standard BIP44 account, got {other:?}"),
+        };
+        let topup_address = match accounts
+            .asset_lock_shielded_address_topup
+            .as_ref()
+            .expect("shielded top-up account")
+            .managed_account_type()
+        {
+            ManagedAccountType::AssetLockShieldedAddressTopUp {
+                addresses,
+            } => addresses.address_at_index(0).expect("top-up address 0"),
+            other => panic!("expected shielded top-up account, got {other:?}"),
+        };
+        (funding_address, topup_address)
+    };
+
+    let funding_tx = create_tx_paying_to(&funding_address, 0x47);
+    let funding_block = make_block(vec![funding_tx.clone()], 0x47, 4_000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 400, &wallets)
+        .await;
+
+    let asset_lock_tx = Transaction {
+        version: 3,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(funding_tx.txid(), 0),
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: TX_AMOUNT - 1_000,
+            script_pubkey: Builder::new()
+                .push_opcode(opcodes::all::OP_RETURN)
+                .push_slice([0; 0])
+                .into_script(),
+        }],
+        special_transaction_payload: Some(TransactionPayload::AssetLockPayloadType(
+            AssetLockPayload::new(vec![TxOut {
+                value: TX_AMOUNT - 1_000,
+                script_pubkey: topup_address.script_pubkey(),
+            }]),
+        )),
+    };
+    let txid = asset_lock_tx.txid();
+    manager.process_mempool_transaction(&asset_lock_tx, None).await;
+
+    manager.process_mempool_instant_send_lock(&asset_lock_tx, dummy_instant_lock(txid)).await;
+
+    let context = &manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0")
+        .transactions()
+        .get(&txid)
+        .expect("funding record")
+        .context;
+    assert!(
+        matches!(context, TransactionContext::InstantSend(_)),
+        "funding record must carry the lock, got {context:?}"
+    );
+}
+
 #[tokio::test]
 async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo() {
     let (mut manager, wallet_id, asset_lock_tx, funding_outpoint, wallets) =
