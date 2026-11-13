@@ -33,6 +33,11 @@ impl Migrator for V4Migrator {
 
             for path in segments {
                 let mut bytes = tokio::fs::read(&path).await?;
+                // A run that stopped before the version bump already wrote it.
+                if has_checksum(&bytes) {
+                    continue;
+                }
+
                 let checksum = blake3::hash(&bytes);
                 bytes.extend_from_slice(checksum.as_bytes());
                 atomic_write(&path, &bytes).await?;
@@ -47,4 +52,12 @@ fn is_segment_file_name(name: &str) -> bool {
     name.strip_prefix(SEGMENT_PREFIX)
         .and_then(|rest| rest.strip_suffix(SEGMENT_EXTENSION))
         .is_some_and(|id| id.parse::<u32>().is_ok())
+}
+
+/// Whether `bytes` end in the blake3 hash of the bytes before it.
+fn has_checksum(bytes: &[u8]) -> bool {
+    bytes.len().checked_sub(blake3::OUT_LEN).is_some_and(|split| {
+        let (data, checksum) = bytes.split_at(split);
+        blake3::hash(data).as_bytes() == checksum
+    })
 }
