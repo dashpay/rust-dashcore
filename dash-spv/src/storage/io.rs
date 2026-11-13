@@ -1,7 +1,7 @@
 //! Low-level I/O utilities for reading and writing segment files.
 
-use std::fs::File;
-use std::io::{BufReader, Seek, SeekFrom};
+use std::fs::{self, File};
+use std::io::{BufReader, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
@@ -38,8 +38,8 @@ impl<I> ChecksummedFile<I> {
     }
 
     /// Checks the file against its checksum without decoding the items.
-    pub(crate) async fn verify(&self) -> StorageResult<()> {
-        self.verified(&tokio::fs::read(&self.path).await?).map(|_| ())
+    pub(crate) fn verify_blocking(&self) -> StorageResult<()> {
+        self.verified(&fs::read(&self.path)?).map(|_| ())
     }
 
     fn verified<'a>(&self, bytes: &'a [u8]) -> StorageResult<&'a [u8]> {
@@ -136,6 +136,32 @@ pub(crate) async fn atomic_write(path: &Path, data: &[u8]) -> StorageResult<()> 
     .await
 }
 
+/// Blocking version of `atomic_write` without `sync_all`, for use inside `spawn_blocking`.
+/// Skipping the sync makes the migration several times faster. A power loss can then leave
+/// the file truncated, which its checksum detects.
+pub(crate) fn atomic_write_blocking(path: &Path, data: &[u8]) -> StorageResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to create directory: {}", e)))?;
+    }
+
+    let temp_path = get_temp_path(path);
+
+    let write_result = File::create(&temp_path).and_then(|mut file| file.write_all(data));
+
+    if let Err(e) = write_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(StorageError::WriteFailed(format!("Failed to write temp file: {}", e)));
+    }
+
+    if let Err(e) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(StorageError::WriteFailed(format!("Failed to rename temp file: {}", e)));
+    }
+
+    Ok(())
+}
+
 async fn atomic_write_with<F, Fut>(path: &Path, write: F) -> StorageResult<()>
 where
     F: FnOnce(tokio::fs::File) -> Fut,
@@ -185,7 +211,7 @@ mod tests {
 
         assert_eq!(file.read().await.unwrap(), items);
         assert_eq!(file.read_unverified_at(0).unwrap(), items[0]);
-        file.verify().await.unwrap();
+        file.verify_blocking().unwrap();
 
         let bytes_file = ChecksummedFile::<u8>::new(temp_dir.path().join("bytes.dat"));
         bytes_file.write_bytes(b"snapshot").await.unwrap();
@@ -215,7 +241,7 @@ mod tests {
         }
 
         assert!(matches!(file.read().await, Err(StorageError::Corruption(_))));
-        assert!(matches!(file.verify().await, Err(StorageError::Corruption(_))));
+        assert!(matches!(file.verify_blocking(), Err(StorageError::Corruption(_))));
         assert!(matches!(bytes_file.read_bytes().await, Err(StorageError::Corruption(_))));
     }
 

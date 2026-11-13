@@ -5,10 +5,13 @@ mod v4;
 mod v5;
 
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tokio::task::JoinSet;
 
 use crate::error::{StorageError, StorageResult};
 use crate::storage::io::{atomic_write, ChecksummedFile};
@@ -167,11 +170,44 @@ async fn verify_folder<I: Persistable>(folder: &Path) -> Result<(), MigratorErro
         Err(e) => return Err(e.into()),
     };
 
+    let mut segments = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         if entry.file_name().to_str().and_then(SegmentCache::<I>::parse_segment_id).is_some() {
-            ChecksummedFile::<I>::new(entry.path()).verify().await?;
+            segments.push(entry.path());
         }
     }
 
+    for_each_file_blocking(segments, |path| Ok(ChecksummedFile::<I>::new(path).verify_blocking()?))
+        .await
+}
+
+/// Runs `f` on every path in `spawn_blocking`, with at most one task per core.
+/// The limit bounds memory, since each task holds a whole file.
+async fn for_each_file_blocking<F>(paths: Vec<PathBuf>, f: F) -> Result<(), MigratorError>
+where
+    F: Fn(PathBuf) -> Result<(), MigratorError> + Clone + Send + 'static,
+{
+    let limit = thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    let mut tasks = JoinSet::new();
+
+    for path in paths {
+        if tasks.len() >= limit {
+            join_one(&mut tasks).await?;
+        }
+        let f = f.clone();
+        tasks.spawn_blocking(move || f(path));
+    }
+
+    while !tasks.is_empty() {
+        join_one(&mut tasks).await?;
+    }
+
     Ok(())
+}
+
+async fn join_one(tasks: &mut JoinSet<Result<(), MigratorError>>) -> Result<(), MigratorError> {
+    match tasks.join_next().await {
+        Some(result) => result.map_err(io::Error::other)?,
+        None => Ok(()),
+    }
 }
