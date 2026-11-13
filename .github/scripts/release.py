@@ -135,24 +135,26 @@ def bump(cargo_toml: str, changelog: str, released_changelog: str, released: str
 
     `dev` on `released` moves to the next minor version. `dev` already past it, after a patch
     release, only gains the released section and keeps its version (`None`). Returns `None` when
-    `dev` already has the section.
+    `dev` needs neither.
     """
     header, sections = split_sections(changelog)
-    if any(section.startswith("## Unreleased") for section in sections):
-        raise ReleaseError("CHANGELOG.md on dev has an `Unreleased` section, move its entries into a release section")
+    versions = [match.group(1) if (match := SECTION_VERSION.match(section)) else None for section in sections]
+    if None in versions:
+        raise ReleaseError("CHANGELOG.md on dev has a section that is not a release, move its entries into one")
     version = workspace_version(cargo_toml)
     if parse_version(version) < parse_version(released):
         raise ReleaseError(f"dev is on {version}, below the released {released}")
-    versions = [match.group(1) if (match := SECTION_VERSION.match(section)) else None for section in sections]
-    if released in versions:
+    if released in versions and version != released:
         return None
-    # Above the first older release, so a patch release lands below the newer sections.
-    position = next(
-        (index for index, other in enumerate(versions) if other and parse_version(other) < parse_version(released)),
-        len(sections),
-    )
-    sections.insert(position, release_section(released_changelog, released))
-    new_changelog = header + "\n\n".join(section.strip() for section in sections) + "\n"
+    new_changelog = changelog
+    if released not in versions:
+        # Above the first older release, so a patch release lands below the newer sections.
+        position = next(
+            (index for index, other in enumerate(versions) if parse_version(other) < parse_version(released)),
+            len(sections),
+        )
+        sections.insert(position, release_section(released_changelog, released))
+        new_changelog = header + "\n\n".join(section.strip() for section in sections) + "\n"
     if version != released:
         return cargo_toml, new_changelog, None
     new_version = next_version(released)
