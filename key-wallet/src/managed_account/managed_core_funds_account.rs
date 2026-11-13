@@ -74,8 +74,9 @@ pub struct ManagedCoreFundsAccount {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) claim_guarded_outputs: BTreeMap<OutPoint, Utxo>,
     /// The UTXOs removed by each spend not yet chainlocked, so a fork that drops
-    /// the spend can put them back.
-    unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
+    /// the spend can put them back. Input matching falls back to these, so the
+    /// spender still matches this account when it is seen again.
+    pub(crate) unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
     /// Outpoints reserved by in-flight transaction builds so concurrent builds
     /// do not select the same UTXO before the first build's transaction is
     /// processed. Empty after a restart, where chain and mempool sync
@@ -1252,12 +1253,14 @@ impl ManagedCoreFundsAccount {
         }
 
         // Marks a transaction that spends our coins. `input_details` (built
-        // above) and `account_match.sent` (built in `check_transaction_with_index`)
+        // above) and `account_match.sent` (built in `check_transaction_for_match`)
         // both resolve each input against `self.utxos`, `self.spent_before_funded`
         // and then `self.claim_guarded_outputs` on this account, with no mutation
         // between the two lookups, so they populate together; keeping both keeps
         // this robust should the two call sites ever compute over different
-        // snapshots.
+        // snapshots. `sent` also falls back to the coins `self.unsettled_spends`
+        // holds for this txid, which exist only once this account has recorded
+        // the transaction, so a new record never needs them.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let output_details = TransactionRecord::output_details_for(
