@@ -19,6 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          # The history since the latest tag, to compare the merged PRs with the changelog.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Check the release version and changelog
