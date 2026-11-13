@@ -188,6 +188,8 @@ pub enum SyncEvent {
     },
 
     /// Storage read back data that fails its checksum or does not decode.
+    /// Reading a single header or filter header from a segment not in memory skips the
+    /// checksum, so corruption there is not detected.
     ///
     /// Emitted by: Any manager whose storage read fails with `StorageError::Corruption`
     /// Consumed by: The client, which wipes the storage and syncs again
