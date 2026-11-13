@@ -1307,6 +1307,14 @@ mod tests {
         let bytes = bincode::serde::encode_to_vec(&*account, config).expect("encodes");
         *account = bincode::serde::decode_from_slice(&bytes, config).expect("decodes").0;
         manager.process_block_for_wallets(&funding, funding.block_hash(), HEIGHT, &wallets).await;
+        // Kept records rebuild the spender's marks on reload, so only pruned
+        // ones leave the far coin credited until its spender comes again.
+        let credited = if cfg!(feature = "keep-finalized-transactions") {
+            BTreeSet::new()
+        } else {
+            BTreeSet::from([1])
+        };
+        assert_eq!(held_vouts(&manager, &wallet_id, &late.txid()), credited);
         manager.process_block_for_wallets(&spends, spends.block_hash(), HEIGHT + 2, &wallets).await;
 
         let late_coins = held_vouts(&manager, &wallet_id, &late.txid());
