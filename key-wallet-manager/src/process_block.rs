@@ -730,7 +730,7 @@ mod tests {
     use super::*;
     use crate::matching::{check_compact_filters_for_elements, FilterMatchKey};
     use crate::test_helpers::*;
-    use crate::test_utils::coinjoin_external_addresses;
+    use crate::test_utils::{coinjoin_external_addresses, external_addresses};
     use dashcore::bip158::BlockFilter;
     use dashcore::block::{Header, Version};
     use dashcore::pow::CompactTarget;
@@ -738,6 +738,7 @@ mod tests {
         BlockHash, Network, OutPoint, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid, Witness,
     };
     use key_wallet::account::ManagedAccountTrait as _;
+    use key_wallet::account::StandardAccountType;
     use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
     use key_wallet::managed_account::address_pool::AddressPoolType;
     use key_wallet::managed_account::managed_account_type::ManagedAccountType;
@@ -746,7 +747,7 @@ mod tests {
     use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-    use key_wallet::{AccountType, AddressPool, KeySource, Mnemonic};
+    use key_wallet::{AccountType, AddressPool, Mnemonic};
     use std::collections::HashMap;
 
     const HEIGHT: CoreBlockHeight = 100;
@@ -788,25 +789,6 @@ mod tests {
         }
     }
 
-    /// The BIP44 account 0 external addresses at `indices`, derived on a copy of the
-    /// pool so the wallet's own pool stays as it is.
-    fn external_addresses(
-        manager: &WalletManager<ManagedWalletInfo>,
-        wallet_id: &WalletId,
-        indices: &[u32],
-    ) -> Vec<Address> {
-        let wallet = manager.get_wallet(wallet_id).expect("wallet");
-        let xpub = wallet.get_bip44_account(0).expect("BIP44 account 0").account_xpub;
-        let mut pool = external_pool(manager, wallet_id);
-        indices
-            .iter()
-            .map(|&index| {
-                pool.generate_up_to(index, &KeySource::Public(xpub)).expect("derives");
-                pool.address_at_index(index).expect("derived")
-            })
-            .collect()
-    }
-
     /// `late` pays index 0 and an index past the window. `extending` pays inside the
     /// window and extends it over that index. In a later block than `late`, it leaves
     /// `late`'s far output to the filter rescan, which delivers `late`'s block again.
@@ -815,10 +797,17 @@ mod tests {
         wallet_id: &WalletId,
     ) -> (Transaction, Transaction) {
         let gap = external_pool(manager, wallet_id).gap_limit;
-        let late =
-            create_tx_paying(&external_addresses(manager, wallet_id, &[0, gap + gap / 3]), 0x51);
-        let extending =
-            create_tx_paying(&external_addresses(manager, wallet_id, &[gap * 2 / 3]), 0x52);
+        let far = gap + gap / 3;
+        let bip44 = AccountType::Standard {
+            index: 0,
+            standard_account_type: StandardAccountType::BIP44Account,
+        };
+        let addresses = external_addresses(manager, wallet_id, bip44, far + 1);
+        let at = |indices: &[u32]| -> Vec<Address> {
+            indices.iter().map(|&i| addresses[i as usize].clone()).collect()
+        };
+        let late = create_tx_paying(&at(&[0, far]), 0x51);
+        let extending = create_tx_paying(&at(&[gap * 2 / 3]), 0x52);
         (late, extending)
     }
 
