@@ -32,6 +32,11 @@ workflows:
     '.github/workflows/ready-for-review-trigger.yml': []
     '.github/workflows/ready-for-review.yml':
         - 'actions/checkout@v7.0.1'
+    '.github/workflows/release-check.yml':
+        - 'actions/checkout@v7.0.1'
+    '.github/workflows/release.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'peter-evans/create-pull-request@v8.1.1'
     '.github/workflows/rust.yml':
         - 'actions/checkout@v7.0.1'
         - 'embarkstudios/cargo-deny-action@v2.1.1'

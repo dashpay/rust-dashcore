@@ -1,0 +1,25 @@
+name: Release Check
+
+# Every PR into `master` is a release. Requires a dated changelog section for the workspace
+# version, and a version above every released one.
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  release-check:
+    name: release-check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the release version and changelog
+        run: python3 .github/scripts/release.py check
