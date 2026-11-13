@@ -1253,12 +1253,14 @@ impl ManagedCoreFundsAccount {
         }
 
         // Marks a transaction that spends our coins. `input_details` (built
-        // above) and `account_match.sent` (built in `check_transaction_with_index`)
+        // above) and `account_match.sent` (built in `check_transaction_for_match`)
         // both resolve each input against `self.utxos`, `self.spent_before_funded`
         // and then `self.claim_guarded_outputs` on this account, with no mutation
         // between the two lookups, so they populate together; keeping both keeps
         // this robust should the two call sites ever compute over different
-        // snapshots.
+        // snapshots. `sent` also falls back to the coins `self.unsettled_spends`
+        // holds for this txid, which exist only once this account has recorded
+        // the transaction, so a new record never needs them.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let output_details = TransactionRecord::output_details_for(
