@@ -1468,15 +1468,20 @@ mod tests {
     use crate::client::ClientConfig;
     use crate::test_utils::test_socket_address;
     use dashcore::consensus::encode::serialize;
-    use dashcore::network::message::RawNetworkMessage;
+    use dashcore::network::address::Address;
+    use dashcore::network::message::{RawNetworkMessage, RawNetworkMessageCodec};
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
+    use dashcore::network::message_network::VersionMessage;
     use dashcore::{BlockHash, Network};
+    use std::sync::atomic::AtomicUsize;
     use test_case::test_case;
     use tokio::io::AsyncWriteExt;
     use tokio::net::tcp::OwnedWriteHalf;
+    use tokio::net::{TcpListener, TcpStream};
     use tokio::task;
     use tokio::time;
+    use tokio_util::codec::FramedRead;
 
     fn get_cfilters(start: u32) -> NetworkMessage {
         NetworkMessage::GetCFilters(GetCFilters {
@@ -1540,6 +1545,183 @@ mod tests {
             }
         }
         panic!("the reader of {id:?} never counted {} bytes", bytes.len());
+    }
+
+    /// Advances the clock `secs` seconds in flow controller ticks, nobody receiving.
+    async fn advance_silent(secs: u64) {
+        for _ in 0..secs * 4 {
+            time::advance(FLOW_TICK).await;
+            settle().await;
+        }
+    }
+
+    /// A framed `cfilter` for a peer to receive. Its block hash is not the stop hash of
+    /// [`get_cfilters`], so it settles no charge and the peer's work stays in flight.
+    fn unsettling_filter() -> Vec<u8> {
+        serialize(&RawNetworkMessage {
+            magic: Network::Regtest.magic(),
+            payload: NetworkMessage::CFilter(CFilter {
+                filter_type: 0,
+                block_hash: BlockHash::dummy(1),
+                filter: vec![0; 32 * 1024],
+            }),
+        })
+    }
+
+    /// A connected peer that receives a run of [`unsettling_filter`]s at its own rate.
+    struct Feeder {
+        id: PeerId,
+        handle: PeerHandle,
+        far: OwnedWriteHalf,
+        rate: u64,
+        sent: usize,
+    }
+
+    impl Feeder {
+        /// Delivers what the peer receives in one [`FLOW_TICK`].
+        async fn tick(&mut self, net: &PeerNetworkManager, frame: &[u8]) {
+            let mut due = (self.rate as f64 * FLOW_TICK.as_secs_f64()) as usize;
+            while due > 0 {
+                let at = self.sent % frame.len();
+                let piece = &frame[at..frame.len().min(at + due)];
+                deliver(net, self.id, &mut self.far, piece).await;
+                self.sent += piece.len();
+                due -= piece.len();
+            }
+        }
+    }
+
+    /// Connects peer `n + 1` for each of `rates` and feeds it `rates[n]` bytes/s until the
+    /// flow controller has measured how fast every peer serves.
+    async fn measured_peers(net: &PeerNetworkManager, rates: &[u64]) -> Vec<Feeder> {
+        let session = net.session.lock().await.clone();
+        let mut feeders = Vec::new();
+        for (n, &rate) in rates.iter().enumerate() {
+            let id = conn(n as u8 + 1, 0);
+            let (peer, far) = ConnectedPeer::for_test_reading(id, net.state.clone()).await;
+            let handle = peer.handle();
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+            feeders.push(Feeder {
+                id,
+                handle,
+                far,
+                rate,
+                sent: 0,
+            });
+        }
+        feed(net, &mut feeders, SERVING_SAMPLE_TICKS * 2).await;
+        let measured = net.state.connected.read().await.iter().all(|p| p.serving_rate() > 0);
+        assert!(measured, "every peer has a serving rate");
+        feeders
+    }
+
+    /// Feeds every peer at its rate for `ticks` flow controller ticks, with work up to its
+    /// cap, as bulk download keeps it.
+    async fn feed(net: &PeerNetworkManager, feeders: &mut [Feeder], ticks: u32) {
+        let frame = unsettling_filter();
+        for _ in 0..ticks {
+            for feeder in feeders.iter() {
+                while feeder.handle.in_flight_bytes() < feeder.handle.cap() {
+                    let _ = feeder.handle.send(&get_cfilters(0)).await;
+                }
+            }
+            time::advance(FLOW_TICK).await;
+            for feeder in feeders.iter_mut() {
+                feeder.tick(net, &frame).await;
+            }
+            settle().await;
+        }
+    }
+
+    /// The peers' serving rates, by connection.
+    async fn serving_rates(net: &PeerNetworkManager) -> Vec<u64> {
+        net.state.connected.read().await.iter().map(ConnectedPeer::serving_rate).collect()
+    }
+
+    /// A peer on loopback that answers the version handshake once `go` is notified, then
+    /// answers pings.
+    struct HandshakingPeer {
+        addr: SocketAddr,
+        go: Arc<Notify>,
+        accepted: Arc<AtomicUsize>,
+        /// Whether a ping came after the handshake, which the client sends last.
+        pinged: Arc<AtomicBool>,
+        /// Whether the client closed the connection.
+        closed: Arc<AtomicBool>,
+    }
+
+    impl HandshakingPeer {
+        async fn listen() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+            let peer = HandshakingPeer {
+                addr: listener.local_addr().expect("bound address"),
+                go: Arc::new(Notify::new()),
+                accepted: Arc::new(AtomicUsize::new(0)),
+                pinged: Arc::new(AtomicBool::new(false)),
+                closed: Arc::new(AtomicBool::new(false)),
+            };
+            let (addr, go) = (peer.addr, peer.go.clone());
+            let (accepted, pinged, closed) =
+                (peer.accepted.clone(), peer.pinged.clone(), peer.closed.clone());
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    accepted.fetch_add(1, Ordering::SeqCst);
+                    let (go, pinged, closed) = (go.clone(), pinged.clone(), closed.clone());
+                    tokio::spawn(answer_handshake(stream, addr, go, pinged, closed));
+                }
+            });
+            peer
+        }
+    }
+
+    /// Answers the client's version handshake on `stream` once `go` is notified, then its
+    /// pings, for [`HandshakingPeer`].
+    async fn answer_handshake(
+        stream: TcpStream,
+        addr: SocketAddr,
+        go: Arc<Notify>,
+        pinged: Arc<AtomicBool>,
+        closed: Arc<AtomicBool>,
+    ) {
+        stream.set_nodelay(true).expect("loopback nodelay");
+        let (read, mut write) = stream.into_split();
+        let mut frames = FramedRead::new(read, RawNetworkMessageCodec);
+        let framed = |payload| {
+            serialize(&RawNetworkMessage {
+                magic: Network::Regtest.magic(),
+                payload,
+            })
+        };
+        while let Some(Ok(raw)) = frames.next().await {
+            if matches!(raw.payload, NetworkMessage::Version(_)) {
+                break;
+            }
+        }
+        go.notified().await;
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let version = VersionMessage::new(
+            services,
+            0,
+            Address::new(&addr, ServiceFlags::NONE),
+            Address::new(&addr, services),
+            1,
+            "/handshaking/".into(),
+            0,
+            false,
+            [0; 32],
+        );
+        let mut hello = framed(NetworkMessage::Version(version));
+        hello.extend(framed(NetworkMessage::Verack));
+        let _ = write.write_all(&hello).await;
+        while let Some(Ok(raw)) = frames.next().await {
+            if let NetworkMessage::Ping(nonce) = raw.payload {
+                pinged.store(true, Ordering::SeqCst);
+                let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
+            }
+        }
+        closed.store(true, Ordering::SeqCst);
     }
 
     /// Lets the spawned tasks run what the last time advance made due.
@@ -2025,17 +2207,68 @@ mod tests {
         assert_eq!(judge.link_stalled, link_stalled);
     }
 
-    /// A peer serves 1 MB/s with work for three ticks, then nothing for one.
-    #[test_case(false, true => 750_000; "a stall of its own drags its serving rate")]
-    #[test_case(true, true => 1_000_000; "a stall of our link does not")]
-    #[test_case(false, false => 1_000_000; "idle ticks do not")]
-    fn the_serving_rate_averages_ticks_with_work(link_stalled: bool, has_work: bool) -> u64 {
-        let mut flow = PeerFlow::new(0);
-        for _ in 0..3 {
-            flow.sample(1e6, true, false);
+    /// A peer's silence with work drags its serving rate. Once every peer is silent long
+    /// enough for the judge to hold them as a possible stall of our own link, the flow
+    /// controller leaves the rates alone, since such a stall says nothing about the peers.
+    #[tokio::test(start_paused = true)]
+    async fn a_stall_of_our_link_leaves_the_serving_rates_alone() {
+        let net = broker().await;
+        let _feeders = measured_peers(&net, &[1 << 20, 200 << 10]).await;
+        let measured = serving_rates(&net).await;
+
+        advance_silent(REQUEST_TIMEOUT.as_secs() + 2).await;
+        let held = serving_rates(&net).await;
+        assert!(held.iter().zip(&measured).all(|(h, m)| h < m), "{held:?} vs {measured:?}");
+
+        advance_silent(REQUEST_TIMEOUT.as_secs() * 3).await;
+        assert_eq!(serving_rates(&net).await, held);
+        assert_eq!(net.connected_count().await, 2, "a held peer was kicked");
+    }
+
+    /// Peer 2 serves a fifth of peer 1's rate, then both go silent and the supervisor starts
+    /// `start_at` seconds in. Past the judge's hold it must not dial. When the peers deliver
+    /// again, the held back swap goes ahead.
+    #[test_case(REQUEST_TIMEOUT.as_secs() + 2, 0; "a round during the stall dials nobody")]
+    #[tokio::test(start_paused = true)]
+    async fn no_slow_peer_is_swapped_out_while_our_link_stalls(start_at: u64, dials: usize) {
+        let replacement = HandshakingPeer::listen().await;
+        let mut config = ClientConfig::regtest().with_restrict_to_configured_peers(true);
+        config.add_peer(replacement.addr);
+        config.max_peers = 2;
+        config.transport_preference = TransportPreference::V1Only;
+        let net = PeerNetworkManager::new(&config).await;
+        let mut feeders = measured_peers(&net, &[1 << 20, 200 << 10]).await;
+        let slow = feeders[1].handle.clone();
+
+        advance_silent(start_at).await;
+        net.start().await;
+        settle().await;
+        advance_silent((REQUEST_TIMEOUT.as_secs() + 2).saturating_sub(start_at)).await;
+        replacement.go.notify_one();
+        for _ in 0..100_000 {
+            if replacement.closed.load(Ordering::SeqCst) || slow.is_closed() {
+                break;
+            }
+            task::yield_now().await;
         }
-        flow.sample(0.0, has_work, link_stalled);
-        flow.serving_rate as u64
+
+        assert_eq!(replacement.accepted.load(Ordering::SeqCst), dials);
+        assert_eq!(replacement.pinged.load(Ordering::SeqCst), dials > 0, "handshake finished");
+        assert!(!slow.is_closed(), "the slow peer was swapped out");
+        assert_eq!(net.connected_count().await, 2);
+
+        // The peers deliver again, which proves our link works, and the held back swap goes
+        // ahead. Nothing but the pick of a slow peer wakes a full supervisor.
+        replacement.go.notify_one();
+        for _ in 0..8 * 4 {
+            feed(&net, &mut feeders, 1).await;
+            if slow.is_closed() {
+                break;
+            }
+        }
+        assert!(slow.is_closed(), "the slow peer was kept once our link recovered");
+        assert_eq!(replacement.accepted.load(Ordering::SeqCst), dials + 1);
+        assert_eq!(net.connected_count().await, 2);
     }
 
     #[test_case(&[&[MessageType::Inv], &[MessageType::Inv]], 0, &[1, 1]; "every subscriber of the type")]
