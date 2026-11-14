@@ -8,7 +8,7 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_filter::{CFHeaders, GetCFHeaders};
 use dashcore::BlockHash;
 
-use crate::error::{SyncError, SyncResult};
+use crate::error::{StorageError, SyncError, SyncResult};
 use crate::network::{NetworkManager, SendRequest};
 use crate::storage::BlockHeaderStorage;
 
@@ -69,10 +69,9 @@ impl FilterHeadersPipeline {
         let mut end = self.below_end.unwrap_or(top);
         while end > lowest.saturating_sub(1) {
             let start = lowest.max(end.saturating_sub(FILTER_HEADERS_BATCH_SIZE - 1));
-            let stop_hash =
-                storage.get_header(end).await?.map(|h| *h.hash()).ok_or_else(|| {
-                    SyncError::Storage(format!("Missing header at height {}", end))
-                })?;
+            let stop_hash = storage.get_header(end).await?.map(|h| *h.hash()).ok_or_else(|| {
+                SyncError::Storage(StorageError::NotFound(format!("Header at height {}", end)))
+            })?;
             self.want_below(stop_hash, start, end);
             end = start.saturating_sub(1);
         }
@@ -125,7 +124,10 @@ impl FilterHeadersPipeline {
             // Get stop hash for this batch
             let stop_hash =
                 storage.get_header(batch_end).await?.map(|h| *h.hash()).ok_or_else(|| {
-                    SyncError::Storage(format!("Missing header at height {}", batch_end))
+                    SyncError::Storage(StorageError::NotFound(format!(
+                        "Header at height {}",
+                        batch_end
+                    )))
                 })?;
 
             self.want(stop_hash, current);
@@ -178,7 +180,10 @@ impl FilterHeadersPipeline {
             // Get stop hash for this batch
             let stop_hash =
                 storage.get_header(batch_end).await?.map(|h| *h.hash()).ok_or_else(|| {
-                    SyncError::Storage(format!("Missing header at height {}", batch_end))
+                    SyncError::Storage(StorageError::NotFound(format!(
+                        "Header at height {}",
+                        batch_end
+                    )))
                 })?;
 
             self.want(stop_hash, current);

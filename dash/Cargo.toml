@@ -70,7 +70,7 @@ hex-conservative = { workspace = true }
 bincode = { workspace = true, optional = true }
 tokio-util = { workspace = true, features = ["codec"], optional = true }
 bytes = { version = "1", optional = true }
-blake3 = "1.8.1"
+blake3 = { workspace = true }
 thiserror = { workspace = true }
 bitvec = "1.0"
 tracing = { workspace = true }

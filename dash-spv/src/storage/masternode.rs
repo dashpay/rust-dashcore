@@ -10,7 +10,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::Network;
 
 use crate::error::{StorageError, StorageResult};
-use crate::storage::{io::atomic_write, BlockHeaderStorage};
+use crate::storage::{io::ChecksummedFile, BlockHeaderStorage};
 
 #[async_trait]
 pub trait MasternodeStorage: Send + Sync + 'static {
@@ -31,8 +31,8 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
 
     /// Opens the storage and restores the engine from the snapshot, up to its
     /// newest list still in the header chain at its height. The engine starts
-    /// empty when no list is, or the snapshot cannot be read. Only a snapshot
-    /// that does not decode is removed: one failing to read may read later.
+    /// empty when no list is, or the snapshot cannot be read. Only a corrupted
+    /// snapshot is removed: one failing to read may read later.
     pub async fn open(
         storage_path: impl Into<PathBuf> + Send,
         headers: Arc<RwLock<H>>,
@@ -64,21 +64,21 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         headers: &Arc<RwLock<H>>,
         path: &Path,
     ) -> StorageResult<Option<MasternodeListEngine<H>>> {
-        let bytes = match tokio::fs::read(path).await {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.into()),
-        };
+        let engine = ChecksummedFile::<u8>::new(path).read_bytes().await.and_then(|bytes| {
+            MasternodeListEngine::from_snapshot(network, Arc::clone(headers), &bytes)
+                .map_err(|e| StorageError::Corruption(e.to_string()))
+        });
 
-        let mut engine =
-            match MasternodeListEngine::from_snapshot(network, Arc::clone(headers), &bytes) {
-                Ok(engine) => engine,
-                Err(e) => {
-                    tracing::warn!("Removing the undecodable masternode engine snapshot: {e}");
-                    tokio::fs::remove_file(path).await?;
-                    return Ok(None);
-                }
-            };
+        let mut engine = match engine {
+            Ok(engine) => engine,
+            Err(StorageError::Io(e)) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(StorageError::Corruption(e)) => {
+                tracing::warn!("Removing the corrupted masternode engine snapshot: {e}");
+                tokio::fs::remove_file(path).await?;
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        };
 
         let Some(in_chain) = Self::newest_list_in_chain(&engine).await? else {
             tracing::warn!("No list of the masternode engine snapshot is in the header chain");
@@ -139,7 +139,7 @@ impl<H: BlockHeaderStorage> PersistentMasternodeStorage<H> {
         drop(engine);
 
         tokio::fs::create_dir_all(self.folder()).await?;
-        atomic_write(&self.path(), &bytes).await?;
+        ChecksummedFile::<u8>::new(self.path()).write_bytes(&bytes).await?;
 
         Ok(())
     }
