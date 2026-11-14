@@ -114,12 +114,12 @@ impl StorageMigrator {
     }
 }
 
-#[derive(Deserialize, Serialize)]
-struct Version {
-    version: u32,
-}
-
 async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
+    #[derive(Deserialize, Serialize)]
+    struct Version {
+        version: u32,
+    }
+
     let version_path = storage_path.join("version.json");
     let marker_path = storage_path.join("migration_in_progress");
 
@@ -128,7 +128,7 @@ async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
         return Err(MigratorError::Corruption("A storage migration was interrupted".into()));
     }
 
-    let version = if version_path.exists() && version_path.is_file() {
+    let mut version = if version_path.exists() && version_path.is_file() {
         let bytes = tokio::fs::read(&version_path).await?;
         serde_json::from_slice::<Version>(&bytes)?.version
     } else {
@@ -142,26 +142,16 @@ async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
         )));
     }
 
-    if version < CURRENT_VERSION {
+    let migrating = version < CURRENT_VERSION;
+    if migrating {
         atomic_write(&marker_path, &[]).await?;
-        let result = migrate_from(storage_path, &version_path, version).await;
-        tokio::fs::remove_file(&marker_path).await?;
-        result?;
     }
-
-    verify_segments(storage_path).await
-}
-
-async fn migrate_from(
-    storage_path: &Path,
-    version_path: &Path,
-    mut version: u32,
-) -> Result<(), MigratorError> {
-    const MIGRATORS: &[&dyn Migrator; CURRENT_VERSION as usize] =
-        &[&V1Migrator, &V2Migrator, &V3Migrator, &V4Migrator, &V5Migrator];
 
     while version < CURRENT_VERSION {
         tracing::info!("Migrating storage from version {} to {}", version, version + 1);
+
+        const MIGRATORS: &[&dyn Migrator; CURRENT_VERSION as usize] =
+            &[&V1Migrator, &V2Migrator, &V3Migrator, &V4Migrator, &V5Migrator];
 
         MIGRATORS[version as usize].apply_migration(storage_path).await?;
 
@@ -171,10 +161,14 @@ async fn migrate_from(
             version,
         })?;
 
-        atomic_write(version_path, version.as_bytes()).await?;
+        atomic_write(&version_path, version.as_bytes()).await?;
     }
 
-    Ok(())
+    if migrating {
+        tokio::fs::remove_file(&marker_path).await?;
+    }
+
+    verify_segments(storage_path).await
 }
 
 async fn verify_segments(storage_path: &Path) -> Result<(), MigratorError> {
