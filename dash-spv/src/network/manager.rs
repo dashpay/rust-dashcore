@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -44,10 +44,10 @@ const CONNECT_DEADLINE: Duration = Duration::from_secs(20);
 /// peer; this is just a backstop so it never sleeps on a notify that never comes.
 const STALL_CHECK: Duration = Duration::from_secs(5);
 
-/// A request unanswered this long is treated as dead: the timeout monitor re-queues
-/// it and kicks the peer holding it. Deliberately aggressive: replacing a peer that
-/// stopped answering is faster than waiting for it; merely-slow peers are already
-/// throttled by their per-peer cap.
+/// A request unanswered this long is stalled. Its peer becomes a culprit, and [`StallJudge`]
+/// kicks it and re-queues its work unless our own link may be the one stalled. Deliberately
+/// aggressive: replacing a peer that stopped answering is faster than waiting for it, and
+/// merely slow peers are already throttled by their per-peer cap.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A far peer gets this many handshake pings instead, when that is longer: its round
@@ -64,9 +64,14 @@ const MAX_ADDR_PER_MESSAGE: usize = 1000;
 /// How often the timeout monitor scans the outstanding-request registry.
 const TIMEOUT_CHECK: Duration = Duration::from_secs(1);
 
+/// How many request timeouts of our link's downtime a silent peer is held for: the part of
+/// its silence in which no peer received anything. With the 10 s base timeout that is 60 s,
+/// enough for the 40 s outages seen on testnet.
+const LINK_STALL_TIMEOUTS: u32 = 6;
+
 use crate::error::{NetworkError, NetworkResult};
 use crate::network::bans::{Ban, Bans};
-use crate::network::broker::{Broker, RequestKey};
+use crate::network::broker::{Broker, RequestKey, ANSWER_TIMEOUTS};
 use crate::network::peer_set::{Admission, PeerSet};
 use crate::network::NetworkManager;
 use crate::network::TransportPreference;
@@ -208,6 +213,8 @@ pub struct NetworkState {
     pub required_services: ServiceFlags,
     pub user_agent: String,
     pub transport_preference: TransportPreference,
+    /// Whether the timeout monitor sees our own link stalled.
+    link_stalled: AtomicBool,
 }
 
 pub struct PeerNetworkManager {
@@ -257,6 +264,7 @@ impl PeerNetworkManager {
             required_services,
             user_agent: config.user_agent.clone(),
             transport_preference: config.transport_preference,
+            link_stalled: AtomicBool::new(false),
         });
         let shutdown = CancellationToken::new();
 
@@ -610,14 +618,17 @@ impl PeerFlow {
         }
     }
 
-    /// One tick with the peer's cumulative bytes received, its bytes in flight now and
-    /// whether the client's own cap holds back work. Returns its new cap.
-    fn tick(&mut self, bytes: u64, in_flight: u64, link_full: bool) -> u64 {
+    /// One tick with the peer's cumulative bytes received, its bytes in flight now,
+    /// whether the client's own cap holds back work and whether our link is stalled.
+    /// Returns its new cap.
+    fn tick(&mut self, bytes: u64, in_flight: u64, link_full: bool, link_stalled: bool) -> u64 {
         // The router sends a peer work until it reaches its cap or the link cap binds.
         // Short of both, its rate shows how much it was asked for, not its bandwidth.
         let bound = in_flight > 0 && (in_flight >= self.limiter.cap as u64 || link_full);
         let cap = self.limiter.tick(bytes, in_flight, CAP_STEP_BYTES_PER_SEC);
-        if bound {
+        // A stall of our own link says nothing about the peer and would drag its average
+        // for 30 s, so ticks are skipped once the timeout monitor sees one.
+        if bound && !link_stalled {
             self.serving_ticks += 1;
             let alpha = 1.0 / self.serving_ticks.min(SERVING_SAMPLE_TICKS) as f64;
             self.serving_rate += alpha * (self.limiter.rate - self.serving_rate);
@@ -648,6 +659,7 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             peer_wake,
             broker,
             costs,
+            link_stalled,
             ..
         } = &*state;
         let mut global = ByteLimiter::new(MIN_CAP_BYTES, bytes.load(Ordering::Relaxed));
@@ -676,9 +688,10 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             let in_flights: Vec<u64> = g.iter().map(ConnectedPeer::in_flight_bytes).collect();
             let total_in_flight: u64 = in_flights.iter().sum();
             let link_full = total_in_flight >= global_cap.load(Ordering::Relaxed);
+            let stalled = link_stalled.load(Ordering::Relaxed);
             for (p, &in_flight) in g.iter().zip(&in_flights) {
                 let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
-                p.set_cap(flow.tick(p.bytes_read(), in_flight, link_full));
+                p.set_cap(flow.tick(p.bytes_read(), in_flight, link_full, stalled));
                 p.set_serving_rate(flow.serving_rate());
             }
 
@@ -742,8 +755,9 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             }
 
             // Only the transition wakes the supervisor, so a peer with no replacement
-            // is not re-probed every tick.
-            let underserving = underserving_peer(&g);
+            // is not re-probed every tick. A stall of our own link drags every rate down
+            // unevenly, so nobody is underserving during one.
+            let underserving = (!stalled).then(|| underserving_peer(&g)).flatten();
             let handles: Vec<PeerHandle> = g.iter().map(|p| p.handle()).collect();
             drop(g);
             if broker.len() == 0 {
@@ -840,7 +854,8 @@ impl Supervisor {
             // Only look for a laggard once full: below cap every arrival is wanted anyway.
             // Each swap re-sends the work the old peer held, so at most one per cooldown.
             let cooled = self.last_swap.lock().await.is_none_or(|t| t.elapsed() >= SWAP_COOLDOWN);
-            let slow = (deficit == 0 && cooled)
+            let stalled = self.state.link_stalled.load(Ordering::Relaxed);
+            let slow = (deficit == 0 && cooled && !stalled)
                 .then(|| underserving_peer(&peers))
                 .flatten()
                 .map(|slow| slow.addr);
@@ -905,7 +920,9 @@ impl Supervisor {
             }
 
             let new_addr = peer.addr();
-            let slow = slow.filter(|_| replaced.is_none());
+            // Our link can stall while the candidates are dialed, and then `slow` is stale.
+            let stalled = self.state.link_stalled.load(Ordering::Relaxed);
+            let slow = slow.filter(|_| replaced.is_none() && !stalled);
             match self.state.connected.admit(peer, &self.shutdown, self.state.max_peers, slow).await
             {
                 Admission::Joined => accepted += 1,
@@ -1019,17 +1036,170 @@ fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) 
     )
 }
 
-/// Time requests out and evict the peers that stalled on them.
-///
-/// A peer is a culprit when it has in-flight work and no bytes have arrived from it
-/// for a full [`REQUEST_TIMEOUT`] since it was given that work, or when one of its
-/// requests made no progress for that long. Liveness is per peer, not per request
-/// age: a healthy peer draining a deep backlog keeps sending bytes even while its
-/// oldest request waits.
-///
-/// A culprit is kicked immediately and ALL its on-wire requests are re-queued for
-/// other peers; leaving it connected would just route the freed work back to it.
-/// The supervisor refills the set.
+/// What the timeout monitor reads of a connected peer each tick.
+struct Observed {
+    id: PeerId,
+    bytes: u64,
+    /// Whether part of a message has arrived and the rest has not.
+    partial: bool,
+    in_flight: u64,
+    timeout: Duration,
+}
+
+/// What the timeout monitor knows of a connected peer.
+struct Liveness {
+    bytes: u64,
+    /// When the peer last sent bytes or was idle.
+    owing_since: Instant,
+}
+
+/// Decides which peers [`spawn_timeout_monitor`] kicks. A peer silent with work is blamed once
+/// our link worked for more than a timeout of its silence, or after more than
+/// [`LINK_STALL_TIMEOUTS`] timeouts of downtime. At most one is kicked per timeout.
+#[derive(Default)]
+struct StallJudge {
+    liveness: HashMap<PeerId, Liveness>,
+    /// The last kick of a silent peer, which paces the next.
+    last_kick: Option<Instant>,
+    /// Whether our own link may be stalled: the last judgement left a culprit no peer
+    /// witnessed, held or waiting to be kicked.
+    link_stalled: bool,
+    /// When [`Self::observe`] last ran.
+    last_tick: Option<Instant>,
+    /// How long our link has provably worked: each tick on which some peer's bytes grew adds
+    /// the time since the tick before, at most [`TIMEOUT_CHECK`]. A new peer's first counter
+    /// is not growth.
+    link_up: Duration,
+    /// `link_up` at each tick, back to the last tick at or before the oldest silence judged
+    /// now or later.
+    uptime: VecDeque<(Instant, Duration)>,
+}
+
+impl StallJudge {
+    /// Records the peers' byte counters and returns the peers that received bytes of a
+    /// message still arriving. Small unrelated messages arrive whole, so only these bytes
+    /// are progress on a request.
+    fn observe(&mut self, now: Instant, peers: &[Observed]) -> Vec<PeerId> {
+        self.liveness.retain(|id, _| peers.iter().any(|p| p.id == *id));
+        let mut any_grew = false;
+        let mut streaming = Vec::new();
+        for p in peers {
+            let entry = self.liveness.entry(p.id).or_insert(Liveness {
+                bytes: p.bytes,
+                owing_since: now,
+            });
+            let grew = p.bytes > entry.bytes;
+            if grew {
+                any_grew = true;
+                entry.bytes = p.bytes;
+                if p.partial {
+                    streaming.push(p.id);
+                }
+            }
+            // An idle peer owes no bytes, so its silence before it gets work
+            // must not count against its first request.
+            if grew || p.in_flight == 0 {
+                entry.owing_since = now;
+            }
+        }
+        // The cap keeps ticks the monitor ran late from counting an outage as uptime.
+        if let Some(last) = self.last_tick.filter(|_| any_grew) {
+            self.link_up += now.duration_since(last).min(TIMEOUT_CHECK);
+        }
+        self.last_tick = Some(now);
+        self.uptime.push_back((now, self.link_up));
+        streaming
+    }
+
+    /// How long our link worked since `from`. It overcounts by up to one tick.
+    fn uptime_since(&self, from: Instant) -> Duration {
+        // The last sample at or before `from`, or the oldest kept if all are later.
+        let last = self.uptime.partition_point(|&(at, _)| at <= from).saturating_sub(1);
+        let before = self.uptime.get(last).map_or(Duration::ZERO, |&(_, up)| up);
+        self.link_up.saturating_sub(before)
+    }
+
+    /// Returns the peers to kick, how many culprits are spared, and the kicked peer no peer
+    /// witnessed, if any. `culprits` maps the peers of stalled requests to when their
+    /// silence began.
+    fn judge(
+        &mut self,
+        now: Instant,
+        peers: &[Observed],
+        mut culprits: HashMap<PeerId, Instant>,
+    ) -> (HashSet<PeerId>, usize, Option<PeerId>) {
+        self.link_stalled = false;
+        // Judged on the peer's own counters, not just the registry: streaming in-flight
+        // bytes are freed on the peer separately, so a wedged peer can sit at its cap
+        // with no registry entries. Pending work plus a byte counter
+        // frozen for REQUEST_TIMEOUT means stuck, whatever the registry thinks.
+        for p in peers.iter().filter(|p| p.in_flight > 0) {
+            let Some(owing_since) = self.liveness.get(&p.id).map(|l| l.owing_since) else {
+                continue;
+            };
+            if now.duration_since(owing_since) > p.timeout {
+                let since = culprits.entry(p.id).or_insert(owing_since);
+                *since = (*since).min(owing_since);
+            }
+        }
+        // Uptime is kept back to the oldest silence judged now or later: a peer's, a culprit's,
+        // or a request's, which `Broker::expire` blames from at most `ANSWER_TIMEOUTS` back.
+        let oldest = peers
+            .iter()
+            .filter_map(|p| now.checked_sub(p.timeout * ANSWER_TIMEOUTS))
+            .chain(self.liveness.values().map(|l| l.owing_since))
+            .chain(culprits.values().copied())
+            .min();
+        while self.uptime.get(1).is_some_and(|&(at, _)| oldest.is_none_or(|oldest| at <= oldest)) {
+            self.uptime.pop_front();
+        }
+        if culprits.is_empty() {
+            return (HashSet::new(), 0, None);
+        }
+
+        let mut held = 0;
+        let mut silent: Vec<(Instant, &Observed, bool)> = Vec::new();
+        for p in peers {
+            let Some(&since) = culprits.get(&p.id) else {
+                continue;
+            };
+            // Silence is blamed once our link worked for more than a timeout of it, so the peer
+            // had that long to answer, however outages split the uptime.
+            let up = self.uptime_since(since);
+            let down = now.duration_since(since).saturating_sub(up);
+            let witnessed = up > p.timeout;
+            if witnessed || down > p.timeout * LINK_STALL_TIMEOUTS {
+                silent.push((since, p, witnessed));
+            } else {
+                held += 1;
+            }
+        }
+        // A silent peer may still be our link failing it, so the one silent the longest
+        // goes, and one kick per timeout keeps a stall of our link from taking the whole set
+        // at once.
+        silent.sort_by_key(|&(since, p, _)| (since, p.id.addr()));
+        let due = silent.first().is_some_and(|(_, worst, _)| {
+            self.last_kick.is_none_or(|at| now.duration_since(at) > worst.timeout)
+        });
+        if due {
+            self.last_kick = Some(now);
+        }
+        // The culprits waiting behind kick pacing may be our link's victims too.
+        let mut waiting = silent.iter().skip(usize::from(due));
+        self.link_stalled = held > 0 || waiting.any(|&(_, _, witnessed)| !witnessed);
+        // A culprit that already left is not spared, so its requests are still re-queued.
+        let mut kicked: HashSet<PeerId> =
+            culprits.into_keys().filter(|id| peers.iter().all(|p| p.id != *id)).collect();
+        let kick = silent.first().filter(|_| due);
+        kicked.extend(kick.map(|(_, p, _)| p.id));
+        let unwitnessed = kick.filter(|(_, _, witnessed)| !witnessed).map(|(_, p, _)| p.id);
+        (kicked, held + silent.len() - usize::from(due), unwitnessed)
+    }
+}
+
+/// Every [`TIMEOUT_CHECK`], kicks the peers [`StallJudge`] finds stalled on requests with no
+/// progress for a [`REQUEST_TIMEOUT`], bans every kicked peer except one kicked with no witness,
+/// re-queues their on-wire requests for other peers and wakes the supervisor to refill the set.
 fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let NetworkState {
@@ -1038,11 +1208,11 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             peer_wake,
             max_peers,
             bans,
+            link_stalled,
             ..
         } = &*state;
         let mut ticker = tokio::time::interval(TIMEOUT_CHECK);
-        // Per-peer liveness: (bytes read, when the peer last sent bytes or was idle).
-        let mut progress: HashMap<PeerId, (u64, Instant)> = HashMap::new();
+        let mut judge = StallJudge::default();
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -1050,54 +1220,35 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             }
 
             let now = Instant::now();
-
-            // Judged on the peer's own counters, not just the registry: streaming in-flight
-            // bytes are freed on the peer separately, so a wedged peer can sit at its cap
-            // with no registry entries. Pending work plus a byte counter
-            // frozen for REQUEST_TIMEOUT means stuck, whatever the registry thinks.
-            let (mut culprits, streaming) = {
-                let peers = connected.read().await;
-                let live: HashSet<PeerId> = peers.iter().map(|p| p.id()).collect();
-                progress.retain(|addr, _| live.contains(addr));
-                let mut culprits = HashSet::new();
-                let mut streaming = Vec::new();
-                for peer in peers.iter() {
-                    let addr = peer.id();
-                    let bytes = peer.bytes_read();
-                    let in_flight = peer.in_flight_bytes();
-                    let entry = progress.entry(addr).or_insert((bytes, now));
-                    let grew = bytes > entry.0;
-                    // Small unrelated messages arrive whole, so only bytes of a message
-                    // still arriving are progress on a request.
-                    if grew && peer.partial_message() {
-                        streaming.push(addr);
-                    }
-                    // An idle peer owes no bytes, so its silence before it gets work
-                    // must not count against its first request.
-                    if grew || in_flight == 0 {
-                        *entry = (bytes, now);
-                    }
-                    if in_flight > 0 && now.duration_since(entry.1) > request_timeout(peer.lag_ms())
-                    {
-                        culprits.insert(addr);
-                    }
-                }
-                (culprits, streaming)
-            };
-            broker.receiving(&streaming).await;
-            // A request that stopped making progress also condemns its peer: the
-            // per-peer byte check above sees unrelated traffic and judges it healthy.
-            let timeouts: HashMap<PeerId, Duration> = connected
+            let peers: Vec<Observed> = connected
                 .read()
                 .await
                 .iter()
-                .map(|p| (p.id(), request_timeout(p.lag_ms())))
+                .map(|p| Observed {
+                    id: p.id(),
+                    bytes: p.bytes_read(),
+                    partial: p.partial_message(),
+                    in_flight: p.in_flight_bytes(),
+                    timeout: request_timeout(p.lag_ms()),
+                })
                 .collect();
-            culprits.extend(
-                broker.expire(|peer| timeouts.get(peer).copied().unwrap_or(REQUEST_TIMEOUT)).await,
-            );
-
+            broker.receiving(&judge.observe(now, &peers)).await;
+            // A request with no progress for a timeout also condemns its peer: the
+            // per-peer byte check sees unrelated traffic and judges it healthy.
+            let timeout = |id: &PeerId| {
+                peers.iter().find(|p| p.id == *id).map_or(REQUEST_TIMEOUT, |p| p.timeout)
+            };
+            let (culprits, spared, unwitnessed) =
+                judge.judge(now, &peers, broker.expire(timeout).await);
+            link_stalled.store(judge.link_stalled, Ordering::Relaxed);
             if culprits.is_empty() {
+                if spared > 0 {
+                    tracing::debug!(
+                        target: "dash_spv::network",
+                        "request timeout: kicked none, spared {}",
+                        spared,
+                    );
+                }
                 continue;
             }
 
@@ -1111,7 +1262,9 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // going away), keeping keys as Queued so de-dup holds.
             let retried = broker.requeue_from(&culprits).await;
             let dropped = kicked.len();
-            for peer in &culprits {
+            // A peer kicked only because its hold ran out is likely a victim of our own link.
+            // If it is unreachable after all, redialing it fails and backs off.
+            for peer in culprits.iter().filter(|&&peer| Some(peer) != unwitnessed) {
                 bans.ban(peer.addr(), Ban::Kicked).await;
             }
             // The set is now short: wake the supervisor, which otherwise idles.
@@ -1121,9 +1274,10 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             tracing::warn!(
                 target: "dash_spv::network",
-                "request timeout: kicked {} peer(s) {:?}, retried {} request(s)",
+                "request timeout: kicked {} peer(s) {:?}, spared {}, retried {} request(s)",
                 dropped,
                 culprits,
+                spared,
                 retried,
             );
             broker.wake();
@@ -1332,14 +1486,20 @@ mod tests {
     use crate::client::ClientConfig;
     use crate::test_utils::test_socket_address;
     use dashcore::consensus::encode::serialize;
-    use dashcore::network::message::RawNetworkMessage;
+    use dashcore::network::address::Address;
+    use dashcore::network::message::{RawNetworkMessage, RawNetworkMessageCodec};
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
+    use dashcore::network::message_network::VersionMessage;
     use dashcore::{BlockHash, Network};
+    use std::sync::atomic::AtomicUsize;
     use test_case::test_case;
     use tokio::io::AsyncWriteExt;
+    use tokio::net::tcp::OwnedWriteHalf;
+    use tokio::net::{TcpListener, TcpStream};
     use tokio::task;
     use tokio::time;
+    use tokio_util::codec::FramedRead;
 
     fn get_cfilters(start: u32) -> NetworkMessage {
         NetworkMessage::GetCFilters(GetCFilters {
@@ -1361,6 +1521,221 @@ mod tests {
     async fn broker() -> PeerNetworkManager {
         let config = ClientConfig::regtest().with_restrict_to_configured_peers(true);
         PeerNetworkManager::new(&config).await
+    }
+
+    /// Advances the clock `secs` seconds while peer `id` receives a whole `ping` each second
+    /// through its far end `far`.
+    async fn advance_receiving(
+        net: &PeerNetworkManager,
+        id: PeerId,
+        far: &mut OwnedWriteHalf,
+        secs: u64,
+    ) {
+        let ping = serialize(&RawNetworkMessage {
+            magic: Network::Regtest.magic(),
+            payload: NetworkMessage::Ping(1),
+        });
+        for _ in 0..secs {
+            time::advance(TIMEOUT_CHECK).await;
+            deliver(net, id, far, &ping).await;
+            settle().await;
+        }
+    }
+
+    /// Writes `bytes` to the far end `far` of peer `id` and waits until the peer's reader
+    /// counted them. Socket readiness does not follow the paused clock, so a tick could
+    /// otherwise miss bytes already written. A kicked peer's closed socket is skipped.
+    async fn deliver(net: &PeerNetworkManager, id: PeerId, far: &mut OwnedWriteHalf, bytes: &[u8]) {
+        let read = || async {
+            net.state.connected.read().await.iter().find(|p| p.id() == id).map(|p| p.bytes_read())
+        };
+        let Some(before) = read().await else {
+            return;
+        };
+        if far.write_all(bytes).await.is_err() {
+            return;
+        }
+        let target = before + bytes.len() as u64;
+        for _ in 0..100_000 {
+            match read().await {
+                Some(read) if read < target => task::yield_now().await,
+                _ => return,
+            }
+        }
+        panic!("the reader of {id:?} never counted {} bytes", bytes.len());
+    }
+
+    /// Advances the clock `secs` seconds in flow controller ticks, nobody receiving.
+    async fn advance_silent(secs: u64) {
+        for _ in 0..secs * 4 {
+            time::advance(FLOW_TICK).await;
+            settle().await;
+        }
+    }
+
+    /// A connected peer that receives a run of framed `cfilter`s at its own rate.
+    struct Feeder {
+        id: PeerId,
+        handle: PeerHandle,
+        far: OwnedWriteHalf,
+        rate: u64,
+        sent: usize,
+    }
+
+    impl Feeder {
+        /// Delivers what the peer receives in one [`FLOW_TICK`].
+        async fn tick(&mut self, net: &PeerNetworkManager, frame: &[u8]) {
+            let mut due = (self.rate as f64 * FLOW_TICK.as_secs_f64()) as usize;
+            while due > 0 {
+                let at = self.sent % frame.len();
+                let piece = &frame[at..frame.len().min(at + due)];
+                deliver(net, self.id, &mut self.far, piece).await;
+                self.sent += piece.len();
+                due -= piece.len();
+            }
+        }
+    }
+
+    /// Connects peer `n + 1` for each of `rates` and feeds it `rates[n]` bytes/s until the
+    /// flow controller has measured how fast every peer serves.
+    async fn measured_peers(net: &PeerNetworkManager, rates: &[u64]) -> Vec<Feeder> {
+        let session = net.session.lock().await.clone();
+        let mut feeders = Vec::new();
+        for (n, &rate) in rates.iter().enumerate() {
+            let id = conn(n as u8 + 1, 0);
+            let (peer, far) = ConnectedPeer::for_test_reading(id, net.state.clone()).await;
+            let handle = peer.handle();
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+            feeders.push(Feeder {
+                id,
+                handle,
+                far,
+                rate,
+                sent: 0,
+            });
+        }
+        feed(net, &mut feeders, SERVING_SAMPLE_TICKS * 2).await;
+        let measured = net.state.connected.read().await.iter().all(|p| p.serving_rate() > 0);
+        assert!(measured, "every peer has a serving rate");
+        feeders
+    }
+
+    /// Feeds every peer at its rate for `ticks` flow controller ticks, with work up to its
+    /// cap, as bulk download keeps it.
+    async fn feed(net: &PeerNetworkManager, feeders: &mut [Feeder], ticks: u32) {
+        // Its block hash is not the stop hash of `get_cfilters`, so it settles no charge and
+        // the peers' work stays in flight.
+        let frame = serialize(&RawNetworkMessage {
+            magic: Network::Regtest.magic(),
+            payload: NetworkMessage::CFilter(CFilter {
+                filter_type: 0,
+                block_hash: BlockHash::dummy(1),
+                filter: vec![0; 32 * 1024],
+            }),
+        });
+        for _ in 0..ticks {
+            for feeder in feeders.iter() {
+                while feeder.handle.in_flight_bytes() < feeder.handle.cap() {
+                    let _ = feeder.handle.send(&get_cfilters(0)).await;
+                }
+            }
+            time::advance(FLOW_TICK).await;
+            for feeder in feeders.iter_mut() {
+                feeder.tick(net, &frame).await;
+            }
+            settle().await;
+        }
+    }
+
+    /// The peers' serving rates, by connection.
+    async fn serving_rates(net: &PeerNetworkManager) -> Vec<u64> {
+        net.state.connected.read().await.iter().map(ConnectedPeer::serving_rate).collect()
+    }
+
+    /// A peer on loopback that answers the version handshake once `go` is notified, then
+    /// answers pings.
+    struct HandshakingPeer {
+        addr: SocketAddr,
+        go: Arc<Notify>,
+        accepted: Arc<AtomicUsize>,
+        /// Whether a ping came after the handshake, which the client sends last.
+        pinged: Arc<AtomicBool>,
+        /// Whether the client closed the connection.
+        closed: Arc<AtomicBool>,
+    }
+
+    impl HandshakingPeer {
+        async fn listen() -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
+            let peer = HandshakingPeer {
+                addr: listener.local_addr().expect("bound address"),
+                go: Arc::new(Notify::new()),
+                accepted: Arc::new(AtomicUsize::new(0)),
+                pinged: Arc::new(AtomicBool::new(false)),
+                closed: Arc::new(AtomicBool::new(false)),
+            };
+            let (addr, go) = (peer.addr, peer.go.clone());
+            let (accepted, pinged, closed) =
+                (peer.accepted.clone(), peer.pinged.clone(), peer.closed.clone());
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    accepted.fetch_add(1, Ordering::SeqCst);
+                    let (go, pinged, closed) = (go.clone(), pinged.clone(), closed.clone());
+                    tokio::spawn(answer_handshake(stream, addr, go, pinged, closed));
+                }
+            });
+            peer
+        }
+    }
+
+    /// Answers the client's version handshake on `stream` once `go` is notified, then its
+    /// pings, for [`HandshakingPeer`].
+    async fn answer_handshake(
+        stream: TcpStream,
+        addr: SocketAddr,
+        go: Arc<Notify>,
+        pinged: Arc<AtomicBool>,
+        closed: Arc<AtomicBool>,
+    ) {
+        stream.set_nodelay(true).expect("loopback nodelay");
+        let (read, mut write) = stream.into_split();
+        let mut frames = FramedRead::new(read, RawNetworkMessageCodec);
+        let framed = |payload| {
+            serialize(&RawNetworkMessage {
+                magic: Network::Regtest.magic(),
+                payload,
+            })
+        };
+        while let Some(Ok(raw)) = frames.next().await {
+            if matches!(raw.payload, NetworkMessage::Version(_)) {
+                break;
+            }
+        }
+        go.notified().await;
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let version = VersionMessage::new(
+            services,
+            0,
+            Address::new(&addr, ServiceFlags::NONE),
+            Address::new(&addr, services),
+            1,
+            "/handshaking/".into(),
+            0,
+            false,
+            [0; 32],
+        );
+        let mut hello = framed(NetworkMessage::Version(version));
+        hello.extend(framed(NetworkMessage::Verack));
+        let _ = write.write_all(&hello).await;
+        while let Some(Ok(raw)) = frames.next().await {
+            if let NetworkMessage::Ping(nonce) = raw.payload {
+                pinged.store(true, Ordering::SeqCst);
+                let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
+            }
+        }
+        closed.store(true, Ordering::SeqCst);
     }
 
     /// Lets the spawned tasks run what the last time advance made due.
@@ -1398,7 +1773,7 @@ mod tests {
 
         fn tick(&mut self, delivered: u64, in_flight: u64, link_full: bool) {
             self.bytes += delivered;
-            self.cap = self.flow.tick(self.bytes, in_flight, link_full);
+            self.cap = self.flow.tick(self.bytes, in_flight, link_full, false);
         }
 
         /// Bulk download at `rate` bytes/s. The router keeps the peer at its own cap, or
@@ -1508,7 +1883,15 @@ mod tests {
         let mut late = None;
         match departure {
             Departure::Drop => disconnect_all(),
-            Departure::Kick => tokio::time::advance(REQUEST_TIMEOUT + TIMEOUT_CHECK * 2).await,
+            Departure::Kick => {
+                // Silent past the bound, the peers go one per timeout.
+                for _ in 0..2 {
+                    time::advance(REQUEST_TIMEOUT * LINK_STALL_TIMEOUTS + TIMEOUT_CHECK).await;
+                    settle().await;
+                }
+                // No peer witnessed the silence, so it may have been our link's.
+                assert!(net.state.bans.banned().await.is_empty(), "a held peer was banned");
+            }
             Departure::Stop => {
                 net.stop().await;
                 // A handshake that completed while `stop` ran.
@@ -1574,14 +1957,14 @@ mod tests {
         Chatters(u8),
     }
 
-    /// Peer 1 carries a request for `secs` seconds beside idle peer 2.
-    #[test_case(Feed::Nothing, 11, true; "a silent request")]
+    /// Peer 1 carries a request for `secs` seconds while idle peer 2 keeps receiving.
+    #[test_case(Feed::Nothing, 12, true; "a silent request")]
     #[test_case(Feed::Answers(1), 20, false; "the carrier answering keeps it alive")]
-    #[test_case(Feed::Answers(2), 11, true; "another peer answering is not progress")]
+    #[test_case(Feed::Answers(2), 12, true; "another peer answering is not progress")]
     #[test_case(Feed::Streams(1), 55, false; "the carrier streaming one long answer keeps it alive")]
     #[test_case(Feed::Streams(1), 61, true; "the carrier streaming one answer past the bound stalls")]
-    #[test_case(Feed::Streams(2), 11, true; "another peer streaming is not progress")]
-    #[test_case(Feed::Chatters(1), 11, true; "the carrier sending only small messages stalls")]
+    #[test_case(Feed::Streams(2), 12, true; "another peer streaming is not progress")]
+    #[test_case(Feed::Chatters(1), 12, true; "the carrier sending only small messages stalls")]
     #[tokio::test(start_paused = true)]
     async fn the_timeout_monitor_requeues_stalled_requests(feed: Feed, secs: u64, stalls: bool) {
         let net = broker().await;
@@ -1610,6 +1993,10 @@ mod tests {
 
         for second in 0..secs as usize {
             tokio::time::advance(TIMEOUT_CHECK).await;
+            // Peer 2 proves our link works, unless the feed already sends it bytes.
+            if !matches!(feed, Feed::Streams(2) | Feed::Chatters(2)) {
+                deliver(&net, conn(2, 0), &mut far_ends[1], &ping).await;
+            }
             match feed {
                 Feed::Nothing => {}
                 Feed::Answers(peer) => {
@@ -1623,13 +2010,12 @@ mod tests {
                         .send(PeerEvent::Message(conn(peer, 0), piece.into()))
                         .expect("the pump is running");
                 }
-                // A kicked peer's socket is closed, so a write after the kick fails.
                 Feed::Streams(peer) => {
                     let piece = &long_answer[second * 1000..(second + 1) * 1000];
-                    let _ = far_ends[peer as usize - 1].write_all(piece).await;
+                    deliver(&net, conn(peer, 0), &mut far_ends[peer as usize - 1], piece).await;
                 }
                 Feed::Chatters(peer) => {
-                    let _ = far_ends[peer as usize - 1].write_all(&ping).await;
+                    deliver(&net, conn(peer, 0), &mut far_ends[peer as usize - 1], &ping).await;
                 }
             }
             settle().await;
@@ -1638,6 +2024,8 @@ mod tests {
         // A stalled request is re-queued and may already be routed to peer 2.
         let carrier = net.state.broker.carrier_of(&RequestKey::CFilters(0)).await;
         assert_eq!(carrier == Some(conn(1, 0)), !stalls, "carrier {carrier:?}");
+        let banned = net.state.bans.banned().await.contains(&conn(1, 0).addr());
+        assert_eq!(banned, stalls, "a peer kicked beside a witness is banned");
     }
 
     /// A timeout kick re-queues the stalled peer's work only once that peer is closed and out
@@ -1647,10 +2035,11 @@ mod tests {
     async fn a_kicked_peer_gets_none_of_its_requeued_work() {
         let net = broker().await;
         let session = net.session.lock().await.clone();
-        let mut handles = Vec::new();
-        for n in 1..=2 {
-            let peer = ConnectedPeer::for_test(conn(n, 0)).await;
-            handles.push(peer.handle());
+        let stalled = ConnectedPeer::for_test(conn(1, 0)).await;
+        let (witness, mut witness_far) =
+            ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
+        let handles = [stalled.handle(), witness.handle()];
+        for peer in [stalled, witness] {
             let admitted =
                 net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
             assert!(matches!(admitted, Admission::Joined));
@@ -1658,10 +2047,8 @@ mod tests {
         net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
 
         let held = net.state.broker.hold_queue_of(&get_cfilters(0)).await;
-        time::advance(REQUEST_TIMEOUT + TIMEOUT_CHECK * 2).await;
-        for _ in 0..4 {
-            task::yield_now().await;
-        }
+        // The second peer keeps receiving, so the stall is not blamed on our link.
+        advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs() + 2).await;
         let key = RequestKey::CFilters(0);
         assert_eq!(
             net.state.broker.state_of(&key).await,
@@ -1686,27 +2073,260 @@ mod tests {
     async fn the_timeout_monitor_times_an_idle_peer_from_its_first_request() {
         let net = broker().await;
         let session = net.session.lock().await.clone();
-        let id = conn(1, 0);
-        let peer = ConnectedPeer::for_test(id).await;
+        let peer = ConnectedPeer::for_test(conn(1, 0)).await;
         let handle = peer.handle();
-        let admitted = net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
-        assert!(matches!(admitted, Admission::Joined));
-
-        for _ in 0..3 {
-            tokio::time::advance(REQUEST_TIMEOUT).await;
-            tokio::task::yield_now().await;
+        let (witness, mut witness_far) =
+            ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
+        for peer in [peer, witness] {
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
         }
+
+        // The second peer keeps receiving, so a stall is not blamed on our link.
+        advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs() * 3).await;
         // Only the charge matters here: the loopback has no reader to answer it.
         let _ = handle.send(&get_cfilters(0)).await;
         assert!(handle.in_flight_bytes() > 0);
 
-        tokio::time::advance(TIMEOUT_CHECK * 2).await;
-        tokio::task::yield_now().await;
-        assert_eq!(net.connected_count().await, 1, "kicked right after its first request");
+        advance_receiving(&net, conn(2, 0), &mut witness_far, 2).await;
+        assert_eq!(net.connected_count().await, 2, "kicked right after its first request");
 
-        tokio::time::advance(REQUEST_TIMEOUT).await;
-        tokio::task::yield_now().await;
-        assert_eq!(net.connected_count().await, 0, "a peer silent with work stays connected");
+        advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs()).await;
+        assert_eq!(net.connected_count().await, 1, "a peer silent with work stays connected");
+    }
+
+    /// What a peer of the set does, second by second.
+    #[derive(Clone, Copy)]
+    enum Role {
+        /// Holds a request the registry tracks and receives bytes until this second.
+        Registered(u64),
+        /// Owes bytes the registry does not track and receives bytes until this second.
+        Charged(u64),
+        /// Idle, and receives bytes from this second on.
+        Delivers(u64),
+        /// Connects at this second, idle, and receives nothing.
+        Joins(u64),
+        /// Owes bytes. Receives until the time in the first field and again from the time
+        /// in the second, both in seconds.
+        Resumes(u64, u64),
+        /// Idle, and receives bytes every this many seconds.
+        Whispers(u64),
+        /// Holds a request the registry tracks and receives small whole messages from
+        /// this second on.
+        Chatters(u64),
+        /// Owes bytes. Repeats being silent for the first field's seconds and receiving for
+        /// the second's.
+        Flaps(u64, u64),
+        /// Holds a request the registry tracks, sent this many milliseconds in, and receives
+        /// nothing.
+        Asks(u64),
+        /// Holds a request the registry tracks and receives part of its answer every this many
+        /// seconds, never all of it.
+        Streams(u64),
+    }
+
+    /// Peer `n + 1` plays `roles[n]` for `secs` seconds. `link_stalled` is whether the
+    /// judge then suspects our own link, `unbanned` the peers kicked with no witness.
+    #[test_case(&[Role::Registered(0); 3], 11, &[1, 2, 3], true, &[]; "a stall of every peer at once is our link")]
+    #[test_case(&[Role::Registered(0); 3], 41, &[1, 2, 3], true, &[]; "a 40 s silence of every peer kicks nobody")]
+    #[test_case(&[Role::Registered(0); 3], 71, &[2, 3], true, &[1]; "every peer silent past the bound loses the one silent the longest")]
+    #[test_case(&[Role::Registered(0); 3], 72, &[3], true, &[1, 2]; "every peer silent past the bound loses one per timeout")]
+    #[test_case(&[Role::Charged(0); 3], 25, &[1, 2, 3], true, &[]; "a long stall of every peer is still our link")]
+    #[test_case(&[Role::Registered(1), Role::Registered(2), Role::Registered(3)], 25, &[1, 2, 3], true, &[]; "peers going silent a second apart in an outage stay")]
+    #[test_case(&[Role::Charged(1), Role::Charged(2), Role::Charged(3)], 25, &[1, 2, 3], true, &[]; "peers owing bytes and going silent a second apart stay")]
+    #[test_case(&[Role::Delivers(0), Role::Registered(0), Role::Delivers(0)], 12, &[1, 3], false, &[]; "a lone silent request among delivering peers is kicked")]
+    #[test_case(&[Role::Delivers(0), Role::Charged(0), Role::Delivers(0)], 12, &[1, 3], false, &[]; "a lone peer owing bytes among delivering peers is kicked")]
+    #[test_case(&[Role::Delivers(0), Role::Asks(1500), Role::Delivers(0)], 12, &[1, 3], false, &[]; "a request sent between ticks is kicked on the first tick past its timeout")]
+    #[test_case(&[Role::Streams(3)], 61, &[], false, &[]; "a sole peer streaming a never finished answer is kicked at the answer bound")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(0)], 12, &[2, 3], false, &[]; "two stalls beside a delivering peer kick one")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(0)], 23, &[2], false, &[]; "the second stall goes a timeout later")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(1)], 12, &[2, 3], false, &[]; "stalls a second apart beside a delivering peer go one per timeout")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(2)], 14, &[2, 3], false, &[]; "stalls two seconds apart beside a delivering peer go one per timeout")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(1), Role::Joins(11)], 12, &[2, 3, 4], false, &[]; "a replacement joining does not unpace the next stall")]
+    #[test_case(&[Role::Registered(0), Role::Delivers(13), Role::Registered(1)], 24, &[2, 3], false, &[]; "a late witness kicks the peer silent the longest a timeout later")]
+    #[test_case(&[Role::Resumes(5, 20), Role::Resumes(5, 20), Role::Charged(5)], 25, &[1, 2, 3], true, &[]; "a peer still silent when the link is back gets a timeout")]
+    #[test_case(&[Role::Resumes(5, 20), Role::Resumes(5, 20), Role::Charged(5)], 31, &[1, 2], false, &[]; "a peer silent a timeout after the link is back is kicked")]
+    #[test_case(&[Role::Charged(0), Role::Whispers(3)], 32, &[1, 2], true, &[]; "a lone peer owing bytes beside a pinging idle one is held while the pings add up")]
+    #[test_case(&[Role::Charged(0), Role::Whispers(3)], 33, &[2], false, &[]; "a lone peer owing bytes beside a pinging idle one is kicked once they add up to a timeout")]
+    #[test_case(&[Role::Registered(0)], 41, &[1], true, &[]; "a sole silent peer stays through a 40 s outage")]
+    #[test_case(&[Role::Registered(0)], 61, &[], false, &[1]; "a sole silent peer is kicked past the bound")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Joins(12)], 13, &[1, 2, 3], true, &[]; "a peer joining during an outage proves nothing")]
+    #[test_case(&[Role::Charged(0), Role::Delivers(30)], 15, &[1, 2], true, &[]; "a lone peer owing bytes beside a quiet idle one is held")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 34, &[1, 2, 3], true, &[]; "an idle peer receiving first after an outage gives the held peers a timeout")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 36, &[2, 3], false, &[]; "held peers silent a timeout after an idle peer receives go")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Delivers(25)], 47, &[3], false, &[]; "held peers silent after an idle peer receives go one per timeout")]
+    #[test_case(&[Role::Charged(0), Role::Whispers(10)], 67, &[1, 2], true, &[]; "a lone peer owing bytes beside sparse traffic is held up to the bound")]
+    #[test_case(&[Role::Charged(0), Role::Whispers(10)], 68, &[2], false, &[1]; "a lone peer owing bytes beside sparse traffic is kicked at the bound")]
+    #[test_case(&[Role::Resumes(0, 55), Role::Charged(0)], 64, &[1, 2], true, &[]; "a peer silent through a 55 s outage gets a timeout after it")]
+    #[test_case(&[Role::Resumes(0, 55), Role::Charged(0)], 65, &[1], false, &[]; "a peer silent a timeout after a 55 s outage is kicked")]
+    #[test_case(&[Role::Chatters(0)], 12, &[], false, &[]; "a sole peer receiving only small messages is kicked")]
+    #[test_case(&[Role::Chatters(25); 3], 36, &[2, 3], false, &[]; "peers receiving only small messages after an outage go one per timeout")]
+    #[test_case(&[Role::Charged(0), Role::Flaps(12, 5)], 46, &[1, 2], true, &[]; "a dead peer beside a flapping link is held while its uptime adds up")]
+    #[test_case(&[Role::Charged(0), Role::Flaps(12, 5)], 47, &[2], false, &[]; "a dead peer beside a flapping link is kicked once its uptime adds up to a timeout")]
+    #[test_case(&[Role::Charged(0), Role::Flaps(3, 7), Role::Flaps(3, 7)], 16, &[1, 2, 3], true, &[]; "a dead peer beside peers pausing together is held while their uptime adds up")]
+    #[test_case(&[Role::Charged(0), Role::Flaps(3, 7), Role::Flaps(3, 7)], 17, &[2, 3], false, &[]; "a dead peer beside peers pausing together is kicked once their uptime adds up")]
+    #[test_case(&[Role::Charged(0), Role::Delivers(0), Role::Flaps(3, 1), Role::Flaps(3, 1)], 12, &[2, 3, 4], false, &[]; "a dead peer beside an idle stream and owing peers with gaps is kicked")]
+    #[test_case(&[Role::Charged(0), Role::Resumes(0, 12)], 21, &[1, 2], true, &[]; "a peer silent with one resuming on the timeout tick gets a timeout")]
+    #[test_case(&[Role::Charged(0), Role::Resumes(0, 12)], 22, &[2], false, &[]; "a peer silent with one resuming on the timeout tick is kicked a timeout later")]
+    #[test_case(&[Role::Charged(0), Role::Resumes(3, 9)], 16, &[1, 2], true, &[]; "a peer silent across a 5 s outage gets a timeout of uptime")]
+    #[test_case(&[Role::Charged(0), Role::Resumes(3, 9)], 17, &[2], false, &[]; "a peer silent across a 5 s outage is kicked after a timeout of uptime")]
+    #[test_case(&[Role::Charged(0), Role::Resumes(0, 40)], 49, &[1, 2], true, &[]; "a peer silent through a 40 s outage gets a timeout after it")]
+    #[test_case(&[Role::Charged(0), Role::Resumes(0, 40)], 50, &[2], false, &[]; "a peer silent a timeout after a 40 s outage is kicked")]
+    #[test_case(&[Role::Registered(0), Role::Registered(0), Role::Registered(0), Role::Charged(20)], 34, &[4], true, &[]; "stalls paced past the link's last uptime keep their witness")]
+    fn the_stall_judge_kicks_one_peer_per_shared_stall(
+        roles: &[Role],
+        secs: u64,
+        kept: &[u8],
+        link_stalled: bool,
+        unbanned: &[u8],
+    ) {
+        // Every received byte but a chatter's is part of an answer still arriving.
+        let peer = |n: u8, role: Role| Observed {
+            id: conn(n, 0),
+            bytes: 0,
+            partial: !matches!(role, Role::Chatters(_)),
+            in_flight: matches!(role, Role::Charged(_) | Role::Resumes(..) | Role::Flaps(..))
+                .into(),
+            timeout: REQUEST_TIMEOUT,
+        };
+        let start = Instant::now();
+        let mut peers: Vec<Observed> = (1..)
+            .zip(roles)
+            .filter(|(_, role)| !matches!(role, Role::Joins(_)))
+            .map(|(n, &role)| peer(n, role))
+            .collect();
+        // When each registered request was sent, and its last progress. None is answered.
+        let mut requests: HashMap<PeerId, (Instant, Instant)> = (1..)
+            .zip(roles)
+            .filter_map(|(n, &role)| {
+                let sent = match role {
+                    Role::Registered(_) | Role::Chatters(_) | Role::Streams(_) => start,
+                    Role::Asks(ms) => start + Duration::from_millis(ms),
+                    _ => return None,
+                };
+                Some((conn(n, 0), (sent, sent)))
+            })
+            .collect();
+        let mut judge = StallJudge::default();
+        let mut kicked_unbanned = Vec::new();
+
+        for second in 1..=secs {
+            for (n, &role) in (1..).zip(roles) {
+                let receives = match role {
+                    Role::Registered(until) | Role::Charged(until) => second <= until,
+                    Role::Delivers(from) | Role::Chatters(from) => second >= from,
+                    Role::Resumes(until, from) => second <= until || second >= from,
+                    Role::Whispers(period) | Role::Streams(period) => second.is_multiple_of(period),
+                    Role::Asks(_) => false,
+                    Role::Flaps(silent, receiving) => (second - 1) % (silent + receiving) >= silent,
+                    Role::Joins(at) => {
+                        if second == at {
+                            peers.push(peer(n, role));
+                        }
+                        false
+                    }
+                };
+                if let Some(p) = peers.iter_mut().find(|p| receives && p.id == conn(n, 0)) {
+                    p.bytes += 100;
+                }
+            }
+            let now = start + Duration::from_secs(second);
+            for id in judge.observe(now, &peers) {
+                if let Some((_, progress)) = requests.get_mut(&id) {
+                    *progress = now;
+                }
+            }
+            // As `Broker::expire` blames a request: from its progress, or from its answer.
+            let stalled = requests
+                .iter()
+                .filter_map(|(&id, &(sent, progress))| {
+                    if now.duration_since(progress) > REQUEST_TIMEOUT {
+                        Some((id, progress))
+                    } else {
+                        (now.duration_since(sent) > REQUEST_TIMEOUT * ANSWER_TIMEOUTS)
+                            .then_some((id, sent))
+                    }
+                })
+                .collect();
+            let (kicked, _, unwitnessed) = judge.judge(now, &peers, stalled);
+            assert!(kicked.len() <= 1, "second {second} kicked {kicked:?}");
+            kicked_unbanned.extend(unwitnessed);
+            peers.retain(|p| !kicked.contains(&p.id));
+            requests.retain(|id, _| !kicked.contains(id));
+        }
+
+        let left: Vec<PeerId> = peers.iter().map(|p| p.id).collect();
+        let kept: Vec<PeerId> = kept.iter().map(|&n| conn(n, 0)).collect();
+        assert_eq!(left, kept);
+        assert_eq!(judge.link_stalled, link_stalled);
+        let unbanned: Vec<PeerId> = unbanned.iter().map(|&n| conn(n, 0)).collect();
+        assert_eq!(kicked_unbanned, unbanned, "kicked without a ban");
+    }
+
+    /// A peer's silence with work drags its serving rate. Once every peer is silent long
+    /// enough for the judge to hold them as a possible stall of our own link, the flow
+    /// controller leaves the rates alone, since such a stall says nothing about the peers.
+    #[tokio::test(start_paused = true)]
+    async fn a_stall_of_our_link_leaves_the_serving_rates_alone() {
+        let net = broker().await;
+        let _feeders = measured_peers(&net, &[1 << 20, 200 << 10]).await;
+        let measured = serving_rates(&net).await;
+
+        advance_silent(REQUEST_TIMEOUT.as_secs() + 2).await;
+        let held = serving_rates(&net).await;
+        assert!(held.iter().zip(&measured).all(|(h, m)| h < m), "{held:?} vs {measured:?}");
+
+        advance_silent(REQUEST_TIMEOUT.as_secs() * 3).await;
+        assert_eq!(serving_rates(&net).await, held);
+        assert_eq!(net.connected_count().await, 2, "a held peer was kicked");
+    }
+
+    /// Peer 2 serves a fifth of peer 1's rate, then both go silent and the supervisor starts
+    /// `start_at` seconds in. While the judge holds them it must not swap peer 2 out, nor dial
+    /// once the hold began. When the peers deliver again, the held back swap goes ahead.
+    #[test_case(REQUEST_TIMEOUT.as_secs() + 2, 0; "a round during the stall dials nobody")]
+    #[test_case(REQUEST_TIMEOUT.as_secs() - 2, 1; "a stall during the dial keeps the slow peer")]
+    #[tokio::test(start_paused = true)]
+    async fn no_slow_peer_is_swapped_out_while_our_link_stalls(start_at: u64, dials: usize) {
+        let replacement = HandshakingPeer::listen().await;
+        let mut config = ClientConfig::regtest().with_restrict_to_configured_peers(true);
+        config.add_peer(replacement.addr);
+        config.max_peers = 2;
+        config.transport_preference = TransportPreference::V1Only;
+        let net = PeerNetworkManager::new(&config).await;
+        let mut feeders = measured_peers(&net, &[1 << 20, 200 << 10]).await;
+        let slow = feeders[1].handle.clone();
+
+        advance_silent(start_at).await;
+        net.start().await;
+        settle().await;
+        advance_silent((REQUEST_TIMEOUT.as_secs() + 2).saturating_sub(start_at)).await;
+        replacement.go.notify_one();
+        for _ in 0..100_000 {
+            if replacement.closed.load(Ordering::SeqCst) || slow.is_closed() {
+                break;
+            }
+            task::yield_now().await;
+        }
+
+        assert_eq!(replacement.accepted.load(Ordering::SeqCst), dials);
+        assert_eq!(replacement.pinged.load(Ordering::SeqCst), dials > 0, "handshake finished");
+        assert!(!slow.is_closed(), "the slow peer was swapped out");
+        assert_eq!(net.connected_count().await, 2);
+
+        // The peers deliver again, which proves our link works, and the held back swap goes
+        // ahead. Nothing but the pick of a slow peer wakes a full supervisor.
+        replacement.go.notify_one();
+        for _ in 0..8 * 4 {
+            feed(&net, &mut feeders, 1).await;
+            if slow.is_closed() {
+                break;
+            }
+        }
+        assert!(slow.is_closed(), "the slow peer was kept once our link recovered");
+        assert_eq!(replacement.accepted.load(Ordering::SeqCst), dials + 1);
+        assert_eq!(net.connected_count().await, 2);
     }
 
     #[test_case(&[&[MessageType::Inv], &[MessageType::Inv]], 0, &[1, 1]; "every subscriber of the type")]

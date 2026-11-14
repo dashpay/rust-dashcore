@@ -15,7 +15,7 @@ const KICKING_ATTEMPTS: u32 = 2;
 /// How many timeouts a request lives on bytes of a message still arriving, without an
 /// answer. A big answer on a slow link must fit, but a message that never finishes must
 /// not keep its request alive forever.
-const ANSWER_TIMEOUTS: u32 = 6;
+pub(super) const ANSWER_TIMEOUTS: u32 = 6;
 const HEDGE_AFTER: Duration = Duration::from_secs(2);
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
@@ -237,25 +237,31 @@ impl Broker {
         }
     }
 
-    /// Returns the peers to kick for a stalled request. A request stalls after a timeout
-    /// without progress, or after [`ANSWER_TIMEOUTS`] timeouts without an answer. A request
-    /// that already stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
-    pub async fn expire(&self, timeout: impl Fn(&PeerId) -> Duration) -> HashSet<PeerId> {
+    /// Returns the peers of stalled requests, each with the earliest instant its stalled
+    /// requests are blamed from. A request stalls after a timeout without
+    /// progress, or after [`ANSWER_TIMEOUTS`] timeouts without an answer. A request that
+    /// already stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
+    pub async fn expire(&self, timeout: impl Fn(&PeerId) -> Duration) -> HashMap<PeerId, Instant> {
         let now = Instant::now();
-        let mut culprits = HashSet::new();
+        let mut culprits: HashMap<PeerId, Instant> = HashMap::new();
         let mut unanswerable = HashSet::new();
         for (key, state) in self.requests.lock().await.iter() {
             let ReqState::OnWire(o) = state else {
                 continue;
             };
             let timeout = timeout(&o.peer);
-            if now.duration_since(o.last_progress) <= timeout
-                && now.duration_since(o.last_answer) <= timeout * ANSWER_TIMEOUTS
-            {
+            let silent_since = if now.duration_since(o.last_progress) > timeout {
+                o.last_progress
+            } else if now.duration_since(o.last_answer) > timeout * ANSWER_TIMEOUTS {
+                // Blamed from the answer, not the recent bytes, so those bytes show our
+                // link works and the peer is not held as a link stall.
+                o.last_answer
+            } else {
                 continue;
-            }
+            };
             if o.attempts < KICKING_ATTEMPTS {
-                culprits.insert(o.peer);
+                let since = culprits.entry(o.peer).or_insert(silent_since);
+                *since = (*since).min(silent_since);
             } else {
                 tracing::debug!(
                     target: "dash_spv::network",
