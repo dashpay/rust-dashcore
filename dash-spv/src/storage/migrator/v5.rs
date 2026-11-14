@@ -42,3 +42,29 @@ fn has_checksum(bytes: &[u8]) -> bool {
         blake3::hash(data).as_bytes() == checksum
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::storage::io::ChecksummedFile;
+
+    #[tokio::test]
+    async fn test_v5_appends_checksum_once() {
+        let temp_dir = TempDir::new().unwrap();
+        let snapshot_path = temp_dir.path().join(SNAPSHOT_PATH);
+
+        fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
+        fs::write(&snapshot_path, b"snapshot").unwrap();
+
+        for _ in 0..2 {
+            V5Migrator.apply_migration(temp_dir.path()).await.unwrap();
+        }
+
+        let file = ChecksummedFile::<u8>::new(&snapshot_path);
+        assert_eq!(file.read_bytes().await.unwrap(), b"snapshot");
+    }
+}

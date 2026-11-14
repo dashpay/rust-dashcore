@@ -232,3 +232,31 @@ async fn join_one(tasks: &mut JoinSet<Result<(), MigratorError>>) -> Result<(), 
         None => Ok(()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_interrupted_migration_wipes_storage() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage_path = temp_dir.path().to_path_buf();
+        let marker_path = storage_path.join("migration_in_progress");
+        let snapshot_path = storage_path.join("masternodes").join("engine.dat");
+
+        StorageMigrator::migrate(&storage_path).await.unwrap();
+        assert!(!marker_path.exists());
+
+        fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
+        fs::write(&snapshot_path, b"snapshot").unwrap();
+        fs::write(&marker_path, []).unwrap();
+        StorageMigrator::migrate(&storage_path).await.unwrap();
+
+        assert!(!snapshot_path.exists());
+        assert!(!marker_path.exists());
+    }
+}

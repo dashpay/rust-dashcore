@@ -62,3 +62,36 @@ fn has_checksum(bytes: &[u8]) -> bool {
         blake3::hash(data).as_bytes() == checksum
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use dashcore::block::Header;
+    use dashcore::consensus::Encodable;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::storage::io::ChecksummedFile;
+    use crate::types::HashedBlockHeader;
+
+    #[tokio::test]
+    async fn test_v4_appends_checksum_once() {
+        let temp_dir = TempDir::new().unwrap();
+        let segment_path = temp_dir.path().join("block_headers").join("segment_000000.dat");
+
+        let headers: Vec<HashedBlockHeader> =
+            (0..3).map(|height| HashedBlockHeader::from(Header::dummy(height))).collect();
+        let mut segment = Vec::new();
+        for header in &headers {
+            header.consensus_encode(&mut segment).unwrap();
+        }
+        fs::create_dir_all(segment_path.parent().unwrap()).unwrap();
+        fs::write(&segment_path, segment).unwrap();
+
+        for _ in 0..2 {
+            V4Migrator.apply_migration(temp_dir.path()).await.unwrap();
+        }
+
+        let file = ChecksummedFile::<HashedBlockHeader>::new(&segment_path);
+        assert_eq!(file.read().await.unwrap(), headers);
+    }
+}
