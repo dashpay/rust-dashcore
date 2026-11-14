@@ -27,6 +27,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Read the workspace version
         id: version
@@ -34,21 +36,10 @@ jobs:
           version=$(python3 .github/scripts/release.py version)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Tag the release
+      # Creates the tag on the pushed commit too, unless it already exists.
+      - name: Tag and create the GitHub release
         env:
-          TAG: v${{ steps.version.outputs.version }}
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
-            echo "$TAG already exists"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "$TAG"
-
-      - name: Create the GitHub release
-        env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -57,7 +48,7 @@ jobs:
             exit 0
           fi
           python3 .github/scripts/release.py notes "$VERSION" > "$RUNNER_TEMP/notes.md"
-          gh release create "v$VERSION" --verify-tag --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest
 
   bump:
     name: Bring the release to dev
