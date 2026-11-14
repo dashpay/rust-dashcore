@@ -45,7 +45,8 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 ## Branches and releases
 
 - Branch from `dev` and open every PR against `dev`. This includes fixes and docs.
-- `master` holds the latest release. Maintainers cut a `chore/release-vX.Y.Z` branch, merge it into `master` and tag `vX.Y.Z`. Don't target `master` or a release branch.
+- `master` holds the latest release. Don't target `master` or a release branch.
+- To release, maintainers cut a `chore/release-vX.Y.Z` branch from `dev`, add the `## X.Y.Z - YYYY-MM-DD` changelog section and open a PR into `master` with the `release` label. `Release Check` requires that section and a version above the latest tag, and rejects a PR an earlier release already lists. It warns about merged `feat`, `fix`, `perf` and `refactor` PRs the section leaves out. Merge with a merge commit, not a squash, so `master` keeps the `dev` history. The `Release` workflow then tags `vX.Y.Z`, publishes the GitHub release and opens the PR that bumps `dev` to the next version.
 - `CHANGELOG.md` is written from the merged PR titles when a release is cut. Don't edit it in a feature PR: CI fails a PR that touches it unless it carries the `release` label.
 
 ## Rust code style

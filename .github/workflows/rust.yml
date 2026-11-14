@@ -59,6 +59,17 @@ jobs:
       - name: Verify group config and hardcoded matrix
         run: just gha::verify-groups
 
+  test-release:
+    name: Test Release Script
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: taiki-e/install-action@v2.90.0
+        with:
+          tool: just
+      - name: Test the release script
+        run: just gha::test-release
+
   verify-actions-lock:
     name: Verify Action Lockfile
     runs-on: ubuntu-latest
