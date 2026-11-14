@@ -29,6 +29,6 @@ jobs:
         with:
           node-version: '24'
       - name: Manki Review
-        uses: manki-review/manki@v7.4.0
+        uses: manki-review/manki@v7.5.0
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
