@@ -24,9 +24,9 @@ WORKSPACE_VERSION = re.compile(r'(^\[workspace\.package\]\n(?:(?!\[)[^\n]*\n)*?v
 SECTION_START = re.compile(r"^## ", re.MULTILINE)
 RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+")
 SECTION_VERSION = re.compile(r"## (\d+\.\d+\.\d+) - ")
-# `#123`, but not `rust-bitcoin#123`, a URL fragment or `[#123](...)`, which old entries use for
-# upstream rust-bitcoin PRs.
-PR_REFERENCE = re.compile(r"(?<![\w/\[])#(\d+)\b")
+# The `(#123)` or `(#123, #124)` that ends an entry, before its authors. Any other `#123` in an
+# entry mentions another PR, as a revert or a follow-up does.
+OWN_PRS = re.compile(r"\((#\d+(?:, #\d+)*)\)\.?(?: @[\w-]+)*[ \t]*$", re.MULTILINE)
 # `title (#123)` from a squash merge, `Merge pull request #123 from ...` from a merge commit.
 MERGED_PR = re.compile(r"\(#(\d+)\)$|^Merge pull request #(\d+) ")
 # Conventional Commit types that change the library for its users. Other PRs (`ci`, `docs`,
@@ -83,8 +83,9 @@ def release_section(changelog: str, version: str) -> str:
     raise ReleaseError(f"CHANGELOG.md has no `## {version} - YYYY-MM-DD` section")
 
 
-def pr_references(text: str) -> set[int]:
-    return {int(number) for number in PR_REFERENCE.findall(text)}
+def own_prs(text: str) -> set[int]:
+    """Returns the PRs the entries in `text` are for."""
+    return {int(number) for group in OWN_PRS.findall(text) for number in re.findall(r"\d+", group)}
 
 
 def merged_prs(subjects: list[str]) -> dict[int, str]:
@@ -113,8 +114,8 @@ def check(version: str, changelog: str, tags: list[str], merged: dict[int, str] 
     if released and parse_version(version) <= max(released):
         latest = ".".join(map(str, max(released)))
         raise ReleaseError(f"{version} is not above the latest release v{latest}")
-    listed = pr_references(section)
-    earlier = pr_references("".join(other for other in split_sections(changelog)[1] if not other.startswith(f"## {version} ")))
+    listed = own_prs(section)
+    earlier = own_prs("".join(other for other in split_sections(changelog)[1] if not other.startswith(f"## {version} ")))
     shipped = listed & earlier
     if shipped:
         raise ReleaseError(f"the {version} section lists PRs an earlier release already lists: {format_prs(shipped)}")
