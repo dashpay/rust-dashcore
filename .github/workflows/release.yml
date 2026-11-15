@@ -3,7 +3,8 @@ name: Release
 # Publishes the release a merged release PR puts on `master`: tags the workspace version and
 # creates the GitHub release from its changelog section. Then opens the PR that brings the
 # section to `dev`, with the next version unless `dev` is already past the release. Each step
-# skips what already exists, so a failed run can be rerun.
+# skips what already exists, so a failed run can be rerun. A patch release needs the PR that
+# brought the previous release to `dev` merged first, or the `bump` job fails until it is.
 
 on:
   push:
