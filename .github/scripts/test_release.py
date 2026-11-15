@@ -97,6 +97,8 @@ class CheckTests(unittest.TestCase):
 
     def test_warns_about_unmerged_and_left_out_prs(self):
         merged = {
+            # Cherry-picked into a patch release, so the tag does not reach the copy on `dev`.
+            1: "fix: old thing (#1)",
             3: "feat(dash-spv)!: left out (#3)",
             4: "fix: left out too (#4)",
             5: "ci: routinely left out (#5)",
