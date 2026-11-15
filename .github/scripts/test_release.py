@@ -125,21 +125,24 @@ class MergedPrsTests(unittest.TestCase):
 class BumpTests(unittest.TestCase):
     def test_inserts_the_released_section_and_bumps_the_version(self):
         dev_changelog = HEADER + "## 0.45.0 - 2026-10-21\n\n### Fixed\n\n- Old thing (#1) @b\n"
-        cargo_toml, changelog, version = bump(CARGO_TOML, dev_changelog, CHANGELOG, "0.46.0")
-        self.assertEqual(version, "0.47.0")
+        cargo_toml, changelog, version, added = bump(CARGO_TOML, dev_changelog, CHANGELOG, "0.46.0")
+        self.assertEqual((version, added), ("0.47.0", True))
         self.assertEqual(workspace_version(cargo_toml), "0.47.0")
         self.assertEqual(changelog, CHANGELOG)
+        _, _, body = bump_pr("0.46.0", version, added, "dashpay/rust-dashcore", "abc123")
+        self.assertIn("Add the `0.46.0` changelog section", body)
 
     def test_first_release_into_a_changelog_without_sections(self):
-        _, changelog, _ = bump(CARGO_TOML, "# Changelog\n\n", CHANGELOG, "0.46.0")
+        _, changelog, _, _ = bump(CARGO_TOML, "# Changelog\n\n", CHANGELOG, "0.46.0")
         self.assertEqual(changelog, "# Changelog\n\n## 0.46.0 - 2026-11-13\n\n### Added\n\n- New thing (#2) @a\n")
 
     def test_patch_release_adds_its_section_below_newer_ones_and_keeps_the_version(self):
         dev_cargo_toml = set_workspace_version(CARGO_TOML, "0.47.0")
         dev_changelog = HEADER + "## 0.47.0 - 2026-12-01\n\n- Newer (#9) @c\n\n" + CHANGELOG[len(HEADER) :]
         released = CHANGELOG.replace("## 0.46.0 - 2026-11-13", "## 0.46.1 - 2026-11-20\n\n- Patch (#5) @d\n\n## 0.46.0 - 2026-11-13")
-        cargo_toml, changelog, version = bump(dev_cargo_toml, dev_changelog, released, "0.46.1")
+        cargo_toml, changelog, version, added = bump(dev_cargo_toml, dev_changelog, released, "0.46.1")
         self.assertIsNone(version)
+        self.assertTrue(added)
         self.assertEqual(cargo_toml, dev_cargo_toml)
         self.assertEqual(
             changelog,
@@ -151,8 +154,11 @@ class BumpTests(unittest.TestCase):
         self.assertIsNone(bump(moved_on, CHANGELOG, CHANGELOG, "0.46.0"))
 
     def test_bumps_a_dev_that_already_has_the_section(self):
-        cargo_toml, changelog, version = bump(CARGO_TOML, CHANGELOG, CHANGELOG, "0.46.0")
-        self.assertEqual((workspace_version(cargo_toml), changelog, version), ("0.47.0", CHANGELOG, "0.47.0"))
+        cargo_toml, changelog, version, added = bump(CARGO_TOML, CHANGELOG, CHANGELOG, "0.46.0")
+        self.assertEqual((workspace_version(cargo_toml), changelog, version, added), ("0.47.0", CHANGELOG, "0.47.0", False))
+        _, _, body = bump_pr("0.46.0", version, added, "dashpay/rust-dashcore", "abc123")
+        self.assertIn("Bump the workspace version to `0.47.0`", body)
+        self.assertNotIn("changelog section", body)
 
     def test_refuses_a_section_that_is_not_a_release_or_dev_behind_the_release(self):
         behind = set_workspace_version(CARGO_TOML, "0.45.0")
@@ -168,11 +174,11 @@ class BumpTests(unittest.TestCase):
             bump(CARGO_TOML, HEADER, HEADER, "0.46.0")
 
     def test_pr_text_for_a_bump_and_for_a_patch_release(self):
-        branch, title, body = bump_pr("0.46.0", "0.47.0", "dashpay/rust-dashcore", "abc123")
+        branch, title, body = bump_pr("0.46.0", "0.47.0", True, "dashpay/rust-dashcore", "abc123")
         self.assertEqual((branch, title), ("chore/bump-version-to-0.47.0", "chore: bump version to `0.47.0`"))
         self.assertIn("https://github.com/dashpay/rust-dashcore/releases/tag/v0.46.0", body)
         self.assertIn("tag `v0.46.0` on abc123", body)
-        branch, title, body = bump_pr("0.46.1", None, "dashpay/rust-dashcore", "abc123")
+        branch, title, body = bump_pr("0.46.1", None, True, "dashpay/rust-dashcore", "abc123")
         self.assertEqual((branch, title), ("chore/changelog-v0.46.1", "chore: add the `0.46.1` changelog"))
         self.assertIn("its version stays", body)
 
