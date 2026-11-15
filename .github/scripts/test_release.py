@@ -92,7 +92,7 @@ class CheckTests(unittest.TestCase):
 
     def test_upstream_links_and_foreign_references_are_not_prs(self):
         changelog = CHANGELOG + "\n## 0.1.0 - 2020-01-01\n\n- Upstream [#2](https://github.com/rust-bitcoin/rust-bitcoin/pull/2)\n"
-        changelog = changelog.replace("(#2) @a", "(#2) @a, see rust-bitcoin#1 and https://example.com/x#1")
+        changelog = changelog.replace("New thing (#2)", "New thing, see rust-bitcoin#1 and https://example.com/x#1 (#2)")
         self.assertEqual(check("0.46.0", changelog, ["v0.45.0"], {2: "fix: new thing (#2)"}), [])
 
     def test_warns_about_unmerged_and_left_out_prs(self):
@@ -104,9 +104,10 @@ class CheckTests(unittest.TestCase):
             5: "ci: routinely left out (#5)",
             6: "chore: also routinely left out (#6)",
         }
-        warnings = check("0.46.0", CHANGELOG, ["v0.45.0"], merged)
+        mentions = CHANGELOG.replace("- New thing (#2) @a", '- New thing (#2) @a\n- Revert "feat: x (#1)" (#7) @c\n- Follow-up fixes to #1 (#8) @c')
+        warnings = check("0.46.0", mentions, ["v0.45.0"], merged)
         self.assertEqual(len(warnings), 2)
-        self.assertIn("not merged since the latest release: #2", warnings[0])
+        self.assertTrue(warnings[0].endswith("not merged since the latest release: #2, #7, #8"))
         self.assertTrue(warnings[1].endswith(": #3, #4"))
 
 
