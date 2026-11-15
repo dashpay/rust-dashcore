@@ -146,7 +146,9 @@ def bump(
         raise ReleaseError("CHANGELOG.md on dev has a section that is not a release, move its entries into one")
     version = workspace_version(cargo_toml)
     if parse_version(version) < parse_version(released):
-        raise ReleaseError(f"dev is on {version}, below the released {released}")
+        raise ReleaseError(
+            f"dev is on {version}, below the released {released}: merge the open version bump PR into dev, then rerun this job"
+        )
     if released in versions and version != released:
         return None
     new_changelog = changelog
