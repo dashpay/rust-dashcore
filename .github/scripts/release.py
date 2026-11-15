@@ -114,8 +114,8 @@ def check(version: str, changelog: str, tags: list[str], merged: dict[int, str] 
         latest = ".".join(map(str, max(released)))
         raise ReleaseError(f"{version} is not above the latest release v{latest}")
     listed = pr_references(section)
-    earlier = "".join(other for other in split_sections(changelog)[1] if not other.startswith(f"## {version} "))
-    shipped = listed & pr_references(earlier)
+    earlier = pr_references("".join(other for other in split_sections(changelog)[1] if not other.startswith(f"## {version} ")))
+    shipped = listed & earlier
     if shipped:
         raise ReleaseError(f"the {version} section lists PRs an earlier release already lists: {format_prs(shipped)}")
     if merged is None:
@@ -124,7 +124,7 @@ def check(version: str, changelog: str, tags: list[str], merged: dict[int, str] 
     unmerged = listed - merged.keys()
     if unmerged:
         warnings.append(f"the {version} section lists PRs not merged since the latest release: {format_prs(unmerged)}")
-    left_out = {number for number, subject in merged.items() if USER_FACING.match(subject)} - listed
+    left_out = {number for number, subject in merged.items() if USER_FACING.match(subject)} - listed - earlier
     if left_out:
         warnings.append(f"the {version} section leaves out these merged PRs, check that each is meant to: {format_prs(left_out)}")
     return warnings
