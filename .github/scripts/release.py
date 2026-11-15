@@ -130,8 +130,11 @@ def check(version: str, changelog: str, tags: list[str], merged: dict[int, str] 
     return warnings
 
 
-def bump(cargo_toml: str, changelog: str, released_changelog: str, released: str) -> tuple[str, str, str | None] | None:
-    """Returns `Cargo.toml` and `CHANGELOG.md` for `dev` after `released`, and the new version.
+def bump(
+    cargo_toml: str, changelog: str, released_changelog: str, released: str
+) -> tuple[str, str, str | None, bool] | None:
+    """Returns `Cargo.toml` and `CHANGELOG.md` for `dev` after `released`, the new version, and
+    whether the released section was added.
 
     `dev` on `released` moves to the next minor version. `dev` already past it, after a patch
     release, only gains the released section and keeps its version (`None`). Returns `None` when
@@ -147,7 +150,8 @@ def bump(cargo_toml: str, changelog: str, released_changelog: str, released: str
     if released in versions and version != released:
         return None
     new_changelog = changelog
-    if released not in versions:
+    added = released not in versions
+    if added:
         # Above the first older release, so a patch release lands below the newer sections.
         position = next(
             (index for index, other in enumerate(versions) if parse_version(other) < parse_version(released)),
@@ -156,12 +160,12 @@ def bump(cargo_toml: str, changelog: str, released_changelog: str, released: str
         sections.insert(position, release_section(released_changelog, released))
         new_changelog = header + "\n\n".join(section.strip() for section in sections) + "\n"
     if version != released:
-        return cargo_toml, new_changelog, None
+        return cargo_toml, new_changelog, None, added
     new_version = next_version(released)
-    return set_workspace_version(cargo_toml, new_version), new_changelog, new_version
+    return set_workspace_version(cargo_toml, new_version), new_changelog, new_version, added
 
 
-def bump_pr(released: str, new_version: str | None, repository: str, sha: str) -> tuple[str, str, str]:
+def bump_pr(released: str, new_version: str | None, added: bool, repository: str, sha: str) -> tuple[str, str, str]:
     """Returns the branch, title and body of the PR that brings a release to `dev`."""
     release = f"[`v{released}`](https://github.com/{repository}/releases/tag/v{released})"
     tag = f"The release is the tag `v{released}` on {sha}"
@@ -173,10 +177,12 @@ def bump_pr(released: str, new_version: str | None, repository: str, sha: str) -
             f"This PR goes into `dev` only. {tag}.\n\n{footer}"
         )
         return f"chore/changelog-v{released}", f"chore: add the `{released}` changelog", body
+    changes = f"- Bump the workspace version to `{new_version}`.\n"
+    if added:
+        changes += f"- Add the `{released}` changelog section, identical to the one on `master`.\n"
     body = (
         f"Starts the `{new_version}` development cycle on `dev` now that {release} is released from `master`.\n\n"
-        f"- Bump the workspace version to `{new_version}`.\n"
-        f"- Add the `{released}` changelog section, identical to the one on `master`.\n\n"
+        f"{changes}\n"
         f"This PR goes into `dev` only. {tag}, where the workspace version stays `{released}`.\n\n{footer}"
     )
     return f"chore/bump-version-to-{new_version}", f"chore: bump version to `{new_version}`", body
@@ -242,11 +248,15 @@ def main():
             if result is None:
                 print(f"::notice::dev already has the {args.released} changelog section")
                 return
-            new_cargo_toml, new_changelog, new_version = result
+            new_cargo_toml, new_changelog, new_version, added = result
             CARGO_TOML.write_text(new_cargo_toml)
             CHANGELOG.write_text(new_changelog)
             branch, title, body = bump_pr(
-                args.released, new_version, os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_SHA", "")
+                args.released,
+                new_version,
+                added,
+                os.environ.get("GITHUB_REPOSITORY", ""),
+                os.environ.get("GITHUB_SHA", ""),
             )
             print(title)
             set_output("branch", branch)
