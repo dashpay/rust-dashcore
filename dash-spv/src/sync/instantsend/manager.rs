@@ -241,8 +241,9 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
     ///
     /// Called both when a `MasternodeStateUpdated` event arrives and from `tick`
     /// once the engine has advanced. Locks that verify are emitted as
-    /// `InstantLockReceived` events; locks that still can't be verified are
-    /// re-queued until they either become verifiable or exceed [`PENDING_TTL`].
+    /// `InstantLockReceived` events, and locks their complete cycle refutes are
+    /// dropped. Locks that still can't be verified are re-queued until they
+    /// either become verifiable or exceed [`PENDING_TTL`].
     ///
     /// `now` is the current time used for TTL expiry; production callers pass
     /// `Instant::now()`. It is threaded in (rather than read here) so tests can
