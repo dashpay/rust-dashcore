@@ -9,11 +9,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
-use dashcore::consensus::encode;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hash_types::InstantSendLockHash;
 use dashcore::Txid;
-use dashcore_hashes::sha256d;
 use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
@@ -35,11 +33,6 @@ const CACHE_TTL: Duration = Duration::from_secs(3600);
 /// now be driven from `tick` as the engine advances, so an attempt counter
 /// would overrun long before an hour elapsed during a fresh sync.
 const PENDING_TTL: Duration = Duration::from_secs(3600);
-
-/// The hash of the serialized lock, as its inventory announces it.
-fn lock_hash(instant_lock: &InstantLock) -> InstantSendLockHash {
-    InstantSendLockHash::from_raw_hash(sha256d::Hash::hash(&encode::serialize(instant_lock)))
-}
 
 /// Pending InstantLock awaiting the quorum data required to verify it.
 #[derive(Debug, Clone)]
@@ -161,7 +154,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             self.progress.add_invalid(1);
             return Ok(vec![]);
         }
-        let hash = lock_hash(instantlock);
+        let hash = instantlock.hash();
         if self.pending_instantlocks.iter().any(|pending| pending.hash == hash) {
             tracing::debug!("The same InstantLock for txid {} is already pending", txid);
             return Ok(vec![]);
@@ -417,7 +410,7 @@ mod tests {
     /// back-dating this field — see [`past_ttl`].
     fn fresh_pending(txid: Txid) -> PendingInstantLock {
         let instant_lock = create_test_instantlock(txid);
-        let hash = lock_hash(&instant_lock);
+        let hash = instant_lock.hash();
         PendingInstantLock::new(instant_lock, hash)
     }
 

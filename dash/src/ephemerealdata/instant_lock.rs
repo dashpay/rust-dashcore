@@ -11,7 +11,10 @@ pub use std::vec::Vec;
 
 use crate::bls_sig_utils::BLSSignature;
 use crate::consensus::Encodable;
-use crate::hash_types::{CycleHash, QuorumSigningRequestId, QuorumSigningSignId};
+use crate::consensus::encode::serialize;
+use crate::hash_types::{
+    CycleHash, InstantSendLockHash, QuorumSigningRequestId, QuorumSigningSignId,
+};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
 use crate::{OutPoint, QuorumHash, Txid, VarInt, io};
@@ -52,6 +55,11 @@ impl Default for InstantLock {
 }
 
 impl InstantLock {
+    /// Returns the hash peers use to announce and request this lock.
+    pub fn hash(&self) -> InstantSendLockHash {
+        InstantSendLockHash::from_raw_hash(sha256d::Hash::hash(&serialize(self)))
+    }
+
     /// Returns quorum signing request ID
     pub fn request_id(&self) -> Result<QuorumSigningRequestId, io::Error> {
         let mut engine = sha256d::Hash::engine();
