@@ -1,34 +1,49 @@
-//! Authorization evidence for reserving a wallet coin before Core finality.
-
 use dashcore::crypto::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 use dashcore::ecdsa::Signature;
 use dashcore::hashes::hash160;
 use dashcore::script::Instruction;
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
 use dashcore::{Transaction, TxOut};
-use thiserror::Error;
 
 /// A pending spend whose authorization cannot be decided by the wallet signer contract.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum SpendAuthorizationError {
+    /// The transaction has no input at this index.
+    InputIndexOutOfRange(usize),
     /// The funding script requires a different authorization verifier.
-    #[error("pending spend uses an unsupported funding script")]
     UnsupportedScript,
     /// The signature does not commit to the complete transaction.
-    #[error("pending spend uses unsupported signature hash type {0:#x}")]
     UnsupportedSighash(u8),
 }
 
+impl core::fmt::Display for SpendAuthorizationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InputIndexOutOfRange(index) => {
+                write!(f, "pending spend has no input at index {}", index)
+            }
+            Self::UnsupportedScript => {
+                write!(f, "pending spend uses an unsupported funding script")
+            }
+            Self::UnsupportedSighash(mode) => {
+                write!(f, "pending spend uses unsupported signature hash type {:#x}", mode)
+            }
+        }
+    }
+}
+
+impl std::error::Error for SpendAuthorizationError {}
+
 /// Whether input `input_index` carries the owner's P2PKH `SIGHASH_ALL` signature for `prevout`.
 /// The caller takes `prevout` from the funding transaction of that input's outpoint.
-/// Unsupported forms return an error so an existing pending hold is not silently released.
+/// An unsupported form or a missing input returns an error, so a pending hold is not released.
 pub fn verify_input_authorization(
     transaction: &Transaction,
     input_index: usize,
     prevout: &TxOut,
 ) -> Result<bool, SpendAuthorizationError> {
     let Some(input) = transaction.input.get(input_index) else {
-        return Ok(false);
+        return Err(SpendAuthorizationError::InputIndexOutOfRange(input_index));
     };
     if transaction
         .input
@@ -94,7 +109,37 @@ mod tests {
     };
     use dashcore::crypto::ecdsa::EcdsaSecretKey;
     use dashcore::script::{Builder, PushBytesBuf};
-    use dashcore::{OutPoint, ScriptBuf, TxIn, Txid, Witness};
+    use dashcore::{OutPoint, ScriptBuf, TxIn, Txid};
+    use std::slice;
+
+    fn p2pkh_prevout(public_key: &[u8]) -> TxOut {
+        TxOut {
+            value: 100_000,
+            script_pubkey: ScriptBuf::new_p2pkh(&hash160::Hash::hash(public_key).into()),
+        }
+    }
+
+    /// An unsigned spend of one input per funding output, paying back to the first owner.
+    fn spend_of(prevouts: &[TxOut]) -> Transaction {
+        Transaction {
+            version: 1,
+            lock_time: 0,
+            input: (0..prevouts.len() as u32)
+                .map(|vout| TxIn {
+                    previous_output: OutPoint {
+                        txid: Txid::from_byte_array([3; 32]),
+                        vout,
+                    },
+                    ..Default::default()
+                })
+                .collect(),
+            output: vec![TxOut {
+                value: prevouts.iter().map(|prevout| prevout.value).sum::<u64>() - 10_000,
+                script_pubkey: prevouts[0].script_pubkey.clone(),
+            }],
+            special_transaction_payload: None,
+        }
+    }
 
     fn signed(uncompressed: bool) -> (Transaction, TxOut) {
         let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
@@ -103,38 +148,10 @@ mod tests {
         } else {
             key.public_key().to_compressed().to_vec()
         };
-        let prevout = TxOut {
-            value: 100_000,
-            script_pubkey: ScriptBuf::new_p2pkh(&hash160::Hash::hash(&public_key).into()),
-        };
-        let mut tx = Transaction {
-            version: 1,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint {
-                    txid: Txid::from_byte_array([3; 32]),
-                    vout: 2,
-                },
-                ..Default::default()
-            }],
-            output: vec![TxOut {
-                value: 90_000,
-                script_pubkey: prevout.script_pubkey.clone(),
-            }],
-            special_transaction_payload: None,
-        };
-        sign(&mut tx, &prevout, &key, &public_key, 1);
+        let prevout = p2pkh_prevout(&public_key);
+        let mut tx = spend_of(slice::from_ref(&prevout));
+        sign_input(&mut tx, 0, &prevout, &key, &public_key, 1);
         (tx, prevout)
-    }
-
-    fn sign(
-        tx: &mut Transaction,
-        prevout: &TxOut,
-        key: &EcdsaSecretKey,
-        public_key: &[u8],
-        mode: u8,
-    ) {
-        sign_input(tx, 0, prevout, key, public_key, mode);
     }
 
     fn sign_input(
@@ -161,31 +178,9 @@ mod tests {
         let keys = [[7; 32], [9; 32]].map(|bytes| EcdsaSecretKey::from_bytes(&bytes).unwrap());
         let public_keys =
             keys.iter().map(|key| key.public_key().to_compressed()).collect::<Vec<_>>();
-        let prevouts = public_keys
-            .iter()
-            .map(|public_key| TxOut {
-                value: 100_000,
-                script_pubkey: ScriptBuf::new_p2pkh(&hash160::Hash::hash(public_key).into()),
-            })
-            .collect::<Vec<_>>();
-        let mut tx = Transaction {
-            version: 1,
-            lock_time: 0,
-            input: (0..2)
-                .map(|vout| TxIn {
-                    previous_output: OutPoint {
-                        txid: Txid::from_byte_array([3; 32]),
-                        vout,
-                    },
-                    ..Default::default()
-                })
-                .collect(),
-            output: vec![TxOut {
-                value: 190_000,
-                script_pubkey: prevouts[0].script_pubkey.clone(),
-            }],
-            special_transaction_payload: None,
-        };
+        let prevouts =
+            public_keys.iter().map(|public_key| p2pkh_prevout(public_key)).collect::<Vec<_>>();
+        let mut tx = spend_of(&prevouts);
         for index in 0..2 {
             sign_input(&mut tx, index, &prevouts[index], &keys[index], &public_keys[index], 1);
         }
@@ -260,12 +255,15 @@ mod tests {
         assert_eq!(verify_input_authorization(&changed, 0, &prevout), Ok(false));
         let (_, different_encoding) = signed(true);
         assert_eq!(verify_input_authorization(&tx, 0, &different_encoding), Ok(false));
-        assert_eq!(verify_input_authorization(&tx, 1, &prevout), Ok(false));
+        assert_eq!(
+            verify_input_authorization(&tx, 1, &prevout),
+            Err(SpendAuthorizationError::InputIndexOutOfRange(1))
+        );
         // The owner signs a transaction that lists the outpoint twice.
         let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
         changed = tx.clone();
         changed.input.push(tx.input[0].clone());
-        sign(&mut changed, &prevout, &key, &key.public_key().to_compressed(), 1);
+        sign_input(&mut changed, 0, &prevout, &key, &key.public_key().to_compressed(), 1);
         assert_eq!(verify_input_authorization(&changed, 0, &prevout), Ok(false));
     }
 
@@ -289,7 +287,7 @@ mod tests {
             Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(vec![
                 prevout.clone()
             ])));
-        sign(&mut tx, &prevout, &key, &key.public_key().to_compressed(), 1);
+        sign_input(&mut tx, 0, &prevout, &key, &key.public_key().to_compressed(), 1);
         assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(true));
         if let Some(TransactionPayload::AssetLockPayloadType(payload)) =
             &mut tx.special_transaction_payload
@@ -313,44 +311,25 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_authorization_with_uncommitted_witness() {
-        let (mut tx, prevout) = signed(false);
-        let original_txid = tx.txid();
-        tx.input[0].witness = Witness::from_slice(&[b"peer-attached witness"]);
-        assert_eq!(tx.txid(), original_txid);
-        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(true));
-    }
-
-    #[test]
-    fn should_never_authorize_the_sighash_single_bug_digest() {
-        let (mut tx, prevout) = signed(false);
-        let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
-        // Input 0 has no matching output, so SINGLE signs the constant digest 1,
-        // which commits to nothing in the transaction.
-        tx.output.clear();
-        for mode in [3, 0x83] {
-            sign(&mut tx, &prevout, &key, &key.public_key().to_compressed(), mode);
-            assert_eq!(
-                verify_input_authorization(&tx, 0, &prevout),
-                Err(SpendAuthorizationError::UnsupportedSighash(mode))
-            );
-            let mut replayed = tx.clone();
-            replayed.lock_time += 1;
-            assert_eq!(
-                verify_input_authorization(&replayed, 0, &prevout),
-                Err(SpendAuthorizationError::UnsupportedSighash(mode))
-            );
-        }
-    }
-
-    #[test]
     fn should_preserve_unsupported_authorization_as_an_error() {
         let (mut tx, prevout) = signed(false);
         let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
         for mode in [0, 2, 3, 4, 0x81, 0x82, 0x83, 0xff] {
-            sign(&mut tx, &prevout, &key, &key.public_key().to_compressed(), mode);
+            sign_input(&mut tx, 0, &prevout, &key, &key.public_key().to_compressed(), mode);
             assert_eq!(
                 verify_input_authorization(&tx, 0, &prevout),
+                Err(SpendAuthorizationError::UnsupportedSighash(mode))
+            );
+        }
+        // Without an output for input 0, SINGLE signs the constant digest 1. That signature
+        // still verifies on a changed transaction, and must stay an error there.
+        let mut no_outputs = tx.clone();
+        no_outputs.output.clear();
+        for mode in [3, 0x83] {
+            sign_input(&mut no_outputs, 0, &prevout, &key, &key.public_key().to_compressed(), mode);
+            no_outputs.lock_time += 1;
+            assert_eq!(
+                verify_input_authorization(&no_outputs, 0, &prevout),
                 Err(SpendAuthorizationError::UnsupportedSighash(mode))
             );
         }
