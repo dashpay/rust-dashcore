@@ -18,7 +18,7 @@ use crate::wallet::Wallet;
 /// Wrap an [`Account`] as the right [`OwnedManagedCoreAccount`] variant for
 /// its [`AccountType`] — funds-bearing for Standard / CoinJoin / DashPay,
 /// keys-only for identity / asset-lock / provider variants.
-fn owned_from_account(account: &Account) -> OwnedManagedCoreAccount {
+fn owned_from_account(account: &Account) -> Result<OwnedManagedCoreAccount> {
     match account.account_type {
         AccountType::Standard {
             ..
@@ -31,8 +31,8 @@ fn owned_from_account(account: &Account) -> OwnedManagedCoreAccount {
         }
         | AccountType::DashpayExternalAccount {
             ..
-        } => ManagedCoreFundsAccount::from_account(account).into(),
-        _ => ManagedCoreKeysAccount::from_account(account).into(),
+        } => ManagedCoreFundsAccount::from_account(account).map(Into::into),
+        _ => ManagedCoreKeysAccount::from_account(account).map(Into::into),
     }
 }
 
@@ -66,7 +66,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         })?;
 
         // Wrap as the right managed-account variant for the account type.
-        let managed_account = owned_from_account(account);
+        let managed_account = owned_from_account(account)?;
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_account_type()) {
@@ -101,7 +101,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         let account = Account::new(None, account_type, account_xpub, self.network)?;
 
         // Wrap as the right managed-account variant for the account type.
-        let managed_account = owned_from_account(&account);
+        let managed_account = owned_from_account(&account)?;
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_account_type()) {
@@ -149,7 +149,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
         })?;
 
         // ProviderOperatorKeys is always a keys-only variant.
-        let managed_account = ManagedCoreKeysAccount::from_bls_account(bls_account);
+        let managed_account = ManagedCoreKeysAccount::from_bls_account(bls_account)?;
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -185,7 +185,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
             BLSAccount::from_public_key_bytes(None, account_type, bls_public_key, self.network)?;
 
         // ProviderOperatorKeys is always a keys-only variant.
-        let managed_account = ManagedCoreKeysAccount::from_bls_account(&bls_account);
+        let managed_account = ManagedCoreKeysAccount::from_bls_account(&bls_account)?;
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -234,7 +234,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
             })?;
 
         // ProviderPlatformKeys is always a keys-only variant.
-        let managed_account = ManagedCoreKeysAccount::from_eddsa_account(eddsa_account);
+        let managed_account = ManagedCoreKeysAccount::from_eddsa_account(eddsa_account)?;
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {
@@ -275,7 +275,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 
         // Create the ManagedAccount from the EdDSA Account
         // ProviderPlatformKeys is always a keys-only variant.
-        let managed_account = ManagedCoreKeysAccount::from_eddsa_account(&eddsa_account);
+        let managed_account = ManagedCoreKeysAccount::from_eddsa_account(&eddsa_account)?;
 
         // Check if managed account already exists
         if self.accounts.contains_managed_account_type(managed_account.managed_type()) {

@@ -59,6 +59,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
     /// `Synced` or conditions are not met.
     pub(super) fn try_complete_sync(&mut self) -> Option<SyncEvent> {
         if self.block_headers_synced
+            && self.progress.missing_below() == 0
             && self.progress.current_height() >= self.progress.target_height()
         {
             if self.state() == SyncState::Synced {
@@ -182,6 +183,90 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         self.progress.add_processed(count);
 
         Ok(count)
+    }
+
+    /// Queue the batches below the lowest stored filter header while block headers
+    /// reach below it, which the pipeline downloads in parallel.
+    pub(super) async fn extend_down(&mut self) -> SyncResult<()> {
+        let header_storage = self.header_storage.read().await;
+        let header_start = header_storage.get_start_height().await;
+        let filter_start = self.filter_header_storage.read().await.get_filter_start_height().await;
+        // A chain anchored at a checkpoint holds the filter header below it too.
+        let (Some(header_start), Some(end)) = (header_start, filter_start) else {
+            return Ok(());
+        };
+        self.progress.update_missing_below(end.saturating_sub(header_start.saturating_sub(1)));
+        if end <= header_start.saturating_sub(1) {
+            return Ok(());
+        }
+        self.pipeline.extend_below(&*header_storage, end, header_start).await?;
+        drop(header_storage);
+
+        if self.state() == SyncState::Synced {
+            self.set_state(SyncState::Syncing);
+        }
+        Ok(())
+    }
+
+    /// Store the received batches below, from the one ending at the lowest stored
+    /// filter header down. A batch that does not match the header it ends at is
+    /// requested again.
+    pub(super) async fn store_lower_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
+        let mut events = Vec::new();
+        loop {
+            let Some(end) = self.filter_header_storage.read().await.get_filter_start_height().await
+            else {
+                break;
+            };
+            let Some((start, cfheaders)) = self.pipeline.take_below(end) else {
+                break;
+            };
+            let Some(stored) = self.store_lower_batch(start, end, &cfheaders).await? else {
+                self.pipeline.want_below(cfheaders.stop_hash, start, end);
+                break;
+            };
+            events.push(stored);
+        }
+        if events.is_empty() {
+            return Ok(events);
+        }
+        let header_start = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+        let filter_start =
+            self.filter_header_storage.read().await.get_filter_start_height().await.unwrap_or(0);
+        self.progress
+            .update_missing_below(filter_start.saturating_sub(header_start.saturating_sub(1)));
+        events.extend(self.try_complete_sync());
+        Ok(events)
+    }
+
+    /// Store the batch `start..=end` below, if it ends at the stored filter header at `end`.
+    pub(super) async fn store_lower_batch(
+        &mut self,
+        start: u32,
+        end: u32,
+        cfheaders: &CFHeaders,
+    ) -> SyncResult<Option<SyncEvent>> {
+        let mut headers = compute_filter_headers(cfheaders);
+        let mut storage = self.filter_header_storage.write().await;
+        if start + headers.len() as u32 != end + 1
+            || headers.pop() != storage.get_filter_header(end).await?
+        {
+            tracing::warn!(
+                "CFHeaders batch at {} does not end at the stored filter headers",
+                start
+            );
+            return Ok(None);
+        }
+        if start > 0 {
+            headers.insert(0, cfheaders.previous_filter_header);
+        }
+        let first = start.saturating_sub(1);
+        storage.store_filter_headers_at_height(&headers, first).await?;
+        Ok(Some(SyncEvent::FilterHeadersStored {
+            start_height: first,
+            end_height: end - 1,
+            tip_height: self.progress.current_height(),
+        }))
     }
 
     /// Start or resume filter header download.
@@ -315,6 +400,7 @@ mod tests {
     use dashcore::network::message::NetworkMessage;
     use dashcore::{block::Version, BlockHash, CompactTarget, Header as BlockHeader};
     use dashcore_hashes::sha256d;
+    use test_case::test_case;
 
     type TestFilterHeadersManager =
         FilterHeadersManager<PersistentBlockHeaderStorage, PersistentFilterHeaderStorage>;
@@ -647,6 +733,43 @@ mod tests {
 
     async fn filter_tip(storage: &DiskStorageManager) -> Option<u32> {
         storage.filter_headers().read().await.get_filter_tip_height().await.unwrap()
+    }
+
+    /// A batch below the stored filter headers that doesn't end at them stores nothing.
+    #[test_case(0, b"prev" ; "empty")]
+    #[test_case(1999, b"prev" ; "wrong end")]
+    #[test_case(2000, b"other" ; "last header mismatch")]
+    #[tokio::test]
+    async fn test_lower_batch_not_ending_at_stored_filter_headers_is_rejected(
+        count: u32,
+        previous: &[u8],
+    ) {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let hashes = store_block_headers(&storage, 0, 2001).await;
+        let stop_hash = hashes[2000];
+        let stored = compute_filter_headers(&cfheaders(
+            FilterHeader::from_raw_hash(sha256d::Hash::hash(b"prev")),
+            stop_hash,
+            2000,
+        ));
+        let filter_headers = storage.filter_headers();
+        filter_headers
+            .write()
+            .await
+            .store_filter_headers_at_height(&stored[1999..], 2000)
+            .await
+            .unwrap();
+        let mut manager =
+            FilterHeadersManager::new(storage.block_headers(), filter_headers.clone())
+                .await
+                .unwrap();
+
+        let batch =
+            cfheaders(FilterHeader::from_raw_hash(sha256d::Hash::hash(previous)), stop_hash, count);
+        let stored = manager.store_lower_batch(1, 2000, &batch).await.unwrap();
+
+        assert!(stored.is_none());
+        assert_eq!(filter_headers.read().await.get_filter_start_height().await, Some(2000));
     }
 
     #[tokio::test]

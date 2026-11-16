@@ -126,14 +126,6 @@ impl<'a> ManagedAccountRef<'a> {
         }
     }
 
-    /// Return the current monitor revision.
-    pub fn monitor_revision(self) -> u64 {
-        match self {
-            ManagedAccountRef::Funds(a) => a.monitor_revision(),
-            ManagedAccountRef::Keys(a) => a.monitor_revision(),
-        }
-    }
-
     /// Whether `address` belongs to this account.
     pub fn contains_address(self, address: &Address) -> bool {
         match self {
@@ -282,23 +274,6 @@ impl<'a> ManagedAccountRefMut<'a> {
         }
     }
 
-    /// Bump the monitor revision counter — call this when the monitored
-    /// address set changes (e.g. new addresses generated).
-    pub fn bump_monitor_revision(&mut self) {
-        match self {
-            ManagedAccountRefMut::Funds(a) => a.bump_monitor_revision(),
-            ManagedAccountRefMut::Keys(a) => a.bump_monitor_revision(),
-        }
-    }
-
-    /// Return the current monitor revision.
-    pub fn monitor_revision(&self) -> u64 {
-        match self {
-            ManagedAccountRefMut::Funds(a) => a.monitor_revision(),
-            ManagedAccountRefMut::Keys(a) => a.monitor_revision(),
-        }
-    }
-
     /// Record a new transaction for this account.
     ///
     /// Funds variants update UTXO state and balance; keys variants update
@@ -371,8 +346,9 @@ impl<'a> ManagedAccountRefMut<'a> {
 
     /// Re-process an existing transaction with updated context.
     ///
-    /// Funds variants additionally refresh UTXO state. Returns the updated
-    /// record only when confirmation status actually changes.
+    /// Funds variants additionally refresh UTXO state. Returns the record when it is new or its
+    /// confirmation status changed, and, for funds variants, when it gained outputs derived since
+    /// it was recorded.
     ///
     /// This public entry point confirms with no observed-spend context — the
     /// pre-#649 behavior, appropriate for callers driving an account directly

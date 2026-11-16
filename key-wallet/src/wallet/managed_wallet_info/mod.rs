@@ -8,6 +8,8 @@ pub mod coin_selection;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
+pub(crate) mod locked_outpoints;
+pub use locked_outpoints::masternode_collateral;
 pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;
@@ -149,6 +151,11 @@ pub struct ManagedWalletInfo {
     pub(crate) account_generation: u64,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) noted_chain_lock_height: Option<CoreBlockHeight>,
+    /// Outpoints the wallet will not spend; see [`Self::locked_outpoints`].
+    /// `serde(default)` loads a snapshot written before the field existed
+    /// with no locks, in self-describing formats only.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub(crate) locked_outpoints: BTreeSet<OutPoint>,
 }
 
 /// Serde adapter for [`ManagedWalletInfo::observed_spent_outpoints`] that
@@ -256,6 +263,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
@@ -274,6 +282,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
@@ -302,6 +311,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            locked_outpoints: BTreeSet::new(),
         }
     }
 
@@ -451,7 +461,9 @@ impl ManagedWalletInfo {
     /// way as when it processes the funding transaction, except that claims
     /// are not consulted. The restored UTXO
     /// keeps the InstantSend lock and trust of any copy it replaces or takes
-    /// out, and their coin lock replaces its own. A matched outpoint the
+    /// out. Its coin lock follows the wallet's lock set
+    /// ([`locked_outpoints`](Self::locked_outpoints)), whatever flag it or
+    /// those copies carry. A matched outpoint the
     /// wallet already saw spent is neither credited nor returned: one the
     /// owning account recorded spending is held under that spend, so a fork
     /// dropping the spend gives it back, and one spent in a processed block
@@ -459,10 +471,6 @@ impl ManagedWalletInfo {
     /// as spent before it was funded) is held as spent before funded. A
     /// spent-output claim does not hold a restored UTXO back; a credited
     /// UTXO is no longer kept aside for one.
-    ///
-    /// Each account whose pools grow, or that is credited a UTXO or loses one,
-    /// gets its monitor revision bumped, so a running client rebuilds its
-    /// filters.
     ///
     /// Every pool is extended before any UTXO is inserted, so an `Err` from
     /// address derivation leaves the UTXO sets as they were; the addresses
@@ -504,28 +512,26 @@ impl ManagedWalletInfo {
             }
         };
         let mut unmatched = Vec::new();
+        let mut matched = Vec::new();
         for (utxo, owner) in utxos.into_iter().zip(owners) {
             let Some(owner) = owner else {
                 unmatched.push(utxo);
                 continue;
             };
             let outpoint = utxo.outpoint;
+            matched.push(outpoint);
             let mut copies = Vec::new();
             for (index, account) in accounts.iter_mut().enumerate() {
                 if index != owner {
                     if let Some(copy) = account.utxos.remove(&outpoint) {
                         copies.push(copy);
-                        account.bump_monitor_revision();
                     }
                 }
             }
             let account = &mut accounts[owner];
-            let credited =
-                account.take_in_output(utxo, copies, &self.observed_spent_outpoints, None, |_| {});
-            if credited {
-                account.bump_monitor_revision();
-            }
+            account.take_in_output(utxo, copies, &self.observed_spent_outpoints, None, |_| {});
         }
+        self.refresh_lock_flags(matched);
         Ok(unmatched)
     }
 
@@ -747,8 +753,6 @@ impl ManagedWalletInfo {
             for pool in account.managed_account_type_mut().address_pools_mut() {
                 pool.generate_up_to(last_index, &key_source)?;
             }
-
-            account.bump_monitor_revision();
         }
 
         Ok(())
@@ -756,8 +760,7 @@ impl ManagedWalletInfo {
 }
 
 /// Extend every pool of `accounts` that has a public key source to its gap
-/// limit, bumping the monitor revision of each account that grew. Returns
-/// whether any pool grew.
+/// limit. Returns whether any pool grew.
 fn extend_pools(
     wallet: &Wallet,
     accounts: &mut [&mut crate::managed_account::ManagedCoreFundsAccount],
@@ -769,13 +772,8 @@ fn extend_pools(
         if matches!(key_source, crate::KeySource::NoKeySource) {
             continue;
         }
-        let mut grew = false;
         for pool in account.managed_account_type_mut().address_pools_mut() {
-            grew |= !pool.maintain_gap_limit(&key_source)?.is_empty();
-        }
-        if grew {
-            account.bump_monitor_revision();
-            any_grew = true;
+            any_grew |= !pool.maintain_gap_limit(&key_source)?.is_empty();
         }
     }
     Ok(any_grew)

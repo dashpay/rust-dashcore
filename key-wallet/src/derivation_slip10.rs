@@ -155,7 +155,7 @@ impl ExtendedEd25519PrivKey {
 
         Ok(ExtendedEd25519PrivKey {
             network: self.network,
-            depth: self.depth + 1,
+            depth: self.depth.checked_add(1).ok_or(Error::MaxDepthExceeded)?,
             parent_fingerprint,
             child_number: child,
             private_key,
@@ -441,6 +441,8 @@ pub enum Error {
     InvalidPublicKeyPrefix,
     /// Ed25519 cryptographic error
     Ed25519Error(String),
+    /// Derivation would exceed the maximum depth of 255
+    MaxDepthExceeded,
 }
 
 impl fmt::Display for Error {
@@ -476,6 +478,7 @@ impl fmt::Display for Error {
             Error::Ed25519Error(msg) => {
                 write!(f, "Ed25519 error: {}", msg)
             }
+            Error::MaxDepthExceeded => write!(f, "Derivation depth exceeds 255"),
         }
     }
 }
@@ -831,5 +834,15 @@ mod test {
             master.derive_priv(&[ChildNumber::Hardened(ChildIndex::new_const(9)), child]),
             Err(Error::InvalidChildNumberFormat)
         ));
+    }
+
+    #[test]
+    fn derivation_stops_at_depth_255() {
+        let child = ChildNumber::Hardened(ChildIndex::ZERO);
+        let mut sk = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &[7u8; 32]).unwrap();
+        sk.depth = 254;
+        let sk = sk.ckd_priv(child).unwrap();
+        assert_eq!(sk.depth, 255);
+        assert!(matches!(sk.ckd_priv(child), Err(Error::MaxDepthExceeded)));
     }
 }

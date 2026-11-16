@@ -1,6 +1,9 @@
+use super::manager::DerivedScripts;
 use dashcore::bip158::BlockFilter;
+use dashcore::ScriptBuf;
 use key_wallet_manager::{FilterMatchKey, WalletId};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::mem;
 use std::sync::Arc;
 
 /// A completed batch of compact block filters ready for verification.
@@ -34,6 +37,8 @@ pub(super) struct FiltersBatch {
     /// Every script and filter element already matched against this batch's
     /// filters, per wallet, as the bytes the filters were queried with.
     tested: HashMap<WalletId, HashSet<Vec<u8>>>,
+    /// Newly derived scripts still to be matched against this batch, per wallet.
+    deferred_scripts: HashMap<WalletId, DerivedScripts>,
 }
 
 impl FiltersBatch {
@@ -52,6 +57,7 @@ impl FiltersBatch {
             pending_blocks: 0,
             scanned_wallets: BTreeMap::new(),
             tested: HashMap::new(),
+            deferred_scripts: HashMap::new(),
         }
     }
     /// Start height of this batch (inclusive).
@@ -123,6 +129,30 @@ impl FiltersBatch {
     ) -> impl Iterator<Item = &'a T> {
         let tested = self.tested.get(wallet_id);
         monitored.iter().filter(move |item| tested.is_none_or(|t| !t.contains(item.as_ref())))
+    }
+
+    /// Defer the wallet's `scripts` this batch still has to be matched against,
+    /// keeping the `pass` that derived them. An unscanned batch defers
+    /// nothing, since its scan matches every script the wallet watches.
+    pub(super) fn defer(&mut self, wallet_id: WalletId, pass: u64, scripts: &[ScriptBuf]) {
+        if !self.scanned || !self.scanned_wallets.contains_key(&wallet_id) {
+            return;
+        }
+        let missing: HashSet<ScriptBuf> = self.untested(&wallet_id, scripts).cloned().collect();
+        if !missing.is_empty() {
+            let deferred = self.deferred_scripts.entry(wallet_id).or_default();
+            deferred.entry(pass).or_default().extend(missing);
+        }
+    }
+
+    /// Whether scripts are deferred for this batch.
+    pub(super) fn has_deferred(&self) -> bool {
+        !self.deferred_scripts.is_empty()
+    }
+
+    /// Take the deferred scripts for matching.
+    pub(super) fn take_deferred(&mut self) -> HashMap<WalletId, DerivedScripts> {
+        mem::take(&mut self.deferred_scripts)
     }
 
     /// Record the wallets that were behind for this batch at scan time, each
