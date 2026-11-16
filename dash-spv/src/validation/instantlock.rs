@@ -11,6 +11,28 @@ use crate::sml_engine::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
 use crate::validation::Validator;
 
+/// Verifies `instant_lock` against its cycle in `engine`: `Ok(true)` when it verifies,
+/// `Ok(false)` while the engine lacks the quorum data to decide.
+/// Fails when a complete cycle of the network's InstantSend quorum type refutes the lock.
+pub(crate) fn verify_against_cycle<H: BlockHeaderStorage>(
+    instant_lock: &InstantLock,
+    engine: &MasternodeListEngine<H>,
+) -> ValidationResult<bool> {
+    let Some(cycle) = engine.instant_send_cycle(&instant_lock.cyclehash) else {
+        return Ok(false);
+    };
+    match InstantLockValidator::new(cycle.quorums).validate_signature(instant_lock) {
+        Ok(()) => Ok(true),
+        Err(
+            MessageVerificationError::CycleHashNotPresent(_)
+            | MessageVerificationError::QuorumIndexNotFound(..),
+        ) => Ok(false),
+        // A later QRInfo can still replace the quorums of a partial cycle.
+        Err(_) if !cycle.complete => Ok(false),
+        Err(e) => Err(signature_error(e)),
+    }
+}
+
 /// An InstantLock authenticated against the client's synchronized quorum state.
 ///
 /// This evidence is process-local: persisted locks must be verified again on load.
@@ -84,22 +106,12 @@ impl VerifiedInstantLock {
         let Some(engine) = engine else {
             return Ok(None);
         };
-        let Some(cycle) = engine.instant_send_cycle(&instant_lock.cyclehash) else {
-            return Ok(None);
-        };
-        match InstantLockValidator::new(cycle.quorums).validate_signature(instant_lock) {
-            Ok(()) => Ok(Some(Self {
-                instant_lock: instant_lock.clone(),
-                network: engine.network(),
-            })),
-            Err(
-                MessageVerificationError::CycleHashNotPresent(_)
-                | MessageVerificationError::QuorumIndexNotFound(..),
-            ) => Ok(None),
-            // A later QRInfo can still replace the quorums of a partial cycle.
-            Err(_) if !cycle.complete => Ok(None),
-            Err(e) => Err(InstantLockVerificationError::InvalidSignature(signature_error(e))),
-        }
+        let verified = verify_against_cycle(instant_lock, engine)
+            .map_err(InstantLockVerificationError::InvalidSignature)?;
+        Ok(verified.then(|| Self {
+            instant_lock: instant_lock.clone(),
+            network: engine.network(),
+        }))
     }
 }
 
