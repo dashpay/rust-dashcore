@@ -1468,7 +1468,8 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{fixture_heights, mainnet_fixture_is_lock, quorum_entry, TestEngine};
     use super::{
-        build_cycle_quorum_map, instant_send_cycle_completeness, valid_coinbase_chain_lock,
+        build_cycle_quorum_map, fills_every_slot, instant_send_cycle_completeness,
+        valid_coinbase_chain_lock,
     };
     use super::{FeedError, MasternodeListEngine, QRInfoFeedResult};
     use crate::error::{StorageError, StorageResult};
@@ -2632,42 +2633,6 @@ mod tests {
         );
     }
 
-    /// A stored cycle of another rotating type does not close the storage gate, so
-    /// the configured type's full set still merges into it.
-    #[tokio::test]
-    async fn store_cycle_if_fully_verified_merges_over_a_foreign_type() {
-        let (mut engine, qr_info) = load_qrinfo_2240504_fixture().await;
-        engine.feed_qr_info(qr_info).await.expect("first feed should succeed");
-        let cycle_key = *engine
-            .rotated_quorums_per_cycle
-            .keys()
-            .next()
-            .expect("first feed must store at least one rotation cycle");
-        let original_cycle = engine.rotated_quorums_per_cycle[&cycle_key].clone();
-        let rotation_quorum_type =
-            original_cycle.values().next().expect("cycle non-empty").quorum_entry.llmq_type;
-        let foreign = original_cycle
-            .iter()
-            .map(|(index, quorum)| {
-                let mut quorum = quorum.clone();
-                quorum.quorum_entry.llmq_type = LLMQType::LlmqtypeTestDIP0024;
-                (*index, quorum)
-            })
-            .collect();
-        engine.rotated_quorums_per_cycle.insert(cycle_key, foreign);
-
-        engine
-            .store_cycle_if_fully_verified(
-                cycle_key,
-                original_cycle.values().cloned().collect(),
-                rotation_quorum_type,
-            )
-            .await
-            .expect("gate must not error");
-
-        assert_eq!(engine.rotated_quorums_per_cycle[&cycle_key], original_cycle);
-    }
-
     /// The storage gate must short-circuit with `Ok(None)` (and not write)
     /// when any input entry is not `Verified` or the target cycle is already
     /// fully `Verified`, and it only ever merges into a stored cycle.
@@ -3422,7 +3387,7 @@ mod tests {
 
     /// On a devnet the signing cycle can be of another rotating type than the configured
     /// one. Holding as many quorums as the configured type has slots does not complete
-    /// it, so a lock it does not verify is deferred, not refuted.
+    /// it, so a lock it does not verify is deferred and a later QRInfo still merges in.
     #[test]
     fn should_not_complete_a_devnet_cycle_of_another_rotating_type() {
         let lock = mainnet_fixture_is_lock();
@@ -3434,6 +3399,7 @@ mod tests {
         assert!(slots < cycle.len(), "the mainnet cycle has more slots than a devnet one");
         let partial: BTreeMap<_, _> = cycle.clone().into_iter().take(slots).collect();
 
+        assert!(!fills_every_slot(&partial, configured));
         assert_eq!(instant_send_cycle_completeness(&partial, configured, true), Some(false));
         assert_eq!(instant_send_cycle_completeness(&partial, configured, false), None);
         assert_eq!(instant_send_cycle_completeness(&cycle, served, false), Some(true));
