@@ -19,14 +19,9 @@ pub enum SpendAuthorizationError {
     UnsupportedSighash(u8),
 }
 
-/// Checks P2PKH/SIGHASH_ALL authorization to reserve one input's funding coin.
-///
-/// The caller must obtain `prevout` from the funding transaction identified by
-/// this input, and bind its outpoint to the wallet coin being reserved. A valid
-/// signature proves authorization only: other inputs, amounts and consensus
-/// rules are not validated, and this result supplies no finality evidence.
-/// Unsupported forms return an error so an existing pending hold is not
-/// silently released. Malformed or invalid supported authorizations return false.
+/// Whether input `input_index` carries the owner's P2PKH `SIGHASH_ALL` signature for `prevout`.
+/// The caller takes `prevout` from the funding transaction of that input's outpoint.
+/// Unsupported forms return an error so an existing pending hold is not silently released.
 pub fn verify_input_authorization(
     transaction: &Transaction,
     input_index: usize,
@@ -66,11 +61,9 @@ pub fn verify_input_authorization(
     let Some((&mode, _)) = signature.as_bytes().split_last() else {
         return Ok(false);
     };
-    let Ok(mut signature) = Signature::from_slice(signature.as_bytes()) else {
+    let Ok(signature) = Signature::from_slice(signature.as_bytes()) else {
         return Ok(false);
     };
-    // Both S encodings prove ownership; normalization preserves authorization.
-    signature.signature.normalize_s();
     let signature = EcdsaSignature::from(signature.signature);
     let Ok(hash) = SighashCache::new(transaction).legacy_signature_hash(
         input_index,
@@ -326,39 +319,6 @@ mod tests {
         tx.input[0].witness = Witness::from_slice(&[b"peer-attached witness"]);
         assert_eq!(tx.txid(), original_txid);
         assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(true));
-    }
-
-    #[test]
-    fn should_accept_high_s_owner_authorization() {
-        let (mut tx, prevout) = signed(false);
-        let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
-        let hash =
-            SighashCache::new(&tx).legacy_signature_hash(0, &prevout.script_pubkey, 1).unwrap();
-        let low = key.sign(&hash.to_byte_array());
-        let mut compact = low.to_bytes();
-        // secp256k1 group order: (r, n-s) is the high-S form of (r, s).
-        let order = hex_conservative::decode_to_vec(
-            "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
-        )
-        .unwrap();
-        let mut borrow = false;
-        for i in (0..32).rev() {
-            let (difference, first_borrow) = order[i].overflowing_sub(compact[32 + i]);
-            let (difference, second_borrow) = difference.overflowing_sub(u8::from(borrow));
-            compact[32 + i] = difference;
-            borrow = first_borrow || second_borrow;
-        }
-        let high = EcdsaSignature::from_bytes(&compact).unwrap();
-        assert!(!high.is_low_s());
-        let mut signature = high.with_der(|der| der.to_vec());
-        signature.push(1);
-        tx.input[0].script_sig = Builder::new()
-            .push_slice(PushBytesBuf::try_from(signature).unwrap())
-            .push_slice(key.public_key().to_compressed())
-            .into_script();
-        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(true));
-        tx.output[0].value -= 1;
-        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
     }
 
     #[test]
