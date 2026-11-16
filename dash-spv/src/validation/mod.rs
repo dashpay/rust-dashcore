@@ -13,6 +13,8 @@ pub use filter::{FilterValidationInput, FilterValidator};
 pub use header::BlockHeaderValidator;
 pub(crate) use instantlock::verify_against_cycle;
 pub use instantlock::InstantLockStructureValidator;
+#[cfg(test)]
+pub(crate) use instantlock::InstantLockValidator;
 pub use masternode_list::MasternodeListValidator;
 
 use crate::error::ValidationResult;
