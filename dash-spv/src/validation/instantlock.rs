@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use dashcore::bls_sig_utils::BlsScheme;
 use dashcore::constants::MAX_BLOCK_SIZE;
@@ -140,6 +140,13 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
         if instant_lock.inputs.len() > MAX_INSTANT_LOCK_INPUTS {
             return Err(ValidationError::InvalidInstantLock(format!(
                 "InstantLock has more than {MAX_INSTANT_LOCK_INPUTS} inputs"
+            )));
+        }
+
+        let mut seen = HashSet::with_capacity(instant_lock.inputs.len());
+        if let Some(idx) = instant_lock.inputs.iter().position(|input| !seen.insert(input)) {
+            return Err(ValidationError::InvalidInstantLock(format!(
+                "InstantLock input {idx} repeats an earlier input"
             )));
         }
 
@@ -325,7 +332,9 @@ mod tests {
     fn a_well_formed_lock_passes_the_structure_check() {
         assert!(InstantLockStructureValidator.validate(&InstantLock::dummy(0..3)).is_ok());
         let mut largest = InstantLock::dummy(0..1);
-        largest.inputs = vec![largest.inputs[0]; MAX_INSTANT_LOCK_INPUTS];
+        let txid = largest.inputs[0].txid;
+        largest.inputs =
+            (0..MAX_INSTANT_LOCK_INPUTS as u32).map(|vout| OutPoint::new(txid, vout)).collect();
         assert!(InstantLockStructureValidator.validate(&largest).is_ok());
     }
 
@@ -334,6 +343,7 @@ mod tests {
     #[test_case(|lock| lock.txid = dashcore::Txid::all_zeros(), "transaction ID cannot be zero"; "null txid")]
     #[test_case(|lock| lock.inputs[1].txid = dashcore::Txid::all_zeros(), "input 1 has null transaction ID"; "null input txid")]
     #[test_case(|lock| lock.inputs = vec![lock.inputs[0]; MAX_INSTANT_LOCK_INPUTS + 1], "more than 48780 inputs"; "too many inputs")]
+    #[test_case(|lock| lock.inputs[2] = lock.inputs[0], "input 2 repeats an earlier input"; "repeated input")]
     fn a_malformed_lock_fails_the_structure_check(malform: fn(&mut InstantLock), reason: &str) {
         let mut is_lock = InstantLock::dummy(0..3);
         malform(&mut is_lock);
