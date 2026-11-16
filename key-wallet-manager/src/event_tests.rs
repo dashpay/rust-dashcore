@@ -11,17 +11,18 @@ use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::hash_types::CycleHash;
 use dashcore::opcodes;
 use dashcore::{
-    BlockHash, CompactTarget, OutPoint, PublicKey, ScriptBuf, TxIn, TxMerkleNode, TxOut, Txid,
-    Witness,
+    BlockHash, CompactTarget, OutPoint, PubkeyHash, PublicKey, ScriptBuf, TxIn, TxMerkleNode,
+    TxOut, Txid, Witness,
 };
 use key_wallet::account::StandardAccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
-use key_wallet::transaction_checking::{TransactionRouter, TransactionType};
+use key_wallet::transaction_checking::{BlockInfo, TransactionRouter, TransactionType};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::AccountType;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use test_case::test_case;
 
 fn make_block(txdata: Vec<Transaction>, seed: u8, time: u32) -> Block {
     Block {
@@ -79,7 +80,9 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
             balance,
             account_balances,
             addresses_derived: _,
+            locked_outpoints,
         } => {
+            assert!(locked_outpoints.is_empty(), "an ordinary payment locks nothing");
             assert_eq!(*wid, wallet_id);
             assert_eq!(record.txid, tx.txid());
             assert_eq!(record.context, TransactionContext::Mempool);
@@ -132,7 +135,9 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
             balance,
             account_balances,
             addresses_derived: _,
+            locked_outpoints,
         } => {
+            assert!(locked_outpoints.is_empty(), "an ordinary payment locks nothing");
             assert_eq!(*wid, wallet_id);
             assert!(matches!(record.context, TransactionContext::InstantSend(_)));
             assert_eq!(balance.confirmed(), TX_AMOUNT);
@@ -348,7 +353,9 @@ async fn test_block_with_new_tx_emits_inserted_record() {
             account_balances,
             addresses_derived: _,
             chain_lock: _,
+            locked_outpoints,
         } => {
+            assert!(locked_outpoints.is_empty(), "an ordinary payment locks nothing");
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 100);
             assert_eq!(inserted.len(), 1);
@@ -414,7 +421,9 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             account_balances,
             addresses_derived: _,
             chain_lock: _,
+            locked_outpoints,
         } => {
+            assert!(locked_outpoints.is_empty(), "an ordinary payment locks nothing");
             assert_eq!(*wid, wallet_id);
             assert_eq!(*height, 200);
             assert!(inserted.is_empty());
@@ -440,7 +449,20 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
     }
 }
 
+/// Where the credit output of the fixture's asset lock pays.
+#[derive(Clone, Copy, PartialEq)]
+enum AssetLockCredit {
+    External,
+    /// The wallet's own shielded top-up address, which keeps the asset lock
+    /// relevant to the wallet after its funding coin is spent.
+    WalletTopUp,
+}
+
+/// A wallet holding, from the mempool, an asset lock that spends a whole BIP44
+/// coin with no change, so the funding account matches it only by the coin its
+/// mempool sighting already removed.
 async fn setup_known_mempool_spend_only_asset_lock(
+    credit: AssetLockCredit,
 ) -> (WalletManager<ManagedWalletInfo>, WalletId, Transaction, OutPoint, BTreeSet<WalletId>) {
     let (mut manager, wallet_id, _default_addr) = setup_manager_with_wallet();
 
@@ -481,10 +503,24 @@ async fn setup_known_mempool_spend_only_asset_lock(
         "funding UTXO must be confirmed before the spend"
     );
 
-    let external_address = Address::p2pkh(
-        &PublicKey::from_slice(&[2u8; 33]).expect("valid external public key"),
-        key_wallet::Network::Testnet,
-    );
+    let credit_script = match credit {
+        AssetLockCredit::External => Address::p2pkh(
+            &PublicKey::from_slice(&[2u8; 33]).expect("valid external public key"),
+            key_wallet::Network::Testnet,
+        )
+        .script_pubkey(),
+        AssetLockCredit::WalletTopUp => {
+            let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+            let account =
+                info.accounts.asset_lock_shielded_address_topup.as_ref().expect("top-up account");
+            match account.managed_account_type() {
+                ManagedAccountType::AssetLockShieldedAddressTopUp {
+                    addresses,
+                } => addresses.address_at_index(0).expect("top-up address 0").script_pubkey(),
+                other => panic!("expected shielded top-up account, got {other:?}"),
+            }
+        }
+    };
     let regular_external_script =
         Builder::new().push_opcode(opcodes::all::OP_RETURN).push_slice([0x52u8; 20]).into_script();
     let asset_lock_tx = Transaction {
@@ -503,7 +539,7 @@ async fn setup_known_mempool_spend_only_asset_lock(
         special_transaction_payload: Some(TransactionPayload::AssetLockPayloadType(
             AssetLockPayload::new(vec![TxOut {
                 value: TX_AMOUNT - 1_000,
-                script_pubkey: external_address.script_pubkey(),
+                script_pubkey: credit_script.clone(),
             }]),
         )),
     };
@@ -517,9 +553,10 @@ async fn setup_known_mempool_spend_only_asset_lock(
         !monitored_scripts.contains(&regular_external_script),
         "regular AssetLock output must not pay the wallet"
     );
-    assert!(
-        !monitored_scripts.contains(&external_address.script_pubkey()),
-        "AssetLock credit output must not pay the wallet"
+    assert_eq!(
+        monitored_scripts.contains(&credit_script),
+        credit == AssetLockCredit::WalletTopUp,
+        "AssetLock credit output must pay the wallet only for a wallet top-up"
     );
 
     let mempool_result = manager.process_mempool_transaction(&asset_lock_tx, None).await;
@@ -561,10 +598,35 @@ async fn setup_known_mempool_spend_only_asset_lock(
     (manager, wallet_id, asset_lock_tx, funding_outpoint, wallets)
 }
 
+#[test_case(AssetLockCredit::External, 1 ; "external credit")]
+#[test_case(AssetLockCredit::WalletTopUp, 2 ; "wallet top-up credit")]
 #[tokio::test]
-async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo() {
+async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo(
+    credit: AssetLockCredit,
+    expected_updated: usize,
+) {
     let (mut manager, wallet_id, asset_lock_tx, funding_outpoint, wallets) =
-        setup_known_mempool_spend_only_asset_lock().await;
+        setup_known_mempool_spend_only_asset_lock(credit).await;
+
+    manager
+        .process_mempool_instant_send_lock(&asset_lock_tx, dummy_instant_lock(asset_lock_tx.txid()))
+        .await;
+    let locked_context = &manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .accounts
+        .standard_bip44_accounts
+        .get(&0)
+        .expect("BIP44 account 0")
+        .transactions()
+        .get(&asset_lock_tx.txid())
+        .expect("mempool record must remain stored")
+        .context;
+    assert!(
+        matches!(locked_context, TransactionContext::InstantSend(_)),
+        "known spend-only transaction must take its InstantSend lock, got {locked_context:?}"
+    );
+
     let mut rx = manager.subscribe_events();
     let block = make_block(vec![asset_lock_tx.clone()], 0x45, 4_100);
 
@@ -608,14 +670,19 @@ async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo() {
     );
     let updated =
         updated.unwrap_or_else(|| panic!("BlockProcessed update expected: {block_events:?}"));
-    assert_eq!(updated.len(), 1);
-    assert_eq!(updated[0].txid, asset_lock_tx.txid());
+    assert_eq!(updated.len(), expected_updated);
+    assert!(updated.iter().all(|record| record.txid == asset_lock_tx.txid()));
 }
 
+#[test_case(AssetLockCredit::External, 1 ; "external credit")]
+#[test_case(AssetLockCredit::WalletTopUp, 2 ; "wallet top-up credit")]
 #[tokio::test]
-async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction() {
+async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction(
+    credit: AssetLockCredit,
+    expected_updated: usize,
+) {
     let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
-        setup_known_mempool_spend_only_asset_lock().await;
+        setup_known_mempool_spend_only_asset_lock(credit).await;
     manager.apply_chain_lock(ChainLock::dummy(500));
     let mut rx = manager.subscribe_events();
     let block = make_block(vec![asset_lock_tx.clone()], 0x46, 4_200);
@@ -635,11 +702,11 @@ async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction() 
         .unwrap_or_else(|| panic!("chainlocked BlockProcessed update expected: {events:?}"));
 
     assert_eq!(block_result.existing_txids, vec![asset_lock_tx.txid()]);
-    assert_eq!(updated.len(), 1);
-    assert!(matches!(
-        updated[0].context,
+    assert_eq!(updated.len(), expected_updated);
+    assert!(updated.iter().all(|record| matches!(
+        record.context,
         TransactionContext::InChainLockedBlock(info) if info.height() == 401
-    ));
+    )));
 
     let account = manager
         .get_wallet_info(&wallet_id)
@@ -665,7 +732,7 @@ async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction() 
 #[tokio::test]
 async fn test_spend_only_promotion_never_demotes_chainlocked_context() {
     let (mut manager, wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
-        setup_known_mempool_spend_only_asset_lock().await;
+        setup_known_mempool_spend_only_asset_lock(AssetLockCredit::External).await;
     manager.apply_chain_lock(ChainLock::dummy(500));
     let chainlocked_block = make_block(vec![asset_lock_tx.clone()], 0x47, 4_300);
     manager
@@ -735,7 +802,7 @@ async fn test_block_does_not_promote_unknown_irrelevant_transaction() {
 #[tokio::test]
 async fn test_spend_only_block_promotion_is_idempotent() {
     let (mut manager, _wallet_id, asset_lock_tx, _funding_outpoint, wallets) =
-        setup_known_mempool_spend_only_asset_lock().await;
+        setup_known_mempool_spend_only_asset_lock(AssetLockCredit::External).await;
     let block = make_block(vec![asset_lock_tx.clone()], 0x4a, 4_600);
     let mut rx = manager.subscribe_events();
 
@@ -750,7 +817,7 @@ async fn test_spend_only_block_promotion_is_idempotent() {
 
     let second = manager.process_block_for_wallets(&block, block.block_hash(), 401, &wallets).await;
     assert!(second.new_txids.is_empty());
-    assert!(second.existing_txids.is_empty());
+    assert_eq!(second.existing_txids, vec![asset_lock_tx.txid()]);
     assert_no_events(&mut rx);
 }
 
@@ -1363,6 +1430,204 @@ async fn test_update_wallet_synced_height_does_not_re_emit_when_unchanged() {
         "no SyncHeightAdvanced should fire when height went backwards, got {:?}",
         events
     );
+}
+
+// ---------------------------------------------------------------------------
+// Masternode collateral locks
+// ---------------------------------------------------------------------------
+
+/// A ProRegTx registering `collateral` and paying `outputs`. Its fee input and
+/// keys belong to no one the test wallet knows; `seed` varies the txid.
+fn masternode_registration(collateral: OutPoint, outputs: Vec<TxOut>, seed: u8) -> Transaction {
+    let owner_key_hash = PubkeyHash::from_byte_array([0x70; 20]);
+    Transaction::dummy_provider_registration(collateral, owner_key_hash, outputs, seed)
+}
+
+fn bip44_account_0() -> AccountType {
+    AccountType::Standard {
+        index: 0,
+        standard_account_type: StandardAccountType::BIP44Account,
+    }
+}
+
+/// A wallet holding one coin of `TX_AMOUNT`, mined at height 100.
+async fn manager_holding_a_coin() -> (WalletManager, WalletId, OutPoint) {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let funding = create_tx_paying_to(&addr, 0xc0);
+    let block = make_block(vec![funding.clone()], 0xc0, 1_000);
+    manager
+        .process_block_for_wallets(&block, block.block_hash(), 100, &BTreeSet::from([wallet_id]))
+        .await;
+    (manager, wallet_id, OutPoint::new(funding.txid(), 0))
+}
+
+/// A ProRegTx locks a collateral it names at the block that holds it, not
+/// from the mempool. The mempool sighting changes nothing and emits nothing;
+/// the block's `BlockProcessed` names the locked outpoint and carries the coin
+/// in the locked balance.
+#[tokio::test]
+async fn test_registration_locks_a_named_collateral_at_its_block_not_from_the_mempool() {
+    let (mut manager, wallet_id, collateral) = manager_holding_a_coin().await;
+    let registration = masternode_registration(collateral, vec![], 0xc1);
+    let mut rx = manager.subscribe_events();
+
+    let result = manager.process_mempool_transaction(&registration, None).await;
+
+    assert!(!result.is_relevant);
+    assert_no_events(&mut rx);
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    assert!(!info.is_outpoint_locked(&collateral));
+    assert_eq!(info.balance().spendable(), TX_AMOUNT);
+    assert_eq!(info.balance().locked(), 0);
+
+    let block = make_block(vec![registration], 0xc1, 1_001);
+    manager
+        .process_block_for_wallets(&block, block.block_hash(), 101, &BTreeSet::from([wallet_id]))
+        .await;
+
+    assert!(manager
+        .get_wallet_info(&wallet_id)
+        .expect("wallet info")
+        .is_outpoint_locked(&collateral));
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "one BlockProcessed expected, got {:?}", events);
+    match &events[0] {
+        WalletEvent::BlockProcessed {
+            inserted,
+            updated,
+            balance,
+            account_balances,
+            locked_outpoints,
+            ..
+        } => {
+            assert!(inserted.is_empty() && updated.is_empty(), "the ProRegTx records nothing");
+            assert_eq!(locked_outpoints, &vec![collateral]);
+            assert_eq!(balance.locked(), TX_AMOUNT);
+            assert_eq!(balance.spendable(), 0);
+            let account = account_balances.get(&bip44_account_0()).expect("the coin's account");
+            assert_eq!(account.locked(), TX_AMOUNT);
+        }
+        other => panic!("expected BlockProcessed, got {:?}", other),
+    }
+}
+
+/// An InstantSend lock does not make a ProRegTx a registration: the coin it
+/// names stays spendable until a block holds the ProRegTx.
+#[tokio::test]
+async fn test_instant_locked_registration_locks_no_collateral_it_names() {
+    let (mut manager, wallet_id, collateral) = manager_holding_a_coin().await;
+    let registration = masternode_registration(collateral, vec![], 0xc2);
+    let mut rx = manager.subscribe_events();
+
+    manager
+        .process_mempool_transaction(&registration, Some(dummy_instant_lock(registration.txid())))
+        .await;
+
+    assert_no_events(&mut rx);
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    assert!(!info.is_outpoint_locked(&collateral));
+    assert_eq!(info.balance().spendable(), TX_AMOUNT);
+    assert_eq!(info.balance().locked(), 0);
+}
+
+/// A ProRegTx that creates its collateral locks it from the mempool, and the
+/// `TransactionDetected` for the coin names the locked outpoint and carries
+/// the coin in the locked balance.
+#[tokio::test]
+async fn test_mempool_registration_creating_its_collateral_emits_the_locked_balance() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let to_wallet = TxOut {
+        value: TX_AMOUNT,
+        script_pubkey: addr.script_pubkey(),
+    };
+    // A null collateral txid: the collateral is this ProRegTx's output 0.
+    let registration =
+        masternode_registration(OutPoint::new(Txid::all_zeros(), 0), vec![to_wallet], 0xc3);
+    let collateral = OutPoint::new(registration.txid(), 0);
+    let mut rx = manager.subscribe_events();
+
+    let result = manager.process_mempool_transaction(&registration, None).await;
+
+    assert!(result.is_relevant);
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "one TransactionDetected expected, got {:?}", events);
+    match &events[0] {
+        WalletEvent::TransactionDetected {
+            record,
+            balance,
+            account_balances,
+            locked_outpoints,
+            ..
+        } => {
+            assert_eq!(record.txid, registration.txid());
+            assert_eq!(locked_outpoints, &vec![collateral]);
+            assert_eq!(balance.locked(), TX_AMOUNT);
+            assert_eq!(balance.spendable(), 0, "the collateral is not spendable balance");
+            let account = account_balances.get(&bip44_account_0()).expect("the coin's account");
+            assert_eq!(account.locked(), TX_AMOUNT);
+        }
+        other => panic!("expected TransactionDetected, got {:?}", other),
+    }
+    let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
+    assert!(info.is_outpoint_locked(&collateral));
+    assert_eq!(info.balance().locked(), TX_AMOUNT);
+}
+
+/// A check reports the locks it took per wallet, including for a wallet the
+/// transaction is otherwise irrelevant to, so a caller that checks with
+/// `update_balance = false` knows which balances to refresh.
+#[tokio::test]
+async fn test_check_transaction_reports_a_lock_for_a_wallet_it_is_otherwise_irrelevant_to() {
+    let (mut manager, wallet_id, collateral) = manager_holding_a_coin().await;
+    let registration = masternode_registration(collateral, vec![], 0xc4);
+    let mined = TransactionContext::InBlock(BlockInfo::new(101, BlockHash::all_zeros(), 1_001));
+
+    let result = manager.check_transaction_in_all_wallets(&registration, mined, true, false).await;
+
+    assert!(result.affected_wallets.is_empty());
+    assert_eq!(result.per_wallet_locked_outpoints, BTreeMap::from([(wallet_id, vec![collateral])]));
+}
+
+/// A lock that moves no balance and adds no record still reaches a persister.
+/// Here a rescan locks again the collateral of the wallet's own registration,
+/// a coin that has not arrived.
+#[tokio::test]
+async fn test_block_processed_names_a_lock_that_changes_nothing_else() {
+    let (mut manager, wallet_id, _addr) = setup_manager_with_wallet();
+    let owner = manager
+        .get_wallet_info_mut(&wallet_id)
+        .expect("wallet info")
+        .provider_owner_keys_managed_account_mut()
+        .expect("provider owner keys account")
+        .next_address(None, true)
+        .expect("owner address");
+    let owner_key_hash = *owner.payload().as_pubkey_hash().expect("P2PKH owner address");
+    let collateral = OutPoint::new(Txid::from_byte_array([0xc5; 32]), 0);
+    let registration =
+        Transaction::dummy_provider_registration(collateral, owner_key_hash, Vec::new(), 0xc5);
+    let block = make_block(vec![registration], 0xc5, 1_001);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager.process_block_for_wallets(&block, block.block_hash(), 101, &wallets).await;
+    let info = manager.get_wallet_info_mut(&wallet_id).expect("wallet info");
+    assert!(info.unlock_outpoint(&collateral));
+    let mut rx = manager.subscribe_events();
+
+    manager.process_block_for_wallets(&block, block.block_hash(), 101, &wallets).await;
+
+    let events = drain_events(&mut rx);
+    assert_eq!(events.len(), 1, "one BlockProcessed expected, got {:?}", events);
+    match &events[0] {
+        WalletEvent::BlockProcessed {
+            inserted,
+            updated,
+            locked_outpoints,
+            ..
+        } => {
+            assert!(inserted.is_empty() && updated.is_empty(), "already recorded");
+            assert_eq!(locked_outpoints, &vec![collateral]);
+        }
+        other => panic!("expected BlockProcessed, got {:?}", other),
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -73,6 +73,8 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
         };
 
         let hashed_block = HashedBlock::from(block);
+        // Released before validation, so `send_pending` requests an invalid block again.
+        network.release_request(RequestKey::Block(*hashed_block.hash())).await;
 
         if let Err(e) = BlockValidator::new().validate(&hashed_block) {
             network.ban_peer(peer).await;
@@ -85,8 +87,6 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
             tracing::debug!("Received unrequested block {}", hashed_block.hash());
             return Ok(vec![]);
         }
-
-        network.release_request(RequestKey::Block(*hashed_block.hash())).await;
 
         // Look up height for storage
         let height = self

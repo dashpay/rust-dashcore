@@ -1211,6 +1211,8 @@ pub enum Error {
     Hex(hex_conservative::DecodeFixedLengthBytesError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
+    /// Derivation would exceed the maximum depth of 255
+    MaxDepthExceeded,
 }
 
 impl fmt::Display for Error {
@@ -1239,6 +1241,7 @@ impl fmt::Display for Error {
             Error::InvalidPublicKeyHexLength(got) => {
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got)
             }
+            Error::MaxDepthExceeded => f.write_str("derivation depth exceeds 255"),
         }
     }
 }
@@ -1353,7 +1356,7 @@ impl ExtendedPrivKey {
 
         Ok(ExtendedPrivKey {
             network: self.network,
-            depth: self.depth + 1,
+            depth: self.depth.checked_add(1).ok_or(Error::MaxDepthExceeded)?,
             parent_fingerprint: self.fingerprint(),
             child_number: i,
             private_key: tweaked,
@@ -1623,7 +1626,7 @@ impl ExtendedPubKey {
 
         Ok(ExtendedPubKey {
             network: self.network,
-            depth: self.depth + 1,
+            depth: self.depth.checked_add(1).ok_or(Error::MaxDepthExceeded)?,
             parent_fingerprint: self.fingerprint(),
             child_number: i,
             public_key: tweaked,
@@ -2799,5 +2802,18 @@ mod tests {
         // Verify the keys match
         let pub_from_priv = dashcore::PublicKey::from_private_key(&priv_key);
         assert_eq!(pub_key.inner, pub_from_priv.inner);
+    }
+
+    #[test]
+    fn derivation_stops_at_depth_255() {
+        let child = ChildNumber::from_normal_idx(0).unwrap();
+        let mut sk = ExtendedPrivKey::new_master(Mainnet, &[0x2a; 32]).unwrap();
+        sk.depth = 254;
+        let sk = sk.ckd_priv(child).unwrap();
+        assert_eq!(sk.depth, 255);
+        assert_eq!(sk.ckd_priv(child), Err(Error::MaxDepthExceeded));
+
+        let pk = ExtendedPubKey::from_priv(&sk);
+        assert_eq!(pk.ckd_pub(child), Err(Error::MaxDepthExceeded));
     }
 }

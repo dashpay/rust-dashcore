@@ -20,6 +20,17 @@
 //! 2. [`coinjoin_gap_limit_inversion_within_batch_recovers`] — a gap-window
 //!    output in an EARLIER block of the SAME (still-active) batch is
 //!    recovered by the commit-time rescan. GREEN since #820.
+//! 3. [`coinjoin_rescan_skips_blocks_applied_after_the_scripts`] — the
+//!    rescan re-applies only blocks whose last pass predates the matching
+//!    scripts.
+//! 4. [`provider_wallet_rescans_only_untested_outpoints`] — a rescan matches a
+//!    batch only against the UTXO outpoints it was never matched against.
+//! 5. [`provider_wallet_rescan_prefers_an_untested_outpoint_over_an_older_script`]
+//!    — an untested outpoint re-applies a block even when an older script
+//!    group also matches it.
+//! 6. [`coinjoin_scripts_derived_in_one_batch_find_blocks_in_the_next`] —
+//!    scripts derived by the lowest batch are deferred to the next batch and
+//!    still find its blocks before it commits.
 //!
 //! Each test drives the manager exactly the way the production event loop
 //! does: `try_process_batch` → `BlocksNeeded` → (blocks-manager stand-in)
@@ -34,14 +45,17 @@ use crate::storage::{
     PersistentFilterStorage, StorageManager,
 };
 use crate::test_utils::MockNetworkManager;
+use dashcore::bip158::BlockFilterWriter;
+use dashcore::consensus::encode::serialize;
 use dashcore::{
     Address, Block, BlockHash, Network, OutPoint, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use key_wallet::account::ManagedAccountTrait;
 use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
-use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
+use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet_manager::test_utils::coinjoin_external_addresses;
 use key_wallet_manager::WalletManager;
 
 /// Deterministic test wallet seed (standard BIP-39 test vector mnemonic).
@@ -82,47 +96,11 @@ async fn setup() -> (CjFiltersManager, Arc<RwLock<WalletManager<ManagedWalletInf
         storage.block_headers(),
         storage.filter_headers(),
         storage.filters(),
+        0,
     )
     .await;
     manager.set_state(SyncState::Syncing);
     (manager, wallet, wallet_id)
-}
-
-/// Derive the wallet's first `count` CoinJoin-account-0 External addresses
-/// OFFLINE (via a standalone pool over the same xpub + base path), so test
-/// blocks can pay indices far beyond the wallet's live watch window without
-/// touching the wallet's own state.
-async fn coinjoin_external_addresses(
-    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
-    wallet_id: &WalletId,
-    count: u32,
-) -> Vec<Address> {
-    let wm = wallet.read().await;
-    let signing_wallet = wm.get_wallet(wallet_id).expect("wallet present");
-    let xpub = signing_wallet
-        .accounts
-        .coinjoin_accounts
-        .get(&0)
-        .expect("CoinJoin account 0 (Default options)")
-        .account_xpub;
-    let info = wm.get_wallet_info(wallet_id).expect("wallet info present");
-    let live_pool = coinjoin_external_pool(info);
-    let mut pool = AddressPool::new(
-        live_pool.base_path.clone(),
-        AddressPoolType::External,
-        count,
-        Network::Regtest,
-        &KeySource::Public(xpub),
-    )
-    .expect("derive standalone CoinJoin External pool");
-    // `AddressPool::new` pre-generates `count` addresses; extend defensively
-    // in case the constructor semantics change.
-    if pool.highest_generated.map(|h| h + 1).unwrap_or(0) < count {
-        let missing = count - pool.highest_generated.map(|h| h + 1).unwrap_or(0);
-        pool.generate_addresses(missing, &KeySource::Public(xpub), true)
-            .expect("extend standalone pool");
-    }
-    (0..count).map(|i| pool.address_at_index(i).expect("address generated")).collect()
 }
 
 /// The wallet's LIVE CoinJoin-account-0 External pool.
@@ -180,22 +158,38 @@ fn block_paying(height: u32, addresses: &[Address]) -> (Block, BlockFilter, Filt
     (block, filter, key)
 }
 
+/// The filter of `block` with `elements` added to its output scripts, the way
+/// Dash Core adds a `ProRegTx`'s collateral outpoint.
+fn filter_with_elements(block: &Block, elements: &[Vec<u8>]) -> BlockFilter {
+    let mut content = Vec::new();
+    let mut writer = BlockFilterWriter::new(&mut content, block);
+    writer.add_output_scripts();
+    for element in elements {
+        writer.add_element(element);
+    }
+    writer.finish().expect("write test filter");
+    BlockFilter::new(&content)
+}
+
 /// Drive the production event loop to quiescence: consume `BlocksNeeded` by
 /// processing the named blocks through the real wallet (the blocks-manager's
 /// job), feed the resulting `BlockProcessed` events (carrying the wallet's
 /// freshly derived scripts) back into the filters manager, and repeat until
 /// no more blocks are requested. Blocks are processed in height order, like
-/// the real `BlocksPipeline`.
+/// the real `BlocksPipeline`, and the manager ticks once per round. Returns how
+/// often each block was applied.
 async fn drive_to_quiescence(
     manager: &mut CjFiltersManager,
     wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
     blocks: &HashMap<BlockHash, Block>,
     initial_events: Vec<SyncEvent>,
-) {
+) -> HashMap<BlockHash, usize> {
     let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
+    let mut passes: HashMap<BlockHash, usize> = HashMap::new();
     let mut events = initial_events;
     for _round in 0..64 {
+        events.extend(manager.tick(&network).await.expect("tick"));
         let mut pending: BTreeMap<(u32, BlockHash), BTreeSet<WalletId>> = BTreeMap::new();
         for event in events.drain(..) {
             if let SyncEvent::BlocksNeeded {
@@ -208,7 +202,7 @@ async fn drive_to_quiescence(
             }
         }
         if pending.is_empty() {
-            return;
+            return passes;
         }
 
         let mut next_events = Vec::new();
@@ -219,6 +213,7 @@ async fn drive_to_quiescence(
                 .await
                 .process_block_for_wallets(block, block_hash, height, &wallets)
                 .await;
+            *passes.entry(block_hash).or_default() += 1;
             let confirmed_txids = result.relevant_txids().cloned().collect();
             let event = SyncEvent::BlockProcessed {
                 block_hash,
@@ -245,7 +240,7 @@ async fn drive_to_quiescence(
 #[tokio::test]
 async fn coinjoin_gap_limit_dense_same_batch_recovers() {
     let (mut manager, wallet, wallet_id) = setup().await;
-    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 40) as u32).await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 40) as u32);
 
     let (highest_used, highest_generated, _) = coinjoin_pool_state(&wallet, &wallet_id).await;
     assert_eq!(highest_used, None, "fresh wallet must have no used CoinJoin indices");
@@ -288,7 +283,7 @@ async fn coinjoin_gap_limit_dense_same_batch_recovers() {
 #[tokio::test]
 async fn coinjoin_gap_limit_inversion_within_batch_recovers() {
     let (mut manager, wallet, wallet_id) = setup().await;
-    let addresses = coinjoin_external_addresses(&wallet, &wallet_id, (G + 22) as u32).await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 22) as u32);
 
     let (block_a, filter_a, key_a) = block_paying(10, &addresses[(G + 10)..=(G + 21)]);
     let (block_b, filter_b, key_b) = block_paying(20, &addresses[0..=29]);
@@ -310,4 +305,156 @@ async fn coinjoin_gap_limit_inversion_within_batch_recovers() {
         "a gap-window output in an earlier block of the SAME active batch must be \
          recovered by the commit-time rescan (PR #820). used_count={used_count}"
     );
+}
+
+/// Block A pays G+2 in its first transaction and index 5 in its second. Using
+/// index 5 derives G+2, and the same application checks the block again, so A
+/// is applied once. Block B pays index 1 and G+3 and is applied after A derived
+/// G+3, so its first pass already credited G+3 and the rescan must not apply it again.
+#[tokio::test]
+async fn coinjoin_rescan_skips_blocks_applied_after_the_scripts() {
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 4) as u32);
+
+    let (pays_g2, _, _) = block_paying(10, &[addresses[G + 2].clone()]);
+    let (pays_5, _, _) = block_paying(11, &[addresses[5].clone()]);
+    let block_a = Block::dummy(10, vec![pays_g2.txdata[0].clone(), pays_5.txdata[0].clone()]);
+    let (filter_a, key_a) =
+        (BlockFilter::dummy(&block_a), FilterMatchKey::new(10, block_a.block_hash()));
+    let (block_b, filter_b, key_b) =
+        block_paying(20, &[addresses[1].clone(), addresses[G + 3].clone()]);
+    let (hash_a, hash_b) = (block_a.block_hash(), block_b.block_hash());
+    let blocks: HashMap<BlockHash, Block> = HashMap::from([(hash_a, block_a), (hash_b, block_b)]);
+
+    let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key_a, filter_a), (key_b, filter_b)]));
+    batch.mark_verified();
+    manager.active_batches.insert(0, batch);
+    manager.progress.update_stored_height(99);
+
+    let initial_events = manager.try_process_batch().await.unwrap();
+    let passes = drive_to_quiescence(&mut manager, &wallet, &blocks, initial_events).await;
+
+    let (highest_used, _, used_count) = coinjoin_pool_state(&wallet, &wallet_id).await;
+    assert_eq!(highest_used, Some((G + 3) as u32));
+    assert_eq!(used_count, 4, "indices 1, 5, G+2 and G+3 must all be credited");
+    let balance = wallet.read().await.get_wallet_balance(&wallet_id).expect("balance");
+    assert_eq!(balance.confirmed(), 4 * DENOMINATION);
+    assert_eq!(passes.get(&hash_a), Some(&1), "A credits the scripts it derived itself");
+    assert_eq!(passes.get(&hash_b), Some(&1), "B was applied after G+3 was derived");
+}
+
+/// Runs one batch of `blocks` at `batch_start` through scan, block passes and
+/// commit, returning how often each block was applied.
+async fn run_batch(
+    manager: &mut CjFiltersManager,
+    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+    batch_start: u32,
+    blocks: Vec<(Block, BlockFilter, FilterMatchKey)>,
+) -> HashMap<BlockHash, usize> {
+    let batch_end = batch_start + 99;
+    let filters = blocks.iter().map(|(_, filter, key)| (key.clone(), filter.clone())).collect();
+    let mut batch = FiltersBatch::new(batch_start, batch_end, filters);
+    batch.mark_verified();
+    manager.active_batches.insert(batch_start, batch);
+    manager.progress.update_stored_height(batch_end);
+
+    let blocks = blocks.into_iter().map(|(block, _, _)| (block.block_hash(), block)).collect();
+    let initial_events = manager.try_process_batch().await.unwrap();
+    let passes = drive_to_quiescence(manager, wallet, &blocks, initial_events).await;
+    assert!(!manager.active_batches.contains_key(&batch_start), "the batch must commit");
+    passes
+}
+
+/// A provider wallet watches every UTXO outpoint, which a `ProRegTx` adds to
+/// its block's filter as collateral. A rescan matches a batch only against the
+/// outpoints the batch was never matched against, so a block is not applied
+/// again for an outpoint its pass already knew.
+#[tokio::test]
+async fn provider_wallet_rescans_only_untested_outpoints() {
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, 7);
+
+    // Batch 0: A creates the outpoint the later batches refer to.
+    let (block_a, filter_a, key_a) = block_paying(10, &[addresses[5].clone()]);
+    let outpoint_a = serialize(&OutPoint::new(block_a.txdata[0].txid(), 0));
+    run_batch(&mut manager, &wallet, 0, vec![(block_a, filter_a, key_a)]).await;
+    let elements = wallet.read().await.monitored_filter_elements_for(&wallet_id);
+    assert!(elements.contains(&outpoint_a), "a provider wallet watches its UTXO outpoints");
+
+    // Batch 1: B creates an outpoint without deriving an address, and E matches
+    // only that outpoint. Only the commit-time reconcile can find E.
+    let b = block_paying(110, &[addresses[2].clone()]);
+    let outpoint_b = serialize(&OutPoint::new(b.0.txdata[0].txid(), 0));
+    let (block_e, _, key_e) = block_paying(130, &[]);
+    let filter_e = filter_with_elements(&block_e, &[outpoint_b]);
+    let hash_e = block_e.block_hash();
+    let passes = run_batch(&mut manager, &wallet, 100, vec![b, (block_e, filter_e, key_e)]).await;
+    assert_eq!(passes.get(&hash_e), Some(&1), "E matches only the outpoint B created");
+
+    // Batch 2 is scanned with A's outpoint, so C's pass knows it. D derives an
+    // address, which rescans the batch before it commits.
+    let (block_c, _, key_c) = block_paying(210, &[addresses[1].clone()]);
+    let filter_c = filter_with_elements(&block_c, &[outpoint_a]);
+    let hash_c = block_c.block_hash();
+    let d = block_paying(220, &[addresses[6].clone()]);
+    let passes = run_batch(&mut manager, &wallet, 200, vec![(block_c, filter_c, key_c), d]).await;
+    assert_eq!(passes.get(&hash_c), Some(&1), "C already knew A's outpoint");
+}
+
+/// Block X pays index G+3, which block A derived in an earlier pass, so X's
+/// pass already credited it. X's filter also carries the outpoint that block Z
+/// creates after X's pass. The rescan matches both, and the outpoint must win:
+/// X is applied again, since no pass of X saw that outpoint.
+#[tokio::test]
+async fn provider_wallet_rescan_prefers_an_untested_outpoint_over_an_older_script() {
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 4) as u32);
+
+    let a = block_paying(10, &[addresses[5].clone()]);
+    let z = block_paying(30, &[addresses[2].clone()]);
+    let outpoint_z = serialize(&OutPoint::new(z.0.txdata[0].txid(), 0));
+    let (block_x, _, key_x) = block_paying(20, &[addresses[1].clone(), addresses[G + 3].clone()]);
+    let filter_x = filter_with_elements(&block_x, &[outpoint_z]);
+    let hash_x = block_x.block_hash();
+
+    let passes = run_batch(&mut manager, &wallet, 0, vec![a, (block_x, filter_x, key_x), z]).await;
+    assert_eq!(passes.get(&hash_x), Some(&2), "X never saw the outpoint Z created");
+}
+
+/// Block A in the first batch pays index 5 and G+4, which derives the window
+/// up to 2G+4. The next batch was scanned before that, and its blocks pay G+2
+/// and G+6. Both are found by the deferred rescan, and every block is applied once.
+#[tokio::test]
+async fn coinjoin_scripts_derived_in_one_batch_find_blocks_in_the_next() {
+    let (mut manager, wallet, wallet_id) = setup().await;
+    let addresses = coinjoin_external_addresses(&*wallet.read().await, &wallet_id, (G + 7) as u32);
+
+    let (block_a, filter_a, key_a) =
+        block_paying(10, &[addresses[5].clone(), addresses[G + 4].clone()]);
+    let (block_b, filter_b, key_b) = block_paying(120, &[addresses[G + 6].clone()]);
+    let (block_c, filter_c, key_c) = block_paying(150, &[addresses[G + 2].clone()]);
+    let blocks: HashMap<BlockHash, Block> =
+        [block_a, block_b, block_c].into_iter().map(|block| (block.block_hash(), block)).collect();
+
+    let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key_a, filter_a)]));
+    batch.mark_verified();
+    manager.active_batches.insert(0, batch);
+    let mut batch =
+        FiltersBatch::new(100, 199, HashMap::from([(key_b, filter_b), (key_c, filter_c)]));
+    batch.mark_verified();
+    manager.active_batches.insert(100, batch);
+    manager.progress.update_stored_height(199);
+
+    let initial_events = manager.try_process_batch().await.unwrap();
+    let passes = drive_to_quiescence(&mut manager, &wallet, &blocks, initial_events).await;
+
+    let (highest_used, _, used_count) = coinjoin_pool_state(&wallet, &wallet_id).await;
+    assert_eq!(highest_used, Some((G + 6) as u32));
+    assert_eq!(used_count, 4, "indices 5, G+2, G+4 and G+6 must all be credited");
+    let balance = wallet.read().await.get_wallet_balance(&wallet_id).expect("balance");
+    assert_eq!(balance.confirmed(), 4 * DENOMINATION);
+    assert_eq!(passes.len(), 3);
+    assert!(passes.values().all(|count| *count == 1), "each block is applied once: {passes:?}");
+    assert!(manager.active_batches.is_empty(), "both batches commit");
+    assert_eq!(manager.progress.committed_height(), 199);
 }

@@ -205,6 +205,10 @@ pub enum WalletEvent {
         /// these rows transactionally with `record` so UTXOs landing on
         /// them retain a parent address row.
         addresses_derived: Vec<DerivedAddress>,
+        /// Outpoints this transaction added to the wallet's lock set: the
+        /// collateral of a ProRegTx. A persister stores them and hands them
+        /// back with `ManagedWalletInfo::lock_outpoint` on load.
+        locked_outpoints: Vec<OutPoint>,
     },
     /// An InstantSend lock was applied to a previously-seen off-chain
     /// wallet-relevant transaction.
@@ -374,6 +378,11 @@ pub enum WalletEvent {
         /// transactionally with the inserted/updated records so UTXOs
         /// landing on them retain a parent address row.
         addresses_derived: Vec<DerivedAddress>,
+        /// Outpoints this block added to the wallet's lock set: the
+        /// collateral of each ProRegTx that locked one. A persister stores
+        /// them and hands them back with `ManagedWalletInfo::lock_outpoint`
+        /// on load.
+        locked_outpoints: Vec<OutPoint>,
     },
     /// The wallet's scan cursor advanced because the filter pipeline
     /// committed a batch covering blocks up to `height`. No records or
@@ -478,15 +487,17 @@ impl fmt::Display for WalletEvent {
                 balance,
                 account_balances,
                 addresses_derived,
+                locked_outpoints,
                 ..
             } => write!(
                 f,
-                "TransactionDetected(txid={}, context={}, balance={}, account_balances={}, derived={})",
+                "TransactionDetected(txid={}, context={}, balance={}, account_balances={}, derived={}, locked={})",
                 record.txid,
                 record.context,
                 balance,
                 format_account_balances(account_balances),
                 addresses_derived.len(),
+                locked_outpoints.len(),
             ),
             WalletEvent::TransactionInstantLocked {
                 txid,
@@ -545,10 +556,11 @@ impl fmt::Display for WalletEvent {
                 balance,
                 account_balances,
                 addresses_derived,
+                locked_outpoints,
                 ..
             } => write!(
                 f,
-                "BlockProcessed(height={}, chainlocked={}, inserted={}, updated={}, matured={}, balance={}, account_balances={}, derived={})",
+                "BlockProcessed(height={}, chainlocked={}, inserted={}, updated={}, matured={}, balance={}, account_balances={}, derived={}, locked={})",
                 height,
                     chain_lock.is_some(),
                 inserted.len(),
@@ -557,6 +569,7 @@ impl fmt::Display for WalletEvent {
                 balance,
                 format_account_balances(account_balances),
                 addresses_derived.len(),
+                locked_outpoints.len(),
             ),
             WalletEvent::SyncHeightAdvanced {
                 height,

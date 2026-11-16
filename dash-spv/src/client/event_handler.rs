@@ -6,16 +6,19 @@
 
 use std::fmt::Display;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{broadcast, mpsc, watch, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::network::NetworkEvent;
-use crate::sync::{SyncEvent, SyncProgress};
+use crate::sync::{SyncEvent, SyncProgress, SyncState};
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use key_wallet_manager::{WalletEvent, WalletInterface};
+
+/// Minimum time between two logged progress values while no manager changes state.
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Trait for receiving SPV client events.
 ///
@@ -115,9 +118,10 @@ where
 
 /// Spawns a task that monitors a watch channel for progress updates.
 ///
-/// Sends the initial progress value, then monitors for changes. Every value is
-/// mirrored into `tracing::info!` before consumer handlers run, matching
-/// `spawn_broadcast_monitor`'s behavior.
+/// Sends the initial progress value, then monitors for changes. Every value reaches
+/// the consumer handlers. A value is mirrored into `tracing::info!` when a manager
+/// changes state or [`PROGRESS_LOG_INTERVAL`] has passed since the last logged one,
+/// because sync updates progress many times a second.
 pub(crate) fn spawn_progress_monitor(
     mut receiver: watch::Receiver<SyncProgress>,
     handlers: Arc<Vec<Arc<dyn EventHandler>>>,
@@ -127,27 +131,28 @@ pub(crate) fn spawn_progress_monitor(
     tokio::spawn(async move {
         tracing::debug!("Progress monitoring task started");
 
-        {
-            let guard = receiver.borrow_and_update();
-            let progress: &SyncProgress = &guard;
-            tracing::info!("SyncProgress: {}", progress);
+        let mut logged: Option<(Instant, Vec<SyncState>)> = None;
+        let mut dispatch = |progress: &SyncProgress| {
+            let states = progress.manager_states();
+            let due = logged.as_ref().is_none_or(|(at, logged_states)| {
+                *logged_states != states || at.elapsed() >= PROGRESS_LOG_INTERVAL
+            });
+            if due {
+                tracing::info!("SyncProgress: {}", progress);
+                logged = Some((Instant::now(), states));
+            }
             for handler in handlers.iter() {
                 handler.on_progress(progress);
             }
-        }
+        };
+
+        dispatch(&receiver.borrow_and_update());
 
         loop {
             tokio::select! {
                 result = receiver.changed() => {
                     match result {
-                        Ok(()) => {
-                            let guard = receiver.borrow_and_update();
-                            let progress: &SyncProgress = &guard;
-                            tracing::info!("SyncProgress: {}", progress);
-                            for handler in handlers.iter() {
-                                handler.on_progress(progress);
-                            }
-                        }
+                        Ok(()) => dispatch(&receiver.borrow_and_update()),
                         Err(_) if shutdown.is_cancelled() => break,
                         Err(_) => {
                             let msg = "Progress monitor channel closed unexpectedly".to_string();

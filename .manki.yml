@@ -1,0 +1,23 @@
+# Manki — AI Code Review Configuration
+# https://github.com/manki-review/manki
+
+auto_review: true
+auto_approve: true
+
+review:
+  examples:
+    blocker:
+      - "Changing the field order in a `consensus_encode` implementation changes the bytes on the wire, even when every test passes."
+
+related_repos:
+  - { repo: dashpay/dash, kind: reference, paths: [src/] }
+  - { repo: dashpay/dips, kind: reference }
+  - { repo: dashpay/platform, kind: consumer, paths: ["packages/rs-*"] }
+  - { repo: dashpay/dash-evo-tool, kind: consumer }
+
+static_analysis:
+  analyzers:
+    secrets: true
+
+memory:
+  enabled: true

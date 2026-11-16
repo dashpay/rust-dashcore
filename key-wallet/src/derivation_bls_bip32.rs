@@ -73,6 +73,8 @@ pub enum Error {
     CannotDeriveFromHardenedPublic,
     /// BLS error
     BLSError(String),
+    /// Derivation would exceed the maximum depth of 255
+    MaxDepthExceeded,
 }
 
 impl fmt::Display for Error {
@@ -87,6 +89,7 @@ impl fmt::Display for Error {
                 write!(f, "Cannot derive public key from hardened")
             }
             Error::BLSError(e) => write!(f, "BLS error: {}", e),
+            Error::MaxDepthExceeded => write!(f, "Derivation depth exceeds 255"),
         }
     }
 }
@@ -267,7 +270,7 @@ impl ExtendedBLSPrivKey {
 
         Ok(ExtendedBLSPrivKey {
             network: self.network,
-            depth: self.depth + 1,
+            depth: self.depth.checked_add(1).ok_or(Error::MaxDepthExceeded)?,
             parent_fingerprint: self.fingerprint()?,
             child_number: child,
             private_key: derived_private_key,
@@ -472,7 +475,7 @@ impl ExtendedBLSPubKey {
 
         Ok(ExtendedBLSPubKey {
             network: self.network,
-            depth: self.depth + 1,
+            depth: self.depth.checked_add(1).ok_or(Error::MaxDepthExceeded)?,
             parent_fingerprint: self.fingerprint(),
             child_number: child,
             public_key: derived_pubkey,
@@ -1776,5 +1779,20 @@ mod tests {
         ));
         let path = DerivationPath::from(vec![ChildNumber::from_hardened_idx(9).unwrap(), hardened]);
         assert!(matches!(master.derive_path(&path), Err(Error::InvalidDerivationPath)));
+    }
+
+    #[test]
+    fn derivation_stops_at_depth_255() {
+        use super::*;
+
+        let child = ChildNumber::from_normal_idx(0).unwrap();
+        let mut sk = ExtendedBLSPrivKey::new_master(Network::Testnet, &[7u8; 32]).unwrap();
+        sk.depth = 254;
+        let sk = sk.derive_priv(child).unwrap();
+        assert_eq!(sk.depth, 255);
+        assert!(matches!(sk.derive_priv(child), Err(Error::MaxDepthExceeded)));
+
+        let pk = sk.to_extended_pub_key().unwrap();
+        assert!(matches!(pk.ckd_pub(child), Err(Error::MaxDepthExceeded)));
     }
 }

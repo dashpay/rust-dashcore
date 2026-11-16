@@ -19,6 +19,7 @@
 //! from 80 bytes to as low as 37 bytes through stateful compression techniques.
 
 use crate::blockdata::block::{Header, Version};
+use crate::consensus::encode::read_compact_size_len;
 use crate::consensus::{Decodable, Encodable};
 use crate::hash_types::{BlockHash, TxMerkleNode};
 use crate::pow::CompactTarget;
@@ -598,7 +599,7 @@ impl Decodable for Headers2Message {
     fn consensus_decode<R: io::Read + ?Sized>(
         r: &mut R,
     ) -> Result<Self, crate::consensus::encode::Error> {
-        let count = VarInt::consensus_decode(r)?.0;
+        let count = read_compact_size_len(r)?;
         // Core never sends more and treats more as misbehaviour. Checking before reserving
         // also keeps a short frame with a huge count from triggering a large allocation.
         if count > MAX_HEADERS2_RESULTS as u64 {
@@ -621,6 +622,7 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
+    use crate::consensus::encode::{self, MAX_COMPACT_SIZE};
 
     fn create_test_header(nonce: u32, prev_nonce: u32) -> Header {
         let mut prev_hash = [0u8; 32];
@@ -971,10 +973,13 @@ mod tests {
         assert!(matches!(result, Err(ProcessError::DecompressionError(0, _))));
     }
 
-    #[test]
-    fn headers2_short_frame_with_huge_count_fails() {
-        let payload = crate::consensus::encode::serialize(&VarInt(u64::MAX));
-        assert!(Headers2Message::consensus_decode(&mut &payload[..]).is_err());
+    #[test_case(u64::MAX => matches encode::Error::OversizedVectorAllocation { .. }; "huge count")]
+    #[test_case(MAX_COMPACT_SIZE + 1 => matches encode::Error::OversizedVectorAllocation { .. }; "above MAX_SIZE")]
+    #[test_case(MAX_COMPACT_SIZE => matches encode::Error::ParseFailed(_); "MAX_SIZE, above the batch limit")]
+    #[test_case(MAX_HEADERS2_RESULTS as u64 => matches encode::Error::Io(_); "full batch, no headers")]
+    fn headers2_short_frame_with_huge_count_fails(count: u64) -> encode::Error {
+        let payload = encode::serialize(&VarInt(count));
+        Headers2Message::consensus_decode(&mut &payload[..]).unwrap_err()
     }
 
     #[test_case(MAX_HEADERS2_RESULTS, true; "full Core batch decodes")]

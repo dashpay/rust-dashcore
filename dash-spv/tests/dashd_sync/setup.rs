@@ -146,13 +146,21 @@ impl TestContext {
         wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
         wallet_id: &WalletId,
     ) {
+        self.assert_wallet_synced_at(progress, wallet, wallet_id, self.dashd.initial_height).await;
+    }
+
+    /// [`Self::assert_wallet_synced`] with the chain at `tip`.
+    pub(super) async fn assert_wallet_synced_at(
+        &self,
+        progress: &SyncProgress,
+        wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+        wallet_id: &WalletId,
+        tip: u32,
+    ) {
         let header_height = progress.headers().unwrap().current_height();
         let filter_header_height = progress.filter_headers().unwrap().current_height();
-        assert_eq!(header_height, self.dashd.initial_height, "Header height mismatch");
-        assert_eq!(
-            filter_header_height, self.dashd.initial_height,
-            "Filter header height mismatch"
-        );
+        assert_eq!(header_height, tip, "Header height mismatch");
+        assert_eq!(filter_header_height, tip, "Filter header height mismatch");
 
         let wallet_read = wallet.read().await;
         let wallet_info = wallet_read.get_wallet_info(wallet_id).expect("Wallet info not found");

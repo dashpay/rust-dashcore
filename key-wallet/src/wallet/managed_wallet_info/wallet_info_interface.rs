@@ -131,7 +131,8 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// Get all UTXOs for the wallet
     fn utxos(&self) -> BTreeSet<&Utxo>;
 
-    /// Get spendable UTXOs (confirmed and not locked)
+    /// Get spendable UTXOs: mature and not locked (see
+    /// [`ManagedWalletInfo::locked_outpoints`]).
     fn get_spendable_utxos(&self) -> BTreeSet<&Utxo>;
 
     /// Get the wallet balance
@@ -304,12 +305,6 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     fn mark_instant_send_utxos(&mut self, txid: &Txid, lock: &InstantLock) -> bool;
 
     fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight>;
-
-    /// Return the aggregated monitor revision across all accounts.
-    /// Increments whenever the monitored address set changes.
-    fn monitor_revision(&self) -> u64 {
-        0
-    }
 }
 
 /// Default implementation for ManagedWalletInfo
@@ -506,6 +501,10 @@ impl WalletInfoInterface for ManagedWalletInfo {
     }
 
     fn update_balance(&mut self) {
+        // The locked bucket is read from each coin's lock flag, which follows
+        // the wallet's lock set; bring every flag up to date first.
+        self.refresh_all_lock_flags();
+
         // Only funds-bearing accounts contribute to the wallet balance.
         let mut balance = WalletCoreBalance::default();
         let last_processed_height = self.last_processed_height();
@@ -691,10 +690,6 @@ impl WalletInfoInterface for ManagedWalletInfo {
             self.update_balance();
         }
         any_changed || swept
-    }
-
-    fn monitor_revision(&self) -> u64 {
-        self.accounts.all_accounts().iter().map(|a| a.monitor_revision()).sum()
     }
 
     fn unrecorded_spend_heights(&self, tx: &Transaction) -> BTreeSet<CoreBlockHeight> {

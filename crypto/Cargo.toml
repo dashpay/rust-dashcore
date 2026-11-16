@@ -32,6 +32,7 @@ serde = [
 ]
 
 [dependencies]
+base58ck = { workspace = true }
 bitcoin-crypto = { workspace = true, features = ["std", "hex"] }
 bincode = { workspace = true, optional = true }
 bincode_derive = { workspace = true, optional = true }

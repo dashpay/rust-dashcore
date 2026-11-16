@@ -6,11 +6,13 @@
 //! special-purpose flows (identity registration, asset locks, masternode provider
 //! keys) rather than to hold and spend Dash directly.
 
+use crate::account::AccountType;
 #[cfg(feature = "bls")]
 use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
 use crate::account::TransactionRecord;
+use crate::error::Result;
 use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
@@ -80,10 +82,6 @@ pub struct ManagedCoreKeysAccount {
     #[cfg(not(feature = "keep-finalized-transactions"))]
     #[cfg_attr(feature = "serde", serde(default))]
     finalized_summaries: HashMap<Txid, FinalizedSummary>,
-    /// Revision counter incremented when the monitored address set changes
-    /// (e.g. new addresses generated). Used to detect bloom filter staleness.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    monitor_revision: u64,
 }
 
 impl ManagedCoreKeysAccount {
@@ -97,7 +95,6 @@ impl ManagedCoreKeysAccount {
             finalized_txids: HashSet::new(),
             #[cfg(not(feature = "keep-finalized-transactions"))]
             finalized_summaries: HashMap::new(),
-            monitor_revision: 0,
         }
     }
 
@@ -232,61 +229,47 @@ impl ManagedCoreKeysAccount {
     }
 
     /// Create a `ManagedCoreKeysAccount` from an [`Account`](super::super::Account).
-    pub fn from_account(account: &super::super::Account) -> Self {
-        let key_source = address_pool::KeySource::Public(account.account_xpub);
+    pub fn from_account(account: &super::super::Account) -> Result<Self> {
+        // An xpub cannot derive the hardened pool of `ProviderPlatformKeys`.
+        let key_source = if account.account_type == AccountType::ProviderPlatformKeys {
+            address_pool::KeySource::NoKeySource
+        } else {
+            address_pool::KeySource::Public(account.account_xpub)
+        };
         let managed_type = ManagedAccountType::from_account_type(
             account.account_type,
             account.network,
             &key_source,
-        )
-        .unwrap_or_else(|_| {
-            let no_key_source = address_pool::KeySource::NoKeySource;
-            ManagedAccountType::from_account_type(
-                account.account_type,
-                account.network,
-                &no_key_source,
-            )
-            .expect("Should succeed with NoKeySource")
-        });
+        )?;
 
-        Self::new(managed_type, account.network)
+        Ok(Self::new(managed_type, account.network))
     }
 
     /// Create a `ManagedCoreKeysAccount` from a [`BLSAccount`].
     #[cfg(feature = "bls")]
-    pub fn from_bls_account(account: &BLSAccount) -> Self {
+    pub fn from_bls_account(account: &BLSAccount) -> Result<Self> {
         let key_source = address_pool::KeySource::BLSPublic(account.bls_public_key.clone());
         let managed_type = ManagedAccountType::from_account_type(
             account.account_type,
             account.network,
             &key_source,
-        )
-        .unwrap_or_else(|_| {
-            let no_key_source = address_pool::KeySource::NoKeySource;
-            ManagedAccountType::from_account_type(
-                account.account_type,
-                account.network,
-                &no_key_source,
-            )
-            .expect("Should succeed with NoKeySource")
-        });
+        )?;
 
-        Self::new(managed_type, account.network)
+        Ok(Self::new(managed_type, account.network))
     }
 
     /// Create a `ManagedCoreKeysAccount` from an [`EdDSAAccount`].
     #[cfg(feature = "eddsa")]
-    pub fn from_eddsa_account(account: &EdDSAAccount) -> Self {
+    pub fn from_eddsa_account(account: &EdDSAAccount) -> Result<Self> {
         // EdDSA requires hardened derivation, so we cannot generate addresses without the private key.
         let key_source = address_pool::KeySource::NoKeySource;
         let managed_type = ManagedAccountType::from_account_type(
             account.account_type,
             account.network,
             &key_source,
-        )
-        .expect("Should succeed with NoKeySource");
+        )?;
 
-        Self::new(managed_type, account.network)
+        Ok(Self::new(managed_type, account.network))
     }
 
     /// Record a new transaction for this keys account.
@@ -470,13 +453,5 @@ impl ManagedAccountTrait for ManagedCoreKeysAccount {
     #[cfg(not(feature = "keep-finalized-transactions"))]
     fn transaction_is_finalized(&self, txid: &Txid) -> bool {
         self.finalized_txids.contains(txid)
-    }
-
-    fn monitor_revision(&self) -> u64 {
-        self.monitor_revision
-    }
-
-    fn bump_monitor_revision(&mut self) {
-        self.monitor_revision += 1;
     }
 }

@@ -21,7 +21,9 @@
 use super::{TransactionPayload, TransactionType};
 use crate::Transaction;
 use crate::bls_sig_utils::BLSSignature;
-use crate::consensus::encode::{compact_size_len, read_compact_size, write_compact_size};
+use crate::consensus::encode::{
+    MAX_COMPACT_SIZE, compact_size_len, read_compact_size, write_compact_size,
+};
 use crate::consensus::{Decodable, Encodable, encode};
 use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
 use crate::io;
@@ -377,7 +379,13 @@ impl Decodable for CoinbasePayload {
             MerkleRootQuorums::all_zeros()
         };
         let best_cl_height = if version >= 3 {
-            Some(read_compact_size(r)?)
+            // Core reads it with `COMPACTSIZE`, whose `ReadCompactSize` range check refuses a
+            // value above `MAX_SIZE`.
+            let diff = read_compact_size(r)?;
+            if u64::from(diff) > MAX_COMPACT_SIZE {
+                return Err(encode::Error::ParseFailed("bestCLHeightDiff larger than MAX_SIZE"));
+            }
+            Some(diff)
         } else {
             None
         };
@@ -414,6 +422,7 @@ mod tests {
 
     use crate::Transaction;
     use crate::bls_sig_utils::BLSSignature;
+    use crate::consensus::encode::MAX_COMPACT_SIZE;
     use crate::consensus::{Decodable, Encodable};
     use crate::hash_types::{MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums};
     use crate::transaction::special_transaction::TransactionPayload;
@@ -605,6 +614,28 @@ mod tests {
             bincode::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
         assert_eq!(decoded, payload);
         assert_eq!(read, bytes.len());
+    }
+
+    #[test]
+    fn best_cl_height_diff_over_max_size_fails_to_decode() {
+        let payload = |best_cl_height| CoinbasePayload {
+            version: 3,
+            height: 1000,
+            merkle_root_masternode_list: MerkleRootMasternodeList::all_zeros(),
+            merkle_root_quorums: MerkleRootQuorums::all_zeros(),
+            best_cl_height: Some(best_cl_height),
+            best_cl_signature: Some(BLSSignature::from([0; 96])),
+            asset_locked_amount: Some(10000),
+            merkle_root_asset_unlocks: None,
+        };
+        let decode = |p: CoinbasePayload| {
+            let mut encoded = Vec::new();
+            p.consensus_encode(&mut encoded).unwrap();
+            CoinbasePayload::consensus_decode(&mut encoded.as_slice())
+        };
+        let max = u32::try_from(MAX_COMPACT_SIZE).unwrap();
+        assert!(decode(payload(max)).is_ok());
+        assert!(decode(payload(max + 1)).is_err());
     }
 
     #[test]

@@ -4,8 +4,8 @@
 //! downloaded in parallel from multiple peers. Each segment tracks its own
 //! progress and buffers headers until ready for ordered storage.
 
-#[cfg(test)]
 use dashcore::block::Header;
+use dashcore::pow::DGW_PAST_BLOCKS;
 use dashcore::BlockHash;
 use std::sync::Arc;
 
@@ -32,6 +32,9 @@ pub struct HeadersPipeline {
     checkpoint_manager: &'static CheckpointManager,
     /// Whether the pipeline has been initialized.
     initialized: bool,
+    /// Segments syncing below the stored headers, highest first, each stored whole
+    /// once it and the ones above it are.
+    below: Vec<SegmentState>,
 }
 
 impl std::fmt::Debug for HeadersPipeline {
@@ -52,6 +55,7 @@ impl HeadersPipeline {
             next_to_store: 0,
             checkpoint_manager,
             initialized: false,
+            below: Vec::new(),
         }
     }
 
@@ -60,6 +64,7 @@ impl HeadersPipeline {
         self.segments.clear();
         self.next_to_store = 0;
         self.initialized = true;
+        self.below.clear();
 
         // Find checkpoints between current_height and target_height
         let mut boundaries: Vec<(u32, BlockHash)> = Vec::new();
@@ -111,13 +116,60 @@ impl HeadersPipeline {
         );
     }
 
+    /// Download `(start_height, end_height]` below the stored headers and the segments
+    /// already added, the block at `end_height` being `end_hash`.
+    pub(super) fn sync_below(
+        &mut self,
+        start_height: u32,
+        start_hash: BlockHash,
+        end_height: u32,
+        end_hash: BlockHash,
+    ) {
+        let mut segment = SegmentState::new(
+            self.segments.len() + self.below.len(),
+            start_height,
+            start_hash,
+            Some(end_height),
+            Some(end_hash),
+        );
+        segment.complete = start_height == end_height;
+        self.below.push(segment);
+    }
+
+    /// Whether a [`Self::sync_below`] segment is still to be stored.
+    pub(super) fn is_syncing_below(&self) -> bool {
+        !self.below.is_empty()
+    }
+
+    /// Headers of the highest [`Self::sync_below`] segment, once complete.
+    pub(super) fn take_below(&mut self) -> Option<Vec<HashedBlockHeader>> {
+        if !self.below.first()?.complete {
+            return None;
+        }
+        Some(self.below.remove(0).buffered_headers)
+    }
+
+    /// Drop the [`Self::sync_below`] segments, to sync below again from scratch.
+    pub(super) fn clear_below(&mut self) {
+        self.below.clear();
+    }
+
+    /// Declare the `getheaders` of the highest [`Self::sync_below`] segments still downloading.
+    pub(super) async fn send_below(&mut self, network: &Arc<dyn NetworkManager>) {
+        for below in
+            self.below.iter_mut().take(ACTIVE_SEGMENT_WINDOW).filter(|below| below.can_send())
+        {
+            below.send_request(network).await;
+        }
+    }
+
     /// Get the number of segments in the pipeline.
     pub fn segment_count(&self) -> usize {
         self.segments.len()
     }
 
     /// Declare each non-complete segment's `getheaders`. Safe to call freely since the
-    /// broker de-duplicates; returns the number of segments declared.
+    /// broker de-duplicates. Returns the number of segments with a new request.
     pub async fn send_pending(&mut self, network: &Arc<dyn NetworkManager>) -> SyncResult<usize> {
         let mut sent = 0;
         let window_end = (self.next_to_store + ACTIVE_SEGMENT_WINDOW).min(self.segments.len());
@@ -126,8 +178,9 @@ impl HeadersPipeline {
             if !segment.can_send() {
                 continue;
             }
-            segment.send_request(network).await;
-            sent += 1;
+            if segment.send_request(network).await {
+                sent += 1;
+            }
         }
         Ok(sent)
     }
@@ -156,6 +209,13 @@ impl HeadersPipeline {
 
         let prev_hash = headers[0].header().prev_blockhash;
 
+        if let Some(below) =
+            self.below.iter_mut().find(|below| !below.complete && below.matches(&prev_hash))
+        {
+            below.receive_headers(headers)?;
+            return Ok(Some(below.segment_id));
+        }
+
         // Find the segment that matches
         for (idx, segment) in self.segments.iter_mut().enumerate() {
             if segment.matches(&prev_hash) {
@@ -165,11 +225,11 @@ impl HeadersPipeline {
                 if segment.complete && segment.target_height.is_some() {
                     continue;
                 }
-                // If tip segment was completed but receives new headers (post-sync),
-                // reset it so take_ready_to_store() can process the new headers
+                // Reopen a completed tip segment that receives new headers. The store cursor
+                // only moves back to it, since earlier segments may still be downloading.
                 if segment.complete && segment.target_height.is_none() {
                     segment.complete = false;
-                    self.next_to_store = idx;
+                    self.next_to_store = self.next_to_store.min(idx);
                     tracing::debug!(
                         "Tip segment {} receiving post-sync headers, reset for continued processing",
                         segment.segment_id
@@ -196,6 +256,25 @@ impl HeadersPipeline {
         Ok(None)
     }
 
+    /// Height and ancestors of the segment whose tip is `hash`, if any: the
+    /// checkpoint it starts at and the headers it has buffered since.
+    pub(super) fn segment_ancestors(&self, hash: &BlockHash) -> Option<(u32, Vec<Header>)> {
+        let segment = self.segments.iter().find(|segment| segment.matches(hash))?;
+        let checkpoint = self
+            .checkpoint_manager
+            .last_checkpoint_before_height(segment.start_height)
+            .filter(|checkpoint| checkpoint.height() == segment.start_height);
+        let buffered = &segment.buffered_headers;
+        let recent = &buffered[buffered.len().saturating_sub(DGW_PAST_BLOCKS)..];
+        let ancestors = checkpoint
+            .into_iter()
+            .flat_map(|checkpoint| checkpoint.headers())
+            .chain(recent)
+            .map(|header| *header.header())
+            .collect();
+        Some((segment.current_height, ancestors))
+    }
+
     /// Get segments that are ready to store (complete and in order).
     /// Returns tuples of (start_height, headers).
     pub fn take_ready_to_store(&mut self) -> Vec<(u32, Vec<HashedBlockHeader>)> {
@@ -217,9 +296,11 @@ impl HeadersPipeline {
             }
 
             let segment = &mut self.segments[self.next_to_store];
-            let start_height = segment.start_height + 1; // +1 because we store headers after start
             let segment_id = segment.segment_id;
             let headers = segment.take_buffered();
+            // A segment drains many times while it downloads, and each drained batch
+            // ends at `current_height`.
+            let start_height = segment.current_height + 1 - headers.len() as u32;
             let is_complete = segment.complete;
             let is_empty = segment.buffered_headers.is_empty();
 
@@ -244,14 +325,15 @@ impl HeadersPipeline {
         ready
     }
 
-    /// Check if all segments are complete.
+    /// Whether all segments above the stored headers are complete. The segments below
+    /// do not count, so syncing below never holds back the sync to the tip.
     pub fn is_complete(&self) -> bool {
         self.segments.iter().all(|s| s.complete && s.buffered_headers.is_empty())
     }
 
     /// Get the total number of buffered headers across all segments.
     pub fn total_buffered(&self) -> u32 {
-        self.segments.iter().map(|s| s.buffered_headers.len() as u32).sum()
+        self.segments.iter().chain(&self.below).map(|s| s.buffered_headers.len() as u32).sum()
     }
 
     /// Locator of the non-complete tip segment, used to key an empty `headers` response.
@@ -287,6 +369,14 @@ impl HeadersPipeline {
         }
     }
 
+    /// Treats every segment's next request as new, for a sync that starts again after
+    /// losing its peers, when queued requests may have been dropped.
+    pub(super) fn forget_declared(&mut self) {
+        for segment in self.segments.iter_mut().chain(&mut self.below) {
+            segment.forget_declared();
+        }
+    }
+
     /// Reset the tip segment for continued syncing after initial sync completes.
     /// This allows the pipeline to be reused for post-sync header updates.
     /// Returns true if the tip segment was reset, false if not found or not complete.
@@ -295,8 +385,8 @@ impl HeadersPipeline {
         for (idx, segment) in self.segments.iter_mut().enumerate() {
             if segment.target_height.is_none() && segment.complete {
                 segment.complete = false;
-                // Reset next_to_store so buffered headers can be processed
-                self.next_to_store = idx;
+                // Earlier segments may still be downloading, so the store cursor only moves back.
+                self.next_to_store = self.next_to_store.min(idx);
                 tracing::debug!(
                     "Reset tip segment {} at height {} for continued syncing",
                     segment.segment_id,
@@ -416,9 +506,9 @@ mod tests {
             pipeline.segments[0].complete = true;
             pipeline.next_to_store = 1;
 
-            // A tick re-declares the whole window; what matters is that draining the
-            // head exposed the next segment.
-            assert_eq!(pipeline.send_pending(&network).await.unwrap(), ACTIVE_SEGMENT_WINDOW);
+            // A tick re-declares the whole window, but only the segment exposed by
+            // draining the head has a new request.
+            assert_eq!(pipeline.send_pending(&network).await.unwrap(), 1);
             assert!(declared_locators(&mock)
                 .await
                 .contains(&pipeline.segments[ACTIVE_SEGMENT_WINDOW].current_tip_hash));
@@ -499,6 +589,62 @@ mod tests {
         assert_eq!(pipeline.segments[0].current_height, 1002);
         assert_eq!(pipeline.segments[0].buffered_headers, headers);
         assert_eq!(pipeline.next_to_store, 0);
+        assert_eq!(pipeline.take_ready_to_store(), vec![(1001, headers.clone())]);
+
+        // The next batch starts above the stored one, not at the segment start.
+        pipeline.mark_tip_complete();
+        let next: Vec<HashedBlockHeader> = Header::dummy_chain(1, *headers[1].hash())
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        assert_eq!(pipeline.receive_headers(&next).unwrap(), Some(0));
+        assert_eq!(pipeline.take_ready_to_store(), vec![(1003, next)]);
+    }
+
+    #[tokio::test]
+    async fn test_reopened_tip_does_not_strand_unfinished_segments() {
+        let chain = Header::dummy_chain(6, BlockHash::dummy(0))
+            .into_iter()
+            .map(HashedBlockHeader::from)
+            .collect::<Vec<_>>();
+        let checkpoint_hash = *chain[3].hash();
+
+        for reopen_with_header in [true, false] {
+            let cm = create_test_checkpoint_manager(true);
+            let mut pipeline = HeadersPipeline::new(cm);
+            pipeline.set_segments_for_test(vec![
+                SegmentState::new(0, 0, BlockHash::dummy(0), Some(4), Some(checkpoint_hash)),
+                SegmentState::new(1, 4, checkpoint_hash, None, None),
+            ]);
+
+            // Segment 0 is half downloaded while the tip segment already reached the peer's tip.
+            assert_eq!(pipeline.receive_headers(&chain[..2]).unwrap(), Some(0));
+            assert_eq!(pipeline.receive_headers(&chain[4..5]).unwrap(), Some(1));
+            assert_eq!(pipeline.receive_headers(&[]).unwrap(), Some(1));
+            assert!(pipeline.is_tip_complete());
+
+            let tip_end = if reopen_with_header {
+                assert_eq!(pipeline.receive_headers(&chain[5..]).unwrap(), Some(1));
+                6
+            } else {
+                assert!(pipeline.reset_tip_segment());
+                5
+            };
+
+            let mock = Arc::new(MockNetworkManager::new());
+            let network: Arc<dyn NetworkManager> = mock.clone();
+            pipeline.send_pending(&network).await.unwrap();
+            assert!(
+                declared_locators(&mock).await.contains(chain[1].hash()),
+                "unfinished segment 0 stopped requesting its headers"
+            );
+
+            assert_eq!(pipeline.receive_headers(&chain[2..4]).unwrap(), Some(0));
+            assert_eq!(
+                pipeline.take_ready_to_store(),
+                vec![(1, chain[..4].to_vec()), (5, chain[4..tip_end].to_vec())]
+            );
+        }
     }
 
     #[tokio::test]
@@ -537,6 +683,13 @@ mod tests {
             vec![BlockHash::dummy(ACTIVE_SEGMENT_WINDOW as u32)],
             "newly exposed segment was not requested"
         );
+
+        // Re-declaring an unanswered request is not new. After an empty reply, the same
+        // locator is a new request again.
+        assert_eq!(pipeline.send_pending(&network).await.unwrap(), 0);
+        assert_eq!(pipeline.receive_headers(&[]).unwrap(), Some(ACTIVE_SEGMENT_WINDOW));
+        assert!(pipeline.reset_tip_segment());
+        assert_eq!(pipeline.send_pending(&network).await.unwrap(), 1);
     }
 
     #[test]
@@ -597,6 +750,50 @@ mod tests {
         let matched = pipeline.receive_headers(&[first_header.into()]).unwrap();
         assert_eq!(matched, None, "Duplicate headers should be silently ignored");
         assert!(pipeline.segments[0].buffered_headers.is_empty());
+    }
+
+    /// A segment's ancestors are the checkpoint it starts at, if it starts at
+    /// one, followed by the last headers it buffered.
+    #[test]
+    fn test_segment_ancestors() {
+        let cm = create_test_checkpoint_manager(true);
+        let checkpoint = cm.checkpoints().next().unwrap();
+        let segment = |id, start_height, start_hash| {
+            let buffered: Vec<HashedBlockHeader> =
+                Header::dummy_chain(30, start_hash).iter().map(HashedBlockHeader::from).collect();
+            let mut segment = SegmentState::new(id, start_height, start_hash, None, None);
+            segment.current_height = start_height + 30;
+            segment.current_tip_hash = *buffered[29].hash();
+            segment.buffered_headers = buffered;
+            segment
+        };
+        let mut pipeline = HeadersPipeline::new(cm);
+        pipeline.initialized = true;
+        pipeline.segments = vec![
+            segment(0, checkpoint.height(), *checkpoint.hash()),
+            // Above the checkpoint, so it must not take its headers.
+            segment(1, checkpoint.height() + 100, BlockHash::dummy(10)),
+        ];
+        let recent = |segment: &SegmentState| -> Vec<Header> {
+            segment.buffered_headers[6..].iter().map(|header| *header.header()).collect()
+        };
+
+        let at_checkpoint = &pipeline.segments[0];
+        let mut expected: Vec<Header> =
+            checkpoint.headers().iter().map(|header| *header.header()).collect();
+        expected.extend(recent(at_checkpoint));
+        assert_eq!(
+            pipeline.segment_ancestors(&at_checkpoint.current_tip_hash),
+            Some((checkpoint.height() + 30, expected))
+        );
+
+        let off_checkpoint = &pipeline.segments[1];
+        assert_eq!(
+            pipeline.segment_ancestors(&off_checkpoint.current_tip_hash),
+            Some((checkpoint.height() + 130, recent(off_checkpoint)))
+        );
+
+        assert_eq!(pipeline.segment_ancestors(&BlockHash::dummy(999)), None);
     }
 
     #[test]

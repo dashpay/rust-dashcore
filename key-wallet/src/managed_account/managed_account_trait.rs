@@ -73,15 +73,6 @@ pub trait ManagedAccountTrait {
     /// the full record under the default feature configuration.
     fn transaction_is_finalized(&self, txid: &Txid) -> bool;
 
-    /// Return the current monitor revision.
-    ///
-    /// Bumped whenever the monitored address set changes (e.g. new addresses
-    /// generated). Used to detect bloom-filter staleness.
-    fn monitor_revision(&self) -> u64;
-
-    /// Increment the monitor revision to signal that the monitored address set changed.
-    fn bump_monitor_revision(&mut self);
-
     // ----- Provided: defaults built on the primitives above -----
 
     /// Get the account index
@@ -565,12 +556,6 @@ pub trait ManagedAccountTrait {
                     break;
                 }
             }
-        }
-
-        // Bump the monitor revision if any pool actually generated addresses, even when a later
-        // pool failed — otherwise the revision would stay stale despite changed monitored state.
-        if !generated.is_empty() {
-            self.bump_monitor_revision();
         }
 
         if let Some(e) = first_error {

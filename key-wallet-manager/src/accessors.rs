@@ -59,7 +59,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Insert a pre-built wallet and info pair.
     ///
     /// Errors with [`WalletError::WalletExists`] if a wallet with the same ID is
-    /// already registered. On success bumps the structural revision.
+    /// already registered.
     pub fn insert_wallet(&mut self, wallet: Wallet, info: T) -> Result<WalletId, WalletError> {
         let wallet_id = wallet.compute_wallet_id();
         if self.wallets.contains_key(&wallet_id) {
@@ -67,7 +67,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, info);
-        self.bump_structural_revision();
         Ok(wallet_id)
     }
 
@@ -77,9 +76,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             self.wallets.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
         let info =
             self.wallet_infos.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
-        // Absorb the removed wallet's account-level revision so the total
-        // stays monotonically increasing even though we lost a contributor.
-        self.structural_revision += info.monitor_revision() + 1;
         Ok((wallet, info))
     }
 
@@ -244,12 +240,6 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.persistence_sender = Some(sender);
         Some(receiver)
-    }
-
-    /// Return the total monitor revision (structural + per-wallet account revisions).
-    pub fn monitor_revision(&self) -> u64 {
-        self.structural_revision
-            + self.wallet_infos.values().map(|w| w.monitor_revision()).sum::<u64>()
     }
 
     /// Snapshot the current balance of every managed wallet.

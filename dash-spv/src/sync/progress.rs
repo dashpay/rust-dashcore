@@ -44,16 +44,7 @@ impl SyncProgress {
     /// Returns the most progressed state among all managers,
     /// or WaitForEvents if no managers have started.
     pub fn state(&self) -> SyncState {
-        let states: Vec<SyncState> = [
-            self.headers.as_ref().map(|h| h.state()),
-            self.filter_headers.as_ref().map(|f| f.state()),
-            self.filters.as_ref().map(|f| f.state()),
-            self.blocks.as_ref().map(|b| b.state()),
-            self.masternodes.as_ref().map(|m| m.state()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let states = self.manager_states();
 
         if states.is_empty() {
             return SyncState::WaitForEvents;
@@ -78,7 +69,19 @@ impl SyncProgress {
 
     /// Check if all managers are idle (sync complete).
     pub fn is_synced(&self) -> bool {
-        let states: Vec<SyncState> = [
+        let states = self.manager_states();
+
+        // Not synced if no managers have reported yet
+        if states.is_empty() {
+            return false;
+        }
+
+        states.iter().all(|state| *state == SyncState::Synced)
+    }
+
+    /// Returns the states of the managers that reported, in a fixed manager order.
+    pub(crate) fn manager_states(&self) -> Vec<SyncState> {
+        [
             self.headers.as_ref().map(|h| h.state()),
             self.filter_headers.as_ref().map(|f| f.state()),
             self.filters.as_ref().map(|f| f.state()),
@@ -87,14 +90,7 @@ impl SyncProgress {
         ]
         .into_iter()
         .flatten()
-        .collect();
-
-        // Not synced if no managers have reported yet
-        if states.is_empty() {
-            return false;
-        }
-
-        states.iter().all(|state| *state == SyncState::Synced)
+        .collect()
     }
 
     /// Get overall completion percentage (0.0 to 1.0).
@@ -265,11 +261,16 @@ pub trait ProgressPercentage {
     fn target_height(&self) -> CoreBlockHeight;
     /// Get the current height used for calculating progress.
     fn current_height(&self) -> CoreBlockHeight;
+    /// Get the number of heights below the stored ones still to sync.
+    fn missing_below(&self) -> CoreBlockHeight {
+        0
+    }
     /// Get completion percentage (0.0 to 1.0).
     fn percentage(&self) -> f64 {
         if self.target_height() == 0 {
             return 0.0;
         }
-        (self.current_height() as f64 / self.target_height() as f64).min(1.0)
+        let done = self.current_height().saturating_sub(self.missing_below());
+        (done as f64 / self.target_height() as f64).min(1.0)
     }
 }

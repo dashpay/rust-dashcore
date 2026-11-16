@@ -278,28 +278,44 @@ impl GcsFilterReader {
         let reader = &mut decoder;
         // map hashes to [0, n_elements << grp]
         let nm = n_elements.0 * self.m;
-        let mut mapped = self.filter.hash_query(query, nm);
         // For an empty query set, "any" should be false (no items to match).
-        if mapped.is_empty() {
+        if query.is_empty() || n_elements.0 == 0 {
             return Ok(false);
+        }
+        let mut mapped = self.filter.hash_query(query, nm);
+
+        let mut reader = BitStreamReader::new(reader);
+        // Probing decodes the whole filter but skips the sort. It wins once the query is at
+        // least as long as the filter.
+        if n_elements.0 <= mapped.len() as u64 {
+            return self.match_any_probing(&mut reader, n_elements.0, &mapped);
         }
         // sort
         mapped.sort_unstable();
-        if n_elements.0 == 0 {
-            return Ok(false);
-        }
+        self.match_any_merging(&mut reader, n_elements.0, &mapped)
+    }
 
+    /// Returns true if any of the sorted `mapped` values is among the `n_elements` values
+    /// of `reader`, stopping the decode as soon as the answer is known.
+    fn match_any_merging<R>(
+        &self,
+        reader: &mut BitStreamReader<'_, R>,
+        n_elements: u64,
+        mapped: &[u64],
+    ) -> Result<bool, Error>
+    where
+        R: io::Read,
+    {
         // find first match in two sorted arrays in one read pass
-        let mut reader = BitStreamReader::new(reader);
-        let mut data = self.filter.golomb_rice_decode(&mut reader)?;
-        let mut remaining = n_elements.0 - 1;
-        for p in mapped {
+        let mut data = self.filter.golomb_rice_decode(reader)?;
+        let mut remaining = n_elements - 1;
+        for &p in mapped {
             loop {
                 match data.cmp(&p) {
                     Ordering::Equal => return Ok(true),
                     Ordering::Less => {
                         if remaining > 0 {
-                            data += self.filter.golomb_rice_decode(&mut reader)?;
+                            data += self.filter.golomb_rice_decode(reader)?;
                             remaining -= 1;
                         } else {
                             return Ok(false);
@@ -310,6 +326,59 @@ impl GcsFilterReader {
             }
         }
         Ok(false)
+    }
+
+    /// Returns true if any of the `mapped` values, in any order, is among the `n_elements`
+    /// values of `reader`. `n_elements` must not exceed `mapped.len()`, which bounds the
+    /// allocation when a malformed filter declares a huge count.
+    fn match_any_probing<R>(
+        &self,
+        reader: &mut BitStreamReader<'_, R>,
+        n_elements: u64,
+        mapped: &[u64],
+    ) -> Result<bool, Error>
+    where
+        R: io::Read,
+    {
+        let mut values = Vec::with_capacity(n_elements as usize);
+        let mut decode_error = None;
+        let mut data = 0;
+        for _ in 0..n_elements {
+            match self.filter.golomb_rice_decode(reader) {
+                Ok(delta) => {
+                    data += delta;
+                    values.push(data);
+                }
+                Err(e) => {
+                    decode_error = Some(e);
+                    break;
+                }
+            }
+        }
+
+        // At least 64 bits per value, so nearly every miss ends at the bitmap. The low bits
+        // are enough: the values are uniform, and a collision only costs a binary search.
+        let mut bitmap = vec![0u64; values.len().next_power_of_two()];
+        let mask = bitmap.len() * 64 - 1;
+        for value in &values {
+            let bit = *value as usize & mask;
+            bitmap[bit / 64] |= 1 << (bit % 64);
+        }
+        let matched = mapped.iter().any(|p| {
+            let bit = *p as usize & mask;
+            bitmap[bit / 64] >> (bit % 64) & 1 == 1 && values.binary_search(p).is_ok()
+        });
+        if matched {
+            return Ok(true);
+        }
+
+        // A truncated filter only fails a query that reaches past its last readable value.
+        match decode_error {
+            Some(e) if values.last().is_none_or(|last| mapped.iter().any(|p| p > last)) => {
+                Err(e.into())
+            }
+            _ => Ok(false),
+        }
     }
 
     /// Returns true if all elements of `query` match against this [`GcsFilterReader`].
@@ -682,6 +751,36 @@ mod test {
     use crate::hash_types::BlockHash;
     use crate::internal_macros::hex;
 
+    /// Asserts that `match_any` and both its strategies give the same answer on `content`.
+    /// Returns that answer, `None` being a decode error.
+    fn assert_match_any_agrees(
+        reader: &GcsFilterReader,
+        content: &[u8],
+        query: &FilterQuery,
+    ) -> Option<bool> {
+        let answer = reader.match_any(&mut &content[..], query).ok();
+        let mut body = content;
+        let n_elements = VarInt::consensus_decode(&mut body).map_or(0, |n| n.0);
+        if query.is_empty() || n_elements == 0 {
+            assert_eq!(answer, Some(false));
+            return answer;
+        }
+
+        let mapped = reader.filter.hash_query(query, n_elements * reader.m);
+        let mut sorted = mapped.clone();
+        sorted.sort_unstable();
+        let mut merge_body = body;
+        let mut merge_reader = BitStreamReader::new(&mut merge_body);
+        let merged = reader.match_any_merging(&mut merge_reader, n_elements, &sorted).ok();
+        let mut probe_body = body;
+        let mut probe_reader = BitStreamReader::new(&mut probe_body);
+        let probed = reader.match_any_probing(&mut probe_reader, n_elements, &mapped).ok();
+
+        assert_eq!(probed, merged);
+        assert_eq!(answer, merged);
+        answer
+    }
+
     #[test]
     fn test_blockfilters() {
         // test vectors from: https://github.com/dashpay/dash/blob/436872aaec86edad3c6243aecd2549453608d0c1/src/test/data/blockfilters.json
@@ -728,12 +827,20 @@ mod test {
                 txmap.values().filter(|s| !s.is_empty()).map(|s| s.as_bytes()).collect();
             assert!(filter.match_all(block_hash, &all).unwrap());
 
+            let reader = BlockFilterReader::new(block_hash).reader;
+            assert_match_any_agrees(&reader, &filter.content, &all);
             for script in txmap.values() {
                 if !script.is_empty() {
                     let query: FilterQuery = core::iter::once(script.as_bytes()).collect();
                     assert!(filter.match_any(block_hash, &query).unwrap());
+                    assert_eq!(
+                        assert_match_any_agrees(&reader, &filter.content, &query),
+                        Some(true)
+                    );
                 }
             }
+            let misses: FilterQuery = [b"not".as_slice(), b"in", b"filter"].into_iter().collect();
+            assert_match_any_agrees(&reader, &filter.content, &misses);
 
             assert_eq!(filter_header, filter.filter_header(&previous_filter_header));
         }
@@ -794,6 +901,56 @@ mod test {
             query.push(&hex!("abcdef"));
             assert!(!reader.match_all(&mut bytes.as_slice(), &query).unwrap());
         }
+    }
+
+    #[test]
+    fn test_match_any_strategies_agree() {
+        let bytes = |seed: u64, i: u64, len: usize| {
+            let mut bytes = siphash24::siphash(seed, i, b"").to_le_bytes().repeat(4);
+            bytes.truncate(len);
+            bytes
+        };
+        // One element per `FilterQuery` length bucket.
+        let element = |seed: u64, i: u64| bytes(seed, i, [25, 23, 8][i as usize % 3]);
+
+        let mut outcomes = BTreeSet::new();
+        // The tiny range puts duplicates in the filter and collisions in the query.
+        for (m, p) in [(M, P), (4, 2)] {
+            for n_elements in [0, 1, 2, 3, 7, 64, 65, 300, 1000] {
+                let mut content = Vec::new();
+                let mut writer = GcsFilterWriter::new(&mut content, 1, 2, m, p);
+                for i in 0..n_elements {
+                    writer.add_element(&element(1, i));
+                }
+                writer.finish().unwrap();
+                let reader = GcsFilterReader::new(1, 2, m, p);
+
+                let mut garbage = Vec::new();
+                VarInt(n_elements).consensus_encode(&mut garbage).unwrap();
+                garbage.extend(bytes(n_elements, 0, 32));
+
+                for query_len in [0, 1, 2, 10, 100, 1000] {
+                    let misses: FilterQuery = (0..query_len).map(|i| element(2, i)).collect();
+                    let mut hit = misses.clone();
+                    hit.push(&element(1, n_elements / 2));
+                    let mut duplicates = misses.clone();
+                    (0..query_len).for_each(|i| duplicates.push(&element(2, i)));
+
+                    assert_match_any_agrees(&reader, &garbage, &misses);
+                    for query in [&misses, &hit, &duplicates] {
+                        assert_match_any_agrees(&reader, &content, query);
+                        for cut in (0..content.len()).step_by(content.len().div_ceil(16).max(1)) {
+                            outcomes.insert(assert_match_any_agrees(
+                                &reader,
+                                &content[..cut],
+                                query,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(outcomes, BTreeSet::from([None, Some(false), Some(true)]));
     }
 
     #[test]

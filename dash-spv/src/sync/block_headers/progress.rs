@@ -14,6 +14,8 @@ pub struct BlockHeadersProgress {
     target_height: u32,
     /// Number of block-headers processed (stored) in the current sync session.
     processed: u32,
+    /// Number of heights below the stored ones still to sync.
+    missing_below: u32,
     /// Number of headers currently buffered in the pipeline (waiting to be stored).
     buffered: u32,
     /// The last time a block-header was stored to disk or the last manager state change.
@@ -27,6 +29,7 @@ impl Default for BlockHeadersProgress {
             tip_height: 0,
             target_height: 0,
             processed: 0,
+            missing_below: 0,
             buffered: 0,
             last_activity: Instant::now(),
         }
@@ -83,6 +86,10 @@ impl BlockHeadersProgress {
     pub fn update_buffered(&mut self, count: u32) {
         self.buffered = count;
     }
+    /// Update the number of heights below the stored ones still to sync.
+    pub fn update_missing_below(&mut self, count: u32) {
+        self.missing_below = count;
+    }
     /// Bump the last activity time.
     pub fn bump_last_activity(&mut self) {
         self.last_activity = Instant::now();
@@ -107,6 +114,9 @@ impl fmt::Display for BlockHeadersProgress {
 }
 
 impl ProgressPercentage for BlockHeadersProgress {
+    fn missing_below(&self) -> u32 {
+        self.missing_below
+    }
     fn target_height(&self) -> u32 {
         self.target_height
     }

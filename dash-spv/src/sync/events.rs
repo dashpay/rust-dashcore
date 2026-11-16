@@ -94,7 +94,8 @@ pub enum SyncEvent {
         blocks: BTreeMap<FilterMatchKey, BTreeSet<WalletId>>,
     },
 
-    /// Block downloaded and processed through wallet.
+    /// Block downloaded and processed through wallet. Also emitted for each
+    /// re-application of a stored block, with the one wallet it was re-applied for.
     ///
     /// Emitted by: `BlocksManager`
     /// Consumed by: `FiltersManager` (for gap limit rescanning),
@@ -185,6 +186,16 @@ pub enum SyncEvent {
     ForkDetected {
         /// Height of the last block both chains share
         fork_height: u32,
+    },
+
+    /// A wallet needs blocks below the lowest stored header.
+    ///
+    /// Emitted by: `FiltersManager`
+    /// Consumed by: `BlockHeadersManager`, which fills them in from the
+    /// checkpoint at or below `height`
+    HeadersBackfillNeeded {
+        /// Lowest height a wallet needs
+        height: u32,
     },
 
     /// Sync has reached the chain tip (all managers idle).
@@ -282,6 +293,9 @@ impl fmt::Display for SyncEvent {
             SyncEvent::ForkDetected {
                 fork_height,
             } => write!(f, "ForkDetected(height={})", fork_height),
+            SyncEvent::HeadersBackfillNeeded {
+                height,
+            } => write!(f, "HeadersBackfillNeeded(height={})", height),
             SyncEvent::SyncComplete {
                 header_tip,
                 cycle,

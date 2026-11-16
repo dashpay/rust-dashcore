@@ -1,0 +1,19 @@
+{
+  "height": 110,
+  "bestblock": "54c8c1a58a737156abd144e0c5ab012bf2548a9ad6ff0f1648fb8fcad499ede4",
+  "txouts": 110,
+  "bogosize": 8250,
+  "total_amount": 55000.00000000,
+  "total_unspendable_amount": 50.00000000,
+  "block_info": {
+    "prevout_spent": 0.00000000,
+    "coinbase": 500.00000000,
+    "new_outputs_ex_coinbase": 0.00000000,
+    "unspendable": 0.00000000,
+    "unspendables": {
+      "genesis_block": 0.00000000,
+      "scripts": 0.00000000,
+      "unclaimed_rewards": 0.00000000
+    }
+  }
+}
