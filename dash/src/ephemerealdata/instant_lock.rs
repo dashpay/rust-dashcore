@@ -66,12 +66,9 @@ impl InstantLock {
         else {
             return transaction.input.iter().map(|input| input.previous_output).collect();
         };
-        let mut engine = sha256d::Hash::engine();
-        // The compact size of a length below 0xfd is that one byte.
-        engine.input(&[ASSET_UNLOCK_REQUEST_ID_PREFIX.len() as u8]);
-        engine.input(ASSET_UNLOCK_REQUEST_ID_PREFIX.as_bytes());
-        engine.input(&payload.base.index.to_le_bytes());
-        vec![OutPoint::new(Txid::from_raw_hash(engine.finalize()), 0)]
+        let request = (ASSET_UNLOCK_REQUEST_ID_PREFIX.to_string(), payload.base.index);
+        let txid = Txid::from_raw_hash(sha256d::Hash::hash(&serialize(&request)));
+        vec![OutPoint::new(txid, 0)]
     }
 
     /// Returns the hash peers use to announce and request this lock.
