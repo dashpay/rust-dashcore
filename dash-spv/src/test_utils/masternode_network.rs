@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::BlockHash;
-use dashcore_rpc::{Auth, Client, RpcApi};
+use dashcore_rpc::RpcApi;
 use serde::Deserialize;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -1116,10 +1116,7 @@ fn update_mn_service_addresses(
     metadata: &NetworkMetadata,
 ) {
     // Wallet-aware client needed because protx update_service sends a transaction
-    let url =
-        format!("http://127.0.0.1:{}/wallet/{}", controller.rpc_port(), metadata.controller.wallet);
-    let cookie_path = controller.datadir().join("regtest/.cookie");
-    let client = Client::new(&url, Auth::CookieFile(cookie_path)).expect("rpc client");
+    let client = controller.rpc_client_for_wallet(&metadata.controller.wallet);
 
     let mut failures = Vec::new();
     for (mn, mn_info) in masternodes.iter().zip(metadata.masternodes.iter()) {
