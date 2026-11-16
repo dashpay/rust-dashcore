@@ -65,10 +65,13 @@ pub(crate) struct InstantSendCycle<'a> {
     pub(crate) complete: bool,
 }
 
-/// `true` when the cycle holds a `Verified` quorum for every active slot of `isd_type`.
+/// `true` when the cycle holds a `Verified` quorum of `isd_type` for every active slot.
 fn fills_every_slot(quorums: &BTreeMap<u16, QualifiedQuorumEntry>, isd_type: LLMQType) -> bool {
     quorums.len() == isd_type.active_quorum_count() as usize
-        && quorums.values().all(|quorum| quorum.verified == LLMQEntryVerificationStatus::Verified)
+        && quorums.values().all(|quorum| {
+            quorum.verified == LLMQEntryVerificationStatus::Verified
+                && quorum.quorum_entry.llmq_type == isd_type
+        })
 }
 
 /// Whether a stored cycle is complete, or `None` when one of its quorums is unverified or
@@ -92,10 +95,7 @@ fn instant_send_cycle_completeness(
     }) {
         return None;
     }
-    Some(
-        fills_every_slot(quorums, isd_type)
-            && quorums.values().all(|quorum| quorum.quorum_entry.llmq_type == isd_type),
-    )
+    Some(fills_every_slot(quorums, isd_type))
 }
 
 /// Why the engine did not take a diff or a QRInfo.
@@ -763,8 +763,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         Ok(())
     }
 
-    /// `true` when the stored cycle has a `Verified` quorum for every active
-    /// slot. A partial cycle stays open so a later QRInfo can complete it.
+    /// `true` when the stored cycle has a `Verified` quorum of the configured type for
+    /// every active slot. A partial or foreign-type cycle stays open so a later QRInfo
+    /// can complete it.
     fn is_cycle_fully_verified(&self, cycle_hash: &BlockHash) -> bool {
         let isd_type = self.network.isd_llmq_type();
         self.rotated_quorums_per_cycle
@@ -2629,6 +2630,42 @@ mod tests {
             feed_result.stored_cycle_height.is_some(),
             "the current cycle must still be stored"
         );
+    }
+
+    /// A stored cycle of another rotating type does not close the storage gate, so
+    /// the configured type's full set still merges into it.
+    #[tokio::test]
+    async fn store_cycle_if_fully_verified_merges_over_a_foreign_type() {
+        let (mut engine, qr_info) = load_qrinfo_2240504_fixture().await;
+        engine.feed_qr_info(qr_info).await.expect("first feed should succeed");
+        let cycle_key = *engine
+            .rotated_quorums_per_cycle
+            .keys()
+            .next()
+            .expect("first feed must store at least one rotation cycle");
+        let original_cycle = engine.rotated_quorums_per_cycle[&cycle_key].clone();
+        let rotation_quorum_type =
+            original_cycle.values().next().expect("cycle non-empty").quorum_entry.llmq_type;
+        let foreign = original_cycle
+            .iter()
+            .map(|(index, quorum)| {
+                let mut quorum = quorum.clone();
+                quorum.quorum_entry.llmq_type = LLMQType::LlmqtypeTestDIP0024;
+                (*index, quorum)
+            })
+            .collect();
+        engine.rotated_quorums_per_cycle.insert(cycle_key, foreign);
+
+        engine
+            .store_cycle_if_fully_verified(
+                cycle_key,
+                original_cycle.values().cloned().collect(),
+                rotation_quorum_type,
+            )
+            .await
+            .expect("gate must not error");
+
+        assert_eq!(engine.rotated_quorums_per_cycle[&cycle_key], original_cycle);
     }
 
     /// The storage gate must short-circuit with `Ok(None)` (and not write)
