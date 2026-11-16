@@ -38,7 +38,7 @@ jobs:
       - name: Install nightly toolchain
         run: rustup toolchain install nightly --profile minimal --component rust-src --no-self-update
 
-      - uses: taiki-e/install-action@v2.90.0
+      - uses: taiki-e/install-action@v2.90.3
         with:
           tool: just
 
@@ -53,7 +53,7 @@ jobs:
       - name: Install nightly toolchain
         run: rustup toolchain install nightly --profile minimal --component rust-src --no-self-update
 
-      - uses: taiki-e/install-action@v2.90.0
+      - uses: taiki-e/install-action@v2.90.3
         with:
           tool: just
 
