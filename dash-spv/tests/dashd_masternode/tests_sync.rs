@@ -204,17 +204,13 @@ async fn test_masternode_list_sync_with_restart() {
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let second_height = second_mn_progress.current_height();
 
-    let lock = wait_for_instant_lock_received(
-        &mut client_handle.sync_event_receiver,
-        txid,
-        true,
-        SYNC_TIMEOUT,
-    )
-    .await;
+    let lock =
+        wait_for_instant_lock_received(&mut client_handle.sync_event_receiver, txid, SYNC_TIMEOUT)
+            .await;
     {
         let engine = client_handle.engine.read().await;
         assert!(
-            engine.rotated_quorums_of_cycle(&lock.cyclehash).is_some(),
+            engine.rotated_quorums_per_cycle().contains_key(&lock.cyclehash),
             "the lock is accepted against a stored cycle"
         );
         assert_all_rotated_quorums_verified(&engine);

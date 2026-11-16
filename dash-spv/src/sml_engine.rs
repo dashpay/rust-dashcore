@@ -1467,10 +1467,9 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{fixture_heights, mainnet_fixture_is_lock, quorum_entry, TestEngine};
     use super::{
-        build_cycle_quorum_map, instant_send_cycle_completeness, qr_info_diffs,
-        valid_coinbase_chain_lock,
+        build_cycle_quorum_map, instant_send_cycle_completeness, valid_coinbase_chain_lock,
     };
-    use super::{FeedError, MasternodeListEngine, QRInfoFeedResult, WORK_DIFF_DEPTH};
+    use super::{FeedError, MasternodeListEngine, QRInfoFeedResult};
     use crate::error::{StorageError, StorageResult};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
