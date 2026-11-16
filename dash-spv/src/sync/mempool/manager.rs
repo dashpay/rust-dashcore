@@ -862,6 +862,7 @@ mod tests {
 
     use crate::sync::SyncState;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
+    use test_case::test_case;
 
     fn dummy_instant_lock(txid: Txid) -> InstantLock {
         InstantLock {
@@ -1986,6 +1987,47 @@ mod tests {
             manager.broadcasts.get(&txid).map(|state| state.status),
             Some(BroadcastStatus::Accepted)
         );
+    }
+
+    #[test_case(true, true; "known uncertain")]
+    #[test_case(false, false; "early pending")]
+    #[test_case(false, true; "early uncertain")]
+    #[tokio::test]
+    async fn should_accept_broadcast_on_instant_lock(known: bool, uncertain: bool) {
+        let (mut manager, requests, _rx) = create_test_manager();
+        let tx = test_transaction(42);
+        let txid = tx.txid();
+        assert!(manager.start_broadcast(&tx, &requests).await.is_empty());
+        if known {
+            manager.transactions.insert(
+                txid,
+                UnconfirmedTransaction::new(tx, Amount::from_sat(0), false, false, Vec::new(), 0),
+            );
+        }
+        if uncertain {
+            let deadline = Instant::now() + BroadcastConfig::default().acceptance_timeout;
+            assert_eq!(manager.expire_broadcasts_at(deadline).len(), 1);
+        }
+        let lock = dummy_instant_lock(txid);
+
+        let events = manager.process_instant_send(verified_lock(txid)).await;
+
+        assert!(matches!(
+            events.as_slice(),
+            [SyncEvent::TransactionBroadcastResult {
+                txid: accepted,
+                result: BroadcastResult::Accepted { .. },
+            }] if *accepted == txid
+        ));
+        assert!(!manager.broadcasts.contains_key(&txid));
+        let processed = manager.wallet.read().await.processed_instant_locks.lock().await.clone();
+        if known {
+            assert!(manager.transactions[&txid].is_instant_send);
+            assert_eq!(processed, vec![(txid, Some(lock))]);
+        } else {
+            assert_eq!(manager.pending_is_locks[&txid].0.instant_lock(), &lock);
+            assert!(processed.is_empty());
+        }
     }
 
     #[tokio::test]
