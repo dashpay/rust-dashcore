@@ -221,11 +221,11 @@ pub(super) async fn wait_for_mn_state_event_above(
 
 /// Wait for a `MasternodeStateUpdated` event that carries a `QRInfoFeedResult`
 /// whose `stored_cycle_height` is above `min_cycle_height` and which reports
-/// `all_fully_verified()` (i.e. every rotated quorum settled as `Verified` and
-/// the rotation cycle was actually stored in `rotated_quorums_per_cycle`). Use
-/// this when a test needs the SPV to have a fully-verified rotation cycle
-/// before proceeding, for example when preparing to verify a post-rotation
-/// InstantSend lock.
+/// `all_fully_verified()`: every served rotated quorum settled as `Verified` and
+/// quorums of that cycle were stored in `rotated_quorums_per_cycle`. The cycle can
+/// still lack a slot whose served quorum is of an older cycle. Use this when a
+/// test needs the SPV to hold a post-rotation cycle, for example before verifying
+/// a post-rotation InstantSend lock.
 pub(super) async fn wait_for_mn_state_with_stored_cycle_above(
     event_receiver: &mut broadcast::Receiver<SyncEvent>,
     min_cycle_height: u32,

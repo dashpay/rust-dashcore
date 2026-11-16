@@ -123,11 +123,10 @@ pub enum SyncEvent {
         height: u32,
         /// QRInfo processing result when this update came through the
         /// QuorumValidation pipeline. `None` for Incremental (MnListDiff-only)
-        /// updates. Consumers that care about rotation cycle storage (e.g.
-        /// IS lock verification across rotation) can gate on
-        /// `result.all_fully_verified()` together with
-        /// `result.stored_cycle_height` to know which cycle was fully
-        /// verified and stored in `rotated_quorums_per_cycle` by this update.
+        /// updates. `result.stored_cycle_height` is the rotation cycle this
+        /// update stored quorums of. That cycle can lack a slot even when
+        /// `result.all_fully_verified()`: a served quorum of an older cycle is
+        /// not stored in it.
         qr_info_result: Option<QRInfoFeedResult>,
     },
 
