@@ -121,7 +121,7 @@ impl<'a> InstantLockValidator<'a> {
 
     /// The quorum of the cycle that signs the lock (DIP-24), with the lock's
     /// request id and the quorum index it selects.
-    fn signing_quorum(
+    pub(crate) fn signing_quorum(
         &self,
         instant_lock: &InstantLock,
     ) -> Result<(&'a QualifiedQuorumEntry, QuorumSigningRequestId, u16), MessageVerificationError>
