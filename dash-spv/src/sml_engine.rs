@@ -784,10 +784,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         });
     }
 
-    /// Merges the quorums of the active set that belong to the cycle `cycle_key` into
-    /// its stored cycle when every quorum of the set is `Verified` and the cycle is not
-    /// complete yet, returning the cycle's height. IS locks are verified against these
-    /// cycles only.
+    /// Merges the active set's quorums of the cycle `cycle_key` into it while the cycle is
+    /// not complete and every served quorum is `Verified`, returning the cycle's height
+    /// when it stored any. IS locks are verified against these cycles only.
     async fn store_cycle_if_fully_verified(
         &mut self,
         cycle_key: BlockHash,
@@ -813,6 +812,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             if self.rotated_quorum_cycle_base(&quorum.quorum_entry).await? == Some(height) {
                 own_quorums.insert(index, quorum);
             }
+        }
+        if own_quorums.is_empty() {
+            return Ok(None);
         }
         self.rotated_quorums_per_cycle.entry(cycle_key).or_default().extend(own_quorums);
         Ok(Some(height))
@@ -1480,7 +1482,7 @@ mod tests {
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
-    use crate::validation::{verify_against_cycle, InstantLockValidator, MasternodeListValidator};
+    use crate::validation::{verify_against_cycle, MasternodeListValidator};
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -1916,7 +1918,7 @@ mod tests {
         }
         assert!(
             !engine.is_cycle_fully_verified(&cycle_hash),
-            "the cycle stays open, so a later QRInfo can bring its own quorum at index 0"
+            "a cycle without its own quorum at index 0 must stay open"
         );
 
         // The previous cycle's active set carries its own straggler at index
@@ -1939,21 +1941,10 @@ mod tests {
             "every stored previous-cycle quorum must be verified"
         );
 
-        // A lock of the current cycle at index 0 is signed by that cycle's own quorum
-        // there, which the straggler is not, so it is deferred and never refuted.
-        let lock = (0..)
-            .map(|vout| {
-                let mut lock = mainnet_fixture_is_lock();
-                lock.cyclehash = cycle_hash;
-                lock.inputs[0].vout = vout;
-                lock
-            })
-            .find(|lock| {
-                InstantLockValidator::new(previous_cycle)
-                    .signing_quorum(lock)
-                    .is_ok_and(|(_, _, index)| index == 0)
-            })
-            .expect("a lock selecting index 0");
+        // The current cycle has no quorum of its own at index 0, so it is incomplete and
+        // a lock of it that does not verify is deferred, not refuted.
+        let mut lock = mainnet_fixture_is_lock();
+        lock.cyclehash = cycle_hash;
         assert!(matches!(verify_against_cycle(&lock, &engine), Ok(false)));
 
         // The list at h holds the same previous-cycle quorums and must agree
