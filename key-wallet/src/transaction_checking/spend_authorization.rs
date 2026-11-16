@@ -12,6 +12,8 @@ pub enum SpendAuthorizationError {
     InputIndexOutOfRange(usize),
     /// The funding script requires a different authorization verifier.
     UnsupportedScript,
+    /// The input script carries instructions before the owner's signature and public key.
+    UnsupportedScriptSig,
     /// The signature does not commit to the complete transaction.
     UnsupportedSighash(u8),
 }
@@ -24,6 +26,9 @@ impl core::fmt::Display for SpendAuthorizationError {
             }
             Self::UnsupportedScript => {
                 write!(f, "pending spend uses an unsupported funding script")
+            }
+            Self::UnsupportedScriptSig => {
+                write!(f, "pending spend uses an unsupported input script")
             }
             Self::UnsupportedSighash(mode) => {
                 write!(f, "pending spend uses unsupported signature hash type {:#x}", mode)
@@ -57,15 +62,16 @@ pub fn verify_input_authorization(
     let Some(public_key_hash) = prevout.script_pubkey.p2pkh_public_key_hash_bytes() else {
         return Err(SpendAuthorizationError::UnsupportedScript);
     };
-    let mut instructions = input.script_sig.instructions();
-    let (Some(Ok(Instruction::PushBytes(signature))), Some(Ok(Instruction::PushBytes(public_key)))) =
-        (instructions.next(), instructions.next())
+    let Ok(instructions) = input.script_sig.instructions().collect::<Result<Vec<_>, _>>() else {
+        return Ok(false);
+    };
+    // The signature hash does not commit to the input script, so anyone can prepend
+    // instructions to an owner's signature without invalidating it.
+    let [prefix @ .., Instruction::PushBytes(signature), Instruction::PushBytes(public_key)] =
+        instructions.as_slice()
     else {
         return Ok(false);
     };
-    if instructions.next().is_some() {
-        return Ok(false);
-    }
     let public_key_bytes = public_key.as_bytes();
     if hash160::Hash::hash(public_key_bytes).as_byte_array().as_slice() != public_key_hash {
         return Ok(false);
@@ -94,6 +100,9 @@ pub fn verify_input_authorization(
     // produce a constant digest. They cannot authorize this durable reservation.
     if u32::from(mode) != EcdsaSighashType::All.to_u32() {
         return Err(SpendAuthorizationError::UnsupportedSighash(mode));
+    }
+    if !prefix.is_empty() {
+        return Err(SpendAuthorizationError::UnsupportedScriptSig);
     }
     Ok(true)
 }
@@ -341,5 +350,19 @@ mod tests {
             verify_input_authorization(&tx, 0, &unknown),
             Err(SpendAuthorizationError::UnsupportedScript)
         );
+        // OP_0 and OP_NOP before the owner's signature keep the spend consensus-valid.
+        let (signed_tx, prevout) = signed(false);
+        for opcode in [0x00, 0x61] {
+            let mut padded = signed_tx.clone();
+            let mut bytes = vec![opcode];
+            bytes.extend_from_slice(padded.input[0].script_sig.as_bytes());
+            padded.input[0].script_sig = ScriptBuf::from_bytes(bytes);
+            assert_eq!(
+                verify_input_authorization(&padded, 0, &prevout),
+                Err(SpendAuthorizationError::UnsupportedScriptSig)
+            );
+            padded.output[0].value -= 1;
+            assert_eq!(verify_input_authorization(&padded, 0, &prevout), Ok(false));
+        }
     }
 }
