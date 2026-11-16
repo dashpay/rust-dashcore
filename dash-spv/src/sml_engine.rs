@@ -61,7 +61,8 @@ impl QRInfoFeedResult {
 pub(crate) struct InstantSendCycle<'a> {
     /// The cycle's quorums, by quorum index.
     pub(crate) quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
-    /// Whether no later QRInfo can replace the cycle's quorums, so it can refute a lock.
+    /// Whether every slot holds a verified quorum of this cycle. No later QRInfo replaces
+    /// one, so the cycle can refute a lock.
     pub(crate) complete: bool,
 }
 
@@ -792,9 +793,10 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         });
     }
 
-    /// Merges the active set into its stored cycle when every quorum of it is
-    /// `Verified` and the cycle is not complete yet, returning the cycle's
-    /// height. IS locks are verified against these cycles only.
+    /// Merges the quorums of the active set that belong to the cycle `cycle_key` into
+    /// its stored cycle when every quorum of the set is `Verified` and the cycle is not
+    /// complete yet, returning the cycle's height. IS locks are verified against these
+    /// cycles only.
     async fn store_cycle_if_fully_verified(
         &mut self,
         cycle_key: BlockHash,
@@ -807,11 +809,22 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         if !all_entries_verified || self.is_cycle_fully_verified(&cycle_key) {
             return Ok(None);
         }
-        let height = self.height_of(&cycle_key).await?;
+        let Some(height) = self.height_of(&cycle_key).await? else {
+            return Ok(None);
+        };
         let cycle_map =
             build_cycle_quorum_map(qualified_last_commitment_per_index, rotation_quorum_type)?;
-        self.rotated_quorums_per_cycle.entry(cycle_key).or_default().extend(cycle_map);
-        Ok(height)
+        // A slot holds an older cycle's quorum until this cycle's commitment for it is
+        // mined, or for good when its DKG failed. Dash Core labels that quorum's locks
+        // with its own cycle, so it never verifies a lock of this one.
+        let mut own_quorums = BTreeMap::new();
+        for (index, quorum) in cycle_map {
+            if self.rotated_quorum_cycle_base(&quorum.quorum_entry).await? == Some(height) {
+                own_quorums.insert(index, quorum);
+            }
+        }
+        self.rotated_quorums_per_cycle.entry(cycle_key).or_default().extend(own_quorums);
+        Ok(Some(height))
     }
 
     async fn rotated_quorum_cycle_base(
@@ -1476,7 +1489,7 @@ mod tests {
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
-    use crate::validation::MasternodeListValidator;
+    use crate::validation::{InstantLockValidator, MasternodeListValidator, VerifiedInstantLock};
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -1900,10 +1913,19 @@ mod tests {
             .rotated_quorums_per_cycle
             .get(&cycle_hash)
             .expect("expected active set stored under the current cycle hash");
-        assert_eq!(stored_cycle.len(), 32);
+        assert!(!stored_cycle.contains_key(&0), "the straggler must not fill the cycle's slot");
+        assert_eq!(stored_cycle.len(), 31);
+        for quorum in stored_cycle.values() {
+            assert_eq!(quorum.verified, LLMQEntryVerificationStatus::Verified);
+            assert_eq!(
+                engine.rotated_quorum_cycle_base(&quorum.quorum_entry).await.unwrap(),
+                Some(current_cycle_base),
+                "every stored quorum must belong to the cycle"
+            );
+        }
         assert!(
-            stored_cycle.values().all(|q| q.verified == LLMQEntryVerificationStatus::Verified),
-            "every stored quorum must be verified"
+            !engine.is_cycle_fully_verified(&cycle_hash),
+            "the cycle stays open, so a later QRInfo can bring its own quorum at index 0"
         );
 
         // The previous cycle's active set carries its own straggler at index
@@ -1925,6 +1947,23 @@ mod tests {
             previous_cycle.values().all(|q| q.verified == LLMQEntryVerificationStatus::Verified),
             "every stored previous-cycle quorum must be verified"
         );
+
+        // A lock of the current cycle at index 0 is signed by that cycle's own quorum
+        // there, which the straggler is not, so it is deferred and never refuted.
+        let lock = (0..)
+            .map(|vout| {
+                let mut lock = mainnet_fixture_is_lock();
+                lock.cyclehash = cycle_hash;
+                lock.inputs[0].vout = vout;
+                lock
+            })
+            .find(|lock| {
+                InstantLockValidator::new(previous_cycle)
+                    .signing_quorum(lock)
+                    .is_ok_and(|(_, _, index)| index == 0)
+            })
+            .expect("a lock selecting index 0");
+        assert!(matches!(VerifiedInstantLock::verify(&lock, Some(&engine)), Ok(None)));
 
         // The list at h holds the same previous-cycle quorums and must agree
         // with the stored cycle instead of reading them as skipped.
@@ -2692,7 +2731,7 @@ mod tests {
         // A cycle stored with only part of its set is not a cycle the gate may
         // protect: the entries it lacks are exactly what a later QRInfo is
         // expected to supply.
-        let partial_key = BlockHash::from_byte_array([0xCD; 32]);
+        let partial_key = cycle_key;
         let complete_cycle: Vec<QualifiedQuorumEntry> = original_cycle.values().cloned().collect();
         let partial_cycle: BTreeMap<u16, QualifiedQuorumEntry> =
             original_cycle.iter().skip(1).map(|(index, q)| (*index, q.clone())).collect();
@@ -2713,7 +2752,7 @@ mod tests {
 
         // Completion only ever adds: a verified set smaller than what is
         // already stored must leave the indices it does not carry in place.
-        let shrink_key = BlockHash::from_byte_array([0xEF; 32]);
+        let shrink_key = cycle_key;
         let stored_before: BTreeMap<u16, QualifiedQuorumEntry> =
             original_cycle.iter().skip(1).map(|(index, q)| (*index, q.clone())).collect();
         engine.rotated_quorums_per_cycle.insert(shrink_key, stored_before.clone());
