@@ -179,12 +179,12 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
         // Build mempool manager if tracking is enabled
         if config.enable_mempool_tracking {
-            let initial_revision = wallet.read().await.monitor_revision();
+            let initial_hash = wallet.read().await.monitor_hash();
             managers.mempool = Some(MempoolManager::new(
                 wallet.clone(),
                 config.mempool_strategy,
                 config.max_mempool_transactions,
-                initial_revision,
+                initial_hash,
                 config.broadcast_config(),
             ));
         }

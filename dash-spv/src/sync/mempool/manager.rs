@@ -59,7 +59,7 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     /// Self-broadcast transactions and their network-acceptance state.
     pub(super) broadcasts: HashMap<Txid, TxBroadcastState>,
     broadcast_config: BroadcastConfig,
-    strategy: MempoolStrategy,
+    pub(super) strategy: MempoolStrategy,
     max_transactions: usize,
     /// Txids we have requested via getdata but not yet received, with request time.
     pending_requests: HashMap<Txid, Instant>,
@@ -71,9 +71,9 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     /// Prevents duplicate downloads when multiple peers announce the same transactions.
     /// Entries expire after `SEEN_TXID_EXPIRY`.
     seen_txids: HashMap<Txid, Instant>,
-    /// Wallet monitor revision at the time of the last filter build.
+    /// Wallet monitor hash at the time of the last filter build.
     /// Compared on each tick to detect when the wallet's monitored set has changed.
-    pub(super) last_monitor_revision: u64,
+    pub(super) last_monitor_hash: u64,
 }
 
 impl<W: WalletInterface> MempoolManager<W> {
@@ -83,7 +83,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         wallet: Arc<RwLock<W>>,
         strategy: MempoolStrategy,
         max_transactions: usize,
-        initial_monitor_revision: u64,
+        initial_monitor_hash: u64,
         broadcast_config: BroadcastConfig,
     ) -> Self {
         Self {
@@ -98,7 +98,7 @@ impl<W: WalletInterface> MempoolManager<W> {
             peers: HashMap::new(),
             pending_is_locks: HashMap::new(),
             seen_txids: HashMap::new(),
-            last_monitor_revision: initial_monitor_revision,
+            last_monitor_hash: initial_monitor_hash,
         }
     }
 
@@ -136,6 +136,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         &mut self,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<()> {
+        self.last_monitor_hash = self.wallet.read().await.monitor_hash();
         let inactive: Vec<SocketAddr> =
             self.peers.iter().filter(|(_, v)| v.is_none()).map(|(k, _)| *k).collect();
         for peer in inactive {

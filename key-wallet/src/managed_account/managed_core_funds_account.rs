@@ -1,7 +1,7 @@
 //! Managed core funds account: keys-account state plus balance, UTXOs, and spent outpoints.
 //!
 //! Composed of an inner [`ManagedCoreKeysAccount`] (which carries the address
-//! pools, transactions, network, and monitor revision) plus the funds-specific
+//! pools, transactions and network) plus the funds-specific
 //! bookkeeping needed for accounts that hold and spend Dash directly
 //! (Standard, CoinJoin, DashPay).
 //!
@@ -15,6 +15,7 @@ use crate::account::BLSAccount;
 #[cfg(feature = "eddsa")]
 use crate::account::EdDSAAccount;
 use crate::account::TransactionRecord;
+use crate::error::Error;
 use crate::managed_account::address_pool;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_account_type::ManagedAccountType;
@@ -52,8 +53,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct ManagedCoreFundsAccount {
-    /// Shared keys-account state (address pools, transactions, network,
-    /// monitor revision).
+    /// Shared keys-account state (address pools, transactions, network).
     keys: ManagedCoreKeysAccount,
     /// Account balance information
     pub balance: WalletCoreBalance,
@@ -74,8 +74,9 @@ pub struct ManagedCoreFundsAccount {
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) claim_guarded_outputs: BTreeMap<OutPoint, Utxo>,
     /// The UTXOs removed by each spend not yet chainlocked, so a fork that drops
-    /// the spend can put them back.
-    unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
+    /// the spend can put them back. Input matching falls back to these, so the
+    /// spender still matches this account when it is seen again.
+    pub(crate) unsettled_spends: BTreeMap<Txid, Vec<Utxo>>,
     /// Outpoints reserved by in-flight transaction builds so concurrent builds
     /// do not select the same UTXO before the first build's transaction is
     /// processed. Empty after a restart, where chain and mempool sync
@@ -135,20 +136,20 @@ impl ManagedCoreFundsAccount {
     }
 
     /// Create a `ManagedCoreFundsAccount` from an [`Account`](super::super::Account).
-    pub fn from_account(account: &super::super::Account) -> Self {
-        Self::wrap(ManagedCoreKeysAccount::from_account(account))
+    pub fn from_account(account: &super::super::Account) -> Result<Self, Error> {
+        ManagedCoreKeysAccount::from_account(account).map(Self::wrap)
     }
 
     /// Create a `ManagedCoreFundsAccount` from a [`BLSAccount`].
     #[cfg(feature = "bls")]
-    pub fn from_bls_account(account: &BLSAccount) -> Self {
-        Self::wrap(ManagedCoreKeysAccount::from_bls_account(account))
+    pub fn from_bls_account(account: &BLSAccount) -> Result<Self, Error> {
+        ManagedCoreKeysAccount::from_bls_account(account).map(Self::wrap)
     }
 
     /// Create a `ManagedCoreFundsAccount` from an [`EdDSAAccount`].
     #[cfg(feature = "eddsa")]
-    pub fn from_eddsa_account(account: &EdDSAAccount) -> Self {
-        Self::wrap(ManagedCoreKeysAccount::from_eddsa_account(account))
+    pub fn from_eddsa_account(account: &EdDSAAccount) -> Result<Self, Error> {
+        ManagedCoreKeysAccount::from_eddsa_account(account).map(Self::wrap)
     }
 
     fn wrap(keys: ManagedCoreKeysAccount) -> Self {
@@ -217,6 +218,15 @@ impl ManagedCoreFundsAccount {
     /// Check if an outpoint was spent by a previously recorded transaction.
     pub(crate) fn is_outpoint_spent(&self, outpoint: &OutPoint) -> bool {
         self.spent_outpoints.contains(outpoint)
+    }
+
+    /// Whether the account holds `outpoint` as a UTXO or keeps it aside as
+    /// spent or claimed, to take it back if that spend or claim goes away.
+    pub(crate) fn holds_or_keeps_aside(&self, outpoint: &OutPoint) -> bool {
+        self.utxos.contains_key(outpoint)
+            || self.spent_before_funded.contains_key(outpoint)
+            || self.claim_guarded_outputs.contains_key(outpoint)
+            || self.unsettled_spends.values().flatten().any(|utxo| utxo.outpoint == *outpoint)
     }
 
     /// Fill `claim_guarded_outputs` for a claim restored after its funding:
@@ -358,9 +368,9 @@ impl ManagedCoreFundsAccount {
         // scratch, so carry forward flags that must not regress. An
         // InstantSend lock is permanent for a txid (DIP-0010) and
         // trust only ever settles, so both latch monotonically. A
-        // coin reservation is orthogonal to chain context and is kept
-        // as-is. `is_confirmed` stays freshly derived so a reorg can
-        // still downgrade it.
+        // coin lock follows the wallet's lock set, not chain context,
+        // and is kept as-is. `is_confirmed` stays freshly derived so a
+        // reorg can still downgrade it.
         copies.extend(self.utxos.get(&outpoint).cloned());
         if !copies.is_empty() {
             output.is_instantlocked |= copies.iter().any(|copy| copy.is_instantlocked);
@@ -446,7 +456,6 @@ impl ManagedCoreFundsAccount {
                 });
 
                 let txid = tx.txid();
-                let mut utxos_changed = false;
 
                 // A transaction whose input a *block* already spent can never
                 // confirm — unless this arrival is that block delivery itself.
@@ -498,7 +507,7 @@ impl ManagedCoreFundsAccount {
                                 context.block_info().map_or(0, |info| info.height),
                                 tx.is_coin_base(),
                             );
-                            utxos_changed |= self.take_in_output(
+                            self.take_in_output(
                                 received,
                                 Vec::new(),
                                 observed_spent,
@@ -537,15 +546,10 @@ impl ManagedCoreFundsAccount {
                             "Removed spent UTXO"
                         );
                         self.unsettled_spends.entry(txid).or_default().push(spent);
-                        utxos_changed = true;
                     }
                 }
                 if context.is_chain_locked() {
                     self.unsettled_spends.remove(&txid);
-                }
-
-                if utxos_changed {
-                    self.keys.bump_monitor_revision();
                 }
             }
             _ => {}
@@ -634,9 +638,6 @@ impl ManagedCoreFundsAccount {
             self.release_spent_marks(&freed);
         }
 
-        if utxos > 0 {
-            self.keys.bump_monitor_revision();
-        }
         AbandonRemoval {
             utxos,
             records,
@@ -716,9 +717,6 @@ impl ManagedCoreFundsAccount {
         // so the spend is still matched when it is mined again.
         for outpoint in spent_claims.keys() {
             self.keep_recorded_output_for_claim(outpoint);
-        }
-        if !restored.is_empty() {
-            self.keys.bump_monitor_revision();
         }
         Truncation {
             txids: dropped.into_iter().collect(),
@@ -865,13 +863,11 @@ impl ManagedCoreFundsAccount {
         }
 
         let mut freed: HashSet<OutPoint> = HashSet::new();
-        let mut changed = false;
         for loser in &losers {
             let removed: Vec<OutPoint> =
                 self.utxos.keys().filter(|outpoint| outpoint.txid == *loser).copied().collect();
             for outpoint in removed {
                 self.utxos.remove(&outpoint);
-                changed = true;
             }
             self.spent_before_funded.retain(|outpoint, _| outpoint.txid != *loser);
             self.claim_guarded_outputs.retain(|outpoint, _| outpoint.txid != *loser);
@@ -895,9 +891,6 @@ impl ManagedCoreFundsAccount {
         // Only the loser's *extra* inputs are genuinely released.
         freed.retain(|outpoint| !spent.contains(outpoint));
         let released = self.release_spent_marks(&freed);
-        if changed {
-            self.keys.bump_monitor_revision();
-        }
 
         // Report only coins that outlive this sweep. The descendant closure
         // above removes transactions that spent a loser's *own* change, so
@@ -1151,9 +1144,6 @@ impl ManagedCoreFundsAccount {
             observed_spent,
             spent_claims,
         );
-        if coins_changed {
-            self.keys.bump_monitor_revision();
-        }
         Confirmation {
             record,
             coins_changed,
@@ -1243,12 +1233,14 @@ impl ManagedCoreFundsAccount {
         }
 
         // Marks a transaction that spends our coins. `input_details` (built
-        // above) and `account_match.sent` (built in `check_transaction_with_index`)
+        // above) and `account_match.sent` (built in `check_transaction_for_match`)
         // both resolve each input against `self.utxos`, `self.spent_before_funded`
         // and then `self.claim_guarded_outputs` on this account, with no mutation
         // between the two lookups, so they populate together; keeping both keeps
         // this robust should the two call sites ever compute over different
-        // snapshots.
+        // snapshots. `sent` also falls back to the coins `self.unsettled_spends`
+        // holds for this txid, which exist only once this account has recorded
+        // the transaction, so a new record never needs them.
         let has_inputs = !input_details.is_empty() || account_match.sent > 0;
 
         let output_details = TransactionRecord::output_details_for(
@@ -1402,7 +1394,6 @@ impl ManagedCoreFundsAccount {
                 }
                 _ => "Failed to generate receive address",
             })?;
-            self.keys.bump_monitor_revision();
             Ok(addr)
         } else {
             Err("Cannot generate receive address for non-standard account type")
@@ -1431,7 +1422,6 @@ impl ManagedCoreFundsAccount {
                 }
                 _ => "Failed to generate change address",
             })?;
-            self.keys.bump_monitor_revision();
             Ok(addr)
         } else {
             Err("Cannot generate change address for non-standard account type")
@@ -1472,7 +1462,6 @@ impl ManagedCoreFundsAccount {
                     _ => "Failed to generate receive address",
                 },
             )?;
-            self.keys.bump_monitor_revision();
             Ok(addr)
         } else {
             Err("Cannot generate receive address for non-standard account type")
@@ -1482,8 +1471,7 @@ impl ManagedCoreFundsAccount {
     /// Release a previously reserved receive address back to the available pool.
     ///
     /// Idempotent: returns `false` if the address is unknown to the external
-    /// pool or is not currently reserved. Bumps the monitor revision only when
-    /// a reservation is actually cleared.
+    /// pool or is not currently reserved.
     pub fn release_receive_reservation(&mut self, address: &Address) -> bool {
         if let ManagedAccountType::Standard {
             external_addresses,
@@ -1491,10 +1479,7 @@ impl ManagedCoreFundsAccount {
         } = self.keys.managed_account_type_mut()
         {
             if let Some(index) = external_addresses.address_index(address) {
-                if external_addresses.release_reservation(index) {
-                    self.keys.bump_monitor_revision();
-                    return true;
-                }
+                return external_addresses.release_reservation(index);
             }
         }
         false
@@ -1506,19 +1491,14 @@ impl ManagedCoreFundsAccount {
     /// Backstop for reservations handed out but never funded and never
     /// explicitly released, which would otherwise pin gap-limit headroom
     /// forever. `now` and `ttl` are caller-supplied (seconds); the wallet keeps
-    /// no clock. Returns the number of reservations reclaimed and bumps the
-    /// monitor revision when that is non-zero.
+    /// no clock. Returns the number of reservations reclaimed.
     pub fn sweep_expired_receive_reservations(&mut self, now: u64, ttl: u64) -> usize {
         if let ManagedAccountType::Standard {
             external_addresses,
             ..
         } = self.keys.managed_account_type_mut()
         {
-            let reclaimed = external_addresses.sweep_expired_reservations(now, ttl);
-            if reclaimed > 0 {
-                self.keys.bump_monitor_revision();
-            }
-            reclaimed
+            external_addresses.sweep_expired_reservations(now, ttl)
         } else {
             0
         }
@@ -1578,14 +1558,6 @@ impl ManagedAccountTrait for ManagedCoreFundsAccount {
 
     fn transaction_is_finalized(&self, txid: &Txid) -> bool {
         self.keys.transaction_is_finalized(txid)
-    }
-
-    fn monitor_revision(&self) -> u64 {
-        self.keys.monitor_revision()
-    }
-
-    fn bump_monitor_revision(&mut self) {
-        self.keys.bump_monitor_revision()
     }
 }
 

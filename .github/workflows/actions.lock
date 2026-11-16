@@ -10,20 +10,20 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'codecov/codecov-action@v7.1.1'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.90.0'
+        - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/changelog-guard.yml': []
     '.github/workflows/conflict-check.yml':
         - 'eps1lon/actions-label-merge-conflict@v3.1.0'
     '.github/workflows/fuzz.yml':
         - 'actions/checkout@v7.0.1'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.90.0'
+        - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/manki.yml':
         - 'actions/setup-node@v7.1.0'
-        - 'manki-review/manki@v7.4.0'
+        - 'manki-review/manki@v7.5.2'
     '.github/workflows/pr-review-policy.yml': []
     '.github/workflows/pr-title.yml':
-        - 'amannn/action-semantic-pull-request@v6.1.1'
+        - 'amannn/action-semantic-pull-request@v6.1.2'
     '.github/workflows/pre-commit.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-python@v7.1.0'
@@ -36,16 +36,15 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'embarkstudios/cargo-deny-action@v2.1.1'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.90.0'
+        - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/sanitizer.yml':
         - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@nightly'
-        - 'taiki-e/install-action@v2.90.0'
+        - 'taiki-e/install-action@v2.90.3'
     '.github/workflows/update-masternode-seeds.yml':
         - 'actions/checkout@v7.0.1'
-        - 'peter-evans/create-pull-request@v8.1.1'
+        - 'peter-evans/create-pull-request@v8.1.2'
         - 'swatinem/rust-cache@v2.9.3'
-        - 'taiki-e/install-action@v2.90.0'
+        - 'taiki-e/install-action@v2.90.3'
 dependencies:
     'actions/cache@v4':
         ref: 'v4'
@@ -82,9 +81,9 @@ dependencies:
         commit: 'sha1-cf430e030ddbb5b0abf93d22962f4752f3646cd9'
         owner_id: 44036562
         repo_id: 192625955
-    'amannn/action-semantic-pull-request@v6.1.1':
-        ref: 'v6.1.1'
-        commit: 'sha1-48f256284bd46cdaab1048c3721360e808335d50'
+    'amannn/action-semantic-pull-request@v6.1.2':
+        ref: 'v6.1.2'
+        commit: 'sha1-2252a14e810aa9b85c2d560bd7070c802206ecf6'
         owner_id: 4038316
         repo_id: 220418983
     'codecov/codecov-action@v7.1.1':
@@ -94,11 +93,6 @@ dependencies:
         repo_id: 200299178
         uses:
             - 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd'
-    'dtolnay/rust-toolchain@nightly':
-        ref: 'nightly'
-        commit: 'sha1-2c76c034f9e32a5d6e2c104dc4df23a22476db04'
-        owner_id: 1940490
-        repo_id: 260749683
     'embarkstudios/cargo-deny-action@v2.1.1':
         ref: 'v2.1.1'
         commit: 'sha1-3c6349835b2b7b196a839186cb8b78e02f7b5f25'
@@ -109,14 +103,14 @@ dependencies:
         commit: 'sha1-0273be72a0bbd58fcd71d0d6c02c209b50d1e5e1'
         owner_id: 12292047
         repo_id: 248206495
-    'manki-review/manki@v7.4.0':
-        ref: 'v7.4.0'
-        commit: 'sha1-d6eba103babe1d1ef9b213fcd9dd19ed9a5c5415'
+    'manki-review/manki@v7.5.2':
+        ref: 'v7.5.2'
+        commit: 'sha1-99d5d40c6e2a5783b789d2cdf8b1349721175b39'
         owner_id: 270828077
         repo_id: 1190216666
-    'peter-evans/create-pull-request@v8.1.1':
-        ref: 'v8.1.1'
-        commit: 'sha1-5f6978faf089d4d20b00c7766989d076bb2fc7f1'
+    'peter-evans/create-pull-request@v8.1.2':
+        ref: 'v8.1.2'
+        commit: 'sha1-15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8'
         owner_id: 18365890
         repo_id: 197176365
     'pre-commit/action@v3.0.1':
@@ -131,8 +125,8 @@ dependencies:
         commit: 'sha1-d1527c8f67ef9af357290475d4af4b0fab8f12e0'
         owner_id: 580492
         repo_id: 298565987
-    'taiki-e/install-action@v2.90.0':
-        ref: 'v2.90.0'
-        commit: 'sha1-b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2'
+    'taiki-e/install-action@v2.90.3':
+        ref: 'v2.90.3'
+        commit: 'sha1-cfdb7ed4ccc7c7dce37759eae89dc5674b469b39'
         owner_id: 43724913
         repo_id: 442947557
