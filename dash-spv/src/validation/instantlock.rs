@@ -60,18 +60,14 @@ impl VerifiedInstantLock {
         self.instant_lock.txid
     }
 
-    /// Binds the evidence to the wallet's network, the complete transaction and its ordered inputs.
+    /// Binds the evidence to the wallet's network, the complete transaction and the ordered
+    /// inputs its lock carries, see [`InstantLock::lock_inputs`].
     ///
     /// No wallet arithmetic or transaction consensus validation is performed.
     pub fn matches_transaction(&self, network: Network, transaction: &Transaction) -> bool {
         self.network == network
             && self.txid() == transaction.txid()
-            && self
-                .instant_lock
-                .inputs
-                .iter()
-                .copied()
-                .eq(transaction.input.iter().map(|input| input.previous_output))
+            && self.instant_lock.inputs == InstantLock::lock_inputs(transaction)
     }
 
     /// Authenticates a lock, or returns `None` while the engine lacks the quorum data to decide.
@@ -249,7 +245,7 @@ mod tests {
     use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::sml::llmq_type::LLMQType;
-    use dashcore::{BlockHash, OutPoint, QuorumHash, ScriptBuf, TxIn, TxOut};
+    use dashcore::{Address, BlockHash, OutPoint, QuorumHash, ScriptBuf, TxIn, TxOut};
     use hex_conservative::DisplayHex;
     use test_case::test_case;
 
@@ -313,7 +309,7 @@ mod tests {
         // This unit tests binding only; authentication is exercised with the signed fixture.
         let mut lock = mainnet_fixture_is_lock();
         lock.txid = transaction.txid();
-        lock.inputs = transaction.input.iter().map(|input| input.previous_output).collect();
+        lock.inputs = InstantLock::lock_inputs(&transaction);
         let verified = VerifiedInstantLock {
             instant_lock: lock,
             network: Network::Mainnet,
@@ -326,6 +322,17 @@ mod tests {
         let mut wrong_inputs = verified.clone();
         wrong_inputs.instant_lock.inputs[0].vout += 1;
         assert!(!wrong_inputs.matches_transaction(Network::Mainnet, &transaction));
+
+        let address = Address::dummy(Network::Mainnet, 0);
+        let withdrawal = Transaction::dummy_asset_unlock(&address, 7, 1);
+        let mut lock = mainnet_fixture_is_lock();
+        lock.txid = withdrawal.txid();
+        lock.inputs = InstantLock::lock_inputs(&withdrawal);
+        let verified = VerifiedInstantLock {
+            instant_lock: lock,
+            network: Network::Mainnet,
+        };
+        assert!(verified.matches_transaction(Network::Mainnet, &withdrawal));
     }
 
     #[test]

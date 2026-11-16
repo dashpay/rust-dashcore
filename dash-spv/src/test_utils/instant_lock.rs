@@ -38,7 +38,7 @@ pub struct InstantLockFixture {
 }
 
 impl InstantLockFixture {
-    /// Signs the transaction's ID and ordered inputs with a quorum of `network`'s
+    /// Signs the transaction's ID and the inputs its lock carries with a quorum of `network`'s
     /// InstantSend quorum type.
     pub fn new(
         network: Network,
@@ -51,7 +51,7 @@ impl InstantLockFixture {
         let quorum_hash = QuorumHash::from_byte_array([9; 32]);
         let mut instant_lock = InstantLock {
             version: 1,
-            inputs: transaction.input.iter().map(|input| input.previous_output).collect(),
+            inputs: InstantLock::lock_inputs(transaction),
             txid: transaction.txid(),
             cyclehash: BlockHash::from_byte_array([8; 32]),
             signature: BLSSignature::from([0; 96]),
