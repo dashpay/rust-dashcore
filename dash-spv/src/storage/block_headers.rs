@@ -106,7 +106,7 @@ pub struct PersistentBlockHeaderStorage {
 }
 
 impl PersistentBlockHeaderStorage {
-    const FOLDER_NAME: &str = "block_headers";
+    pub(super) const FOLDER_NAME: &str = "block_headers";
 }
 
 #[async_trait]

@@ -42,7 +42,7 @@ pub struct PersistentBlockStorage {
 }
 
 impl PersistentBlockStorage {
-    const FOLDER_NAME: &str = "blocks";
+    pub(super) const FOLDER_NAME: &str = "blocks";
 }
 
 #[async_trait]

@@ -364,6 +364,84 @@ pub trait SyncManager: Send + Sync + std::fmt::Debug {
 }
 
 #[cfg(test)]
+pub(super) mod running {
+    use super::*;
+    use crate::test_utils::test_socket_address;
+    use tokio::sync::mpsc::{self, UnboundedSender};
+    use tokio::{task, time};
+
+    /// A manager running its task loop, as the coordinator spawns it.
+    pub(in crate::sync) struct RunningManager {
+        messages: UnboundedSender<Inbound>,
+        sync_events: broadcast::Sender<SyncEvent>,
+        received: broadcast::Receiver<SyncEvent>,
+        _network_events: broadcast::Sender<NetworkEvent>,
+        _progress: watch::Receiver<SyncManagerProgress>,
+        shutdown: CancellationToken,
+    }
+
+    impl RunningManager {
+        /// Spawns `manager` and returns once it listens to the event bus.
+        pub(in crate::sync) async fn spawn<M: SyncManager + 'static>(
+            manager: M,
+            network: Arc<dyn NetworkManager>,
+        ) -> Self {
+            let (messages, message_receiver) = mpsc::unbounded_channel();
+            let sync_events = broadcast::Sender::new(100);
+            let received = sync_events.subscribe();
+            let network_events = broadcast::Sender::new(1);
+            let (progress_sender, progress) = watch::channel(manager.progress());
+            let shutdown = CancellationToken::new();
+            tokio::spawn(manager.run(SyncManagerTaskContext {
+                message_receiver,
+                sync_event_sender: sync_events.clone(),
+                network_event_receiver: network_events.subscribe(),
+                network,
+                shutdown: shutdown.clone(),
+                progress_sender,
+            }));
+            while sync_events.receiver_count() < 2 {
+                task::yield_now().await;
+            }
+            Self {
+                messages,
+                sync_events,
+                received,
+                _network_events: network_events,
+                _progress: progress,
+                shutdown,
+            }
+        }
+
+        pub(in crate::sync) fn send_message(&self, message: impl Into<InboundMessage>) {
+            self.messages.send((test_socket_address(1), Arc::new(message.into()))).unwrap();
+        }
+
+        pub(in crate::sync) fn send_event(&self, event: SyncEvent) {
+            self.sync_events.send(event).unwrap();
+        }
+
+        /// Waits for the manager to report a storage corruption.
+        pub(in crate::sync) async fn wait_for_storage_corrupted(&mut self) {
+            time::timeout(Duration::from_secs(5), async {
+                while !matches!(
+                    self.received.recv().await.unwrap(),
+                    SyncEvent::StorageCorrupted { .. }
+                ) {}
+            })
+            .await
+            .expect("no StorageCorrupted event");
+        }
+    }
+
+    impl Drop for RunningManager {
+        fn drop(&mut self) {
+            self.shutdown.cancel();
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::sync::BlockHeadersProgress;

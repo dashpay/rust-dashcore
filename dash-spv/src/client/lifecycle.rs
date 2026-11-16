@@ -146,7 +146,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                         .start_from_height
                         .unwrap_or_else(|| config.network.hd_wallet_sync_floor()),
                 )
-                .await,
+                .await?,
             );
             managers.blocks = Some(
                 BlocksManager::new(wallet.clone(), storage.block_headers(), storage.blocks()).await,
@@ -172,7 +172,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     storage.metadata(),
                     masternode_list_engine.clone(),
                 )
-                .await,
+                .await?,
             );
             managers.instantsend = Some(InstantSendManager::new(masternode_list_engine.clone()));
         }
