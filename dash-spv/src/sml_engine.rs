@@ -65,10 +65,13 @@ pub(crate) struct InstantSendCycle<'a> {
     pub(crate) complete: bool,
 }
 
-/// `true` when the cycle holds a `Verified` quorum for every active slot of `isd_type`.
+/// `true` when the cycle holds a `Verified` quorum of `isd_type` for every active slot.
 fn fills_every_slot(quorums: &BTreeMap<u16, QualifiedQuorumEntry>, isd_type: LLMQType) -> bool {
     quorums.len() == isd_type.active_quorum_count() as usize
-        && quorums.values().all(|quorum| quorum.verified == LLMQEntryVerificationStatus::Verified)
+        && quorums.values().all(|quorum| {
+            quorum.verified == LLMQEntryVerificationStatus::Verified
+                && quorum.quorum_entry.llmq_type == isd_type
+        })
 }
 
 /// Whether a stored cycle is complete, or `None` when one of its quorums is unverified or
@@ -92,10 +95,7 @@ fn instant_send_cycle_completeness(
     }) {
         return None;
     }
-    Some(
-        fills_every_slot(quorums, isd_type)
-            && quorums.values().all(|quorum| quorum.quorum_entry.llmq_type == isd_type),
-    )
+    Some(fills_every_slot(quorums, isd_type))
 }
 
 /// Why the engine did not take a diff or a QRInfo.
@@ -754,8 +754,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         Ok(())
     }
 
-    /// `true` when the stored cycle has a `Verified` quorum for every active
-    /// slot. A partial cycle stays open so a later QRInfo can complete it.
+    /// `true` when the stored cycle has a `Verified` quorum of the configured type for
+    /// every active slot. A partial or foreign-type cycle stays open so a later QRInfo
+    /// can complete it.
     fn is_cycle_fully_verified(&self, cycle_hash: &BlockHash) -> bool {
         let isd_type = self.network.isd_llmq_type();
         self.rotated_quorums_per_cycle
@@ -1458,7 +1459,8 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{fixture_heights, mainnet_fixture_is_lock, quorum_entry, TestEngine};
     use super::{
-        build_cycle_quorum_map, instant_send_cycle_completeness, valid_coinbase_chain_lock,
+        build_cycle_quorum_map, fills_every_slot, instant_send_cycle_completeness,
+        valid_coinbase_chain_lock,
     };
     use super::{FeedError, MasternodeListEngine, QRInfoFeedResult};
     use crate::error::{StorageError, StorageResult};
@@ -3376,7 +3378,7 @@ mod tests {
 
     /// On a devnet the signing cycle can be of another rotating type than the configured
     /// one. Holding as many quorums as the configured type has slots does not complete
-    /// it, so a lock it does not verify is deferred, not refuted.
+    /// it, so a lock it does not verify is deferred and a later QRInfo still merges in.
     #[test]
     fn should_not_complete_a_devnet_cycle_of_another_rotating_type() {
         let lock = mainnet_fixture_is_lock();
@@ -3388,6 +3390,7 @@ mod tests {
         assert!(slots < cycle.len(), "the mainnet cycle has more slots than a devnet one");
         let partial: BTreeMap<_, _> = cycle.clone().into_iter().take(slots).collect();
 
+        assert!(!fills_every_slot(&partial, configured));
         assert_eq!(instant_send_cycle_completeness(&partial, configured, true), Some(false));
         assert_eq!(instant_send_cycle_completeness(&partial, configured, false), None);
         assert_eq!(instant_send_cycle_completeness(&cycle, served, false), Some(true));
