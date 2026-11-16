@@ -6,12 +6,17 @@ use crate::hash_types::{
     InputsHash, MerkleRootAssetUnlocks, MerkleRootMasternodeList, MerkleRootQuorums,
 };
 use crate::sml::masternode_list_entry::MasternodeNetInfo;
+use crate::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
+use crate::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
+use crate::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
 use crate::transaction::special_transaction::coinbase::CoinbasePayload;
 use crate::transaction::special_transaction::provider_registration::{
     ProviderMasternodeType, ProviderRegistrationPayload,
 };
 use crate::transaction::special_transaction::{TransactionPayload, TransactionType};
-use crate::{Address, OutPoint, PubkeyHash, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness};
+use crate::{
+    Address, OutPoint, PubkeyHash, QuorumHash, ScriptBuf, Transaction, TxIn, TxOut, Txid, Witness,
+};
 
 /// A special transaction type no Dash Core version assigns
 pub const UNASSIGNED_SPECIAL_TX_TYPE: u16 = 0xffff;
@@ -25,6 +30,33 @@ impl Transaction {
             input: Vec::new(),
             output: Vec::new(),
             special_transaction_payload: None,
+        }
+    }
+
+    /// Creates an asset unlock (Platform withdrawal) paying `value` to `address`.
+    pub fn dummy_asset_unlock(address: &Address, index: u64, value: u64) -> Transaction {
+        Transaction {
+            version: 3,
+            lock_time: 0,
+            input: Vec::new(),
+            output: vec![TxOut {
+                value,
+                script_pubkey: address.script_pubkey(),
+            }],
+            special_transaction_payload: Some(TransactionPayload::AssetUnlockPayloadType(
+                AssetUnlockPayload {
+                    base: AssetUnlockBasePayload {
+                        version: 1,
+                        index,
+                        fee: 0,
+                    },
+                    request_info: AssetUnlockRequestInfo {
+                        request_height: 0,
+                        quorum_hash: QuorumHash::all_zeros(),
+                    },
+                    quorum_sig: BLSSignature::from([0; 96]),
+                },
+            )),
         }
     }
 

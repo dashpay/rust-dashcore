@@ -17,9 +17,11 @@ use crate::hash_types::{
 };
 use crate::internal_macros::impl_consensus_encoding;
 use crate::sml::llmq_type::LLMQType;
-use crate::{OutPoint, QuorumHash, Txid, VarInt, io};
+use crate::transaction::special_transaction::TransactionPayload;
+use crate::{OutPoint, QuorumHash, Transaction, Txid, VarInt, io};
 
 const IS_LOCK_REQUEST_ID_PREFIX: &str = "islock";
+const ASSET_UNLOCK_REQUEST_ID_PREFIX: &str = "plwdtx";
 
 #[derive(Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "bincode", derive(Encode, Decode))]
@@ -55,6 +57,20 @@ impl Default for InstantLock {
 }
 
 impl InstantLock {
+    /// Returns the outpoints a lock of `transaction` lists, as Dash Core's `GetLockInputs`
+    /// derives them. An asset unlock spends no inputs, so its lock lists one outpoint
+    /// derived from the withdrawal index.
+    pub fn lock_inputs(transaction: &Transaction) -> Vec<OutPoint> {
+        let Some(TransactionPayload::AssetUnlockPayloadType(payload)) =
+            &transaction.special_transaction_payload
+        else {
+            return transaction.input.iter().map(|input| input.previous_output).collect();
+        };
+        let request = (ASSET_UNLOCK_REQUEST_ID_PREFIX.to_string(), payload.base.index);
+        let txid = Txid::from_raw_hash(sha256d::Hash::hash(&serialize(&request)));
+        vec![OutPoint::new(txid, 0)]
+    }
+
     /// Returns the hash peers use to announce and request this lock.
     pub fn hash(&self) -> InstantSendLockHash {
         InstantSendLockHash::from_raw_hash(sha256d::Hash::hash(&serialize(self)))
@@ -118,6 +134,26 @@ mod tests {
     use super::*;
     use crate::consensus::{deserialize, serialize};
     use crate::internal_macros::hex;
+    use crate::{Address, Network};
+
+    #[test]
+    fn should_list_the_inputs_dash_core_locks() {
+        let address = Address::dummy(Network::Testnet, 0);
+        let transaction = Transaction::dummy(&address, 0..2, &[1]);
+        let prevouts: Vec<OutPoint> =
+            transaction.input.iter().map(|input| input.previous_output).collect();
+        assert_eq!(InstantLock::lock_inputs(&transaction), prevouts);
+
+        // sha256d of the compact-size string "plwdtx" followed by index 7 as a u64.
+        let withdrawal_txid = Txid::from_slice(&hex!(
+            "938752a81b996801646ce07e4647fa3f536fabbc7d308b0a7647b75732a0ae58"
+        ))
+        .unwrap();
+        assert_eq!(
+            InstantLock::lock_inputs(&Transaction::dummy_asset_unlock(&address, 7, 1)),
+            vec![OutPoint::new(withdrawal_txid, 0)]
+        );
+    }
 
     #[test]
     pub fn should_decode_vec() {
