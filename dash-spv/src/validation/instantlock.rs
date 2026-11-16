@@ -6,7 +6,31 @@ use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{InstantLock, QuorumSigningRequestId};
 
 use crate::error::{ValidationError, ValidationResult};
+use crate::sml_engine::MasternodeListEngine;
+use crate::storage::BlockHeaderStorage;
 use crate::validation::Validator;
+
+/// Verifies `instant_lock` against its cycle in `engine`: `Ok(true)` when it verifies,
+/// `Ok(false)` while the engine lacks the quorum data to decide.
+/// Fails when a complete cycle of the network's InstantSend quorum type refutes the lock.
+pub(crate) fn verify_against_cycle<H: BlockHeaderStorage>(
+    instant_lock: &InstantLock,
+    engine: &MasternodeListEngine<H>,
+) -> ValidationResult<bool> {
+    let Some(cycle) = engine.instant_send_cycle(&instant_lock.cyclehash) else {
+        return Ok(false);
+    };
+    match InstantLockValidator::new(cycle.quorums).validate_signature(instant_lock) {
+        Ok(()) => Ok(true),
+        Err(
+            MessageVerificationError::CycleHashNotPresent(_)
+            | MessageVerificationError::QuorumIndexNotFound(..),
+        ) => Ok(false),
+        // A later QRInfo can still replace the quorums of a partial cycle.
+        Err(_) if !cycle.complete => Ok(false),
+        Err(e) => Err(signature_error(e)),
+    }
+}
 
 /// Rejects malformed InstantLocks. Needs no quorum data, so it runs before a
 /// lock is looked up, queued or cached.
@@ -60,12 +84,14 @@ pub struct InstantLockValidator<'a> {
 
 impl Validator<&InstantLock> for InstantLockValidator<'_> {
     fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
-        self.validate_signature(instant_lock).map_err(|e| {
-            ValidationError::InvalidSignature(format!(
-                "InstantLock BLS signature verification failed: {e}"
-            ))
-        })
+        self.validate_signature(instant_lock).map_err(signature_error)
     }
+}
+
+fn signature_error(error: MessageVerificationError) -> ValidationError {
+    ValidationError::InvalidSignature(format!(
+        "InstantLock BLS signature verification failed: {error}"
+    ))
 }
 
 impl<'a> InstantLockValidator<'a> {
@@ -137,17 +163,11 @@ impl<'a> InstantLockValidator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sml_engine::test_support::TestEngine;
-    use dashcore::consensus::deserialize;
+    use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
     use dashcore::sml::llmq_type::LLMQType;
     use dashcore::QuorumHash;
     use hex_conservative::DisplayHex;
     use test_case::test_case;
-
-    /// An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
-    fn fixture_is_lock() -> InstantLock {
-        deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
-    }
 
     #[test]
     fn a_well_formed_lock_passes_the_structure_check() {
@@ -171,9 +191,9 @@ mod tests {
     #[test]
     fn a_lock_verifies_against_the_quorum_its_request_id_selects() {
         let engine = TestEngine::mainnet_fixture();
-        let lock = fixture_is_lock();
+        let lock = mainnet_fixture_is_lock();
         let validator =
-            InstantLockValidator::new(engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap());
+            InstantLockValidator::new(&engine.rotated_quorums_per_cycle()[&lock.cyclehash]);
 
         let request_id = lock.request_id().expect("expected to make request id");
         assert_eq!(
@@ -201,7 +221,7 @@ mod tests {
         validator.validate(&lock).expect("expected to verify is lock");
 
         // Without its quorum index in the cycle, the lock cannot be resolved.
-        let mut quorums = engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap().clone();
+        let mut quorums = engine.rotated_quorums_per_cycle()[&lock.cyclehash].clone();
         quorums.remove(&23);
         match InstantLockValidator::new(&quorums).signing_quorum(&lock) {
             Err(MessageVerificationError::QuorumIndexNotFound(23, hash)) => {

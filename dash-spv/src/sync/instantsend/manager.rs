@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 
 use crate::error::SyncResult;
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
-use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Validator};
+use crate::validation::{verify_against_cycle, InstantLockStructureValidator, Validator};
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -153,34 +153,29 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             return Ok(vec![]);
         }
 
-        // Until the engine knows the lock's cycle, or when its signature does not
-        // verify, the engine may only lack its quorum yet: the lock is kept pending.
-        let engine = self.engine.read().await;
-        let result = engine
-            .rotated_quorums_of_cycle(&instantlock.cyclehash)
-            .map(|quorums| InstantLockValidator::new(quorums).validate(instantlock));
-        drop(engine);
+        // Until the engine holds the lock's complete cycle, it may only lack its quorum
+        // yet: the lock is kept pending. A lock its complete cycle refutes is not.
+        let result = verify_against_cycle(instantlock, &*self.engine.read().await);
         let validated = match result {
-            Some(Ok(())) => true,
-            Some(Err(e)) => {
-                tracing::warn!("InstantLock for txid {} not verified yet: {}", txid, e);
+            Ok(true) => {
+                self.progress.add_valid(1);
+                true
+            }
+            Ok(false) => {
+                tracing::debug!("InstantLock for txid {} awaits quorum data", txid);
+                self.queue_pending(PendingInstantLock {
+                    instant_lock: instantlock.clone(),
+                    first_seen: Instant::now(),
+                });
+                self.progress.update_pending(self.pending_instantlocks.len());
                 false
             }
-            None => {
-                tracing::debug!("InstantLock for txid {} is of a cycle not known yet", txid);
+            Err(e) => {
+                tracing::warn!("Refuted InstantLock for txid {}: {}", txid, e);
+                self.progress.add_invalid(1);
                 false
             }
         };
-
-        if validated {
-            self.progress.add_valid(1);
-        } else {
-            self.queue_pending(PendingInstantLock {
-                instant_lock: instantlock.clone(),
-                first_seen: Instant::now(),
-            });
-            self.progress.update_pending(self.pending_instantlocks.len());
-        }
 
         // Store in cache
         let entry = InstantLockEntry {
@@ -233,8 +228,9 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
     ///
     /// Called both when a `MasternodeStateUpdated` event arrives and from `tick`
     /// once the engine has advanced. Locks that verify are emitted as validated
-    /// `InstantLockReceived` events; locks that still can't be verified are
-    /// re-queued until they either become verifiable or exceed [`PENDING_TTL`].
+    /// `InstantLockReceived` events, and locks their complete cycle refutes are
+    /// dropped. Locks that still can't be verified are re-queued until they
+    /// either become verifiable or exceed [`PENDING_TTL`].
     ///
     /// `now` is the current time used for TTL expiry; production callers pass
     /// `Instant::now()`. It is threaded in (rather than read here) so tests can
@@ -247,6 +243,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
         let pending = std::mem::take(&mut self.pending_instantlocks);
         let mut events = Vec::new();
+        let mut rejected = 0;
 
         for pending_lock in pending {
             let txid = pending_lock.instant_lock.txid;
@@ -257,28 +254,33 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 continue;
             }
 
-            let lock = &pending_lock.instant_lock;
-            let validated =
-                self.engine.read().await.rotated_quorums_of_cycle(&lock.cyclehash).is_some_and(
-                    |quorums| InstantLockValidator::new(quorums).validate(lock).is_ok(),
-                );
-
-            if validated {
-                self.progress.add_valid(1);
-                // Update the cached entry
-                if let Some(entry) = self.instantlocks.get_mut(&txid) {
-                    entry.validated = true;
+            let result =
+                verify_against_cycle(&pending_lock.instant_lock, &*self.engine.read().await);
+            match result {
+                Ok(true) => {
+                    self.progress.add_valid(1);
+                    // Update the cached entry
+                    if let Some(entry) = self.instantlocks.get_mut(&txid) {
+                        entry.validated = true;
+                    }
+                    events.push(SyncEvent::InstantLockReceived {
+                        instant_lock: pending_lock.instant_lock.clone(),
+                        validated: true,
+                    });
                 }
-                events.push(SyncEvent::InstantLockReceived {
-                    instant_lock: pending_lock.instant_lock.clone(),
-                    validated: true,
-                });
-            } else {
                 // Still can't validate, re-queue
-                self.queue_pending(pending_lock);
+                Ok(false) => self.queue_pending(pending_lock),
+                Err(_) => rejected += 1,
             }
         }
 
+        if rejected > 0 {
+            tracing::warn!(
+                "Dropped {} pending InstantLocks refuted by their complete cycle",
+                rejected
+            );
+            self.progress.add_invalid(rejected);
+        }
         self.last_validated_engine_height = engine_height;
         self.progress.update_pending(self.pending_instantlocks.len());
         Ok(events)
@@ -365,13 +367,13 @@ impl<H: BlockHeaderStorage> std::fmt::Debug for InstantSendManager<H> {
 mod tests {
     use super::*;
     use crate::network::{MessageType, NetworkManager};
-    use crate::sml_engine::test_support::TestEngine;
+    use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
     use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::CycleHash;
     use dashcore::sml::masternode_list::MasternodeList;
-    use dashcore::{BlockHash, OutPoint};
+    use dashcore::{BlockHash, Network, OutPoint};
     use test_case::test_case;
 
     /// Insert an empty masternode list at `height` so the shared engine reports a
@@ -502,6 +504,45 @@ mod tests {
         let events = manager.process_instantlock(&create_test_instantlock(txid)).await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(manager.pending_count(), 1);
+    }
+
+    /// A lock its complete, verified cycle refutes is not kept pending.
+    #[tokio::test]
+    async fn should_reject_lock_refuted_by_its_complete_cycle() {
+        let engine = TestEngine::mainnet_fixture();
+        let mut manager = InstantSendManager::new(Arc::new(RwLock::new(engine)));
+        let mut forged = mainnet_fixture_is_lock();
+        forged.signature = BLSSignature::from([1; 96]);
+
+        manager.process_instantlock(&forged).await.unwrap();
+        assert_eq!(manager.pending_count(), 0);
+        assert_eq!(manager.progress.invalid(), 1);
+    }
+
+    /// A pending lock refuted once its cycle completes is dropped on replay without
+    /// an event, and the drained queue lets the manager leave `Syncing`.
+    #[tokio::test]
+    async fn should_drop_pending_lock_refuted_once_its_cycle_completes() {
+        let mut manager =
+            InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(Network::Mainnet))));
+        manager.set_state(SyncState::Syncing);
+        let mut forged = mainnet_fixture_is_lock();
+        forged.signature = BLSSignature::from([1; 96]);
+        manager.process_instantlock(&forged).await.unwrap();
+        assert_eq!(manager.pending_count(), 1);
+
+        *manager.engine.write().await = TestEngine::mainnet_fixture();
+        let event = SyncEvent::MasternodeStateUpdated {
+            height: 1,
+            qr_info_result: None,
+        };
+        let events = manager.handle_sync_event(&event, &no_op_network()).await.unwrap();
+
+        assert!(events.is_empty(), "a refuted lock emits no event: {events:?}");
+        assert_eq!(manager.pending_count(), 0);
+        assert_eq!(manager.progress.invalid(), 1);
+        assert_eq!(manager.progress.valid(), 0);
+        assert_eq!(manager.state(), SyncState::Synced);
     }
 
     #[tokio::test]
