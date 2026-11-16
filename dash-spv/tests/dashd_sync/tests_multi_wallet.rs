@@ -21,7 +21,9 @@ use super::helpers::{
     EMPTY_MNEMONIC, SECONDARY_MNEMONIC,
 };
 use super::setup::{create_and_start_client, TestContext};
-use dash_spv::test_utils::{create_test_wallet, default_test_account_options, TestChain};
+use dash_spv::test_utils::{
+    create_test_wallet, default_test_account_options, DashdTestContext, TestChain,
+};
 use key_wallet::account::ManagedAccountTrait;
 
 /// Derive a fresh BIP44 external receive address for `mnemonic` without
@@ -735,4 +737,16 @@ async fn test_explicit_start_height_limits_backfill() {
     let start = storage.get_start_height().await;
     storage.stop().await;
     assert_eq!(start, Some(anchor + 1 - CHECKPOINT_HEADERS as u32));
+}
+
+#[tokio::test]
+async fn test_ensure_wallet_already_loaded_and_missing() {
+    let Some(ctx) = DashdTestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    // DashdTestContext::new already loaded "default".
+    ctx.node.ensure_wallet("default");
+    ctx.node.ensure_wallet("created");
+    ctx.node.ensure_wallet("created");
+    ctx.node.get_new_address_from_wallet("created");
 }
