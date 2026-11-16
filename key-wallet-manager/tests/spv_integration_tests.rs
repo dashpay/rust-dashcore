@@ -7,6 +7,7 @@ use dashcore::{Address, ScriptBuf};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::ChildIndex;
 use key_wallet::Network;
 use key_wallet_manager::{BlockProcessingResult, WalletId, WalletInterface, WalletManager};
 use std::collections::BTreeSet;
@@ -128,7 +129,12 @@ async fn test_immature_balance_matures_during_block_processing() {
 
     let account_xpub = {
         let wallet = manager.get_wallet(&wallet_id).expect("Wallet should exist");
-        wallet.accounts.standard_bip44_accounts.get(&0).expect("Should have account").account_xpub
+        wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("Should have account")
+            .account_xpub
     };
 
     // Get the first receive address from the wallet

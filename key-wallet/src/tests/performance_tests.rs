@@ -6,6 +6,7 @@ use crate::account::{AccountType, StandardAccountType};
 use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey};
 use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
+use crate::ChildIndex;
 use crate::Network;
 use std::time::{Duration, Instant};
 
@@ -62,11 +63,11 @@ fn test_key_derivation_performance() {
 
     for i in 0..iterations {
         let path = DerivationPath::from(vec![
-            ChildNumber::from_hardened_idx(44).unwrap(),
-            ChildNumber::from_hardened_idx(5).unwrap(),
-            ChildNumber::from_hardened_idx(0).unwrap(),
-            ChildNumber::from_normal_idx(0).unwrap(),
-            ChildNumber::from_normal_idx(i).unwrap(),
+            ChildNumber::Hardened(ChildIndex::new_const(44)),
+            ChildNumber::Hardened(ChildIndex::new_const(5)),
+            ChildNumber::Hardened(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::ZERO),
+            ChildNumber::Normal(ChildIndex::new(i).unwrap()),
         ]);
 
         let start = Instant::now();
@@ -98,7 +99,7 @@ fn test_account_creation_performance() {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: i as u32,
+                    index: ChildIndex::new_const(i as u32),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -170,7 +171,7 @@ fn test_large_wallet_memory_usage() {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -207,9 +208,9 @@ fn test_concurrent_derivation_performance() {
             for i in 0..iterations_per_thread {
                 let index = thread_id * iterations_per_thread + i;
                 let path = DerivationPath::from(vec![
-                    ChildNumber::from_hardened_idx(44).unwrap(),
-                    ChildNumber::from_hardened_idx(5).unwrap(),
-                    ChildNumber::from_hardened_idx(index).unwrap(),
+                    ChildNumber::Hardened(ChildIndex::new_const(44)),
+                    ChildNumber::Hardened(ChildIndex::new_const(5)),
+                    ChildNumber::Hardened(ChildIndex::new(index).unwrap()),
                 ]);
 
                 let thread_start = Instant::now();
@@ -270,14 +271,14 @@ fn test_gap_limit_scan_performance() {
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     let account_path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(44).unwrap(),
-        ChildNumber::from_hardened_idx(5).unwrap(),
-        ChildNumber::from_hardened_idx(0).unwrap(),
+        ChildNumber::Hardened(ChildIndex::new_const(44)),
+        ChildNumber::Hardened(ChildIndex::new_const(5)),
+        ChildNumber::Hardened(ChildIndex::ZERO),
     ]);
     let account_key = master.derive_priv(&account_path).unwrap();
     let key_source = KeySource::Private(account_key);
 
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
     let mut pool =
         AddressPool::new(base_path, AddressPoolType::External, 20, Network::Testnet, &key_source)
             .unwrap();
@@ -310,7 +311,7 @@ fn test_worst_case_derivation_path() {
     // Build a very deep path
     let mut path = DerivationPath::master();
     for i in 0..10 {
-        path = path.child(ChildNumber::from_hardened_idx(i).unwrap());
+        path = path.child(ChildNumber::Hardened(ChildIndex::new(i).unwrap()));
     }
 
     let iterations = 100;

@@ -1168,6 +1168,7 @@ impl std::error::Error for BuilderError {}
 mod tests {
     use super::*;
     use crate::test_utils::TestWalletContext;
+    use crate::ChildIndex;
     use crate::Network;
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
     use dashcore::consensus::serialize;
@@ -1976,8 +1977,13 @@ mod tests {
     #[test]
     fn set_funding_skips_reserved_utxos() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let reserved = Utxo::dummy(0x01, 100_000, 100, false, true);
@@ -2015,8 +2021,13 @@ mod tests {
     #[test]
     fn reservation_only_funding_contributes_no_candidates() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let seeded = Utxo::dummy(0x01, 500_000, 100, false, true);
@@ -2047,8 +2058,13 @@ mod tests {
     #[test]
     fn plain_funding_also_drops_a_seeded_input_the_account_has_reserved() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let free = Utxo::dummy(0x01, 500_000, 100, false, true);
@@ -2079,8 +2095,13 @@ mod tests {
     #[test]
     fn reservation_only_funding_drops_a_seeded_input_it_has_reserved() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         // Both orders: seeding before the funding call and after it — the
         // second is what a call-order-sensitive check would miss, since
@@ -2130,8 +2151,13 @@ mod tests {
     #[test]
     fn reservation_only_funding_lets_a_chunked_drain_clear_the_input_cap() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         // An account above MAX_STANDARD_TX_INPUTS, like a heavily mixed
         // CoinJoin account: 589 UTXOs was the figure from ticket 32081.
@@ -2185,8 +2211,13 @@ mod tests {
     #[test]
     fn add_funding_does_not_duplicate_a_pre_seeded_input() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let seeded = Utxo::dummy(0x01, 500_000, 100, false, true);
@@ -2232,8 +2263,13 @@ mod tests {
     #[tokio::test]
     async fn build_signed_releases_reservation_on_signing_failure() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
@@ -2260,8 +2296,13 @@ mod tests {
     #[test]
     fn build_unsigned_reserves_selected_inputs() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
@@ -2494,8 +2535,13 @@ mod tests {
         use dashcore::bls_sig_utils::BLSSignature;
 
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let a = Utxo::dummy(0x01, 600_000, 100, false, true);
@@ -2555,8 +2601,13 @@ mod tests {
     #[tokio::test]
     async fn payload_finalizer_error_releases_reservation() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
@@ -2587,8 +2638,13 @@ mod tests {
         use dashcore::bls_sig_utils::BLSSignature;
 
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
@@ -2621,8 +2677,13 @@ mod tests {
     #[tokio::test]
     async fn payload_finalizer_rejects_a_payload_that_outgrew_its_placeholder() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
@@ -2650,8 +2711,13 @@ mod tests {
     #[tokio::test]
     async fn payload_finalizer_requires_a_placeholder_payload() {
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
@@ -2684,8 +2750,13 @@ mod tests {
         use dashcore::bls_sig_utils::BLSSignature;
 
         let ctx = TestWalletContext::new_random();
-        let account =
-            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+        let account = ctx
+            .wallet
+            .accounts
+            .standard_bip44_accounts
+            .get(&ChildIndex::ZERO)
+            .expect("BIP44 account")
+            .clone();
 
         let mut funds = ManagedCoreFundsAccount::dummy_bip44();
         let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);

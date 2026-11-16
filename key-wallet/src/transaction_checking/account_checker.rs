@@ -3,6 +3,7 @@
 //! This module provides methods for checking if transactions belong to
 //! specific accounts within a ManagedAccountCollection.
 
+use crate::ChildIndex;
 use std::collections::{BTreeMap, HashSet};
 
 use super::transaction_router::AccountTypeToCheck;
@@ -112,19 +113,19 @@ pub struct TransactionCheckResult {
 pub enum CoreAccountTypeMatch {
     /// Standard BIP44 account with index and involved addresses
     StandardBIP44 {
-        account_index: u32,
+        account_index: ChildIndex,
         involved_receive_addresses: Vec<AddressInfo>,
         involved_change_addresses: Vec<AddressInfo>,
     },
     /// Standard BIP32 account with index and involved addresses
     StandardBIP32 {
-        account_index: u32,
+        account_index: ChildIndex,
         involved_receive_addresses: Vec<AddressInfo>,
         involved_change_addresses: Vec<AddressInfo>,
     },
     /// CoinJoin account with index and involved addresses (no change addresses)
     CoinJoin {
-        account_index: u32,
+        account_index: ChildIndex,
         involved_addresses: Vec<AddressInfo>,
     },
     /// Identity registration account (no index)
@@ -133,7 +134,7 @@ pub enum CoreAccountTypeMatch {
     },
     /// Identity top-up account with index
     IdentityTopUp {
-        account_index: u32,
+        account_index: ChildIndex,
         involved_addresses: Vec<AddressInfo>,
     },
     /// Identity top-up not bound account (no index)
@@ -170,12 +171,12 @@ pub enum CoreAccountTypeMatch {
     },
     /// DashPay receiving funds account (single-pool)
     DashpayReceivingFunds {
-        account_index: u32,
+        account_index: ChildIndex,
         involved_addresses: Vec<AddressInfo>,
     },
     /// DashPay external account (single-pool)
     DashpayExternalAccount {
-        account_index: u32,
+        account_index: ChildIndex,
         involved_addresses: Vec<AddressInfo>,
     },
 }
@@ -318,7 +319,7 @@ impl CoreAccountTypeMatch {
     }
 
     /// Get the account index if applicable
-    pub fn account_index(&self) -> Option<u32> {
+    pub fn account_index(&self) -> Option<ChildIndex> {
         match self {
             CoreAccountTypeMatch::StandardBIP44 {
                 account_index,
@@ -580,7 +581,7 @@ impl ManagedAccountCollection {
 
     /// Check indexed funds-bearing accounts.
     fn check_indexed_accounts(
-        accounts: &BTreeMap<u32, ManagedCoreFundsAccount>,
+        accounts: &BTreeMap<ChildIndex, ManagedCoreFundsAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();
@@ -594,7 +595,7 @@ impl ManagedAccountCollection {
 
     /// Check indexed keys-only accounts.
     fn check_indexed_keys_accounts(
-        accounts: &BTreeMap<u32, crate::managed_account::ManagedCoreKeysAccount>,
+        accounts: &BTreeMap<ChildIndex, crate::managed_account::ManagedCoreKeysAccount>,
         tx: &Transaction,
     ) -> Vec<AccountMatch> {
         let mut matches = Vec::new();
@@ -687,7 +688,7 @@ impl ManagedCoreFundsAccount {
     pub fn check_transaction_for_match(
         &self,
         tx: &Transaction,
-        index: Option<u32>,
+        index: Option<ChildIndex>,
     ) -> Option<AccountMatch> {
         // Check regular outputs
         let mut involved_receive_addresses = Vec::new();
@@ -790,14 +791,14 @@ impl ManagedCoreFundsAccount {
                 } => match standard_account_type {
                     crate::account::account_type::StandardAccountType::BIP44Account => {
                         CoreAccountTypeMatch::StandardBIP44 {
-                            account_index: index.unwrap_or(0),
+                            account_index: index.unwrap_or_default(),
                             involved_receive_addresses,
                             involved_change_addresses,
                         }
                     }
                     crate::account::account_type::StandardAccountType::BIP32Account => {
                         CoreAccountTypeMatch::StandardBIP32 {
-                            account_index: index.unwrap_or(0),
+                            account_index: index.unwrap_or_default(),
                             involved_receive_addresses,
                             involved_change_addresses,
                         }
@@ -806,7 +807,7 @@ impl ManagedCoreFundsAccount {
                 ManagedAccountType::CoinJoin {
                     ..
                 } => CoreAccountTypeMatch::CoinJoin {
-                    account_index: index.unwrap_or(0),
+                    account_index: index.unwrap_or_default(),
                     involved_addresses: {
                         let mut all_addresses = involved_receive_addresses.clone();
                         all_addresses.extend(involved_change_addresses.clone());
@@ -822,7 +823,7 @@ impl ManagedCoreFundsAccount {
                 ManagedAccountType::IdentityTopUp {
                     ..
                 } => CoreAccountTypeMatch::IdentityTopUp {
-                    account_index: index.unwrap_or(0),
+                    account_index: index.unwrap_or_default(),
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::IdentityTopUpNotBoundToIdentity {
@@ -868,13 +869,13 @@ impl ManagedCoreFundsAccount {
                 ManagedAccountType::DashpayReceivingFunds {
                     ..
                 } => CoreAccountTypeMatch::DashpayReceivingFunds {
-                    account_index: index.unwrap_or(0),
+                    account_index: index.unwrap_or_default(),
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::DashpayExternalAccount {
                     ..
                 } => CoreAccountTypeMatch::DashpayExternalAccount {
-                    account_index: index.unwrap_or(0),
+                    account_index: index.unwrap_or_default(),
                     involved_addresses: involved_other_addresses,
                 },
                 ManagedAccountType::PlatformPayment {
@@ -901,7 +902,7 @@ impl ManagedCoreFundsAccount {
     pub fn check_asset_lock_transaction_for_match(
         &self,
         tx: &Transaction,
-        index: Option<u32>,
+        index: Option<ChildIndex>,
     ) -> Option<AccountMatch> {
         use dashcore::transaction::TransactionPayload;
 
@@ -937,7 +938,7 @@ impl ManagedCoreFundsAccount {
                     ManagedAccountType::IdentityTopUp {
                         ..
                     } => CoreAccountTypeMatch::IdentityTopUp {
-                        account_index: index.unwrap_or(0),
+                        account_index: index.unwrap_or_default(),
                         involved_addresses,
                     },
                     ManagedAccountType::IdentityTopUpNotBoundToIdentity {
@@ -1156,7 +1157,7 @@ impl ManagedCoreFundsAccount {
     pub fn find_address_account(
         collection: &ManagedAccountCollection,
         address: &Address,
-    ) -> Option<(AccountTypeToCheck, Option<u32>)> {
+    ) -> Option<(AccountTypeToCheck, Option<ChildIndex>)> {
         // Check standard BIP44 accounts
         for (index, account) in &collection.standard_bip44_accounts {
             if account.contains_address(address) {
@@ -1269,7 +1270,7 @@ impl crate::managed_account::ManagedCoreKeysAccount {
     pub fn check_transaction_for_match(
         &self,
         tx: &Transaction,
-        index: Option<u32>,
+        index: Option<ChildIndex>,
     ) -> Option<AccountMatch> {
         let mut involved_other_addresses = Vec::new();
         let mut received = 0u64;
@@ -1312,7 +1313,7 @@ impl crate::managed_account::ManagedCoreKeysAccount {
             ManagedAccountType::IdentityTopUp {
                 ..
             } => CoreAccountTypeMatch::IdentityTopUp {
-                account_index: index.unwrap_or(0),
+                account_index: index.unwrap_or_default(),
                 involved_addresses: involved_other_addresses,
             },
             ManagedAccountType::IdentityTopUpNotBoundToIdentity {
@@ -1373,7 +1374,7 @@ impl crate::managed_account::ManagedCoreKeysAccount {
     pub fn check_asset_lock_transaction_for_match(
         &self,
         tx: &Transaction,
-        index: Option<u32>,
+        index: Option<ChildIndex>,
     ) -> Option<AccountMatch> {
         if let Some(TransactionPayload::AssetLockPayloadType(ref payload)) =
             tx.special_transaction_payload
@@ -1404,7 +1405,7 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                     ManagedAccountType::IdentityTopUp {
                         ..
                     } => CoreAccountTypeMatch::IdentityTopUp {
-                        account_index: index.unwrap_or(0),
+                        account_index: index.unwrap_or_default(),
                         involved_addresses,
                     },
                     ManagedAccountType::IdentityTopUpNotBoundToIdentity {
@@ -1614,12 +1615,12 @@ mod tests {
     fn test_coinjoin_account_type_match_no_change_addresses() {
         // Create a CoinJoin CoreAccountTypeMatch - note it only has involved_addresses, no split
         let coinjoin_match = CoreAccountTypeMatch::CoinJoin {
-            account_index: 5,
+            account_index: ChildIndex::new_const(5),
             involved_addresses: vec![], // Empty for simplicity
         };
 
         // Verify that account_index() returns the correct index
-        assert_eq!(coinjoin_match.account_index(), Some(5));
+        assert_eq!(coinjoin_match.account_index(), Some(ChildIndex::new_const(5)));
 
         // Verify that to_account_type_to_check() returns the correct type
         assert!(matches!(coinjoin_match.to_account_type_to_check(), AccountTypeToCheck::CoinJoin));
@@ -1633,22 +1634,22 @@ mod tests {
     fn test_standard_accounts_have_separate_receive_and_change() {
         // Test StandardBIP44 account has both receive and change addresses
         let bip44_match = CoreAccountTypeMatch::StandardBIP44 {
-            account_index: 0,
+            account_index: ChildIndex::ZERO,
             involved_receive_addresses: vec![],
             involved_change_addresses: vec![],
         };
 
         // Verify the structure exists with separate fields
-        assert_eq!(bip44_match.account_index(), Some(0));
+        assert_eq!(bip44_match.account_index(), Some(ChildIndex::ZERO));
 
         // Test StandardBIP32 account also has separate receive and change addresses
         let bip32_match = CoreAccountTypeMatch::StandardBIP32 {
-            account_index: 1,
+            account_index: ChildIndex::new_const(1),
             involved_receive_addresses: vec![],
             involved_change_addresses: vec![],
         };
 
-        assert_eq!(bip32_match.account_index(), Some(1));
+        assert_eq!(bip32_match.account_index(), Some(ChildIndex::new_const(1)));
     }
 
     #[test]

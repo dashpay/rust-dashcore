@@ -1,5 +1,6 @@
 use dash_spv::ProgressPercentage;
 use dashcore::{Address, Amount, Network};
+use key_wallet::ChildIndex;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -263,15 +264,15 @@ fn derive_external_addresses(mnemonic: &str, count: u32) -> Vec<Address> {
     let seed = mnemonic.to_seed("");
     let master = ExtendedPrivKey::new_master(Network::Regtest, &seed[..]).expect("master key");
     let chain = [
-        ChildNumber::from_hardened_idx(44).expect("purpose"),
-        ChildNumber::from_hardened_idx(1).expect("coin type"),
-        ChildNumber::from_hardened_idx(0).expect("account"),
-        ChildNumber::from_normal_idx(0).expect("external branch"),
+        ChildNumber::Hardened(ChildIndex::new_const(44)),
+        ChildNumber::Hardened(ChildIndex::new_const(1)),
+        ChildNumber::Hardened(ChildIndex::ZERO),
+        ChildNumber::Normal(ChildIndex::ZERO),
     ];
     (0..count)
         .map(|index| {
             let mut path = chain.to_vec();
-            path.push(ChildNumber::from_normal_idx(index).expect("index"));
+            path.push(ChildNumber::Normal(ChildIndex::new(index).expect("index")));
             let xprv = master.derive_priv(&path).expect("derive");
             let pk = PublicKey::new(xprv.private_key.public_key());
             Address::p2pkh(&pk, Network::Regtest)
@@ -332,7 +333,8 @@ async fn reserve_first_address(mnemonic: &str) -> Address {
 
     let reader = temp_mgr.read().await;
     let info = reader.get_wallet_info(&temp_id).expect("wallet info");
-    let account = info.accounts().standard_bip44_accounts.get(&0).expect("BIP44 account 0");
+    let account =
+        info.accounts().standard_bip44_accounts.get(&ChildIndex::ZERO).expect("BIP44 account 0");
 
     let ManagedAccountType::Standard {
         external_addresses,
@@ -536,8 +538,8 @@ async fn test_drain_account_into_another() {
                 EMPTY_MNEMONIC,
                 0,
                 WalletAccountCreationOptions::SpecificAccounts(
-                    BTreeSet::from([0]), // BIP44 account 0
-                    BTreeSet::from([0]), // BIP32 account 0
+                    BTreeSet::from([ChildIndex::ZERO]), // BIP44 account 0
+                    BTreeSet::from([ChildIndex::ZERO]), // BIP32 account 0
                     BTreeSet::new(),
                     BTreeSet::new(),
                     BTreeSet::new(),
@@ -555,9 +557,14 @@ async fn test_drain_account_into_another() {
         let mut lock = wallet.write().await;
         let (w, info) = lock.get_wallet_and_info_mut(&wallet_id).expect("wallet");
         let fund: Vec<Address> = (0..3)
-            .map(|_| info.next_receive_address(w, 0, AccountTypePreference::BIP32, true).unwrap())
+            .map(|_| {
+                info.next_receive_address(w, ChildIndex::ZERO, AccountTypePreference::BIP32, true)
+                    .unwrap()
+            })
             .collect();
-        let dest = info.next_receive_address(w, 0, AccountTypePreference::BIP44, true).unwrap();
+        let dest = info
+            .next_receive_address(w, ChildIndex::ZERO, AccountTypePreference::BIP44, true)
+            .unwrap();
         (fund, dest)
     };
 
@@ -581,7 +588,7 @@ async fn test_drain_account_into_another() {
         info.build_and_sign_transaction(
             w,
             &[AccountTypePreference::BIP32],
-            0,
+            ChildIndex::ZERO,
             vec![(dest.as_unchecked().clone(), 0)],
             FeeRate::normal(),
             SelectionStrategy::All,
@@ -603,8 +610,8 @@ async fn test_drain_account_into_another() {
     // Final state: BIP32 emptied, BIP44 holds the single drained UTXO.
     let reader = wallet.read().await;
     let info = reader.get_wallet_info(&wallet_id).expect("wallet");
-    let balance = |pref| info.account_balance(pref, 0).unwrap().total();
-    let utxos = |pref| info.funds_account(pref, 0).unwrap().utxos.len();
+    let balance = |pref| info.account_balance(pref, ChildIndex::ZERO).unwrap().total();
+    let utxos = |pref| info.funds_account(pref, ChildIndex::ZERO).unwrap().utxos.len();
 
     assert_eq!(balance(AccountTypePreference::BIP32), 0);
     assert_eq!(utxos(AccountTypePreference::BIP32), 0);

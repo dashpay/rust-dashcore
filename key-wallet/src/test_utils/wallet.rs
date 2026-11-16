@@ -1,5 +1,6 @@
 use dashcore::{Address, Network, Transaction, Txid};
 
+use crate::ChildIndex;
 use crate::{
     account::{ManagedCoreFundsAccount, TransactionRecord},
     managed_account::managed_account_trait::ManagedAccountTrait,
@@ -43,7 +44,7 @@ impl TestWalletContext {
         let xpub = wallet
             .accounts
             .standard_bip44_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("Should have BIP44 account")
             .account_xpub;
 

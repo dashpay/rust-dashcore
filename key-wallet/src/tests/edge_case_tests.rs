@@ -6,6 +6,7 @@ use crate::account::{AccountType, StandardAccountType};
 use crate::bip32::{ChildNumber, DerivationPath};
 use crate::mnemonic::Mnemonic;
 use crate::wallet::Wallet;
+use crate::ChildIndex;
 use crate::Network;
 
 #[test]
@@ -14,13 +15,12 @@ fn test_account_index_overflow() {
     const MAX_HARDENED_INDEX: u32 = 0x7FFFFFFF;
 
     let account_type = AccountType::Standard {
-        index: MAX_HARDENED_INDEX,
+        index: ChildIndex::new_const(MAX_HARDENED_INDEX),
         standard_account_type: StandardAccountType::BIP44Account,
     };
 
     // This should succeed
-    let result = account_type.derivation_path(Network::Testnet);
-    assert!(result.is_ok());
+    account_type.derivation_path(Network::Testnet);
 
     // Test overflow scenario (would need custom type to test properly)
     // In practice, the index is limited by the AccountType enum definition
@@ -137,7 +137,7 @@ fn test_duplicate_account_handling() {
 
     // Add an account
     let account_type = AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
     };
 
@@ -299,7 +299,7 @@ fn test_wallet_recovery_with_missing_accounts() {
     wallet
         .add_account(
             AccountType::Standard {
-                index: 2,
+                index: ChildIndex::new_const(2),
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             None,
@@ -309,7 +309,7 @@ fn test_wallet_recovery_with_missing_accounts() {
     wallet
         .add_account(
             AccountType::Standard {
-                index: 5,
+                index: ChildIndex::new_const(5),
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             None,

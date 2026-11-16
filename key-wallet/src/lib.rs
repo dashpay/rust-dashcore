@@ -41,10 +41,10 @@ pub mod wallet;
 pub use dashcore;
 
 pub use account::{Account, AccountCollection, AccountType};
-pub use bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+pub use bip32::{ChildIndex, ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 pub use dashcore::Network;
 pub use dashcore::{Address, AddressType};
-pub use derivation::{DerivationPathBuilder, DerivationStrategy, KeyDerivation};
+pub use derivation::{DerivationStrategy, KeyDerivation};
 pub use dip9::{DerivationPathReference, DerivationPathType};
 pub use error::{Error, Result};
 pub use gap_limit::{GapLimit, GapLimitManager, GapLimitStage};

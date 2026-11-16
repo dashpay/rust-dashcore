@@ -19,6 +19,7 @@
 //! These white-box tests exercise those branches directly against the
 //! `pub(crate)` surface.
 
+use crate::ChildIndex;
 use dashcore::blockdata::transaction::{OutPoint, Transaction};
 use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
@@ -164,7 +165,7 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
     ctx.managed_wallet
         .add_managed_account_from_xpub(
             AccountType::IdentityTopUp {
-                registration_index: 7,
+                registration_index: ChildIndex::new_const(7),
             },
             ctx.xpub,
         )
@@ -186,7 +187,7 @@ fn adding_account_from_xpub_rewinds_sync_checkpoint() {
     ctx.managed_wallet
         .add_managed_account_from_xpub(
             AccountType::IdentityTopUp {
-                registration_index: 8,
+                registration_index: ChildIndex::new_const(8),
             },
             ctx.xpub,
         )

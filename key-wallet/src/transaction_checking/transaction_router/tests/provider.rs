@@ -8,6 +8,7 @@ use crate::transaction_checking::transaction_router::{
 use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::{ManagedWalletInfo, Wallet};
+use crate::ChildIndex;
 use crate::Network;
 use dashcore::blockdata::transaction::special_transaction::provider_registration::{
     ProviderMasternodeType, ProviderRegistrationPayload,
@@ -883,7 +884,7 @@ async fn test_provider_revocation_classification_and_routing() {
     let account = wallet
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("Expected BIP44 account at index 0 to exist");
     let xpub = account.account_xpub;
 

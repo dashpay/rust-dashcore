@@ -19,7 +19,7 @@ use crate::bip32::{ChainCode, Fingerprint};
 use crate::derivation_slip10::{ExtendedEd25519PrivKey, ExtendedEd25519PubKey};
 use crate::error::{Error, Result};
 use crate::managed_account::address_pool::AddressPoolType;
-use crate::{ChildNumber, DerivationPath, Network};
+use crate::{ChildIndex, ChildNumber, DerivationPath, Network};
 
 /// EdDSA (Ed25519) account structure for Platform identity operations
 #[derive(Debug, Clone)]
@@ -71,7 +71,7 @@ impl EdDSAAccount {
             network,
             depth: 0,
             parent_fingerprint: Fingerprint::default(),
-            child_number: ChildNumber::from_normal_idx(0)?,
+            child_number: ChildNumber::Normal(ChildIndex::ZERO),
             public_key: verifying_key,
             chain_code: ChainCode::from([0u8; 32]),
         };
@@ -98,7 +98,7 @@ impl EdDSAAccount {
         network: Network,
     ) -> Result<Self> {
         let master = ExtendedEd25519PrivKey::new_master(network, seed)?;
-        let path = account_type.derivation_path(network)?;
+        let path = account_type.derivation_path(network);
         let account_xpriv = master.derive_priv(&path)?;
         let ed25519_public_key = ExtendedEd25519PubKey::from_priv(&account_xpriv)?;
 
@@ -137,11 +137,15 @@ impl EdDSAAccount {
     /// (`m/9'/5'/3'/4'` on mainnet, `m/9'/1'/3'/4'` otherwise), matching
     /// DashSync. Because derivation starts from the raw seed, no account
     /// state is involved and in particular no `is_watch_only` gate applies.
-    pub fn platform_node_key_at(seed: &[u8], network: Network, index: u32) -> Result<EddsaSkBytes> {
+    pub fn platform_node_key_at(
+        seed: &[u8],
+        network: Network,
+        index: ChildIndex,
+    ) -> Result<EddsaSkBytes> {
         let master = ExtendedEd25519PrivKey::new_master(network, seed)?;
-        let path = AccountType::ProviderPlatformKeys.derivation_path(network)?;
+        let path = AccountType::ProviderPlatformKeys.derivation_path(network);
         let account_xpriv = master.derive_priv(&path)?;
-        let child = account_xpriv.derive_priv(&[ChildNumber::from_hardened_idx(index)?])?;
+        let child = account_xpriv.derive_priv(&[ChildNumber::Hardened(index)])?;
         Ok(child.private_key.clone())
     }
 
@@ -264,9 +268,7 @@ impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, EddsaPkByt
         match self.account_type {
             AccountType::IdentityTopUp {
                 registration_index,
-            } => Some(ChildNumber::Hardened {
-                index: registration_index,
-            }),
+            } => Some(ChildNumber::Hardened(registration_index)),
             _ => None,
         }
     }
@@ -283,7 +285,7 @@ impl AccountDerivation<ExtendedEd25519PrivKey, ExtendedEd25519PubKey, EddsaPkByt
         }
 
         // Get the derivation path for this account type
-        let path = self.account_type.derivation_path(self.network)?;
+        let path = self.account_type.derivation_path(self.network);
 
         // Derive the account private key from master
         master_xpriv
@@ -445,7 +447,7 @@ mod tests {
         let account = EdDSAAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             public_key_bytes,
@@ -455,7 +457,7 @@ mod tests {
 
         assert_eq!(account.get_public_key_bytes(), public_key_bytes.to_vec());
         assert!(account.is_watch_only);
-        assert_eq!(account.index(), Some(0));
+        assert_eq!(account.index(), Some(ChildIndex::ZERO));
     }
 
     #[test]
@@ -464,7 +466,7 @@ mod tests {
         let account = EdDSAAccount::from_seed(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             &seed,
@@ -481,7 +483,7 @@ mod tests {
         let account = EdDSAAccount::from_seed(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             &seed,
@@ -507,7 +509,7 @@ mod tests {
         let account = EdDSAAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             public_key_bytes,
@@ -543,9 +545,7 @@ mod tests {
         let master =
             ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).expect("master from seed");
         let account_xpriv = master
-            .derive_priv(
-                &AccountType::ProviderPlatformKeys.derivation_path(Network::Mainnet).unwrap(),
-            )
+            .derive_priv(&AccountType::ProviderPlatformKeys.derivation_path(Network::Mainnet))
             .expect("derive account xpriv");
 
         let address = account
@@ -567,7 +567,7 @@ mod tests {
         let account = EdDSAAccount::from_seed(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             &seed,
@@ -593,7 +593,7 @@ mod tests {
         let account = EdDSAAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             public_key_bytes,

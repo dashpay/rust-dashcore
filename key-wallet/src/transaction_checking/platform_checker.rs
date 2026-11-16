@@ -204,15 +204,16 @@ mod tests {
     use crate::bip32::{ChildNumber, DerivationPath};
     use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
     use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
+    use crate::ChildIndex;
     use crate::Network;
 
     fn create_test_pool() -> AddressPool {
         let base_path = DerivationPath::from(vec![
-            ChildNumber::from_hardened_idx(9).unwrap(),
-            ChildNumber::from_hardened_idx(1).unwrap(),
-            ChildNumber::from_hardened_idx(17).unwrap(),
-            ChildNumber::from_hardened_idx(0).unwrap(),
-            ChildNumber::from_hardened_idx(0).unwrap(),
+            ChildNumber::Hardened(ChildIndex::new_const(9)),
+            ChildNumber::Hardened(ChildIndex::new_const(1)),
+            ChildNumber::Hardened(ChildIndex::new_const(17)),
+            ChildNumber::Hardened(ChildIndex::ZERO),
+            ChildNumber::Hardened(ChildIndex::ZERO),
         ]);
         AddressPool::new_without_generation(
             base_path,
@@ -239,15 +240,16 @@ mod tests {
 
         // Create and add a platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
 
         // Add some balance
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 5000, None);
 
         let key = PlatformPaymentAccountKey {
-            account: 0,
-            key_class: 0,
+            account: ChildIndex::ZERO,
+            key_class: ChildIndex::ZERO,
         };
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
@@ -261,27 +263,29 @@ mod tests {
 
         // Create first platform account
         let pool1 = create_test_pool();
-        let mut account1 = ManagedPlatformAccount::new(0, 0, pool1, false);
+        let mut account1 =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool1, false);
         let addr1 = PlatformP2PKHAddress::new([0x11; 20]);
         account1.set_address_credit_balance(addr1, 3000, None);
 
         // Create second platform account
         let pool2 = create_test_pool();
-        let mut account2 = ManagedPlatformAccount::new(1, 0, pool2, false);
+        let mut account2 =
+            ManagedPlatformAccount::new(ChildIndex::new_const(1), ChildIndex::ZERO, pool2, false);
         let addr2 = PlatformP2PKHAddress::new([0x22; 20]);
         account2.set_address_credit_balance(addr2, 2000, None);
 
         wallet_info.accounts.platform_payment_accounts.insert(
             PlatformPaymentAccountKey {
-                account: 0,
-                key_class: 0,
+                account: ChildIndex::ZERO,
+                key_class: ChildIndex::ZERO,
             },
             account1,
         );
         wallet_info.accounts.platform_payment_accounts.insert(
             PlatformPaymentAccountKey {
-                account: 1,
-                key_class: 0,
+                account: ChildIndex::new_const(1),
+                key_class: ChildIndex::ZERO,
             },
             account2,
         );
@@ -296,13 +300,14 @@ mod tests {
 
         // Create platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 1000, None);
 
         let key = PlatformPaymentAccountKey {
-            account: 0,
-            key_class: 0,
+            account: ChildIndex::ZERO,
+            key_class: ChildIndex::ZERO,
         };
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
@@ -323,13 +328,14 @@ mod tests {
 
         // Create platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 1000, None);
 
         let key = PlatformPaymentAccountKey {
-            account: 0,
-            key_class: 0,
+            account: ChildIndex::ZERO,
+            key_class: ChildIndex::ZERO,
         };
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
@@ -350,13 +356,14 @@ mod tests {
 
         // Create platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 5000, None);
 
         let key = PlatformPaymentAccountKey {
-            account: 0,
-            key_class: 0,
+            account: ChildIndex::ZERO,
+            key_class: ChildIndex::ZERO,
         };
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
@@ -375,13 +382,14 @@ mod tests {
 
         // Create platform account
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         account.set_address_credit_balance(addr, 3000, None);
 
         let key = PlatformPaymentAccountKey {
-            account: 0,
-            key_class: 0,
+            account: ChildIndex::ZERO,
+            key_class: ChildIndex::ZERO,
         };
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
@@ -401,14 +409,15 @@ mod tests {
 
         // Create platform account with an address already having a balance
         let pool = create_test_pool();
-        let mut account = ManagedPlatformAccount::new(0, 0, pool, false);
+        let mut account =
+            ManagedPlatformAccount::new(ChildIndex::ZERO, ChildIndex::ZERO, pool, false);
         let addr = PlatformP2PKHAddress::new([0x11; 20]);
         // First set initial balance so the address is known to the account
         account.set_address_credit_balance(addr, 1000, None);
 
         let key = PlatformPaymentAccountKey {
-            account: 0,
-            key_class: 0,
+            account: ChildIndex::ZERO,
+            key_class: ChildIndex::ZERO,
         };
         wallet_info.accounts.platform_payment_accounts.insert(key, account);
 
@@ -426,8 +435,8 @@ mod tests {
 
         // Try with non-existent account
         let bad_key = PlatformPaymentAccountKey {
-            account: 99,
-            key_class: 0,
+            account: ChildIndex::new_const(99),
+            key_class: ChildIndex::ZERO,
         };
         let result =
             wallet_info.set_platform_address_balance_for_account(&bad_key, addr, 1000, None);

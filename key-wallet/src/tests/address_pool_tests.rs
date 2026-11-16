@@ -2,7 +2,7 @@
 //!
 //! Tests address generation, gap limit enforcement, and pool operations.
 
-use crate::bip32::{ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
+use crate::bip32::{ChildIndex, ChildNumber, DerivationPath, ExtendedPrivKey, ExtendedPubKey};
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 use crate::mnemonic::Mnemonic;
 use crate::Network;
@@ -15,9 +15,9 @@ fn test_key_source() -> (KeySource, ExtendedPubKey) {
     let master = ExtendedPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
 
     let path = DerivationPath::from(vec![
-        ChildNumber::from_hardened_idx(44).unwrap(),
-        ChildNumber::from_hardened_idx(1).unwrap(),
-        ChildNumber::from_hardened_idx(0).unwrap(),
+        ChildNumber::Hardened(ChildIndex::new_const(44)),
+        ChildNumber::Hardened(ChildIndex::new_const(1)),
+        ChildNumber::Hardened(ChildIndex::ZERO),
     ]);
     let account_key = master.derive_priv(&path).unwrap();
     let xpub = ExtendedPubKey::from_priv(&account_key);
@@ -27,7 +27,7 @@ fn test_key_source() -> (KeySource, ExtendedPubKey) {
 
 #[test]
 fn test_next_unused_multiple() {
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
     let mut pool = AddressPool::new_without_generation(
         base_path,
         AddressPoolType::External,
@@ -67,7 +67,7 @@ fn test_next_unused_multiple() {
 
 #[test]
 fn test_next_unused_multiple_with_info() {
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
     let mut pool = AddressPool::new_without_generation(
         base_path,
         AddressPoolType::External,
@@ -105,7 +105,7 @@ fn test_next_unused_multiple_with_info() {
 
 #[test]
 fn test_next_unused_multiple_no_key_source() {
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
     let mut pool = AddressPool::new_without_generation(
         base_path,
         AddressPoolType::External,
@@ -137,7 +137,7 @@ fn test_next_unused_multiple_no_key_source() {
 
 #[test]
 fn test_next_unused_multiple_large_batch() {
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
     let mut pool = AddressPool::new_without_generation(
         base_path,
         AddressPoolType::External,
@@ -158,7 +158,7 @@ fn test_next_unused_multiple_large_batch() {
 
 #[test]
 fn test_next_unused_multiple_mixed_usage() {
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
     let mut pool = AddressPool::new_without_generation(
         base_path,
         AddressPoolType::Internal, // Test with internal pool type
@@ -201,7 +201,7 @@ fn test_next_unused_multiple_mixed_usage() {
 /// (dashpay/rust-dashcore#649 companion fix).
 #[test]
 fn prune_unused_clears_script_pubkey_index() {
-    let base_path = DerivationPath::from(vec![ChildNumber::from_normal_idx(0).unwrap()]);
+    let base_path = DerivationPath::from(vec![ChildNumber::Normal(ChildIndex::ZERO)]);
     let gap_limit = 20u32;
     let mut pool = AddressPool::new_without_generation(
         base_path,

@@ -5,7 +5,7 @@
 
 use crate::bip32::DerivationPath;
 use crate::dip9::DerivationPathReference;
-use crate::error::Result;
+use crate::ChildIndex;
 use crate::Network;
 
 /// Common trait for all account types
@@ -23,7 +23,7 @@ pub trait AccountTrait {
     fn is_watch_only(&self) -> bool;
 
     /// Get the account index
-    fn index(&self) -> Option<u32> {
+    fn index(&self) -> Option<ChildIndex> {
         self.account_type().index()
     }
 
@@ -33,7 +33,7 @@ pub trait AccountTrait {
     }
 
     /// Get the derivation path for this account
-    fn derivation_path(&self) -> Result<DerivationPath> {
+    fn derivation_path(&self) -> DerivationPath {
         self.account_type().derivation_path(self.network())
     }
 

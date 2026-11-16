@@ -90,7 +90,7 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
             assert!(matches!(
                 record.account_type,
                 AccountType::Standard {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                     standard_account_type: StandardAccountType::BIP44Account
                 }
             ));
@@ -105,7 +105,7 @@ async fn test_mempool_tx_emits_single_event_with_balance() {
                 account_balances
             );
             let receiving = AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             };
             let acct_balance = account_balances
@@ -144,7 +144,7 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
             assert_eq!(balance.unconfirmed(), 0);
             assert_eq!(account_balances.len(), 1, "only the receiving account should appear");
             let receiving = AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             };
             let acct_balance = account_balances
@@ -238,7 +238,7 @@ async fn test_instant_send_lock_on_known_mempool_tx_emits_instant_locked_event()
                 account_balances
             );
             let receiving = AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             };
             let acct_balance = account_balances
@@ -364,7 +364,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
             assert!(matches!(
                 inserted[0].account_type,
                 AccountType::Standard {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                     standard_account_type: StandardAccountType::BIP44Account
                 }
             ));
@@ -383,7 +383,7 @@ async fn test_block_with_new_tx_emits_inserted_record() {
                 account_balances
             );
             let receiving = AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             };
             let acct_balance = account_balances
@@ -436,7 +436,7 @@ async fn test_block_confirming_known_mempool_tx_emits_updated_record() {
             // The receiving account moved from unconfirmed -> confirmed,
             // so it must appear in the diff.
             let receiving = AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             };
             let acct_balance = account_balances
@@ -468,7 +468,8 @@ async fn setup_known_mempool_spend_only_asset_lock(
 
     let funding_address = {
         let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
-        let account = info.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account 0");
+        let account =
+            info.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).expect("BIP44 account 0");
         match account.managed_account_type() {
             ManagedAccountType::Standard {
                 external_addresses,
@@ -492,7 +493,7 @@ async fn setup_known_mempool_spend_only_asset_lock(
         .expect("wallet info")
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("BIP44 account 0");
     assert!(
         funded_account.utxos.contains_key(&funding_outpoint),
@@ -568,7 +569,7 @@ async fn setup_known_mempool_spend_only_asset_lock(
         .expect("wallet info")
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("BIP44 account 0");
     assert_eq!(
         account_after_mempool
@@ -616,7 +617,7 @@ async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo(
         .expect("wallet info")
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("BIP44 account 0")
         .transactions()
         .get(&asset_lock_tx.txid())
@@ -638,7 +639,7 @@ async fn test_block_promotes_known_mempool_asset_lock_spending_wallet_utxo(
         .expect("wallet info")
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("BIP44 account 0");
     let stored_context = &account_after_block
         .transactions()
@@ -713,7 +714,7 @@ async fn test_chainlocked_block_promotes_known_mempool_spend_only_transaction(
         .expect("wallet info")
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("BIP44 account 0");
     assert!(account.transaction_is_finalized(&asset_lock_tx.txid()));
     #[cfg(feature = "keep-finalized-transactions")]
@@ -758,7 +759,7 @@ async fn test_spend_only_promotion_never_demotes_chainlocked_context() {
         .expect("wallet info")
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("BIP44 account 0");
     assert!(account.transaction_is_finalized(&asset_lock_tx.txid()));
     #[cfg(feature = "keep-finalized-transactions")]
@@ -1445,7 +1446,7 @@ fn masternode_registration(collateral: OutPoint, outputs: Vec<TxOut>, seed: u8) 
 
 fn bip44_account_0() -> AccountType {
     AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
     }
 }
@@ -1685,7 +1686,7 @@ fn pool_state(
     let acct = info
         .accounts
         .standard_bip44_accounts
-        .get(&0)
+        .get(&ChildIndex::ZERO)
         .expect("BIP44 account 0 should exist on the default test wallet");
     let pool = match (acct.managed_account_type(), pool_type) {
         (
@@ -1769,7 +1770,7 @@ async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
         addresses_derived.len()
     );
     let expected_account = AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
     };
 
@@ -1780,7 +1781,8 @@ async fn test_mempool_tx_to_highest_external_carries_addresses_derived() {
     // `AddressInfo` for the same `(account, pool, index)` — drift
     // here would silently corrupt downstream `CoreAddress` rows.
     let info_after = manager.get_wallet_info(&wallet_id).expect("wallet info");
-    let acct_after = info_after.accounts.standard_bip44_accounts.get(&0).expect("BIP44 0");
+    let acct_after =
+        info_after.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).expect("BIP44 0");
     let external_pool_after = match acct_after.managed_account_type() {
         ManagedAccountType::Standard {
             external_addresses,
@@ -1840,7 +1842,7 @@ async fn test_mempool_tx_to_already_buffered_external_carries_no_addresses_deriv
     // buffer (e.g. index 0). The pool is already at highest_before +
     // gap_limit; using a lower index does not push it further.
     let info = manager.get_wallet_info(&wallet_id).expect("wallet info");
-    let acct = info.accounts.standard_bip44_accounts.get(&0).expect("BIP44 0");
+    let acct = info.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).expect("BIP44 0");
     let buffered_addr = match acct.managed_account_type() {
         ManagedAccountType::Standard {
             external_addresses,
@@ -2061,7 +2063,7 @@ async fn test_apply_chain_lock_promotes_in_block_record_and_emits_event() {
             assert_eq!(*wid, wallet_id);
             assert_eq!(chain_lock.block_height, 100);
             let receiving = AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             };
             let txids = locked_transactions
@@ -2108,7 +2110,7 @@ async fn test_apply_chain_lock_with_no_records_emits_chain_lock_processed_and_ad
 
     // Subsequent block below the new finality boundary must be born chainlocked.
     let addr = manager
-        .next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, true)
+        .next_receive_address(&wallet_id, ChildIndex::ZERO, AccountTypePreference::BIP44, true)
         .expect("address generation");
     let tx = create_tx_paying_to(&addr, 0xa2);
     let block = make_block(vec![tx.clone()], 0xa2, 1100);
@@ -2236,7 +2238,7 @@ async fn test_block_processed_chainlocked_flag_matches_record_context() {
 
     // Above the finality boundary: chain_lock=None, records InBlock.
     let addr2 = manager
-        .next_receive_address(&wallet_id, 0, AccountTypePreference::BIP44, true)
+        .next_receive_address(&wallet_id, ChildIndex::ZERO, AccountTypePreference::BIP44, true)
         .expect("address generation");
     let tx_above = create_tx_paying_to(&addr2, 0xa5);
     let block_above = make_block(vec![tx_above.clone()], 0xa5, 1400);

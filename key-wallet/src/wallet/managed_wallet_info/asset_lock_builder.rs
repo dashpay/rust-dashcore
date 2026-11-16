@@ -3,6 +3,7 @@
 //! Builds a Core special transaction (type 8) with `AssetLockPayload` that
 //! locks Dash for Platform credits.
 
+use crate::ChildIndex;
 use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 use dashcore::ecdsa::EcdsaPublicKey;
@@ -66,18 +67,18 @@ pub enum AssetLockFundingAccount {
     /// Standard BIP44 account (`m/44'/coinType'/index'`).
     Bip44 {
         /// BIP44 account index.
-        account_index: u32,
+        account_index: ChildIndex,
     },
     /// CoinJoin account (`m/9'/coinType'/4'/index'`).
     CoinJoin {
         /// CoinJoin account index.
-        account_index: u32,
+        account_index: ChildIndex,
     },
 }
 
 impl AssetLockFundingAccount {
     /// The account index within its family.
-    pub fn account_index(&self) -> u32 {
+    pub fn account_index(&self) -> ChildIndex {
         match self {
             Self::Bip44 {
                 account_index,
@@ -114,7 +115,7 @@ pub struct CreditOutputFunding {
     /// Which funding account type to derive the one-time key from.
     pub funding_type: AssetLockFundingType,
     /// Identity index (only used for `IdentityTopUp`, ignored otherwise).
-    pub identity_index: u32,
+    pub identity_index: ChildIndex,
 }
 
 /// One-time credit-output keys carried back from an asset-lock build.
@@ -222,7 +223,7 @@ impl From<BuilderError> for AssetLockError {
 fn resolve_funding_account(
     accounts: &mut crate::account::ManagedAccountCollection,
     funding_type: AssetLockFundingType,
-    identity_index: u32,
+    identity_index: ChildIndex,
 ) -> Result<&mut ManagedCoreKeysAccount, AssetLockError> {
     match funding_type {
         AssetLockFundingType::IdentityRegistration => accounts
@@ -378,7 +379,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         funding_sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         credit_outputs: Vec<TxOut>,
         fee_per_kb: u64,
         drain: bool,
@@ -460,7 +461,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         funding_sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         credit_output_fundings: Vec<CreditOutputFunding>,
         fee_per_kb: u64,
         drain: bool,
@@ -549,7 +550,7 @@ impl ManagedWalletInfo {
         &mut self,
         wallet: &Wallet,
         funding_sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         credit_output_fundings: Vec<CreditOutputFunding>,
         fee_per_kb: u64,
         drain: bool,
@@ -669,7 +670,7 @@ mod tests {
                     ]),
                 },
                 funding_type: AssetLockFundingType::AssetLockAddressTopUp,
-                identity_index: 0,
+                identity_index: ChildIndex::ZERO,
             })
             .collect()
     }
@@ -690,8 +691,8 @@ mod tests {
         value: u64,
         is_confirmed: bool,
     ) -> OutPoint {
-        let account_xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
-        let account = info.accounts.standard_bip44_accounts.get_mut(&0).unwrap();
+        let account_xpub = wallet.get_bip44_account(ChildIndex::ZERO).unwrap().account_xpub;
+        let account = info.accounts.standard_bip44_accounts.get_mut(&ChildIndex::ZERO).unwrap();
         let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
         let outpoint = OutPoint {
             txid: Txid::from_byte_array([txid_byte; 32]),
@@ -724,8 +725,8 @@ mod tests {
         value: u64,
         is_confirmed: bool,
     ) -> OutPoint {
-        let account_xpub = wallet.get_coinjoin_account(0).unwrap().account_xpub;
-        let account = info.accounts.coinjoin_accounts.get_mut(&0).unwrap();
+        let account_xpub = wallet.get_coinjoin_account(ChildIndex::ZERO).unwrap().account_xpub;
+        let account = info.accounts.coinjoin_accounts.get_mut(&ChildIndex::ZERO).unwrap();
         // CoinJoin accounts have no `next_receive_address` wrapper (that is
         // Standard-only); draw from the external (mixed-coin) pool directly.
         let funding_address = match account.managed_account_type_mut() {
@@ -775,7 +776,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &[AccountTypePreference::CoinJoin],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[0]),
                 1000,
                 true,
@@ -816,7 +817,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &[AccountTypePreference::CoinJoin],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[0, 0]),
                 1000,
                 true,
@@ -842,7 +843,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &[AccountTypePreference::CoinJoin],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[200_000]),
                 1000,
                 false,
@@ -879,7 +880,14 @@ mod tests {
     async fn test_empty_credit_outputs_rejected() {
         let (wallet, mut info) = test_wallet_and_info();
         let result = info
-            .build_asset_lock(&wallet, &[AccountTypePreference::BIP44], 0, vec![], 1000, false)
+            .build_asset_lock(
+                &wallet,
+                &[AccountTypePreference::BIP44],
+                ChildIndex::ZERO,
+                vec![],
+                1000,
+                false,
+            )
             .await;
         assert!(matches!(result, Err(AssetLockError::Builder(BuilderError::NoOutputs))));
     }
@@ -891,7 +899,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                99,
+                ChildIndex::new_const(99),
                 test_credit_outputs(&[100_000]),
                 1000,
                 false,
@@ -911,7 +919,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[500_000]),
                 1000,
                 false,
@@ -938,7 +946,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[200_000]),
                 1000,
                 false,
@@ -964,7 +972,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[200_000]),
                 1000,
                 false,
@@ -1086,7 +1094,7 @@ mod tests {
             .build_asset_lock_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 vec![],
                 1000,
                 false,
@@ -1114,7 +1122,7 @@ mod tests {
             .build_asset_lock_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                99,
+                ChildIndex::new_const(99),
                 test_credit_outputs(&[100_000]),
                 1000,
                 false,
@@ -1156,7 +1164,7 @@ mod tests {
             .build_asset_lock_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[100_000]),
                 1000,
                 false,
@@ -1195,7 +1203,7 @@ mod tests {
             .build_asset_lock_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 fundings,
                 1000,
                 false,
@@ -1256,7 +1264,7 @@ mod tests {
             .build_asset_lock_with_signer(
                 &wallet,
                 &[AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[500_000]),
                 1000,
                 false,
@@ -1295,10 +1303,10 @@ mod tests {
         let account_xpub = wallet
             .accounts
             .standard_bip32_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("default wallet has BIP32 account 0")
             .account_xpub;
-        let account = info.accounts.standard_bip32_accounts.get_mut(&0).unwrap();
+        let account = info.accounts.standard_bip32_accounts.get_mut(&ChildIndex::ZERO).unwrap();
         let funding_address = account.next_receive_address(Some(&account_xpub), true).unwrap();
         let outpoint = OutPoint {
             txid: Txid::from_byte_array([txid_byte; 32]),
@@ -1326,14 +1334,14 @@ mod tests {
 
     fn bip44_0() -> AccountType {
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: crate::account::StandardAccountType::BIP44Account,
         }
     }
 
     fn bip32_0() -> AccountType {
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: crate::account::StandardAccountType::BIP32Account,
         }
     }
@@ -1345,7 +1353,7 @@ mod tests {
     fn credit_output_with_missing_key_account() -> Vec<CreditOutputFunding> {
         let mut fundings = test_credit_outputs(&[400_000]);
         fundings[0].funding_type = AssetLockFundingType::IdentityTopUp;
-        fundings[0].identity_index = 7;
+        fundings[0].identity_index = ChildIndex::new_const(7);
         fundings
     }
 
@@ -1371,7 +1379,14 @@ mod tests {
         info.update_last_processed_height(1100);
 
         let result = info
-            .build_asset_lock(&wallet, &POOLED, 0, test_credit_outputs(&[500_000]), 1000, false)
+            .build_asset_lock(
+                &wallet,
+                &POOLED,
+                ChildIndex::ZERO,
+                test_credit_outputs(&[500_000]),
+                1000,
+                false,
+            )
             .await
             .expect("a 500k lock funded by two 300k accounts");
 
@@ -1390,7 +1405,7 @@ mod tests {
             .iter()
             .find(|out| !out.script_pubkey.is_op_return())
             .expect("600k in against a 500k lock leaves change");
-        let bip44_account = info.accounts.standard_bip44_accounts.get(&0).unwrap();
+        let bip44_account = info.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
         assert!(
             bip44_account
                 .managed_account_type()
@@ -1404,7 +1419,12 @@ mod tests {
         assert!(result.reservation_token.is_some());
         assert_eq!(bip44_account.reservations().reserved(1100), HashSet::from([bip44]));
         assert_eq!(
-            info.accounts.standard_bip32_accounts.get(&0).unwrap().reservations().reserved(1100),
+            info.accounts
+                .standard_bip32_accounts
+                .get(&ChildIndex::ZERO)
+                .unwrap()
+                .reservations()
+                .reserved(1100),
             HashSet::from([bip32])
         );
         assert_eq!(
@@ -1423,7 +1443,14 @@ mod tests {
         info.update_last_processed_height(1100);
 
         let result = info
-            .build_asset_lock(&wallet, &POOLED, 0, test_credit_outputs(&[500_000]), 1000, false)
+            .build_asset_lock(
+                &wallet,
+                &POOLED,
+                ChildIndex::ZERO,
+                test_credit_outputs(&[500_000]),
+                1000,
+                false,
+            )
             .await
             .expect("no contacts and an empty BIP32 account must not block the build");
 
@@ -1445,7 +1472,14 @@ mod tests {
         info.update_last_processed_height(1100);
 
         let result = info
-            .build_asset_lock(&wallet, &POOLED, 99, test_credit_outputs(&[500_000]), 1000, false)
+            .build_asset_lock(
+                &wallet,
+                &POOLED,
+                ChildIndex::new_const(99),
+                test_credit_outputs(&[500_000]),
+                1000,
+                false,
+            )
             .await;
 
         assert!(
@@ -1470,7 +1504,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &[AccountTypePreference::CoinJoin, AccountTypePreference::BIP44],
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[500_000]),
                 1000,
                 drain,
@@ -1483,7 +1517,7 @@ mod tests {
                 && info
                     .accounts
                     .coinjoin_accounts
-                    .get(&0)
+                    .get(&ChildIndex::ZERO)
                     .unwrap()
                     .reservations()
                     .reserved(1100)
@@ -1508,7 +1542,7 @@ mod tests {
             .build_asset_lock(
                 &wallet,
                 &POOLED,
-                0,
+                ChildIndex::ZERO,
                 credit_output_with_missing_key_account(),
                 1000,
                 false,
@@ -1550,7 +1584,7 @@ mod tests {
             .build_asset_lock_with_signer(
                 &wallet,
                 &POOLED,
-                0,
+                ChildIndex::ZERO,
                 credit_output_with_missing_key_account(),
                 1000,
                 false,
@@ -1607,7 +1641,7 @@ mod tests {
             .build_asset_lock_with_signer(
                 &wallet,
                 &POOLED,
-                0,
+                ChildIndex::ZERO,
                 test_credit_outputs(&[500_000]),
                 1000,
                 false,
