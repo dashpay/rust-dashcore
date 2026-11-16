@@ -66,7 +66,7 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     /// Connected peers and their activation state.
     pub(super) peers: HashMap<SocketAddr, Option<VecDeque<Txid>>>,
     /// IS locks that arrived before their corresponding transaction, with insertion time.
-    pub(super) pending_is_locks: HashMap<Txid, (VerifiedInstantLock, Instant)>,
+    pending_is_locks: HashMap<Txid, (VerifiedInstantLock, Instant)>,
     /// Txids already downloaded, with download timestamp.
     /// Prevents duplicate downloads when multiple peers announce the same transactions.
     /// Entries expire after `SEEN_TXID_EXPIRY`.
