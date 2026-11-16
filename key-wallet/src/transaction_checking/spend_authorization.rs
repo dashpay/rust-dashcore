@@ -268,8 +268,11 @@ mod tests {
         let (_, different_encoding) = signed(true);
         assert_eq!(verify_input_authorization(&tx, 0, &different_encoding), Ok(false));
         assert_eq!(verify_input_authorization(&tx, 1, &prevout), Ok(false));
+        // The owner signs a transaction that lists the outpoint twice.
+        let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
         changed = tx.clone();
         changed.input.push(tx.input[0].clone());
+        sign(&mut changed, &prevout, &key, &key.public_key().to_compressed(), 1);
         assert_eq!(verify_input_authorization(&changed, 0, &prevout), Ok(false));
     }
 
