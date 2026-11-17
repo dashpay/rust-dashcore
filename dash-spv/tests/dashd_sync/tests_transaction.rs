@@ -14,7 +14,7 @@ use dash_spv::test_utils::{create_test_wallet, TestChain};
 use dashcore::PublicKey;
 use key_wallet::account::ManagedAccountTrait;
 use key_wallet::bip32::{ChildNumber, ExtendedPrivKey};
-use key_wallet::gap_limit::DEFAULT_EXTERNAL_GAP_LIMIT;
+use key_wallet::managed_account::address_pool::DEFAULT_EXTERNAL_GAP_LIMIT;
 use key_wallet::mnemonic::Mnemonic;
 use key_wallet::wallet::balance::WalletCoreBalance;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;

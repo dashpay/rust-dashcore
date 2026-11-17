@@ -102,7 +102,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 for (wallet_id, derived) in check_result.new_addresses {
                     derived_wallets.insert(wallet_id);
                     let scripts =
-                        derived.iter().map(|d| d.info.script_pubkey.clone()).collect::<Vec<_>>();
+                        derived.iter().map(|d| d.info.address.script_pubkey()).collect::<Vec<_>>();
                     result.new_scripts.entry(wallet_id).or_default().extend(scripts);
                     per_wallet_derived.entry(wallet_id).or_default().extend(derived);
                 }
@@ -739,8 +739,8 @@ mod tests {
     };
     use key_wallet::account::ManagedAccountTrait as _;
     use key_wallet::account::StandardAccountType;
-    use key_wallet::gap_limit::DEFAULT_COINJOIN_GAP_LIMIT;
     use key_wallet::managed_account::address_pool::AddressPoolType;
+    use key_wallet::managed_account::address_pool::DEFAULT_COINJOIN_GAP_LIMIT;
     use key_wallet::managed_account::managed_core_funds_account::ManagedCoreFundsAccount;
     use key_wallet::managed_account::transaction_record::OutputRole;
     use key_wallet::mnemonic::Language;
@@ -1174,8 +1174,8 @@ mod tests {
             .managed_account_type()
             .address_pools()
             .iter()
-            .find(|p| p.pool_type == AddressPoolType::External)
-            .and_then(|p| p.highest_used);
+            .find(|p| p.pool_type() == AddressPoolType::External)
+            .and_then(|p| p.highest_used());
         assert_eq!(pool_used, Some(gap + 8));
 
         let txids = BTreeSet::from([early.txid(), late.txid(), both.txid()]);

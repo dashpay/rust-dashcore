@@ -333,8 +333,10 @@ impl ExtNetInfo {
         })
     }
 
+    /// The port of the first Platform HTTPS entry, as in Dash Core: `None` when that entry is
+    /// invalid, even if a later one is valid, or when there is none.
     pub fn platform_https_port(&self) -> Option<u16> {
-        self.entries_for(NetInfoPurpose::PlatformHttps).iter().find_map(NetInfoEntry::port)
+        self.entries_for(NetInfoPurpose::PlatformHttps).first().and_then(NetInfoEntry::port)
     }
 
     /// Checks the map against the port and duplicate-entry rules of Dash Core's
@@ -629,6 +631,20 @@ mod tests {
         entry: NetInfoEntry,
     ) -> Vec<(NetInfoPurpose, Vec<NetInfoEntry>)> {
         vec![(purpose, vec![entry])]
+    }
+
+    #[test_case(vec![(PlatformHttps, vec![NetInfoEntry::Invalid, service(Ipv4, 443)])]
+        => None ; "an invalid entry before a valid one")]
+    #[test_case(vec![(PlatformHttps, vec![service(Ipv4, 443), domain(1443)])]
+        => Some(443) ; "two valid entries")]
+    #[test_case(one(CoreP2P, service(Ipv4, 9999)) => None ; "no platform https purpose")]
+    #[test_case(vec![(PlatformHttps, vec![])] => None ; "an empty platform https list")]
+    fn platform_https_port(purposes: Vec<(NetInfoPurpose, Vec<NetInfoEntry>)>) -> Option<u16> {
+        ExtNetInfo {
+            version: 1,
+            purposes,
+        }
+        .platform_https_port()
     }
 
     /// Core refuses port 0 and the ports `IsBadPort` lists (the system ports up to 1023 and
