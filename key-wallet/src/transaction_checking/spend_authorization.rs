@@ -1,9 +1,10 @@
 use dashcore::crypto::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 use dashcore::ecdsa::Signature;
 use dashcore::hashes::hash160;
-use dashcore::script::Instruction;
+use dashcore::script::{Instruction, PushBytes};
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
 use dashcore::{Transaction, TxOut};
+use std::slice;
 
 /// A pending spend whose authorization cannot be decided by the wallet signer contract.
 #[derive(Debug, PartialEq, Eq)]
@@ -12,7 +13,7 @@ pub enum SpendAuthorizationError {
     InputIndexOutOfRange(usize),
     /// The funding script requires a different authorization verifier.
     UnsupportedScript,
-    /// The input script carries instructions before the owner's signature and public key.
+    /// The input script carries instructions besides the owner's signature and public key.
     UnsupportedScriptSig,
     /// The signature does not commit to the complete transaction.
     UnsupportedSighash(u8),
@@ -65,46 +66,60 @@ pub fn verify_input_authorization(
     let Ok(instructions) = input.script_sig.instructions().collect::<Result<Vec<_>, _>>() else {
         return Ok(false);
     };
-    // The signature hash does not commit to the input script, so anyone can prepend
-    // instructions to an owner's signature without invalidating it.
-    let [prefix @ .., Instruction::PushBytes(signature), Instruction::PushBytes(public_key)] =
-        instructions.as_slice()
-    else {
+    let pushes = instructions
+        .iter()
+        .filter_map(Instruction::push_bytes)
+        .map(PushBytes::as_bytes)
+        .collect::<Vec<_>>();
+    let push_only = pushes.len() == instructions.len();
+    let is_owner_key =
+        |bytes: &&[u8]| hash160::Hash::hash(bytes).as_byte_array().as_slice() == public_key_hash;
+    // A push-only input script leaves the owner's signature and key as its last two pushes.
+    // Other opcodes can reorder the stack, so then any push can hold the signature.
+    let (signatures, public_key) = if push_only {
+        let [.., signature, public_key] = pushes.as_slice() else {
+            return Ok(false);
+        };
+        (slice::from_ref(signature), Some(*public_key).filter(is_owner_key))
+    } else {
+        (pushes.as_slice(), pushes.iter().copied().find(is_owner_key))
+    };
+    let Some(Ok(public_key)) = public_key.map(EcdsaPublicKey::from_bytes) else {
         return Ok(false);
     };
-    let public_key_bytes = public_key.as_bytes();
-    if hash160::Hash::hash(public_key_bytes).as_byte_array().as_slice() != public_key_hash {
-        return Ok(false);
-    }
-    let Ok(public_key) = EcdsaPublicKey::from_bytes(public_key_bytes) else {
+    let Some(mode) = signatures.iter().find_map(|signature| {
+        owner_signature_mode(transaction, input_index, prevout, &public_key, signature)
+    }) else {
         return Ok(false);
     };
-    let Some((&mode, _)) = signature.as_bytes().split_last() else {
-        return Ok(false);
-    };
-    let Ok(signature) = Signature::from_slice(signature.as_bytes()) else {
-        return Ok(false);
-    };
-    let signature = EcdsaSignature::from(signature.signature);
-    let Ok(hash) = SighashCache::new(transaction).legacy_signature_hash(
-        input_index,
-        &prevout.script_pubkey,
-        u32::from(mode),
-    ) else {
-        return Ok(false);
-    };
-    if public_key.verify(&hash.to_byte_array(), signature).is_err() {
-        return Ok(false);
-    }
     // Other modes can authorize only part of a transaction; SINGLE can even
     // produce a constant digest. They cannot authorize this durable reservation.
     if u32::from(mode) != EcdsaSighashType::All.to_u32() {
         return Err(SpendAuthorizationError::UnsupportedSighash(mode));
     }
-    if !prefix.is_empty() {
+    // The signature hash does not commit to the input script, so anyone can add
+    // instructions to an owner's signature without invalidating it.
+    if !push_only || pushes.len() != 2 {
         return Err(SpendAuthorizationError::UnsupportedScriptSig);
     }
     Ok(true)
+}
+
+/// Returns the signature hash type when `signature` is `public_key`'s valid signature for the input.
+fn owner_signature_mode(
+    transaction: &Transaction,
+    input_index: usize,
+    prevout: &TxOut,
+    public_key: &EcdsaPublicKey,
+    signature: &[u8],
+) -> Option<u8> {
+    let (&mode, _) = signature.split_last()?;
+    let signature = EcdsaSignature::from(Signature::from_slice(signature).ok()?.signature);
+    let hash = SighashCache::new(transaction)
+        .legacy_signature_hash(input_index, &prevout.script_pubkey, u32::from(mode))
+        .ok()?;
+    public_key.verify(&hash.to_byte_array(), signature).ok()?;
+    Some(mode)
 }
 
 #[cfg(test)]
@@ -117,9 +132,9 @@ mod tests {
         asset_lock::AssetLockPayload, TransactionPayload,
     };
     use dashcore::crypto::ecdsa::EcdsaSecretKey;
+    use dashcore::opcodes::all::{OP_DROP, OP_SWAP};
     use dashcore::script::{Builder, PushBytesBuf};
     use dashcore::{OutPoint, ScriptBuf, TxIn, Txid};
-    use std::slice;
 
     fn p2pkh_prevout(public_key: &[u8]) -> TxOut {
         TxOut {
@@ -307,35 +322,32 @@ mod tests {
     }
 
     #[test]
-    fn should_not_turn_an_unauthenticated_hash_flag_into_an_unsupported_error() {
-        let (mut tx, prevout) = signed(false);
-        let original = tx.input[0].script_sig.as_bytes().to_vec();
-        for mode in [0, 0x82, 0xff] {
-            let mut bytes = original.clone();
-            let signature_len = usize::from(bytes[0]);
-            bytes[signature_len] = mode;
-            tx.input[0].script_sig = ScriptBuf::from_bytes(bytes);
-            assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
-        }
-    }
-
-    #[test]
     fn should_preserve_unsupported_authorization_as_an_error() {
-        let (mut tx, prevout) = signed(false);
+        let (signed_tx, prevout) = signed(false);
         let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
+        let owner_script = signed_tx.input[0].script_sig.as_bytes();
+        let signature = &owner_script[1..=usize::from(owner_script[0])];
+        let public_key = &owner_script[signature.len() + 2..];
+        let mut tx = signed_tx.clone();
         for mode in [0, 2, 3, 4, 0x81, 0x82, 0x83, 0xff] {
-            sign_input(&mut tx, 0, &prevout, &key, &key.public_key().to_compressed(), mode);
+            sign_input(&mut tx, 0, &prevout, &key, public_key, mode);
             assert_eq!(
                 verify_input_authorization(&tx, 0, &prevout),
                 Err(SpendAuthorizationError::UnsupportedSighash(mode))
             );
+            // Swapping only the flag invalidates the signature instead of making it unsupported.
+            let mut flagged = signed_tx.clone();
+            let mut bytes = owner_script.to_vec();
+            bytes[signature.len()] = mode;
+            flagged.input[0].script_sig = ScriptBuf::from_bytes(bytes);
+            assert_eq!(verify_input_authorization(&flagged, 0, &prevout), Ok(false));
         }
         // Without an output for input 0, SINGLE signs the constant digest 1. That signature
         // still verifies on a changed transaction, and must stay an error there.
         let mut no_outputs = tx.clone();
         no_outputs.output.clear();
         for mode in [3, 0x83] {
-            sign_input(&mut no_outputs, 0, &prevout, &key, &key.public_key().to_compressed(), mode);
+            sign_input(&mut no_outputs, 0, &prevout, &key, public_key, mode);
             no_outputs.lock_time += 1;
             assert_eq!(
                 verify_input_authorization(&no_outputs, 0, &prevout),
@@ -350,13 +362,22 @@ mod tests {
             verify_input_authorization(&tx, 0, &unknown),
             Err(SpendAuthorizationError::UnsupportedScript)
         );
-        // OP_0 and OP_NOP before the owner's signature keep the spend consensus-valid.
-        let (signed_tx, prevout) = signed(false);
-        for opcode in [0x00, 0x61] {
+        // Each of these input scripts keeps the owner's spend consensus-valid.
+        let pushes = |items: &[&[u8]]| {
+            items.iter().fold(Builder::new(), |builder, item| {
+                builder.push_slice(PushBytesBuf::try_from(item.to_vec()).unwrap())
+            })
+        };
+        let scripts = [
+            [&[0x00][..], owner_script].concat(),
+            [&[0x61][..], owner_script].concat(),
+            [owner_script, &[0x61][..]].concat(),
+            pushes(&[signature, public_key, &[1]]).push_opcode(OP_DROP).into_bytes(),
+            pushes(&[public_key, signature]).push_opcode(OP_SWAP).into_bytes(),
+        ];
+        for script in scripts {
             let mut padded = signed_tx.clone();
-            let mut bytes = vec![opcode];
-            bytes.extend_from_slice(padded.input[0].script_sig.as_bytes());
-            padded.input[0].script_sig = ScriptBuf::from_bytes(bytes);
+            padded.input[0].script_sig = ScriptBuf::from_bytes(script);
             assert_eq!(
                 verify_input_authorization(&padded, 0, &prevout),
                 Err(SpendAuthorizationError::UnsupportedScriptSig)
