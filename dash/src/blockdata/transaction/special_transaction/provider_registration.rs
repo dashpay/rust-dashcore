@@ -1545,6 +1545,18 @@ mod tests {
     }
 
     #[test]
+    fn max_signed_size_reserves_missing_join_signatures() {
+        let signed = v3_payload(false, 2);
+        let mut unsigned = signed.clone();
+        unsigned.shared_collateral.as_mut().unwrap().join_sigs.clear();
+        let signed = ProviderRegistrationPayloadType(signed);
+        let unsigned = ProviderRegistrationPayloadType(unsigned);
+
+        assert_eq!(unsigned.max_signed_size(), signed.max_signed_size());
+        assert!(signed.max_signed_size() >= signed.size());
+    }
+
+    #[test]
     fn v3_layout_follows_core() {
         let payload = v3_payload(true, 2);
         let mut encoded = Vec::new();

@@ -539,7 +539,7 @@ async fn born_fully_spent_intermediate_hop_is_recorded_in_history() {
         .managed_wallet
         .first_bip44_managed_account_mut()
         .expect("BIP44 account")
-        .next_receive_address(Some(&ctx.xpub), true)
+        .next_receive_address(Some(&ctx.xpub))
         .expect("hop address");
 
     // C funds our first receive address (a live coin).
