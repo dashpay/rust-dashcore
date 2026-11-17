@@ -22,7 +22,7 @@ tokio-util = { workspace = true }
 
 clap = { workspace = true }
 anyhow = { workspace = true }
-chrono = { workspace = true, features = ["clock"] }
+time = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rand = { workspace = true }

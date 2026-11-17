@@ -49,6 +49,8 @@ use dashcore::sml::masternode_list_entry::EntryMasternodeType;
 use dashcore::{BlockHash, Network};
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::sync::Arc;
+use time::OffsetDateTime;
+use time::macros::format_description;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
@@ -270,7 +272,7 @@ async fn handshake(peer: &mut Peer, peer_addr: SocketAddr) -> Result<()> {
     // `VersionMessage::new` picks up `PROTOCOL_VERSION` internally.
     let version = VersionMessage::new(
         ServiceFlags::NONE,
-        chrono::Utc::now().timestamp(),
+        OffsetDateTime::now_utc().unix_timestamp(),
         Address::new(&peer_addr, ServiceFlags::NETWORK),
         Address::new(&our_addr, ServiceFlags::NONE),
         rand::random::<u64>(),
@@ -551,7 +553,9 @@ fn write_seed_file(
         fs::create_dir_all(parent)
             .with_context(|| format!("creating parent dir for {}", path.display()))?;
     }
-    let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+    let timestamp = OffsetDateTime::now_utc()
+        .format(format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z"))
+        .context("formatting timestamp")?;
     let mut file =
         fs::File::create(path).with_context(|| format!("opening {} for write", path.display()))?;
     writeln!(
