@@ -56,18 +56,26 @@ impl HeaderHashIndex {
     }
 
     fn rebuild(&mut self, keep: impl Fn(u32) -> bool) {
-        let mut offsets = Vec::with_capacity(GROUPS + 1);
+        // Only groups with pending heights are looked up in the map, so a merge hashes one key
+        // per pending group rather than one per group. They are marked in `offsets[group + 1]`
+        // before the walk overwrites that entry with the group's end.
+        let mut offsets = vec![0; GROUPS + 1];
+        for &group in self.pending.keys() {
+            offsets[group as usize + 1] = 1;
+        }
         let mut heights = Vec::with_capacity(self.heights.len() + self.pending_len);
-        offsets.push(0);
 
         for (group, range) in self.offsets.windows(2).enumerate() {
             let stored = &self.heights[range[0] as usize..range[1] as usize];
             heights.extend(stored.iter().copied().filter(|h| keep(*h)));
 
-            let pending = self.pending.get(&(group as u32)).into_iter().flatten();
-            heights.extend(pending.copied().filter(|h| keep(*h)));
+            if offsets[group + 1] != 0 {
+                if let Some(pending) = self.pending.get(&(group as u32)) {
+                    heights.extend(pending.iter().copied().filter(|h| keep(*h)));
+                }
+            }
 
-            offsets.push(heights.len() as u32);
+            offsets[group + 1] = heights.len() as u32;
         }
 
         self.offsets = offsets;
@@ -99,5 +107,53 @@ mod tests {
         index.truncate_above(count / 2);
         assert!(index.get(&BlockHash::dummy(count / 2)).contains(&(count / 2)));
         assert!(!index.get(&BlockHash::dummy(count / 2 + 1)).contains(&(count / 2 + 1)));
+    }
+
+    /// Every group holds exactly the heights inserted into it and not truncated, highest first,
+    /// whether they were merged or are still pending: checked against a map of group to heights.
+    #[test]
+    fn groups_match_a_plain_map() {
+        let mut index = HeaderHashIndex::default();
+        let mut model: HashMap<u32, Vec<u32>> = HashMap::new();
+        // Few groups, so most share one with others, merged and pending alike. One is the last.
+        let group_of = |height: u32| match height % 97 {
+            96 => GROUPS as u32 - 1,
+            group => group,
+        };
+        let hash = |height: u32| {
+            let mut bytes = [0; 32];
+            bytes[..4]
+                .copy_from_slice(&(group_of(height) * GROUP_SIZE + height % 13).to_le_bytes());
+            bytes[4..8].copy_from_slice(&height.to_le_bytes());
+            BlockHash::from_byte_array(bytes)
+        };
+        let check = |index: &HeaderHashIndex, model: &HashMap<u32, Vec<u32>>| {
+            for slot in 0..97 {
+                let group = group_of(slot);
+                let mut want = model.get(&group).cloned().unwrap_or_default();
+                want.sort_unstable_by(|a, b| b.cmp(a));
+                let probe = hash(slot);
+                assert_eq!(HeaderHashIndex::group(&probe), group);
+                assert_eq!(index.get(&probe), want, "group {group}");
+            }
+        };
+
+        let mut height = 0;
+        for (inserts, truncate_to) in
+            [(MERGE_THRESHOLD + 11, None), (300, Some(50_100)), (MERGE_THRESHOLD, Some(70_000))]
+        {
+            for _ in 0..inserts {
+                index.insert(&hash(height), height);
+                model.entry(HeaderHashIndex::group(&hash(height))).or_default().push(height);
+                height += 1;
+            }
+            check(&index, &model);
+            if let Some(top) = truncate_to {
+                index.truncate_above(top);
+                model.values_mut().for_each(|heights| heights.retain(|&h| h <= top));
+                height = top + 1;
+                check(&index, &model);
+            }
+        }
     }
 }

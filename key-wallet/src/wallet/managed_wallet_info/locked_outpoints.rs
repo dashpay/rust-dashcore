@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 /// A null collateral txid means the ProRegTx creates its collateral itself, as
 /// its own output at `collateralIndex`. An index past its outputs names no coin
 /// (Core rejects such a registration), so it yields `None`.
-pub(crate) fn masternode_collateral(tx: &Transaction) -> Option<OutPoint> {
+pub fn masternode_collateral(tx: &Transaction) -> Option<OutPoint> {
     let Some(TransactionPayload::ProviderRegistrationPayloadType(registration)) =
         &tx.special_transaction_payload
     else {
@@ -144,7 +144,7 @@ impl ManagedWalletInfo {
     /// Whether a funds account of this wallet holds `outpoint` as a coin. A
     /// coin it keeps aside as spent counts: a fork that drops the spend gives
     /// it back.
-    pub(crate) fn holds_coin(&self, outpoint: &OutPoint) -> bool {
+    pub fn holds_coin(&self, outpoint: &OutPoint) -> bool {
         self.accounts
             .all_funding_accounts()
             .iter()

@@ -9,8 +9,8 @@ use dashcore::blockdata::transaction::OutPoint;
 use dashcore::Transaction;
 
 use crate::account::account_collection::{DashpayAccountKey, PlatformPaymentAccountKey};
-use crate::gap_limit::DIP17_GAP_LIMIT;
 use crate::managed_account::address_pool::AddressPoolType;
+use crate::managed_account::address_pool::DIP17_GAP_LIMIT;
 use crate::managed_account::managed_account_ref::{
     ManagedAccountRef, ManagedAccountRefMut, OwnedManagedCoreAccount,
 };
@@ -1169,6 +1169,7 @@ mod dashpay_funding_scope_tests {
             account_xpub: xpub(),
             is_watch_only: matches!(account_type, AccountType::DashpayExternalAccount { .. }),
         })
+        .unwrap()
     }
 
     /// A DashPay **external** account is watch-only — its addresses derive from

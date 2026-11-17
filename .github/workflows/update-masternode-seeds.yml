@@ -31,7 +31,7 @@ jobs:
         with:
           shared-key: "masternode-seeds-fetcher"
 
-      - uses: taiki-e/install-action@v2.90.0
+      - uses: taiki-e/install-action@v2.90.3
         with:
           tool: just
 
@@ -39,7 +39,7 @@ jobs:
         run: just masternode-seeds-fetcher::refresh-all
 
       - name: Open pull request on change
-        uses: peter-evans/create-pull-request@v8.1.1
+        uses: peter-evans/create-pull-request@v8.1.2
         with:
           commit-message: "chore(dash-spv): refresh masternode seed files"
           title: "chore(dash-spv): refresh masternode seed files"

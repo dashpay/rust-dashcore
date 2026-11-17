@@ -95,6 +95,7 @@ impl Decodable for ProviderUpdateSharedRegistrarPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blockdata::transaction::special_transaction::TransactionPayload::ProviderUpdateSharedRegistrarPayloadType;
     use crate::consensus::{deserialize, serialize};
 
     #[test]
@@ -118,5 +119,29 @@ mod tests {
         assert_eq!(serialize(&payload), want);
         assert_eq!(payload.size(), want.len());
         assert_eq!(deserialize::<ProviderUpdateSharedRegistrarPayload>(&want).unwrap(), payload);
+    }
+
+    #[test]
+    fn max_signed_size_counts_placeholder_signatures() {
+        let payload = |signatures| {
+            ProviderUpdateSharedRegistrarPayloadType(ProviderUpdateSharedRegistrarPayload {
+                version: 1,
+                pro_tx_hash: Txid::from_byte_array([0x11; 32]),
+                operator_public_key: BLSPublicKey::from([0x22; 48]),
+                voting_key_hash: PubkeyHash::from_byte_array([0x33; 20]),
+                inputs_hash: InputsHash::from_byte_array([0x44; 32]),
+                signatures,
+            })
+        };
+        let placeholder = payload(vec![EcdsaRecSignature::from([0; 65]); 3]);
+        let signed = payload(vec![
+            EcdsaRecSignature::from([0x55; 65]),
+            EcdsaRecSignature::from([0x66; 65]),
+            EcdsaRecSignature::from([0x77; 65]),
+        ]);
+
+        assert_eq!(placeholder.max_signed_size(), payload(vec![]).max_signed_size() + 3 * 65);
+        assert_eq!(placeholder.max_signed_size(), signed.max_signed_size());
+        assert!(signed.max_signed_size() >= signed.size());
     }
 }

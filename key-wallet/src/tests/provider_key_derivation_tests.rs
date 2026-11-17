@@ -179,7 +179,7 @@ fn platform_pool_entries_are_keyed_by_tenderdash_node_id() {
     let (verifying_key, entry) = info
         .provider_platform_keys_managed_account_mut()
         .expect("platform managed account")
-        .next_eddsa_platform_key(account_xpriv, true)
+        .next_eddsa_platform_key(account_xpriv)
         .expect("derive platform key 0");
 
     assert_eq!(

@@ -4,6 +4,7 @@ use dashcore::{OutPoint, ScriptBuf, TxIn, TxOut, Txid, Witness};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
+use std::slice;
 use tokio::sync::broadcast;
 
 pub(crate) const TEST_MNEMONIC: &str =
@@ -30,6 +31,11 @@ pub(crate) fn setup_manager_with_wallet() -> (WalletManager<ManagedWalletInfo>, 
 }
 
 pub(crate) fn create_tx_paying_to(addr: &Address, input_seed: u8) -> Transaction {
+    create_tx_paying(slice::from_ref(addr), input_seed)
+}
+
+/// Pays `TX_AMOUNT` to each of `addrs`, from one input seeded with `input_seed`.
+pub(crate) fn create_tx_paying(addrs: &[Address], input_seed: u8) -> Transaction {
     Transaction {
         version: 2,
         lock_time: 0,
@@ -42,10 +48,13 @@ pub(crate) fn create_tx_paying_to(addr: &Address, input_seed: u8) -> Transaction
             sequence: u32::MAX,
             witness: Witness::default(),
         }],
-        output: vec![TxOut {
-            value: TX_AMOUNT,
-            script_pubkey: addr.script_pubkey(),
-        }],
+        output: addrs
+            .iter()
+            .map(|addr| TxOut {
+                value: TX_AMOUNT,
+                script_pubkey: addr.script_pubkey(),
+            })
+            .collect(),
         special_transaction_payload: None,
     }
 }

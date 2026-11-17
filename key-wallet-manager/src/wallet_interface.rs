@@ -8,7 +8,9 @@ use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, BlockHash, OutPoint, ScriptBuf, Transaction, Txid};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 use tokio::sync::broadcast;
 
 /// Result of processing a block through the wallet
@@ -191,11 +193,14 @@ pub trait WalletInterface: Send + Sync + 'static {
         height: CoreBlockHeight,
     );
 
-    /// Return a revision counter that increments whenever the set of monitored
-    /// addresses or watched outpoints changes. The mempool manager uses this to
-    /// detect when its bloom filter is stale without requiring an external signal.
-    fn monitor_revision(&self) -> u64 {
-        0
+    /// Hash of the monitored addresses and watched outpoints. It changes when
+    /// either set changes, so the mempool manager can tell when its bloom
+    /// filter is stale.
+    fn monitor_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.monitored_addresses().hash(&mut hasher);
+        self.watched_outpoints().hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Reclaim expired receive-address reservations across every managed

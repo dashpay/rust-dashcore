@@ -9,6 +9,7 @@ pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
 pub(crate) mod locked_outpoints;
+pub use locked_outpoints::masternode_collateral;
 pub mod managed_account_operations;
 pub mod managed_accounts;
 pub mod transaction_builder;
@@ -470,10 +471,6 @@ impl ManagedWalletInfo {
     /// spent-output claim does not hold a restored UTXO back; a credited
     /// UTXO is no longer kept aside for one.
     ///
-    /// Each account whose pools grow, or that is credited a UTXO or loses one,
-    /// gets its monitor revision bumped, so a running client rebuilds its
-    /// filters.
-    ///
     /// Every pool is extended before any UTXO is inserted, so an `Err` from
     /// address derivation leaves the UTXO sets as they were; the addresses
     /// derived and marked used by then stay. The balance is not recomputed:
@@ -527,16 +524,11 @@ impl ManagedWalletInfo {
                 if index != owner {
                     if let Some(copy) = account.utxos.remove(&outpoint) {
                         copies.push(copy);
-                        account.bump_monitor_revision();
                     }
                 }
             }
             let account = &mut accounts[owner];
-            let credited =
-                account.take_in_output(utxo, copies, &self.observed_spent_outpoints, None, |_| {});
-            if credited {
-                account.bump_monitor_revision();
-            }
+            account.take_in_output(utxo, copies, &self.observed_spent_outpoints, None, |_| {});
         }
         self.refresh_lock_flags(matched);
         Ok(unmatched)
@@ -644,9 +636,8 @@ impl ManagedWalletInfo {
                 let managed_account = collection.standard_bip44_accounts.get_mut(&account_index)?;
                 let wallet_account = wallet.get_bip44_account(account_index)?;
 
-                let address = managed_account
-                    .next_change_address(Some(&wallet_account.account_xpub), true)
-                    .ok();
+                let address =
+                    managed_account.next_change_address(Some(&wallet_account.account_xpub)).ok();
 
                 if let (Some(address), true) = (&address, mark_as_used) {
                     managed_account.mark_address_used(address);
@@ -658,9 +649,8 @@ impl ManagedWalletInfo {
                 let managed_account = collection.standard_bip32_accounts.get_mut(&account_index)?;
                 let wallet_account = wallet.get_bip32_account(account_index)?;
 
-                let address = managed_account
-                    .next_change_address(Some(&wallet_account.account_xpub), true)
-                    .ok();
+                let address =
+                    managed_account.next_change_address(Some(&wallet_account.account_xpub)).ok();
 
                 if let (Some(address), true) = (&address, mark_as_used) {
                     managed_account.mark_address_used(address);
@@ -700,9 +690,8 @@ impl ManagedWalletInfo {
                 let managed_account = collection.standard_bip44_accounts.get_mut(&account_index)?;
                 let wallet_account = wallet.get_bip44_account(account_index)?;
 
-                let address = managed_account
-                    .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    .ok();
+                let address =
+                    managed_account.next_receive_address(Some(&wallet_account.account_xpub)).ok();
 
                 if let (Some(address), true) = (&address, mark_as_used) {
                     managed_account.mark_address_used(address);
@@ -714,9 +703,8 @@ impl ManagedWalletInfo {
                 let managed_account = collection.standard_bip32_accounts.get_mut(&account_index)?;
                 let wallet_account = wallet.get_bip32_account(account_index)?;
 
-                let address = managed_account
-                    .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    .ok();
+                let address =
+                    managed_account.next_receive_address(Some(&wallet_account.account_xpub)).ok();
 
                 if let (Some(address), true) = (&address, mark_as_used) {
                     managed_account.mark_address_used(address);
@@ -760,8 +748,6 @@ impl ManagedWalletInfo {
             for pool in account.managed_account_type_mut().address_pools_mut() {
                 pool.generate_up_to(last_index, &key_source)?;
             }
-
-            account.bump_monitor_revision();
         }
 
         Ok(())
@@ -769,8 +755,7 @@ impl ManagedWalletInfo {
 }
 
 /// Extend every pool of `accounts` that has a public key source to its gap
-/// limit, bumping the monitor revision of each account that grew. Returns
-/// whether any pool grew.
+/// limit. Returns whether any pool grew.
 fn extend_pools(
     wallet: &Wallet,
     accounts: &mut [&mut crate::managed_account::ManagedCoreFundsAccount],
@@ -782,13 +767,8 @@ fn extend_pools(
         if matches!(key_source, crate::KeySource::NoKeySource) {
             continue;
         }
-        let mut grew = false;
         for pool in account.managed_account_type_mut().address_pools_mut() {
-            grew |= !pool.maintain_gap_limit(&key_source)?.is_empty();
-        }
-        if grew {
-            account.bump_monitor_revision();
-            any_grew = true;
+            any_grew |= !pool.maintain_gap_limit(&key_source)?.is_empty();
         }
     }
     Ok(any_grew)
