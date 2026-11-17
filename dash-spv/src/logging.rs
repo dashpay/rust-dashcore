@@ -5,7 +5,8 @@
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local};
+use time::macros::format_description;
+use time::OffsetDateTime;
 use tracing::level_filters::LevelFilter;
 use tracing::subscriber::{set_default, DefaultGuard};
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
@@ -192,23 +193,20 @@ fn rotate_previous_log(log_dir: &Path) -> LoggingResult<()> {
     }
 
     // Get timestamp from file modification time
-    let timestamp = get_file_modification_time(&run_log_path).unwrap_or_else(Local::now);
+    let timestamp =
+        get_file_modification_time(&run_log_path).unwrap_or_else(OffsetDateTime::now_utc);
 
-    // Format: dash-spv.2025-01-15.143025.log
-    let archive_name = format!("{}{}.log", LOG_FILE_PREFIX, timestamp.format("%Y-%m-%d.%H%M%S"));
+    // Format (UTC): dash-spv.2025-01-15.143025.log
+    let timestamp = timestamp
+        .format(format_description!("[year]-[month]-[day].[hour][minute][second]"))
+        .map_err(|e| LoggingError::RotationFailed(format!("failed to format timestamp: {}", e)))?;
+    let archive_name = format!("{}{}.log", LOG_FILE_PREFIX, timestamp);
     let archive_path = log_dir.join(&archive_name);
 
     // Handle collision: if archive already exists, add a suffix
     let final_path = if archive_path.exists() {
         (1..=999)
-            .map(|i| {
-                log_dir.join(format!(
-                    "{}{}-{}.log",
-                    LOG_FILE_PREFIX,
-                    timestamp.format("%Y-%m-%d.%H%M%S"),
-                    i
-                ))
-            })
+            .map(|i| log_dir.join(format!("{}{}-{}.log", LOG_FILE_PREFIX, timestamp, i)))
             .find(|p| !p.exists())
             .ok_or_else(|| {
                 LoggingError::RotationFailed("too many log files with same timestamp".to_string())
@@ -220,11 +218,11 @@ fn rotate_previous_log(log_dir: &Path) -> LoggingResult<()> {
     fs::rename(&run_log_path, &final_path).map_err(|e| LoggingError::RotationFailed(e.to_string()))
 }
 
-/// Get file modification time as DateTime.
-fn get_file_modification_time(path: &Path) -> Option<DateTime<Local>> {
+/// Get file modification time in UTC.
+fn get_file_modification_time(path: &Path) -> Option<OffsetDateTime> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
-    Some(DateTime::from(modified))
+    Some(OffsetDateTime::from(modified))
 }
 
 /// Delete oldest archived log files if count exceeds max_files.
@@ -522,10 +520,8 @@ mod tests {
         assert!(mtime.is_some());
 
         // Should be recent (within last minute)
-        let now = Local::now();
-        let dt = mtime.unwrap();
-        let diff = now.signed_duration_since(dt);
-        assert!(diff.num_seconds() < 60);
+        let diff = OffsetDateTime::now_utc() - mtime.unwrap();
+        assert!(diff.whole_seconds() < 60);
     }
 
     #[test]
