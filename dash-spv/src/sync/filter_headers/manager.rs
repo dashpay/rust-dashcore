@@ -276,7 +276,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
     ) -> SyncResult<Vec<SyncEvent>> {
         // Get current filter tip
         let filter_headers_tip =
-            self.filter_header_storage.read().await.get_filter_tip_height().await?.unwrap_or(0);
+            self.filter_header_storage.read().await.get_filter_tip_height().await?;
 
         // Get header start height (for checkpoint sync)
         let header_start_height =
@@ -284,11 +284,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
 
         // Calculate start height
         let start_height = match filter_headers_tip {
-            0 => header_start_height,
-            n => (n + 1).max(header_start_height),
+            None => header_start_height,
+            Some(n) => (n + 1).max(header_start_height),
         };
 
-        self.progress.update_current_height(filter_headers_tip);
+        self.progress.update_current_height(filter_headers_tip.unwrap_or(0));
 
         // Check if already at target (nothing to download)
         if start_height > self.progress.block_header_tip_height() {
@@ -307,7 +307,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         // Track checkpoint start height for storing prev header on first batch.
         // Only needed on fresh checkpoint sync (no existing filter headers).
         // On resume, start_height-1 is already stored so re-inserting would panic in debug builds.
-        if start_height > 0 && filter_headers_tip == 0 {
+        if start_height > 0 && filter_headers_tip.is_none() {
             self.checkpoint_start_height = Some(start_height);
         }
 
@@ -858,12 +858,17 @@ mod tests {
         assert_eq!(filter_headers.get_filter_tip_height().await.unwrap(), Some(5099));
     }
 
+    #[test_case(1 ; "genesis only")]
+    #[test_case(2000 ; "first batch")]
     #[tokio::test]
-    async fn test_resumed_cfheaders_batch_chains_from_stored_header() {
+    async fn test_resumed_cfheaders_batch_chains_from_stored_header(stored: u32) {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let hashes = store_block_headers(&storage, 0, 4000).await;
-        let first_headers =
-            compute_filter_headers(&cfheaders(FilterHeader::all_zeros(), hashes[1999], 2000));
+        let first_headers = compute_filter_headers(&cfheaders(
+            FilterHeader::all_zeros(),
+            hashes[stored as usize - 1],
+            stored,
+        ));
         storage
             .filter_headers()
             .write()
@@ -872,12 +877,12 @@ mod tests {
             .await
             .unwrap();
 
-        // A manager started over existing filter headers resumes at 2000.
         let (mut manager, network) = start_sync(&storage, 3999).await;
-        assert_eq!(manager.pipeline.next_expected(), 2000);
+        assert_eq!(manager.pipeline.next_expected(), stored);
         assert_eq!(manager.checkpoint_start_height, None);
 
-        let next = cfheaders(*first_headers.last().unwrap(), hashes[3999], 2000);
-        assert_eq!(deliver(&mut manager, &network, next).await.0, vec![(2000, 3999)]);
+        let end = stored + 1999;
+        let next = cfheaders(*first_headers.last().unwrap(), hashes[end as usize], 2000);
+        assert_eq!(deliver(&mut manager, &network, next).await.0, vec![(stored, end)]);
     }
 }
