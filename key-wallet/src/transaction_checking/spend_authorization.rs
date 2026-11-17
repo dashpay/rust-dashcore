@@ -1,9 +1,11 @@
+use dashcore::blockdata::constants::MAX_SCRIPT_SIZE;
 use dashcore::crypto::ecdsa::{EcdsaPublicKey, EcdsaSignature};
 use dashcore::ecdsa::Signature;
 use dashcore::hashes::hash160;
 use dashcore::script::{Instruction, PushBytes};
 use dashcore::sighash::{EcdsaSighashType, SighashCache};
 use dashcore::{Transaction, TxOut};
+use std::collections::BTreeMap;
 use std::slice;
 
 /// A pending spend whose authorization cannot be decided by the wallet signer contract.
@@ -43,6 +45,7 @@ impl std::error::Error for SpendAuthorizationError {}
 /// Whether input `input_index` carries the owner's P2PKH `SIGHASH_ALL` signature for `prevout`.
 /// The caller takes `prevout` from the funding transaction of that input's outpoint.
 /// An unsupported form or a missing input returns an error, so a pending hold is not released.
+/// A signature or key built at run time, for example by `OP_CAT`, returns `false`.
 pub fn verify_input_authorization(
     transaction: &Transaction,
     input_index: usize,
@@ -63,6 +66,9 @@ pub fn verify_input_authorization(
     let Some(public_key_hash) = prevout.script_pubkey.p2pkh_public_key_hash_bytes() else {
         return Err(SpendAuthorizationError::UnsupportedScript);
     };
+    if input.script_sig.len() > MAX_SCRIPT_SIZE {
+        return Ok(false);
+    }
     let Ok(instructions) = input.script_sig.instructions().collect::<Result<Vec<_>, _>>() else {
         return Ok(false);
     };
@@ -87,8 +93,19 @@ pub fn verify_input_authorization(
     let Some(Ok(public_key)) = public_key.map(EcdsaPublicKey::from_bytes) else {
         return Ok(false);
     };
+    // Signatures with the same hash type share a digest, which bounds the hashing per script.
+    let mut digests = BTreeMap::new();
     let Some(mode) = signatures.iter().find_map(|signature| {
-        owner_signature_mode(transaction, input_index, prevout, &public_key, signature)
+        let (&mode, _) = signature.split_last()?;
+        let signature = EcdsaSignature::from(Signature::from_slice(signature).ok()?.signature);
+        let digest = digests.entry(mode).or_insert_with(|| {
+            SighashCache::new(transaction)
+                .legacy_signature_hash(input_index, &prevout.script_pubkey, u32::from(mode))
+                .ok()
+                .map(|hash| hash.to_byte_array())
+        });
+        public_key.verify(&(*digest)?, signature).ok()?;
+        Some(mode)
     }) else {
         return Ok(false);
     };
@@ -103,23 +120,6 @@ pub fn verify_input_authorization(
         return Err(SpendAuthorizationError::UnsupportedScriptSig);
     }
     Ok(true)
-}
-
-/// Returns the signature hash type when `signature` is `public_key`'s valid signature for the input.
-fn owner_signature_mode(
-    transaction: &Transaction,
-    input_index: usize,
-    prevout: &TxOut,
-    public_key: &EcdsaPublicKey,
-    signature: &[u8],
-) -> Option<u8> {
-    let (&mode, _) = signature.split_last()?;
-    let signature = EcdsaSignature::from(Signature::from_slice(signature).ok()?.signature);
-    let hash = SighashCache::new(transaction)
-        .legacy_signature_hash(input_index, &prevout.script_pubkey, u32::from(mode))
-        .ok()?;
-    public_key.verify(&hash.to_byte_array(), signature).ok()?;
-    Some(mode)
 }
 
 #[cfg(test)]
@@ -292,14 +292,23 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_extra_script_instructions_and_malformed_signature() {
-        let (mut tx, prevout) = signed(false);
-        let mut bytes = tx.input[0].script_sig.as_bytes().to_vec();
-        bytes.push(0);
-        tx.input[0].script_sig = ScriptBuf::from_bytes(bytes);
-        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
-        tx.input[0].script_sig = ScriptBuf::from_bytes(vec![1, 1, 1, 2]);
-        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
+    fn should_reject_input_scripts_that_cannot_spend_the_funding_output() {
+        let (signed_tx, prevout) = signed(false);
+        let owner_script = signed_tx.input[0].script_sig.as_bytes();
+        let signature_len = usize::from(owner_script[0]);
+        let mut oversized = vec![0x61; MAX_SCRIPT_SIZE + 1];
+        oversized[..owner_script.len()].copy_from_slice(owner_script);
+        let scripts = [
+            [owner_script, &[0x00][..]].concat(),
+            [&[1, 1][..], &owner_script[signature_len + 1..]].concat(),
+            vec![1, 1, 1, 2],
+            oversized,
+        ];
+        for script in scripts {
+            let mut tx = signed_tx.clone();
+            tx.input[0].script_sig = ScriptBuf::from_bytes(script);
+            assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
+        }
     }
 
     #[test]
