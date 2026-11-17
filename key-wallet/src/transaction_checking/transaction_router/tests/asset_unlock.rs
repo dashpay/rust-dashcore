@@ -223,7 +223,7 @@ async fn test_asset_unlock_credits_dashpay_contact() {
     else {
         panic!("expected contact account");
     };
-    let address = addresses.next_unused(&KeySource::Public(xpub), true).unwrap();
+    let address = addresses.next_unused(&KeySource::Public(xpub)).unwrap();
     let mut tx = Transaction::dummy(&address, 0..0, &[2_000_000]);
     tx.version = 3;
     tx.special_transaction_payload =

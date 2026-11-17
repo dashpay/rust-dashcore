@@ -41,7 +41,7 @@ fn bench_address_generation(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(batch_size), &batch_size, |b, &n| {
             b.iter_batched(
                 || pool.clone(),
-                |mut pool| black_box(pool.generate_addresses(n, &key_source, true).unwrap()),
+                |mut pool| black_box(pool.generate_addresses(n, &key_source).unwrap()),
                 BatchSize::SmallInput,
             );
         });

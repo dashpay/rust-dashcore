@@ -1000,20 +1000,17 @@ impl ManagedCoreFundsAccount {
                 };
 
                 // Check if voting_key_hash matches any of our address hashes
-                for (address, &addr_index) in &addresses.address_index {
-                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                for address_info in addresses.addresses().values() {
+                    if let Payload::PubkeyHash(addr_hash) = address_info.address.payload() {
                         if addr_hash == voting_key_hash {
-                            // Get the address info
-                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
-                                return Some(AccountMatch {
-                                    account_type_match: CoreAccountTypeMatch::ProviderVotingKeys {
-                                        involved_addresses: vec![address_info.clone()],
-                                    },
-                                    received: 0,
-                                    sent: 0,
-                                    received_for_credit_conversion: 0,
-                                });
-                            }
+                            return Some(AccountMatch {
+                                account_type_match: CoreAccountTypeMatch::ProviderVotingKeys {
+                                    involved_addresses: vec![address_info.clone()],
+                                },
+                                received: 0,
+                                sent: 0,
+                                received_for_credit_conversion: 0,
+                            });
                         }
                     }
                 }
@@ -1040,20 +1037,17 @@ impl ManagedCoreFundsAccount {
                 };
 
                 // Check if owner_key_hash matches any of our address hashes
-                for (address, &addr_index) in &addresses.address_index {
-                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                for address_info in addresses.addresses().values() {
+                    if let Payload::PubkeyHash(addr_hash) = address_info.address.payload() {
                         if addr_hash == owner_key_hash {
-                            // Get the address info
-                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
-                                return Some(AccountMatch {
-                                    account_type_match: CoreAccountTypeMatch::ProviderOwnerKeys {
-                                        involved_addresses: vec![address_info.clone()],
-                                    },
-                                    received: 0,
-                                    sent: 0,
-                                    received_for_credit_conversion: 0,
-                                });
-                            }
+                            return Some(AccountMatch {
+                                account_type_match: CoreAccountTypeMatch::ProviderOwnerKeys {
+                                    involved_addresses: vec![address_info.clone()],
+                                },
+                                received: 0,
+                                sent: 0,
+                                received_for_credit_conversion: 0,
+                            });
                         }
                     }
                 }
@@ -1085,7 +1079,7 @@ impl ManagedCoreFundsAccount {
                 };
 
                 // Check if operator_public_key matches any of our BLS public keys
-                for address_info in addresses.addresses.values() {
+                for address_info in addresses.addresses().values() {
                     if let Some(PublicKeyType::BLS(bls_key)) = &address_info.public_key {
                         let operator_key_bytes: &[u8; 48] = operator_public_key.as_ref();
                         if bls_key.len() == 48 && bls_key.as_slice() == operator_key_bytes {
@@ -1128,21 +1122,17 @@ impl ManagedCoreFundsAccount {
                     _ => return None,
                 };
 
-                for (address, &addr_index) in &addresses.address_index {
-                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                for address_info in addresses.addresses().values() {
+                    if let Payload::PubkeyHash(addr_hash) = address_info.address.payload() {
                         if *addr_hash.as_byte_array() == platform_node_id.to_byte_array() {
-                            // Get the address info
-                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
-                                return Some(AccountMatch {
-                                    account_type_match:
-                                        CoreAccountTypeMatch::ProviderPlatformKeys {
-                                            involved_addresses: vec![address_info.clone()],
-                                        },
-                                    received: 0,
-                                    sent: 0,
-                                    received_for_credit_conversion: 0,
-                                });
-                            }
+                            return Some(AccountMatch {
+                                account_type_match: CoreAccountTypeMatch::ProviderPlatformKeys {
+                                    involved_addresses: vec![address_info.clone()],
+                                },
+                                received: 0,
+                                sent: 0,
+                                received_for_credit_conversion: 0,
+                            });
                         }
                     }
                 }
@@ -1462,19 +1452,17 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                     _ => return None,
                 };
 
-                for (address, &addr_index) in &addresses.address_index {
-                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                for address_info in addresses.addresses().values() {
+                    if let Payload::PubkeyHash(addr_hash) = address_info.address.payload() {
                         if addr_hash == voting_key_hash {
-                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
-                                return Some(AccountMatch {
-                                    account_type_match: CoreAccountTypeMatch::ProviderVotingKeys {
-                                        involved_addresses: vec![address_info.clone()],
-                                    },
-                                    received: 0,
-                                    sent: 0,
-                                    received_for_credit_conversion: 0,
-                                });
-                            }
+                            return Some(AccountMatch {
+                                account_type_match: CoreAccountTypeMatch::ProviderVotingKeys {
+                                    involved_addresses: vec![address_info.clone()],
+                                },
+                                received: 0,
+                                sent: 0,
+                                received_for_credit_conversion: 0,
+                            });
                         }
                     }
                 }
@@ -1498,19 +1486,17 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                     _ => return None,
                 };
 
-                for (address, &addr_index) in &addresses.address_index {
-                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                for address_info in addresses.addresses().values() {
+                    if let Payload::PubkeyHash(addr_hash) = address_info.address.payload() {
                         if addr_hash == owner_key_hash {
-                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
-                                return Some(AccountMatch {
-                                    account_type_match: CoreAccountTypeMatch::ProviderOwnerKeys {
-                                        involved_addresses: vec![address_info.clone()],
-                                    },
-                                    received: 0,
-                                    sent: 0,
-                                    received_for_credit_conversion: 0,
-                                });
-                            }
+                            return Some(AccountMatch {
+                                account_type_match: CoreAccountTypeMatch::ProviderOwnerKeys {
+                                    involved_addresses: vec![address_info.clone()],
+                                },
+                                received: 0,
+                                sent: 0,
+                                received_for_credit_conversion: 0,
+                            });
                         }
                     }
                 }
@@ -1540,7 +1526,7 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                     _ => return None,
                 };
 
-                for address_info in addresses.addresses.values() {
+                for address_info in addresses.addresses().values() {
                     if let Some(PublicKeyType::BLS(bls_key)) = &address_info.public_key {
                         let operator_key_bytes: &[u8; 48] = operator_public_key.as_ref();
                         if bls_key.len() == 48 && bls_key.as_slice() == operator_key_bytes {
@@ -1583,20 +1569,17 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                     _ => return None,
                 };
 
-                for (address, &addr_index) in &addresses.address_index {
-                    if let Payload::PubkeyHash(addr_hash) = address.payload() {
+                for address_info in addresses.addresses().values() {
+                    if let Payload::PubkeyHash(addr_hash) = address_info.address.payload() {
                         if *addr_hash.as_byte_array() == platform_node_id.to_byte_array() {
-                            if let Some(address_info) = addresses.addresses.get(&addr_index) {
-                                return Some(AccountMatch {
-                                    account_type_match:
-                                        CoreAccountTypeMatch::ProviderPlatformKeys {
-                                            involved_addresses: vec![address_info.clone()],
-                                        },
-                                    received: 0,
-                                    sent: 0,
-                                    received_for_credit_conversion: 0,
-                                });
-                            }
+                            return Some(AccountMatch {
+                                account_type_match: CoreAccountTypeMatch::ProviderPlatformKeys {
+                                    involved_addresses: vec![address_info.clone()],
+                                },
+                                received: 0,
+                                sent: 0,
+                                received_for_credit_conversion: 0,
+                            });
                         }
                     }
                 }

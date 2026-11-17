@@ -4,7 +4,9 @@
 
 use dashcore::{Address, Amount, BlockHash, Transaction, Txid};
 use dashcore_rpc::json as rpc_json;
-use dashcore_rpc::{Auth, Client, RpcApi};
+use dashcore_rpc::jsonrpc::simple_http::SimpleHttpTransport;
+use dashcore_rpc::jsonrpc::{Client as JsonRpcClient, Error as JsonRpcError};
+use dashcore_rpc::{Auth, Client, Error as RpcError, RpcApi};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -154,6 +156,18 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_START_ATTEMPTS: usize = 3;
 /// Lines of debug.log quoted when dashd fails to start.
 const LOG_TAIL_LINES: usize = 40;
+/// Read/write timeout of the RPC clients `rpc_client_for_wallet` builds. Loading a large wallet
+/// under load can exceed `jsonrpc`'s 15 s default, after which `SimpleHttpTransport` re-sends it.
+const RPC_TIMEOUT: Duration = Duration::from_secs(120);
+const RPC_WALLET_NOT_FOUND: i32 = -18;
+const RPC_WALLET_ALREADY_LOADED: i32 = -35;
+
+fn rpc_error_code(error: &RpcError) -> Option<i32> {
+    match error {
+        RpcError::JsonRpc(JsonRpcError::Rpc(e)) => Some(e.code),
+        _ => None,
+    }
+}
 
 /// A node port that dashd's startup log says it could not bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -466,7 +480,7 @@ impl DashCoreNode {
     }
 
     /// Get an RPC client targeting a specific wallet.
-    fn rpc_client_for_wallet(&self, wallet_name: &str) -> Client {
+    pub(super) fn rpc_client_for_wallet(&self, wallet_name: &str) -> Client {
         let url = format!("http://127.0.0.1:{}/wallet/{}", self.config.rpc_port, wallet_name);
         let cookie_path = self.config.datadir.join("regtest/.cookie");
         assert!(
@@ -474,21 +488,31 @@ impl DashCoreNode {
             "RPC cookie file not found at {}. Is dashd running with this datadir?",
             cookie_path.display()
         );
-        let auth = Auth::CookieFile(cookie_path);
-        Client::new(&url, auth).expect("failed to create rpc client")
+        let cookie = fs::read_to_string(&cookie_path).expect("failed to read rpc cookie");
+        let transport = SimpleHttpTransport::builder()
+            .url(&url)
+            .expect("invalid rpc url")
+            .cookie_auth(cookie.trim())
+            .timeout(RPC_TIMEOUT)
+            .build();
+        Client::from_jsonrpc(JsonRpcClient::with_transport(transport))
     }
 
-    /// Load a wallet by name, creating it if it doesn't exist.
+    /// Load a wallet by name, creating it only if dashd reports it doesn't exist.
     pub fn ensure_wallet(&self, wallet_name: &str) {
         let client = self.rpc_client();
         match client.load_wallet(wallet_name) {
             Ok(_) => tracing::info!("Loaded wallet: {}", wallet_name),
-            Err(_) => {
+            Err(e) if rpc_error_code(&e) == Some(RPC_WALLET_ALREADY_LOADED) => {
+                tracing::info!("Wallet already loaded: {}", wallet_name)
+            }
+            Err(e) if rpc_error_code(&e) == Some(RPC_WALLET_NOT_FOUND) => {
                 client
                     .create_wallet(wallet_name, None, None, None, None)
                     .unwrap_or_else(|e| panic!("failed to create wallet '{}': {}", wallet_name, e));
                 tracing::info!("Created wallet: {}", wallet_name);
             }
+            Err(e) => panic!("failed to load wallet '{}': {}", wallet_name, e),
         }
     }
 

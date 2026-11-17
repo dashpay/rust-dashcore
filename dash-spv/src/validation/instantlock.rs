@@ -117,7 +117,7 @@ impl VerifiedInstantLock {
 
 /// The most inputs a valid InstantLock can carry, as Dash Core caps them.
 /// Its transaction fits in a block, and every input takes at least 41 bytes.
-const MAX_INSTANT_LOCK_INPUTS: usize = MAX_BLOCK_SIZE as usize / 41;
+pub(crate) const MAX_INSTANT_LOCK_INPUTS: usize = MAX_BLOCK_SIZE as usize / 41;
 
 /// Rejects malformed InstantLocks. Needs no quorum data, so it runs before a
 /// lock is looked up, queued or cached.

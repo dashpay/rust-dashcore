@@ -27,10 +27,10 @@ pub fn external_addresses(
     let pools = account.managed_account_type().address_pools();
     let live = pools
         .iter()
-        .find(|p| p.pool_type == AddressPoolType::External)
+        .find(|p| p.pool_type() == AddressPoolType::External)
         .unwrap_or_else(|| panic!("{account_type} External pool"));
     let pool = AddressPool::new(
-        live.base_path.clone(),
+        live.base_path().clone(),
         AddressPoolType::External,
         count,
         wallet.network,

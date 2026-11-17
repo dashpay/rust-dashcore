@@ -12,6 +12,8 @@ pub use chainlock::ChainLockValidator;
 pub use filter::{FilterValidationInput, FilterValidator};
 pub use header::BlockHeaderValidator;
 pub(crate) use instantlock::InstantLockStructureValidator;
+#[cfg(test)]
+pub(crate) use instantlock::MAX_INSTANT_LOCK_INPUTS;
 pub use instantlock::{InstantLockVerificationError, VerifiedInstantLock};
 pub use masternode_list::MasternodeListValidator;
 
