@@ -25,7 +25,7 @@ use super::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
 
 const MAGIC: [u8; 4] = *b"DMLE";
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 
 /// Bounds what a corrupt length prefix can make the decoder allocate up front:
 /// bincode claims `len * size_of::<T>()` against it before preallocating.
@@ -694,6 +694,9 @@ mod tests {
             &[&MAGIC[..], &[VERSION + 1], &bytes[MAGIC.len() + 1..]].concat()
         )
         .is_err());
+        // A version 2 snapshot can store a cycle with another cycle's quorums.
+        assert!(decode(Network::Mainnet, &[&MAGIC[..], &[2], &bytes[MAGIC.len() + 1..]].concat())
+            .is_err());
         assert!(decode(Network::Mainnet, &[&bytes[..], &[0]].concat()).is_err());
         assert!(decode(Network::Mainnet, &bytes[..bytes.len() / 2]).is_err());
 
