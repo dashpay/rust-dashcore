@@ -166,8 +166,6 @@ impl TransactionBuilder {
     ///
     /// A change address already set by [`set_change_address`](Self::set_change_address)
     /// wins: the funding account is only asked for one when the builder has none.
-    /// Deriving unconditionally would both discard the caller's choice and burn a
-    /// pool address, since `next_change_address` advances the pool state.
     pub fn add_funding(self, funds_acc: &mut ManagedCoreFundsAccount, acc: &Account) -> Self {
         self.fund_from(funds_acc, acc, true)
     }
@@ -240,7 +238,7 @@ impl TransactionBuilder {
         self.funding.push((funds_acc.reservations().clone(), owned));
         self.inputs.extend(candidates);
         if self.change_addr.is_none() {
-            self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub), true).ok();
+            self.change_addr = funds_acc.next_change_address(Some(&acc.account_xpub)).ok();
         }
         self
     }
@@ -332,7 +330,9 @@ impl TransactionBuilder {
     /// The builder must also be given a placeholder payload via
     /// [`Self::set_special_payload`]: the same variant with every
     /// selection-dependent field (inputs hash, payload signature) zeroed, so
-    /// coin selection prices the payload bytes into the fee. After selection
+    /// coin selection prices the payload bytes into the fee. A ProUpSharedRegTx
+    /// or ProDisTx placeholder must carry dummy signatures of the final count,
+    /// since its payload doesn't record how many it will carry. After selection
     /// reserves the chosen inputs, `finalize_payload` receives the unsigned
     /// transaction — inputs chosen and BIP-69 sorted, placeholder payload
     /// still attached — and returns the finalized payload, which replaces the
@@ -2003,12 +2003,6 @@ mod tests {
             builder.change_addr.as_ref(),
             Some(&explicit),
             "funding must not override a change address the caller chose"
-        );
-        // Nor may it burn a pool address to derive one it then discards.
-        let mut control = ManagedCoreFundsAccount::dummy_bip44();
-        assert_eq!(
-            funds.next_change_address(Some(&account.account_xpub), true).expect("change address"),
-            control.next_change_address(Some(&account.account_xpub), true).expect("change address"),
         );
     }
 

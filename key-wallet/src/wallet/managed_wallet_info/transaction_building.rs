@@ -823,7 +823,7 @@ mod tests {
             .standard_bip44_accounts
             .get_mut(&0)
             .unwrap()
-            .next_receive_address(Some(&account_xpub), true)
+            .next_receive_address(Some(&account_xpub))
             .unwrap();
 
         let utxo = Utxo {
@@ -942,7 +942,7 @@ mod tests {
             .standard_bip44_accounts
             .get_mut(&0)
             .unwrap()
-            .next_receive_address(Some(&mainnet_xpub), true)
+            .next_receive_address(Some(&mainnet_xpub))
             .unwrap();
         // Re-parse as NetworkUnchecked to hand to the builder.
         let mainnet_dest =
@@ -1002,8 +1002,8 @@ mod tests {
             ManagedAccountType::DashpayReceivingFunds {
                 addresses,
                 ..
-            } => addresses.next_unused(&KeySource::Public(account_xpub), true).unwrap(),
-            _ => account.next_receive_address(Some(&account_xpub), true).unwrap(),
+            } => addresses.next_unused(&KeySource::Public(account_xpub)).unwrap(),
+            _ => account.next_receive_address(Some(&account_xpub)).unwrap(),
         };
 
         let outpoint = OutPoint {

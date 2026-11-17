@@ -81,7 +81,7 @@ fn own_registration(ctx: &mut TestWalletContext, collateral: OutPoint, seed: u8)
         .managed_wallet
         .provider_owner_keys_managed_account_mut()
         .expect("provider owner keys account")
-        .next_address(None, true)
+        .next_address(None)
         .expect("owner address");
     let owner_key_hash = *owner.payload().as_pubkey_hash().expect("P2PKH owner address");
     Transaction::dummy_provider_registration(collateral, owner_key_hash, Vec::new(), seed)
