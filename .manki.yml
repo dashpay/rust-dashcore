@@ -4,7 +4,17 @@
 auto_review: true
 auto_approve: true
 
+# A call that a model refuses on safety grounds is sent to this model instead.
+models:
+  fallback: claude-sonnet-5-5
+
 review:
+  # Who reviews. A trivial change gets a quick check, a low-risk change one reader,
+  # and everything else Claude Opus and an OpenAI model side by side.
+  groups:
+    trivial: [claude-sonnet-5-5]
+    solo: [claude-opus-5-5]
+    full: [claude-opus-5-5, gpt-6.1-sol]
   examples:
     blocker:
       - "Changing the field order in a `consensus_encode` implementation changes the bytes on the wire, even when every test passes."
