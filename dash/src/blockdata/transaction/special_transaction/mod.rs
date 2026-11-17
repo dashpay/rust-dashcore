@@ -53,6 +53,7 @@ use crate::blockdata::transaction::special_transaction::provider_update_share::P
 use crate::blockdata::transaction::special_transaction::provider_update_shared_registrar::ProviderUpdateSharedRegistrarPayload;
 use crate::blockdata::transaction::special_transaction::quorum_commitment::QuorumCommitmentPayload;
 use crate::consensus::{Decodable, Encodable, encode};
+use crate::crypto::ecdsa::ECDSA_REC_SIG_LEN;
 use crate::hash_types::SpecialTransactionPayloadHash;
 use crate::io;
 
@@ -69,7 +70,8 @@ pub mod provider_update_share;
 pub mod provider_update_shared_registrar;
 pub mod quorum_commitment;
 
-/// Largest ECDSA signature a ProRegTx or ProUpRegTx payload is sized with before it is signed.
+/// Largest ECDSA signature a ProRegTx, ProUpRegTx or ProUpShareTx payload is sized with before
+/// it is signed.
 pub const MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE: usize = 75;
 
 /// An enum wrapper around various special transaction payloads.
@@ -194,16 +196,30 @@ impl TransactionPayload {
         }
     }
 
-    /// Upper bound of [`Self::size`] once signed. The ECDSA signature of a ProRegTx or
-    /// ProUpRegTx is counted at [`MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE`], since a fee is set before
-    /// the signature exists. Other payloads have fixed-size or no signatures.
+    /// Upper bound of [`Self::size`] once signed, since signatures commit to the inputs: a missing
+    /// ProRegTx, ProUpRegTx, ProUpShareTx or join signature counts at its largest. ProUpSharedRegTx
+    /// and ProDisTx don't record their signature count, so placeholders carry 65-byte dummies.
     pub fn max_signed_size(&self) -> usize {
-        let signature_len = match self {
-            ProviderRegistrationPayloadType(p) => p.signature.len(),
-            ProviderUpdateRegistrarPayloadType(p) => p.payload_sig.len(),
-            _ => return self.size(),
+        let missing = match self {
+            ProviderRegistrationPayloadType(p) => {
+                let missing_join_sigs = p
+                    .shared_collateral
+                    .as_ref()
+                    .map_or(0, |shared| shared.shares.len().saturating_sub(shared.join_sigs.len()));
+                MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE.saturating_sub(p.signature.len())
+                    + ECDSA_REC_SIG_LEN * missing_join_sigs
+            }
+            ProviderUpdateRegistrarPayloadType(ProviderUpdateRegistrarPayload {
+                payload_sig,
+                ..
+            })
+            | ProviderUpdateSharePayloadType(ProviderUpdateSharePayload {
+                payload_sig,
+                ..
+            }) => MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE.saturating_sub(payload_sig.len()),
+            _ => 0,
         };
-        self.size() + MAX_PAYLOAD_ECDSA_SIGNATURE_SIZE.saturating_sub(signature_len)
+        self.size() + missing
     }
 
     /// Convenience method that assumes the payload to be a provider registration payload to get it
