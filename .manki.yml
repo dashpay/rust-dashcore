@@ -10,11 +10,11 @@ models:
 
 review:
   # Who reviews. A trivial change gets a quick check, a low-risk change one reader,
-  # and everything else Claude Opus and an OpenAI model side by side.
+  # and everything else Claude Opus and Claude Sonnet side by side.
   groups:
     trivial: [claude-sonnet-5-5]
     solo: [claude-opus-5-5]
-    full: [claude-opus-5-5, gpt-6.1-sol]
+    full: [claude-opus-5-5, claude-sonnet-5-5]
   examples:
     blocker:
       - "Changing the field order in a `consensus_encode` implementation changes the bytes on the wire, even when every test passes."
