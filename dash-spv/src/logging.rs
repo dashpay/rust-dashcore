@@ -4,6 +4,7 @@
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use time::macros::format_description;
 use time::OffsetDateTime;
@@ -222,7 +223,16 @@ fn rotate_previous_log(log_dir: &Path) -> LoggingResult<()> {
 fn get_file_modification_time(path: &Path) -> Option<OffsetDateTime> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
-    Some(OffsetDateTime::from(modified))
+    utc_from_system_time(modified)
+}
+
+/// Converts `system_time` to UTC, or `None` when it is outside the range `time` supports.
+/// The `From` impl of `time` panics there, and a file mtime can hold any value.
+fn utc_from_system_time(system_time: SystemTime) -> Option<OffsetDateTime> {
+    match system_time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(after) => OffsetDateTime::UNIX_EPOCH.checked_add(after.try_into().ok()?),
+        Err(before) => OffsetDateTime::UNIX_EPOCH.checked_sub(before.duration().try_into().ok()?),
+    }
 }
 
 /// Delete oldest archived log files if count exceeds max_files.
@@ -268,6 +278,7 @@ fn cleanup_old_logs(log_dir: &Path, max_files: usize) -> LoggingResult<()> {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     #[test]
@@ -522,6 +533,18 @@ mod tests {
         // Should be recent (within last minute)
         let diff = OffsetDateTime::now_utc() - mtime.unwrap();
         assert!(diff.whole_seconds() < 60);
+    }
+
+    #[test]
+    fn test_utc_from_system_time_range() {
+        let epoch = SystemTime::UNIX_EPOCH;
+        let day = Duration::from_secs(86_400);
+        assert_eq!(utc_from_system_time(epoch), Some(OffsetDateTime::UNIX_EPOCH));
+        assert_eq!(utc_from_system_time(epoch - day), Some(OffsetDateTime::UNIX_EPOCH - day));
+
+        // About year 11476, past the year 9999 limit of `time` without `large-dates`.
+        let far_future = epoch.checked_add(Duration::from_secs(300_000_000_000)).unwrap();
+        assert_eq!(utc_from_system_time(far_future), None);
     }
 
     #[test]
