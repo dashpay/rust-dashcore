@@ -58,7 +58,7 @@ tracing-subscriber = { workspace = true, features = [
     "env-filter",
 ], optional = true }
 tracing-appender = { version = "0.2", optional = true }
-chrono = { workspace = true, features = ["default"], optional = true }
+time = { workspace = true, optional = true }
 
 # Utilities
 rand = { workspace = true }
@@ -119,7 +119,7 @@ path = "src/lib.rs"
 
 [features]
 cli = ["logging", "dep:clap", "tokio/rt-multi-thread", "tokio/signal"]
-logging = ["dep:chrono", "dep:tracing-appender", "dep:tracing-subscriber"]
+logging = ["dep:time", "dep:tracing-appender", "dep:tracing-subscriber"]
 test-utils = [
     "logging",
     "tokio/process",
