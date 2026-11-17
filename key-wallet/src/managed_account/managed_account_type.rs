@@ -1,6 +1,6 @@
 use crate::account::account_collection::{DashpayContactIdentityId, DashpayOurUserIdentityId};
 use crate::account::StandardAccountType;
-use crate::gap_limit::{
+use crate::managed_account::address_pool::{
     DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_DASHPAY_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT,
     DEFAULT_INTERNAL_GAP_LIMIT, DEFAULT_SPECIAL_GAP_LIMIT, DIP17_GAP_LIMIT,
 };

@@ -113,33 +113,6 @@ for (index, address) in addresses.iter().enumerate() {
 }
 ```
 
-### Address Generation with Gap Limit
-
-```rust
-use key_wallet::gap_limit::{GapLimit, GapLimitStage};
-
-// Create gap limit manager
-let gap_limit = GapLimit::new(20); // Standard gap limit of 20
-
-// Track address usage
-let mut stage = GapLimitStage::new();
-for i in 0..100 {
-    let address = account.derive_receive_address(i)?;
-    
-    // Check if address has been used (would come from blockchain scan)
-    let is_used = check_address_on_blockchain(&address);
-    
-    if is_used {
-        stage.mark_used(i);
-    }
-    
-    // Check if we've reached gap limit
-    if stage.should_stop(i, gap_limit.gap()) {
-        break;
-    }
-}
-```
-
 ### CoinJoin Account
 
 ```rust

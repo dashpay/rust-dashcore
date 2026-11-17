@@ -636,9 +636,8 @@ impl ManagedWalletInfo {
                 let managed_account = collection.standard_bip44_accounts.get_mut(&account_index)?;
                 let wallet_account = wallet.get_bip44_account(account_index)?;
 
-                let address = managed_account
-                    .next_change_address(Some(&wallet_account.account_xpub), true)
-                    .ok();
+                let address =
+                    managed_account.next_change_address(Some(&wallet_account.account_xpub)).ok();
 
                 if let (Some(address), true) = (&address, mark_as_used) {
                     managed_account.mark_address_used(address);
@@ -650,9 +649,8 @@ impl ManagedWalletInfo {
                 let managed_account = collection.standard_bip32_accounts.get_mut(&account_index)?;
                 let wallet_account = wallet.get_bip32_account(account_index)?;
 
-                let address = managed_account
-                    .next_change_address(Some(&wallet_account.account_xpub), true)
-                    .ok();
+                let address =
+                    managed_account.next_change_address(Some(&wallet_account.account_xpub)).ok();
 
                 if let (Some(address), true) = (&address, mark_as_used) {
                     managed_account.mark_address_used(address);
@@ -692,9 +690,8 @@ impl ManagedWalletInfo {
                 let managed_account = collection.standard_bip44_accounts.get_mut(&account_index)?;
                 let wallet_account = wallet.get_bip44_account(account_index)?;
 
-                let address = managed_account
-                    .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    .ok();
+                let address =
+                    managed_account.next_receive_address(Some(&wallet_account.account_xpub)).ok();
 
                 if let (Some(address), true) = (&address, mark_as_used) {
                     managed_account.mark_address_used(address);
@@ -706,9 +703,8 @@ impl ManagedWalletInfo {
                 let managed_account = collection.standard_bip32_accounts.get_mut(&account_index)?;
                 let wallet_account = wallet.get_bip32_account(account_index)?;
 
-                let address = managed_account
-                    .next_receive_address(Some(&wallet_account.account_xpub), true)
-                    .ok();
+                let address =
+                    managed_account.next_receive_address(Some(&wallet_account.account_xpub)).ok();
 
                 if let (Some(address), true) = (&address, mark_as_used) {
                     managed_account.mark_address_used(address);
