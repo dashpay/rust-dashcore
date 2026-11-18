@@ -1,36 +1,11 @@
-use std::collections::BTreeMap;
-
 use dashcore::bls_sig_utils::BlsScheme;
 use dashcore::sml::message_verification_error::MessageVerificationError;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{InstantLock, QuorumSigningRequestId};
 
 use crate::error::{ValidationError, ValidationResult};
-use crate::sml_engine::MasternodeListEngine;
-use crate::storage::BlockHeaderStorage;
+use crate::sml_engine::InstantSendCycle;
 use crate::validation::Validator;
-
-/// Verifies `instant_lock` against its cycle in `engine`: `Ok(true)` when it verifies,
-/// `Ok(false)` while the engine lacks the quorum data to decide.
-/// Fails when a complete cycle of the network's InstantSend quorum type refutes the lock.
-pub(crate) fn verify_against_cycle<H: BlockHeaderStorage>(
-    instant_lock: &InstantLock,
-    engine: &MasternodeListEngine<H>,
-) -> ValidationResult<bool> {
-    let Some(cycle) = engine.instant_send_cycle(&instant_lock.cyclehash) else {
-        return Ok(false);
-    };
-    match InstantLockValidator::new(cycle.quorums).validate_signature(instant_lock) {
-        Ok(()) => Ok(true),
-        Err(
-            MessageVerificationError::CycleHashNotPresent(_)
-            | MessageVerificationError::QuorumIndexNotFound(..),
-        ) => Ok(false),
-        // A later QRInfo can still replace the quorums of a partial cycle.
-        Err(_) if !cycle.complete => Ok(false),
-        Err(e) => Err(signature_error(e)),
-    }
-}
 
 /// Rejects malformed InstantLocks. Needs no quorum data, so it runs before a
 /// lock is looked up, queued or cached.
@@ -75,29 +50,31 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
 /// [`InstantLockStructureValidator`] first. Never accept InstantLocks from the
 /// network without both.
 ///
-/// A lock whose signature does not verify, or whose quorum is not in the
-/// cycle, fails with [`ValidationError::InvalidSignature`].
-pub struct InstantLockValidator<'a> {
-    /// The rotated quorums of the lock's cycle, by quorum index.
-    cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
+/// Missing quorum data defers validation. Only a complete cycle can refute a signature.
+pub(crate) struct InstantLockValidator<'a> {
+    cycle: InstantSendCycle<'a>,
 }
 
 impl Validator<&InstantLock> for InstantLockValidator<'_> {
     fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
-        self.validate_signature(instant_lock).map_err(signature_error)
+        match self.validate_signature(instant_lock) {
+            Ok(()) => Ok(()),
+            Err(
+                MessageVerificationError::CycleHashNotPresent(_)
+                | MessageVerificationError::QuorumIndexNotFound(..),
+            ) => Err(ValidationError::MissingQuorumData),
+            Err(_) if !self.cycle.complete => Err(ValidationError::MissingQuorumData),
+            Err(error) => Err(ValidationError::InvalidSignature(format!(
+                "InstantLock BLS signature verification failed: {error}"
+            ))),
+        }
     }
 }
 
-fn signature_error(error: MessageVerificationError) -> ValidationError {
-    ValidationError::InvalidSignature(format!(
-        "InstantLock BLS signature verification failed: {error}"
-    ))
-}
-
 impl<'a> InstantLockValidator<'a> {
-    pub fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
+    pub(crate) fn new(cycle: InstantSendCycle<'a>) -> Self {
         Self {
-            cycle_quorums,
+            cycle,
         }
     }
 
@@ -109,7 +86,7 @@ impl<'a> InstantLockValidator<'a> {
     ) -> Result<(&'a QualifiedQuorumEntry, QuorumSigningRequestId, u16), MessageVerificationError>
     {
         let cycle_hash = instant_lock.cyclehash;
-        let quorums = self.cycle_quorums;
+        let quorums = self.cycle.quorums;
         let llmq_type = quorums
             .values()
             .next()
@@ -119,8 +96,9 @@ impl<'a> InstantLockValidator<'a> {
 
         let request_id = instant_lock.request_id().map_err(|e| e.to_string())?;
         // `selectionHash.GetUint64(3)` and the index bits as Dash Core takes them.
-        let selection_hash_64 =
-            u64::from_le_bytes(request_id.to_byte_array()[24..32].try_into().unwrap());
+        let mut selection_bytes = [0; 8];
+        selection_bytes.copy_from_slice(&request_id.as_byte_array()[24..32]);
+        let selection_hash_64 = u64::from_le_bytes(selection_bytes);
         let n = llmq_type.active_quorum_count().ilog2();
         let quorum_index = (((1 << n) - 1) & (selection_hash_64 >> (64 - n - 1))) as u16;
 
@@ -164,9 +142,11 @@ impl<'a> InstantLockValidator<'a> {
 mod tests {
     use super::*;
     use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
+    use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::sml::llmq_type::LLMQType;
     use dashcore::QuorumHash;
     use hex_conservative::DisplayHex;
+    use std::collections::BTreeMap;
     use test_case::test_case;
 
     #[test]
@@ -189,11 +169,41 @@ mod tests {
     }
 
     #[test]
+    fn a_lock_without_its_quorum_is_not_refuted() {
+        let quorums = BTreeMap::new();
+        let result = InstantLockValidator::new(InstantSendCycle {
+            quorums: &quorums,
+            complete: false,
+        })
+        .validate(&mainnet_fixture_is_lock());
+        assert!(matches!(result, Err(ValidationError::MissingQuorumData)));
+    }
+
+    #[test_case(false; "partial cycle")]
+    #[test_case(true; "complete cycle")]
+    fn only_a_complete_cycle_refutes_a_signature(complete: bool) {
+        let engine = TestEngine::mainnet_fixture();
+        let mut lock = mainnet_fixture_is_lock();
+        let cycle = InstantSendCycle {
+            quorums: &engine.rotated_quorums_per_cycle()[&lock.cyclehash],
+            complete,
+        };
+        let validator = InstantLockValidator::new(cycle);
+        validator.validate(&lock).unwrap();
+        lock.signature = BLSSignature::from([1; 96]);
+        match validator.validate(&lock) {
+            Err(ValidationError::InvalidSignature(_)) if complete => {}
+            Err(ValidationError::MissingQuorumData) if !complete => {}
+            result => panic!("unexpected validation result: {result:?}"),
+        }
+    }
+
+    #[test]
     fn a_lock_verifies_against_the_quorum_its_request_id_selects() {
         let engine = TestEngine::mainnet_fixture();
         let lock = mainnet_fixture_is_lock();
         let validator =
-            InstantLockValidator::new(&engine.rotated_quorums_per_cycle()[&lock.cyclehash]);
+            InstantLockValidator::new(engine.instant_send_cycle(&lock.cyclehash).unwrap());
 
         let request_id = lock.request_id().expect("expected to make request id");
         assert_eq!(
@@ -223,7 +233,12 @@ mod tests {
         // Without its quorum index in the cycle, the lock cannot be resolved.
         let mut quorums = engine.rotated_quorums_per_cycle()[&lock.cyclehash].clone();
         quorums.remove(&23);
-        match InstantLockValidator::new(&quorums).signing_quorum(&lock) {
+        let validator = InstantLockValidator::new(InstantSendCycle {
+            quorums: &quorums,
+            complete: false,
+        });
+        assert!(matches!(validator.validate(&lock), Err(ValidationError::MissingQuorumData)));
+        match validator.signing_quorum(&lock) {
             Err(MessageVerificationError::QuorumIndexNotFound(23, hash)) => {
                 assert_eq!(hash, lock.cyclehash)
             }

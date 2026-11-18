@@ -13,9 +13,9 @@ use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::Txid;
 use tokio::sync::RwLock;
 
-use crate::error::SyncResult;
+use crate::error::{SyncResult, ValidationError};
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
-use crate::validation::{verify_against_cycle, InstantLockStructureValidator, Validator};
+use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Validator};
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -155,13 +155,18 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
         // Until the engine holds the lock's complete cycle, it may only lack its quorum
         // yet: the lock is kept pending. A lock its complete cycle refutes is not.
-        let result = verify_against_cycle(instantlock, &*self.engine.read().await);
+        let engine = self.engine.read().await;
+        let result = engine
+            .instant_send_cycle(&instantlock.cyclehash)
+            .ok_or(ValidationError::MissingQuorumData)
+            .and_then(|cycle| InstantLockValidator::new(cycle).validate(instantlock));
+        drop(engine);
         let validated = match result {
-            Ok(true) => {
+            Ok(()) => {
                 self.progress.add_valid(1);
                 true
             }
-            Ok(false) => {
+            Err(ValidationError::MissingQuorumData) => {
                 tracing::debug!("InstantLock for txid {} awaits quorum data", txid);
                 self.queue_pending(PendingInstantLock {
                     instant_lock: instantlock.clone(),
@@ -254,10 +259,15 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 continue;
             }
 
-            let result =
-                verify_against_cycle(&pending_lock.instant_lock, &*self.engine.read().await);
+            let engine = self.engine.read().await;
+            let lock = &pending_lock.instant_lock;
+            let result = engine
+                .instant_send_cycle(&lock.cyclehash)
+                .ok_or(ValidationError::MissingQuorumData)
+                .and_then(|cycle| InstantLockValidator::new(cycle).validate(lock));
+            drop(engine);
             match result {
-                Ok(true) => {
+                Ok(()) => {
                     self.progress.add_valid(1);
                     // Update the cached entry
                     if let Some(entry) = self.instantlocks.get_mut(&txid) {
@@ -269,7 +279,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                     });
                 }
                 // Still can't validate, re-queue
-                Ok(false) => self.queue_pending(pending_lock),
+                Err(ValidationError::MissingQuorumData) => self.queue_pending(pending_lock),
                 Err(_) => rejected += 1,
             }
         }
