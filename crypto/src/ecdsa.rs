@@ -176,8 +176,9 @@ impl EcdsaSecretKey {
     }
 
     /// Draws a random scalar from `rng`, as `secp256k1::SecretKey::new` does.
+    /// A seeded `rng` yields a secret key only when its seed is secret and has full entropy.
     #[cfg(feature = "rand")]
-    pub fn generate_with<R: rand::Rng + ?Sized>(rng: &mut R) -> Self {
+    pub fn generate_with<R: rand::Rng + rand::CryptoRng + ?Sized>(rng: &mut R) -> Self {
         Self(secp256k1::SecretKey::new(rng).into())
     }
 }
