@@ -178,7 +178,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             Err(e) => {
                 tracing::warn!("Refuted InstantLock for txid {}: {}", txid, e);
                 self.progress.add_invalid(1);
-                false
+                return Ok(vec![]);
             }
         };
 
@@ -280,7 +280,10 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 }
                 // Still can't validate, re-queue
                 Err(ValidationError::MissingQuorumData) => self.queue_pending(pending_lock),
-                Err(_) => rejected += 1,
+                Err(_) => {
+                    self.instantlocks.remove(&txid);
+                    rejected += 1;
+                }
             }
         }
 
@@ -524,9 +527,22 @@ mod tests {
         let mut forged = mainnet_fixture_is_lock();
         forged.signature = BLSSignature::from([1; 96]);
 
-        manager.process_instantlock(&forged).await.unwrap();
+        let events = manager.process_instantlock(&forged).await.unwrap();
+        assert!(events.is_empty(), "a refuted lock emits no event: {events:?}");
         assert_eq!(manager.pending_count(), 0);
         assert_eq!(manager.progress.invalid(), 1);
+
+        let events = manager.process_instantlock(&mainnet_fixture_is_lock()).await.unwrap();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::InstantLockReceived {
+                    validated: true,
+                    ..
+                }]
+            ),
+            "the genuine lock for the txid still gets in: {events:?}"
+        );
     }
 
     /// A pending lock refuted once its cycle completes is dropped on replay without
@@ -553,6 +569,18 @@ mod tests {
         assert_eq!(manager.progress.invalid(), 1);
         assert_eq!(manager.progress.valid(), 0);
         assert_eq!(manager.state(), SyncState::Synced);
+
+        let events = manager.process_instantlock(&mainnet_fixture_is_lock()).await.unwrap();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::InstantLockReceived {
+                    validated: true,
+                    ..
+                }]
+            ),
+            "the genuine lock for the txid still gets in: {events:?}"
+        );
     }
 
     #[tokio::test]
