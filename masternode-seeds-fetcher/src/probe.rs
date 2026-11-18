@@ -22,6 +22,7 @@ use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_network::VersionMessage;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
+use time::OffsetDateTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use x509_parser::prelude::FromDer;
@@ -58,7 +59,7 @@ async fn probe_core_inner(peer_addr: SocketAddr, network: DashNetwork) -> Result
 
     let version = VersionMessage::new(
         ServiceFlags::NONE,
-        chrono::Utc::now().timestamp(),
+        OffsetDateTime::now_utc().unix_timestamp(),
         Address::new(&peer_addr, ServiceFlags::NETWORK),
         Address::new(
             &SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)), 0),
@@ -241,7 +242,7 @@ fn classify_cert(chain: Option<&[CertificateDer<'_>]>) -> SslStatus {
         return SslStatus::Untrusted;
     }
     let not_after = leaf.tbs_certificate.validity.not_after;
-    let now = chrono::Utc::now().timestamp();
+    let now = OffsetDateTime::now_utc().unix_timestamp();
     if not_after.timestamp() < now {
         return SslStatus::Expired;
     }
