@@ -14,7 +14,7 @@ review:
   groups:
     trivial: [claude-sonnet-5-5]
     solo: [claude-opus-5-5]
-    full: [claude-opus-5-5, gpt-6.1-sol]
+    full: [claude-opus-5-5, gpt-6.2-sol]
   # A trial that runs until the Manki v7.7.0 release decides whether the sweep stays.
   sweep: warnings
   examples:
