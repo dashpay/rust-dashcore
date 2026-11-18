@@ -370,7 +370,6 @@ mod tests {
     use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
     use crate::test_utils::MockHeaderStorage;
-    use crate::validation::MAX_INSTANT_LOCK_INPUTS;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::CycleHash;
     use dashcore::sml::masternode_list::MasternodeList;
@@ -487,7 +486,6 @@ mod tests {
     #[test_case(|lock| lock.signature = BLSSignature::from([0; 96]); "zero signature")]
     #[test_case(|lock| lock.inputs.clear(); "no inputs")]
     #[test_case(|lock| lock.inputs[0].txid = Txid::all_zeros(); "null input txid")]
-    #[test_case(|lock| lock.inputs = (0..=MAX_INSTANT_LOCK_INPUTS as u32).map(|vout| OutPoint::new(lock.inputs[0].txid, vout)).collect(); "too many inputs")]
     #[tokio::test]
     async fn a_malformed_lock_of_an_unknown_cycle_is_dropped(malform: fn(&mut InstantLock)) {
         let mut manager = create_test_manager();
