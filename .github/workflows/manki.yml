@@ -29,8 +29,11 @@ jobs:
         with:
           node-version: '24'
       - name: Manki Review
-        uses: manki-review/manki@v7.6.2
+        uses: manki-review/manki@v7.6.3
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The repository variable MANKI_OPENAI_LOGIN picks the OpenAI login: `subscription` uses the
+          # ChatGPT login, anything else or unset the endpoint at MANKI_OPENAI_BASE_URL.
+          openai_oauth_token: ${{ vars.MANKI_OPENAI_LOGIN == 'subscription' && secrets.MANKI_OPENAI_OAUTH_TOKEN || '' }}
           openai_api_key: ${{ secrets.MANKI_OPENAI_API_KEY }}
-          openai_base_url: ${{ secrets.MANKI_OPENAI_BASE_URL }}
+          openai_base_url: ${{ vars.MANKI_OPENAI_LOGIN != 'subscription' && secrets.MANKI_OPENAI_BASE_URL || '' }}

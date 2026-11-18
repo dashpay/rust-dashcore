@@ -90,9 +90,7 @@ impl Reply {
             NetworkMessage::CFHeaders(m) => Reply::CfHeaders(m.stop_hash),
             NetworkMessage::Block(block) => Reply::Block(block.block_hash()),
             NetworkMessage::Tx(tx) => Reply::Tx(tx.txid()),
-            NetworkMessage::ISLock(lock) => Reply::InstantLock(InstantSendLockHash::from_raw_hash(
-                sha256d::Hash::hash(&encode::serialize(lock)),
-            )),
+            NetworkMessage::ISLock(lock) => Reply::InstantLock(lock.hash()),
             NetworkMessage::CLSig(lock) => Reply::ChainLock(ChainLockHash::from_raw_hash(
                 sha256d::Hash::hash(&encode::serialize(lock)),
             )),
