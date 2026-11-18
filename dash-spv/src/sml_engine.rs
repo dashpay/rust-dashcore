@@ -2712,6 +2712,87 @@ mod tests {
         );
     }
 
+    /// Only a cycle's own verified quorums fill its slots, and later QRInfo feeds complete it.
+    #[tokio::test]
+    async fn qr_info_completes_a_partial_cycle() {
+        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+        let cycle_key = served_cycle_key(&engine, &qr_info).await;
+        let cycle_height = engine.block_height(&cycle_key).unwrap();
+        let ty = engine.network().isd_llmq_type();
+        assert_eq!(ty.active_quorum_count(), 32);
+        let older = qr_info
+            .last_commitment_per_index
+            .iter()
+            .find(|quorum| quorum.quorum_index == Some(0))
+            .unwrap();
+        assert!(engine.rotated_quorum_cycle_base(older).await.unwrap().unwrap() < cycle_height);
+
+        let result = engine.feed_qr_info(qr_info).await.unwrap();
+        assert!(result.all_fully_verified());
+        assert_eq!(result.stored_cycle_height, Some(cycle_height));
+        assert_eq!(result.complete_cycle_height, None);
+        let cycle = engine.instant_send_cycle(&cycle_key).unwrap();
+        assert!(!cycle.complete);
+        assert_eq!(cycle.quorums.len(), 31);
+        assert!(!cycle.quorums.contains_key(&0));
+        for quorum in cycle.quorums.values() {
+            assert_eq!(
+                engine.rotated_quorum_cycle_base(&quorum.quorum_entry).await.unwrap(),
+                Some(cycle_height)
+            );
+        }
+        let mut lock = mainnet_fixture_is_lock();
+        lock.cyclehash = cycle_key;
+        lock.inputs[0].vout = 3;
+        lock.signature = BLSSignature::from([1; 96]);
+        assert_eq!(
+            (lock.request_id().unwrap().as_byte_array()[31] >> 2) & 31,
+            0,
+            "DIP-24 selects the missing slot"
+        );
+        assert!(matches!(
+            InstantLockValidator::new(cycle).validate(&lock),
+            Err(ValidationError::MissingQuorumData)
+        ));
+
+        let (mut engine, mut remaining) = load_qrinfo_2240504_fixture().await;
+        let cycle_key = served_cycle_key(&engine, &remaining).await;
+        let cycle_height = engine.block_height(&cycle_key).unwrap();
+        let expected = build_cycle_quorum_map(
+            remaining.last_commitment_per_index.iter().cloned().map(Into::into).collect(),
+            ty,
+        )
+        .unwrap();
+        let first = remaining.last_commitment_per_index.remove(0);
+        let mut partial = remaining.clone();
+        partial.last_commitment_per_index = vec![first.clone()];
+        let result = engine.feed_qr_info(partial).await.unwrap();
+        assert_eq!(result.stored_cycle_height, Some(cycle_height));
+        assert_eq!(result.complete_cycle_height, None);
+        let cycle = engine.instant_send_cycle(&cycle_key).unwrap();
+        assert!(!cycle.complete);
+        assert_eq!(cycle.quorums.len(), 1);
+        assert_eq!(cycle.quorums.values().next().unwrap().quorum_entry, first);
+        assert!(!fills_every_slot(cycle.quorums, ty));
+
+        let result = engine.feed_qr_info(remaining).await.unwrap();
+        assert!(!result.all_fully_verified());
+        assert_eq!(result.stored_cycle_height, Some(cycle_height));
+        assert_eq!(result.complete_cycle_height, Some(cycle_height));
+        let cycle = engine.instant_send_cycle(&cycle_key).unwrap();
+        assert!(cycle.complete);
+        assert!(fills_every_slot(cycle.quorums, ty));
+        assert_eq!(cycle.quorums.keys().collect::<Vec<_>>(), expected.keys().collect::<Vec<_>>());
+        for (index, quorum) in cycle.quorums {
+            assert_eq!(quorum.quorum_entry, expected[index].quorum_entry);
+        }
+        lock.cyclehash = cycle_key;
+        assert!(matches!(
+            InstantLockValidator::new(cycle).validate(&lock),
+            Err(ValidationError::InvalidSignature(_))
+        ));
+    }
+
     /// The storage gate must short-circuit with `Ok(None)` (and not write)
     /// when any input entry is not `Verified` or the target cycle is already
     /// fully `Verified`, and it only ever merges into a stored cycle.
