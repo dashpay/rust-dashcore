@@ -51,7 +51,7 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
 /// network without both.
 ///
 /// Missing quorum data defers validation. Only a complete cycle can refute a signature.
-pub(crate) struct InstantLockValidator<'a> {
+pub struct InstantLockValidator<'a> {
     cycle: InstantSendCycle<'a>,
 }
 
@@ -72,7 +72,8 @@ impl Validator<&InstantLock> for InstantLockValidator<'_> {
 }
 
 impl<'a> InstantLockValidator<'a> {
-    pub(crate) fn new(cycle: InstantSendCycle<'a>) -> Self {
+    /// Creates a validator for an InstantSend cycle.
+    pub fn new(cycle: InstantSendCycle<'a>) -> Self {
         Self {
             cycle,
         }
@@ -96,9 +97,8 @@ impl<'a> InstantLockValidator<'a> {
 
         let request_id = instant_lock.request_id().map_err(|e| e.to_string())?;
         // `selectionHash.GetUint64(3)` and the index bits as Dash Core takes them.
-        let mut selection_bytes = [0; 8];
-        selection_bytes.copy_from_slice(&request_id.as_byte_array()[24..32]);
-        let selection_hash_64 = u64::from_le_bytes(selection_bytes);
+        let selection_hash_64 =
+            u64::from_le_bytes(request_id.to_byte_array()[24..32].try_into().unwrap());
         let n = llmq_type.active_quorum_count().ilog2();
         let quorum_index = (((1 << n) - 1) & (selection_hash_64 >> (64 - n - 1))) as u16;
 

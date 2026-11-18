@@ -58,9 +58,9 @@ impl QRInfoFeedResult {
     }
 }
 
-/// A stored cycle whose quorums may sign this network's InstantSend locks.
+/// A stored InstantSend cycle and its completeness for the configured signing type.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct InstantSendCycle<'a> {
+pub struct InstantSendCycle<'a> {
     /// The cycle's quorums, by quorum index.
     pub(crate) quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
     /// Whether every slot holds a verified quorum of this cycle. No later QRInfo replaces
@@ -412,20 +412,18 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.masternode_lists.last_key_value().map(|(_, list)| list)
     }
 
-    /// The cycle `cycle_hash` when every quorum of it is verified and of a type that
-    /// signs this network's InstantSend locks.
-    pub(crate) fn instant_send_cycle(
+    /// The rotated quorums of the cycle `cycle_hash`, by quorum index.
+    pub fn rotated_quorums_of_cycle(
         &self,
         cycle_hash: &BlockHash,
-    ) -> Option<InstantSendCycle<'_>> {
+    ) -> Option<&BTreeMap<u16, QualifiedQuorumEntry>> {
+        self.rotated_quorums_per_cycle.get(cycle_hash)
+    }
+
+    /// Returns the stored cycle and whether it fills every configured signing slot.
+    pub fn instant_send_cycle(&self, cycle_hash: &BlockHash) -> Option<InstantSendCycle<'_>> {
         let quorums = self.rotated_quorums_per_cycle.get(cycle_hash)?;
         let configured = self.network.isd_llmq_type();
-        // A process-wide devnet override can be set after the cycle was stored.
-        if !self.reads_served_rotation_type()
-            && quorums.values().next()?.quorum_entry.llmq_type != configured
-        {
-            return None;
-        }
         let complete = fills_every_slot(quorums, configured);
         Some(InstantSendCycle {
             quorums,
@@ -746,27 +744,12 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .is_some_and(|existing| fills_every_slot(existing, isd_type))
     }
 
-    /// Keeps cycles of one eligible signing type whose verified quorums are held by
-    /// one restored list with the same entry hashes.
+    /// Keeps the restored cycles whose quorums are all `Verified` and held by
+    /// one restored list with the same entry hash.
     fn retain_listed_cycles(&mut self) {
         let lists = &self.masternode_lists;
-        let configured = self.network.isd_llmq_type();
-        let reads_served_type = self.reads_served_rotation_type();
         self.rotated_quorums_per_cycle.retain(|_, cycle| {
-            let Some(first) = cycle.values().next() else {
-                return false;
-            };
-            let llmq_type = first.quorum_entry.llmq_type;
-            let eligible = if reads_served_type {
-                llmq_type.is_rotating_quorum_type()
-            } else {
-                llmq_type == configured
-            };
-            eligible
-                && cycle.values().all(|stored| {
-                    stored.verified == LLMQEntryVerificationStatus::Verified
-                        && stored.quorum_entry.llmq_type == llmq_type
-                })
+            cycle.values().all(|stored| stored.verified == LLMQEntryVerificationStatus::Verified)
                 && lists.values().any(|list| {
                     cycle.values().all(|stored| {
                         list.quorums
@@ -863,7 +846,6 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// rotating type the peer serves.
     fn rotation_quorum_type(&self, served: &[QuorumEntry]) -> LLMQType {
         let configured = self.network.isd_llmq_type();
-        // A process-wide devnet override can be set after the cycle was stored.
         if !self.reads_served_rotation_type() {
             return configured;
         }
@@ -1481,7 +1463,7 @@ mod tests {
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
     use crate::validation::{InstantLockValidator, MasternodeListValidator, Validator};
-    use bincode::{config, decode_from_slice, encode_to_vec, Decode};
+    use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
     use dashcore::hash_types::QuorumVVecHash;
@@ -1492,8 +1474,8 @@ mod tests {
     use dashcore::sml::llmq_entry_verification::{
         LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
     };
+    use dashcore::sml::llmq_type::devnet_isd_type_override;
     use dashcore::sml::llmq_type::network::NetworkLLMQExt;
-    use dashcore::sml::llmq_type::{devnet_isd_type_override, set_devnet_isd_type};
     use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::sml::masternode_list_entry::MasternodeListEntry;
@@ -1506,8 +1488,6 @@ mod tests {
     use dashcore::transaction::special_transaction::TransactionPayload;
     use dashcore::{BlockHash, Network, QuorumHash, Transaction};
     use std::collections::{BTreeMap, BTreeSet};
-    use std::env;
-    use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -1733,52 +1713,6 @@ mod tests {
             )),
         );
         (engine, qr_info)
-    }
-
-    fn snapshot_with_network(bytes: &[u8], network: Network) -> Vec<u8> {
-        let ((magic, version, _), prefix_len): (([u8; 4], u8, Network), usize) =
-            decode_from_slice(bytes, config::standard()).unwrap();
-        let mut snapshot = encode_to_vec((magic, version, network), config::standard()).unwrap();
-        snapshot.extend_from_slice(&bytes[prefix_len..]);
-        snapshot
-    }
-
-    #[tokio::test]
-    async fn restored_cycles_must_match_the_configured_signing_type() {
-        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
-        engine.feed_qr_info(qr_info).await.unwrap();
-        // A different network tag models reopening with a different configured IS type.
-        let bytes = snapshot_with_network(&engine.snapshot().unwrap(), Network::Regtest);
-        let restored =
-            TestEngine::from_snapshot(Network::Regtest, engine.headers(), &bytes).unwrap();
-        assert!(!restored.masternode_lists.is_empty());
-        assert!(restored.rotated_quorums_per_cycle().is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_devnet_override_rejects_previously_eligible_cycles() {
-        const CHILD: &str = "DASH_SPV_TEST_DEVNET_OVERRIDE";
-        if env::var_os(CHILD).is_none() {
-            // Routing overrides are process-wide OnceLocks.
-            let status = Command::new(env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "sml_engine::tests::a_devnet_override_rejects_previously_eligible_cycles",
-                ])
-                .env(CHILD, "1")
-                .status()
-                .unwrap();
-            assert!(status.success());
-            return;
-        }
-        let (mut source, qr_info) = load_qrinfo_2518986_fixture();
-        source.feed_qr_info(qr_info).await.unwrap();
-        let cycle_hash = source.block_hash_at(2518848).unwrap();
-        let bytes = snapshot_with_network(&source.snapshot().unwrap(), Network::Devnet);
-        let engine = TestEngine::from_snapshot(Network::Devnet, source.headers(), &bytes).unwrap();
-        assert!(engine.instant_send_cycle(&cycle_hash).is_some());
-        set_devnet_isd_type(LLMQType::LlmqtypeDevnetDIP0024).unwrap();
-        assert!(engine.instant_send_cycle(&cycle_hash).is_none());
     }
 
     /// A restart keeps both cycles the QRInfo stored, the previous one without
