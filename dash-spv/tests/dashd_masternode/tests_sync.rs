@@ -215,7 +215,7 @@ async fn test_masternode_list_sync_with_restart() {
     {
         let engine = client_handle.engine.read().await;
         assert!(
-            engine.rotated_quorums_per_cycle().contains_key(&lock.cyclehash),
+            engine.rotated_quorums_of_cycle(&lock.cyclehash).is_some(),
             "the lock is accepted against a stored cycle"
         );
         assert_all_rotated_quorums_verified(&engine);

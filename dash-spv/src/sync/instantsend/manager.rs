@@ -13,7 +13,7 @@ use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::Txid;
 use tokio::sync::RwLock;
 
-use crate::error::{SyncResult, ValidationError};
+use crate::error::{SyncResult, ValidationError, ValidationResult};
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
 use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Validator};
 
@@ -153,15 +153,8 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             return Ok(vec![]);
         }
 
-        // Until the engine holds the lock's complete cycle, it may only lack its quorum
-        // yet: the lock is kept pending. A lock its complete cycle refutes is not.
-        let engine = self.engine.read().await;
-        let result = engine
-            .instant_send_cycle(&instantlock.cyclehash)
-            .ok_or(ValidationError::MissingQuorumData)
-            .and_then(|cycle| InstantLockValidator::new(cycle).validate(instantlock));
-        drop(engine);
-        let validated = match result {
+        // A lock stays pending until its cycle is complete; only a complete cycle can refute it.
+        let validated = match self.verify(instantlock).await {
             Ok(()) => {
                 self.progress.add_valid(1);
                 true
@@ -193,6 +186,16 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             instant_lock: instantlock.clone(),
             validated,
         }])
+    }
+
+    /// Verifies `lock` against its stored cycle.
+    async fn verify(&self, lock: &InstantLock) -> ValidationResult<()> {
+        self.engine
+            .read()
+            .await
+            .instant_send_cycle(&lock.cyclehash)
+            .ok_or(ValidationError::MissingQuorumData)
+            .and_then(|cycle| InstantLockValidator::new(cycle).validate(lock))
     }
 
     /// Queue an InstantLock for later validation.
@@ -259,14 +262,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 continue;
             }
 
-            let engine = self.engine.read().await;
-            let lock = &pending_lock.instant_lock;
-            let result = engine
-                .instant_send_cycle(&lock.cyclehash)
-                .ok_or(ValidationError::MissingQuorumData)
-                .and_then(|cycle| InstantLockValidator::new(cycle).validate(lock));
-            drop(engine);
-            match result {
+            match self.verify(&pending_lock.instant_lock).await {
                 Ok(()) => {
                     self.progress.add_valid(1);
                     // Update the cached entry
