@@ -452,6 +452,15 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         })
     }
 
+    #[cfg(feature = "test-utils")]
+    pub(crate) fn install_test_instant_lock_cycle(
+        &mut self,
+        cycle: BlockHash,
+        quorums: BTreeMap<u16, QualifiedQuorumEntry>,
+    ) {
+        self.rotated_quorums_per_cycle.insert(cycle, quorums);
+    }
+
     #[cfg(any(test, feature = "test-utils"))]
     pub fn rotated_quorums_per_cycle(
         &self,
@@ -1482,7 +1491,7 @@ mod tests {
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
-    use crate::validation::{verify_against_cycle, MasternodeListValidator};
+    use crate::validation::{MasternodeListValidator, VerifiedInstantLock};
     use bincode::{config, decode_from_slice, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
@@ -1945,7 +1954,7 @@ mod tests {
         // a lock of it that does not verify is deferred, not refuted.
         let mut lock = mainnet_fixture_is_lock();
         lock.cyclehash = cycle_hash;
-        assert!(matches!(verify_against_cycle(&lock, &engine), Ok(false)));
+        assert!(matches!(VerifiedInstantLock::verify(&lock, Some(&engine)), Ok(None)));
 
         // The list at h holds the same previous-cycle quorums and must agree
         // with the stored cycle instead of reading them as skipped.
