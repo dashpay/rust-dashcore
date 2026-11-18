@@ -246,11 +246,11 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         // `tick` knows not to re-run until the engine advances past it.
         let engine_height = self.engine_height().await;
 
-        let pending = std::mem::take(&mut self.pending_instantlocks);
+        let mut pending = std::mem::take(&mut self.pending_instantlocks).into_iter();
         let mut events = Vec::new();
         let mut rejected = 0;
 
-        for pending_lock in pending {
+        while let Some(pending_lock) = pending.next() {
             let txid = pending_lock.instant_lock.txid;
 
             // Drop locks that have been awaiting quorum data for too long.
@@ -281,8 +281,15 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 // Still can't validate, re-queue
                 Err(ValidationError::MissingQuorumData) => self.queue_pending(pending_lock),
                 Err(_) => {
-                    // A validated entry belongs to the genuine lock that arrived after eviction.
-                    if self.instantlocks.get(&txid).is_some_and(|entry| !entry.validated) {
+                    // After eviction, the cache entry may belong to a later lock for the same txid.
+                    let owned_by_other = pending
+                        .as_slice()
+                        .iter()
+                        .chain(&self.pending_instantlocks)
+                        .any(|other| other.instant_lock.txid == txid);
+                    if !owned_by_other
+                        && self.instantlocks.get(&txid).is_some_and(|entry| !entry.validated)
+                    {
                         self.instantlocks.remove(&txid);
                     }
                     rejected += 1;
@@ -584,6 +591,30 @@ mod tests {
             ),
             "the genuine lock for the txid still gets in: {events:?}"
         );
+    }
+
+    /// Refuting a pending lock keeps the cache entry of a later pending lock for the
+    /// same txid, so the later lock is reported once.
+    #[tokio::test]
+    async fn refuting_a_lock_keeps_the_entry_of_a_later_lock_for_its_txid() {
+        let mut manager =
+            InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(Network::Mainnet))));
+        let genuine = mainnet_fixture_is_lock();
+        let mut forged = genuine.clone();
+        forged.signature = BLSSignature::from([1; 96]);
+        manager.process_instantlock(&forged).await.unwrap();
+        // Cache eviction drops the forged lock's entry while it stays pending.
+        manager.instantlocks.remove(&genuine.txid);
+        manager.process_instantlock(&genuine).await.unwrap();
+        assert_eq!(manager.pending_count(), 2);
+
+        *manager.engine.write().await = TestEngine::mainnet_fixture();
+        let events = manager.validate_pending(Instant::now()).await.unwrap();
+        assert_eq!(events.len(), 1, "only the genuine lock is reported: {events:?}");
+        assert!(manager.instantlocks.get(&genuine.txid).is_some_and(|entry| entry.validated));
+
+        let events = manager.process_instantlock(&genuine).await.unwrap();
+        assert!(events.is_empty(), "a re-announced lock is reported once: {events:?}");
     }
 
     #[tokio::test]
