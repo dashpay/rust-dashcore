@@ -121,12 +121,9 @@ pub enum SyncEvent {
     MasternodeStateUpdated {
         /// New masternode state height
         height: u32,
-        /// QRInfo processing result when this update came through the
-        /// QuorumValidation pipeline. `None` for Incremental (MnListDiff-only)
-        /// updates. `result.stored_cycle_height` is the rotation cycle this
-        /// update stored quorums of. That cycle can lack a slot even when
-        /// `result.all_fully_verified()`: a served quorum of an older cycle is
-        /// not stored in it.
+        /// QRInfo processing result, or `None` for a list-only update.
+        /// `stored_cycle_height` can describe a partial cycle; `complete_cycle_height`
+        /// reports when the engine holds every configured signing slot.
         qr_info_result: Option<QRInfoFeedResult>,
     },
 

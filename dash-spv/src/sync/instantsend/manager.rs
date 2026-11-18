@@ -13,9 +13,9 @@ use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::Txid;
 use tokio::sync::RwLock;
 
-use crate::error::SyncResult;
+use crate::error::{SyncResult, ValidationError};
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
-use crate::validation::{verify_against_cycle, InstantLockStructureValidator, Validator};
+use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Validator};
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -155,13 +155,18 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
         // Until the engine holds the lock's complete cycle, it may only lack its quorum
         // yet: the lock is kept pending. A lock its complete cycle refutes is not.
-        let result = verify_against_cycle(instantlock, &*self.engine.read().await);
+        let engine = self.engine.read().await;
+        let result = engine
+            .instant_send_cycle(&instantlock.cyclehash)
+            .ok_or(ValidationError::MissingQuorumData)
+            .and_then(|cycle| InstantLockValidator::new(cycle).validate(instantlock));
+        drop(engine);
         let validated = match result {
-            Ok(true) => {
+            Ok(()) => {
                 self.progress.add_valid(1);
                 true
             }
-            Ok(false) => {
+            Err(ValidationError::MissingQuorumData) => {
                 tracing::debug!("InstantLock for txid {} awaits quorum data", txid);
                 self.queue_pending(PendingInstantLock {
                     instant_lock: instantlock.clone(),
@@ -173,7 +178,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             Err(e) => {
                 tracing::warn!("Refuted InstantLock for txid {}: {}", txid, e);
                 self.progress.add_invalid(1);
-                false
+                return Ok(vec![]);
             }
         };
 
@@ -254,10 +259,15 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 continue;
             }
 
-            let result =
-                verify_against_cycle(&pending_lock.instant_lock, &*self.engine.read().await);
+            let engine = self.engine.read().await;
+            let lock = &pending_lock.instant_lock;
+            let result = engine
+                .instant_send_cycle(&lock.cyclehash)
+                .ok_or(ValidationError::MissingQuorumData)
+                .and_then(|cycle| InstantLockValidator::new(cycle).validate(lock));
+            drop(engine);
             match result {
-                Ok(true) => {
+                Ok(()) => {
                     self.progress.add_valid(1);
                     // Update the cached entry
                     if let Some(entry) = self.instantlocks.get_mut(&txid) {
@@ -269,8 +279,11 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                     });
                 }
                 // Still can't validate, re-queue
-                Ok(false) => self.queue_pending(pending_lock),
-                Err(_) => rejected += 1,
+                Err(ValidationError::MissingQuorumData) => self.queue_pending(pending_lock),
+                Err(_) => {
+                    self.instantlocks.remove(&txid);
+                    rejected += 1;
+                }
             }
         }
 
@@ -514,9 +527,22 @@ mod tests {
         let mut forged = mainnet_fixture_is_lock();
         forged.signature = BLSSignature::from([1; 96]);
 
-        manager.process_instantlock(&forged).await.unwrap();
+        let events = manager.process_instantlock(&forged).await.unwrap();
+        assert!(events.is_empty(), "a refuted lock emits no event: {events:?}");
         assert_eq!(manager.pending_count(), 0);
         assert_eq!(manager.progress.invalid(), 1);
+
+        let events = manager.process_instantlock(&mainnet_fixture_is_lock()).await.unwrap();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::InstantLockReceived {
+                    validated: true,
+                    ..
+                }]
+            ),
+            "the genuine lock for the txid still gets in: {events:?}"
+        );
     }
 
     /// A pending lock refuted once its cycle completes is dropped on replay without
@@ -543,6 +569,18 @@ mod tests {
         assert_eq!(manager.progress.invalid(), 1);
         assert_eq!(manager.progress.valid(), 0);
         assert_eq!(manager.state(), SyncState::Synced);
+
+        let events = manager.process_instantlock(&mainnet_fixture_is_lock()).await.unwrap();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [SyncEvent::InstantLockReceived {
+                    validated: true,
+                    ..
+                }]
+            ),
+            "the genuine lock for the txid still gets in: {events:?}"
+        );
     }
 
     #[tokio::test]

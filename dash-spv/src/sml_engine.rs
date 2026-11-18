@@ -44,6 +44,8 @@ pub struct QRInfoFeedResult {
     pub fully_verified_count: usize,
     /// Height of the cycle this call stored, `None` when it stored none.
     pub stored_cycle_height: Option<CoreBlockHeight>,
+    /// Height of the served cycle when the engine holds every configured signing slot.
+    pub complete_cycle_height: Option<CoreBlockHeight>,
 }
 
 impl QRInfoFeedResult {
@@ -73,30 +75,6 @@ fn fills_every_slot(quorums: &BTreeMap<u16, QualifiedQuorumEntry>, isd_type: LLM
             quorum.verified == LLMQEntryVerificationStatus::Verified
                 && quorum.quorum_entry.llmq_type == isd_type
         })
-}
-
-/// Whether a stored cycle is complete, or `None` when one of its quorums is unverified or
-/// cannot sign IS locks: of type `isd_type`, or any rotating type when `reads_served_type`.
-/// Storage stops merging into a cycle only once it fills every slot of `isd_type`.
-fn instant_send_cycle_completeness(
-    quorums: &BTreeMap<u16, QualifiedQuorumEntry>,
-    isd_type: LLMQType,
-    reads_served_type: bool,
-) -> Option<bool> {
-    let signs = |llmq_type: LLMQType| {
-        if reads_served_type {
-            llmq_type.is_rotating_quorum_type()
-        } else {
-            llmq_type == isd_type
-        }
-    };
-    if quorums.values().any(|quorum| {
-        quorum.verified != LLMQEntryVerificationStatus::Verified
-            || !signs(quorum.quorum_entry.llmq_type)
-    }) {
-        return None;
-    }
-    Some(fills_every_slot(quorums, isd_type))
 }
 
 /// Why the engine did not take a diff or a QRInfo.
@@ -441,11 +419,14 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         cycle_hash: &BlockHash,
     ) -> Option<InstantSendCycle<'_>> {
         let quorums = self.rotated_quorums_per_cycle.get(cycle_hash)?;
-        let complete = instant_send_cycle_completeness(
-            quorums,
-            self.network.isd_llmq_type(),
-            self.reads_served_rotation_type(),
-        )?;
+        let configured = self.network.isd_llmq_type();
+        // A process-wide devnet override can be set after the cycle was stored.
+        if !self.reads_served_rotation_type()
+            && quorums.values().next()?.quorum_entry.llmq_type != configured
+        {
+            return None;
+        }
+        let complete = fills_every_slot(quorums, configured);
         Some(InstantSendCycle {
             quorums,
             complete,
@@ -765,12 +746,27 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             .is_some_and(|existing| fills_every_slot(existing, isd_type))
     }
 
-    /// Keeps the restored cycles whose quorums are all `Verified` and held by
-    /// one restored list with the same entry hash.
+    /// Keeps cycles of one eligible signing type whose verified quorums are held by
+    /// one restored list with the same entry hashes.
     fn retain_listed_cycles(&mut self) {
         let lists = &self.masternode_lists;
+        let configured = self.network.isd_llmq_type();
+        let reads_served_type = self.reads_served_rotation_type();
         self.rotated_quorums_per_cycle.retain(|_, cycle| {
-            cycle.values().all(|stored| stored.verified == LLMQEntryVerificationStatus::Verified)
+            let Some(first) = cycle.values().next() else {
+                return false;
+            };
+            let llmq_type = first.quorum_entry.llmq_type;
+            let eligible = if reads_served_type {
+                llmq_type.is_rotating_quorum_type()
+            } else {
+                llmq_type == configured
+            };
+            eligible
+                && cycle.values().all(|stored| {
+                    stored.verified == LLMQEntryVerificationStatus::Verified
+                        && stored.quorum_entry.llmq_type == llmq_type
+                })
                 && lists.values().any(|list| {
                     cycle.values().all(|stored| {
                         list.quorums
@@ -784,19 +780,15 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         });
     }
 
-    /// Merges the active set's quorums of the cycle `cycle_key` into it while the cycle is
-    /// not complete and every served quorum is `Verified`, returning the cycle's height
-    /// when it stored any. IS locks are verified against these cycles only.
+    /// Merges verified quorums of `cycle_key` and `rotation_quorum_type` into an incomplete
+    /// cycle, returning its height when any are stored.
     async fn store_cycle_if_fully_verified(
         &mut self,
         cycle_key: BlockHash,
         qualified_last_commitment_per_index: Vec<QualifiedQuorumEntry>,
         rotation_quorum_type: LLMQType,
     ) -> Result<Option<CoreBlockHeight>, FeedError<QuorumValidationError>> {
-        let all_entries_verified = qualified_last_commitment_per_index
-            .iter()
-            .all(|q| q.verified == LLMQEntryVerificationStatus::Verified);
-        if !all_entries_verified || self.is_cycle_fully_verified(&cycle_key) {
+        if self.is_cycle_fully_verified(&cycle_key) {
             return Ok(None);
         }
         let Some(height) = self.height_of(&cycle_key).await? else {
@@ -809,14 +801,19 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         // with its own cycle, so it never verifies a lock of this one.
         let mut own_quorums = BTreeMap::new();
         for (index, quorum) in cycle_map {
-            if self.rotated_quorum_cycle_base(&quorum.quorum_entry).await? == Some(height) {
+            if quorum.quorum_entry.llmq_type == rotation_quorum_type
+                && quorum.verified == LLMQEntryVerificationStatus::Verified
+                && self.rotated_quorum_cycle_base(&quorum.quorum_entry).await? == Some(height)
+            {
                 own_quorums.insert(index, quorum);
             }
         }
         if own_quorums.is_empty() {
             return Ok(None);
         }
-        self.rotated_quorums_per_cycle.entry(cycle_key).or_default().extend(own_quorums);
+        let stored = self.rotated_quorums_per_cycle.entry(cycle_key).or_default();
+        stored.retain(|_, quorum| quorum.quorum_entry.llmq_type == rotation_quorum_type);
+        stored.extend(own_quorums);
         Ok(Some(height))
     }
 
@@ -866,6 +863,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
     /// rotating type the peer serves.
     fn rotation_quorum_type(&self, served: &[QuorumEntry]) -> LLMQType {
         let configured = self.network.isd_llmq_type();
+        // A process-wide devnet override can be set after the cycle was stored.
         if !self.reads_served_rotation_type() {
             return configured;
         }
@@ -1046,12 +1044,17 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             None => None,
         };
 
+        let complete_cycle_height = match cycle_key {
+            Some(key) if self.is_cycle_fully_verified(&key) => self.height_of(&key).await?,
+            _ => None,
+        };
         self.verify_newest_quorums().await;
         Ok(QRInfoFeedResult {
             rotated_quorum_count,
             expected_rotated_quorum_count: rotation_quorum_type.active_quorum_count() as usize,
             fully_verified_count,
             stored_cycle_height,
+            complete_cycle_height,
         })
     }
 
@@ -1473,17 +1476,14 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::{fixture_heights, mainnet_fixture_is_lock, quorum_entry, TestEngine};
-    use super::{
-        build_cycle_quorum_map, fills_every_slot, instant_send_cycle_completeness,
-        valid_coinbase_chain_lock,
-    };
+    use super::{build_cycle_quorum_map, fills_every_slot, valid_coinbase_chain_lock};
     use super::{FeedError, MasternodeListEngine, QRInfoFeedResult};
-    use crate::error::{StorageError, StorageResult};
+    use crate::error::{StorageError, StorageResult, ValidationError};
     use crate::storage::{BlockHeaderStorage, BlockHeaderTip};
     use crate::test_utils::MockHeaderStorage;
     use crate::types::HashedBlockHeader;
-    use crate::validation::{verify_against_cycle, MasternodeListValidator};
-    use bincode::{config, decode_from_slice, Decode};
+    use crate::validation::{InstantLockValidator, MasternodeListValidator, Validator};
+    use bincode::{config, decode_from_slice, encode_to_vec, Decode};
     use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature};
     use dashcore::consensus::deserialize;
     use dashcore::hash_types::QuorumVVecHash;
@@ -1494,8 +1494,8 @@ mod tests {
     use dashcore::sml::llmq_entry_verification::{
         LLMQEntryVerificationSkipStatus, LLMQEntryVerificationStatus,
     };
-    use dashcore::sml::llmq_type::devnet_isd_type_override;
     use dashcore::sml::llmq_type::network::NetworkLLMQExt;
+    use dashcore::sml::llmq_type::{devnet_isd_type_override, set_devnet_isd_type};
     use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
     use dashcore::sml::masternode_list::MasternodeList;
     use dashcore::sml::masternode_list_entry::MasternodeListEntry;
@@ -1508,6 +1508,8 @@ mod tests {
     use dashcore::transaction::special_transaction::TransactionPayload;
     use dashcore::{BlockHash, Network, QuorumHash, Transaction};
     use std::collections::{BTreeMap, BTreeSet};
+    use std::env;
+    use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -1734,6 +1736,52 @@ mod tests {
         (engine, qr_info)
     }
 
+    fn snapshot_with_network(bytes: &[u8], network: Network) -> Vec<u8> {
+        let ((magic, version, _), prefix_len): (([u8; 4], u8, Network), usize) =
+            decode_from_slice(bytes, config::standard()).unwrap();
+        let mut snapshot = encode_to_vec((magic, version, network), config::standard()).unwrap();
+        snapshot.extend_from_slice(&bytes[prefix_len..]);
+        snapshot
+    }
+
+    #[tokio::test]
+    async fn restored_cycles_must_match_the_configured_signing_type() {
+        let (mut engine, qr_info) = load_qrinfo_2518986_fixture();
+        engine.feed_qr_info(qr_info).await.unwrap();
+        // A different network tag models reopening with a different configured IS type.
+        let bytes = snapshot_with_network(&engine.snapshot().unwrap(), Network::Regtest);
+        let restored =
+            TestEngine::from_snapshot(Network::Regtest, engine.headers(), &bytes).unwrap();
+        assert!(!restored.masternode_lists.is_empty());
+        assert!(restored.rotated_quorums_per_cycle().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_devnet_override_rejects_previously_eligible_cycles() {
+        const CHILD: &str = "DASH_SPV_TEST_DEVNET_OVERRIDE";
+        if env::var_os(CHILD).is_none() {
+            // Routing overrides are process-wide OnceLocks.
+            let status = Command::new(env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "sml_engine::tests::a_devnet_override_rejects_previously_eligible_cycles",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let (mut source, qr_info) = load_qrinfo_2518986_fixture();
+        source.feed_qr_info(qr_info).await.unwrap();
+        let cycle_hash = source.block_hash_at(2518848).unwrap();
+        let bytes = snapshot_with_network(&source.snapshot().unwrap(), Network::Devnet);
+        let engine = TestEngine::from_snapshot(Network::Devnet, source.headers(), &bytes).unwrap();
+        assert!(engine.instant_send_cycle(&cycle_hash).is_some());
+        set_devnet_isd_type(LLMQType::LlmqtypeDevnetDIP0024).unwrap();
+        assert!(engine.instant_send_cycle(&cycle_hash).is_none());
+    }
+
     /// A restart keeps both cycles the QRInfo stored, the previous one without
     /// the straggler it could not verify included.
     #[tokio::test]
@@ -1908,6 +1956,7 @@ mod tests {
             .expect("expected active set stored under the current cycle hash");
         assert!(!stored_cycle.contains_key(&0), "the straggler must not fill the cycle's slot");
         assert_eq!(stored_cycle.len(), 31);
+        assert_eq!(feed_result.complete_cycle_height, None);
         for quorum in stored_cycle.values() {
             assert_eq!(quorum.verified, LLMQEntryVerificationStatus::Verified);
             assert_eq!(
@@ -1945,7 +1994,11 @@ mod tests {
         // a lock of it that does not verify is deferred, not refuted.
         let mut lock = mainnet_fixture_is_lock();
         lock.cyclehash = cycle_hash;
-        assert!(matches!(verify_against_cycle(&lock, &engine), Ok(false)));
+        assert!(matches!(
+            InstantLockValidator::new(engine.instant_send_cycle(&lock.cyclehash).unwrap())
+                .validate(&lock),
+            Err(ValidationError::MissingQuorumData)
+        ));
 
         // The list at h holds the same previous-cycle quorums and must agree
         // with the stored cycle instead of reading them as skipped.
@@ -2149,7 +2202,7 @@ mod tests {
     }
 
     /// A straggler whose quarter lists are not served is skipped for the oldest missing list, and
-    /// its cycle is not stored.
+    /// its verified current-cycle peer is still stored.
     #[tokio::test]
     async fn a_straggler_without_its_quarter_lists_is_skipped_for_them() {
         let (mut engine, qr_info) = load_qrinfo_597_regtest_fixture();
@@ -2164,7 +2217,13 @@ mod tests {
 
         assert_eq!(feed_result.rotated_quorum_count, 2);
         assert_eq!(feed_result.fully_verified_count, 1);
-        assert_eq!(feed_result.stored_cycle_height, None);
+        assert_eq!(feed_result.stored_cycle_height, Some(576));
+        let cycle_hash = engine.block_hash_at(576).unwrap();
+        let cycle = engine.instant_send_cycle(&cycle_hash).unwrap();
+        assert_eq!(cycle.quorums.len(), 1);
+        assert_eq!(feed_result.complete_cycle_height, None);
+        assert!(cycle.quorums.contains_key(&0));
+        assert!(!cycle.complete);
         let list_424 = &engine.masternode_lists[&424];
         assert!(
             matches!(engine.coinbase_chain_lock(424, &list_424.block_hash), Some(Some(_))),
@@ -3421,9 +3480,7 @@ mod tests {
         let partial: BTreeMap<_, _> = cycle.clone().into_iter().take(slots).collect();
 
         assert!(!fills_every_slot(&partial, configured));
-        assert_eq!(instant_send_cycle_completeness(&partial, configured, true), Some(false));
-        assert_eq!(instant_send_cycle_completeness(&partial, configured, false), None);
-        assert_eq!(instant_send_cycle_completeness(&cycle, served, false), Some(true));
-        assert_eq!(instant_send_cycle_completeness(&partial, served, false), Some(false));
+        assert!(fills_every_slot(&cycle, served));
+        assert!(!fills_every_slot(&partial, served));
     }
 }
