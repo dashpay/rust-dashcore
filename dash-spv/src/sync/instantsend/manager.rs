@@ -281,7 +281,10 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 // Still can't validate, re-queue
                 Err(ValidationError::MissingQuorumData) => self.queue_pending(pending_lock),
                 Err(_) => {
-                    self.instantlocks.remove(&txid);
+                    // A validated entry belongs to the genuine lock that arrived after eviction.
+                    if self.instantlocks.get(&txid).is_some_and(|entry| !entry.validated) {
+                        self.instantlocks.remove(&txid);
+                    }
                     rejected += 1;
                 }
             }

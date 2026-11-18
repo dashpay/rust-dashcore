@@ -693,8 +693,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         else {
             return Ok(());
         };
-        let Some(cycle_hash) =
-            self.active_set_cycle_hash(quorums_of_type.values().map(|q| &**q).collect()).await?
+        let Some((cycle_hash, _)) =
+            self.active_set_cycle(quorums_of_type.values().map(|q| &**q).collect()).await?
         else {
             return Ok(());
         };
@@ -878,20 +878,20 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
         self.network == Network::Devnet && devnet_isd_type_override().is_none()
     }
 
-    /// The hash of the newest cycle base in an active set. A failed DKG leaves
-    /// an older cycle's quorum at its index, so a set can span cycles, and the
+    /// The hash and height of the newest cycle base in an active set. A failed DKG
+    /// leaves an older cycle's quorum at its index, so a set can span cycles, and the
     /// newest one is the cycle the set is active for.
-    async fn active_set_cycle_hash(
+    async fn active_set_cycle(
         &self,
         entries: Vec<&QualifiedQuorumEntry>,
-    ) -> StorageResult<Option<QuorumHash>> {
+    ) -> StorageResult<Option<(QuorumHash, CoreBlockHeight)>> {
         let mut newest_cycle_base = None;
         for entry in entries {
             let cycle_base = self.rotated_quorum_cycle_base(&entry.quorum_entry).await?;
             newest_cycle_base = newest_cycle_base.max(cycle_base);
         }
         match newest_cycle_base {
-            Some(cycle_base) => self.hash_at(cycle_base).await,
+            Some(cycle_base) => Ok(self.hash_at(cycle_base).await?.map(|hash| (hash, cycle_base))),
             None => Ok(None),
         }
     }
@@ -1002,9 +1002,9 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             qualified_last_commitment_per_index.push(listed);
         }
 
-        let cycle_key = self
-            .active_set_cycle_hash(qualified_last_commitment_per_index.iter().collect())
-            .await?;
+        let cycle =
+            self.active_set_cycle(qualified_last_commitment_per_index.iter().collect()).await?;
+        let cycle_key = cycle.map(|(key, _)| key);
         if cycle_key.is_none() && rotated_quorum_count > 0 {
             tracing::warn!(
                 "None of the {} rotated quorums served resolves a cycle base, so the cycle cannot be stored under any key",
@@ -1044,10 +1044,8 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
             None => None,
         };
 
-        let complete_cycle_height = match cycle_key {
-            Some(key) if self.is_cycle_fully_verified(&key) => self.height_of(&key).await?,
-            _ => None,
-        };
+        let complete_cycle_height =
+            cycle.filter(|(key, _)| self.is_cycle_fully_verified(key)).map(|(_, height)| height);
         self.verify_newest_quorums().await;
         Ok(QRInfoFeedResult {
             rotated_quorum_count,
@@ -1660,10 +1658,11 @@ mod tests {
         let entries: Vec<QualifiedQuorumEntry> =
             qr_info.last_commitment_per_index.iter().cloned().map(Into::into).collect();
         engine
-            .active_set_cycle_hash(entries.iter().collect())
+            .active_set_cycle(entries.iter().collect())
             .await
             .expect("the headers read")
             .expect("fixture must resolve the cycle key of its active set")
+            .0
     }
 
     fn decode_fixture<T: Decode<()>>(bytes: &[u8]) -> T {
