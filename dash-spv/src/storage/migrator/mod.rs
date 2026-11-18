@@ -1,6 +1,7 @@
 mod v1;
 mod v2;
 mod v3;
+mod v4;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -13,8 +14,9 @@ use crate::storage::io::atomic_write;
 use v1::V1Migrator;
 use v2::V2Migrator;
 use v3::V3Migrator;
+use v4::V4Migrator;
 
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 
 #[async_trait]
 trait Migrator {
@@ -121,7 +123,7 @@ async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
         tracing::info!("Migrating storage from version {} to {}", version, version + 1);
 
         const MIGRATORS: &[&dyn Migrator; CURRENT_VERSION as usize] =
-            &[&V1Migrator, &V2Migrator, &V3Migrator];
+            &[&V1Migrator, &V2Migrator, &V3Migrator, &V4Migrator];
 
         MIGRATORS[version as usize].apply_migration(storage_path).await?;
 
@@ -135,4 +137,36 @@ async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StorageMigrator;
+    use tempfile::TempDir;
+    use test_case::test_case;
+    use tokio::fs;
+
+    #[test_case(true; "old snapshot")]
+    #[test_case(false; "missing snapshot")]
+    #[tokio::test]
+    async fn storage_v3_discards_the_old_engine_snapshot(present: bool) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().to_path_buf();
+        fs::write(path.join("version.json"), br#"{"version":3}"#).await.unwrap();
+        fs::create_dir(path.join("masternodes")).await.unwrap();
+        let snapshot = path.join("masternodes/engine.dat");
+        if present {
+            fs::write(&snapshot, b"old engine snapshot").await.unwrap();
+        }
+        fs::write(path.join("headers.dat"), b"keep headers").await.unwrap();
+        StorageMigrator::migrate(&path).await.unwrap();
+        assert!(!snapshot.exists());
+        let version: serde_json::Value =
+            serde_json::from_slice(&fs::read(path.join("version.json")).await.unwrap()).unwrap();
+        assert_eq!(version["version"], 4);
+        assert_eq!(fs::read(path.join("headers.dat")).await.unwrap(), b"keep headers");
+        fs::write(&snapshot, b"current engine snapshot").await.unwrap();
+        StorageMigrator::migrate(&path).await.unwrap();
+        assert_eq!(fs::read(&snapshot).await.unwrap(), b"current engine snapshot");
+    }
 }
