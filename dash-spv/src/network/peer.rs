@@ -28,6 +28,7 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
     },
+    task,
 };
 use tokio_stream::StreamExt;
 use tokio_util::bytes::BytesMut;
@@ -754,16 +755,21 @@ fn spawn_reader(
                             }
                         }
                         NetworkMessage::Headers2(compressed) => {
-                            match CompressionState::default()
-                                .process_headers_with_hashes(&compressed.headers)
-                            {
-                                Ok(headers) => {
+                            // X11 is CPU-bound, so it must not hold an async worker.
+                            let decompressed = task::spawn_blocking(move || {
+                                CompressionState::default()
+                                    .process_headers_with_hashes(&compressed.headers)
+                            })
+                            .await;
+
+                            match decompressed {
+                                Ok(Ok(headers)) => {
                                     let msg = InboundMessage::new_headers(headers);
                                     if inbound.send(PeerEvent::Message(addr, msg)).is_err() {
                                         break;
                                     }
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     tracing::warn!(
                                         target: "dash_spv::network",
                                         "headers2 from {} failed to decompress: {}",
@@ -771,6 +777,15 @@ fn spawn_reader(
                                         e
                                     );
                                     state.bans.ban(addr.addr(), Ban::Misbehaved).await;
+                                    break;
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        target: "dash_spv::network",
+                                        "headers2 task for {} failed: {}",
+                                        addr,
+                                        e
+                                    );
                                     break;
                                 }
                             }
