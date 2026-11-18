@@ -311,6 +311,20 @@ impl BlsSecretKey<'_> {
         }
     }
 
+    /// Signs a 32-byte message digest, written under the scheme.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidSecretKey` when the bytes are not a valid scalar.
+    pub fn sign_digest(self, digest: &[u8; 32]) -> Result<BlsSigBytes, BlsError> {
+        let signature = match self.scheme {
+            BlsScheme::Legacy => self.scalar::<BlsScChia>()?.sign_digest(digest).to_bytes(),
+            BlsScheme::Modern => self.scalar::<BlsScIetf>()?.sign_digest(digest).to_bytes(),
+        };
+
+        Ok(BlsSigBytes::from_bytes(signature))
+    }
+
     fn scalar<S: PkcScheme>(self) -> Result<PkcSecretKey<S>, BlsError> {
         PkcSecretKey::<S>::from_bytes(self.bytes.as_bytes()).map_err(|_| BlsError::InvalidSecretKey)
     }
@@ -569,6 +583,23 @@ mod tests {
         fn is_valid_follows_dash_core_is_valid(bytes: [u8; BLS_SIG_LEN], valid: bool) {
             let signature = BlsSigBytes::from_bytes(bytes).as_scheme(BlsScheme::Modern);
             assert_eq!(signature.is_valid(), valid);
+        }
+
+        #[test]
+        fn a_digest_signature_verifies_against_its_key_and_digest() {
+            let secret = BlsSkBytes::from_bytes([1; BLS_SK_LEN]);
+            for scheme in [BlsScheme::Modern, BlsScheme::Legacy] {
+                let key = secret.as_scheme(scheme);
+                let signature = key.sign_digest(&CHAINLOCK_BLOCK_HASH).unwrap();
+                let public_key = key.public_key().unwrap().as_scheme(scheme);
+                assert!(public_key.verify(&CHAINLOCK_BLOCK_HASH, &signature).is_ok());
+                assert!(public_key.verify(&[0; 32], &signature).is_err());
+            }
+            let invalid = BlsSkBytes::from_bytes([0xff; BLS_SK_LEN]);
+            assert_eq!(
+                invalid.as_scheme(BlsScheme::Modern).sign_digest(&[0; 32]),
+                Err(BlsError::InvalidSecretKey)
+            );
         }
 
         #[test]
