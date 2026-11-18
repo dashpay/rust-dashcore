@@ -269,24 +269,28 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         }))
     }
 
+    /// Returns the stored filter header tip and the height the download resumes from.
+    async fn resume_height(&self) -> SyncResult<(Option<u32>, u32)> {
+        let filter_headers_tip =
+            self.filter_header_storage.read().await.get_filter_tip_height().await?;
+
+        let header_start_height =
+            self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+
+        let start_height = match filter_headers_tip {
+            None => header_start_height,
+            Some(n) => (n + 1).max(header_start_height),
+        };
+
+        Ok((filter_headers_tip, start_height))
+    }
+
     /// Start or resume filter header download.
     async fn start_download(
         &mut self,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
-        // Get current filter tip
-        let filter_headers_tip =
-            self.filter_header_storage.read().await.get_filter_tip_height().await?;
-
-        // Get header start height (for checkpoint sync)
-        let header_start_height =
-            self.header_storage.read().await.get_start_height().await.unwrap_or(0);
-
-        // Calculate start height
-        let start_height = match filter_headers_tip {
-            None => header_start_height,
-            Some(n) => (n + 1).max(header_start_height),
-        };
+        let (filter_headers_tip, start_height) = self.resume_height().await?;
 
         self.progress.update_current_height(filter_headers_tip.unwrap_or(0));
 
@@ -337,8 +341,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         self.progress.update_block_header_tip_height(tip_height);
         self.update_target_height(tip_height);
 
-        // Nothing to do if caught up to available headers
-        if self.progress.current_height() >= self.progress.block_header_tip_height() {
+        // Read from storage: progress counts an empty store as height 0.
+        let (_, next_height) = self.resume_height().await?;
+        if next_height > self.progress.block_header_tip_height() {
             let mut events = Vec::new();
             if let Some(event) = self.try_complete_sync() {
                 events.push(event);
@@ -355,7 +360,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
                     self.pipeline
                         .init(
                             &*header_storage,
-                            self.progress.current_height() + 1,
+                            next_height,
                             self.progress.block_header_tip_height(),
                         )
                         .await?;
@@ -474,14 +479,9 @@ mod tests {
         use crate::network::NetworkManager;
         use crate::test_utils::MockNetworkManager;
 
-        let mut manager = create_test_manager().await;
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut manager = caught_up_manager(&storage, 1000).await;
         let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
-
-        // Filter headers caught up to block header tip and target
-        manager.progress.update_current_height(1000);
-        manager.progress.update_target_height(1000);
-        manager.progress.update_block_header_tip_height(1000);
-        manager.set_state(SyncState::WaitForEvents);
 
         // BlockHeadersStored does NOT set block_headers_synced, no completion emitted
         let event = SyncEvent::BlockHeadersStored {
@@ -506,14 +506,12 @@ mod tests {
         use crate::network::NetworkManager;
         use crate::test_utils::MockNetworkManager;
 
-        let mut manager = create_test_manager().await;
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut manager = caught_up_manager(&storage, 1000).await;
         let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
 
         // Filter headers caught up to block tip, but target is higher (more headers coming)
-        manager.progress.update_current_height(1000);
         manager.progress.update_target_height(2000);
-        manager.progress.update_block_header_tip_height(1000);
-        manager.set_state(SyncState::WaitForEvents);
 
         // BlockHeaderSyncComplete arrives but target not reached yet
         let event = SyncEvent::BlockHeaderSyncComplete {
@@ -656,6 +654,24 @@ mod tests {
             .await
             .unwrap();
         headers.iter().map(|h| *h.hash()).collect()
+    }
+
+    /// A manager over block and filter headers both stored up to `tip`.
+    async fn caught_up_manager(storage: &DiskStorageManager, tip: u32) -> TestFilterHeadersManager {
+        let hashes = store_block_headers(storage, 0, tip + 1).await;
+        let headers = compute_filter_headers(&cfheaders(
+            FilterHeader::all_zeros(),
+            hashes[tip as usize],
+            tip + 1,
+        ));
+        storage
+            .filter_headers()
+            .write()
+            .await
+            .store_filter_headers_at_height(&headers, 0)
+            .await
+            .unwrap();
+        FilterHeadersManager::new(storage.block_headers(), storage.filter_headers()).await.unwrap()
     }
 
     /// A CFHeaders response with `count` filter hashes chained from `previous_filter_header`.

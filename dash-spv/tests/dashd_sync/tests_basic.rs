@@ -116,3 +116,29 @@ async fn test_empty_wallet_manager_no_spurious_rescan() {
 
     client_handle.stop().await;
 }
+
+/// A client that syncs a chain holding only genesis keeps syncing the blocks mined on it.
+#[tokio::test]
+async fn test_sync_from_genesis_only_chain() {
+    let Some(ctx) = TestContext::new(TestChain::Minimal).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+    let node = &ctx.dashd.node;
+    node.invalidate_block(&node.get_block_hash(1));
+    assert_eq!(node.get_block_count(), 0);
+    // Peers announce the height dashd learns from this queue, not the chain tip.
+    node.try_rpc_call("syncwithvalidationinterfacequeue", &[])
+        .expect("syncwithvalidationinterfacequeue failed");
+
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, 0).await;
+
+    node.generate_blocks(2, &node.get_new_address());
+    wait_for_sync(&mut client_handle.progress_receiver, 2).await;
+
+    client_handle.stop().await;
+}
