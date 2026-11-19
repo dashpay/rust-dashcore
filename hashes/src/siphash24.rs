@@ -130,32 +130,55 @@ pub fn siphash(k0: u64, k1: u64, data: &[u8]) -> u64 {
 /// kernel when available, else the scalar one-shot; bit-identical to per-input [`siphash`].
 pub fn siphash_batch<const LEN: usize>(k0: u64, k1: u64, inputs: &[[u8; LEN]], out: &mut [u64]) {
     assert!(out.len() >= inputs.len(), "output buffer too small");
+    siphash_flat(k0, k1, inputs.as_flattened(), LEN, &mut out[..inputs.len()]);
+}
 
+/// Calls `$f::<{ $len % 8 }, $r>$args`, so the kernels handle the tail block at compile time.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+macro_rules! by_tail {
+    ($len:expr, $f:ident, $r:expr, $args:tt) => {
+        match $len % 8 {
+            0 => $f::<0, $r> $args,
+            1 => $f::<1, $r> $args,
+            2 => $f::<2, $r> $args,
+            3 => $f::<3, $r> $args,
+            4 => $f::<4, $r> $args,
+            5 => $f::<5, $r> $args,
+            6 => $f::<6, $r> $args,
+            _ => $f::<7, $r> $args,
+        }
+    };
+}
+
+/// [`siphash_batch`] over `out.len()` inputs of `len` bytes each, laid end to end in `data`.
+/// It is not generic, so the kernels are compiled in this crate, at this crate's opt-level.
+#[inline(never)]
+fn siphash_flat(k0: u64, k1: u64, data: &[u8], len: usize, out: &mut [u64]) {
     #[cfg(target_arch = "x86_64")]
     {
         if std::is_x86_feature_detected!("avx2") {
-            unsafe { hash_many_wide_avx2::<LEN, AVX2_R>(k0, k1, inputs, out) };
+            unsafe { by_tail!(len, hash_many_wide_avx2, AVX2_R, (k0, k1, data, len, out)) };
         } else {
-            siphash_each(k0, k1, inputs, out);
+            siphash_each(k0, k1, data, len, out);
         }
     }
 
     #[cfg(target_arch = "aarch64")]
     unsafe {
-        hash_many_wide_neon::<LEN, NEON_R>(k0, k1, inputs, out)
+        by_tail!(len, hash_many_wide_neon, NEON_R, (k0, k1, data, len, out))
     };
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    siphash_each(k0, k1, inputs, out);
+    siphash_each(k0, k1, data, len, out);
 }
 
 /// Scalar fallback for [`siphash_batch`] where no SIMD kernel applies (x86 without AVX2, and
 /// targets with no vectorised path). aarch64 always batches via NEON, so it never uses this.
 #[cfg(not(target_arch = "aarch64"))]
 #[inline]
-fn siphash_each<const LEN: usize>(k0: u64, k1: u64, inputs: &[[u8; LEN]], out: &mut [u64]) {
-    for (i, inp) in inputs.iter().enumerate() {
-        out[i] = siphash(k0, k1, inp);
+fn siphash_each(k0: u64, k1: u64, data: &[u8], len: usize, out: &mut [u64]) {
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = siphash(k0, k1, &data[i * len..(i + 1) * len]);
     }
 }
 
@@ -206,18 +229,22 @@ const NEON_R: usize = 6;
 /// chains. Writes `out[0..2*R]`. NEON analogue of [`siphash_block_avx2`] (4 lanes there).
 ///
 /// # Safety
-/// NEON is baseline on aarch64. `inputs`/`out` must have at least `2 * R` elements.
+/// NEON is baseline on aarch64. `data` must hold at least `2 * R` inputs of `len` bytes, `out`
+/// at least `2 * R` elements, and `TAIL` must be `len % 8`.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 // The `for r in 0..R` loops step the register-sets in lockstep by design; index-based.
 #[allow(clippy::needless_range_loop)]
-unsafe fn siphash_block_neon<const LEN: usize, const R: usize>(
+unsafe fn siphash_block_neon<const TAIL: usize, const R: usize>(
     k0: u64,
     k1: u64,
-    inputs: &[[u8; LEN]],
+    data: &[u8],
+    len: usize,
     out: &mut [u64],
 ) {
     use core::arch::aarch64::*;
+
+    let input = |k: usize| -> &[u8] { data.get_unchecked(k * len..(k + 1) * len) };
 
     // Build a lane-vector {x, y} from two scalar words. `vcombine`/`vcreate` moves the GPRs
     // straight into the SIMD lanes (lane0 = x, lane1 = y), avoiding the stack round-trip a
@@ -236,7 +263,7 @@ unsafe fn siphash_block_neon<const LEN: usize, const R: usize>(
             let mut m = [vdupq_n_u64(0); R];
             for r in 0..R {
                 let b = r * 2;
-                m[r] = pack($word(&inputs[b]), $word(&inputs[b + 1]));
+                m[r] = pack($word(input(b)), $word(input(b + 1)));
             }
             m
         }};
@@ -265,19 +292,19 @@ unsafe fn siphash_block_neon<const LEN: usize, const R: usize>(
     }
 
     // Full 8-byte message blocks.
-    for blk in 0..LEN / 8 {
+    for blk in 0..len / 8 {
         let off = blk * 8;
-        let m = words!(|inp: &[u8; LEN]| load_int_le!(inp, off, u64));
+        let m = words!(|inp: &[u8]| load_int_le!(inp, off, u64));
         xor_all!(v3, m);
         rounds!(2);
         xor_all!(v0, m);
     }
 
     // Final block: the leftover tail bytes with the length in the top byte.
-    let lb = (LEN as u64 & 0xff) << 56;
-    let off = LEN / 8 * 8;
-    let left = LEN % 8;
-    let b = words!(|inp: &[u8; LEN]| lb | u8to64_le(inp, off, left));
+    let lb = (len as u64 & 0xff) << 56;
+    let off = len / 8 * 8;
+    let left = TAIL;
+    let b = words!(|inp: &[u8]| lb | u8to64_le(inp, off, left));
     xor_all!(v3, b);
     rounds!(2);
     xor_all!(v0, b);
@@ -301,28 +328,30 @@ unsafe fn siphash_block_neon<const LEN: usize, const R: usize>(
 /// drained with 2-lane (`R = 1`) blocks, then a final scalar one-shot.
 ///
 /// # Safety
-/// NEON is baseline on aarch64.
+/// NEON is baseline on aarch64. `data` must hold `out.len()` inputs of `len` bytes, and `TAIL`
+/// must be `len % 8`.
 #[cfg(target_arch = "aarch64")]
-unsafe fn hash_many_wide_neon<const LEN: usize, const R: usize>(
+unsafe fn hash_many_wide_neon<const TAIL: usize, const R: usize>(
     k0: u64,
     k1: u64,
-    inputs: &[[u8; LEN]],
+    data: &[u8],
+    len: usize,
     out: &mut [u64],
 ) {
     let w = 2 * R;
-    let n = inputs.len();
+    let n = out.len();
     let mut i = 0;
     while i + w <= n {
-        siphash_block_neon::<LEN, R>(k0, k1, &inputs[i..], &mut out[i..]);
+        siphash_block_neon::<TAIL, R>(k0, k1, &data[i * len..], len, &mut out[i..]);
         i += w;
     }
     // Drain remaining pairs through the 2-lane kernel (the same block with R = 1).
     while i + 2 <= n {
-        siphash_block_neon::<LEN, 1>(k0, k1, &inputs[i..], &mut out[i..]);
+        siphash_block_neon::<TAIL, 1>(k0, k1, &data[i * len..], len, &mut out[i..]);
         i += 2;
     }
     if i < n {
-        out[i] = siphash(k0, k1, &inputs[i]);
+        out[i] = siphash(k0, k1, &data[i * len..(i + 1) * len]);
     }
 }
 
@@ -375,18 +404,22 @@ unsafe fn sip_round_avx2(
 /// chains. Writes `out[0..4*R]`.
 ///
 /// # Safety
-/// Requires AVX2. `inputs`/`out` must have at least `4 * R` elements.
+/// Requires AVX2. `data` must hold at least `4 * R` inputs of `len` bytes, `out` at least
+/// `4 * R` elements, and `TAIL` must be `len % 8`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 // The `for r in 0..R` loops step the register sets in lockstep by design; index-based.
 #[allow(clippy::needless_range_loop)]
-unsafe fn siphash_block_avx2<const LEN: usize, const R: usize>(
+unsafe fn siphash_block_avx2<const TAIL: usize, const R: usize>(
     k0: u64,
     k1: u64,
-    inputs: &[[u8; LEN]],
+    data: &[u8],
+    len: usize,
     out: &mut [u64],
 ) {
     use core::arch::x86_64::*;
+
+    let input = |k: usize| -> &[u8] { data.get_unchecked(k * len..(k + 1) * len) };
 
     let mut v0 = [_mm256_set1_epi64x((k0 ^ 0x736f6d6570736575) as i64); R];
     let mut v1 = [_mm256_set1_epi64x((k1 ^ 0x646f72616e646f6d) as i64); R];
@@ -404,10 +437,10 @@ unsafe fn siphash_block_avx2<const LEN: usize, const R: usize>(
             for r in 0..R {
                 let b = r * 4;
                 m[r] = _mm256_set_epi64x(
-                    $word(&inputs[b + 3]) as i64,
-                    $word(&inputs[b + 2]) as i64,
-                    $word(&inputs[b + 1]) as i64,
-                    $word(&inputs[b]) as i64,
+                    $word(input(b + 3)) as i64,
+                    $word(input(b + 2)) as i64,
+                    $word(input(b + 1)) as i64,
+                    $word(input(b)) as i64,
                 );
             }
             m
@@ -437,19 +470,19 @@ unsafe fn siphash_block_avx2<const LEN: usize, const R: usize>(
     }
 
     // Full 8-byte message blocks.
-    for blk in 0..LEN / 8 {
+    for blk in 0..len / 8 {
         let off = blk * 8;
-        let m = words!(|inp: &[u8; LEN]| load_int_le!(inp, off, u64));
+        let m = words!(|inp: &[u8]| load_int_le!(inp, off, u64));
         xor_all!(v3, m);
         rounds!(2);
         xor_all!(v0, m);
     }
 
     // Final block: the leftover tail bytes with the length in the top byte.
-    let lb = (LEN as u64 & 0xff) << 56;
-    let off = LEN / 8 * 8;
-    let left = LEN % 8;
-    let b = words!(|inp: &[u8; LEN]| lb | unsafe { u8to64_le(inp, off, left) });
+    let lb = (len as u64 & 0xff) << 56;
+    let off = len / 8 * 8;
+    let left = TAIL;
+    let b = words!(|inp: &[u8]| lb | unsafe { u8to64_le(inp, off, left) });
     xor_all!(v3, b);
     rounds!(2);
     xor_all!(v0, b);
@@ -473,29 +506,31 @@ unsafe fn siphash_block_avx2<const LEN: usize, const R: usize>(
 /// [`hash_many_wide_neon`].
 ///
 /// # Safety
-/// Requires AVX2.
+/// Requires AVX2. `data` must hold `out.len()` inputs of `len` bytes, and `TAIL` must be
+/// `len % 8`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn hash_many_wide_avx2<const LEN: usize, const R: usize>(
+unsafe fn hash_many_wide_avx2<const TAIL: usize, const R: usize>(
     k0: u64,
     k1: u64,
-    inputs: &[[u8; LEN]],
+    data: &[u8],
+    len: usize,
     out: &mut [u64],
 ) {
     let w = 4 * R;
-    let n = inputs.len();
+    let n = out.len();
     let mut i = 0;
     while i + w <= n {
-        siphash_block_avx2::<LEN, R>(k0, k1, &inputs[i..], &mut out[i..]);
+        siphash_block_avx2::<TAIL, R>(k0, k1, &data[i * len..], len, &mut out[i..]);
         i += w;
     }
     // Drain remaining quads through the 4-lane kernel (the same block with R = 1).
     while i + 4 <= n {
-        siphash_block_avx2::<LEN, 1>(k0, k1, &inputs[i..], &mut out[i..]);
+        siphash_block_avx2::<TAIL, 1>(k0, k1, &data[i * len..], len, &mut out[i..]);
         i += 4;
     }
     while i < n {
-        out[i] = siphash(k0, k1, &inputs[i]);
+        out[i] = siphash(k0, k1, &data[i * len..(i + 1) * len]);
         i += 1;
     }
 }
