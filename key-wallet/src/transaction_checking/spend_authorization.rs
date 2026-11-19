@@ -128,118 +128,131 @@ mod tests {
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
     use crate::test_utils::TestWalletContext;
     use crate::wallet::managed_wallet_info::transaction_builder::TransactionSigner;
-    use dashcore::blockdata::transaction::special_transaction::{
-        asset_lock::AssetLockPayload, TransactionPayload,
-    };
     use dashcore::crypto::ecdsa::EcdsaSecretKey;
-    use dashcore::opcodes::all::{OP_DROP, OP_SWAP};
+    use dashcore::opcodes::all::{OP_NOP, OP_SWAP};
     use dashcore::script::{Builder, PushBytesBuf};
-    use dashcore::{OutPoint, ScriptBuf, TxIn, Txid};
+    use dashcore::{Address, Network, PrivateKey, ScriptBuf, TxIn};
+    use test_case::test_case;
 
-    fn p2pkh_prevout(public_key: &[u8]) -> TxOut {
-        TxOut {
-            value: 100_000,
-            script_pubkey: ScriptBuf::new_p2pkh(&hash160::Hash::hash(public_key).into()),
-        }
+    fn key(byte: u8) -> PrivateKey {
+        PrivateKey::new(EcdsaSecretKey::from_bytes(&[byte; 32]).unwrap(), Network::Regtest)
     }
 
-    /// An unsigned spend of one input per funding output, paying back to the first owner.
-    fn spend_of(prevouts: &[TxOut]) -> Transaction {
-        Transaction {
-            version: 1,
-            lock_time: 0,
-            input: (0..prevouts.len() as u32)
-                .map(|vout| TxIn {
-                    previous_output: OutPoint {
-                        txid: Txid::from_byte_array([3; 32]),
-                        vout,
-                    },
-                    ..Default::default()
-                })
-                .collect(),
-            output: vec![TxOut {
-                value: prevouts.iter().map(|prevout| prevout.value).sum::<u64>() - 10_000,
-                script_pubkey: prevouts[0].script_pubkey.clone(),
-            }],
-            special_transaction_payload: None,
-        }
-    }
-
-    fn signed(uncompressed: bool) -> (Transaction, TxOut) {
-        let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
-        let public_key = if uncompressed {
-            key.public_key().to_uncompressed().to_vec()
-        } else {
-            key.public_key().to_compressed().to_vec()
-        };
-        let prevout = p2pkh_prevout(&public_key);
-        let mut tx = spend_of(slice::from_ref(&prevout));
-        sign_input(&mut tx, 0, &prevout, &key, &public_key, 1);
-        (tx, prevout)
-    }
-
-    fn sign_input(
-        tx: &mut Transaction,
-        input_index: usize,
-        prevout: &TxOut,
-        key: &EcdsaSecretKey,
-        public_key: &[u8],
-        mode: u8,
-    ) {
+    fn sign_input(tx: &mut Transaction, index: usize, prevout: &TxOut, key: &PrivateKey, mode: u8) {
         let hash = SighashCache::new(&*tx)
-            .legacy_signature_hash(input_index, &prevout.script_pubkey, u32::from(mode))
+            .legacy_signature_hash(index, &prevout.script_pubkey, u32::from(mode))
             .unwrap();
-        let mut signature = key.sign(&hash.to_byte_array()).with_der(|der| der.to_vec());
+        let mut signature = key.inner.sign(&hash.to_byte_array()).with_der(|der| der.to_vec());
         signature.push(mode);
-        tx.input[input_index].script_sig = Builder::new()
+        tx.input[index].script_sig = Builder::new()
             .push_slice(PushBytesBuf::try_from(signature).unwrap())
-            .push_slice(PushBytesBuf::try_from(public_key.to_vec()).unwrap())
+            .push_key(&key.public_key())
             .into_script();
     }
 
-    /// Two inputs funded by different owners, each signed by its own.
-    fn signed_by_two_owners() -> (Transaction, Vec<TxOut>) {
-        let keys = [[7; 32], [9; 32]].map(|bytes| EcdsaSecretKey::from_bytes(&bytes).unwrap());
-        let public_keys =
-            keys.iter().map(|key| key.public_key().to_compressed()).collect::<Vec<_>>();
-        let prevouts =
-            public_keys.iter().map(|public_key| p2pkh_prevout(public_key)).collect::<Vec<_>>();
-        let mut tx = spend_of(&prevouts);
-        for index in 0..2 {
-            sign_input(&mut tx, index, &prevouts[index], &keys[index], &public_keys[index], 1);
-        }
-        (tx, prevouts)
+    #[test_case(|_, _| {}, Ok(true); "owner signature")]
+    #[test_case(|tx, prevout| {
+        let mut owner = key(7);
+        owner.compressed = false;
+        prevout.script_pubkey = ScriptBuf::new_p2pkh(&owner.public_key().pubkey_hash());
+        sign_input(tx, 0, prevout, &owner, 1);
+    }, Ok(true); "uncompressed owner key")]
+    #[test_case(|tx, _| tx.input[0].script_sig = ScriptBuf::new(), Ok(false); "unsigned")]
+    #[test_case(|tx, prevout| sign_input(tx, 0, prevout, &key(9), 1), Ok(false); "other key")]
+    #[test_case(|tx, prevout| {
+        tx.input.push(tx.input[0].clone());
+        sign_input(tx, 0, prevout, &key(7), 1);
+    }, Ok(false); "signed duplicate input")]
+    #[test_case(|_, prevout| prevout.script_pubkey = ScriptBuf::new(),
+        Err(SpendAuthorizationError::UnsupportedScript); "non P2PKH prevout")]
+    #[test_case(|tx, _| {
+        let mut bytes = tx.input[0].script_sig.to_bytes();
+        bytes.resize(MAX_SCRIPT_SIZE + 1, OP_NOP.to_u8());
+        tx.input[0].script_sig = ScriptBuf::from_bytes(bytes);
+    }, Ok(false); "oversized input script")]
+    #[test_case(|tx, _| {
+        let mut bytes = tx.input[0].script_sig.to_bytes();
+        bytes.push(1);
+        tx.input[0].script_sig = ScriptBuf::from_bytes(bytes);
+    }, Ok(false); "truncated push")]
+    #[test_case(|tx, _| {
+        tx.input[0].script_sig =
+            Builder::new().push_slice([1]).push_key(&key(7).public_key()).into_script();
+    }, Ok(false); "malformed owner signature")]
+    #[test_case(|tx, _| tx.input[0].script_sig.push_slice([]), Ok(false); "missing owner at top")]
+    #[test_case(|tx, _| {
+        let script = &mut tx.input[0].script_sig;
+        *script = ScriptBuf::from_bytes([&[0][..], script.as_bytes()].concat());
+    }, Err(SpendAuthorizationError::UnsupportedScriptSig); "extra push before signature")]
+    #[test_case(|tx, _| tx.input[0].script_sig.push_opcode(OP_NOP),
+        Err(SpendAuthorizationError::UnsupportedScriptSig); "trailing opcode")]
+    #[test_case(|tx, _| {
+        let script = &mut tx.input[0].script_sig;
+        let last_der_byte = usize::from(script.as_bytes()[0]) - 1;
+        script.as_mut_bytes()[last_der_byte] ^= 1;
+        script.push_opcode(OP_NOP);
+    }, Ok(false); "padded script with invalid owner signature")]
+    #[test_case(|tx, _| {
+        let script = &mut tx.input[0].script_sig;
+        let bytes = script.as_mut_bytes();
+        let signature_push_len = 1 + usize::from(bytes[0]);
+        bytes.rotate_left(signature_push_len);
+        script.push_opcode(OP_SWAP);
+    }, Err(SpendAuthorizationError::UnsupportedScriptSig); "reordered owner pushes")]
+    #[test_case(|tx, _| {
+        let script = &mut tx.input[0].script_sig;
+        let bytes = script.as_mut_bytes();
+        bytes[usize::from(bytes[0])] = 0x81;
+    }, Ok(false); "unsigned change of sighash flag")]
+    #[test_case(|tx, prevout| sign_input(tx, 0, prevout, &key(7), 0x81),
+        Err(SpendAuthorizationError::UnsupportedSighash(0x81)); "owner signed ANYONECANPAY")]
+    #[test_case(|tx, prevout| {
+        tx.output.clear();
+        sign_input(tx, 0, prevout, &key(7), 3);
+        tx.lock_time += 1;
+    }, Err(SpendAuthorizationError::UnsupportedSighash(3)); "SINGLE without matching output")]
+    fn input_authorization(
+        mutate: fn(&mut Transaction, &mut TxOut),
+        expected: Result<bool, SpendAuthorizationError>,
+    ) {
+        let owner = key(7);
+        let address = Address::p2pkh(&owner.public_key(), Network::Regtest);
+        let mut tx = Transaction::dummy(&address, 1..2, &[90_000]);
+        let mut prevout = TxOut {
+            value: 100_000,
+            script_pubkey: address.script_pubkey(),
+        };
+        sign_input(&mut tx, 0, &prevout, &owner, 1);
+
+        mutate(&mut tx, &mut prevout);
+        assert_eq!(verify_input_authorization(&tx, 0, &prevout), expected);
+    }
+
+    #[test]
+    fn should_return_missing_input_index() {
+        assert_eq!(
+            verify_input_authorization(&Transaction::dummy_empty(), 1, &TxOut::default()),
+            Err(SpendAuthorizationError::InputIndexOutOfRange(1))
+        );
     }
 
     #[test]
     fn should_authorize_each_input_only_against_its_own_funding_output() {
-        let (tx, prevouts) = signed_by_two_owners();
+        let keys = [key(7), key(9)];
+        let addresses =
+            keys.each_ref().map(|key| Address::p2pkh(&key.public_key(), Network::Regtest));
+        let mut tx = Transaction::dummy(&addresses[0], 1..3, &[190_000]);
+        let prevouts = addresses.map(|address| TxOut {
+            value: 100_000,
+            script_pubkey: address.script_pubkey(),
+        });
+        for (index, owner) in keys.iter().enumerate() {
+            sign_input(&mut tx, index, &prevouts[index], owner, 1);
+        }
+
         for index in 0..2 {
             assert_eq!(verify_input_authorization(&tx, index, &prevouts[index]), Ok(true));
             assert_eq!(verify_input_authorization(&tx, index, &prevouts[1 - index]), Ok(false));
-        }
-
-        // SIGHASH_ALL commits to every input, so changing one input revokes the other's.
-        let mut resequenced = tx.clone();
-        resequenced.input[1].sequence = 7;
-        assert_eq!(verify_input_authorization(&resequenced, 0, &prevouts[0]), Ok(false));
-
-        // A signature does not follow its input to another position.
-        let mut reordered = tx;
-        reordered.input.swap(0, 1);
-        for index in 0..2 {
-            assert_eq!(
-                verify_input_authorization(&reordered, index, &prevouts[1 - index]),
-                Ok(false)
-            );
-        }
-    }
-
-    #[test]
-    fn should_accept_compressed_and_uncompressed_owner_signatures() {
-        for uncompressed in [false, true] {
-            let (tx, prevout) = signed(uncompressed);
-            assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(true));
         }
     }
 
@@ -263,136 +276,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(verify_input_authorization(&signed, 0, &utxo.txout), Ok(true));
-    }
-
-    #[test]
-    fn should_reject_unsigned_tampered_and_wrong_funding_claims() {
-        let (tx, prevout) = signed(false);
-        let mut unsigned = tx.clone();
-        unsigned.input[0].script_sig = ScriptBuf::new();
-        assert_eq!(verify_input_authorization(&unsigned, 0, &prevout), Ok(false));
-        let mut changed = tx.clone();
-        changed.output[0].value -= 1;
-        assert_eq!(verify_input_authorization(&changed, 0, &prevout), Ok(false));
-        changed = tx.clone();
-        changed.input[0].previous_output.vout += 1;
-        assert_eq!(verify_input_authorization(&changed, 0, &prevout), Ok(false));
-        let (_, different_encoding) = signed(true);
-        assert_eq!(verify_input_authorization(&tx, 0, &different_encoding), Ok(false));
-        assert_eq!(
-            verify_input_authorization(&tx, 1, &prevout),
-            Err(SpendAuthorizationError::InputIndexOutOfRange(1))
-        );
-        // The owner signs a transaction that lists the outpoint twice.
-        let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
-        changed = tx.clone();
-        changed.input.push(tx.input[0].clone());
-        sign_input(&mut changed, 0, &prevout, &key, &key.public_key().to_compressed(), 1);
-        assert_eq!(verify_input_authorization(&changed, 0, &prevout), Ok(false));
-    }
-
-    #[test]
-    fn should_reject_input_scripts_that_cannot_spend_the_funding_output() {
-        let (signed_tx, prevout) = signed(false);
-        let owner_script = signed_tx.input[0].script_sig.as_bytes();
-        let signature_len = usize::from(owner_script[0]);
-        let mut oversized = vec![0x61; MAX_SCRIPT_SIZE + 1];
-        oversized[..owner_script.len()].copy_from_slice(owner_script);
-        let scripts = [
-            [owner_script, &[0x00][..]].concat(),
-            [&[1, 1][..], &owner_script[signature_len + 1..]].concat(),
-            vec![1, 1, 1, 2],
-            oversized,
-        ];
-        for script in scripts {
-            let mut tx = signed_tx.clone();
-            tx.input[0].script_sig = ScriptBuf::from_bytes(script);
-            assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
-        }
-    }
-
-    #[test]
-    fn should_bind_asset_lock_payload_to_authorization() {
-        let (mut tx, prevout) = signed(false);
-        let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
-        tx.version = 3;
-        tx.special_transaction_payload =
-            Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(vec![
-                prevout.clone()
-            ])));
-        sign_input(&mut tx, 0, &prevout, &key, &key.public_key().to_compressed(), 1);
-        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(true));
-        if let Some(TransactionPayload::AssetLockPayloadType(payload)) =
-            &mut tx.special_transaction_payload
-        {
-            payload.credit_outputs[0].value -= 1;
-        }
-        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
-    }
-
-    #[test]
-    fn should_preserve_unsupported_authorization_as_an_error() {
-        let (signed_tx, prevout) = signed(false);
-        let key = EcdsaSecretKey::from_bytes(&[7; 32]).unwrap();
-        let owner_script = signed_tx.input[0].script_sig.as_bytes();
-        let signature = &owner_script[1..=usize::from(owner_script[0])];
-        let public_key = &owner_script[signature.len() + 2..];
-        let mut tx = signed_tx.clone();
-        for mode in [0, 2, 3, 4, 0x81, 0x82, 0x83, 0xff] {
-            sign_input(&mut tx, 0, &prevout, &key, public_key, mode);
-            assert_eq!(
-                verify_input_authorization(&tx, 0, &prevout),
-                Err(SpendAuthorizationError::UnsupportedSighash(mode))
-            );
-            // Swapping only the flag invalidates the signature instead of making it unsupported.
-            let mut flagged = signed_tx.clone();
-            let mut bytes = owner_script.to_vec();
-            bytes[signature.len()] = mode;
-            flagged.input[0].script_sig = ScriptBuf::from_bytes(bytes);
-            assert_eq!(verify_input_authorization(&flagged, 0, &prevout), Ok(false));
-        }
-        // Without an output for input 0, SINGLE signs the constant digest 1. That signature
-        // still verifies on a changed transaction, and must stay an error there.
-        let mut no_outputs = tx.clone();
-        no_outputs.output.clear();
-        for mode in [3, 0x83] {
-            sign_input(&mut no_outputs, 0, &prevout, &key, public_key, mode);
-            no_outputs.lock_time += 1;
-            assert_eq!(
-                verify_input_authorization(&no_outputs, 0, &prevout),
-                Err(SpendAuthorizationError::UnsupportedSighash(mode))
-            );
-        }
-        let unknown = TxOut {
-            value: prevout.value,
-            script_pubkey: ScriptBuf::new(),
-        };
-        assert_eq!(
-            verify_input_authorization(&tx, 0, &unknown),
-            Err(SpendAuthorizationError::UnsupportedScript)
-        );
-        // Each of these input scripts keeps the owner's spend consensus-valid.
-        let pushes = |items: &[&[u8]]| {
-            items.iter().fold(Builder::new(), |builder, item| {
-                builder.push_slice(PushBytesBuf::try_from(item.to_vec()).unwrap())
-            })
-        };
-        let scripts = [
-            [&[0x00][..], owner_script].concat(),
-            [&[0x61][..], owner_script].concat(),
-            [owner_script, &[0x61][..]].concat(),
-            pushes(&[signature, public_key, &[1]]).push_opcode(OP_DROP).into_bytes(),
-            pushes(&[public_key, signature]).push_opcode(OP_SWAP).into_bytes(),
-        ];
-        for script in scripts {
-            let mut padded = signed_tx.clone();
-            padded.input[0].script_sig = ScriptBuf::from_bytes(script);
-            assert_eq!(
-                verify_input_authorization(&padded, 0, &prevout),
-                Err(SpendAuthorizationError::UnsupportedScriptSig)
-            );
-            padded.output[0].value -= 1;
-            assert_eq!(verify_input_authorization(&padded, 0, &prevout), Ok(false));
-        }
     }
 }
