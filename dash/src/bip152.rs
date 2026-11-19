@@ -6,7 +6,7 @@
 //!
 
 use core::convert::{TryFrom, TryInto};
-use core::{convert, fmt, mem};
+use core::{convert, fmt};
 use std::error;
 
 use hashes::{sha256, siphash24};
@@ -83,7 +83,7 @@ impl Decodable for PrefilledTransaction {
     fn consensus_decode<D: io::Read + ?Sized>(
         mut d: &mut D,
     ) -> Result<PrefilledTransaction, encode::Error> {
-        let idx = VarInt::consensus_decode(&mut d)?.0;
+        let idx = encode::read_compact_size_len(&mut d)?;
         let idx = u16::try_from(idx)
             .map_err(|_| encode::Error::ParseFailed("BIP152 prefilled tx index out of bounds"))?;
         let tx = Transaction::consensus_decode(&mut d)?;
@@ -162,7 +162,37 @@ pub struct HeaderAndShortIds {
     ///  which we expect a peer may be missing.
     pub prefilled_txs: Vec<PrefilledTransaction>,
 }
-impl_consensus_encoding!(HeaderAndShortIds, header, nonce, short_ids, prefilled_txs);
+
+impl Encodable for HeaderAndShortIds {
+    #[inline]
+    fn consensus_encode<S: io::Write + ?Sized>(&self, s: &mut S) -> Result<usize, io::Error> {
+        let mut len = self.header.consensus_encode(s)?;
+        len += self.nonce.consensus_encode(s)?;
+        len += self.short_ids.consensus_encode(s)?;
+        len += self.prefilled_txs.consensus_encode(s)?;
+        Ok(len)
+    }
+}
+
+impl Decodable for HeaderAndShortIds {
+    /// Refuses more than [`u16::MAX`] short IDs and prefilled transactions together, because
+    /// every transaction in a compact block has a 16-bit index.
+    #[inline]
+    fn consensus_decode_from_finite_reader<D: io::Read + ?Sized>(
+        d: &mut D,
+    ) -> Result<HeaderAndShortIds, encode::Error> {
+        let compact = HeaderAndShortIds {
+            header: Decodable::consensus_decode_from_finite_reader(d)?,
+            nonce: Decodable::consensus_decode_from_finite_reader(d)?,
+            short_ids: Decodable::consensus_decode_from_finite_reader(d)?,
+            prefilled_txs: Decodable::consensus_decode_from_finite_reader(d)?,
+        };
+        if compact.short_ids.len() + compact.prefilled_txs.len() > usize::from(u16::MAX) {
+            return Err(encode::Error::ParseFailed("indexes overflowed 16 bits"));
+        }
+        Ok(compact)
+    }
+}
 
 impl HeaderAndShortIds {
     /// Create a new [HeaderAndShortIds] from a full block.
@@ -244,67 +274,62 @@ pub struct BlockTransactionsRequest {
     pub block_hash: BlockHash,
     ///  The indexes of the transactions being requested in the block.
     ///
-    ///  Warning: Encoding panics with [`u64::MAX`] values. See [`BlockTransactionsRequest::consensus_encode()`]
+    ///  They must be strictly increasing and at most [`u16::MAX`]. See
+    ///  [`BlockTransactionsRequest::consensus_encode()`]. Serializing a request that breaks this
+    ///  with [`serialize`](crate::consensus::encode::serialize) panics.
     pub indexes: Vec<u64>,
 }
 
 impl Encodable for BlockTransactionsRequest {
-    /// # Panics
+    /// Writes each index as `index - (previous + 1)`, and the first one as itself.
     ///
-    /// Panics if the index overflows [`u64::MAX`]. This happens when [`BlockTransactionsRequest::indexes`]
-    /// contains an entry with the value [`u64::MAX`] as `u64` overflows during differential encoding.
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] if an index is not above the one before it, or is
+    /// above [`u16::MAX`].
     fn consensus_encode<S: io::Write + ?Sized>(&self, mut s: &mut S) -> Result<usize, io::Error> {
         let mut len = self.block_hash.consensus_encode(&mut s)?;
         // Manually encode indexes because they are differentially encoded VarInts.
         len += VarInt(self.indexes.len() as u64).consensus_encode(&mut s)?;
-        let mut last_idx = 0;
+        let mut shift: u64 = 0;
         for idx in &self.indexes {
-            len += VarInt(*idx - last_idx).consensus_encode(&mut s)?;
-            last_idx = *idx + 1; // can panic here
+            if *idx < shift || *idx > u64::from(u16::MAX) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "differential value overflow",
+                ));
+            }
+            len += VarInt(*idx - shift).consensus_encode(&mut s)?;
+            shift = *idx + 1;
         }
         Ok(len)
     }
 }
 
 impl Decodable for BlockTransactionsRequest {
+    /// Reads the count and each differential as a CompactSize of at most 32 MiB, and refuses an
+    /// absolute index above [`u16::MAX`].
     fn consensus_decode<D: io::Read + ?Sized>(
         mut d: &mut D,
     ) -> Result<BlockTransactionsRequest, encode::Error> {
+        let block_hash = BlockHash::consensus_decode(&mut d)?;
+        let count = encode::read_compact_size_len(&mut d)?;
+        // Indexes increase and stop at `u16::MAX`, so at most 65,536 are read before an error.
+        let max_indexes = u64::from(u16::MAX) + 1;
+        let mut indexes = Vec::with_capacity(count.min(max_indexes) as usize);
+        let mut shift: u64 = 0;
+        for _ in 0..count {
+            let differential = encode::read_compact_size_len(&mut d)?;
+            shift += differential;
+            if shift > u64::from(u16::MAX) {
+                return Err(encode::Error::ParseFailed("differential value overflow"));
+            }
+            indexes.push(shift);
+            shift += 1;
+        }
         Ok(BlockTransactionsRequest {
-            block_hash: BlockHash::consensus_decode(&mut d)?,
-            indexes: {
-                // Manually decode indexes because they are differentially encoded VarInts.
-                let nb_indexes = VarInt::consensus_decode(&mut d)?.0 as usize;
-
-                // Since the number of indices ultimately represent transactions,
-                // we can limit the number of indices to the maximum number of
-                // transactions that would be allowed in a vector.
-                let byte_size = (nb_indexes)
-                    .checked_mul(mem::size_of::<Transaction>())
-                    .ok_or(encode::Error::ParseFailed("Invalid length"))?;
-                if byte_size > encode::MAX_VEC_SIZE {
-                    return Err(encode::Error::OversizedVectorAllocation {
-                        requested: byte_size,
-                        max: encode::MAX_VEC_SIZE,
-                    });
-                }
-
-                let mut indexes = Vec::with_capacity(nb_indexes);
-                let mut last_index: u64 = 0;
-                for _ in 0..nb_indexes {
-                    let differential: VarInt = Decodable::consensus_decode(&mut d)?;
-                    last_index = match last_index.checked_add(differential.0) {
-                        Some(r) => r,
-                        None => return Err(encode::Error::ParseFailed("block index overflow")),
-                    };
-                    indexes.push(last_index);
-                    last_index = match last_index.checked_add(1) {
-                        Some(r) => r,
-                        None => return Err(encode::Error::ParseFailed("block index overflow")),
-                    };
-                }
-                indexes
-            },
+            block_hash,
+            indexes,
         })
     }
 }
@@ -376,6 +401,7 @@ mod test {
     use crate::hash_types::{TxMerkleNode, Txid};
     use crate::pow::CompactTarget;
     use hashes::sha256d;
+    use test_case::test_case;
 
     fn dummy_tx(nonce: &[u8]) -> Transaction {
         Transaction {
@@ -450,55 +476,113 @@ mod test {
         assert_eq!(idxs, vec![0, 1]);
     }
 
+    #[test_case(&[4, 0, 5, 1, 10] => matches Ok(v) if v == [0, 6, 8, 19]; "four indexes")]
+    #[test_case(&[1, 0] => matches Ok(v) if v == [0]; "one index")]
+    #[test_case(&[5, 0, 0, 0, 0, 0] => matches Ok(v) if v == [0, 1, 2, 3, 4]; "consecutive indexes")]
+    #[test_case(&[3, 1, 1, 1] => matches Ok(v) if v == [1, 3, 5]; "gaps of one")]
+    #[test_case(&[3, 0, 0, 253, 0, 1] => matches Ok(v) if v == [0, 1, 258]; "three-byte differential")]
+    #[test_case(&[1, 0xfd, 0xff, 0xff] => matches Ok(v) if v == [65_535]; "absolute index u16 max")]
+    #[test_case(&[[0xfe, 0, 0, 1, 0].as_slice(), &[0; 65_536]].concat()
+        => matches Ok(v) if v.len() == 65_536 && v.last() == Some(&65_535); "65,536 indexes")]
+    #[test_case(&[1, 0xfe, 0, 0, 1, 0]
+        => matches Err(encode::Error::ParseFailed("differential value overflow")); "absolute index 65,536")]
+    #[test_case(&[2, 0xfd, 0xff, 0xff, 0]
+        => matches Err(encode::Error::ParseFailed("differential value overflow")); "index after u16 max")]
+    #[test_case(&[[0xfe, 1, 0, 1, 0].as_slice(), &[0; 65_537]].concat()
+        => matches Err(encode::Error::ParseFailed("differential value overflow")); "65,537 indexes")]
+    #[test_case(&[0xfe, 0, 0, 0, 2, 0xfd, 0xff, 0xff, 0xfd, 0xff, 0xff]
+        => matches Err(encode::Error::ParseFailed("differential value overflow")); "count of 32 MiB, second index above u16 max")]
+    #[test_case(&[1, 0xfe, 0, 0, 0, 2]
+        => matches Err(encode::Error::ParseFailed("differential value overflow")); "differential of 32 MiB")]
+    #[test_case(&[0xfe, 1, 0, 0, 2]
+        => matches Err(encode::Error::OversizedVectorAllocation { .. }); "count above 32 MiB")]
+    #[test_case(&[1, 0xfe, 1, 0, 0, 2]
+        => matches Err(encode::Error::OversizedVectorAllocation { .. }); "differential above 32 MiB")]
+    #[test_case(&[2, 255, 254, 255, 255, 255, 255, 255, 255, 255, 0]
+        => matches Err(encode::Error::OversizedVectorAllocation { .. }); "differential u64 max minus one")]
+    #[test_case(&[1, 255, 255, 255, 255, 255, 255, 255, 255, 255]
+        => matches Err(encode::Error::OversizedVectorAllocation { .. }); "differential u64 max")]
+    #[test_case(&[0xfe, 0, 0, 0, 2] => matches Err(encode::Error::Io(_)); "count of 32 MiB, no indexes follow")]
+    fn test_getblocktx_differential_encoding_de_and_serialization(
+        encoded: &[u8],
+    ) -> Result<Vec<u64>, encode::Error> {
+        let mut raw = vec![0; 32];
+        raw.extend_from_slice(encoded);
+        let streamed = BlockTransactionsRequest::consensus_decode(&mut &raw[..]);
+        let sliced = deserialize::<BlockTransactionsRequest>(&raw);
+        assert_eq!(format!("{:?}", streamed), format!("{:?}", sliced));
+        let request = streamed?;
+        assert_eq!(serialize(&request), raw);
+        Ok(request.indexes)
+    }
+
     #[test]
-    fn test_getblocktx_differential_encoding_de_and_serialization() {
-        let testcases = vec![
-            // differentially encoded VarInts, indices
-            (vec![4, 0, 5, 1, 10], vec![0, 6, 8, 19]),
-            (vec![1, 0], vec![0]),
-            (vec![5, 0, 0, 0, 0, 0], vec![0, 1, 2, 3, 4]),
-            (vec![3, 1, 1, 1], vec![1, 3, 5]),
-            (vec![3, 0, 0, 253, 0, 1], vec![0, 1, 258]), // .., 253, 0, 1] == VarInt(256)
-        ];
-        let deser_errorcases = vec![
-            vec![2, 255, 254, 255, 255, 255, 255, 255, 255, 255, 0], // .., 255, 254, .., 255] == VarInt(u64::MAX-1)
-            vec![1, 255, 255, 255, 255, 255, 255, 255, 255, 255], // .., 255, 255, .., 255] == VarInt(u64::MAX)
-        ];
-        for testcase in testcases {
-            {
-                // test deserialization
-                let mut raw: Vec<u8> = [0u8; 32].to_vec();
-                raw.extend(testcase.0.clone());
-                let btr: BlockTransactionsRequest = deserialize(&raw.to_vec()).unwrap();
-                assert_eq!(testcase.1, btr.indexes);
-            }
-            {
-                // test serialization
-                let raw: Vec<u8> = serialize(&BlockTransactionsRequest {
-                    block_hash: BlockHash::all_zeros(),
-                    indexes: testcase.1,
-                });
-                let mut expected_raw: Vec<u8> = [0u8; 32].to_vec();
-                expected_raw.extend(testcase.0);
-                assert_eq!(expected_raw, raw);
-            }
+    fn getblocktxn_encoding_refuses_indexes_not_increasing_or_above_u16() {
+        for indexes in [
+            vec![u64::MAX],
+            vec![u64::MAX - 1],
+            vec![65_536],
+            vec![0, 65_536],
+            vec![1, 0],
+            vec![5, 5],
+            vec![0, 3, 2],
+        ] {
+            let err = request(indexes.clone())
+                .consensus_encode(&mut Vec::new())
+                .expect_err("indexes must be refused");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{:?}", indexes);
         }
-        for errorcase in deser_errorcases {
-            {
-                // test that we return Err() if deserialization fails (and don't panic)
-                let mut raw: Vec<u8> = [0u8; 32].to_vec();
-                raw.extend(errorcase);
-                assert!(deserialize::<BlockTransactionsRequest>(&raw.to_vec()).is_err());
-            }
+        for indexes in [vec![65_535], vec![0, 1], vec![1, 3, 65_535]] {
+            let request = request(indexes);
+            let raw = serialize(&request);
+            assert_eq!(deserialize::<BlockTransactionsRequest>(&raw).unwrap(), request);
+        }
+    }
+
+    fn request(indexes: Vec<u64>) -> BlockTransactionsRequest {
+        BlockTransactionsRequest {
+            block_hash: BlockHash::all_zeros(),
+            indexes,
         }
     }
 
     #[test]
-    #[should_panic] // 'attempt to add with overflow' in consensus_encode()
-    fn test_getblocktx_panic_when_encoding_u64_max() {
-        serialize(&BlockTransactionsRequest {
-            block_hash: BlockHash::all_zeros(),
-            indexes: vec![u64::MAX],
-        });
+    fn prefilled_transaction_index_is_a_compact_size_bounded_by_u16() {
+        let tx = serialize(&dummy_tx(&[7]));
+        let with_index = |index: &[u8]| {
+            let mut raw = index.to_vec();
+            raw.extend_from_slice(&tx);
+            raw
+        };
+        let ok = deserialize::<PrefilledTransaction>(&with_index(&[0xfd, 0xff, 0xff])).unwrap();
+        assert_eq!(ok.idx, 65_535);
+        let err = deserialize::<PrefilledTransaction>(&with_index(&[0xfe, 0x00, 0x00, 0x01, 0x00]))
+            .expect_err("65,536 is above u16::MAX");
+        assert!(matches!(
+            err,
+            encode::Error::ParseFailed("BIP152 prefilled tx index out of bounds")
+        ));
+        let err = deserialize::<PrefilledTransaction>(&with_index(&[0xfe, 0x01, 0x00, 0x00, 0x02]))
+            .expect_err("index above 32 MiB");
+        assert!(matches!(err, encode::Error::OversizedVectorAllocation { .. }), "{:?}", err);
+    }
+
+    #[test]
+    fn compact_block_decoding_refuses_more_than_u16_transactions() {
+        let block = dummy_block();
+        let mut compact = HeaderAndShortIds::from_block(&block, 42, 1, &[]).unwrap();
+        compact.short_ids = vec![ShortId([0; 6]); 65_534];
+        let raw = serialize(&compact);
+        assert_eq!(deserialize::<HeaderAndShortIds>(&raw).unwrap(), compact);
+        assert_eq!(HeaderAndShortIds::consensus_decode(&mut &raw[..]).unwrap(), compact);
+
+        compact.short_ids.push(ShortId([0; 6]));
+        let raw = serialize(&compact);
+        for err in [
+            deserialize::<HeaderAndShortIds>(&raw).expect_err("65,536 transactions"),
+            HeaderAndShortIds::consensus_decode(&mut &raw[..]).expect_err("65,536 transactions"),
+        ] {
+            assert!(matches!(err, encode::Error::ParseFailed("indexes overflowed 16 bits")));
+        }
     }
 }
