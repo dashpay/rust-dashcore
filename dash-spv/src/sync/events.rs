@@ -187,6 +187,17 @@ pub enum SyncEvent {
         fork_height: u32,
     },
 
+    /// Storage read back data that fails its checksum or does not decode.
+    /// Reading a single header or filter header from a segment not in memory skips the
+    /// checksum, so corruption there is not detected.
+    ///
+    /// Emitted by: Any manager whose storage read fails with `StorageError::Corruption`
+    /// Consumed by: The client, which wipes the storage and syncs again
+    StorageCorrupted {
+        /// The corruption the storage reported
+        error: String,
+    },
+
     /// A wallet needs blocks below the lowest stored header.
     ///
     /// Emitted by: `FiltersManager`
@@ -297,6 +308,9 @@ impl fmt::Display for SyncEvent {
             SyncEvent::ForkDetected {
                 fork_height,
             } => write!(f, "ForkDetected(height={})", fork_height),
+            SyncEvent::StorageCorrupted {
+                error,
+            } => write!(f, "StorageCorrupted({})", error),
             SyncEvent::HeadersBackfillNeeded {
                 height,
             } => write!(f, "HeadersBackfillNeeded(height={})", height),

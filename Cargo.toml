@@ -37,6 +37,7 @@ key-wallet-manager = { path = "key-wallet-manager" }
 # Packages shared across crates
 bincode = { package = "grovedb-bincode", version = "=2.1.0" }
 bincode_derive = { package = "grovedb-bincode-derive", version = "=2.1.0" }
+blake3 = "1.8.1"
 futures = "0.3"
 rayon = "1.11"
 serde = { version = "1.0.219", default-features = false }

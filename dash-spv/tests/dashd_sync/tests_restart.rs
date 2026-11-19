@@ -1,6 +1,7 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::HashSet;
+use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,14 +9,16 @@ use dash_spv::Network;
 use dash_spv::{SyncEvent, SyncProgress};
 
 use super::helpers::{
-    get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete, PeerTracker,
+    get_spendable_balance, is_progress_event, wait_for_sync, wait_for_sync_complete,
+    wait_for_wallet_synced, PeerTracker, EMPTY_MNEMONIC,
 };
 use dash_spv::test_utils::SYNC_TIMEOUT;
 
 use super::setup::{create_and_start_client, TestContext};
-use dash_spv::test_utils::{create_test_wallet, TestChain};
+use dash_spv::test_utils::{create_test_wallet, default_test_account_options, TestChain};
 
-/// Verify sync state is identical after stopping and restarting with same storage.
+/// Verify sync state is identical after stopping and restarting with same storage,
+/// and that a corrupted segment of it is wiped and synced again.
 #[tokio::test]
 async fn test_sync_restart_consistency() {
     let Some(ctx) = TestContext::new(TestChain::Full).await else {
@@ -57,6 +60,29 @@ async fn test_sync_restart_consistency() {
     assert_eq!(first_balance, second_balance, "Balance mismatch after restart");
     assert_eq!(first_tx_count, second_tx_count, "Transaction count mismatch after restart");
     tracing::info!("State consistent after restart");
+
+    drop(client_handle);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let segment = ctx.client_config.storage_path.join("block_headers").join("segment_000000.dat");
+    let original_segment = fs::read(&segment).unwrap();
+    let mut corrupted_segment = original_segment.clone();
+    corrupted_segment[0] ^= 1;
+    fs::write(&segment, corrupted_segment).unwrap();
+
+    tracing::info!("Restarting with a corrupted segment");
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
+
+    client_handle.stop().await;
+    ctx.assert_synced(&client_handle.client.progress().await).await;
+    assert_eq!(first_balance, ctx.spendable_balance().await, "Balance mismatch after resync");
+    assert_eq!(
+        first_tx_count,
+        ctx.transaction_count().await,
+        "Transaction count mismatch after resync"
+    );
+    assert_eq!(fs::read(&segment).unwrap(), original_segment, "Corrupted segment not synced again");
 
     // A block mined right after a fully-synced restart must commit through the
     // Filters phase instead of freezing `committed_height` one below the new
@@ -271,4 +297,45 @@ async fn test_clear_storage_stops_running_client() {
     wait_for_sync_complete(&mut client_handle.sync_event_receiver, ctx.dashd.initial_height).await;
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
+}
+
+/// Verify a segment corrupted while the client runs is wiped and synced again.
+#[tokio::test]
+async fn test_runtime_corruption_resyncs() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    let height = ctx.dashd.initial_height;
+    let mut client_handle = ctx.spawn_new_client().await;
+    wait_for_sync(&mut client_handle.progress_receiver, height).await;
+
+    let segment = ctx.client_config.storage_path.join("filters").join("segment_000000.dat");
+    let original_segment = fs::read(&segment).unwrap();
+    let mut corrupted_segment = original_segment.clone();
+    corrupted_segment[0] ^= 1;
+    fs::write(&segment, corrupted_segment).unwrap();
+
+    // A wallet born at 0 rescans the filters, so the client reads the corrupted segment.
+    let wallet_id = client_handle
+        .client
+        .wallet()
+        .write()
+        .await
+        .create_wallet_from_mnemonic(EMPTY_MNEMONIC, 0, default_test_account_options())
+        .unwrap();
+
+    tokio::time::timeout(SYNC_TIMEOUT, async {
+        while !matches!(
+            client_handle.sync_event_receiver.recv().await.unwrap(),
+            SyncEvent::StorageCorrupted { .. }
+        ) {}
+    })
+    .await
+    .expect("Corruption not detected");
+
+    wait_for_wallet_synced(client_handle.client.wallet(), &wallet_id, height).await;
+    wait_for_sync(&mut client_handle.progress_receiver, height).await;
+    client_handle.stop().await;
+    ctx.assert_synced(&client_handle.client.progress().await).await;
+    assert_eq!(fs::read(&segment).unwrap(), original_segment, "Corrupted segment not synced again");
 }
