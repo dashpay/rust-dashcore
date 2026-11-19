@@ -127,7 +127,8 @@ pub fn siphash(k0: u64, k1: u64, data: &[u8]) -> u64 {
 
 /// Batch SipHash-2-4 over `inputs` that are all exactly `LEN` bytes, writing
 /// `out[i] = siphash(k0, k1, &inputs[i])`. Uses the AVX2 (x86_64) or NEON (aarch64) batch
-/// kernel when available, else the scalar one-shot; bit-identical to per-input [`siphash`].
+/// kernel when available and this crate is optimized, else the scalar one-shot. The result is
+/// bit-identical to per-input [`siphash`].
 pub fn siphash_batch<const LEN: usize>(k0: u64, k1: u64, inputs: &[[u8; LEN]], out: &mut [u64]) {
     assert!(out.len() >= inputs.len(), "output buffer too small");
     siphash_flat(k0, k1, inputs.as_flattened(), LEN, &mut out[..inputs.len()]);
@@ -154,6 +155,12 @@ macro_rules! by_tail {
 /// It is not generic, so the kernels are compiled in this crate, at this crate's opt-level.
 #[inline(never)]
 fn siphash_flat(k0: u64, k1: u64, data: &[u8], len: usize, out: &mut [u64]) {
+    // Unoptimized, each SIMD intrinsic is a call, which makes the kernels slower than scalar.
+    if cfg!(hashes_unoptimized) {
+        siphash_each(k0, k1, data, len, out);
+        return;
+    }
+
     #[cfg(target_arch = "x86_64")]
     {
         if std::is_x86_feature_detected!("avx2") {
@@ -172,9 +179,7 @@ fn siphash_flat(k0: u64, k1: u64, data: &[u8], len: usize, out: &mut [u64]) {
     siphash_each(k0, k1, data, len, out);
 }
 
-/// Scalar fallback for [`siphash_batch`] where no SIMD kernel applies (x86 without AVX2, and
-/// targets with no vectorised path). aarch64 always batches via NEON, so it never uses this.
-#[cfg(not(target_arch = "aarch64"))]
+/// Scalar fallback for [`siphash_batch`] in unoptimized builds and where no SIMD kernel applies.
 #[inline]
 fn siphash_each(k0: u64, k1: u64, data: &[u8], len: usize, out: &mut [u64]) {
     for (i, o) in out.iter_mut().enumerate() {

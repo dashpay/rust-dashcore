@@ -100,3 +100,7 @@ debug = 1
 [profile.dev.package.dash-pow]
 # Unoptimized X11 is slow enough to stall header sync
 opt-level = 3
+
+[profile.dev.package.dashcore_hashes]
+# Unoptimized SipHash drops to scalar, which slows down filter matching
+opt-level = 3

@@ -68,10 +68,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Debug Builds
 
-Unoptimized X11 hashing in `dash-pow` is slow enough to stall header sync in debug builds. Its SIMD code relies on the optimizer to turn each vector operation into a single instruction. Cargo ignores the profiles of dependencies, so optimize `dash-pow` in the root `Cargo.toml` of your workspace.
+Unoptimized X11 hashing in `dash-pow` is slow enough to stall header sync in debug builds. Its SIMD code relies on the optimizer to turn each vector operation into a single instruction. The SIMD SipHash in `dashcore_hashes` that compact filter matching runs on has the same need, and it drops to slower scalar code when unoptimized. Cargo ignores the profiles of dependencies, so optimize both in the root `Cargo.toml` of your workspace.
 
 ```toml
 [profile.dev.package.dash-pow]
+opt-level = 3
+
+[profile.dev.package.dashcore_hashes]
 opt-level = 3
 ```
 
