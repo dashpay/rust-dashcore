@@ -307,7 +307,10 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
     /// Prune old entries from the cache.
     pub(super) fn prune_old_entries(&mut self) {
-        let now = SystemTime::now();
+        self.prune_old_entries_at(SystemTime::now());
+    }
+
+    fn prune_old_entries_at(&mut self, now: SystemTime) {
         self.instantlocks.retain(|_, entry| {
             now.duration_since(entry.received_at).map(|d| d < CACHE_TTL).unwrap_or(true)
         });
@@ -599,8 +602,8 @@ mod tests {
         let mut forged = genuine.clone();
         forged.signature = BLSSignature::from([1; 96]);
         manager.process_instantlock(&forged).await.unwrap();
-        // Cache eviction drops the forged lock's entry while it stays pending.
-        manager.instantlocks.remove(&genuine.txid);
+        // A wall-clock jump can expire the cache before the monotonic pending TTL.
+        manager.prune_old_entries_at(SystemTime::now() + CACHE_TTL + Duration::from_secs(1));
         manager.process_instantlock(&genuine).await.unwrap();
         assert_eq!(manager.pending_count(), 2);
 
