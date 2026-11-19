@@ -157,6 +157,13 @@ mod tests {
         prevout.script_pubkey = ScriptBuf::new_p2pkh(&owner.public_key().pubkey_hash());
         sign_input(tx, 0, prevout, &owner, 1);
     }, Ok(true); "uncompressed owner key")]
+    #[test_case(|tx, prevout| {
+        let owner = key(7);
+        let mut funding_key = owner.public_key();
+        funding_key.compressed = false;
+        prevout.script_pubkey = ScriptBuf::new_p2pkh(&funding_key.pubkey_hash());
+        sign_input(tx, 0, prevout, &owner, 1);
+    }, Ok(false); "compressed key for uncompressed funding key hash")]
     #[test_case(|tx, _| tx.input[0].script_sig = ScriptBuf::new(), Ok(false); "unsigned")]
     #[test_case(|tx, prevout| sign_input(tx, 0, prevout, &key(9), 1), Ok(false); "other key")]
     #[test_case(|tx, prevout| {
@@ -204,8 +211,10 @@ mod tests {
         let bytes = script.as_mut_bytes();
         bytes[usize::from(bytes[0])] = 0x81;
     }, Ok(false); "unsigned change of sighash flag")]
-    #[test_case(|tx, prevout| sign_input(tx, 0, prevout, &key(7), 0x81),
-        Err(SpendAuthorizationError::UnsupportedSighash(0x81)); "owner signed ANYONECANPAY")]
+    #[test_case(|tx, prevout| sign_input(tx, 0, prevout, &key(7), 2),
+        Err(SpendAuthorizationError::UnsupportedSighash(2)); "owner signed NONE")]
+    #[test_case(|tx, prevout| sign_input(tx, 0, prevout, &key(7), 3),
+        Err(SpendAuthorizationError::UnsupportedSighash(3)); "owner signed SINGLE")]
     #[test_case(|tx, prevout| {
         tx.output.clear();
         sign_input(tx, 0, prevout, &key(7), 3);
