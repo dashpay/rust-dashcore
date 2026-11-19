@@ -155,6 +155,7 @@ macro_rules! by_tail {
 /// It is not generic, so the kernels are compiled in this crate, at this crate's opt-level.
 #[inline(never)]
 fn siphash_flat(k0: u64, k1: u64, data: &[u8], len: usize, out: &mut [u64]) {
+    debug_assert_eq!(data.len(), out.len() * len);
     // Unoptimized, each SIMD intrinsic is a call, which makes the kernels slower than scalar.
     if cfg!(hashes_unoptimized) {
         siphash_each(k0, k1, data, len, out);
@@ -164,12 +165,16 @@ fn siphash_flat(k0: u64, k1: u64, data: &[u8], len: usize, out: &mut [u64]) {
     #[cfg(target_arch = "x86_64")]
     {
         if std::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 was just detected, `data` holds `out.len()` inputs of `len` bytes,
+            // and `by_tail!` passes `TAIL == len % 8`.
             unsafe { by_tail!(len, hash_many_wide_avx2, AVX2_R, (k0, k1, data, len, out)) };
         } else {
             siphash_each(k0, k1, data, len, out);
         }
     }
 
+    // SAFETY: NEON is always present on aarch64, `data` holds `out.len()` inputs of `len`
+    // bytes, and `by_tail!` passes `TAIL == len % 8`.
     #[cfg(target_arch = "aarch64")]
     unsafe {
         by_tail!(len, hash_many_wide_neon, NEON_R, (k0, k1, data, len, out))
