@@ -164,9 +164,8 @@ mod tests {
     use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::sml::llmq_type::LLMQType;
-    use dashcore::{OutPoint, QuorumHash};
+    use dashcore::{BlockHash, OutPoint, QuorumHash};
     use hex_conservative::DisplayHex;
-    use std::collections::BTreeMap;
     use test_case::test_case;
 
     #[test]
@@ -195,28 +194,48 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_lock_without_its_quorum_is_not_refuted() {
-        let quorums = BTreeMap::new();
-        let result = InstantLockValidator::new(InstantSendCycle {
-            quorums: &quorums,
-            complete: false,
-        })
-        .validate(&mainnet_fixture_is_lock());
-        assert!(matches!(result, Err(ValidationError::MissingQuorumData)));
+    async fn partial_mainnet_cycle() -> (TestEngine, BlockHash) {
+        let (mut engine, qr_info) = TestEngine::mainnet_qr_info_fixture();
+        let cycle_hash = engine.block_hash_at(2518848).unwrap();
+        engine.feed_qr_info(qr_info).await.unwrap();
+        (engine, cycle_hash)
+    }
+
+    #[tokio::test]
+    async fn a_lock_without_its_quorum_is_not_refuted() {
+        let (engine, cycle_hash) = partial_mainnet_cycle().await;
+        let mut lock = mainnet_fixture_is_lock();
+        lock.cyclehash = cycle_hash;
+        lock.inputs[0].vout = 3;
+        let cycle = engine.instant_send_cycle(&cycle_hash).unwrap();
+        assert!(!cycle.quorums.contains_key(&0));
+        let validator = InstantLockValidator::new(cycle);
+        assert!(matches!(
+            validator.signing_quorum(&lock),
+            Err(MessageVerificationError::QuorumIndexNotFound(0, hash)) if hash == cycle_hash
+        ));
+        assert!(matches!(validator.validate(&lock), Err(ValidationError::MissingQuorumData)));
     }
 
     #[test_case(false; "partial cycle")]
     #[test_case(true; "complete cycle")]
-    fn only_a_complete_cycle_refutes_a_signature(complete: bool) {
-        let engine = TestEngine::mainnet_fixture();
+    #[tokio::test]
+    async fn only_a_complete_cycle_refutes_a_signature(complete: bool) {
         let mut lock = mainnet_fixture_is_lock();
-        let cycle = InstantSendCycle {
-            quorums: &engine.rotated_quorums_per_cycle()[&lock.cyclehash],
-            complete,
+        let engine = if complete {
+            TestEngine::mainnet_fixture()
+        } else {
+            let (engine, cycle_hash) = partial_mainnet_cycle().await;
+            lock.cyclehash = cycle_hash;
+            engine
         };
+        let cycle = engine.instant_send_cycle(&lock.cyclehash).unwrap();
+        assert_eq!(cycle.complete, complete);
+        assert!(cycle.quorums.contains_key(&23));
         let validator = InstantLockValidator::new(cycle);
-        validator.validate(&lock).unwrap();
+        if complete {
+            validator.validate(&lock).unwrap();
+        }
         lock.signature = BLSSignature::from([1; 96]);
         match validator.validate(&lock) {
             Err(ValidationError::InvalidSignature(_)) if complete => {}
@@ -256,20 +275,5 @@ mod tests {
             "6fcbf58004b118d865a448bf89d9299c64d4ecedd754dabec655090224de91cd"
         );
         validator.validate(&lock).expect("expected to verify is lock");
-
-        // Without its quorum index in the cycle, the lock cannot be resolved.
-        let mut quorums = engine.rotated_quorums_per_cycle()[&lock.cyclehash].clone();
-        quorums.remove(&23);
-        let validator = InstantLockValidator::new(InstantSendCycle {
-            quorums: &quorums,
-            complete: false,
-        });
-        assert!(matches!(validator.validate(&lock), Err(ValidationError::MissingQuorumData)));
-        match validator.signing_quorum(&lock) {
-            Err(MessageVerificationError::QuorumIndexNotFound(23, hash)) => {
-                assert_eq!(hash, lock.cyclehash)
-            }
-            other => panic!("expected QuorumIndexNotFound(23), got: {:?}", other.map(|_| ())),
-        }
     }
 }

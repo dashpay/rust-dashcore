@@ -1250,6 +1250,30 @@ pub(crate) mod test_support {
         }
     }
 
+    /// Returns every masternode list diff a QRInfo carries.
+    pub(super) fn qr_info_diffs(qr_info: &mut QRInfo) -> Vec<&mut MnListDiff> {
+        let QRInfo {
+            mn_list_diff_tip,
+            mn_list_diff_h,
+            mn_list_diff_at_h_minus_c,
+            mn_list_diff_at_h_minus_2c,
+            mn_list_diff_at_h_minus_3c,
+            quorum_snapshot_and_mn_list_diff_at_h_minus_4c,
+            mn_list_diff_list,
+            ..
+        } = qr_info;
+        let mut diffs = vec![
+            mn_list_diff_tip,
+            mn_list_diff_h,
+            mn_list_diff_at_h_minus_c,
+            mn_list_diff_at_h_minus_2c,
+            mn_list_diff_at_h_minus_3c,
+        ];
+        diffs.extend(quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_mut().map(|(_, diff)| diff));
+        diffs.extend(mn_list_diff_list.iter_mut());
+        diffs
+    }
+
     /// The block heights of a `block_container_*.dat` fixture.
     pub(crate) fn fixture_heights(bytes: &[u8]) -> HashMap<BlockHash, CoreBlockHeight> {
         heights_of(decode(bytes))
@@ -1316,6 +1340,20 @@ pub(crate) mod test_support {
             let (before, after) = self.masternode_lists_around_height(chain_lock.signing_height());
             ChainLockValidator::new(self.network.chain_locks_type(), before, after)
                 .validate(chain_lock)
+        }
+
+        /// Returns a cold-start engine and the mainnet QRInfo at height 2518986.
+        /// The active set includes a verified quorum from the previous cycle.
+        pub(crate) fn mainnet_qr_info_fixture() -> (Self, QRInfo) {
+            let heights = fixture_heights(include_bytes!(
+                "../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
+            ));
+            let mut engine =
+                Self::new(Network::Mainnet, Arc::new(RwLock::new(MockHeaderStorage::new(heights))));
+            let mut qr_info: QRInfo =
+                decode(include_bytes!("../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"));
+            engine.feed_merkle_roots(qr_info_diffs(&mut qr_info).into_iter().map(|diff| &*diff));
+            (engine, qr_info)
         }
 
         /// A mainnet engine with 29 lists up to 2243493 holding only their
@@ -1455,7 +1493,9 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{fixture_heights, mainnet_fixture_is_lock, quorum_entry, TestEngine};
+    use super::test_support::{
+        fixture_heights, mainnet_fixture_is_lock, qr_info_diffs, quorum_entry, TestEngine,
+    };
     use super::{build_cycle_quorum_map, fills_every_slot, valid_coinbase_chain_lock};
     use super::{FeedError, MasternodeListEngine, QRInfoFeedResult};
     use crate::error::{StorageError, StorageResult, ValidationError};
@@ -1493,30 +1533,6 @@ mod tests {
     use std::time::Duration;
     use test_case::test_case;
     use tokio::sync::RwLock;
-
-    /// Returns every masternode list diff a QRInfo carries.
-    fn qr_info_diffs(qr_info: &mut QRInfo) -> Vec<&mut MnListDiff> {
-        let QRInfo {
-            mn_list_diff_tip,
-            mn_list_diff_h,
-            mn_list_diff_at_h_minus_c,
-            mn_list_diff_at_h_minus_2c,
-            mn_list_diff_at_h_minus_3c,
-            quorum_snapshot_and_mn_list_diff_at_h_minus_4c,
-            mn_list_diff_list,
-            ..
-        } = qr_info;
-        let mut diffs = vec![
-            mn_list_diff_tip,
-            mn_list_diff_h,
-            mn_list_diff_at_h_minus_c,
-            mn_list_diff_at_h_minus_2c,
-            mn_list_diff_at_h_minus_3c,
-        ];
-        diffs.extend(quorum_snapshot_and_mn_list_diff_at_h_minus_4c.as_mut().map(|(_, diff)| diff));
-        diffs.extend(mn_list_diff_list.iter_mut());
-        diffs
-    }
 
     /// Feeds the merkle roots of every diff `qr_info` carries and returns `qr_info`.
     fn feed_qr_info_merkle_roots(engine: &mut TestEngine, mut qr_info: QRInfo) -> QRInfo {
@@ -1699,20 +1715,7 @@ mod tests {
     /// engine state mirrors production cold start: empty masternode lists
     /// over the captured header heights.
     fn load_qrinfo_2518986_fixture() -> (TestEngine, QRInfo) {
-        let heights = fixture_heights(include_bytes!(
-            "../../dash/tests/data/test_DML_diffs/block_container_2518986.dat"
-        ));
-        let mut engine = TestEngine::new(
-            Network::Mainnet,
-            Arc::new(RwLock::new(MockHeaderStorage::new(heights))),
-        );
-        let qr_info = feed_qr_info_merkle_roots(
-            &mut engine,
-            decode_fixture(include_bytes!(
-                "../../dash/tests/data/test_DML_diffs/qrinfo_2518986.dat"
-            )),
-        );
-        (engine, qr_info)
+        TestEngine::mainnet_qr_info_fixture()
     }
 
     /// A restart keeps both cycles the QRInfo stored, the previous one without
@@ -1861,6 +1864,12 @@ mod tests {
             mixed_cycle_bases
         );
 
+        let older = qr_info
+            .last_commitment_per_index
+            .iter()
+            .find(|quorum| quorum.quorum_index == Some(0))
+            .unwrap()
+            .clone();
         let h_block_hash = qr_info.mn_list_diff_h.block_hash;
         let feed_result = engine
             .feed_qr_info(qr_info)
@@ -1922,6 +1931,13 @@ mod tests {
             previous_cycle.values().all(|q| q.verified == LLMQEntryVerificationStatus::Verified),
             "every stored previous-cycle quorum must be verified"
         );
+
+        let stored_older = engine
+            .rotated_quorums_of_cycle(&previous_cycle_hash)
+            .and_then(|cycle| cycle.get(&0))
+            .unwrap();
+        assert_eq!(stored_older.quorum_entry, older);
+        assert_eq!(stored_older.verified, LLMQEntryVerificationStatus::Verified);
 
         // The current cycle has no quorum of its own at index 0, so it is incomplete and
         // a lock of it that does not verify is deferred, not refuted.
@@ -2731,80 +2747,46 @@ mod tests {
             InstantLockValidator::new(cycle).validate(&lock),
             Err(ValidationError::InvalidSignature(_))
         ));
+
+        // This signed lock is captured with its cycle, without the original QRInfo.
+        let fixture = TestEngine::mainnet_fixture();
+        let lock = mainnet_fixture_is_lock();
+        let quorum = fixture.rotated_quorums_of_cycle(&lock.cyclehash).unwrap()[&23].clone();
+        let mut engine = TestEngine::new(Network::Mainnet, fixture.headers());
+        engine.store_cycle_if_fully_verified(lock.cyclehash, vec![quorum], ty).await.unwrap();
+        let cycle = engine.instant_send_cycle(&lock.cyclehash).unwrap();
+        assert!(!cycle.complete);
+        assert_eq!(cycle.quorums.len(), 1);
+        InstantLockValidator::new(cycle).validate(&lock).unwrap();
     }
 
     /// Complete cycles stay immutable, while partial cycles accept missing slots.
     #[tokio::test]
     async fn store_cycle_if_fully_verified_short_circuits() {
         let (mut engine, qr_info) = load_qrinfo_2240504_fixture().await;
-        engine.feed_qr_info(qr_info).await.expect("first feed should succeed");
+        let cycle_key = served_cycle_key(&engine, &qr_info).await;
+        engine.feed_qr_info(qr_info.clone()).await.unwrap();
+        let original_cycle = engine.rotated_quorums_of_cycle(&cycle_key).unwrap().clone();
 
-        let cycle_key = *engine
-            .rotated_quorums_per_cycle
-            .keys()
-            .next()
-            .expect("first feed must store at least one rotation cycle");
-        let original_cycle =
-            engine.rotated_quorums_per_cycle.get(&cycle_key).expect("cycle present").clone();
-        let rotation_quorum_type =
-            original_cycle.values().next().expect("cycle non-empty").quorum_entry.llmq_type;
+        let result = engine.feed_qr_info(qr_info).await.unwrap();
+        assert_eq!(result.stored_cycle_height, None);
+        assert_eq!(engine.rotated_quorums_of_cycle(&cycle_key), Some(&original_cycle));
 
-        let already_verified: Vec<QualifiedQuorumEntry> =
-            original_cycle.values().cloned().collect();
-        let result = engine
-            .store_cycle_if_fully_verified(cycle_key, already_verified, rotation_quorum_type)
-            .await
-            .expect("gate must not error on already-verified cycle");
-        assert!(
-            result.is_none(),
-            "gate must short-circuit when target cycle is already fully Verified, got {:?}",
-            result
-        );
-        assert_eq!(
-            engine.rotated_quorums_per_cycle.get(&cycle_key).unwrap(),
-            &original_cycle,
-            "gate must not mutate the stored cycle on the already-verified short-circuit"
-        );
+        let (mut engine, qr_info) = load_qrinfo_2240504_fixture().await;
+        let mut partial = qr_info.clone();
+        partial.last_commitment_per_index.remove(0);
+        engine.feed_qr_info(partial.clone()).await.unwrap();
+        assert_eq!(engine.rotated_quorums_of_cycle(&cycle_key).unwrap().len(), 31);
 
-        // A cycle stored with only part of its set is not a cycle the gate may
-        // protect: the entries it lacks are exactly what a later QRInfo is
-        // expected to supply.
-        let partial_key = cycle_key;
-        let complete_cycle: Vec<QualifiedQuorumEntry> = original_cycle.values().cloned().collect();
-        let partial_cycle: BTreeMap<u16, QualifiedQuorumEntry> =
-            original_cycle.iter().skip(1).map(|(index, q)| (*index, q.clone())).collect();
-        engine.rotated_quorums_per_cycle.insert(partial_key, partial_cycle);
-        engine
-            .store_cycle_if_fully_verified(
-                partial_key,
-                complete_cycle.clone(),
-                rotation_quorum_type,
-            )
-            .await
-            .expect("gate must not error when completing a partial cycle");
-        assert_eq!(
-            engine.rotated_quorums_per_cycle.get(&partial_key).map(|cycle| cycle.len()),
-            Some(complete_cycle.len()),
-            "a complete cycle must complete a partially stored one"
-        );
+        engine.feed_qr_info(qr_info).await.unwrap();
+        assert_eq!(engine.rotated_quorums_of_cycle(&cycle_key), Some(&original_cycle));
 
-        // Completion only ever adds: a verified set smaller than what is
-        // already stored must leave the indices it does not carry in place.
-        let shrink_key = cycle_key;
-        let stored_before: BTreeMap<u16, QualifiedQuorumEntry> =
-            original_cycle.iter().skip(1).map(|(index, q)| (*index, q.clone())).collect();
-        engine.rotated_quorums_per_cycle.insert(shrink_key, stored_before.clone());
-        let single_entry =
-            vec![stored_before.values().next().expect("partial cycle non-empty").clone()];
-        engine
-            .store_cycle_if_fully_verified(shrink_key, single_entry, rotation_quorum_type)
-            .await
-            .expect("gate must not error when merging a smaller verified set");
-        assert_eq!(
-            engine.rotated_quorums_per_cycle.get(&shrink_key),
-            Some(&stored_before),
-            "a smaller verified set must not shrink a larger stored cycle"
-        );
+        let (mut engine, _) = load_qrinfo_2240504_fixture().await;
+        engine.feed_qr_info(partial.clone()).await.unwrap();
+        let stored_before = engine.rotated_quorums_of_cycle(&cycle_key).unwrap().clone();
+        partial.last_commitment_per_index.truncate(1);
+        engine.feed_qr_info(partial).await.unwrap();
+        assert_eq!(engine.rotated_quorums_of_cycle(&cycle_key), Some(&stored_before));
     }
 
     /// The non-rotating quorums of the newest list still to validate ask for
