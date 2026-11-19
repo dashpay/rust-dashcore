@@ -7,6 +7,7 @@ mod filter;
 mod fs_helpers;
 mod header_storage;
 pub(crate) mod masternode_network;
+mod metadata_storage;
 mod network;
 mod node;
 mod types;
@@ -24,6 +25,7 @@ pub use header_storage::MockHeaderStorage;
 pub use masternode_network::{
     ControllerInfo, MasternodeInfo, MasternodeTestContext, NetworkMetadata,
 };
+pub use metadata_storage::FailingMetadataStorage;
 pub use network::{test_socket_address, MockNetworkManager};
 pub use node::{DashCoreNode, TestChain, WalletFile};
 pub use wallet::{
