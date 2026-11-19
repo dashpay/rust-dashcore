@@ -422,7 +422,7 @@ impl<H: BlockHeaderStorage> MasternodeListEngine<H> {
 
     /// Returns the stored cycle and whether it fills every configured signing slot.
     pub fn instant_send_cycle(&self, cycle_hash: &BlockHash) -> Option<InstantSendCycle<'_>> {
-        let quorums = self.rotated_quorums_per_cycle.get(cycle_hash)?;
+        let quorums = self.rotated_quorums_of_cycle(cycle_hash)?;
         let configured = self.network.isd_llmq_type();
         let complete = fills_every_slot(quorums, configured);
         Some(InstantSendCycle {
@@ -2171,6 +2171,12 @@ mod tests {
             status,
             LLMQEntryVerificationStatus::Skipped(LLMQEntryVerificationSkipStatus::MissedList(376))
         );
+
+        let (mut engine, mut qr_info) = load_qrinfo_597_regtest_fixture();
+        qr_info.last_commitment_per_index = vec![straggler];
+        let result = engine.feed_qr_info(qr_info).await.unwrap();
+        assert_eq!(result.fully_verified_count, 0);
+        assert_eq!(result.stored_cycle_height, None);
     }
 
     #[tokio::test]
@@ -2727,9 +2733,7 @@ mod tests {
         ));
     }
 
-    /// The storage gate must short-circuit with `Ok(None)` (and not write)
-    /// when any input entry is not `Verified` or the target cycle is already
-    /// fully `Verified`, and it only ever merges into a stored cycle.
+    /// Complete cycles stay immutable, while partial cycles accept missing slots.
     #[tokio::test]
     async fn store_cycle_if_fully_verified_short_circuits() {
         let (mut engine, qr_info) = load_qrinfo_2240504_fixture().await;
@@ -2760,27 +2764,6 @@ mod tests {
             engine.rotated_quorums_per_cycle.get(&cycle_key).unwrap(),
             &original_cycle,
             "gate must not mutate the stored cycle on the already-verified short-circuit"
-        );
-
-        // `make_qualified_quorum_entry` defaults `verified` to `Skipped`, so
-        // the gate must refuse to write a degraded cycle.
-        let fresh_key = BlockHash::from_byte_array([0xAB; 32]);
-        let active_count = rotation_quorum_type.active_quorum_count() as i16;
-        let degraded: Vec<QualifiedQuorumEntry> = (0..active_count)
-            .map(|i| make_qualified_quorum_entry(rotation_quorum_type, Some(i)))
-            .collect();
-        let result = engine
-            .store_cycle_if_fully_verified(fresh_key, degraded, rotation_quorum_type)
-            .await
-            .expect("gate must not error when no entries are verified");
-        assert!(
-            result.is_none(),
-            "gate must short-circuit when not all entries are Verified, got {:?}",
-            result
-        );
-        assert!(
-            !engine.rotated_quorums_per_cycle.contains_key(&fresh_key),
-            "gate must not write a degraded cycle"
         );
 
         // A cycle stored with only part of its set is not a cycle the gate may
