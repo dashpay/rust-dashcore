@@ -100,3 +100,7 @@ debug = 1
 [profile.dev.package.dash-pow]
 # Unoptimized X11 is slow enough to stall header sync
 opt-level = 3
+
+[profile.dev.package.dashcore]
+# Unoptimized hashing through `dashcore_hashes` slows down filter matching
+opt-level = 3
