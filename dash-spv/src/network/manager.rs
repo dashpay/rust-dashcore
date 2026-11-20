@@ -2208,27 +2208,11 @@ mod tests {
         assert_eq!(stalled_at, link_stalled);
     }
 
-    /// A peer's silence with work drags its serving rate. Once every peer is silent long
-    /// enough for the judge to hold them as a possible stall of our own link, the flow
-    /// controller leaves the rates alone, since such a stall says nothing about the peers.
-    #[tokio::test(start_paused = true)]
-    async fn a_stall_of_our_link_leaves_the_serving_rates_alone() {
-        let net = broker().await;
-        let _feeders = measured_peers(&net, &[1 << 20, 200 << 10]).await;
-        let measured = serving_rates(&net).await;
-
-        advance_silent(REQUEST_TIMEOUT.as_secs() + 2).await;
-        let held = serving_rates(&net).await;
-        assert!(held.iter().zip(&measured).all(|(h, m)| h < m), "{held:?} vs {measured:?}");
-
-        advance_silent(REQUEST_TIMEOUT.as_secs() * 3).await;
-        assert_eq!(serving_rates(&net).await, held);
-        assert_eq!(net.connected_count().await, 2, "a held peer was kicked");
-    }
-
     /// Peer 2 serves a fifth of peer 1's rate, then both go silent and the supervisor starts
-    /// `start_at` seconds in. While the judge holds them it must not swap peer 2 out, nor dial
-    /// once the hold began. When the peers deliver again, the held back swap goes ahead.
+    /// `start_at` seconds in. The silence drags their serving rates until the judge holds them
+    /// as a possible stall of our link, which says nothing about the peers, so the rates then
+    /// stay put. While held, the supervisor must not swap peer 2 out, nor dial once the hold
+    /// began. When the peers deliver again, the held back swap goes ahead.
     #[test_case(REQUEST_TIMEOUT.as_secs() + 2, 0; "a round during the stall dials nobody")]
     #[test_case(REQUEST_TIMEOUT.as_secs() - 2, 1; "a stall during the dial keeps the slow peer")]
     #[tokio::test(start_paused = true)]
@@ -2241,6 +2225,7 @@ mod tests {
         let net = PeerNetworkManager::new(&config).await;
         let mut feeders = measured_peers(&net, &[1 << 20, 200 << 10]).await;
         let slow = feeders[1].handle.clone();
+        let measured = serving_rates(&net).await;
 
         advance_silent(start_at).await;
         net.start().await;
@@ -2253,6 +2238,10 @@ mod tests {
             }
             task::yield_now().await;
         }
+        let held = serving_rates(&net).await;
+        assert!(held.iter().zip(&measured).all(|(h, m)| h < m), "{held:?} vs {measured:?}");
+        advance_silent(REQUEST_TIMEOUT.as_secs() * 3).await;
+        assert_eq!(serving_rates(&net).await, held);
 
         assert_eq!(replacement.accepted.load(Ordering::SeqCst), dials);
         assert_eq!(replacement.pinged.load(Ordering::SeqCst), dials > 0, "handshake finished");
