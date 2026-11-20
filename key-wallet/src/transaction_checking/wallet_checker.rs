@@ -154,30 +154,20 @@ impl ManagedWalletInfo {
             .collect()
     }
 
-    /// Marks the addresses the matches in `result` involve as used and checks `tx` again until
-    /// nothing new is derived, so a record made afterwards holds every output. With `unrecorded`,
-    /// only the matches whose account holds no record of that txid take part.
+    /// Marks the addresses involved by the matches in `result` whose account holds no record of
+    /// `tx` as used, and checks `tx` again until nothing new is derived, so a record made
+    /// afterwards holds every output.
     fn use_addresses_until_settled(
         &mut self,
         wallet: &Wallet,
         tx: &Transaction,
         relevant_types: &[AccountTypeToCheck],
         result: &mut TransactionCheckResult,
-        unrecorded: Option<&Txid>,
     ) {
+        let txid = tx.txid();
         loop {
-            let derived = match unrecorded {
-                Some(txid) => {
-                    let matches = self.matches_without_record(&result.affected_accounts, txid);
-                    self.use_involved_addresses(wallet, &matches, &mut result.new_addresses)
-                }
-                None => self.use_involved_addresses(
-                    wallet,
-                    &result.affected_accounts,
-                    &mut result.new_addresses,
-                ),
-            };
-            if !derived {
+            let matches = self.matches_without_record(&result.affected_accounts, &txid);
+            if !self.use_involved_addresses(wallet, &matches, &mut result.new_addresses) {
                 return;
             }
             let rechecked = self.accounts.check_transaction(tx, relevant_types);
@@ -478,13 +468,7 @@ impl ManagedWalletInfo {
                 // Extend a backfilled account's windows and check again before recording it, as on
                 // first sight, so its record holds every output. An account already holding the
                 // record only changes context; its derivations travel with the block's new record.
-                self.use_addresses_until_settled(
-                    wallet,
-                    tx,
-                    &relevant_types,
-                    &mut result,
-                    Some(&txid),
-                );
+                self.use_addresses_until_settled(wallet, tx, &relevant_types, &mut result);
                 // Mark UTXOs as IS-locked and update the transaction context.
                 // An account can match (its address pool detects the tx) without
                 // already holding a record — backfill via `record_transaction`
@@ -537,7 +521,7 @@ impl ManagedWalletInfo {
             // whole. After the first round, a round derives only when it
             // marked a further address of this transaction used, and the
             // transaction has finitely many.
-            self.use_addresses_until_settled(wallet, tx, &relevant_types, &mut result, None);
+            self.use_addresses_until_settled(wallet, tx, &relevant_types, &mut result);
         }
 
         // Process each affected account
