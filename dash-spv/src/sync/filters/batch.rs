@@ -4,7 +4,6 @@ use dashcore::ScriptBuf;
 use key_wallet_manager::{FilterMatchKey, WalletId};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::mem;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// A completed batch of compact block filters ready for verification.
@@ -40,8 +39,6 @@ pub(super) struct FiltersBatch {
     tested: HashMap<WalletId, HashSet<Vec<u8>>>,
     /// Newly derived scripts still to be matched against this batch, per wallet.
     deferred_scripts: HashMap<WalletId, DerivedScripts>,
-    /// Peer whose `cfilter` completed this batch, `None` for a batch loaded from storage.
-    peer: Option<SocketAddr>,
 }
 
 impl FiltersBatch {
@@ -61,7 +58,6 @@ impl FiltersBatch {
             scanned_wallets: BTreeMap::new(),
             tested: HashMap::new(),
             deferred_scripts: HashMap::new(),
-            peer: None,
         }
     }
     /// Start height of this batch (inclusive).
@@ -87,14 +83,6 @@ impl FiltersBatch {
     /// Returns whether this batch is verified (filters verified against their headers).
     pub(super) fn verified(&self) -> bool {
         self.verified
-    }
-    /// Peer whose `cfilter` completed this batch, if it was downloaded.
-    pub(super) fn peer(&self) -> Option<SocketAddr> {
-        self.peer
-    }
-    /// Record the peer whose `cfilter` completed this batch.
-    pub(super) fn set_peer(&mut self, peer: SocketAddr) {
-        self.peer = Some(peer);
     }
     /// Mark this batch as verified (filters matched their expected headers).
     pub(super) fn mark_verified(&mut self) {

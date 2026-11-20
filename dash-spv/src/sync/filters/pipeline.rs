@@ -6,7 +6,6 @@
 //! is complete, enabling batch verification and direct wallet matching.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use dashcore::network::message_filter::GetCFilters;
@@ -195,14 +194,13 @@ impl FiltersPipeline {
         Ok(Some(height))
     }
 
-    /// Handle a CFilter message with filter data that `peer` sent.
+    /// Handle a received CFilter message with filter data.
     ///
     /// Buffers the filter data for batch verification and wallet matching.
     /// Returns `Some(batch_start)` (the `GetCFilters` request key) when a batch
     /// completes, `None` otherwise.
     pub(super) fn receive_with_data(
         &mut self,
-        peer: SocketAddr,
         height: u32,
         block_hash: BlockHash,
         filter_data: &[u8],
@@ -248,8 +246,7 @@ impl FiltersPipeline {
             end_height,
             filters.len()
         );
-        let mut batch = FiltersBatch::new(batch_start, end_height, filters);
-        batch.set_peer(peer);
+        let batch = FiltersBatch::new(batch_start, end_height, filters);
         self.completed_batches.insert(batch);
 
         Some(batch_start)
@@ -272,7 +269,6 @@ impl FiltersPipeline {
 mod tests {
     use super::*;
     use crate::storage::{PersistentBlockHeaderStorage, PersistentStorage};
-    use crate::test_utils::test_socket_address;
     use crate::types::HashedBlockHeader;
     use dashcore::block::Header;
     use dashcore::network::message::NetworkMessage;
@@ -387,12 +383,7 @@ mod tests {
 
         let height = 50;
         let hash = Header::dummy(height).block_hash();
-        let result = pipeline.receive_with_data(
-            test_socket_address(1),
-            height,
-            hash,
-            &dummy_filter_data(height),
-        );
+        let result = pipeline.receive_with_data(height, hash, &dummy_filter_data(height));
 
         assert_eq!(result, None);
         assert_eq!(pipeline.filters_received, 1);
@@ -405,8 +396,7 @@ mod tests {
         pipeline.target_height = 99;
 
         let hash = Header::dummy(50).block_hash();
-        let result =
-            pipeline.receive_with_data(test_socket_address(1), 50, hash, &dummy_filter_data(50));
+        let result = pipeline.receive_with_data(50, hash, &dummy_filter_data(50));
 
         assert_eq!(result, None);
         assert_eq!(pipeline.filters_received, 0);
@@ -421,9 +411,7 @@ mod tests {
         let mut completed_at = None;
         for h in 0..=2 {
             let hash = Header::dummy(h).block_hash();
-            if let Some(start) =
-                pipeline.receive_with_data(test_socket_address(1), h, hash, &dummy_filter_data(h))
-            {
+            if let Some(start) = pipeline.receive_with_data(h, hash, &dummy_filter_data(h)) {
                 completed_at = Some(start);
             }
         }
@@ -448,7 +436,7 @@ mod tests {
 
         for h in [3, 1, 4, 0, 2] {
             let hash = Header::dummy(h).block_hash();
-            pipeline.receive_with_data(test_socket_address(1), h, hash, &dummy_filter_data(h));
+            pipeline.receive_with_data(h, hash, &dummy_filter_data(h));
         }
 
         assert!(pipeline.batch_trackers.is_empty());
@@ -464,14 +452,14 @@ mod tests {
 
         for h in 0..=4 {
             let hash = Header::dummy(h).block_hash();
-            pipeline.receive_with_data(test_socket_address(1), h, hash, &dummy_filter_data(h));
+            pipeline.receive_with_data(h, hash, &dummy_filter_data(h));
         }
         assert_eq!(pipeline.completed_batches.len(), 1);
         assert_eq!(pipeline.batch_trackers.len(), 1);
 
         for h in 5..=9 {
             let hash = Header::dummy(h).block_hash();
-            pipeline.receive_with_data(test_socket_address(1), h, hash, &dummy_filter_data(h));
+            pipeline.receive_with_data(h, hash, &dummy_filter_data(h));
         }
         assert_eq!(pipeline.completed_batches.len(), 2);
         assert!(pipeline.batch_trackers.is_empty());
@@ -536,12 +524,7 @@ mod tests {
 
         for h in 100..=199 {
             let height = pipeline.resolve_height(&hash(h), &empty).await.unwrap().unwrap();
-            pipeline.receive_with_data(
-                test_socket_address(1),
-                height,
-                hash(h),
-                &dummy_filter_data(h),
-            );
+            pipeline.receive_with_data(height, hash(h), &dummy_filter_data(h));
         }
         assert_eq!(pipeline.completed_batches.len(), 1);
         assert_eq!(pipeline.resolve_height(&hash(150), &empty).await.unwrap(), None);
@@ -632,7 +615,7 @@ mod tests {
         // Receive all filters
         for h in 0..=99 {
             let hash = Header::dummy(h).block_hash();
-            pipeline.receive_with_data(test_socket_address(1), h, hash, &dummy_filter_data(h));
+            pipeline.receive_with_data(h, hash, &dummy_filter_data(h));
         }
 
         assert!(pipeline.is_idle());
