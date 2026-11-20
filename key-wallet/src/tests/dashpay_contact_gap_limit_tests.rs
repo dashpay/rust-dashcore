@@ -1,9 +1,10 @@
-//! Regression test for DIP-15 contact address pool maintenance (issue #1032).
+//! Regression tests for DIP-15 contact address pool maintenance (issue #1032).
 
-use dashcore::{Address, BlockHash, Transaction};
+use dashcore::{Address, BlockHash, Transaction, TxOut};
 
+use crate::account::derivation::AccountDerivation;
 use crate::account::AccountType;
-use crate::managed_account::address_pool::AddressPool;
+use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
@@ -41,15 +42,19 @@ fn contact_pool(ctx: &TestWalletContext, contact: AccountType) -> &AddressPool {
         .address_pools()[0]
 }
 
-/// Pays `address` in a block, and reports whether the wallet saw it.
-async fn pay(ctx: &mut TestWalletContext, address: &Address, height: u32) -> bool {
-    let tx = Transaction::dummy(address, 0..1, &[29_000]);
-    let context = TransactionContext::InBlock(BlockInfo::new(
+/// A delivery in the block at `height`.
+fn in_block(height: u32) -> TransactionContext {
+    TransactionContext::InBlock(BlockInfo::new(
         height,
         BlockHash::from_byte_array([height as u8; 32]),
         1_700_000_000,
-    ));
-    ctx.check_transaction(&tx, context).await.is_relevant
+    ))
+}
+
+/// Pays `address` in a block, and reports whether the wallet saw it.
+async fn pay(ctx: &mut TestWalletContext, address: &Address, height: u32) -> bool {
+    let tx = Transaction::dummy(address, 0..1, &[29_000]);
+    ctx.check_transaction(&tx, in_block(height)).await.is_relevant
 }
 
 /// A contact chain must extend as its payments arrive. Without that, the first
@@ -107,4 +112,45 @@ async fn contact_payments_extend_the_contact_pool() {
             "{direction}: the window must keep moving, not widen once"
         );
     }
+}
+
+/// A friendship's receiving chain and the reverse of the contact's external chain share an xpub,
+/// so both derive the same addresses. Each chain reports the address as used when it derives and
+/// uses it within one check.
+#[tokio::test]
+async fn shared_contact_addresses_are_reported_used_by_each_chain() {
+    let mut ctx = TestWalletContext::new_random();
+    let shared = [
+        AccountType::DashpayReceivingFunds {
+            index: 0,
+            user_identity_id: US,
+            friend_identity_id: THEM,
+        },
+        AccountType::DashpayExternalAccount {
+            index: 0,
+            user_identity_id: THEM,
+            friend_identity_id: US,
+        },
+    ];
+    for contact in shared {
+        ctx.wallet.add_account(contact, None).expect("contact account is addable");
+        ctx.managed_wallet
+            .add_managed_account(&ctx.wallet, contact)
+            .expect("contact account is manageable");
+    }
+    let gap = contact_pool(&ctx, shared[0]).gap_limit();
+    let account = ctx.wallet.accounts.account_of_type(shared[0]).expect("receiving chain");
+    let address = |index| account.derive_address_at(AddressPoolType::Absent, index, None).unwrap();
+    let (first, late) = (address(1), address(1 + gap));
+    assert_eq!(contact_pool(&ctx, shared[1]).address_at_index(1), Some(first.clone()));
+    let mut tx = Transaction::dummy(&first, 0..1, &[29_000]);
+    tx.output.push(TxOut {
+        value: 29_000,
+        script_pubkey: late.script_pubkey(),
+    });
+
+    let result = ctx.check_transaction(&tx, in_block(1_555_200)).await;
+    let reported: Vec<_> = result.new_addresses.iter().filter(|d| d.info.address == late).collect();
+    assert_eq!(reported.len(), 2, "each chain derives it");
+    assert!(reported.iter().all(|d| d.info.is_used()));
 }
