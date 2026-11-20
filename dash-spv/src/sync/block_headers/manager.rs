@@ -425,7 +425,7 @@ mod tests {
     use crate::sync::block_headers::pipeline::ACTIVE_SEGMENT_WINDOW;
     use crate::sync::block_headers::segment_state::SegmentState;
     use crate::sync::{ManagerIdentifier, ProgressPercentage, SyncManager, SyncManagerProgress};
-    use crate::test_utils::{test_socket_address, MockNetworkManager};
+    use crate::test_utils::{test_socket_address, FailingMetadataStorage, MockNetworkManager};
     use dashcore::network::message::NetworkMessage;
     use test_case::test_case;
 
@@ -437,6 +437,12 @@ mod tests {
     }
 
     async fn create_test_manager() -> TestBlockHeadersManager {
+        create_test_manager_with_metadata(DiskStorageManager::metadata).await
+    }
+
+    async fn create_test_manager_with_metadata<M: MetadataStorage>(
+        metadata: impl FnOnce(&DiskStorageManager) -> Arc<RwLock<M>>,
+    ) -> BlockHeadersManager<PersistentBlockHeaderStorage, M> {
         let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
         // Store a genesis header so the manager can initialize
         let genesis = Header::dummy_batch(0..1);
@@ -449,7 +455,7 @@ mod tests {
         let checkpoint_manager = create_test_checkpoint_manager();
         BlockHeadersManager::new(
             storage.block_headers(),
-            storage.metadata(),
+            metadata(&storage),
             checkpoint_manager,
             Network::Regtest,
         )
@@ -904,9 +910,26 @@ mod tests {
         assert!(mock.sent_to_messages().await.is_empty());
     }
 
+    #[test_case(false; "working metadata storage")]
+    #[test_case(true; "failing metadata storage")]
     #[tokio::test]
-    async fn test_disconnect_preserves_pipeline_and_resumes_from_advanced_tip() {
-        let mut manager = create_test_manager().await;
+    async fn test_disconnect_preserves_pipeline_and_resumes_from_advanced_tip(
+        failing_metadata: bool,
+    ) {
+        if failing_metadata {
+            let failing = |_: &DiskStorageManager| Arc::new(RwLock::new(FailingMetadataStorage));
+            disconnect_preserves_pipeline_and_resumes(
+                create_test_manager_with_metadata(failing).await,
+            )
+            .await;
+        } else {
+            disconnect_preserves_pipeline_and_resumes(create_test_manager().await).await;
+        }
+    }
+
+    async fn disconnect_preserves_pipeline_and_resumes<M: MetadataStorage>(
+        mut manager: BlockHeadersManager<PersistentBlockHeaderStorage, M>,
+    ) {
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
 
@@ -916,7 +939,8 @@ mod tests {
             addresses: vec![test_socket_address(1)],
             best_height: 40_000,
         };
-        manager.handle_network_event(&initial_event, &network).await.unwrap();
+        let events = manager.handle_network_event(&initial_event, &network).await.unwrap();
+        assert!(matches!(events.as_slice(), [SyncEvent::SyncStart { .. }]), "{events:?}");
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(manager.pipeline.is_initialized());
         assert_eq!(manager.pipeline.segment_count(), 1);
@@ -954,7 +978,8 @@ mod tests {
             addresses: vec![],
             best_height: 40_000,
         };
-        manager.handle_network_event(&disconnect_event, &network).await.unwrap();
+        let events = manager.handle_network_event(&disconnect_event, &network).await.unwrap();
+        assert!(events.is_empty(), "{events:?}");
         // The broker re-queues in-flight requests on disconnect, so the resumed request can go out.
         mock.release_requests_in_play().await;
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
@@ -966,7 +991,8 @@ mod tests {
 
         // Reconnect: start_sync must skip pipeline.init and resume by sending
         // GetHeaders from each segment's preserved current_tip_hash.
-        manager.handle_network_event(&initial_event, &network).await.unwrap();
+        let events = manager.handle_network_event(&initial_event, &network).await.unwrap();
+        assert!(matches!(events.as_slice(), [SyncEvent::SyncStart { .. }]), "{events:?}");
         assert_eq!(manager.state(), SyncState::Syncing);
 
         let sent = mock.sent_messages().await;
