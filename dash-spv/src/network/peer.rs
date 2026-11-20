@@ -791,7 +791,7 @@ fn spawn_reader(
     });
 }
 
-fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
+pub(super) fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let unspecified: SocketAddr = ([0u8, 0, 0, 0], 0).into();
     VersionMessage::new(

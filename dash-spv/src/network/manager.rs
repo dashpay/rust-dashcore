@@ -1484,13 +1484,12 @@ fn spawn_pump(
 mod tests {
     use super::*;
     use crate::client::ClientConfig;
+    use crate::network::peer::build_version;
     use crate::test_utils::test_socket_address;
     use dashcore::consensus::encode::serialize;
-    use dashcore::network::address::Address;
     use dashcore::network::message::{RawNetworkMessage, RawNetworkMessageCodec};
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
-    use dashcore::network::message_network::VersionMessage;
     use dashcore::{BlockHash, Network};
     use std::sync::atomic::AtomicUsize;
     use test_case::test_case;
@@ -1654,16 +1653,13 @@ mod tests {
         net.state.connected.read().await.iter().map(ConnectedPeer::serving_rate).collect()
     }
 
-    /// A peer on loopback that answers the version handshake once `go` is notified, then
-    /// answers pings.
+    /// A peer on loopback that answers each version handshake once `go` is notified, then
+    /// answers pings until the client closes the connection.
     struct HandshakingPeer {
         addr: SocketAddr,
         go: Arc<Notify>,
-        accepted: Arc<AtomicUsize>,
-        /// Whether a ping came after the handshake, which the client sends last.
-        pinged: Arc<AtomicBool>,
-        /// Whether the client closed the connection.
-        closed: Arc<AtomicBool>,
+        /// How many of its connections the client closed.
+        closed: Arc<AtomicUsize>,
     }
 
     impl HandshakingPeer {
@@ -1672,33 +1668,22 @@ mod tests {
             let peer = HandshakingPeer {
                 addr: listener.local_addr().expect("bound address"),
                 go: Arc::new(Notify::new()),
-                accepted: Arc::new(AtomicUsize::new(0)),
-                pinged: Arc::new(AtomicBool::new(false)),
-                closed: Arc::new(AtomicBool::new(false)),
+                closed: Arc::new(AtomicUsize::new(0)),
             };
-            let (addr, go) = (peer.addr, peer.go.clone());
-            let (accepted, pinged, closed) =
-                (peer.accepted.clone(), peer.pinged.clone(), peer.closed.clone());
+            let (go, closed) = (peer.go.clone(), peer.closed.clone());
             tokio::spawn(async move {
-                while let Ok((stream, _)) = listener.accept().await {
-                    accepted.fetch_add(1, Ordering::SeqCst);
-                    let (go, pinged, closed) = (go.clone(), pinged.clone(), closed.clone());
-                    tokio::spawn(answer_handshake(stream, addr, go, pinged, closed));
+                while let Ok((stream, client)) = listener.accept().await {
+                    answer_handshake(stream, client, &go).await;
+                    closed.fetch_add(1, Ordering::SeqCst);
                 }
             });
             peer
         }
     }
 
-    /// Answers the client's version handshake on `stream` once `go` is notified, then its
+    /// Answers the version handshake of `client` on `stream` once `go` is notified, then its
     /// pings, for [`HandshakingPeer`].
-    async fn answer_handshake(
-        stream: TcpStream,
-        addr: SocketAddr,
-        go: Arc<Notify>,
-        pinged: Arc<AtomicBool>,
-        closed: Arc<AtomicBool>,
-    ) {
+    async fn answer_handshake(stream: TcpStream, client: SocketAddr, go: &Notify) {
         stream.set_nodelay(true).expect("loopback nodelay");
         let (read, mut write) = stream.into_split();
         let mut frames = FramedRead::new(read, RawNetworkMessageCodec);
@@ -1714,28 +1699,17 @@ mod tests {
             }
         }
         go.notified().await;
-        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
-        let version = VersionMessage::new(
-            services,
-            0,
-            Address::new(&addr, ServiceFlags::NONE),
-            Address::new(&addr, services),
-            1,
-            "/handshaking/".into(),
-            0,
-            false,
-            [0; 32],
-        );
+        let mut version = build_version(client, "handshaking");
+        version.services =
+            ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
         let mut hello = framed(NetworkMessage::Version(version));
         hello.extend(framed(NetworkMessage::Verack));
         let _ = write.write_all(&hello).await;
         while let Some(Ok(raw)) = frames.next().await {
             if let NetworkMessage::Ping(nonce) = raw.payload {
-                pinged.store(true, Ordering::SeqCst);
                 let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
             }
         }
-        closed.store(true, Ordering::SeqCst);
     }
 
     /// Lets the spawned tasks run what the last time advance made due.
@@ -2233,18 +2207,17 @@ mod tests {
         advance_silent((REQUEST_TIMEOUT.as_secs() + 2).saturating_sub(start_at)).await;
         replacement.go.notify_one();
         for _ in 0..100_000 {
-            if replacement.closed.load(Ordering::SeqCst) || slow.is_closed() {
+            if replacement.closed.load(Ordering::SeqCst) > 0 || slow.is_closed() {
                 break;
             }
             task::yield_now().await;
         }
+        assert_eq!(replacement.closed.load(Ordering::SeqCst), dials, "probed and closed");
+        assert!(net.state.bans.banned().await.is_empty(), "a handshake failed");
         let held = serving_rates(&net).await;
         assert!(held.iter().zip(&measured).all(|(h, m)| h < m), "{held:?} vs {measured:?}");
         advance_silent(REQUEST_TIMEOUT.as_secs() * 3).await;
         assert_eq!(serving_rates(&net).await, held);
-
-        assert_eq!(replacement.accepted.load(Ordering::SeqCst), dials);
-        assert_eq!(replacement.pinged.load(Ordering::SeqCst), dials > 0, "handshake finished");
         assert!(!slow.is_closed(), "the slow peer was swapped out");
         assert_eq!(net.connected_count().await, 2);
 
@@ -2258,7 +2231,6 @@ mod tests {
             }
         }
         assert!(slow.is_closed(), "the slow peer was kept once our link recovered");
-        assert_eq!(replacement.accepted.load(Ordering::SeqCst), dials + 1);
         assert_eq!(net.connected_count().await, 2);
     }
 
