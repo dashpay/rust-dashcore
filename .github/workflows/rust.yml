@@ -16,13 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  security:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: EmbarkStudios/cargo-deny-action@v2.1.2
-
   msrv:
     name: MSRV Check
     runs-on: ubuntu-latest
@@ -51,8 +44,8 @@ jobs:
       - name: Build documentation
         run: just doc
 
-  verify-groups:
-    name: Verify Test Groups
+  checks:
+    name: Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -62,6 +55,11 @@ jobs:
       - run: pip install pyyaml
       - name: Verify group config and hardcoded matrix
         run: just gha::verify-groups
+      - name: Verify the action lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just gha::setup gha::verify
+      - uses: EmbarkStudios/cargo-deny-action@v2.1.2
 
   test-release:
     name: Test Release Script
@@ -73,21 +71,6 @@ jobs:
           tool: just
       - name: Test the release script
         run: just gha::test-release
-
-  verify-actions-lock:
-    name: Verify Action Lockfile
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: taiki-e/install-action@v2.90.5
-        with:
-          tool: just
-      - name: Verify the action lockfile
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: just gha::setup gha::verify
 
   test-ubuntu:
     name: Ubuntu
