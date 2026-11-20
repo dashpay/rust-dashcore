@@ -1,6 +1,6 @@
 use crate::events::{diff_account_balances, project_derived_addresses, DerivedAddress};
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
-use crate::{WalletError, WalletEvent, WalletId, WalletManager};
+use crate::{CheckTransactionsResult, WalletError, WalletEvent, WalletId, WalletManager};
 use async_trait::async_trait;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -210,12 +210,23 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
             None => TransactionContext::Mempool,
         };
-        let mut check_result =
-            self.check_transaction_in_all_wallets(tx, context, true, false).await;
+        let CheckTransactionsResult {
+            affected_wallets,
+            new_addresses: mut per_wallet_derived,
+            total_received,
+            total_sent,
+            involved_addresses,
+            per_wallet_new_records,
+            per_wallet_updated_records,
+            per_wallet_swept,
+            per_wallet_released_outpoints: mut per_wallet_released,
+            per_wallet_locked_outpoints: mut per_wallet_locked,
+            ..
+        } = self.check_transaction_in_all_wallets(tx, context, true, false).await;
 
-        let is_relevant = !check_result.affected_wallets.is_empty();
+        let is_relevant = !affected_wallets.is_empty();
         let net_amount = if is_relevant {
-            check_result.total_received as i64 - check_result.total_sent as i64
+            total_received as i64 - total_sent as i64
         } else {
             0
         };
@@ -230,7 +241,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             WalletId,
             BTreeMap<AccountType, WalletCoreBalance>,
         > = BTreeMap::new();
-        for wallet_id in &check_result.affected_wallets {
+        for wallet_id in &affected_wallets {
             if let Some(info) = self.wallet_infos.get_mut(wallet_id) {
                 let prior = info.account_balances();
                 info.update_balance();
@@ -239,11 +250,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
         }
 
-        let per_wallet_new_records = std::mem::take(&mut check_result.per_wallet_new_records);
-        let per_wallet_updated_records =
-            std::mem::take(&mut check_result.per_wallet_updated_records);
-        let mut per_wallet_derived = std::mem::take(&mut check_result.new_addresses);
-        let mut per_wallet_locked = std::mem::take(&mut check_result.per_wallet_locked_outpoints);
+        let new_addresses: Vec<Address> =
+            per_wallet_derived.values().flatten().map(|d| d.info.address.clone()).collect();
 
         for (wallet_id, records) in per_wallet_new_records {
             let Some(info) = self.wallet_infos.get(&wallet_id) else {
@@ -292,9 +300,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         // Removals, before the additive events: a consumer applying these in
         // order sees the dead rows deleted first, so a replacement paying the
         // same address cannot be clobbered by the delete that follows it.
-        let mut per_wallet_released =
-            std::mem::take(&mut check_result.per_wallet_released_outpoints);
-        for (wallet_id, txids) in std::mem::take(&mut check_result.per_wallet_swept) {
+        for (wallet_id, txids) in per_wallet_swept {
             if txids.is_empty() {
                 continue;
             }
@@ -362,12 +368,11 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
         }
 
-        let new_addresses: Vec<Address> = check_result.all_new_addresses().cloned().collect();
         MempoolTransactionResult {
             is_relevant,
             net_amount,
             is_outgoing: net_amount < 0,
-            addresses: check_result.involved_addresses,
+            addresses: involved_addresses,
             new_addresses,
         }
     }
@@ -1349,6 +1354,31 @@ mod tests {
         assert_eq!(result.net_amount, TX_AMOUNT as i64);
         assert!(!result.is_outgoing);
         assert!(!result.addresses.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mempool_transaction_result_lists_the_addresses_it_derives() {
+        let (mut manager, _wallet_id, addr) = setup_manager_with_wallet();
+        let mut rx = manager.subscribe_events();
+        let tx = create_tx_paying_to(&addr, 0xaa);
+
+        let result = manager.process_mempool_transaction(&tx, None).await;
+
+        let mut derived = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let WalletEvent::TransactionDetected {
+                addresses_derived,
+                ..
+            } = event
+            {
+                derived.extend(addresses_derived.into_iter().map(|d| d.address));
+            }
+        }
+        assert!(!derived.is_empty(), "paying a receive address extends the gap");
+        let mut reported = result.new_addresses;
+        reported.sort();
+        derived.sort();
+        assert_eq!(reported, derived);
     }
 
     #[tokio::test]
