@@ -197,8 +197,9 @@ impl FiltersPipeline {
     /// Handle a received CFilter message with filter data.
     ///
     /// Buffers the filter data for batch verification and wallet matching.
-    /// Returns the stop hash of the batch's `GetCFilters` request when the batch completes,
-    /// `None` otherwise.
+    /// Returns the stop hash of the batch's `GetCFilters` request when that request is over:
+    /// the batch completed, or its last filter arrived and earlier ones are missing. Peers
+    /// answer in order, so nothing more will come and the request must be declared again.
     pub(super) fn receive_with_data(
         &mut self,
         height: u32,
@@ -226,7 +227,17 @@ impl FiltersPipeline {
                     expected
                 );
             }
-            return None;
+            return if height == tracker.end_height() {
+                tracing::warn!(
+                    "Filter batch {} ended incomplete with {}/{} filters, requesting it again",
+                    batch_start,
+                    received,
+                    expected
+                );
+                self.batch_stops.get(&batch_start).copied()
+            } else {
+                None
+            };
         }
 
         let end_height = tracker.end_height();
@@ -250,6 +261,11 @@ impl FiltersPipeline {
         self.completed_batches.insert(batch);
 
         stop_hash
+    }
+
+    /// Returns the stop hash of every batch still wanted, the keys of its `GetCFilters` requests.
+    pub(super) fn wanted_stops(&self) -> impl Iterator<Item = &BlockHash> {
+        self.batch_stops.values()
     }
 
     /// Returns the start height of the wanted batch that contains `height`.
