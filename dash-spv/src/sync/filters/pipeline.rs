@@ -252,6 +252,12 @@ impl FiltersPipeline {
         Some(batch_start)
     }
 
+    /// Wants the batch `start_height..=end_height` again. A rejected batch left the pipeline
+    /// when it completed, and without it the store order waits for it forever.
+    pub(super) fn requeue_rejected(&mut self, start_height: u32, end_height: u32) {
+        self.batch_trackers.insert(start_height, BatchTracker::new(end_height));
+    }
+
     /// Returns the start height of the wanted batch that contains `height`.
     fn find_batch_for_height(&self, height: u32) -> Option<u32> {
         let (&start, tracker) = self.batch_trackers.range(..=height).next_back()?;

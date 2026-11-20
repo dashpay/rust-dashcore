@@ -13,7 +13,7 @@ use dashcore::ScriptBuf;
 use super::batch::FiltersBatch;
 use super::block_match_tracker::{BlockMatchTracker, BlockTrackResult};
 use super::pipeline::FiltersPipeline;
-use crate::error::SyncResult;
+use crate::error::{SyncError, SyncResult};
 use crate::network::NetworkManager;
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
 use crate::sync::filters::util::get_prev_filter_header;
@@ -577,11 +577,27 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
             // Verify and store filters
             if !batch.verified() {
-                self.verify_and_store(&batch).await?;
-                events.push(SyncEvent::FiltersStored {
-                    start_height: batch.start_height(),
-                    end_height: batch.end_height(),
-                });
+                let (start, end) = (batch.start_height(), batch.end_height());
+                match self.verify_and_store(&batch).await {
+                    Ok(()) => events.push(SyncEvent::FiltersStored {
+                        start_height: start,
+                        end_height: end,
+                    }),
+                    Err(SyncError::Validation(reason)) => {
+                        tracing::warn!(
+                            "Rejected filter batch {}-{}, requesting it again: {}",
+                            start,
+                            end,
+                            reason
+                        );
+                        self.filter_pipeline.requeue_rejected(start, end);
+                        break;
+                    }
+                    Err(e) => {
+                        self.filter_pipeline.requeue_rejected(start, end);
+                        return Err(e);
+                    }
+                }
             }
 
             // === Load filters into all active batches that overlap ===
@@ -1366,6 +1382,7 @@ mod tests {
         MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };
     use std::net::SocketAddr;
+    use test_case::test_case;
 
     type TestFiltersManager = FiltersManager<
         PersistentBlockHeaderStorage,
@@ -3836,8 +3853,10 @@ mod tests {
     /// block makes `extend_target` re-request every filter from height 1 and
     /// wedges the in-order store loop on a `next_batch_to_store` of 0, freezing
     /// `committed_height` one below tip.
+    #[test_case(false; "the first copy is valid")]
+    #[test_case(true; "a rejected copy is requested again")]
     #[tokio::test]
-    async fn test_synced_boot_then_boundary_block_commits() {
+    async fn test_synced_boot_then_boundary_block_commits(rejected_first: bool) {
         let (mut manager, headers, boundary_filter) = setup_synced_manager_at_tip().await;
 
         // Fully-synced boot leaves the manager in its default state.
@@ -3894,6 +3913,19 @@ mod tests {
             block_hash: headers[101].block_hash(),
             filter: boundary_filter.content.clone(),
         };
+        if rejected_first {
+            let corrupt = CFilter {
+                filter: vec![0xFF; 4],
+                ..cfilter.clone()
+            };
+            manager
+                .handle_message(peer, NetworkMessage::CFilter(corrupt).into(), &requests)
+                .await
+                .unwrap();
+            mock.clear_sent().await;
+            manager.tick(&requests).await.unwrap();
+            assert_eq!(drain_getcfilters(&mock).await, 1, "the rejected batch must return");
+        }
         manager
             .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
             .await
