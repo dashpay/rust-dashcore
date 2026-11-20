@@ -593,10 +593,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         self.filter_pipeline.requeue_rejected(start, end);
                         break;
                     }
-                    Err(e) => {
-                        self.filter_pipeline.requeue_rejected(start, end);
-                        return Err(e);
-                    }
+                    Err(e) => return Err(e),
                 }
             }
 
