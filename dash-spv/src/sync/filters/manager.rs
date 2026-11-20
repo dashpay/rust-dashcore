@@ -496,6 +496,43 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         }
     }
 
+    /// Verifies `batch` against the stored filter headers and stores its filters.
+    async fn verify_and_store(&self, batch: &FiltersBatch) -> SyncResult<()> {
+        // Load filter headers for verification
+        let filter_headers = self
+            .filter_header_storage
+            .read()
+            .await
+            .load_filter_headers(batch.start_height()..batch.end_height() + 1)
+            .await?;
+
+        let filter_headers_map: HashMap<u32, FilterHeader> = filter_headers
+            .into_iter()
+            .enumerate()
+            .map(|(idx, header)| (batch.start_height() + idx as u32, header))
+            .collect();
+
+        let filter_header_storage = self.filter_header_storage.read().await;
+        let prev_filter_header =
+            get_prev_filter_header(&*filter_header_storage, batch.start_height()).await?;
+        drop(filter_header_storage);
+
+        let validator = FilterValidator::new();
+        let validation_input = FilterValidationInput {
+            filters: batch.filters(),
+            expected_headers: &filter_headers_map,
+            prev_filter_header,
+        };
+        validator.validate(validation_input)?;
+
+        // Store verified filters to disk
+        let mut filter_storage = self.filter_storage.write().await;
+        for (key, filter) in batch.filters() {
+            filter_storage.store_filter(key.height(), &filter.content).await?;
+        }
+        Ok(())
+    }
+
     /// Store completed filter batches to disk and do speculative matching.
     /// This is decoupled from block processing - we store and match as fast as possible.
     pub(super) async fn store_and_match_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
@@ -540,40 +577,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
             // Verify and store filters
             if !batch.verified() {
-                // Load filter headers for verification
-                let filter_headers = self
-                    .filter_header_storage
-                    .read()
-                    .await
-                    .load_filter_headers(batch.start_height()..batch.end_height() + 1)
-                    .await?;
-
-                let filter_headers_map: HashMap<u32, FilterHeader> = filter_headers
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, header)| (batch.start_height() + idx as u32, header))
-                    .collect();
-
-                let filter_header_storage = self.filter_header_storage.read().await;
-                let prev_filter_header =
-                    get_prev_filter_header(&*filter_header_storage, batch.start_height()).await?;
-                drop(filter_header_storage);
-
-                let validator = FilterValidator::new();
-                let validation_input = FilterValidationInput {
-                    filters: batch.filters(),
-                    expected_headers: &filter_headers_map,
-                    prev_filter_header,
-                };
-                validator.validate(validation_input)?;
-
-                // Store verified filters to disk
-                let mut filter_storage = self.filter_storage.write().await;
-                for (key, filter) in batch.filters() {
-                    filter_storage.store_filter(key.height(), &filter.content).await?;
-                }
-                drop(filter_storage);
-
+                self.verify_and_store(&batch).await?;
                 events.push(SyncEvent::FiltersStored {
                     start_height: batch.start_height(),
                     end_height: batch.end_height(),
