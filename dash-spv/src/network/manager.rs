@@ -2134,6 +2134,7 @@ mod tests {
     #[test_case(&[Role::Registered(1), Role::Registered(2), Role::Registered(3)], 25, &[1, 2, 3], true, &[]; "peers going silent a second apart in an outage stay")]
     #[test_case(&[Role::Delivers(0), Role::Registered(0), Role::Delivers(0)], 12, &[1, 3], false, &[]; "a lone silent request among delivering peers is kicked")]
     #[test_case(&[Role::Streams(3)], 61, &[], false, &[]; "a sole peer streaming a never finished answer is kicked at the answer bound")]
+    #[test_case(&[Role::Registered(49)], 61, &[], false, &[]; "a sole peer going quiet partway through an answer is kicked at the answer bound")]
     #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(1), Role::Joins(11)], 12, &[2, 3, 4], false, &[]; "a replacement joining does not unpace the next stall")]
     #[test_case(&[Role::Registered(0), Role::Delivers(0), Role::Registered(0)], 23, &[2], false, &[]; "two stalls beside a delivering peer go a timeout apart")]
     #[test_case(&[Role::Resumes(5, 20), Role::Resumes(5, 20), Role::Charged(5)], 25, &[1, 2, 3], true, &[]; "a peer still silent when the link is back gets a timeout")]

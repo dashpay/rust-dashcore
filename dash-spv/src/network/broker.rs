@@ -250,12 +250,12 @@ impl Broker {
                 continue;
             };
             let timeout = timeout(&o.peer);
-            let silent_since = if now.duration_since(o.last_progress) > timeout {
-                o.last_progress
-            } else if now.duration_since(o.last_answer) > timeout * ANSWER_TIMEOUTS {
-                // Blamed from the answer, not the recent bytes, so those bytes show our
+            let silent_since = if now.duration_since(o.last_answer) > timeout * ANSWER_TIMEOUTS {
+                // Blamed from the answer, not the later bytes, so those bytes show our
                 // link works and the peer is not held as a link stall.
                 o.last_answer
+            } else if now.duration_since(o.last_progress) > timeout {
+                o.last_progress
             } else {
                 continue;
             };
