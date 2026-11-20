@@ -392,17 +392,11 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 // A chainlocked tx may have had its full record dropped
                 // under the default feature config — `transaction_is_finalized`
                 // catches that case via `finalized_txids` and the in-map
-                // record check covers `InBlock`.
-                let already_confirmed = result.affected_accounts.iter().any(|am| {
-                    let Some(account) =
-                        self.accounts.get_by_account_type_match(&am.account_type_match)
-                    else {
-                        return false;
-                    };
-                    if account.transaction_is_finalized(&txid) {
-                        return true;
-                    }
-                    account.transactions().get(&txid).is_some_and(|r| r.is_confirmed())
+                // record check covers `InBlock`. Every account is asked, since an
+                // account whose chainlocked spend has settled no longer matches it.
+                let already_confirmed = self.accounts.all_accounts().into_iter().any(|account| {
+                    account.transaction_is_finalized(&txid)
+                        || account.transactions().get(&txid).is_some_and(|r| r.is_confirmed())
                 });
                 if already_confirmed {
                     return result;
@@ -4134,6 +4128,14 @@ mod tests {
         ))
     }
 
+    fn chain_locked(height: u32, byte: u8) -> TransactionContext {
+        TransactionContext::InChainLockedBlock(BlockInfo::new(
+            height,
+            BlockHash::from_slice(&[byte; 32]).unwrap(),
+            1_700_000_000,
+        ))
+    }
+
     fn owned_output_count(record: &TransactionRecord) -> usize {
         record
             .output_details
@@ -4274,6 +4276,46 @@ mod tests {
             result.new_addresses.iter().any(|d| d.info.address == addresses[3 * gap + 1]),
             "the extension is reported with the backfilled record"
         );
+    }
+
+    /// A late lock on a mined transaction that only a spend-only record holds is stale: an
+    /// account that matches it only now is not backfilled with an `InstantSend` context.
+    #[tokio::test]
+    async fn test_late_lock_on_a_mined_spend_backfills_nothing() {
+        let mut ctx = TestWalletContext::new_random();
+        let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
+        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 1);
+        let bip32_xpub = ctx.wallet.accounts.standard_bip32_accounts[&0].account_xpub;
+        let bip32_address = ctx
+            .managed_wallet
+            .first_bip32_managed_account_mut()
+            .expect("BIP32 account")
+            .next_receive_address(Some(&bip32_xpub), true)
+            .expect("BIP32 address");
+
+        let funding = paying(1, &[&bip32_address], 50_000);
+        ctx.check_transaction(&funding, chain_locked(1, 1)).await;
+        let mut spend = paying(2, &[&addresses[2 * gap]], 40_000);
+        spend.input[0].previous_output = OutPoint {
+            txid: funding.txid(),
+            vout: 0,
+        };
+        let mined = ctx.check_transaction(&spend, chain_locked(2, 2)).await;
+        assert_eq!(mined.affected_accounts.len(), 1, "only BIP32 sees the spend in its block");
+
+        ctx.check_transaction(&paying(3, &[&addresses[1]], 7_000), TransactionContext::Mempool)
+            .await;
+        ctx.check_transaction(&paying(4, &[&addresses[gap]], 7_000), TransactionContext::Mempool)
+            .await;
+        assert!(ctx.bip44_account().contains_address(&addresses[2 * gap]));
+
+        let lock = TransactionContext::InstantSend(InstantLock {
+            txid: spend.txid(),
+            ..InstantLock::default()
+        });
+        let result = ctx.check_transaction(&spend, lock).await;
+        assert!(result.new_records.is_empty(), "a mined transaction takes no lock-only record");
+        assert!(!ctx.bip44_account().transactions().contains_key(&spend.txid()));
     }
 
     /// The same late recognition on a transaction we funded: its first record
