@@ -7,6 +7,7 @@
 
 use core::convert::{TryFrom, TryInto};
 use core::{convert, fmt};
+use std::collections::BTreeSet;
 use std::error;
 
 use hashes::{sha256, siphash24};
@@ -272,35 +273,21 @@ impl HeaderAndShortIds {
 pub struct BlockTransactionsRequest {
     ///  The blockhash of the block which the transactions being requested are in.
     pub block_hash: BlockHash,
-    ///  The indexes of the transactions being requested in the block.
-    ///
-    ///  They must be strictly increasing and at most [`u16::MAX`]. See
-    ///  [`BlockTransactionsRequest::consensus_encode()`]. Serializing a request that breaks this
-    ///  with [`serialize`](crate::consensus::encode::serialize) panics.
-    pub indexes: Vec<u64>,
+    ///  The indexes of the transactions being requested in the block: unique, increasing and at
+    ///  most [`u16::MAX`], as Dash Core's `std::vector<uint16_t>`.
+    pub indexes: BTreeSet<u16>,
 }
 
 impl Encodable for BlockTransactionsRequest {
     /// Writes each index as `index - (previous + 1)`, and the first one as itself.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`io::ErrorKind::InvalidInput`] if an index is not above the one before it, or is
-    /// above [`u16::MAX`].
     fn consensus_encode<S: io::Write + ?Sized>(&self, mut s: &mut S) -> Result<usize, io::Error> {
         let mut len = self.block_hash.consensus_encode(&mut s)?;
-        // Manually encode indexes because they are differentially encoded VarInts.
         len += VarInt(self.indexes.len() as u64).consensus_encode(&mut s)?;
-        let mut shift: u64 = 0;
-        for idx in &self.indexes {
-            if *idx < shift || *idx > u64::from(u16::MAX) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "differential value overflow",
-                ));
-            }
-            len += VarInt(*idx - shift).consensus_encode(&mut s)?;
-            shift = *idx + 1;
+        let mut shift = 0;
+        for &idx in &self.indexes {
+            let idx = u64::from(idx);
+            len += VarInt(idx - shift).consensus_encode(&mut s)?;
+            shift = idx + 1;
         }
         Ok(len)
     }
@@ -314,17 +301,13 @@ impl Decodable for BlockTransactionsRequest {
     ) -> Result<BlockTransactionsRequest, encode::Error> {
         let block_hash = BlockHash::consensus_decode(&mut d)?;
         let count = encode::read_compact_size_len(&mut d)?;
-        // Indexes increase and stop at `u16::MAX`, so at most 65,536 are read before an error.
-        let max_indexes = u64::from(u16::MAX) + 1;
-        let mut indexes = Vec::with_capacity(count.min(max_indexes) as usize);
+        let mut indexes = BTreeSet::new();
         let mut shift: u64 = 0;
         for _ in 0..count {
-            let differential = encode::read_compact_size_len(&mut d)?;
-            shift += differential;
-            if shift > u64::from(u16::MAX) {
-                return Err(encode::Error::ParseFailed("differential value overflow"));
-            }
-            indexes.push(shift);
+            shift += encode::read_compact_size_len(&mut d)?;
+            let index = u16::try_from(shift)
+                .map_err(|_| encode::Error::ParseFailed("differential value overflow"))?;
+            indexes.insert(index);
             shift += 1;
         }
         Ok(BlockTransactionsRequest {
@@ -374,11 +357,12 @@ impl BlockTransactions {
             block_hash: request.block_hash,
             transactions: {
                 let mut txs = Vec::with_capacity(request.indexes.len());
-                for idx in &request.indexes {
-                    if *idx >= block.txdata.len() as u64 {
-                        return Err(TxIndexOutOfRangeError(*idx));
-                    }
-                    txs.push(block.txdata[*idx as usize].clone());
+                for &idx in &request.indexes {
+                    let tx = block
+                        .txdata
+                        .get(usize::from(idx))
+                        .ok_or(TxIndexOutOfRangeError(u64::from(idx)))?;
+                    txs.push(tx.clone());
                 }
                 txs
             },
@@ -476,12 +460,15 @@ mod test {
         assert_eq!(idxs, vec![0, 1]);
     }
 
+    #[test_case(&[0] => matches Ok(v) if v.is_empty(); "no indexes")]
     #[test_case(&[4, 0, 5, 1, 10] => matches Ok(v) if v == [0, 6, 8, 19]; "four indexes")]
     #[test_case(&[1, 0] => matches Ok(v) if v == [0]; "one index")]
     #[test_case(&[5, 0, 0, 0, 0, 0] => matches Ok(v) if v == [0, 1, 2, 3, 4]; "consecutive indexes")]
     #[test_case(&[3, 1, 1, 1] => matches Ok(v) if v == [1, 3, 5]; "gaps of one")]
     #[test_case(&[3, 0, 0, 253, 0, 1] => matches Ok(v) if v == [0, 1, 258]; "three-byte differential")]
     #[test_case(&[1, 0xfd, 0xff, 0xff] => matches Ok(v) if v == [65_535]; "absolute index u16 max")]
+    #[test_case(&[2, 0, 0xfd, 0xfe, 0xff] => matches Ok(v) if v == [0, 65_535]; "zero and u16 max")]
+    #[test_case(&[2, 0xfd, 0xfd, 0xff, 1] => matches Ok(v) if v == [65_533, 65_535]; "gap at the top")]
     #[test_case(&[[0xfe, 0, 0, 1, 0].as_slice(), &[0; 65_536]].concat()
         => matches Ok(v) if v.len() == 65_536 && v.last() == Some(&65_535); "65,536 indexes")]
     #[test_case(&[1, 0xfe, 0, 0, 1, 0]
@@ -505,7 +492,7 @@ mod test {
     #[test_case(&[0xfe, 0, 0, 0, 2] => matches Err(encode::Error::Io(_)); "count of 32 MiB, no indexes follow")]
     fn test_getblocktx_differential_encoding_de_and_serialization(
         encoded: &[u8],
-    ) -> Result<Vec<u64>, encode::Error> {
+    ) -> Result<Vec<u16>, encode::Error> {
         let mut raw = vec![0; 32];
         raw.extend_from_slice(encoded);
         let streamed = BlockTransactionsRequest::consensus_decode(&mut &raw[..]);
@@ -513,36 +500,20 @@ mod test {
         assert_eq!(format!("{:?}", streamed), format!("{:?}", sliced));
         let request = streamed?;
         assert_eq!(serialize(&request), raw);
-        Ok(request.indexes)
+        Ok(request.indexes.into_iter().collect())
     }
 
     #[test]
-    fn getblocktxn_encoding_refuses_indexes_not_increasing_or_above_u16() {
-        for indexes in [
-            vec![u64::MAX],
-            vec![u64::MAX - 1],
-            vec![65_536],
-            vec![0, 65_536],
-            vec![1, 0],
-            vec![5, 5],
-            vec![0, 3, 2],
-        ] {
-            let err = request(indexes.clone())
-                .consensus_encode(&mut Vec::new())
-                .expect_err("indexes must be refused");
-            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{:?}", indexes);
-        }
-        for indexes in [vec![65_535], vec![0, 1], vec![1, 3, 65_535]] {
-            let request = request(indexes);
-            let raw = serialize(&request);
-            assert_eq!(deserialize::<BlockTransactionsRequest>(&raw).unwrap(), request);
-        }
+    fn getblocktxn_writes_unordered_or_repeated_indexes_once_in_order() {
+        let raw = serialize(&request([5, 3, 5, 65_535]));
+        assert_eq!(raw[32..], [3, 3, 1, 0xfd, 0xf9, 0xff]);
+        assert_eq!(deserialize::<BlockTransactionsRequest>(&raw).unwrap(), request([3, 5, 65_535]));
     }
 
-    fn request(indexes: Vec<u64>) -> BlockTransactionsRequest {
+    fn request(indexes: impl IntoIterator<Item = u16>) -> BlockTransactionsRequest {
         BlockTransactionsRequest {
             block_hash: BlockHash::all_zeros(),
-            indexes,
+            indexes: indexes.into_iter().collect(),
         }
     }
 
