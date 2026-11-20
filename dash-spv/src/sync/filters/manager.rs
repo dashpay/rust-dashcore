@@ -535,7 +535,10 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
 
     /// Store completed filter batches to disk and do speculative matching.
     /// This is decoupled from block processing - we store and match as fast as possible.
-    pub(super) async fn store_and_match_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
+    pub(super) async fn store_and_match_batches(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<Vec<SyncEvent>> {
         // Collect newly completed batches from pipeline
         let completed = self.filter_pipeline.take_completed_batches();
         // Filter out batches that have already been stored (can happen with retries)
@@ -585,11 +588,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                     }),
                     Err(SyncError::Validation(reason)) => {
                         tracing::warn!(
+                            peer = ?batch.peer(),
                             "Rejected filter batch {}-{}, requesting it again: {}",
                             start,
                             end,
                             reason
                         );
+                        if let Some(peer) = batch.peer() {
+                            network.ban_peer(peer).await;
+                        }
                         self.filter_pipeline.requeue_rejected(start, end);
                         break;
                     }
@@ -1368,7 +1375,7 @@ mod tests {
         PersistentFilterHeaderStorage, PersistentFilterStorage, StorageManager,
     };
     use crate::sync::{BlocksManager, ManagerIdentifier, SyncManagerProgress};
-    use crate::test_utils::MockNetworkManager;
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
     use crate::types::{HashedBlock, HashedBlockHeader};
     use dashcore::bip158::BlockFilter;
     use dashcore::network::message::NetworkMessage;
@@ -3910,15 +3917,17 @@ mod tests {
             block_hash: headers[101].block_hash(),
             filter: boundary_filter.content.clone(),
         };
+        let bad_peer = test_socket_address(2);
         if rejected_first {
             let corrupt = CFilter {
                 filter: vec![0xFF; 4],
                 ..cfilter.clone()
             };
             manager
-                .handle_message(peer, NetworkMessage::CFilter(corrupt).into(), &requests)
+                .handle_message(bad_peer, NetworkMessage::CFilter(corrupt).into(), &requests)
                 .await
                 .unwrap();
+            assert_eq!(mock.banned_peers().await, vec![bad_peer]);
             mock.clear_sent().await;
             manager.tick(&requests).await.unwrap();
             assert_eq!(drain_getcfilters(&mock).await, 1, "the rejected batch must return");
@@ -3930,6 +3939,13 @@ mod tests {
 
         // A trailing tick drives any residual processing to completion.
         manager.tick(&requests).await.unwrap();
+
+        let banned = if rejected_first {
+            vec![bad_peer]
+        } else {
+            vec![]
+        };
+        assert_eq!(mock.banned_peers().await, banned);
 
         assert_eq!(manager.progress.committed_height(), 101);
         assert_eq!(manager.state(), SyncState::Synced);
@@ -4234,6 +4250,7 @@ mod tests {
         let filter = BlockFilter::new(&[0u8; 32]);
         for (idx, header) in headers.iter().enumerate().take(10) {
             manager.filter_pipeline.receive_with_data(
+                test_socket_address(1),
                 200_000 + idx as u32,
                 *header.hash(),
                 &filter.content,
@@ -4244,6 +4261,7 @@ mod tests {
 
         assert_eq!(
             manager.filter_pipeline.receive_with_data(
+                test_socket_address(1),
                 200_010,
                 *headers[10].hash(),
                 &filter.content

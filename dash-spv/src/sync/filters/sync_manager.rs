@@ -137,7 +137,7 @@ impl<
 
         // Buffer filter in pipeline
         let batch_completed =
-            self.filter_pipeline.receive_with_data(h, cfilter.block_hash, &cfilter.filter);
+            self.filter_pipeline.receive_with_data(peer, h, cfilter.block_hash, &cfilter.filter);
 
         // One `getcfilters` is answered only once its whole batch has arrived, so
         // individual `cfilter`s are never answered on their own.
@@ -148,7 +148,7 @@ impl<
         // No `send_pending` here: re-declaring per `cfilter` would re-scan every
         // wanted batch on the hot path; the tick picks up newly-available batches.
 
-        Ok(self.store_and_match_batches().await?)
+        Ok(self.store_and_match_batches(network).await?)
     }
 
     async fn handle_sync_event(
@@ -267,7 +267,7 @@ impl<
         let mut events = self.rescan_next_deferred().await?;
 
         // Store completed batches and do speculative matching
-        events.extend(self.store_and_match_batches().await?);
+        events.extend(self.store_and_match_batches(network).await?);
 
         // Try to process blocks in current batch
         events.extend(self.try_process_batch().await?);
