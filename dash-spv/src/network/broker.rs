@@ -29,8 +29,8 @@ pub enum RequestKey {
     Headers(BlockHash),
     /// Stop hash.
     CfHeaders(BlockHash),
-    /// Start height.
-    CFilters(u32),
+    /// Stop hash.
+    CFilters(BlockHash),
     MnListDiff(BlockHash),
     Block(BlockHash),
 }
@@ -41,7 +41,7 @@ pub fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
             m.locator_hashes.first().map(|h| RequestKey::Headers(*h)).into_iter().collect()
         }
         NetworkMessage::GetCFHeaders(m) => vec![RequestKey::CfHeaders(m.stop_hash)],
-        NetworkMessage::GetCFilters(m) => vec![RequestKey::CFilters(m.start_height)],
+        NetworkMessage::GetCFilters(m) => vec![RequestKey::CFilters(m.stop_hash)],
         NetworkMessage::GetMnListD(m) => vec![RequestKey::MnListDiff(m.block_hash)],
         NetworkMessage::GetData(inv) => inv
             .iter()
@@ -640,7 +640,7 @@ mod tests {
         NetworkMessage::GetCFilters(GetCFilters {
             filter_type: 0,
             start_height: start,
-            stop_hash: BlockHash::dummy(9),
+            stop_hash: BlockHash::dummy(start),
         })
     }
 
@@ -683,7 +683,7 @@ mod tests {
 
     #[test_case(get_headers(1) => vec![RequestKey::Headers(BlockHash::dummy(1))]; "getheaders")]
     #[test_case(get_cfheaders(2) => vec![RequestKey::CfHeaders(BlockHash::dummy(2))]; "getcfheaders")]
-    #[test_case(get_cfilters(100) => vec![RequestKey::CFilters(100)]; "getcfilters")]
+    #[test_case(get_cfilters(100) => vec![RequestKey::CFilters(BlockHash::dummy(100))]; "getcfilters")]
     #[test_case(get_mnlistdiff(3) => vec![RequestKey::MnListDiff(BlockHash::dummy(4))]; "getmnlistd")]
     #[test_case(NetworkMessage::GetData(vec![block(1), tx(7), block(2)])
         => vec![RequestKey::Block(BlockHash::dummy(1)), RequestKey::Block(BlockHash::dummy(2))];
@@ -717,7 +717,10 @@ mod tests {
             } else {
                 "on_wire"
             };
-            assert_eq!(broker.state_of(&RequestKey::CFilters(height)).await, Some(want));
+            assert_eq!(
+                broker.state_of(&RequestKey::CFilters(BlockHash::dummy(height))).await,
+                Some(want)
+            );
         }
     }
 
@@ -734,7 +737,10 @@ mod tests {
         // With only the closed peer listed nothing is popped, so the router is not woken
         // again and waits for a real change instead of spinning.
         assert_eq!(broker.route(&[gone.handle()], u64::MAX, &ResponseCosts::new()).await, 0);
-        assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, Some("queued"));
+        assert_eq!(
+            broker.state_of(&RequestKey::CFilters(BlockHash::dummy(0))).await,
+            Some("queued")
+        );
         assert!(broker.notified().now_or_never().is_none(), "the router was woken again");
 
         // Only the charge matters here: the loopback has no reader to answer it.
@@ -751,13 +757,16 @@ mod tests {
         broker.mark_on_wire(&get_cfilters(0), peer).await;
         broker.requeue_from(&HashSet::from([peer])).await;
         broker.queue.pop_n(1).await;
-        assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, Some("queued"));
+        assert_eq!(
+            broker.state_of(&RequestKey::CFilters(BlockHash::dummy(0))).await,
+            Some("queued")
+        );
 
         broker.enqueue(0, get_cfilters(0)).await;
         assert_eq!(broker.len(), 0);
 
-        broker.release(&RequestKey::CFilters(0)).await;
-        assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, None);
+        broker.release(&RequestKey::CFilters(BlockHash::dummy(0))).await;
+        assert_eq!(broker.state_of(&RequestKey::CFilters(BlockHash::dummy(0))).await, None);
         broker.enqueue(0, get_cfilters(0)).await;
         assert_eq!(broker.len(), 1);
     }

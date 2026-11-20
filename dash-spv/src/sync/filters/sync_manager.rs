@@ -141,8 +141,8 @@ impl<
 
         // One `getcfilters` is answered only once its whole batch has arrived, so
         // individual `cfilter`s are never answered on their own.
-        if let Some(batch_start) = batch_completed {
-            network.release_request(RequestKey::CFilters(batch_start)).await;
+        if let Some(stop_hash) = batch_completed {
+            network.release_request(RequestKey::CFilters(stop_hash)).await;
         }
 
         // No `send_pending` here: re-declaring per `cfilter` would re-scan every

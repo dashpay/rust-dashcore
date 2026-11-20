@@ -1504,7 +1504,7 @@ mod tests {
         NetworkMessage::GetCFilters(GetCFilters {
             filter_type: 0,
             start_height: start,
-            stop_hash: BlockHash::dummy(9),
+            stop_hash: BlockHash::dummy(start),
         })
     }
 
@@ -1996,7 +1996,7 @@ mod tests {
         }
 
         // A stalled request is re-queued and may already be routed to peer 2.
-        let carrier = net.state.broker.carrier_of(&RequestKey::CFilters(0)).await;
+        let carrier = net.state.broker.carrier_of(&RequestKey::CFilters(BlockHash::dummy(0))).await;
         assert_eq!(carrier == Some(conn(1, 0)), !stalls, "carrier {carrier:?}");
         let banned = net.state.bans.banned().await.contains(&conn(1, 0).addr());
         assert_eq!(banned, stalls, "a peer kicked beside a witness is banned");
@@ -2023,7 +2023,7 @@ mod tests {
         let held = net.state.broker.hold_queue_of(&get_cfilters(0)).await;
         // The second peer keeps receiving, so the stall is not blamed on our link.
         advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs() + 2).await;
-        let key = RequestKey::CFilters(0);
+        let key = RequestKey::CFilters(BlockHash::dummy(0));
         assert_eq!(
             net.state.broker.state_of(&key).await,
             Some("queued"),

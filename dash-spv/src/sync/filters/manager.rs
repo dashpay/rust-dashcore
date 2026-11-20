@@ -4215,7 +4215,7 @@ mod tests {
                 *headers[10].hash(),
                 &filter.content
             ),
-            Some(200_000),
+            Some(*headers[10].hash()),
             "a tick re-requested filters that were still in flight"
         );
     }
