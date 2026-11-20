@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ["core", "spv", "wallet", "rpc"]
+        group: ["core wallet rpc", "spv"]
     env:
       RUST_BACKTRACE: 1
       CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
