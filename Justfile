@@ -8,6 +8,7 @@ mod dash-spv
 mod dash-spv-bench
 mod masternode-seeds-fetcher
 
+nightly := env("NIGHTLY_TOOLCHAIN", "nightly")
 rust_version := replace_regex(read(root / "Cargo.toml"), '(?s).*\nrust-version = "(\d+\.\d+)[^"]*".*', '$1')
 
 # List every recipe
@@ -61,9 +62,9 @@ asan *crates="dashcore dashcore_hashes":
     export RUST_BACKTRACE=1 SKIP_DASHD_TESTS=1
     export RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=2 -Cforce-frame-pointers=yes"
     export ASAN_OPTIONS="symbolize=1:allow_addr2line=1" LSAN_OPTIONS="fast_unwind_on_malloc=0"
-    host=$(rustc +nightly -vV | sed -n 's/^host: //p')
+    host=$(rustc +{{ nightly }} -vV | sed -n 's/^host: //p')
     for crate in {{ crates }}; do
-        cargo +nightly test -Zbuild-std --target "$host" -p "$crate" --lib --tests
+        cargo +{{ nightly }} test -Zbuild-std --target "$host" -p "$crate" --lib --tests
     done
 
 # Run crates' tests under AddressSanitizer on nightly
@@ -79,9 +80,9 @@ tsan *crates="dash-spv":
     set -euo pipefail
     export RUST_BACKTRACE=1 SKIP_DASHD_TESTS=1
     export RUSTFLAGS="-Zsanitizer=thread -Cdebuginfo=2" TSAN_OPTIONS="second_deadlock_stack=1"
-    host=$(rustc +nightly -vV | sed -n 's/^host: //p')
+    host=$(rustc +{{ nightly }} -vV | sed -n 's/^host: //p')
     for crate in {{ crates }}; do
-        cargo +nightly test -Zbuild-std --target "$host" -p "$crate" --lib --tests
+        cargo +{{ nightly }} test -Zbuild-std --target "$host" -p "$crate" --lib --tests
     done
 
 # Run crates' tests under ThreadSanitizer on nightly
