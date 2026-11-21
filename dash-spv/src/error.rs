@@ -30,6 +30,28 @@ pub enum SpvError {
     QuorumLookupError(String),
 }
 
+/// Why [`DashSpvClient::current_masternode_list`](crate::DashSpvClient::current_masternode_list)
+/// returns no masternode list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum MasternodeListNotCurrent {
+    #[error("Masternode sync is disabled")]
+    Disabled,
+
+    #[error("The client is not running")]
+    NotRunning,
+
+    /// Header or masternode list sync has not caught up since the client started.
+    #[error("Masternode list sync has not caught up yet")]
+    Syncing,
+
+    /// The newest list trails the header tip by more than an update in flight explains.
+    #[error("Masternode list at height {list_height} is behind the header tip at {tip}")]
+    BehindTip {
+        list_height: u32,
+        tip: u32,
+    },
+}
+
 /// Logging-related errors.
 #[derive(Debug, Error)]
 pub enum LoggingError {

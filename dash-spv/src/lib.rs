@@ -80,7 +80,8 @@ pub mod types;
 pub use client::config::MempoolStrategy;
 pub use client::{ClientConfig, DashSpvClient, DevnetConfig, EventHandler};
 pub use error::{
-    LoggingError, LoggingResult, NetworkError, SpvError, StorageError, SyncError, ValidationError,
+    LoggingError, LoggingResult, MasternodeListNotCurrent, NetworkError, SpvError, StorageError,
+    SyncError, ValidationError,
 };
 #[cfg(feature = "logging")]
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
