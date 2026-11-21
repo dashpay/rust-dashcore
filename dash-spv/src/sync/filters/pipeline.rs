@@ -21,6 +21,11 @@ use crate::sync::filters::batch_tracker::BatchTracker;
 /// Batch size for filter requests.
 const FILTER_BATCH_SIZE: u32 = 1000;
 
+/// How many times a batch that fails verification is requested again. A batch that keeps
+/// failing likely disagrees with our stored filter headers, and downloading it again cannot fix
+/// that.
+pub(super) const MAX_BATCH_RETRIES: u32 = 3;
+
 /// Pipeline for downloading compact block filters.
 #[derive(Debug)]
 pub(super) struct FiltersPipeline {
@@ -38,6 +43,8 @@ pub(super) struct FiltersPipeline {
     filters_received: u32,
     /// Highest filter height received.
     highest_received: u32,
+    /// How often each batch failed verification (start_height -> rejections).
+    rejections: HashMap<u32, u32>,
 }
 
 impl Default for FiltersPipeline {
@@ -57,6 +64,7 @@ impl FiltersPipeline {
             target_height: 0,
             filters_received: 0,
             highest_received: 0,
+            rejections: HashMap::new(),
         }
     }
 
@@ -252,10 +260,17 @@ impl FiltersPipeline {
         Some(batch_start)
     }
 
-    /// Wants the batch `start_height..=end_height` again. A rejected batch left the pipeline
-    /// when it completed, and without it the store order waits for it forever.
-    pub(super) fn requeue_rejected(&mut self, start_height: u32, end_height: u32) {
+    /// Wants the rejected batch `start_height..=end_height` again, and returns whether it does.
+    /// A rejected batch left the pipeline when it completed, and without it the store order waits
+    /// for it forever. A batch rejected more than [`MAX_BATCH_RETRIES`] times is given up.
+    pub(super) fn requeue_rejected(&mut self, start_height: u32, end_height: u32) -> bool {
+        let rejections = self.rejections.entry(start_height).or_default();
+        *rejections += 1;
+        if *rejections > MAX_BATCH_RETRIES {
+            return false;
+        }
         self.batch_trackers.insert(start_height, BatchTracker::new(end_height));
+        true
     }
 
     /// Returns the start height of the wanted batch that contains `height`.
@@ -400,6 +415,19 @@ mod tests {
 
         assert_eq!(result, None);
         assert_eq!(pipeline.filters_received, 0);
+    }
+
+    #[test]
+    fn test_a_rejected_batch_is_requested_again_up_to_the_retry_limit() {
+        let mut pipeline = FiltersPipeline::new();
+        for _ in 0..MAX_BATCH_RETRIES {
+            assert!(pipeline.requeue_rejected(0, 999));
+            assert!(pipeline.batch_trackers.contains_key(&0));
+            pipeline.batch_trackers.clear();
+        }
+        assert!(!pipeline.requeue_rejected(0, 999), "a batch that keeps failing is given up");
+        assert!(pipeline.batch_trackers.is_empty());
+        assert!(pipeline.requeue_rejected(1000, 1999), "the limit counts each batch alone");
     }
 
     #[test]

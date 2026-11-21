@@ -584,13 +584,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         end_height: end,
                     }),
                     Err(SyncError::Validation(reason)) => {
+                        if !self.filter_pipeline.requeue_rejected(start, end) {
+                            return Err(SyncError::Validation(reason));
+                        }
                         tracing::warn!(
                             "Rejected filter batch {}-{}, requesting it again: {}",
                             start,
                             end,
                             reason
                         );
-                        self.filter_pipeline.requeue_rejected(start, end);
                         break;
                     }
                     Err(e) => return Err(e),
@@ -1367,6 +1369,7 @@ mod tests {
         BlockHeaderStorage, BlockStorage, DiskStorageManager, PersistentBlockHeaderStorage,
         PersistentFilterHeaderStorage, PersistentFilterStorage, StorageManager,
     };
+    use crate::sync::filters::pipeline::MAX_BATCH_RETRIES;
     use crate::sync::{BlocksManager, ManagerIdentifier, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
     use crate::types::{HashedBlock, HashedBlockHeader};
@@ -3850,10 +3853,12 @@ mod tests {
     /// block makes `extend_target` re-request every filter from height 1 and
     /// wedges the in-order store loop on a `next_batch_to_store` of 0, freezing
     /// `committed_height` one below tip.
-    #[test_case(false; "the first copy is valid")]
-    #[test_case(true; "a rejected copy is requested again")]
+    #[test_case(0; "the first copy is valid")]
+    #[test_case(1; "a rejected copy is requested again")]
+    #[test_case(MAX_BATCH_RETRIES; "a copy rejected up to the retry limit is requested again")]
+    #[test_case(MAX_BATCH_RETRIES + 1; "a batch that keeps failing is given up")]
     #[tokio::test]
-    async fn test_synced_boot_then_boundary_block_commits(rejected_first: bool) {
+    async fn test_synced_boot_then_boundary_block_commits(rejections: u32) {
         let (mut manager, headers, boundary_filter) = setup_synced_manager_at_tip().await;
 
         // Fully-synced boot leaves the manager in its default state.
@@ -3910,18 +3915,23 @@ mod tests {
             block_hash: headers[101].block_hash(),
             filter: boundary_filter.content.clone(),
         };
-        if rejected_first {
-            let corrupt = CFilter {
-                filter: vec![0xFF; 4],
-                ..cfilter.clone()
-            };
-            manager
-                .handle_message(peer, NetworkMessage::CFilter(corrupt).into(), &requests)
-                .await
-                .unwrap();
+        let corrupt = CFilter {
+            filter: vec![0xFF; 4],
+            ..cfilter.clone()
+        };
+        for rejection in 1..=rejections {
+            let result = manager
+                .handle_message(peer, NetworkMessage::CFilter(corrupt.clone()).into(), &requests)
+                .await;
+            let given_up = rejection > MAX_BATCH_RETRIES;
+            assert_eq!(matches!(result, Err(SyncError::Validation(_))), given_up);
             mock.clear_sent().await;
             manager.tick(&requests).await.unwrap();
-            assert_eq!(drain_getcfilters(&mock).await, 1, "the rejected batch must return");
+            let requested = drain_getcfilters(&mock).await;
+            assert_eq!(requested, usize::from(!given_up), "rejection {rejection}");
+            if given_up {
+                return;
+            }
         }
         manager
             .handle_message(peer, NetworkMessage::CFilter(cfilter).into(), &requests)
