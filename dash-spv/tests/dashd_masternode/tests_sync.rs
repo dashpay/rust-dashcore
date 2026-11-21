@@ -8,7 +8,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dash_spv::{ProgressPercentage, SyncEvent, SyncState};
+use dash_spv::{
+    MasternodeListNotCurrentError, ProgressPercentage, SyncEvent, SyncState,
+    MASTERNODE_LIST_TIP_TOLERANCE,
+};
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
 use dashcore::{Amount, QuorumHash};
@@ -43,6 +46,10 @@ async fn test_masternode_list_sync() {
 
     let mut client_handle = create_client(&config, Arc::clone(&wallet)).await;
     assert_eq!(client_handle.client.latest_coinbase().await, None);
+    assert_eq!(
+        client_handle.client.current_masternode_list().await,
+        Err(MasternodeListNotCurrentError::NotRunning)
+    );
     client_handle.run().await;
 
     // Wait for the MasternodeStateUpdated event
@@ -100,6 +107,37 @@ async fn test_masternode_list_sync() {
         assert_eq!(client_handle.client.latest_coinbase().await, engine_coinbase);
     }
 
+    // A synced client's newest list is current, at most two blocks below the header tip.
+    {
+        let current = client_handle.client.current_masternode_list().await;
+        let engine_list = client_handle.engine.read().await.latest_masternode_list().cloned();
+        assert_eq!(current.as_ref().ok(), engine_list.as_ref());
+        let list_height = current.expect("a synced list is current").known_height;
+        assert!(
+            list_height + MASTERNODE_LIST_TIP_TOLERANCE >= mn_progress.block_header_tip_height()
+        );
+        let client = client_handle.client.clone();
+        let blocking_current =
+            tokio::task::spawn_blocking(move || client.current_masternode_list_blocking())
+                .await
+                .expect("blocking accessor should not panic");
+        assert_eq!(blocking_current.ok(), engine_list);
+    }
+
+    client_handle.stop().await;
+    assert_eq!(
+        client_handle.client.current_masternode_list().await,
+        Err(MasternodeListNotCurrentError::NotRunning),
+        "a stopped client keeps its list but nothing keeps it current"
+    );
+
+    // Running again on the same client, the list stays not current until sync catches up.
+    client_handle.run().await;
+    assert_eq!(
+        client_handle.client.current_masternode_list().await,
+        Err(MasternodeListNotCurrentError::Syncing),
+        "a list from an earlier run is not current before the new run syncs"
+    );
     client_handle.stop().await;
 
     let final_progress = client_handle.client.progress().await;
@@ -182,6 +220,11 @@ async fn test_masternode_list_sync_with_restart() {
         "startup must rebuild the first session's masternode list from storage, \
          not default and let a fresh dashd sync cover for it"
     );
+    assert_eq!(
+        client_handle.client.current_masternode_list().await,
+        Err(MasternodeListNotCurrentError::NotRunning),
+        "a list restored from storage is not current while the client is not running"
+    );
     {
         let engine = client_handle.engine.read().await;
         let restored_cycles = engine.rotated_quorums_per_cycle();
@@ -229,6 +272,20 @@ async fn test_masternode_list_sync_with_restart() {
         SyncState::Synced,
         "Should reach Synced state after restart"
     );
+    {
+        let current = client_handle.client.current_masternode_list().await;
+        let engine_list = client_handle.engine.read().await.latest_masternode_list().cloned();
+        assert_eq!(
+            current.as_ref().ok(),
+            engine_list.as_ref(),
+            "the restarted client's list is current"
+        );
+        let list_height = current.expect("a synced list is current").known_height;
+        assert!(
+            list_height + MASTERNODE_LIST_TIP_TOLERANCE
+                >= second_mn_progress.block_header_tip_height()
+        );
+    }
 
     let after_second = storage_snapshot(ctx.storage_path());
     assert_storage_did_not_shrink(&after_first, &after_second, "masternode restart");

@@ -10,6 +10,8 @@ pub struct BlockHeadersProgress {
     state: SyncState,
     /// The tip height of the block-header storage.
     tip_height: u32,
+    /// The block time of the tip header, in seconds since the Unix epoch.
+    tip_time: u32,
     /// Equals to current_height (blockchain tip) when synced and to the best height of connected peers during initial sync.
     target_height: u32,
     /// Number of block-headers processed (stored) in the current sync session.
@@ -27,6 +29,7 @@ impl Default for BlockHeadersProgress {
         Self {
             state: SyncState::default(),
             tip_height: 0,
+            tip_time: 0,
             target_height: 0,
             processed: 0,
             missing_below: 0,
@@ -44,6 +47,10 @@ impl BlockHeadersProgress {
     /// Get the current height (last successfully processed height).
     pub fn tip_height(&self) -> u32 {
         self.tip_height
+    }
+    /// The block time of the tip header, in seconds since the Unix epoch.
+    pub fn tip_time(&self) -> u32 {
+        self.tip_time
     }
     /// Number of block-headers processed (stored) in the current sync session.
     pub fn processed(&self) -> u32 {
@@ -64,6 +71,10 @@ impl BlockHeadersProgress {
         self.tip_height = height;
         self.update_target_height(height);
         self.bump_last_activity();
+    }
+    /// Update the block time of the tip header.
+    pub fn update_tip_time(&mut self, time: u32) {
+        self.tip_time = time;
     }
     /// Update the target height (the best height of the connected peers).
     /// Only updates if the new height is greater than the current target (monotonic increase).

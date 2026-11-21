@@ -32,6 +32,7 @@ pub use event_handler::EventHandler;
 
 // Re-export the main client struct
 pub use core::DashSpvClient;
+pub use queries::{MAINNET_MAX_TIP_AGE, MASTERNODE_LIST_TIP_TOLERANCE, TESTNET_MAX_TIP_AGE};
 
 #[cfg(test)]
 mod config_test;

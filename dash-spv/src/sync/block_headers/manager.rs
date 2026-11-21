@@ -88,6 +88,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let mut initial_progress = BlockHeadersProgress::default();
         initial_progress.set_state(SyncState::WaitingForConnections);
         initial_progress.update_tip_height(tip.height());
+        initial_progress.update_tip_time(tip.header().time);
         initial_progress.update_target_height(target_height);
 
         tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
@@ -242,6 +243,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 
         // Update state
         self.progress.update_tip_height(tip.height());
+        self.progress.update_tip_time(tip.header().time);
         self.progress.add_processed(headers.len() as u32);
 
         Ok(tip)
@@ -777,6 +779,9 @@ mod tests {
             events.iter().any(|e| matches!(e, SyncEvent::BlockHeadersStored { .. })),
             "the promotion must be reported, not done silently"
         );
+        let new_tip_time = manager.tip().await.unwrap().header().time;
+        assert_ne!(new_tip_time, tip.header().time, "precondition: the stored tip changed time");
+        assert_eq!(manager.progress.tip_time(), new_tip_time);
 
         // Completing the pipeline must also be reachable from a tick: an empty
         // response closes the tip segment, and the next tick has to announce
@@ -936,6 +941,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(manager.progress.target_height(), 9);
+        assert_eq!(manager.progress.tip_time(), stored[9].time);
 
         let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
         let lagging = NetworkEvent::PeersUpdated {
