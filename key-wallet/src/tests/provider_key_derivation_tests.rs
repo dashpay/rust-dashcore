@@ -14,7 +14,7 @@ use crate::account::derivation::AccountDerivation;
 #[cfg(feature = "eddsa")]
 use crate::account::eddsa_account::EdDSAAccount;
 use crate::account::AccountType;
-use crate::managed_account::address_pool::AddressPoolType;
+use crate::managed_account::address_pool::{AddressPoolType, MAX_GAP_LIMIT};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::mnemonic::Mnemonic;
 use crate::wallet::initialization::WalletAccountCreationOptions;
@@ -440,5 +440,30 @@ fn find_provider_key_without_the_account_finds_nothing() {
     for (role, account_type) in HASHED_PROVIDER_ROLES {
         let hash = provider_key_hash(&wallet, account_type, 0);
         assert_eq!(info.find_provider_key(&empty, role, &hash, Some(0), 20).unwrap(), None);
+    }
+}
+
+#[test]
+fn find_provider_key_caps_min_window_at_the_gap_limit_maximum() {
+    let wallet = test_wallet(Network::Testnet);
+    let info = ManagedWalletInfo::from_wallet(&wallet, 0);
+    let role = ProviderKeyRole::Owner;
+    let account_type = AccountType::ProviderOwnerKeys;
+
+    let last_in_window = provider_key_hash(&wallet, account_type, MAX_GAP_LIMIT - 1);
+    let found = info.find_provider_key(&wallet, role, &last_in_window, None, u32::MAX).unwrap();
+    assert_eq!(found.map(|(index, _)| index), Some(MAX_GAP_LIMIT - 1));
+
+    let past_window = provider_key_hash(&wallet, account_type, MAX_GAP_LIMIT);
+    assert_eq!(info.find_provider_key(&wallet, role, &past_window, None, u32::MAX).unwrap(), None);
+}
+
+#[test]
+fn find_provider_key_rejects_a_hardened_index_hint() {
+    let wallet = test_wallet(Network::Testnet);
+    let info = ManagedWalletInfo::from_wallet(&wallet, 0);
+    for (role, account_type) in HASHED_PROVIDER_ROLES {
+        let hash = provider_key_hash(&wallet, account_type, 3);
+        assert!(info.find_provider_key(&wallet, role, &hash, Some(1 << 31), 20).is_err());
     }
 }
