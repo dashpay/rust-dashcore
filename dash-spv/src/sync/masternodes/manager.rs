@@ -12,7 +12,7 @@ use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use tokio::sync::RwLock;
 
 use super::pipeline::{DiffKind, MnListDiffPipeline, MNLISTDIFF_DEADLINE};
-use crate::error::SyncResult;
+use crate::error::{StorageResult, SyncResult};
 use crate::network::{NetworkManager, SendRequest};
 use crate::storage::{BlockHeaderStorage, PersistentMasternodeStorage};
 use crate::sync::{MasternodesProgress, SyncEvent, SyncManager, SyncState};
@@ -171,13 +171,13 @@ impl MasternodeSyncState {
     pub(super) async fn retry_given_up_work_lists<H: BlockHeaderStorage>(
         &mut self,
         engine: &MasternodeListEngine<H>,
-    ) -> Vec<(BlockHash, BlockHash)> {
+    ) -> StorageResult<Vec<(BlockHash, BlockHash)>> {
         if !self.given_up_work_lists.values().any(|retry| *retry == WorkListRetry::Pending) {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let requests: Vec<_> = engine
-            .readable_missing_work_block_list_requests()
-            .await
+            .missing_work_block_list_requests()
+            .await?
             .into_iter()
             .filter(|(_, target)| {
                 self.given_up_work_lists.get(target) == Some(&WorkListRetry::Pending)
@@ -187,7 +187,7 @@ impl MasternodeSyncState {
         for (_, target) in &requests {
             self.given_up_work_lists.insert(*target, WorkListRetry::Sent);
         }
-        requests
+        Ok(requests)
     }
 
     pub(super) fn forget_given_up_work_lists(&mut self) {

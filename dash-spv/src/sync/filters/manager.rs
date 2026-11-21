@@ -197,20 +197,14 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         filter_header_storage: Arc<RwLock<FH>>,
         filter_storage: Arc<RwLock<F>>,
         sync_floor: u32,
-    ) -> Self {
+    ) -> SyncResult<Self> {
         let committed_height = wallet.read().await.synced_height();
         let checks_derived_addresses = wallet.read().await.checks_derived_addresses();
-        let stored_height = filter_storage.read().await.filter_tip_height().await.unwrap_or(0);
+        let stored_height = filter_storage.read().await.filter_tip_height().await?;
         let target_height =
             header_storage.read().await.get_tip().await.map(|t| t.height()).unwrap_or(0);
-        let filter_header_tip = filter_header_storage
-            .read()
-            .await
-            .get_filter_tip_height()
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(0);
+        let filter_header_tip =
+            filter_header_storage.read().await.get_filter_tip_height().await?.unwrap_or(0);
 
         let mut initial_progress = FiltersProgress::default();
         initial_progress.update_committed_height(committed_height);
@@ -218,7 +212,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         initial_progress.update_target_height(target_height);
         initial_progress.update_filter_header_tip_height(filter_header_tip);
 
-        Self {
+        Ok(Self {
             progress: initial_progress,
             header_storage,
             filter_header_storage,
@@ -232,7 +226,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             processing_height: 0,
             tracker: BlockMatchTracker::new(checks_derived_addresses),
             sync_floor,
-        }
+        })
     }
 
     /// Returns true if there is no in-flight processing state.
@@ -1354,6 +1348,7 @@ mod tests {
         BlockHeaderStorage, BlockStorage, DiskStorageManager, PersistentBlockHeaderStorage,
         PersistentFilterHeaderStorage, PersistentFilterStorage, StorageManager,
     };
+    use crate::sync::sync_manager::running::RunningManager;
     use crate::sync::{BlocksManager, ManagerIdentifier, SyncManagerProgress};
     use crate::test_utils::MockNetworkManager;
     use crate::types::{HashedBlock, HashedBlockHeader};
@@ -1366,6 +1361,8 @@ mod tests {
         MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };
     use std::net::SocketAddr;
+    use std::time::Duration;
+    use tokio::{task, time};
 
     type TestFiltersManager = FiltersManager<
         PersistentBlockHeaderStorage,
@@ -1392,6 +1389,7 @@ mod tests {
             0,
         )
         .await
+        .unwrap()
     }
 
     async fn create_multi_test_manager(
@@ -1406,6 +1404,74 @@ mod tests {
             0,
         )
         .await
+        .unwrap()
+    }
+
+    /// A manager over headers up to 20,000 whose first header segment is corrupted on disk,
+    /// for a wallet synced to `synced_height`. Returns the headers.
+    async fn manager_over_corrupted_headers(
+        synced_height: u32,
+    ) -> (TestFiltersManager, Vec<HashedBlockHeader>) {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let headers = storage.store_headers_and_corrupt_the_first_segment(20_000).await;
+        let mut wallet = MockWallet::new();
+        wallet.update_wallet_synced_height(&MOCK_WALLET_ID, synced_height);
+        let manager = FiltersManager::new(
+            Arc::new(RwLock::new(wallet)),
+            storage.block_headers(),
+            storage.filter_headers(),
+            storage.filters(),
+            0,
+        )
+        .await
+        .unwrap();
+        (manager, headers)
+    }
+
+    /// A storage corruption met while requesting a filter batch is reported.
+    #[tokio::test]
+    async fn test_corrupted_header_storage_on_request_is_reported() {
+        let (manager, _) = manager_over_corrupted_headers(0).await;
+        let mut running = RunningManager::spawn(manager, Arc::new(MockNetworkManager::new())).await;
+
+        running.send_event(SyncEvent::FilterHeadersSyncComplete {
+            tip_height: 20_000,
+        });
+
+        running.wait_for_storage_corrupted().await;
+    }
+
+    /// A storage corruption met while resolving the height of a received filter is reported.
+    /// Its batch starts in the corrupted segment and ends in the next one, so requesting the
+    /// batch reads only the healthy segment.
+    #[tokio::test]
+    async fn test_corrupted_header_storage_on_filter_is_reported() {
+        let (manager, headers) = manager_over_corrupted_headers(9_499).await;
+        let network = Arc::new(MockNetworkManager::new());
+        let mut running = RunningManager::spawn(manager, network.clone()).await;
+        running.send_event(SyncEvent::FilterHeadersSyncComplete {
+            tip_height: 20_000,
+        });
+        time::timeout(Duration::from_secs(5), async {
+            while !network
+                .sent_messages()
+                .await
+                .iter()
+                .any(|message| matches!(message, NetworkMessage::GetCFilters(_)))
+            {
+                task::yield_now().await;
+            }
+        })
+        .await
+        .expect("no filter batch requested");
+
+        running.send_message(NetworkMessage::CFilter(CFilter {
+            filter_type: 0,
+            block_hash: *headers[10_000].hash(),
+            filter: vec![],
+        }));
+
+        running.wait_for_storage_corrupted().await;
     }
 
     /// Store `count` headers starting at `anchor`, so `get_start_height`
@@ -1618,7 +1684,8 @@ mod tests {
             storage.filters(),
             0,
         )
-        .await;
+        .await
+        .unwrap();
 
         assert_eq!(manager.progress.committed_height(), 50);
         assert_eq!(manager.progress.stored_height(), 100);
@@ -2637,7 +2704,8 @@ mod tests {
             storage.filters(),
             0,
         )
-        .await;
+        .await
+        .unwrap();
         filters_manager.set_state(SyncState::Syncing);
         let mut batch = FiltersBatch::new(0, 99, filters);
         batch.mark_verified();
