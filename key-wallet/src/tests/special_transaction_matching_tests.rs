@@ -410,6 +410,12 @@ async fn provider_registration_with_voting_key_hash_matches_provider_voting_keys
         info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
     assert_matched_account_type(&result, AccountTypeToCheck::ProviderVotingKeys);
+
+    let voting_hash = derive_pubkey_hash(&voting_addr);
+    let found = info.find_provider_key(&wallet, ProviderKeyRole::Voting, &voting_hash, None, 0);
+    let voting_pool = info.provider_voting_keys_managed_account().unwrap().managed_account_type();
+    let pool_index = voting_pool.address_pools()[0].address_index(&voting_addr).unwrap();
+    assert_eq!(found.unwrap().map(|(index, _)| index), Some(pool_index));
 }
 
 #[cfg(feature = "bls")]
