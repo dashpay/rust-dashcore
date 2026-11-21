@@ -126,6 +126,9 @@ pub enum ValidationError {
     #[error("Invalid InstantLock: {0}")]
     InvalidInstantLock(String),
 
+    #[error("Missing quorum data to decide the InstantLock")]
+    MissingQuorumData,
+
     #[error("Invalid signature: {0}")]
     InvalidSignature(String),
 

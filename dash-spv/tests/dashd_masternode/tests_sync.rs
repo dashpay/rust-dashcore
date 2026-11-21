@@ -13,6 +13,7 @@ use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
 use dashcore::{Amount, QuorumHash};
 use tokio::sync::Mutex;
+use tokio::{task, time};
 
 use super::helpers::{
     assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
@@ -362,8 +363,28 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
             max_cycle
         };
 
-        let quorum_hash =
-            ctx.mn_ctx.mine_dkg_cycle().unwrap_or_else(|| panic!("DKG cycle {} failed", cycle));
+        let progress = client_handle.progress_receiver.clone();
+        let (next_ctx, quorum_hash) = task::spawn_blocking(move || {
+            let quorum_hash = ctx
+                .mn_ctx
+                .mine_dkg_cycle_with_hook(|_, height| {
+                    let window = LLMQType::LlmqtypeTestDIP0024.get_dkg_window_for_height(height);
+                    if height != window.mining_start {
+                        return;
+                    }
+                    // Let the client consume the first slot before the next one can be mined.
+                    let start = Instant::now();
+                    while progress.borrow().masternodes().unwrap().current_height() < height {
+                        assert!(start.elapsed() < Duration::from_secs(SYNC_TIMEOUT));
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                })
+                .unwrap_or_else(|| panic!("DKG cycle {cycle} failed"));
+            (ctx, quorum_hash)
+        })
+        .await
+        .unwrap();
+        ctx = next_ctx;
 
         // Wait for the SPV client to sync the new masternode state.
         // Using wait_for_mn_state_with_stored_cycle_above instead of
@@ -383,6 +404,27 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
             updated_height,
             last_height
         );
+
+        time::timeout(Duration::from_secs(SYNC_TIMEOUT), async {
+            loop {
+                let complete = client_handle
+                    .engine
+                    .read()
+                    .await
+                    .rotated_quorums_per_cycle()
+                    .get(&quorum_hash)
+                    .is_some_and(|quorums| {
+                        quorums.len()
+                            == LLMQType::LlmqtypeTestDIP0024.active_quorum_count() as usize
+                    });
+                if complete {
+                    break;
+                }
+                time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the later commitment must fill the cycle's remaining slot");
 
         // After each successful DKG cycle, the stored rotation cycle count
         // must not shrink and must reach at least `cycle` distinct entries.
