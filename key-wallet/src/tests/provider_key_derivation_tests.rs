@@ -467,3 +467,17 @@ fn find_provider_key_rejects_a_hardened_index_hint() {
         assert!(info.find_provider_key(&wallet, role, &hash, Some(1 << 31), 20).is_err());
     }
 }
+
+#[test]
+fn find_provider_key_ignores_a_pool_of_another_wallet() {
+    let wallet = test_wallet(Network::Testnet);
+    let info = ManagedWalletInfo::from_wallet(&wallet, 0);
+    let other_wallet =
+        Wallet::new_random(Network::Testnet, WalletAccountCreationOptions::Default).unwrap();
+
+    for (role, account_type) in HASHED_PROVIDER_ROLES {
+        let pool_hash = provider_key_hash(&wallet, account_type, 3);
+        let found = info.find_provider_key(&other_wallet, role, &pool_hash, None, 0).unwrap();
+        assert_eq!(found, None);
+    }
+}

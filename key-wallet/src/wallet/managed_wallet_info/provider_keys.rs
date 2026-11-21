@@ -33,8 +33,12 @@ impl ManagedWalletInfo {
     ///
     /// Needs no seed: keys are derived from the account xpub. The key at `index_hint` is
     /// checked first, then the account's address pool, then the keys past the pool below
-    /// `min_window`, which is capped at [`MAX_GAP_LIMIT`]. Fails only when the wallet has the
-    /// account and `index_hint` is in the hardened range.
+    /// `min_window`, which is capped at [`MAX_GAP_LIMIT`]. Every match is derived from `wallet`,
+    /// so a pool of another wallet matches nothing. [`DEFAULT_PROVIDER_KEY_WINDOW`] is the usual
+    /// `min_window`. Fails only when the wallet has the account and `index_hint` is in the
+    /// hardened range.
+    ///
+    /// [`DEFAULT_PROVIDER_KEY_WINDOW`]: crate::managed_account::address_pool::DEFAULT_PROVIDER_KEY_WINDOW
     pub fn find_provider_key(
         &self,
         wallet: &Wallet,
@@ -69,8 +73,10 @@ impl ManagedWalletInfo {
             .and_then(|account| account.managed_account_type().address_pools().into_iter().next());
         if let Some(pool) = pool {
             let address = Address::new(pool.network(), Payload::PubkeyHash(*key_hash));
-            if let Some(info) = pool.address_info(&address) {
-                return Ok(Some((info.index, info.path.clone())));
+            if let Some(index) = pool.address_index(&address) {
+                if let Some(found) = derived_match(index)? {
+                    return Ok(Some(found));
+                }
             }
         }
 

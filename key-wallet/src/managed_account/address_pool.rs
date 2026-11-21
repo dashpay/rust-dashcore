@@ -39,6 +39,12 @@ pub const DEFAULT_DASHPAY_GAP_LIMIT: u32 = 10;
 /// Gap limit for DIP-17 platform payment addresses
 pub const DIP17_GAP_LIMIT: u32 = 20;
 
+/// Default `min_window` for [`ManagedWalletInfo::find_provider_key`]: how many provider keys
+/// to check past an address pool that a restored wallet has not grown yet.
+///
+/// [`ManagedWalletInfo::find_provider_key`]: crate::wallet::managed_wallet_info::ManagedWalletInfo::find_provider_key
+pub const DEFAULT_PROVIDER_KEY_WINDOW: u32 = 20;
+
 /// Maximum gap limit to prevent excessive address generation
 pub const MAX_GAP_LIMIT: u32 = 1000;
 
