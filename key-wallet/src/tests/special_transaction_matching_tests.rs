@@ -23,7 +23,7 @@ use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::wallet::initialization::WalletAccountCreationOptions;
 use crate::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use crate::wallet::managed_wallet_info::ManagedWalletInfo;
+use crate::wallet::managed_wallet_info::{ManagedWalletInfo, ProviderKeyRole};
 use crate::wallet::Wallet;
 use crate::Network;
 
@@ -369,6 +369,12 @@ async fn provider_registration_with_owner_key_hash_matches_provider_owner_keys()
         info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
     assert_matched_account_type(&result, AccountTypeToCheck::ProviderOwnerKeys);
+
+    let owner_hash = derive_pubkey_hash(&owner_addr);
+    let found = info.find_provider_key(&wallet, ProviderKeyRole::Owner, &owner_hash, None, 0);
+    let owner_pool = info.provider_owner_keys_managed_account().unwrap().managed_account_type();
+    let pool_index = owner_pool.address_pools()[0].address_index(&owner_addr).unwrap();
+    assert_eq!(found.unwrap().map(|(index, _)| index), Some(pool_index));
 }
 
 #[tokio::test]

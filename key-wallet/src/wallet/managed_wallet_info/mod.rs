@@ -12,11 +12,13 @@ pub(crate) mod locked_outpoints;
 pub use locked_outpoints::masternode_collateral;
 pub mod managed_account_operations;
 pub mod managed_accounts;
+mod provider_keys;
 pub mod transaction_builder;
 pub mod transaction_building;
 pub mod wallet_info_interface;
 
 pub use managed_account_operations::ManagedAccountOperations;
+pub use provider_keys::ProviderKeyRole;
 
 use super::balance::WalletCoreBalance;
 use super::metadata::WalletMetadata;

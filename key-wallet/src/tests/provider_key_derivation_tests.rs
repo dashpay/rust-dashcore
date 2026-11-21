@@ -14,10 +14,14 @@ use crate::account::derivation::AccountDerivation;
 #[cfg(feature = "eddsa")]
 use crate::account::eddsa_account::EdDSAAccount;
 use crate::account::AccountType;
+use crate::managed_account::address_pool::AddressPoolType;
+use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::mnemonic::Mnemonic;
 use crate::wallet::initialization::WalletAccountCreationOptions;
+use crate::wallet::managed_wallet_info::{ManagedWalletInfo, ProviderKeyRole};
 use crate::wallet::Wallet;
-use crate::{ChildNumber, Network};
+use crate::{AccountCollection, ChildNumber, DerivationPath, KeySource, Network};
+use dashcore::PubkeyHash;
 
 const TEST_MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -328,4 +332,113 @@ fn seedless_wallet_skips_provider_operator_and_platform_accounts() {
     wallet.add_eddsa_account(AccountType::ProviderPlatformKeys, Some(&seed)).unwrap();
     assert!(wallet.accounts.bls_account_of_type(AccountType::ProviderOperatorKeys).is_some());
     assert!(wallet.accounts.eddsa_account_of_type(AccountType::ProviderPlatformKeys).is_some());
+}
+
+const HASHED_PROVIDER_ROLES: [(ProviderKeyRole, AccountType); 2] = [
+    (ProviderKeyRole::Owner, AccountType::ProviderOwnerKeys),
+    (ProviderKeyRole::Voting, AccountType::ProviderVotingKeys),
+];
+
+fn provider_key_hash(wallet: &Wallet, account_type: AccountType, index: u32) -> PubkeyHash {
+    let account = wallet.accounts.account_of_type(account_type).unwrap();
+    account.derive_public_key_at(AddressPoolType::Absent, index, None).unwrap().pubkey_hash()
+}
+
+fn provider_key_path(wallet: &Wallet, account_type: AccountType, index: u32) -> DerivationPath {
+    let account = wallet.accounts.account_of_type(account_type).unwrap();
+    account.derivation_path().unwrap().child(ChildNumber::from_normal_idx(index).unwrap())
+}
+
+#[test]
+fn find_provider_key_resolves_keys_in_the_pool() {
+    let wallet = test_wallet(Network::Testnet);
+    let info = ManagedWalletInfo::from_wallet(&wallet, 0);
+
+    for (role, account_type) in HASHED_PROVIDER_ROLES {
+        let hash = provider_key_hash(&wallet, account_type, 3);
+        let expected = Some((3, provider_key_path(&wallet, account_type, 3)));
+        assert_eq!(info.find_provider_key(&wallet, role, &hash, None, 0).unwrap(), expected);
+    }
+
+    let owner_hash = provider_key_hash(&wallet, AccountType::ProviderOwnerKeys, 3);
+    let found = info.find_provider_key(&wallet, ProviderKeyRole::Voting, &owner_hash, None, 20);
+    assert_eq!(found.unwrap(), None);
+}
+
+#[test]
+fn find_provider_key_scans_past_the_pool_up_to_min_window() {
+    let wallet = test_wallet(Network::Testnet);
+    let info = ManagedWalletInfo::from_wallet(&wallet, 0);
+
+    for (role, account_type) in HASHED_PROVIDER_ROLES {
+        let hash = provider_key_hash(&wallet, account_type, 12);
+        assert_eq!(info.find_provider_key(&wallet, role, &hash, None, 12).unwrap(), None);
+        let expected = Some((12, provider_key_path(&wallet, account_type, 12)));
+        assert_eq!(info.find_provider_key(&wallet, role, &hash, None, 13).unwrap(), expected);
+    }
+}
+
+#[test]
+fn find_provider_key_covers_a_pool_deeper_than_min_window() {
+    let wallet = test_wallet(Network::Testnet);
+    let mut info = ManagedWalletInfo::from_wallet(&wallet, 0);
+    let account = wallet.accounts.account_of_type(AccountType::ProviderOwnerKeys).unwrap();
+    let key_source = KeySource::Public(account.account_xpub);
+    let owner_account = info.provider_owner_keys_managed_account_mut().unwrap();
+    for pool in owner_account.managed_account_type_mut().address_pools_mut() {
+        pool.set_gap_limit(30, &key_source).unwrap();
+    }
+
+    let hash = provider_key_hash(&wallet, AccountType::ProviderOwnerKeys, 25);
+    let found = info.find_provider_key(&wallet, ProviderKeyRole::Owner, &hash, None, 20).unwrap();
+    assert_eq!(found, Some((25, provider_key_path(&wallet, AccountType::ProviderOwnerKeys, 25))));
+}
+
+#[test]
+fn find_provider_key_verifies_the_index_hint_first() {
+    let wallet = test_wallet(Network::Testnet);
+    let info = ManagedWalletInfo::from_wallet(&wallet, 0);
+
+    for (role, account_type) in HASHED_PROVIDER_ROLES {
+        let far_hash = provider_key_hash(&wallet, account_type, 40);
+        assert_eq!(info.find_provider_key(&wallet, role, &far_hash, None, 20).unwrap(), None);
+        let expected = Some((40, provider_key_path(&wallet, account_type, 40)));
+        assert_eq!(
+            info.find_provider_key(&wallet, role, &far_hash, Some(40), 20).unwrap(),
+            expected
+        );
+
+        let near_hash = provider_key_hash(&wallet, account_type, 3);
+        let expected = Some((3, provider_key_path(&wallet, account_type, 3)));
+        assert_eq!(
+            info.find_provider_key(&wallet, role, &near_hash, Some(7), 20).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn find_provider_key_needs_no_seed() {
+    let wallet = test_wallet(Network::Testnet);
+    let watch_only =
+        Wallet::new_watch_only(Network::Testnet, wallet.wallet_id, wallet.accounts.clone());
+    let info = ManagedWalletInfo::from_wallet(&watch_only, 0);
+
+    for (role, account_type) in HASHED_PROVIDER_ROLES {
+        let hash = provider_key_hash(&wallet, account_type, 12);
+        let expected = Some((12, provider_key_path(&wallet, account_type, 12)));
+        assert_eq!(info.find_provider_key(&watch_only, role, &hash, None, 20).unwrap(), expected);
+    }
+}
+
+#[test]
+fn find_provider_key_without_the_account_finds_nothing() {
+    let wallet = test_wallet(Network::Testnet);
+    let empty = Wallet::new_watch_only(Network::Testnet, [0; 32], AccountCollection::default());
+    let info = ManagedWalletInfo::from_wallet(&empty, 0);
+
+    for (role, account_type) in HASHED_PROVIDER_ROLES {
+        let hash = provider_key_hash(&wallet, account_type, 0);
+        assert_eq!(info.find_provider_key(&empty, role, &hash, Some(0), 20).unwrap(), None);
+    }
 }
