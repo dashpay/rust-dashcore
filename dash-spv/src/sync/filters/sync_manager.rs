@@ -120,9 +120,13 @@ impl<
 
         // Find height for this filter
         let height =
-            self.filter_pipeline.resolve_height(&cfilter.block_hash, &self.header_storage).await?;
+            self.filter_pipeline.resolve_height(&cfilter.block_hash, &self.header_storage).await;
+        if !matches!(height, Ok(Some(_))) {
+            // This may be the last filter of its batch, which the pipeline will never see.
+            network.release_request(RequestKey::CFilters(cfilter.block_hash)).await;
+        }
 
-        let Some(h) = height else {
+        let Some(h) = height? else {
             tracing::warn!(
                 block_hash = %cfilter.block_hash,
                 peer = %peer,
@@ -136,13 +140,13 @@ impl<
         };
 
         // Buffer filter in pipeline
-        let batch_completed =
+        let request_over =
             self.filter_pipeline.receive_with_data(h, cfilter.block_hash, &cfilter.filter);
 
         // One `getcfilters` is answered only once its whole batch has arrived, so
         // individual `cfilter`s are never answered on their own.
-        if let Some(batch_start) = batch_completed {
-            network.release_request(RequestKey::CFilters(batch_start)).await;
+        if let Some(stop_hash) = request_over {
+            network.release_request(RequestKey::CFilters(stop_hash)).await;
         }
 
         // No `send_pending` here: re-declaring per `cfilter` would re-scan every
@@ -241,7 +245,7 @@ impl<
                         committed,
                         restart_at
                     );
-                    self.reset_for_rescan();
+                    self.reset_for_rescan(network).await;
                     self.progress.update_committed_height(stale_min_synced);
                     return self.start_download(network).await;
                 }

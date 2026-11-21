@@ -1322,12 +1322,22 @@ fn spawn_pump(
                         broker.not_found(peer, inv).await;
                     }
 
-                    // A block is settled on arrival, not when the wallet gets to it: blocks
-                    // are processed in height order, so one can wait long behind a gap, and
-                    // charging that wait to the peer reads as a queue and shrinks its cap.
-                    // The first copy of a hedged block settles it: the other is a cancel.
-                    if let NetworkMessage::Block(block) = &*msg {
-                        broker.block_arrived(peer, block.block_hash()).await;
+                    // A request is settled on arrival, not when its manager gets to it: blocks
+                    // wait in height order behind a gap and filters in a long backlog, and
+                    // charging that wait to the peer reads as a stall. The last `cfilter` of a
+                    // reply is the one for the stop hash that keys the request.
+                    let arrived = match &*msg {
+                        NetworkMessage::Block(block) => Some(RequestKey::Block(block.block_hash())),
+                        NetworkMessage::CFilter(filter) => {
+                            Some(RequestKey::CFilters(filter.block_hash))
+                        }
+                        NetworkMessage::CFHeaders(headers) => {
+                            Some(RequestKey::CfHeaders(headers.stop_hash))
+                        }
+                        _ => None,
+                    };
+                    if let Some(key) = arrived {
+                        broker.arrived(peer, key).await;
                     }
 
                     // Peers answer in order, so any answer means the peer is working
@@ -1409,8 +1419,8 @@ fn spawn_pump(
                     }
 
                     let mt = MessageType::from_cmd(msg.cmd());
-                    // Early router wake on inbound traffic (`release_request` notifies again for the
-                    // real capacity). `cfilter` is skipped: only the last of ~1000 frees anything.
+                    // Early router wake on inbound traffic. `cfilter` is skipped: only the last
+                    // of ~1000 frees anything, and `arrived` wakes the router for it.
                     if mt != Some(MessageType::CFilter) {
                         broker.wake();
                     }
@@ -1504,7 +1514,7 @@ mod tests {
         NetworkMessage::GetCFilters(GetCFilters {
             filter_type: 0,
             start_height: start,
-            stop_hash: BlockHash::dummy(9),
+            stop_hash: BlockHash::dummy(start),
         })
     }
 
@@ -1996,7 +2006,7 @@ mod tests {
         }
 
         // A stalled request is re-queued and may already be routed to peer 2.
-        let carrier = net.state.broker.carrier_of(&RequestKey::CFilters(0)).await;
+        let carrier = net.state.broker.carrier_of(&RequestKey::CFilters(BlockHash::dummy(0))).await;
         assert_eq!(carrier == Some(conn(1, 0)), !stalls, "carrier {carrier:?}");
         let banned = net.state.bans.banned().await.contains(&conn(1, 0).addr());
         assert_eq!(banned, stalls, "a peer kicked beside a witness is banned");
@@ -2023,7 +2033,7 @@ mod tests {
         let held = net.state.broker.hold_queue_of(&get_cfilters(0)).await;
         // The second peer keeps receiving, so the stall is not blamed on our link.
         advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs() + 2).await;
-        let key = RequestKey::CFilters(0);
+        let key = RequestKey::CFilters(BlockHash::dummy(0));
         assert_eq!(
             net.state.broker.state_of(&key).await,
             Some("queued"),
@@ -2039,6 +2049,44 @@ mod tests {
         assert_eq!(net.state.broker.state_of(&key).await, Some("on_wire"));
         assert_eq!(handles[0].in_flight_bytes(), 0, "work went back to the kicked peer");
         assert!(handles[1].in_flight_bytes() > 0, "the peer that stays carries the work");
+    }
+
+    /// A kick re-sends what the peer still owes, not a batch that it delivered and that
+    /// waits for the filters manager.
+    #[tokio::test(start_paused = true)]
+    async fn a_kick_requeues_no_delivered_filter_batch() {
+        let net = broker().await;
+        let session = net.session.lock().await.clone();
+        let stalled = ConnectedPeer::for_test(conn(1, 0)).await;
+        let (witness, mut witness_far) =
+            ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
+        for peer in [stalled, witness] {
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+        }
+        let (delivered, owed) = (get_cfilters(0), get_cfilters(1000));
+        net.state.broker.mark_on_wire(&delivered, conn(1, 0)).await;
+        net.state.broker.mark_on_wire(&owed, conn(1, 0)).await;
+        let last = NetworkMessage::CFilter(CFilter {
+            filter_type: 0,
+            block_hash: BlockHash::dummy(0),
+            filter: vec![0; 4],
+        });
+        net.state
+            .inbound
+            .send(PeerEvent::Message(conn(1, 0), last.into()))
+            .expect("the pump is running");
+        settle().await;
+
+        // The second peer keeps receiving, so the stall is not blamed on our link.
+        advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs() + 2).await;
+
+        let broker = &net.state.broker;
+        let owed = RequestKey::CFilters(BlockHash::dummy(1000));
+        assert_ne!(broker.carrier_of(&owed).await, Some(conn(1, 0)), "the peer must be kicked");
+        let delivered = RequestKey::CFilters(BlockHash::dummy(0));
+        assert_eq!(broker.state_of(&delivered).await, Some("arrived"));
     }
 
     /// A peer that was silent while idle is timed from the request it is given, and
