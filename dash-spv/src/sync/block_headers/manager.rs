@@ -88,6 +88,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
         let mut initial_progress = BlockHeadersProgress::default();
         initial_progress.set_state(SyncState::WaitingForConnections);
         initial_progress.update_tip_height(tip.height());
+        initial_progress.update_tip_time(tip.header().time);
         initial_progress.update_target_height(target_height);
 
         tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
@@ -242,6 +243,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 
         // Update state
         self.progress.update_tip_height(tip.height());
+        self.progress.update_tip_time(tip.header().time);
         self.progress.add_processed(headers.len() as u32);
 
         Ok(tip)

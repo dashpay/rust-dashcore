@@ -8,7 +8,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dash_spv::{MasternodeListNotCurrent, ProgressPercentage, SyncEvent, SyncState};
+use dash_spv::{
+    MasternodeListNotCurrentError, ProgressPercentage, SyncEvent, SyncState,
+    MASTERNODE_LIST_TIP_TOLERANCE,
+};
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
 use dashcore::{Amount, QuorumHash};
@@ -45,7 +48,7 @@ async fn test_masternode_list_sync() {
     assert_eq!(client_handle.client.latest_coinbase().await, None);
     assert_eq!(
         client_handle.client.current_masternode_list().await,
-        Err(MasternodeListNotCurrent::NotRunning)
+        Err(MasternodeListNotCurrentError::NotRunning)
     );
     client_handle.run().await;
 
@@ -110,7 +113,9 @@ async fn test_masternode_list_sync() {
         let engine_list = client_handle.engine.read().await.latest_masternode_list().cloned();
         assert_eq!(current.as_ref().ok(), engine_list.as_ref());
         let list_height = current.expect("a synced list is current").known_height;
-        assert!(list_height + 2 >= mn_progress.block_header_tip_height());
+        assert!(
+            list_height + MASTERNODE_LIST_TIP_TOLERANCE >= mn_progress.block_header_tip_height()
+        );
         let client = client_handle.client.clone();
         let blocking_current =
             tokio::task::spawn_blocking(move || client.current_masternode_list_blocking())
@@ -122,9 +127,18 @@ async fn test_masternode_list_sync() {
     client_handle.stop().await;
     assert_eq!(
         client_handle.client.current_masternode_list().await,
-        Err(MasternodeListNotCurrent::NotRunning),
+        Err(MasternodeListNotCurrentError::NotRunning),
         "a stopped client keeps its list but nothing keeps it current"
     );
+
+    // Running again on the same client, the list stays not current until sync catches up.
+    client_handle.run().await;
+    assert_eq!(
+        client_handle.client.current_masternode_list().await,
+        Err(MasternodeListNotCurrentError::Syncing),
+        "a list from an earlier run is not current before the new run syncs"
+    );
+    client_handle.stop().await;
 
     let final_progress = client_handle.client.progress().await;
 
@@ -208,8 +222,8 @@ async fn test_masternode_list_sync_with_restart() {
     );
     assert_eq!(
         client_handle.client.current_masternode_list().await,
-        Err(MasternodeListNotCurrent::NotRunning),
-        "a list restored from storage is not current before the client syncs"
+        Err(MasternodeListNotCurrentError::NotRunning),
+        "a list restored from storage is not current while the client is not running"
     );
     {
         let engine = client_handle.engine.read().await;
@@ -258,10 +272,20 @@ async fn test_masternode_list_sync_with_restart() {
         SyncState::Synced,
         "Should reach Synced state after restart"
     );
-    assert!(
-        client_handle.client.current_masternode_list().await.is_ok(),
-        "the list is current again once the restarted client synced"
-    );
+    {
+        let current = client_handle.client.current_masternode_list().await;
+        let engine_list = client_handle.engine.read().await.latest_masternode_list().cloned();
+        assert_eq!(
+            current.as_ref().ok(),
+            engine_list.as_ref(),
+            "the restarted client's list is current"
+        );
+        let list_height = current.expect("a synced list is current").known_height;
+        assert!(
+            list_height + MASTERNODE_LIST_TIP_TOLERANCE
+                >= second_mn_progress.block_header_tip_height()
+        );
+    }
 
     let after_second = storage_snapshot(ctx.storage_path());
     assert_storage_did_not_shrink(&after_first, &after_second, "masternode restart");

@@ -78,10 +78,13 @@ pub mod types;
 
 // Re-export main types for convenience
 pub use client::config::MempoolStrategy;
-pub use client::{ClientConfig, DashSpvClient, DevnetConfig, EventHandler};
+pub use client::{
+    ClientConfig, DashSpvClient, DevnetConfig, EventHandler, MAINNET_MAX_TIP_AGE,
+    MASTERNODE_LIST_TIP_TOLERANCE, TESTNET_MAX_TIP_AGE,
+};
 pub use error::{
-    LoggingError, LoggingResult, MasternodeListNotCurrent, NetworkError, SpvError, StorageError,
-    SyncError, ValidationError,
+    LoggingError, LoggingResult, MasternodeListNotCurrentError, NetworkError, SpvError,
+    StorageError, SyncError, ValidationError,
 };
 #[cfg(feature = "logging")]
 pub use logging::{init_console_logging, init_logging, LogFileConfig, LoggingConfig, LoggingGuard};
