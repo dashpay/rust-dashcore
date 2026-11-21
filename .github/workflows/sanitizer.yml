@@ -25,6 +25,9 @@ on:
 permissions:
   contents: read
 
+env:
+  NIGHTLY_TOOLCHAIN: nightly-2026-11-20
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -36,7 +39,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install nightly toolchain
-        run: rustup toolchain install nightly --profile minimal --component rust-src --no-self-update
+        run: rustup toolchain install "$NIGHTLY_TOOLCHAIN" --profile minimal --component rust-src --no-self-update
+
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          key: ${{ env.NIGHTLY_TOOLCHAIN }}
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
 
       - uses: taiki-e/install-action@v2.90.3
         with:
@@ -51,7 +59,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install nightly toolchain
-        run: rustup toolchain install nightly --profile minimal --component rust-src --no-self-update
+        run: rustup toolchain install "$NIGHTLY_TOOLCHAIN" --profile minimal --component rust-src --no-self-update
+
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          key: ${{ env.NIGHTLY_TOOLCHAIN }}
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
 
       - uses: taiki-e/install-action@v2.90.3
         with:
