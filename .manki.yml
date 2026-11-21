@@ -18,9 +18,9 @@ review:
     trivial: [claude-sonnet-5-5]
     solo: [claude-opus-5-5]
     full: [claude-opus-5-5, gpt-6.2-sol]
-  # A blocker or proven warning the review keeps starts one search of the diff for
-  # other places with the same kind of mistake.
-  sweep: warnings
+  # A blocker the review keeps starts one search of the diff for other places with
+  # the same kind of mistake.
+  sweep: blockers
   # A doubt that the PR is useful, or a proposed split into separate PRs, is posted
   # as a warning that holds the approval until its thread is resolved.
   scope_blocks: true
