@@ -3,7 +3,7 @@
 use super::ManagedWalletInfo;
 use crate::account::derivation::AccountDerivation;
 use crate::error::Result;
-use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
+use crate::managed_account::address_pool::{AddressPool, AddressPoolType, MAX_GAP_LIMIT};
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::{AccountType, Address, ChildNumber, DerivationPath, Wallet};
 use dashcore::address::Payload;
@@ -33,7 +33,8 @@ impl ManagedWalletInfo {
     ///
     /// Needs no seed: keys are derived from the account xpub. The key at `index_hint` is
     /// checked first, then the account's address pool, then the keys past the pool below
-    /// `min_window`. Fails when `index_hint` is not a normal (non-hardened) child index.
+    /// `min_window`, which is capped at [`MAX_GAP_LIMIT`]. Fails only when the wallet has the
+    /// account and `index_hint` is in the hardened range.
     pub fn find_provider_key(
         &self,
         wallet: &Wallet,
@@ -74,7 +75,7 @@ impl ManagedWalletInfo {
         }
 
         let first_underived = pool.and_then(AddressPool::highest_generated).map_or(0, |h| h + 1);
-        for index in first_underived..min_window {
+        for index in first_underived..min_window.min(MAX_GAP_LIMIT) {
             if let Some(found) = derived_match(index)? {
                 return Ok(Some(found));
             }
