@@ -47,8 +47,9 @@ pub enum MasternodeListNotCurrentError {
 
     /// The header tip is older than the network's maximum tip age, so the client may not have
     /// heard of newer blocks, e.g. right after the host wakes from sleep.
-    #[error("The newest block header, with block time {tip_time}, is too old to trust the masternode list")]
+    #[error("The newest block header is too old to trust the masternode list")]
     TipStale {
+        /// Block time of the header tip, in seconds since the Unix epoch.
         tip_time: u32,
     },
 

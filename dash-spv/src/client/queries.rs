@@ -69,8 +69,9 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// [`TESTNET_MAX_TIP_AGE`], and the list's `known_height` is at most
     /// [`MASTERNODE_LIST_TIP_TOLERANCE`] blocks below the header tip. Otherwise returns why the
     /// list is not current. Use it over [`Self::latest_masternode_list`] to act on what the
-    /// network holds now. Regtest and devnets have no maximum tip age, so there a stalled
-    /// header chain is not detected.
+    /// network holds now. The tip age is measured against the host clock: a clock running ahead
+    /// reports `TipStale` early, and one running behind hides a stale tip. Regtest and devnets
+    /// have no maximum tip age, so there a stalled header chain is not detected.
     pub async fn current_masternode_list(
         &self,
     ) -> std::result::Result<MasternodeList, MasternodeListNotCurrentError> {
