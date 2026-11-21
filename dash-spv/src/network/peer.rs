@@ -28,6 +28,7 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
     },
+    task,
 };
 use tokio_stream::StreamExt;
 use tokio_util::bytes::BytesMut;
@@ -436,6 +437,8 @@ impl ConnectedPeer {
         state: Arc<NetworkState>,
     ) -> (Self, OwnedWriteHalf) {
         let (link, far) = test_link().await;
+        // A test writes in small pieces, which Nagle would hold back for a delayed ACK.
+        far.set_nodelay(true).expect("loopback nodelay");
         let (mut far_read, far_write) = far.into_split();
         tokio::spawn(async move { io::copy(&mut far_read, &mut io::sink()).await });
         let (reader, bytes, partial) = peer_reader(link.reader, link.codec, state.clone());
@@ -754,16 +757,21 @@ fn spawn_reader(
                             }
                         }
                         NetworkMessage::Headers2(compressed) => {
-                            match CompressionState::default()
-                                .process_headers_with_hashes(&compressed.headers)
-                            {
-                                Ok(headers) => {
+                            // X11 is CPU-bound, so it must not hold an async worker.
+                            let decompressed = task::spawn_blocking(move || {
+                                CompressionState::default()
+                                    .process_headers_with_hashes(&compressed.headers)
+                            })
+                            .await;
+
+                            match decompressed {
+                                Ok(Ok(headers)) => {
                                     let msg = InboundMessage::new_headers(headers);
                                     if inbound.send(PeerEvent::Message(addr, msg)).is_err() {
                                         break;
                                     }
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     tracing::warn!(
                                         target: "dash_spv::network",
                                         "headers2 from {} failed to decompress: {}",
@@ -771,6 +779,15 @@ fn spawn_reader(
                                         e
                                     );
                                     state.bans.ban(addr.addr(), Ban::Misbehaved).await;
+                                    break;
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        target: "dash_spv::network",
+                                        "headers2 task for {} failed: {}",
+                                        addr,
+                                        e
+                                    );
                                     break;
                                 }
                             }
@@ -789,7 +806,7 @@ fn spawn_reader(
     });
 }
 
-fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
+pub(super) fn build_version(peer: SocketAddr, user_agent: &str) -> VersionMessage {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let unspecified: SocketAddr = ([0u8, 0, 0, 0], 0).into();
     VersionMessage::new(

@@ -38,6 +38,7 @@ jobs:
           shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
           prefix-key: "v1-rust"
           cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
       - uses: taiki-e/install-action@v2.90.3
         with:
           tool: just

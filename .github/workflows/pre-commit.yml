@@ -32,6 +32,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.9.3
         with:
           shared-key: "pre-commit-rust-${{ matrix.os }}"
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
 
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1

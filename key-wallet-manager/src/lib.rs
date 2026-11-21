@@ -122,21 +122,6 @@ pub struct CheckTransactionsResult {
     pub per_wallet_locked_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
 }
 
-impl CheckTransactionsResult {
-    /// Iterate over every newly derived [`DerivedAddressInfo`] regardless of
-    /// wallet attribution.
-    pub(crate) fn all_new_address_infos(&self) -> impl Iterator<Item = &DerivedAddressInfo> {
-        self.new_addresses.values().flatten()
-    }
-
-    /// Iterate over every newly derived address regardless of wallet
-    /// attribution. The richer [`DerivedAddressInfo`] is available via
-    /// [`Self::all_new_address_infos`].
-    pub(crate) fn all_new_addresses(&self) -> impl Iterator<Item = &Address> {
-        self.all_new_address_infos().map(|d| &d.info.address)
-    }
-}
-
 /// High-level wallet manager that manages multiple wallets
 ///
 /// Each wallet can contain multiple accounts following BIP44 standard.

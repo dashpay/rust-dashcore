@@ -8,6 +8,7 @@ mod fs_helpers;
 mod header_storage;
 mod instant_lock;
 pub(crate) mod masternode_network;
+mod metadata_storage;
 mod network;
 mod node;
 mod types;
@@ -26,6 +27,7 @@ pub use instant_lock::{InstantLockFixture, InstantLockFixtureError};
 pub use masternode_network::{
     ControllerInfo, MasternodeInfo, MasternodeTestContext, NetworkMetadata,
 };
+pub use metadata_storage::FailingMetadataStorage;
 pub use network::{test_socket_address, MockNetworkManager};
 pub use node::{DashCoreNode, TestChain, WalletFile};
 pub use wallet::{
