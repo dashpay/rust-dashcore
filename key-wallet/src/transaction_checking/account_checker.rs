@@ -53,7 +53,8 @@ pub struct TransactionCheckResult {
     pub is_relevant: bool,
     /// Set to false if the transaction was already stored and is being re-processed (e.g., during rescan)
     pub is_new_transaction: bool,
-    /// Whether any wallet state was modified during this check (new recording, confirmation, or IS-lock).
+    /// Whether any wallet state was modified during this check: a new recording, a confirmation,
+    /// an IS-lock, an address newly marked used, or a newly derived address.
     pub state_modified: bool,
     /// Accounts that the transaction affects
     pub affected_accounts: Vec<AccountMatch>,

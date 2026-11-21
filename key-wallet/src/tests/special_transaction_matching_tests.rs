@@ -17,6 +17,7 @@
 //!   pubkey field for the wallet to match against.
 
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+use crate::test_utils::asset_lock_to;
 use crate::transaction_checking::transaction_router::AccountTypeToCheck;
 use crate::transaction_checking::wallet_checker::WalletTransactionChecker;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
@@ -29,7 +30,6 @@ use crate::Network;
 
 use dashcore::blockdata::script::ScriptBuf;
 use dashcore::blockdata::transaction::outpoint::OutPoint;
-use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
 use dashcore::blockdata::transaction::special_transaction::provider_registration::{
     CollateralShare, MasternodePayoutShare, ProviderMasternodeType, ProviderRegistrationPayload,
     SharedCollateral,
@@ -67,35 +67,6 @@ fn make_wallet() -> (Wallet, ManagedWalletInfo) {
     (wallet, info)
 }
 
-/// Build an AssetLock transaction whose `credit_outputs` pay `value` to
-/// `script`. Inputs / regular outputs are placeholders the wallet won't
-/// match against.
-fn asset_lock_to(script: ScriptBuf, value: u64) -> Transaction {
-    Transaction {
-        version: 3,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: Txid::from_byte_array([1u8; 32]),
-                vout: 0,
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: 0xffffffff,
-            witness: Witness::default(),
-        }],
-        output: Vec::new(),
-        special_transaction_payload: Some(TransactionPayload::AssetLockPayloadType(
-            AssetLockPayload {
-                version: 1,
-                credit_outputs: vec![TxOut {
-                    value,
-                    script_pubkey: script,
-                }],
-            },
-        )),
-    }
-}
-
 /// Assert the result is_relevant and contains the expected
 /// `AccountTypeToCheck` among the affected accounts.
 fn assert_matched_account_type(
@@ -129,7 +100,7 @@ async fn asset_lock_credit_output_to_identity_registration_address_matches() {
         .next_address(Some(&xpub))
         .expect("derive address");
 
-    let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
+    let tx = asset_lock_to(1, &[(address.script_pubkey(), ASSET_LOCK_VALUE)]);
     let result =
         info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
@@ -180,7 +151,7 @@ async fn asset_lock_regular_output_to_identity_topup_address_matches() {
         .next_address(Some(&xpub))
         .expect("derive address");
 
-    let mut tx = asset_lock_to(ScriptBuf::new(), ASSET_LOCK_VALUE);
+    let mut tx = asset_lock_to(1, &[(ScriptBuf::new(), ASSET_LOCK_VALUE)]);
     tx.output.push(TxOut {
         value: ASSET_LOCK_VALUE,
         script_pubkey: address.script_pubkey(),
@@ -202,7 +173,7 @@ async fn asset_lock_credit_output_to_identity_topup_not_bound_address_matches() 
         .next_address(Some(&xpub))
         .expect("derive address");
 
-    let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
+    let tx = asset_lock_to(1, &[(address.script_pubkey(), ASSET_LOCK_VALUE)]);
     let result =
         info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
@@ -219,7 +190,7 @@ async fn asset_lock_credit_output_to_identity_invitation_address_matches() {
         .next_address(Some(&xpub))
         .expect("derive address");
 
-    let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
+    let tx = asset_lock_to(1, &[(address.script_pubkey(), ASSET_LOCK_VALUE)]);
     let result =
         info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
@@ -239,7 +210,7 @@ async fn asset_lock_credit_output_to_asset_lock_address_topup_address_matches() 
         .next_address(Some(&xpub))
         .expect("derive address");
 
-    let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
+    let tx = asset_lock_to(1, &[(address.script_pubkey(), ASSET_LOCK_VALUE)]);
     let result =
         info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
@@ -263,7 +234,7 @@ async fn asset_lock_credit_output_to_asset_lock_shielded_address_topup_address_m
         .next_address(Some(&xpub))
         .expect("derive address");
 
-    let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
+    let tx = asset_lock_to(1, &[(address.script_pubkey(), ASSET_LOCK_VALUE)]);
     let result =
         info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
@@ -712,7 +683,7 @@ async fn keys_account_record_is_thin_marker_internal_with_no_details() {
         .next_address(Some(&xpub))
         .expect("derive address");
 
-    let tx = asset_lock_to(address.script_pubkey(), ASSET_LOCK_VALUE);
+    let tx = asset_lock_to(1, &[(address.script_pubkey(), ASSET_LOCK_VALUE)]);
     let txid = tx.txid();
     let _ = info.check_core_transaction(&tx, test_block_context(), &mut wallet, true, true).await;
 
@@ -757,7 +728,7 @@ fn next_bip44_receive_script(wallet: &Wallet, info: &mut ManagedWalletInfo) -> S
 fn with_payload(payload: TransactionPayload) -> Transaction {
     Transaction {
         special_transaction_payload: Some(payload),
-        ..asset_lock_to(ScriptBuf::new(), 0)
+        ..asset_lock_to(1, &[(ScriptBuf::new(), 0)])
     }
 }
 

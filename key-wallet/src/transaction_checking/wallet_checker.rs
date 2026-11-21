@@ -167,7 +167,12 @@ impl ManagedWalletInfo {
         let txid = tx.txid();
         loop {
             let matches = self.matches_without_record(&result.affected_accounts, &txid);
-            if !self.use_involved_addresses(wallet, &matches, &mut result.new_addresses) {
+            if !self.use_involved_addresses(
+                wallet,
+                &matches,
+                &mut result.new_addresses,
+                &mut result.state_modified,
+            ) {
                 return;
             }
             let rechecked = self.accounts.check_transaction(tx, relevant_types);
@@ -181,14 +186,16 @@ impl ManagedWalletInfo {
 
     /// Mark every address `affected` involves as used and extend the address
     /// windows of each account it names. Returns whether any address was
-    /// derived.
+    /// derived. Marking or deriving an address sets `state_modified`.
     fn use_involved_addresses(
         &mut self,
         wallet: &Wallet,
         affected: &[AccountMatch],
         new_addresses: &mut Vec<DerivedAddressInfo>,
+        state_modified: &mut bool,
     ) -> bool {
         let derived_before = new_addresses.len();
+        let mut marked = false;
         for account_match in affected {
             let Some(mut account) =
                 self.accounts.get_by_account_type_match_mut(&account_match.account_type_match)
@@ -196,7 +203,7 @@ impl ManagedWalletInfo {
                 continue;
             };
             for address_info in account_match.account_type_match.all_involved_addresses() {
-                account.mark_address_used(&address_info.address);
+                marked |= account.mark_address_used(&address_info.address);
             }
 
             let owning_account_type = account.managed_account_type().to_account_type();
@@ -206,6 +213,7 @@ impl ManagedWalletInfo {
             }
             for pool in account.managed_account_type_mut().address_pools_mut() {
                 let pool_type = pool.pool_type();
+                let generated_before = pool.highest_generated();
                 match pool.maintain_gap_limit(&key_source) {
                     Ok(infos) => {
                         new_addresses.extend(infos.into_iter().map(|info| DerivedAddressInfo {
@@ -215,6 +223,7 @@ impl ManagedWalletInfo {
                         }))
                     }
                     Err(e) => {
+                        *state_modified |= pool.highest_generated() != generated_before;
                         tracing::error!(
                             account_index = ?account_match.account_type_match.account_index(),
                             pool_type = ?pool_type,
@@ -225,7 +234,9 @@ impl ManagedWalletInfo {
                 }
             }
         }
-        new_addresses.len() > derived_before
+        let derived = new_addresses.len() > derived_before;
+        *state_modified |= marked || derived;
+        derived
     }
 
     /// Promote records whose first sighting already consumed the live UTXO
@@ -560,7 +571,12 @@ impl ManagedWalletInfo {
                 }
             }
         }
-        self.use_involved_addresses(wallet, &result.affected_accounts, &mut result.new_addresses);
+        self.use_involved_addresses(
+            wallet,
+            &result.affected_accounts,
+            &mut result.new_addresses,
+            &mut result.state_modified,
+        );
 
         self.attribute_late_inputs(tx, &mut result);
 
@@ -593,14 +609,17 @@ impl ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::account::account_type::StandardAccountType;
+    use crate::account::derivation::AccountDerivation;
     use crate::account::{ECDSAAddressDerivation, TransactionRecord};
     use crate::managed_account::address_pool::{
-        DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT, DEFAULT_INTERNAL_GAP_LIMIT,
+        AddressPoolType, DEFAULT_COINJOIN_GAP_LIMIT, DEFAULT_EXTERNAL_GAP_LIMIT,
+        DEFAULT_INTERNAL_GAP_LIMIT, DEFAULT_SPECIAL_GAP_LIMIT,
     };
     use crate::managed_account::managed_account_trait::ManagedAccountTrait;
     use crate::managed_account::managed_core_funds_account::ManagedCoreFundsAccount;
     use crate::managed_account::transaction_record::{OutputRole, TransactionDirection};
-    use crate::test_utils::TestWalletContext;
+    use crate::managed_account::ManagedCoreKeysAccount;
+    use crate::test_utils::{asset_lock_to, TestWalletContext};
     use crate::transaction_checking::BlockInfo;
     use crate::transaction_checking::TransactionType;
     use crate::utxo::Utxo;
@@ -4449,6 +4468,82 @@ mod tests {
         assert!(settled.updated_records.is_empty());
         assert!(!settled.state_modified);
         assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
+    }
+
+    /// A re-delivery whose only effect on a keys-only account is to mark a key used, to extend the
+    /// window, or both, is a state change; a further identical delivery is not.
+    #[tokio::test]
+    async fn test_redelivery_marking_a_keys_account_key_is_a_state_change() {
+        #[derive(Debug, PartialEq)]
+        enum Effect {
+            MarksAndDerives,
+            MarksOnly,
+            DerivesOnly,
+        }
+        fn identity(ctx: &TestWalletContext) -> &ManagedCoreKeysAccount {
+            ctx.managed_wallet.identity_registration_managed_account().expect("identity account")
+        }
+        fn lock(seed: u8, keys: &[&Address], value: u64) -> Transaction {
+            let credits: Vec<_> = keys.iter().map(|key| (key.script_pubkey(), value)).collect();
+            asset_lock_to(seed, &credits)
+        }
+        let gap = DEFAULT_SPECIAL_GAP_LIMIT;
+        for effect in [Effect::MarksAndDerives, Effect::MarksOnly, Effect::DerivesOnly] {
+            let mut ctx = TestWalletContext::new_random();
+            let account =
+                ctx.wallet.accounts.identity_registration.as_ref().expect("identity account");
+            let keys: Vec<Address> = (0..3 * gap + 2)
+                .map(|index| {
+                    account.derive_address_at(AddressPoolType::Absent, index, None).unwrap()
+                })
+                .collect();
+            let gap = gap as usize;
+
+            let early = lock(1, &[&keys[1], &keys[2 * gap]], 40_000);
+            ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+            ctx.check_transaction(&lock(2, &[&keys[gap]], 7_000), in_chain_locked_block(101, 2))
+                .await;
+            match effect {
+                Effect::MarksAndDerives => {}
+                Effect::MarksOnly => {
+                    // Keys past the early transaction's are used first, so marking its key derives
+                    // nothing.
+                    ctx.check_transaction(
+                        &lock(3, &[&keys[2 * gap - 1]], 7_000),
+                        in_chain_locked_block(102, 3),
+                    )
+                    .await;
+                    ctx.check_transaction(
+                        &lock(4, &[&keys[2 * gap + 1]], 7_000),
+                        in_chain_locked_block(103, 4),
+                    )
+                    .await;
+                }
+                Effect::DerivesOnly => {
+                    // The key is already used but its window was never extended.
+                    let account = ctx
+                        .managed_wallet
+                        .identity_registration_managed_account_mut()
+                        .expect("identity account");
+                    assert!(account.mark_address_used(&keys[2 * gap]));
+                }
+            }
+            let second = identity(&ctx).get_address_info(&keys[2 * gap]).expect("watched");
+            assert_eq!(second.is_used(), effect == Effect::DerivesOnly);
+
+            let redelivered = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+            let second = identity(&ctx).get_address_info(&keys[2 * gap]).expect("watched");
+            assert!(second.is_used(), "the re-delivered transaction pays index {}", 2 * gap);
+            assert_eq!(
+                redelivered.new_addresses.is_empty(),
+                effect == Effect::MarksOnly,
+                "{effect:?}"
+            );
+            assert!(redelivered.state_modified, "{effect:?}");
+
+            let unchanged = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
+            assert!(!unchanged.state_modified, "nothing left to mark or derive");
+        }
     }
 
     /// A host that keeps only the emitted records, and on load restores the
