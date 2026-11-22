@@ -6,6 +6,8 @@ name: Release Check
 on:
   pull_request:
     branches: [master]
+    # `edited` covers a PR whose base changes to `master`.
+    types: [opened, edited, synchronize, reopened]
 
 permissions: {}
 
