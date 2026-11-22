@@ -12,7 +12,7 @@
 //! Results from both sources are merged and deduplicated. Addresses gossiped by
 //! connected peers are folded in later via [`PeerDiscoverer::learn`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -94,11 +94,21 @@ impl PeerDiscoverer {
         }
     }
 
-    /// Up to `count` addresses to try: the best probed first, then a random sample.
-    pub async fn get(&mut self, count: usize) -> Vec<DisconnectedPeer> {
-        let mut best: Vec<(SocketAddr, u32)> = self.probed.drain().collect();
+    /// Up to `count` distinct addresses to try, none of them in `skip`: the best probed
+    /// first, then a random sample. `skip` is applied before sampling, so excluded
+    /// addresses never take a slot an eligible one could have had.
+    pub async fn get(&mut self, count: usize, skip: &HashSet<SocketAddr>) -> Vec<DisconnectedPeer> {
+        let mut best: Vec<(SocketAddr, u32)> = self
+            .probed
+            .iter()
+            .filter(|(addr, _)| !skip.contains(addr))
+            .map(|(addr, lag)| (*addr, *lag))
+            .collect();
         best.sort_by_key(|(_, lag)| *lag);
-        self.probed.extend(best.split_off(count.min(best.len())));
+        best.truncate(count);
+        for (addr, _) in &best {
+            self.probed.remove(addr);
+        }
         let mut out: Vec<DisconnectedPeer> =
             best.into_iter().map(|(addr, _)| DisconnectedPeer::new(addr, self.network)).collect();
         let count = count - out.len();
@@ -119,6 +129,9 @@ impl PeerDiscoverer {
             pool
         };
 
+        let taken: HashSet<SocketAddr> = out.iter().map(|p| p.addr()).collect();
+        let pool: Vec<SocketAddr> =
+            pool.into_iter().filter(|addr| !skip.contains(addr) && !taken.contains(addr)).collect();
         out.extend(
             pool.choose_multiple(&mut rand::rng(), count)
                 .map(|addr| DisconnectedPeer::new(*addr, self.network)),
@@ -181,6 +194,33 @@ mod tests {
         for peer in &peers {
             assert_eq!(peer.port(), Network::Testnet.default_p2p_port());
         }
+    }
+
+    /// Skipped addresses are left out before sampling, so the one eligible address in a
+    /// mostly banned pool is still handed out. A skipped probed peer keeps its rank.
+    #[tokio::test]
+    async fn get_samples_only_addresses_not_skipped() {
+        let mut config = ClientConfig::regtest();
+        let addrs: Vec<SocketAddr> =
+            (1..=10).map(|n| SocketAddr::from(([10, 0, 0, n], 19899))).collect();
+        for addr in &addrs {
+            config.add_peer(*addr);
+        }
+        let mut discoverer = PeerDiscoverer::new(&config);
+        let (eligible, skip) = (addrs[0], addrs[1..].iter().copied().collect());
+
+        for _ in 0..20 {
+            let got: Vec<SocketAddr> =
+                discoverer.get(3, &skip).await.iter().map(|p| p.addr()).collect();
+            assert_eq!(got, [eligible]);
+        }
+
+        discoverer.probed(addrs[1], 10);
+        discoverer.probed(addrs[2], 20);
+        let got = discoverer.get(1, &HashSet::from([addrs[1]])).await;
+        assert_eq!(got.iter().map(|p| p.addr()).collect::<Vec<_>>(), [addrs[2]]);
+        let got = discoverer.get(1, &HashSet::new()).await;
+        assert_eq!(got.iter().map(|p| p.addr()).collect::<Vec<_>>(), [addrs[1]]);
     }
 
     #[tokio::test]

@@ -764,15 +764,9 @@ impl Supervisor {
     }
 
     async fn next_candidates(&self, want: usize) -> Vec<DisconnectedPeer> {
-        let mut out = self.state.discoverer.lock().await.get(want).await;
-        let live: HashSet<SocketAddr> =
-            self.state.connected.read().await.iter().map(|p| p.addr()).collect();
-        let banned = self.state.bans.banned().await;
-        let mut seen = HashSet::new();
-        out.retain(|p| {
-            !live.contains(&p.addr()) && !banned.contains(&p.addr()) && seen.insert(p.addr())
-        });
-        out
+        let mut skip = self.state.bans.banned().await;
+        skip.extend(self.state.connected.read().await.iter().map(|p| p.addr()));
+        self.state.discoverer.lock().await.get(want, &skip).await
     }
 
     /// Closes probed-but-unused peers and remembers them for the next round.
@@ -1826,7 +1820,7 @@ mod tests {
             .expect("the pump is running");
         settle().await;
 
-        let known = net.state.discoverer.lock().await.get(10).await;
+        let known = net.state.discoverer.lock().await.get(10, &HashSet::new()).await;
         let known: Vec<SocketAddr> = known.iter().map(|p| p.addr()).collect();
         assert_eq!(known, [serves]);
     }
