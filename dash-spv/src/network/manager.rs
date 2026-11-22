@@ -514,7 +514,7 @@ impl ByteLimiter {
     /// Whether what the peer delivers is all it can serve: it is bound, or it holds more than
     /// [`TARGET_QUEUE_SECS`] of what it delivers. A cap raised by a burst leaves the peer below
     /// it, so without the second case the cap never comes down while the queue grows.
-    /// Less than [`MIN_CAP_BYTES`] in flight is a reply or two in the making, not a backlog.
+    /// Less than [`MIN_CAP_BYTES`] in flight, two header replies, never counts as a backlog.
     fn serving_all(&self, in_flight: u64) -> bool {
         self.bound(in_flight)
             || (in_flight >= MIN_CAP_BYTES && in_flight as f64 > self.rate * TARGET_QUEUE_SECS)

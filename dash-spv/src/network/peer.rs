@@ -419,7 +419,7 @@ impl ConnectedPeer {
         self.handle.serving_rate.store(bytes_per_sec, Ordering::Relaxed);
     }
 
-    pub(crate) fn set_served(&self, bytes_per_sec: u64) {
+    pub(super) fn set_served(&self, bytes_per_sec: u64) {
         self.handle.served.store(bytes_per_sec, Ordering::Relaxed);
     }
 
