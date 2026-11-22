@@ -749,6 +749,15 @@ struct Supervisor {
 }
 
 impl Supervisor {
+    fn new(state: Arc<NetworkState>, shutdown: CancellationToken) -> Self {
+        Supervisor {
+            state,
+            shutdown,
+            best_lag_ms: AtomicU32::new(u32::MAX),
+            last_swap: Mutex::new(None),
+        }
+    }
+
     async fn run(self) {
         loop {
             self.repair_round().await;
@@ -976,15 +985,7 @@ fn underserving_peer(peers: &[ConnectedPeer]) -> Option<SlowPeer> {
 }
 
 fn spawn_peer_supervisor(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
-    tokio::spawn(
-        Supervisor {
-            state,
-            shutdown,
-            best_lag_ms: AtomicU32::new(u32::MAX),
-            last_swap: Mutex::new(None),
-        }
-        .run(),
-    )
+    tokio::spawn(Supervisor::new(state, shutdown).run())
 }
 
 /// What the timeout monitor reads of a connected peer each tick.
