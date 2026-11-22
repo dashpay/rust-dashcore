@@ -124,15 +124,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     qr_info_result.expected_rotated_quorum_count,
                     qr_info_result.fully_verified_count,
                 );
-                // If every rotated quorum in this QRInfo ended up Verified,
-                // mark the cycle validated so `next_pipeline_mode` will
-                // return `Incremental` for every subsequent header in this
-                // cycle. No more QRInfo requests for this cycle until the
-                // next boundary.
-                if qr_info_result.all_fully_verified() {
-                    if let Some(ref stored_cycle_height) = qr_info_result.stored_cycle_height {
-                        self.mark_cycle_validated(*stored_cycle_height);
-                    }
+                if let Some(height) = qr_info_result.complete_cycle_height {
+                    self.mark_cycle_validated(height);
                 }
 
                 // The historical diffs that follow a QRInfo run under QuorumValidation.

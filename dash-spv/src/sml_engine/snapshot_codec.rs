@@ -25,7 +25,7 @@ use super::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
 
 const MAGIC: [u8; 4] = *b"DMLE";
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 
 /// Bounds what a corrupt length prefix can make the decoder allocate up front:
 /// bincode claims `len * size_of::<T>()` against it before preallocating.
