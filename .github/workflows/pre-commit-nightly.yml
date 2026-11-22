@@ -5,6 +5,9 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   pre-commit:
     name: Nightly
@@ -19,11 +22,18 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: Create issue
+      - name: Open or update the failure issue
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Nightly pre-commit failure
         run: |
-          gh issue create --repo "${{ github.repository }}" \
-            --title "Nightly pre-commit failure $(date -u +%Y-%m-%d)" \
-            --body "The nightly pre-commit run failed on macOS or Windows. See: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --label "bug"
+          number=$(gh issue list --repo "$REPO" --state open --search "\"$TITLE\" in:title" \
+            --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$REPO" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --repo "$REPO" --title "$TITLE" --label bug \
+              --body "The nightly pre-commit run failed on macOS or Windows. See: $RUN_URL"
+          fi
