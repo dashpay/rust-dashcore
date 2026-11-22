@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use dashcore::bls_sig_utils::BlsScheme;
 use dashcore::constants::MAX_BLOCK_SIZE;
@@ -7,7 +7,6 @@ use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{InstantLock, QuorumSigningRequestId};
 
 use crate::error::{ValidationError, ValidationResult};
-use crate::sml_engine::InstantSendCycle;
 use crate::validation::Validator;
 
 /// The most inputs a valid InstantLock can carry, as Dash Core caps them.
@@ -70,9 +69,10 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
 /// [`InstantLockStructureValidator`] first. Never accept InstantLocks from the
 /// network without both.
 ///
-/// Missing quorum data defers validation. Only a complete cycle can refute a signature.
+/// Missing quorum data defers validation. A signature that fails against a held quorum is invalid.
 pub struct InstantLockValidator<'a> {
-    cycle: InstantSendCycle<'a>,
+    /// The rotated quorums of the lock's cycle, by quorum index.
+    cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
 }
 
 impl Validator<&InstantLock> for InstantLockValidator<'_> {
@@ -83,7 +83,6 @@ impl Validator<&InstantLock> for InstantLockValidator<'_> {
                 MessageVerificationError::CycleHashNotPresent(_)
                 | MessageVerificationError::QuorumIndexNotFound(..),
             ) => Err(ValidationError::MissingQuorumData),
-            Err(_) if !self.cycle.complete => Err(ValidationError::MissingQuorumData),
             Err(error) => Err(ValidationError::InvalidSignature(format!(
                 "InstantLock BLS signature verification failed: {error}"
             ))),
@@ -92,10 +91,9 @@ impl Validator<&InstantLock> for InstantLockValidator<'_> {
 }
 
 impl<'a> InstantLockValidator<'a> {
-    /// Creates a validator for an InstantSend cycle.
-    pub fn new(cycle: InstantSendCycle<'a>) -> Self {
+    pub fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
         Self {
-            cycle,
+            cycle_quorums,
         }
     }
 
@@ -107,7 +105,7 @@ impl<'a> InstantLockValidator<'a> {
     ) -> Result<(&'a QualifiedQuorumEntry, QuorumSigningRequestId, u16), MessageVerificationError>
     {
         let cycle_hash = instant_lock.cyclehash;
-        let quorums = self.cycle.quorums;
+        let quorums = self.cycle_quorums;
         let llmq_type = quorums
             .values()
             .next()
@@ -207,8 +205,8 @@ mod tests {
         let mut lock = mainnet_fixture_is_lock();
         lock.cyclehash = cycle_hash;
         lock.inputs[0].vout = 3;
-        let cycle = engine.instant_send_cycle(&cycle_hash).unwrap();
-        assert!(!cycle.quorums.contains_key(&0));
+        let cycle = engine.rotated_quorums_of_cycle(&cycle_hash).unwrap();
+        assert!(!cycle.contains_key(&0));
         let validator = InstantLockValidator::new(cycle);
         assert!(matches!(
             validator.signing_quorum(&lock),
@@ -220,7 +218,7 @@ mod tests {
     #[test_case(false; "partial cycle")]
     #[test_case(true; "complete cycle")]
     #[tokio::test]
-    async fn only_a_complete_cycle_refutes_a_signature(complete: bool) {
+    async fn a_held_quorum_refutes_a_signature(complete: bool) {
         let mut lock = mainnet_fixture_is_lock();
         let engine = if complete {
             TestEngine::mainnet_fixture()
@@ -229,19 +227,14 @@ mod tests {
             lock.cyclehash = cycle_hash;
             engine
         };
-        let cycle = engine.instant_send_cycle(&lock.cyclehash).unwrap();
-        assert_eq!(cycle.complete, complete);
-        assert!(cycle.quorums.contains_key(&23));
+        let cycle = engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap();
+        assert!(cycle.contains_key(&23));
         let validator = InstantLockValidator::new(cycle);
         if complete {
             validator.validate(&lock).unwrap();
         }
         lock.signature = BLSSignature::from([1; 96]);
-        match validator.validate(&lock) {
-            Err(ValidationError::InvalidSignature(_)) if complete => {}
-            Err(ValidationError::MissingQuorumData) if !complete => {}
-            result => panic!("unexpected validation result: {result:?}"),
-        }
+        assert!(matches!(validator.validate(&lock), Err(ValidationError::InvalidSignature(_))));
     }
 
     #[test]
@@ -249,7 +242,7 @@ mod tests {
         let engine = TestEngine::mainnet_fixture();
         let lock = mainnet_fixture_is_lock();
         let validator =
-            InstantLockValidator::new(engine.instant_send_cycle(&lock.cyclehash).unwrap());
+            InstantLockValidator::new(engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap());
 
         let request_id = lock.request_id().expect("expected to make request id");
         assert_eq!(

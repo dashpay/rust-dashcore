@@ -153,7 +153,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             return Ok(vec![]);
         }
 
-        // A lock stays pending until its cycle is complete; only a complete cycle can refute it.
+        // A lock stays pending while its quorum is missing; a held quorum refutes it.
         let validated = match self.verify(instantlock).await {
             Ok(()) => {
                 self.progress.add_valid(1);
@@ -193,7 +193,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         self.engine
             .read()
             .await
-            .instant_send_cycle(&lock.cyclehash)
+            .rotated_quorums_of_cycle(&lock.cyclehash)
             .ok_or(ValidationError::MissingQuorumData)
             .and_then(|cycle| InstantLockValidator::new(cycle).validate(lock))
     }
@@ -236,7 +236,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
     ///
     /// Called both when a `MasternodeStateUpdated` event arrives and from `tick`
     /// once the engine has advanced. Locks that verify are emitted as validated
-    /// `InstantLockReceived` events, and locks their complete cycle refutes are
+    /// `InstantLockReceived` events, and locks a held quorum refutes are
     /// dropped. Locks that still can't be verified are re-queued until they
     /// either become verifiable or exceed [`PENDING_TTL`].
     ///
@@ -249,11 +249,11 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         // `tick` knows not to re-run until the engine advances past it.
         let engine_height = self.engine_height().await;
 
-        let mut pending = std::mem::take(&mut self.pending_instantlocks).into_iter();
+        let pending = std::mem::take(&mut self.pending_instantlocks);
         let mut events = Vec::new();
         let mut rejected = 0;
 
-        while let Some(pending_lock) = pending.next() {
+        for pending_lock in pending {
             let txid = pending_lock.instant_lock.txid;
 
             // Drop locks that have been awaiting quorum data for too long.
@@ -277,15 +277,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 // Still can't validate, re-queue
                 Err(ValidationError::MissingQuorumData) => self.queue_pending(pending_lock),
                 Err(_) => {
-                    // After eviction, the cache entry may belong to a later lock for the same txid.
-                    let owned_by_other = pending
-                        .as_slice()
-                        .iter()
-                        .chain(&self.pending_instantlocks)
-                        .any(|other| other.instant_lock.txid == txid);
-                    if !owned_by_other
-                        && self.instantlocks.get(&txid).is_some_and(|entry| !entry.validated)
-                    {
+                    if self.instantlocks.get(&txid).is_some_and(|entry| !entry.validated) {
                         self.instantlocks.remove(&txid);
                     }
                     rejected += 1;
@@ -294,10 +286,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         }
 
         if rejected > 0 {
-            tracing::warn!(
-                "Dropped {} pending InstantLocks refuted by their complete cycle",
-                rejected
-            );
+            tracing::warn!("Dropped {} pending InstantLocks refuted by a held quorum", rejected);
             self.progress.add_invalid(rejected);
         }
         self.last_validated_engine_height = engine_height;
@@ -307,10 +296,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
 
     /// Prune old entries from the cache.
     pub(super) fn prune_old_entries(&mut self) {
-        self.prune_old_entries_at(SystemTime::now());
-    }
-
-    fn prune_old_entries_at(&mut self, now: SystemTime) {
+        let now = SystemTime::now();
         self.instantlocks.retain(|_, entry| {
             now.duration_since(entry.received_at).map(|d| d < CACHE_TTL).unwrap_or(true)
         });
@@ -590,30 +576,6 @@ mod tests {
             ),
             "the genuine lock for the txid still gets in: {events:?}"
         );
-    }
-
-    /// Refuting a pending lock keeps the cache entry of a later pending lock for the
-    /// same txid, so the later lock is reported once.
-    #[tokio::test]
-    async fn refuting_a_lock_keeps_the_entry_of_a_later_lock_for_its_txid() {
-        let mut manager =
-            InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(Network::Mainnet))));
-        let genuine = mainnet_fixture_is_lock();
-        let mut forged = genuine.clone();
-        forged.signature = BLSSignature::from([1; 96]);
-        manager.process_instantlock(&forged).await.unwrap();
-        // A wall-clock jump can expire the cache before the monotonic pending TTL.
-        manager.prune_old_entries_at(SystemTime::now() + CACHE_TTL + Duration::from_secs(1));
-        manager.process_instantlock(&genuine).await.unwrap();
-        assert_eq!(manager.pending_count(), 2);
-
-        *manager.engine.write().await = TestEngine::mainnet_fixture();
-        let events = manager.validate_pending(Instant::now()).await.unwrap();
-        assert_eq!(events.len(), 1, "only the genuine lock is reported: {events:?}");
-        assert!(manager.instantlocks.get(&genuine.txid).is_some_and(|entry| entry.validated));
-
-        let events = manager.process_instantlock(&genuine).await.unwrap();
-        assert!(events.is_empty(), "a re-announced lock is reported once: {events:?}");
     }
 
     #[tokio::test]
