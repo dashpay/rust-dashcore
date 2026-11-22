@@ -89,8 +89,6 @@ def format_prs(numbers: set[int]) -> str:
 def check(version: str, changelog: str, tags: list[str]):
     """Raises if `version` is not ready to be released."""
     section = release_section(changelog, version)
-    if f"v{version}" in tags:
-        raise ReleaseError(f"v{version} is already released, bump the workspace version")
     released = [parse_version(tag[1:]) for tag in tags]
     if released and parse_version(version) <= max(released):
         latest = ".".join(map(str, max(released)))
