@@ -113,7 +113,7 @@ impl PeerDiscoverer {
             best.into_iter().map(|(addr, _)| DisconnectedPeer::new(addr, self.network)).collect();
         let count = count - out.len();
 
-        let pool = if !self.fixed.is_empty() {
+        let mut pool = if !self.fixed.is_empty() {
             self.fixed.clone()
         } else if self.restrict_to_configured_peers {
             return Vec::new();
@@ -124,10 +124,10 @@ impl PeerDiscoverer {
             }
             let mut pool = self.discovered.clone().expect("just set");
             pool.extend(self.learned.keys());
-            pool.sort();
-            pool.dedup();
             pool
         };
+        pool.sort();
+        pool.dedup();
 
         let taken: HashSet<SocketAddr> = out.iter().map(|p| p.addr()).collect();
         let pool: Vec<SocketAddr> =
@@ -179,6 +179,7 @@ impl PeerDiscoverer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::test_socket_address;
 
     #[tokio::test]
     async fn test_dns_discovery_testnet_returns_embedded_when_dns_fails() {
@@ -197,15 +198,16 @@ mod tests {
     }
 
     /// Skipped addresses are left out before sampling, so the one eligible address in a
-    /// mostly banned pool is still handed out. A skipped probed peer keeps its rank.
+    /// mostly banned pool is still handed out, once even if configured twice. A skipped
+    /// probed peer keeps its rank.
     #[tokio::test]
     async fn get_samples_only_addresses_not_skipped() {
         let mut config = ClientConfig::regtest();
-        let addrs: Vec<SocketAddr> =
-            (1..=10).map(|n| SocketAddr::from(([10, 0, 0, n], 19899))).collect();
+        let addrs: Vec<SocketAddr> = (1..=10).map(test_socket_address).collect();
         for addr in &addrs {
             config.add_peer(*addr);
         }
+        config.add_peer(addrs[0]);
         let mut discoverer = PeerDiscoverer::new(&config);
         let (eligible, skip) = (addrs[0], addrs[1..].iter().copied().collect());
 
