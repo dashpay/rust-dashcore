@@ -278,13 +278,12 @@ pub struct PeerHandle {
     id: PeerId,
     writer: Arc<Mutex<PeerWriter>>,
     ledger: Arc<Ledger>,
-    /// Response bytes this peer can have in flight before they queue (its
-    /// bandwidth-delay product), sized by the controller from its byte rate and
-    /// service time.
+    /// Response bytes this peer can have in flight, sized by the controller from the rate
+    /// it serves at.
     cap: Arc<AtomicU64>,
     /// Bytes/s this peer serves while bandwidth bound, 0 until measured.
     serving_rate: Arc<AtomicU64>,
-    /// Bytes/s this peer served over the last two seconds, 0 until it delivered anything.
+    /// Bytes/s this peer served over its last two seconds of serving all it could, 0 before.
     /// A rough stand-in for `serving_rate` while that is still being measured.
     served: Arc<AtomicU64>,
     headers2: bool,

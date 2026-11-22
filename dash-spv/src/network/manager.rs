@@ -476,10 +476,10 @@ const SERVING_SAMPLE_TICKS: u32 = 120;
 const SLOW_RATE_FRACTION: f64 = 0.25;
 
 /// Sizes a peer's byte cap in seconds of its own served rate: a fast peer reaches
-/// megabytes within a second or two and a slow one stays near [`MIN_CAP_BYTES`]. The cap
-/// rises at once when the served rate supports it. It only falls while the peer is
-/// [`ByteLimiter::serving_all`]. Otherwise a peer shows how much it was asked for, which
-/// says nothing about what it can serve.
+/// megabytes within a second or two and a slow one stays near [`MIN_CAP_BYTES`]. The
+/// served rate and the cap only change while the peer is [`ByteLimiter::serving_all`], and
+/// the cap rises at once when the served rate supports it. Otherwise a peer shows how much
+/// it was asked for, or in a burst how fast the link is, and neither is what it sustains.
 struct ByteLimiter {
     cap: f64,
     /// Bytes/s and bytes in flight, averaged over ticks.
@@ -533,7 +533,7 @@ impl ByteLimiter {
         }
 
         let serving_all = self.serving_all(in_flight);
-        if serving_all || got > self.served {
+        if serving_all {
             self.served += tick_s / SERVED_RATE_SECS * (got - self.served);
         }
         let target = self.served * TARGET_QUEUE_SECS;
@@ -2352,6 +2352,8 @@ mod tests {
     #[test_case(4 * 1024, 4 * 1024, 1000; "a trickle of small replies")]
     #[test_case(0, 0, 1000; "no work")]
     #[test_case(MIN_CAP_BYTES / 2, 0, 40; "one reply in the making")]
+    #[test_case(32 * 1024, 2 << 20, 40; "bursts faster than it was serving")]
+    #[test_case(0, 2 << 20, 40; "traffic nobody asked for")]
     fn a_peer_below_its_cap_keeps_it(in_flight: u64, per_tick: u64, ticks: usize) {
         let delivered = (5e6 * FLOW_TICK.as_secs_f64()) as u64;
         let mut limiter = ByteLimiter::new(0);
