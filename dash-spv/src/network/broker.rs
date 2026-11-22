@@ -278,23 +278,19 @@ impl Broker {
         culprits
     }
 
-    /// Sends what fits in both the peers' and the global byte caps, each message to
-    /// the peer [`choose_peer`] picks.
-    pub async fn route(
-        &self,
-        peers: &[PeerHandle],
-        global_cap: u64,
-        costs: &ResponseCosts,
-    ) -> usize {
+    /// Sends what fits in the peers' byte caps, each message to the peer [`choose_peer`]
+    /// picks.
+    pub async fn route(&self, peers: &[PeerHandle], costs: &ResponseCosts) -> usize {
         if peers.is_empty() {
             return 0;
         }
         // A closed peer still listed is sent nothing, so its room would pop work that only
         // goes back to the queue and wakes the router again at once.
-        let live = || peers.iter().filter(|p| !p.is_closed());
-        let total_in_flight: u64 = live().map(PeerHandle::in_flight_bytes).sum();
-        let per_peer_room: u64 = live().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
-        let budget = per_peer_room.min(global_cap.saturating_sub(total_in_flight));
+        let budget: u64 = peers
+            .iter()
+            .filter(|p| !p.is_closed())
+            .map(|p| p.cap().saturating_sub(p.in_flight_bytes()))
+            .sum();
         if budget == 0 {
             return 0;
         }
@@ -472,17 +468,15 @@ fn classify(msg: &NetworkMessage) -> MsgClass {
 /// Picks the peer among `open` for a message of `class`. A header or block request goes to
 /// the peer that will answer it soonest, since sync waits on each of them in height order.
 /// Bulk filter traffic goes to the peer least loaded relative to its own cap, and so does
-/// any request while a busy peer has no serving rate yet.
+/// any request while no peer has a rate yet.
 fn choose_peer<'a>(
     open: impl Iterator<Item = &'a PeerHandle> + Clone,
     class: MsgClass,
 ) -> Option<&'a PeerHandle> {
-    if matches!(class, MsgClass::Headers | MsgClass::Blocks) {
-        let waits: Option<Vec<(f64, &PeerHandle)>> =
-            open.clone().map(|p| Some((queued_secs(p)?, p))).collect();
-        if let Some(waits) = waits {
-            return waits.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, p)| p);
-        }
+    if matches!(class, MsgClass::Headers | MsgClass::Blocks) && open.clone().any(|p| rate(p) > 0) {
+        // A busy peer that has not delivered anything yet has no known queue, so it goes last.
+        let wait = |p: &PeerHandle| queued_secs(p).unwrap_or(f64::INFINITY);
+        return open.min_by(|a, b| wait(a).total_cmp(&wait(b)));
     }
     open.min_by(|a, b| {
         (a.in_flight_bytes() as u128 * b.cap() as u128)
@@ -490,10 +484,18 @@ fn choose_peer<'a>(
     })
 }
 
+/// Bytes/s the peer serves: its serving rate once measured, its last two seconds before.
+fn rate(peer: &PeerHandle) -> u64 {
+    match peer.serving_rate() {
+        0 => peer.served(),
+        rate => rate,
+    }
+}
+
 /// Seconds the peer needs to serve what it already holds, `None` while it holds work
-/// but has no measured serving rate. Peers answer in order, so a new request waits that long.
+/// but has no rate. Peers answer in order, so a new request waits that long.
 fn queued_secs(peer: &PeerHandle) -> Option<f64> {
-    match (peer.in_flight_bytes(), peer.serving_rate()) {
+    match (peer.in_flight_bytes(), rate(peer)) {
         (0, _) => Some(0.0),
         (_, 0) => None,
         (bytes, rate) => Some(bytes as f64 / rate as f64),
@@ -664,6 +666,10 @@ mod tests {
         Inventory::Block(BlockHash::dummy(n))
     }
 
+    fn get_block(n: u32) -> NetworkMessage {
+        NetworkMessage::GetData(vec![block(n)])
+    }
+
     fn tx(n: u8) -> Inventory {
         Inventory::Transaction(Txid::from_byte_array([n; 32]))
     }
@@ -736,7 +742,7 @@ mod tests {
 
         // With only the closed peer listed nothing is popped, so the router is not woken
         // again and waits for a real change instead of spinning.
-        assert_eq!(broker.route(&[gone.handle()], u64::MAX, &ResponseCosts::new()).await, 0);
+        assert_eq!(broker.route(&[gone.handle()], &ResponseCosts::new()).await, 0);
         assert_eq!(
             broker.state_of(&RequestKey::CFilters(BlockHash::dummy(0))).await,
             Some("queued")
@@ -744,7 +750,7 @@ mod tests {
         assert!(broker.notified().now_or_never().is_none(), "the router was woken again");
 
         // Only the charge matters here: the loopback has no reader to answer it.
-        broker.route(&[gone.handle(), other.handle()], u64::MAX, &ResponseCosts::new()).await;
+        broker.route(&[gone.handle(), other.handle()], &ResponseCosts::new()).await;
 
         assert_eq!(gone.in_flight_bytes(), 0);
         assert!(other.in_flight_bytes() > 0);
@@ -787,7 +793,6 @@ mod tests {
             kicked.handle(),
         ];
         let (slow, idle) = (&peers[..1], peers[1].id());
-        let get_block = |n: u32| NetworkMessage::GetData(vec![block(n)]);
         let hedged_blocks = || async {
             let mut hedged: Vec<u32> = broker
                 .requests
@@ -806,10 +811,10 @@ mod tests {
         for n in [11, 12] {
             broker.enqueue(n, get_block(n)).await;
         }
-        assert_eq!(broker.route(slow, u64::MAX, &costs).await, 2);
+        assert_eq!(broker.route(slow, &costs).await, 2);
         tokio::time::advance(HEDGE_AFTER).await;
         broker.enqueue(10, get_block(10)).await;
-        assert_eq!(broker.route(slow, u64::MAX, &costs).await, 1);
+        assert_eq!(broker.route(slow, &costs).await, 1);
         assert_eq!(broker.hedge(&peers).await, None, "the lowest block has not waited long enough");
 
         tokio::time::advance(HEDGE_AFTER / 2).await;
@@ -829,6 +834,18 @@ mod tests {
         assert_eq!(broker.hedge(slow).await, None, "no other peer to ask");
     }
 
+    #[tokio::test]
+    async fn a_new_peer_holds_two_header_requests() {
+        let broker = Broker::new();
+        let peer = ConnectedPeer::for_test(conn(1, 0)).await;
+        for n in 0..3 {
+            broker.enqueue(n, get_headers(n)).await;
+        }
+
+        assert_eq!(broker.route(&[peer.handle()], &ResponseCosts::new()).await, 2);
+        assert_eq!(broker.len(), 1);
+    }
+
     #[test_case(NetworkMessage::GetData(vec![block(1)]), RequestKey::Block(BlockHash::dummy(1)); "a block")]
     #[test_case(get_cfilters(1), RequestKey::CFilters(BlockHash::dummy(1)); "a filter batch")]
     #[test_case(get_cfheaders(1), RequestKey::CfHeaders(BlockHash::dummy(1)); "a filter header batch")]
@@ -839,7 +856,7 @@ mod tests {
         let peer = ConnectedPeer::for_test(id).await;
 
         broker.enqueue(0, request.clone()).await;
-        assert_eq!(broker.route(&[peer.handle()], u64::MAX, &ResponseCosts::new()).await, 1);
+        assert_eq!(broker.route(&[peer.handle()], &ResponseCosts::new()).await, 1);
         broker.arrived(conn(2, 0), key.clone()).await;
         assert_eq!(broker.state_of(&key).await, Some("on_wire"), "only its carrier settles it");
         broker.arrived(id, key.clone()).await;
@@ -926,15 +943,23 @@ mod tests {
         assert_eq!(broker.requests.lock().await.len(), tracked);
     }
 
-    /// `slow` holds 1 MB at 100 KB/s, a 10 s queue at a tenth of its cap. `fast` holds
-    /// 256 KB at `fast_rate`, half its cap. Returns which of them `msg` is routed to.
-    #[test_case(get_headers(1), 1 << 20 => "fast"; "a header request goes to the shortest queue")]
-    #[test_case(get_headers(1), 0 => "slow"; "a header request falls back to the cap ratio while a busy peer is unmeasured")]
-    #[test_case(NetworkMessage::GetData(vec![block(1)]), 1 << 20 => "fast"; "a block request goes to the shortest queue")]
-    #[test_case(NetworkMessage::GetData(vec![block(1)]), 0 => "slow"; "a block request falls back to the cap ratio while a busy peer is unmeasured")]
-    #[test_case(get_cfilters(0), 1 << 20 => "slow"; "bulk requests keep the cap ratio")]
+    /// `slow` holds 1 MB, a tenth of its cap, served at `slow_rate`. `fast` holds 256 KB, half
+    /// its cap, served at `fast_rate`, or at `fast_served` over the last two seconds while its
+    /// serving rate is unmeasured. Returns which of them `msg` is routed to.
+    #[test_case(get_headers(1), 100 << 10, 1 << 20, 0 => "fast"; "a header request goes to the shortest queue")]
+    #[test_case(get_headers(1), 100 << 10, 0, 1 << 20 => "fast"; "a peer still being measured is timed by its last two seconds")]
+    #[test_case(get_headers(1), 0, 1 << 20, 0 => "fast"; "a busy peer that delivered nothing yet goes last")]
+    #[test_case(get_headers(1), 0, 0, 0 => "slow"; "the cap ratio while no peer has a rate")]
+    #[test_case(get_block(1), 100 << 10, 1 << 20, 0 => "fast"; "a block request goes to the shortest queue")]
+    #[test_case(get_block(1), 100 << 10, 0, 1 << 20 => "fast"; "a block request times a peer by its last two seconds")]
+    #[test_case(get_cfilters(0), 100 << 10, 1 << 20, 0 => "slow"; "bulk requests keep the cap ratio")]
     #[tokio::test]
-    async fn route_picks_the_peer_by_class(msg: NetworkMessage, fast_rate: u64) -> &'static str {
+    async fn route_picks_the_peer_by_class(
+        msg: NetworkMessage,
+        slow_rate: u64,
+        fast_rate: u64,
+        fast_served: u64,
+    ) -> &'static str {
         let costs = ResponseCosts::new();
         let slow = ConnectedPeer::for_test(conn(1, 0)).await;
         let fast = ConnectedPeer::for_test(conn(2, 0)).await;
@@ -944,13 +969,14 @@ mod tests {
         fast.handle().send(&get_cfilters(4000)).await.expect("loopback send");
         slow.set_cap(slow.in_flight_bytes() * 10);
         fast.set_cap(fast.in_flight_bytes() * 2);
-        slow.set_serving_rate(100 << 10);
+        slow.set_serving_rate(slow_rate);
         fast.set_serving_rate(fast_rate);
+        fast.set_served(fast_served);
         let before = (slow.in_flight_bytes(), fast.in_flight_bytes());
 
         let broker = Broker::new();
         broker.enqueue(0, msg).await;
-        assert_eq!(broker.route(&[slow.handle(), fast.handle()], u64::MAX, &costs).await, 1);
+        assert_eq!(broker.route(&[slow.handle(), fast.handle()], &costs).await, 1);
 
         match (slow.in_flight_bytes() > before.0, fast.in_flight_bytes() > before.1) {
             (true, false) => "slow",
