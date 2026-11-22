@@ -17,7 +17,7 @@ use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashcore::Network;
-use rand::seq::{IndexedRandom, SliceRandom};
+use rand::seq::{IteratorRandom, SliceRandom};
 
 use crate::network::peer::DisconnectedPeer;
 use crate::ClientConfig;
@@ -116,8 +116,9 @@ impl PeerDiscoverer {
             best.into_iter().map(|(addr, _)| DisconnectedPeer::new(addr, self.network)).collect();
         let count = count - out.len();
 
-        let pool = if !self.fixed.is_empty() {
-            self.fixed.clone()
+        let gathered: Vec<SocketAddr>;
+        let pool: &[SocketAddr] = if !self.fixed.is_empty() {
+            &self.fixed
         } else if self.restrict_to_configured_peers {
             return Vec::new();
         } else {
@@ -125,20 +126,20 @@ impl PeerDiscoverer {
                 let found = Self::discover(self.network).await;
                 self.discovered = Some(found);
             }
-            let mut pool = self.discovered.clone().expect("just set");
-            pool.extend(self.learned.keys());
-            pool.sort();
-            pool.dedup();
-            pool
+            let mut all = self.discovered.clone().expect("just set");
+            all.extend(self.learned.keys());
+            all.sort();
+            all.dedup();
+            gathered = all;
+            &gathered
         };
 
         let taken: HashSet<SocketAddr> = out.iter().map(|p| p.addr()).collect();
-        let pool: Vec<SocketAddr> =
-            pool.into_iter().filter(|addr| !skip.contains(addr) && !taken.contains(addr)).collect();
-        out.extend(
-            pool.choose_multiple(&mut rand::rng(), count)
-                .map(|addr| DisconnectedPeer::new(*addr, self.network)),
-        );
+        let sample = pool
+            .iter()
+            .filter(|addr| !skip.contains(*addr) && !taken.contains(*addr))
+            .choose_multiple(&mut rand::rng(), count);
+        out.extend(sample.into_iter().map(|addr| DisconnectedPeer::new(*addr, self.network)));
         out
     }
 
