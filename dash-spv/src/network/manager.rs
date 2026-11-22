@@ -1627,6 +1627,14 @@ mod tests {
 
     impl HandshakingPeer {
         async fn listen() -> Self {
+            Self::serving(
+                ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM,
+            )
+            .await
+        }
+
+        /// Like [`HandshakingPeer::listen`], advertising `services`.
+        async fn serving(services: ServiceFlags) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
             let peer = HandshakingPeer {
                 addr: listener.local_addr().expect("bound address"),
@@ -1636,7 +1644,7 @@ mod tests {
             let (go, closed) = (peer.go.clone(), peer.closed.clone());
             tokio::spawn(async move {
                 while let Ok((stream, client)) = listener.accept().await {
-                    answer_handshake(stream, client, &go).await;
+                    answer_handshake(stream, client, &go, services).await;
                     closed.fetch_add(1, Ordering::SeqCst);
                 }
             });
@@ -1646,7 +1654,12 @@ mod tests {
 
     /// Answers the version handshake of `client` on `stream` once `go` is notified, then its
     /// pings, for [`HandshakingPeer`].
-    async fn answer_handshake(stream: TcpStream, client: SocketAddr, go: &Notify) {
+    async fn answer_handshake(
+        stream: TcpStream,
+        client: SocketAddr,
+        go: &Notify,
+        services: ServiceFlags,
+    ) {
         stream.set_nodelay(true).expect("loopback nodelay");
         let (read, mut write) = stream.into_split();
         let mut frames = FramedRead::new(read, RawNetworkMessageCodec);
@@ -1663,8 +1676,7 @@ mod tests {
         }
         go.notified().await;
         let mut version = build_version(client, "handshaking");
-        version.services =
-            ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        version.services = services;
         let mut hello = framed(NetworkMessage::Version(version));
         hello.extend(framed(NetworkMessage::Verack));
         let _ = write.write_all(&hello).await;
