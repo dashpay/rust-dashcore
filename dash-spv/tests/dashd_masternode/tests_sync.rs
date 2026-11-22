@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use dash_spv::network::TransportPreference;
 use dash_spv::{ProgressPercentage, SyncEvent, SyncState};
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
@@ -21,9 +22,9 @@ use super::helpers::{
     wait_for_mn_state_with_stored_cycle_above,
 };
 use super::setup::{
-    create_and_start_client, create_client, create_dummy_wallet, create_mn_test_config,
-    create_wallet_from_controller, receive_address, wait_for_controller_islock, TestContext,
-    SYNC_TIMEOUT,
+    batch_headers_proxy, create_and_start_client, create_client, create_dummy_wallet,
+    create_mn_test_config, create_wallet_from_controller, receive_address,
+    wait_for_controller_islock, TestContext, SYNC_TIMEOUT,
 };
 
 /// Sync masternode list against a pre-generated regtest controller node.
@@ -112,6 +113,77 @@ async fn test_masternode_list_sync() {
         header_height,
         ctx.mn_ctx.expected_height
     );
+}
+
+#[tokio::test]
+async fn test_qrinfo_catch_up_after_a_batch_crosses_the_cycle() {
+    let Some(mut ctx) = TestContext::new(true).await else {
+        return;
+    };
+    let (proxy, holding, mut received_headers, release, proxy_task) =
+        batch_headers_proxy(ctx.mn_ctx.controller_addr).await;
+    let config = create_mn_test_config(ctx.storage_path().to_path_buf(), proxy)
+        .with_transport_preference(TransportPreference::V1Only);
+    let mut client = create_and_start_client(&config, create_dummy_wallet()).await;
+    let initial = wait_for_masternode_sync(&mut client.progress_receiver, SYNC_TIMEOUT).await;
+    let llmq = LLMQType::LlmqtypeTestDIP0024;
+    let interval = llmq.dkg_interval();
+    let window = llmq.get_dkg_window_for_height(initial.current_height() + interval);
+    ctx.mn_ctx.move_blocks((window.mining_start - initial.current_height()).into());
+    let first_result = tokio::time::timeout(Duration::from_secs(SYNC_TIMEOUT), async {
+        loop {
+            if let SyncEvent::MasternodeStateUpdated {
+                height,
+                qr_info_result: Some(result),
+            } = client.sync_event_receiver.recv().await.unwrap()
+            {
+                if height == window.mining_start {
+                    break result;
+                }
+            }
+        }
+    })
+    .await
+    .expect("the first mining-window QRInfo must finish");
+    // With only the controller running, no new DKG commitment can complete this cycle.
+    assert_ne!(first_result.stored_cycle_height, Some(window.cycle_start));
+    while client.sync_event_receiver.try_recv().is_ok() {}
+
+    let next_cycle = window.cycle_start + interval;
+    holding.store(true, Ordering::SeqCst);
+    for height in window.mining_start + 1..=next_cycle {
+        ctx.mn_ctx.move_blocks(1);
+        let hash = ctx.mn_ctx.controller.get_block_hash(height);
+        tokio::time::timeout(
+            Duration::from_secs(SYNC_TIMEOUT),
+            received_headers.wait_for(|received| *received == Some(hash)),
+        )
+        .await
+        .expect("the proxy must receive each announcement")
+        .unwrap();
+    }
+    release.send(ctx.mn_ctx.controller.get_block_hash(next_cycle)).unwrap();
+    let mut header_tips = Vec::new();
+    let result = tokio::time::timeout(Duration::from_secs(SYNC_TIMEOUT), async {
+        loop {
+            match client.sync_event_receiver.recv().await.unwrap() {
+                SyncEvent::BlockHeadersStored {
+                    tip_height,
+                } => header_tips.push(tip_height),
+                SyncEvent::MasternodeStateUpdated {
+                    height,
+                    qr_info_result,
+                } if height == next_cycle => break qr_info_result,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("the batched tip must finish masternode sync");
+    assert_eq!(header_tips, vec![next_cycle], "the batch must cross the cycle in one update");
+    assert!(result.is_some(), "the previous cycle still needs a catch-up QRInfo");
+    client.stop().await;
+    proxy_task.abort();
 }
 
 /// Sync masternode list, stop, restart with same storage twice without new blocks,

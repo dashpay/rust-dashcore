@@ -1,3 +1,4 @@
+use std::mem;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -12,13 +13,22 @@ use dash_spv::{
     network::PeerNetworkManager,
     LoggingGuard, Network, SyncEvent, SyncProgress,
 };
+use dashcore::consensus::encode::serialize;
+use dashcore::network::message::{NetworkMessage, RawNetworkMessage, RawNetworkMessageCodec};
+use dashcore::BlockHash;
+use futures::StreamExt;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet_manager::{WalletEvent, WalletId, WalletManager};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio::sync::{broadcast, watch, RwLock};
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{broadcast, oneshot, watch, RwLock};
+use tokio::task::JoinHandle;
 use tokio::time;
+use tokio_util::codec::FramedRead;
 
 /// Timeout for masternode sync tests (masternode sync takes longer than wallet sync).
 pub(super) const SYNC_TIMEOUT: u64 = 60;
@@ -195,4 +205,80 @@ pub(super) async fn create_and_start_client(
     let mut handle = create_client(config, wallet).await;
     handle.run().await;
     handle
+}
+
+/// Holds header announcements until `release` names the last block of one batch.
+pub(super) async fn batch_headers_proxy(
+    upstream: SocketAddr,
+) -> (
+    SocketAddr,
+    Arc<AtomicBool>,
+    watch::Receiver<Option<BlockHash>>,
+    oneshot::Sender<BlockHash>,
+    JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let holding = Arc::new(AtomicBool::new(false));
+    let paused = Arc::clone(&holding);
+    let (release, mut released) = oneshot::channel();
+    let (received, received_headers) = watch::channel(None);
+    let task = tokio::spawn(async move {
+        let (client, _) = listener.accept().await.unwrap();
+        let server = TcpStream::connect(upstream).await.unwrap();
+        let (client_rx, mut client_tx) = client.into_split();
+        let (server_rx, mut server_tx) = server.into_split();
+        let forwarding = tokio::spawn(async move {
+            let mut messages = FramedRead::new(client_rx, RawNetworkMessageCodec);
+            while let Some(message) = messages.next().await {
+                let mut message = message.unwrap();
+                // Uncompressed announcements can be joined without changing their headers.
+                if matches!(message.payload, NetworkMessage::SendHeaders2) {
+                    message.payload = NetworkMessage::SendHeaders;
+                }
+                if server_tx.write_all(&serialize(&message)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let mut messages = FramedRead::new(server_rx, RawNetworkMessageCodec);
+        let mut held = Vec::new();
+        let mut last_hash = None;
+        loop {
+            tokio::select! {
+                result = &mut released, if last_hash.is_none() => {
+                    let Ok(hash) = result else { break };
+                    last_hash = Some(hash);
+                }
+                message = messages.next() => {
+                    let Some(Ok(message)) = message else { break };
+                    match message.payload {
+                        NetworkMessage::Headers(headers) if paused.load(Ordering::SeqCst) => {
+                            held.extend(headers);
+                            received.send_replace(held.last().map(|header| header.block_hash()));
+                        }
+                        _ => {
+                            if client_tx.write_all(&serialize(&message)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if last_hash
+                .is_some_and(|hash| held.last().is_some_and(|header| header.block_hash() == hash))
+            {
+                let batch = RawNetworkMessage {
+                    magic: Network::Regtest.magic(),
+                    payload: NetworkMessage::Headers(mem::take(&mut held)),
+                };
+                paused.store(false, Ordering::SeqCst);
+                if client_tx.write_all(&serialize(&batch)).await.is_err() {
+                    break;
+                }
+            }
+        }
+        forwarding.abort();
+    });
+    (address, holding, received_headers, release, task)
 }

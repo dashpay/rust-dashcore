@@ -117,10 +117,8 @@ pub(super) struct MasternodeSyncState {
     /// one-shot degraded-cycle log message. There is no hard cap. QRInfo is fired
     /// on every new block inside the mining window until one succeeds.
     pub(super) current_cycle_attempts: u8,
-    /// Highest tip height a QRInfo has already been fired for inside the current
-    /// cycle's mining window. Gates `next_pipeline_mode` so that unrelated ticks
-    /// (peer events, response receipt, timers) cannot re-fire QRInfo for the same
-    /// tip when validation fails deterministically. Reset on cycle rollover.
+    /// Last tip requested by QRInfo in the tracked cycle. A request before its
+    /// mining window catches up the previous cycle and does not cover this one.
     pub(super) last_window_qrinfo_tip: Option<u32>,
     /// Block hash of the most recently successfully processed QRInfo's `mn_list_diff_tip`.
     /// A response carrying the same tip hash as the last successful processing is dropped
@@ -192,15 +190,6 @@ impl MasternodeSyncState {
 
     pub(super) fn forget_given_up_work_lists(&mut self) {
         self.given_up_work_lists.clear();
-    }
-
-    /// Record that a QRInfo request was actually fired for `tip_height`. Bumps
-    /// the per-cycle attempt counter and sets the per-tip gate so subsequent
-    /// calls to [`MasternodesManager::next_pipeline_mode`] at the same tip
-    /// return `Incremental` instead of refiring.
-    pub(super) fn record_qrinfo_attempt(&mut self, tip_height: u32) {
-        self.last_window_qrinfo_tip = Some(tip_height);
-        self.current_cycle_attempts = self.current_cycle_attempts.saturating_add(1);
     }
 
     /// Arm the QRInfo slot for a request that has just gone out on the wire.
@@ -346,13 +335,30 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
     }
 
+    fn track_cycle(&mut self, cycle_height: u32) {
+        if self.sync_state.current_cycle_height != Some(cycle_height) {
+            self.sync_state.current_cycle_height = Some(cycle_height);
+            self.sync_state.current_cycle_attempts = 0;
+            self.sync_state.last_window_qrinfo_tip = None;
+            self.progress.add_rotation_cycles(1);
+        }
+    }
+
+    fn record_qrinfo_attempt(&mut self, tip_height: u32) {
+        let cycle_height = self.network.isd_llmq_type().get_cycle_base_height(tip_height);
+        self.track_cycle(cycle_height);
+        self.sync_state.last_window_qrinfo_tip = Some(tip_height);
+        self.sync_state.current_cycle_attempts =
+            self.sync_state.current_cycle_attempts.saturating_add(1);
+    }
+
     /// Decide which [`PipelineMode`] to use when a new header lands at `tip_height`
     /// and masternode sync needs to catch up. The rule is:
     ///
     /// - Before `cycle_start + dkgMiningWindowStart`: the rotated commitment for this
     ///   cycle cannot possibly have been mined yet, so a QRInfo would fail at the `tip` slot.
-    ///   Return `Incremental` to fire a targeted `GetMnListDiff` that keeps the tip
-    ///   list fresh.
+    ///   Return `Incremental` to keep the tip list fresh, unless the previous cycle
+    ///   still needs its post-window QRInfo.
     /// - Inside `[cycle_start + dkgMiningWindowStart, cycle_start + dkgMiningWindowEnd]`
     ///   and the cycle is not yet validated: return `QuorumValidation` so a full
     ///   QRInfo fires on every new header. Any block in this window can be the one
@@ -374,13 +380,22 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         let window = self.network.isd_llmq_type().get_dkg_window_for_height(tip_height);
         let cycle_height = window.cycle_start;
 
-        // Reset per-cycle tracking when the tip enters a new cycle.
-        if self.sync_state.current_cycle_height != Some(cycle_height) {
-            self.sync_state.current_cycle_height = Some(cycle_height);
-            self.sync_state.current_cycle_attempts = 0;
-            self.sync_state.last_window_qrinfo_tip = None;
-            self.progress.add_rotation_cycles(1);
+        // Keep a missed-window request eligible across rollover until it is sent.
+        if tip_height < window.mining_start
+            && self.sync_state.current_cycle_height.is_some_and(|previous| {
+                previous < cycle_height
+                    && !self.sync_state.validated_cycle_heights.contains(&previous)
+                    && self.sync_state.last_window_qrinfo_tip.is_none_or(|tip| {
+                        tip < self.network.isd_llmq_type().dkg_window_at_cycle(previous).mining_end
+                    })
+            })
+        {
+            return PipelineMode::QuorumValidation {
+                qr_info_result: None,
+            };
         }
+
+        self.track_cycle(cycle_height);
 
         // Already validated this cycle? Keep the tip list fresh but don't touch QRInfo.
         if self.sync_state.validated_cycle_heights.contains(&cycle_height) {
@@ -392,11 +407,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
         // Past mining window without success.
         if tip_height > window.mining_end {
-            // If we never attempted QRInfo for this cycle (all blocks arrived
-            // in a batch that overshot the window), fire ONE QRInfo now so the
-            // cycle's rotated quorums get stored. Without this, IS locks from
-            // the new cycle can't be verified.
-            if self.sync_state.current_cycle_attempts == 0 {
+            // A pre-window catch-up for the previous cycle does not cover this one.
+            if self.sync_state.last_window_qrinfo_tip.is_none_or(|tip| tip < window.mining_start) {
                 tracing::info!(
                     cycle_height,
                     tip_height,
@@ -653,7 +665,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
             }))
             .await;
         self.progress.add_qr_infos_requested(1);
-        self.sync_state.record_qrinfo_attempt(tip_height);
+        self.record_qrinfo_attempt(tip_height);
         self.sync_state.start_waiting_for_qrinfo(tip_block_hash);
 
         // Only transition to Syncing if not already Synced (incremental updates stay Synced)
@@ -902,7 +914,7 @@ mod tests {
         assert_eq!(manager.progress.rotation_cycles(), 1);
 
         // Simulate the caller firing the QRInfo.
-        manager.sync_state.record_qrinfo_attempt(60);
+        manager.record_qrinfo_attempt(60);
         assert_eq!(manager.sync_state.current_cycle_attempts, 1);
         assert_eq!(manager.sync_state.last_window_qrinfo_tip, Some(60));
 
@@ -915,7 +927,7 @@ mod tests {
 
         // A new tip inside the same window picks QuorumValidation again.
         assert!(matches!(manager.next_pipeline_mode(61), PipelineMode::QuorumValidation { .. }));
-        manager.sync_state.record_qrinfo_attempt(61);
+        manager.record_qrinfo_attempt(61);
         assert_eq!(manager.sync_state.current_cycle_attempts, 2);
         assert_eq!(manager.sync_state.last_window_qrinfo_tip, Some(61));
 
@@ -931,7 +943,7 @@ mod tests {
         assert_eq!(manager.sync_state.current_cycle_attempts, 0);
         assert_eq!(manager.sync_state.last_window_qrinfo_tip, None);
         assert_eq!(manager.progress.rotation_cycles(), 2);
-        manager.sync_state.record_qrinfo_attempt(84);
+        manager.record_qrinfo_attempt(84);
         assert_eq!(manager.sync_state.current_cycle_attempts, 1);
         assert_eq!(manager.sync_state.last_window_qrinfo_tip, Some(84));
         assert!(matches!(manager.next_pipeline_mode(84), PipelineMode::Incremental));
@@ -963,7 +975,7 @@ mod tests {
         assert_eq!(manager.sync_state.current_cycle_height, Some(48));
         assert_eq!(manager.sync_state.current_cycle_attempts, 0);
         assert_eq!(manager.progress.rotation_cycles(), 1);
-        manager.sync_state.record_qrinfo_attempt(70);
+        manager.record_qrinfo_attempt(70);
         assert!(matches!(manager.next_pipeline_mode(70), PipelineMode::Incremental));
         assert!(matches!(manager.next_pipeline_mode(71), PipelineMode::Incremental));
         assert_eq!(manager.progress.rotation_cycles(), 1);
@@ -981,6 +993,75 @@ mod tests {
         assert!(matches!(manager.next_pipeline_mode(60), PipelineMode::Incremental));
         assert!(matches!(manager.next_pipeline_mode(65), PipelineMode::Incremental));
         assert!(matches!(manager.next_pipeline_mode(50), PipelineMode::Incremental));
+    }
+
+    #[tokio::test]
+    async fn test_cycle_rollover_keeps_the_previous_cycle_catch_up() {
+        for attempted_tip in [Some(60), None, Some(68), Some(70)] {
+            for validated in [false, true] {
+                let mut manager = create_test_manager_for(dashcore::Network::Regtest).await;
+                manager.next_pipeline_mode(50);
+                if let Some(tip) = attempted_tip {
+                    manager.next_pipeline_mode(tip);
+                    manager.record_qrinfo_attempt(tip);
+                }
+                if validated {
+                    manager.mark_cycle_validated(48);
+                }
+
+                let needs_catch_up = !validated && attempted_tip.is_none_or(|tip| tip < 68);
+                assert_eq!(
+                    matches!(manager.next_pipeline_mode(72), PipelineMode::QuorumValidation { .. }),
+                    needs_catch_up,
+                    "attempted_tip={attempted_tip:?}, validated={validated}"
+                );
+                if needs_catch_up {
+                    // A failed dispatch must leave the catch-up available.
+                    assert!(matches!(
+                        manager.next_pipeline_mode(72),
+                        PipelineMode::QuorumValidation { .. }
+                    ));
+                    manager.record_qrinfo_attempt(72);
+                }
+                assert!(matches!(manager.next_pipeline_mode(73), PipelineMode::Incremental));
+                assert!(matches!(
+                    manager.next_pipeline_mode(84),
+                    PipelineMode::QuorumValidation { .. }
+                ));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_qrinfo_dispatch_tracks_initial_cycle() {
+        let (mut manager, network, _mock) = make_synced_incremental_manager(60).await;
+        manager.set_state(SyncState::WaitingForConnections);
+        manager.send_qrinfo_for_tip(&network).await.unwrap();
+        assert!(matches!(manager.next_pipeline_mode(72), PipelineMode::QuorumValidation { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_qrinfo_dispatch_tracks_consecutive_cycles() {
+        let mut manager = create_test_manager_for(dashcore::Network::Regtest).await;
+        manager.next_pipeline_mode(60);
+        manager.record_qrinfo_attempt(60);
+        for tip in [72, 96] {
+            assert!(
+                matches!(manager.next_pipeline_mode(tip), PipelineMode::QuorumValidation { .. }),
+                "tip={tip}"
+            );
+            manager.record_qrinfo_attempt(tip);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_qrinfo_dispatch_does_not_skip_the_next_window() {
+        let mut manager = create_test_manager_for(dashcore::Network::Regtest).await;
+        manager.next_pipeline_mode(60);
+        manager.record_qrinfo_attempt(60);
+        assert!(matches!(manager.next_pipeline_mode(72), PipelineMode::QuorumValidation { .. }));
+        manager.record_qrinfo_attempt(72);
+        assert!(matches!(manager.next_pipeline_mode(94), PipelineMode::QuorumValidation { .. }));
     }
 
     /// On restart, `MasternodesManager::new` must recover its height from the
