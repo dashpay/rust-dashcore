@@ -133,7 +133,7 @@ def bump_pr(released: str, new_version: str | None, repository: str, sha: str) -
 def remote_tags() -> list[str]:
     output = subprocess.run(
         ["git", "ls-remote", "--tags", "--refs", "origin", "refs/tags/v*"],
-        capture_output=True,
+        stdout=subprocess.PIPE,
         text=True,
         check=True,
         cwd=ROOT,
