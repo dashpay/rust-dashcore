@@ -1,7 +1,7 @@
 name: Release Check
 
 # Every PR into `master` is a release. Requires a dated changelog section for the workspace
-# version, and a version above every released one.
+# version, a version above every released one, and no PR an earlier release lists.
 
 on:
   pull_request:
