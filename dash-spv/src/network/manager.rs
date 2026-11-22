@@ -1251,6 +1251,7 @@ fn spawn_pump(
             peer_wake,
             max_peers,
             discoverer,
+            required_services,
             ..
         } = &*state;
         // Per-peer received-message counter to check load balance across peers.
@@ -1334,13 +1335,14 @@ fn spawn_pump(
                     }
                     // Addr gossip feeds the discovery pool, otherwise it stays frozen at the seeds and
                     // one DNS lookup. Both spellings: a peer that ignored `sendaddrv2` answers
-                    // `getaddr` with legacy `addr`.
+                    // `getaddr` with legacy `addr`. An address whose services lack what we need
+                    // would only be dropped after its handshake.
                     let gossiped: Option<Vec<(SocketAddr, u32)>> = match &*msg {
                         NetworkMessage::AddrV2(addrs) if addrs.len() <= MAX_ADDR_PER_MESSAGE => {
                             Some(
                                 addrs
                                     .iter()
-                                    .filter(|a| a.services.has(ServiceFlags::NETWORK))
+                                    .filter(|a| a.services.has(*required_services))
                                     .filter_map(|a| Some((a.socket_addr().ok()?, a.time)))
                                     .collect(),
                             )
@@ -1348,7 +1350,7 @@ fn spawn_pump(
                         NetworkMessage::Addr(addrs) if addrs.len() <= MAX_ADDR_PER_MESSAGE => Some(
                             addrs
                                 .iter()
-                                .filter(|(_, a)| a.services.has(ServiceFlags::NETWORK))
+                                .filter(|(_, a)| a.services.has(*required_services))
                                 .filter_map(|(time, a)| Some((a.socket_addr().ok()?, *time)))
                                 .collect(),
                         ),
@@ -1450,11 +1452,13 @@ mod tests {
     use crate::network::peer::build_version;
     use crate::test_utils::test_socket_address;
     use dashcore::consensus::encode::serialize;
+    use dashcore::network::address::{AddrV2Message, Address};
     use dashcore::network::message::{RawNetworkMessage, RawNetworkMessageCodec};
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::{BlockHash, Network};
     use std::sync::atomic::AtomicUsize;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use test_case::test_case;
     use tokio::io::AsyncWriteExt;
     use tokio::net::tcp::OwnedWriteHalf;
@@ -1627,6 +1631,14 @@ mod tests {
 
     impl HandshakingPeer {
         async fn listen() -> Self {
+            Self::serving(
+                ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM,
+            )
+            .await
+        }
+
+        /// Like [`HandshakingPeer::listen`], advertising `services`.
+        async fn serving(services: ServiceFlags) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
             let peer = HandshakingPeer {
                 addr: listener.local_addr().expect("bound address"),
@@ -1636,7 +1648,7 @@ mod tests {
             let (go, closed) = (peer.go.clone(), peer.closed.clone());
             tokio::spawn(async move {
                 while let Ok((stream, client)) = listener.accept().await {
-                    answer_handshake(stream, client, &go).await;
+                    answer_handshake(stream, client, &go, services).await;
                     closed.fetch_add(1, Ordering::SeqCst);
                 }
             });
@@ -1646,7 +1658,12 @@ mod tests {
 
     /// Answers the version handshake of `client` on `stream` once `go` is notified, then its
     /// pings, for [`HandshakingPeer`].
-    async fn answer_handshake(stream: TcpStream, client: SocketAddr, go: &Notify) {
+    async fn answer_handshake(
+        stream: TcpStream,
+        client: SocketAddr,
+        go: &Notify,
+        services: ServiceFlags,
+    ) {
         stream.set_nodelay(true).expect("loopback nodelay");
         let (read, mut write) = stream.into_split();
         let mut frames = FramedRead::new(read, RawNetworkMessageCodec);
@@ -1663,8 +1680,7 @@ mod tests {
         }
         go.notified().await;
         let mut version = build_version(client, "handshaking");
-        version.services =
-            ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        version.services = services;
         let mut hello = framed(NetworkMessage::Version(version));
         hello.extend(framed(NetworkMessage::Verack));
         let _ = write.write_all(&hello).await;
@@ -1763,6 +1779,56 @@ mod tests {
         }
         let slow = underserving_peer(&peers)?;
         peers.iter().position(|p| p.addr() == slow.addr)
+    }
+
+    /// A node that cannot serve compact filters is banned on the spot, not only backed
+    /// off like a failed dial, so it does not take a candidate slot round after round.
+    #[tokio::test]
+    async fn a_node_lacking_required_services_is_banned() {
+        let node = HandshakingPeer::serving(ServiceFlags::NETWORK | ServiceFlags::BLOOM).await;
+        node.go.notify_one();
+        let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
+        let net = PeerNetworkManager::new(&config).await;
+
+        let dialed = DisconnectedPeer::new(node.addr, Network::Regtest)
+            .connect(net.state.clone(), CancellationToken::new())
+            .await;
+
+        assert!(dialed.is_err());
+        assert!(net.state.bans.banned().await.contains(&node.addr));
+    }
+
+    /// Gossiped addresses whose service bits lack what the client needs are not learned.
+    #[test_case(false; "addr")]
+    #[test_case(true; "addrv2")]
+    #[tokio::test(start_paused = true)]
+    async fn gossip_without_required_services_is_not_learned(v2: bool) {
+        let net = PeerNetworkManager::new(&ClientConfig::regtest()).await;
+        let full = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let partial = ServiceFlags::NETWORK | ServiceFlags::BLOOM;
+        let serves = SocketAddr::from(([62, 60, 244, 174], 19999));
+        let lacks = SocketAddr::from(([46, 224, 41, 173], 19999));
+        let addr = if v2 {
+            NetworkMessage::AddrV2(vec![
+                AddrV2Message::new(serves, full),
+                AddrV2Message::new(lacks, partial),
+            ])
+        } else {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+            NetworkMessage::Addr(vec![
+                (now as u32, Address::new(&serves, full)),
+                (now as u32, Address::new(&lacks, partial)),
+            ])
+        };
+        net.state
+            .inbound
+            .send(PeerEvent::Message(conn(1, 0), addr.into()))
+            .expect("the pump is running");
+        settle().await;
+
+        let known = net.state.discoverer.lock().await.get(10).await;
+        let known: Vec<SocketAddr> = known.iter().map(|p| p.addr()).collect();
+        assert_eq!(known, [serves]);
     }
 
     #[test]
