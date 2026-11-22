@@ -1,12 +1,17 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use dashcore::bls_sig_utils::BlsScheme;
+use dashcore::constants::MAX_BLOCK_SIZE;
 use dashcore::sml::message_verification_error::MessageVerificationError;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::{InstantLock, QuorumSigningRequestId};
 
 use crate::error::{ValidationError, ValidationResult};
 use crate::validation::Validator;
+
+/// The most inputs a valid InstantLock can carry, as Dash Core caps them.
+/// Its transaction fits in a block, and every input takes at least 41 bytes.
+const MAX_INSTANT_LOCK_INPUTS: usize = MAX_BLOCK_SIZE as usize / 41;
 
 /// Rejects malformed InstantLocks. Needs no quorum data, so it runs before a
 /// lock is looked up, queued or cached.
@@ -34,6 +39,19 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
             ));
         }
 
+        if instant_lock.inputs.len() > MAX_INSTANT_LOCK_INPUTS {
+            return Err(ValidationError::InvalidInstantLock(format!(
+                "InstantLock has more than {MAX_INSTANT_LOCK_INPUTS} inputs"
+            )));
+        }
+
+        let mut seen = HashSet::with_capacity(instant_lock.inputs.len());
+        if let Some(idx) = instant_lock.inputs.iter().position(|input| !seen.insert(input)) {
+            return Err(ValidationError::InvalidInstantLock(format!(
+                "InstantLock input {idx} repeats an earlier input"
+            )));
+        }
+
         if let Some(idx) =
             instant_lock.inputs.iter().position(|input| input.txid == dashcore::Txid::all_zeros())
         {
@@ -51,8 +69,7 @@ impl Validator<&InstantLock> for InstantLockStructureValidator {
 /// [`InstantLockStructureValidator`] first. Never accept InstantLocks from the
 /// network without both.
 ///
-/// A lock whose signature does not verify, or whose quorum is not in the
-/// cycle, fails with [`ValidationError::InvalidSignature`].
+/// Missing quorum data defers validation. A signature that fails against a held quorum is invalid.
 pub struct InstantLockValidator<'a> {
     /// The rotated quorums of the lock's cycle, by quorum index.
     cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>,
@@ -60,11 +77,16 @@ pub struct InstantLockValidator<'a> {
 
 impl Validator<&InstantLock> for InstantLockValidator<'_> {
     fn validate(&self, instant_lock: &InstantLock) -> ValidationResult<()> {
-        self.validate_signature(instant_lock).map_err(|e| {
-            ValidationError::InvalidSignature(format!(
-                "InstantLock BLS signature verification failed: {e}"
-            ))
-        })
+        match self.validate_signature(instant_lock) {
+            Ok(()) => Ok(()),
+            Err(
+                MessageVerificationError::CycleHashNotPresent(_)
+                | MessageVerificationError::QuorumIndexNotFound(..),
+            ) => Err(ValidationError::MissingQuorumData),
+            Err(error) => Err(ValidationError::InvalidSignature(format!(
+                "InstantLock BLS signature verification failed: {error}"
+            ))),
+        }
     }
 }
 
@@ -137,27 +159,29 @@ impl<'a> InstantLockValidator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sml_engine::test_support::TestEngine;
-    use dashcore::consensus::deserialize;
+    use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
+    use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::sml::llmq_type::LLMQType;
-    use dashcore::QuorumHash;
+    use dashcore::{BlockHash, OutPoint, QuorumHash};
     use hex_conservative::DisplayHex;
     use test_case::test_case;
-
-    /// An IS lock of the mainnet fixture's cycle, signed by its quorum at index 23.
-    fn fixture_is_lock() -> InstantLock {
-        deserialize(&hex_conservative::decode_to_vec("01018d53e7997ead57409750942af0d5e0aafc06f852a9a52308f4781b6a8220298f00000000c6f9d8c63dd15937ea70aaddb7890daad42c91bf6818e2bf76d183d6f2d9215b4b5f84978fad9dde7ab52bdcc0674be891e9029cc1ef0cb01200000000000000a27c98836c4c04653ab81eb4e07ddfc2c8c2c1036b75247969c05a4f25451cd78913a971f1899d9f2bddec9cf8e0104004f72f20c2856453e5aa3bcd2a8200670ec28feda38f67cc400fc72ef1966956656ec0765478c9d16e9a9e470c07f9ed").unwrap()).unwrap()
-    }
 
     #[test]
     fn a_well_formed_lock_passes_the_structure_check() {
         assert!(InstantLockStructureValidator.validate(&InstantLock::dummy(0..3)).is_ok());
+        let mut largest = InstantLock::dummy(0..1);
+        let txid = largest.inputs[0].txid;
+        largest.inputs =
+            (0..MAX_INSTANT_LOCK_INPUTS as u32).map(|vout| OutPoint::new(txid, vout)).collect();
+        assert!(InstantLockStructureValidator.validate(&largest).is_ok());
     }
 
     #[test_case(|lock| lock.inputs.clear(), "at least one input"; "no inputs")]
     #[test_case(|lock| lock.signature = dashcore::bls_sig_utils::BLSSignature::from([0; 96]), "signature cannot be zero"; "zero signature")]
     #[test_case(|lock| lock.txid = dashcore::Txid::all_zeros(), "transaction ID cannot be zero"; "null txid")]
     #[test_case(|lock| lock.inputs[1].txid = dashcore::Txid::all_zeros(), "input 1 has null transaction ID"; "null input txid")]
+    #[test_case(|lock| lock.inputs = vec![lock.inputs[0]; MAX_INSTANT_LOCK_INPUTS + 1], "more than 48780 inputs"; "too many inputs")]
+    #[test_case(|lock| lock.inputs[2] = lock.inputs[0], "input 2 repeats an earlier input"; "repeated input")]
     fn a_malformed_lock_fails_the_structure_check(malform: fn(&mut InstantLock), reason: &str) {
         let mut is_lock = InstantLock::dummy(0..3);
         malform(&mut is_lock);
@@ -168,10 +192,55 @@ mod tests {
         }
     }
 
+    async fn partial_mainnet_cycle() -> (TestEngine, BlockHash) {
+        let (mut engine, qr_info) = TestEngine::mainnet_qr_info_fixture();
+        let cycle_hash = engine.block_hash_at(2518848).unwrap();
+        engine.feed_qr_info(qr_info).await.unwrap();
+        (engine, cycle_hash)
+    }
+
+    #[tokio::test]
+    async fn a_lock_without_its_quorum_is_not_refuted() {
+        let (engine, cycle_hash) = partial_mainnet_cycle().await;
+        let mut lock = mainnet_fixture_is_lock();
+        lock.cyclehash = cycle_hash;
+        lock.inputs[0].vout = 3;
+        let cycle = engine.rotated_quorums_of_cycle(&cycle_hash).unwrap();
+        assert!(!cycle.contains_key(&0));
+        let validator = InstantLockValidator::new(cycle);
+        assert!(matches!(
+            validator.signing_quorum(&lock),
+            Err(MessageVerificationError::QuorumIndexNotFound(0, hash)) if hash == cycle_hash
+        ));
+        assert!(matches!(validator.validate(&lock), Err(ValidationError::MissingQuorumData)));
+    }
+
+    #[test_case(false; "partial cycle")]
+    #[test_case(true; "complete cycle")]
+    #[tokio::test]
+    async fn a_held_quorum_refutes_a_signature(complete: bool) {
+        let mut lock = mainnet_fixture_is_lock();
+        let engine = if complete {
+            TestEngine::mainnet_fixture()
+        } else {
+            let (engine, cycle_hash) = partial_mainnet_cycle().await;
+            lock.cyclehash = cycle_hash;
+            engine
+        };
+        let cycle = engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap();
+        assert!(cycle.contains_key(&23));
+        let validator = InstantLockValidator::new(cycle);
+        if complete {
+            validator.validate(&lock).unwrap();
+        }
+        lock.signature = BLSSignature::from([1; 96]);
+        assert!(matches!(validator.validate(&lock), Err(ValidationError::InvalidSignature(_))));
+    }
+
     #[test]
     fn a_lock_verifies_against_the_quorum_its_request_id_selects() {
         let engine = TestEngine::mainnet_fixture();
-        let lock = fixture_is_lock();
+        let lock = mainnet_fixture_is_lock();
         let validator =
             InstantLockValidator::new(engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap());
 
@@ -199,15 +268,5 @@ mod tests {
             "6fcbf58004b118d865a448bf89d9299c64d4ecedd754dabec655090224de91cd"
         );
         validator.validate(&lock).expect("expected to verify is lock");
-
-        // Without its quorum index in the cycle, the lock cannot be resolved.
-        let mut quorums = engine.rotated_quorums_of_cycle(&lock.cyclehash).unwrap().clone();
-        quorums.remove(&23);
-        match InstantLockValidator::new(&quorums).signing_quorum(&lock) {
-            Err(MessageVerificationError::QuorumIndexNotFound(23, hash)) => {
-                assert_eq!(hash, lock.cyclehash)
-            }
-            other => panic!("expected QuorumIndexNotFound(23), got: {:?}", other.map(|_| ())),
-        }
     }
 }

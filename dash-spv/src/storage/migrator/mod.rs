@@ -3,6 +3,7 @@ mod v2;
 mod v3;
 mod v4;
 mod v5;
+mod v6;
 
 use std::io;
 use std::num::NonZeroUsize;
@@ -23,8 +24,9 @@ use v2::V2Migrator;
 use v3::V3Migrator;
 use v4::V4Migrator;
 use v5::V5Migrator;
+use v6::V6Migrator;
 
-pub const CURRENT_VERSION: u32 = 5;
+pub const CURRENT_VERSION: u32 = 6;
 
 #[async_trait]
 trait Migrator {
@@ -151,7 +153,7 @@ async fn migration_loop(storage_path: &Path) -> Result<(), MigratorError> {
         tracing::info!("Migrating storage from version {} to {}", version, version + 1);
 
         const MIGRATORS: &[&dyn Migrator; CURRENT_VERSION as usize] =
-            &[&V1Migrator, &V2Migrator, &V3Migrator, &V4Migrator, &V5Migrator];
+            &[&V1Migrator, &V2Migrator, &V3Migrator, &V4Migrator, &V5Migrator, &V6Migrator];
 
         MIGRATORS[version as usize].apply_migration(storage_path).await?;
 
