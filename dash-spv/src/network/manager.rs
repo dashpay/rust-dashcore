@@ -764,11 +764,13 @@ impl Supervisor {
     }
 
     async fn next_candidates(&self, want: usize) -> Vec<DisconnectedPeer> {
-        // Live before bans: a kick removes the peer before banning it, so one read sees it.
+        // Snapshot under the lock, so a ban landing during the wait for it is seen. Live
+        // before bans: a peer banned before it leaves the set is seen by one of the reads.
+        let mut discoverer = self.state.discoverer.lock().await;
         let mut skip: HashSet<SocketAddr> =
             self.state.connected.read().await.iter().map(|p| p.addr()).collect();
         skip.extend(self.state.bans.banned().await);
-        self.state.discoverer.lock().await.get(want, &skip).await
+        discoverer.get(want, &skip).await
     }
 
     /// Closes probed-but-unused peers and remembers them for the next round.
