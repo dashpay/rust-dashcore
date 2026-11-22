@@ -16,6 +16,8 @@ concurrency:
 jobs:
   publish:
     name: Tag and release
+    # Waits until a required reviewer of the `release` environment approves the run.
+    environment: release
     runs-on: ubuntu-latest
     permissions:
       contents: write
