@@ -1,0 +1,29 @@
+name: Pre-commit Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  pre-commit:
+    name: Nightly
+    uses: $/.github/workflows/pre-commit.yml
+    with:
+      os: '["macos-latest", "windows-latest"]'
+
+  report-failure:
+    needs: pre-commit
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      issues: write
+    steps:
+      - name: Create issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "${{ github.repository }}" \
+            --title "Nightly pre-commit failure $(date -u +%Y-%m-%d)" \
+            --body "The nightly pre-commit run failed on macOS or Windows. See: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label "bug"
