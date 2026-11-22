@@ -1797,6 +1797,33 @@ mod tests {
         assert!(net.state.bans.banned().await.contains(&node.addr));
     }
 
+    /// The supervisor's candidates leave out the live peers and the banned ones before
+    /// sampling, so the one address left is picked every round.
+    #[tokio::test(start_paused = true)]
+    async fn candidates_skip_live_and_banned_peers() {
+        let addrs: Vec<SocketAddr> = (1..=10).map(test_socket_address).collect();
+        let mut config = ClientConfig::regtest().with_restrict_to_configured_peers(true);
+        for addr in &addrs {
+            config.add_peer(*addr);
+        }
+        let net = PeerNetworkManager::new(&config).await;
+        let session = net.session.lock().await.clone();
+        let live = ConnectedPeer::for_test(conn(1, 0)).await;
+        let admitted = net.state.connected.admit(live, &session, net.state.max_peers, None).await;
+        assert!(matches!(admitted, Admission::Joined));
+        // Configured peers are only ever backed off after a failed dial.
+        for addr in &addrs[1..9] {
+            net.state.bans.ban(*addr, Ban::DialFailed).await;
+        }
+        let supervisor = Supervisor::new(net.state.clone(), CancellationToken::new());
+
+        for _ in 0..20 {
+            let picked: Vec<SocketAddr> =
+                supervisor.next_candidates(3).await.iter().map(|p| p.addr()).collect();
+            assert_eq!(picked, [addrs[9]]);
+        }
+    }
+
     /// Gossiped addresses whose service bits lack what the client needs are not learned.
     #[test_case(false; "addr")]
     #[test_case(true; "addrv2")]
