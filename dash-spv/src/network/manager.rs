@@ -1452,7 +1452,7 @@ mod tests {
     use crate::network::peer::build_version;
     use crate::test_utils::test_socket_address;
     use dashcore::consensus::encode::serialize;
-    use dashcore::network::address::Address;
+    use dashcore::network::address::{AddrV2Message, Address};
     use dashcore::network::message::{RawNetworkMessage, RawNetworkMessageCodec};
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
@@ -1799,17 +1799,27 @@ mod tests {
     }
 
     /// Gossiped addresses whose service bits lack what the client needs are not learned.
+    #[test_case(false; "addr")]
+    #[test_case(true; "addrv2")]
     #[tokio::test]
-    async fn gossip_without_required_services_is_not_learned() {
+    async fn gossip_without_required_services_is_not_learned(v2: bool) {
         let net = PeerNetworkManager::new(&ClientConfig::regtest()).await;
         let full = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let partial = ServiceFlags::NETWORK | ServiceFlags::BLOOM;
         let serves = SocketAddr::from(([62, 60, 244, 174], 19999));
         let lacks = SocketAddr::from(([46, 224, 41, 173], 19999));
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
-        let addr = NetworkMessage::Addr(vec![
-            (now as u32, Address::new(&serves, full)),
-            (now as u32, Address::new(&lacks, ServiceFlags::NETWORK | ServiceFlags::BLOOM)),
-        ]);
+        let addr = if v2 {
+            NetworkMessage::AddrV2(vec![
+                AddrV2Message::new(serves, full),
+                AddrV2Message::new(lacks, partial),
+            ])
+        } else {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+            NetworkMessage::Addr(vec![
+                (now as u32, Address::new(&serves, full)),
+                (now as u32, Address::new(&lacks, partial)),
+            ])
+        };
         net.state
             .inbound
             .send(PeerEvent::Message(conn(1, 0), addr.into()))
