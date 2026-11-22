@@ -43,9 +43,12 @@ pub struct PeerDiscoverer {
 
 impl PeerDiscoverer {
     pub fn new(config: &ClientConfig) -> PeerDiscoverer {
+        let mut fixed = config.peers.clone();
+        fixed.sort();
+        fixed.dedup();
         PeerDiscoverer {
             network: config.network,
-            fixed: config.peers.clone(),
+            fixed,
             restrict_to_configured_peers: config.restrict_to_configured_peers,
             discovered: None,
             learned: HashMap::new(),
@@ -113,7 +116,7 @@ impl PeerDiscoverer {
             best.into_iter().map(|(addr, _)| DisconnectedPeer::new(addr, self.network)).collect();
         let count = count - out.len();
 
-        let mut pool = if !self.fixed.is_empty() {
+        let pool = if !self.fixed.is_empty() {
             self.fixed.clone()
         } else if self.restrict_to_configured_peers {
             return Vec::new();
@@ -124,10 +127,10 @@ impl PeerDiscoverer {
             }
             let mut pool = self.discovered.clone().expect("just set");
             pool.extend(self.learned.keys());
+            pool.sort();
+            pool.dedup();
             pool
         };
-        pool.sort();
-        pool.dedup();
 
         let taken: HashSet<SocketAddr> = out.iter().map(|p| p.addr()).collect();
         let pool: Vec<SocketAddr> =
