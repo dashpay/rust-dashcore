@@ -1801,7 +1801,7 @@ mod tests {
     /// Gossiped addresses whose service bits lack what the client needs are not learned.
     #[test_case(false; "addr")]
     #[test_case(true; "addrv2")]
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn gossip_without_required_services_is_not_learned(v2: bool) {
         let net = PeerNetworkManager::new(&ClientConfig::regtest()).await;
         let full = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
@@ -1824,7 +1824,7 @@ mod tests {
             .inbound
             .send(PeerEvent::Message(conn(1, 0), addr.into()))
             .expect("the pump is running");
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        settle().await;
 
         let known = net.state.discoverer.lock().await.get(10).await;
         let known: Vec<SocketAddr> = known.iter().map(|p| p.addr()).collect();
