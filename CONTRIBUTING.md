@@ -65,7 +65,7 @@ The PR title becomes the changelog entry. See [AGENTS.md](AGENTS.md) for title l
 
 ## Preparing PRs
 
-Active development happens on the `dev` branch, and every PR targets it. The `master` branch tracks the latest release. Maintainers open each release as a PR into `master` and merge it with a merge commit. Once a maintainer approves it, the `Release` workflow tags `vX.Y.Z` and publishes the release. All PRs must compile without errors (verified by GitHub CI).
+Active development happens on the `dev` branch, and every PR except a release targets it. The `master` branch tracks the latest release. Maintainers open each release as a PR into `master` and merge it with a merge commit. Once a maintainer approves it, the `Release` workflow tags `vX.Y.Z` and publishes the release. All PRs must compile without errors (verified by GitHub CI).
 
 Prerequisites that a PR must satisfy for merging into the target branch:
 * each commit within a PR should compile and pass unit tests with no errors, with
