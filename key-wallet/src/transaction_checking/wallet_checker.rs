@@ -135,7 +135,6 @@ impl ManagedWalletInfo {
                         .updated_records
                         .retain(|r| r.txid != record.txid || r.account_type != record.account_type);
                     result.updated_records.push(record);
-                    result.state_modified = true;
                 }
             }
         }
@@ -174,8 +173,6 @@ impl ManagedWalletInfo {
             result.affected_accounts = rechecked.affected_accounts;
             result.total_received = rechecked.total_received;
             result.total_sent = rechecked.total_sent;
-            result.total_received_for_credit_conversion =
-                rechecked.total_received_for_credit_conversion;
         }
     }
 
@@ -290,7 +287,6 @@ impl ManagedWalletInfo {
         if !result.updated_records.is_empty() {
             result.is_relevant = true;
             result.is_new_transaction = false;
-            result.state_modified = true;
         }
     }
 }
@@ -340,8 +336,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
 
         if let Some(collateral) = locked {
             result.locked_outpoints.push(collateral);
-            // The lock set is persisted wallet state.
-            result.state_modified = true;
         }
         if flags_changed && update_balance {
             self.update_balance();
@@ -384,13 +378,7 @@ impl ManagedWalletInfo {
             None
         };
         if let Some(height) = block_height {
-            // The observed-spent map is persisted wallet state: growing it is a
-            // state modification in its own right, even when the tx is
-            // otherwise irrelevant — losing an entry across a restart would
-            // reopen #649 for that coin.
-            if self.record_observed_spends(tx, height) {
-                result.state_modified = true;
-            }
+            self.record_observed_spends(tx, height);
         }
 
         // A final arrival settles its inputs whether or not this transaction
@@ -403,9 +391,6 @@ impl ManagedWalletInfo {
         // unconditional.
         if update_state && (context.confirmed() || context.is_instant_send()) {
             let sweep = self.sweep_conflicts(tx, &context);
-            if !sweep.is_empty() {
-                result.state_modified = true;
-            }
             result.swept_transactions = sweep.txids;
             result.released_outpoints = sweep.released_outpoints;
         }
@@ -499,7 +484,6 @@ impl ManagedWalletInfo {
                 if update_balance {
                     self.update_balance();
                 }
-                result.state_modified = true;
                 return result;
             }
             // Only proceed if the new context is a block confirmation
@@ -537,10 +521,9 @@ impl ManagedWalletInfo {
                     &external_final_parents,
                 );
                 result.new_records.push(record);
-                result.state_modified = true;
             } else {
                 let existed_before = account.has_transaction(&tx.txid());
-                let confirmation = account.confirm_transaction_with_observed_spends(
+                let confirmed = account.confirm_transaction_with_observed_spends(
                     tx,
                     &account_match,
                     context.clone(),
@@ -549,9 +532,7 @@ impl ManagedWalletInfo {
                     &self.spent_claims,
                     &external_final_parents,
                 );
-                result.state_modified |= confirmation.coins_changed;
-                if let Some(record) = confirmation.record {
-                    result.state_modified = true;
+                if let Some(record) = confirmed {
                     if existed_before {
                         result.updated_records.push(record);
                     } else {
@@ -1745,7 +1726,6 @@ mod tests {
             .await;
         assert!(is_result.is_relevant);
         assert!(!is_result.is_new_transaction, "Account 0 still holds the record");
-        assert!(is_result.state_modified);
 
         // Account 0 was already known: classified as updated.
         assert_eq!(is_result.updated_records.len(), 1);
@@ -1855,10 +1835,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeSet::new(),
         );
-        assert!(
-            backfilled.record.is_some(),
-            "Should return Some when backfilling a missing record"
-        );
+        assert!(backfilled.is_some(), "Should return Some when backfilling a missing record");
 
         // Verify the transaction was recorded with block context
         let record = account.transactions().get(&txid).expect("Should have backfilled record");
@@ -1917,7 +1894,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeSet::new(),
         );
-        assert!(confirmed.record.is_some(), "Should return Some when confirming unconfirmed tx");
+        assert!(confirmed.is_some(), "Should return Some when confirming unconfirmed tx");
 
         let record = account.transactions().get(&txid).expect("Should have record");
         assert!(record.is_confirmed());
@@ -4119,7 +4096,6 @@ mod tests {
             )
             .await;
         assert!(!result.is_new_transaction);
-        assert!(result.state_modified);
         assert_eq!(result.new_records.len(), 1);
         assert_eq!(result.new_records[0].account_type, account_type);
         let corrected = result.updated_records.iter().find(|r| r.txid == spender.txid()).unwrap();
@@ -4435,7 +4411,6 @@ mod tests {
         let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == early.txid()).count();
         assert_eq!(credited, 2);
         assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
-        assert!(again.state_modified, "the credit is a state change in both configs");
         assert_eq!(again.updated_records.len(), 1, "the corrected record is re-emitted");
         let updated = &again.updated_records[0];
         assert_eq!(owned_output_count(updated), 2);
@@ -4447,7 +4422,6 @@ mod tests {
 
         let settled = ctx.check_transaction(&early, in_chain_locked_block(100, 1)).await;
         assert!(settled.updated_records.is_empty());
-        assert!(!settled.state_modified);
         assert_eq!(ctx.managed_wallet.balance.total(), 87_000);
     }
 
@@ -4559,7 +4533,6 @@ mod tests {
                 assert_eq!(again.updated_records[0].net_amount, 80_000, "{format}");
             } else {
                 assert!(again.updated_records.is_empty(), "{format}");
-                assert!(again.state_modified, "{format}");
             }
         }
     }

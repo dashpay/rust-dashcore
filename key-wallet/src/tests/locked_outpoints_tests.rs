@@ -236,7 +236,6 @@ async fn a_registration_in_a_block_locks_a_collateral_the_wallet_holds() {
     // No separate balance refresh: the check leaves the balance right.
     assert!(!registered.is_relevant, "nothing but the collateral ties it to this wallet");
     assert_eq!(registered.locked_outpoints, vec![collateral]);
-    assert!(registered.state_modified, "the lock set is persisted state");
     assert!(ctx.bip44_account().utxos[&collateral].is_locked);
     assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
     assert!(is_out_of_coins(send(&mut ctx, DASH, SelectionStrategy::LargestFirst)));
@@ -341,7 +340,6 @@ async fn an_unconfirmed_registration_leaves_the_collateral_it_names_unlocked(
     let result = ctx.check_transaction(&registration, sighting(&registration)).await;
 
     assert!(result.locked_outpoints.is_empty());
-    assert!(!result.state_modified, "nothing changed");
     assert!(!ctx.managed_wallet.is_outpoint_locked(&collateral));
     assert!(!ctx.bip44_account().utxos[&collateral].is_locked);
     assert_eq!(ctx.managed_wallet.balance().spendable(), COLLATERAL);
@@ -431,7 +429,6 @@ async fn a_rescan_of_the_registration_block_locks_an_unlocked_collateral_again()
         ctx.check_transaction(&registration(collateral, vec![], 0xEE), block(101)).await;
 
     assert_eq!(rescanned.locked_outpoints, vec![collateral]);
-    assert!(rescanned.state_modified, "the lock set is persisted state");
     assert_eq!(ctx.managed_wallet.balance().locked(), COLLATERAL);
 }
 

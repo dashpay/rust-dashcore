@@ -95,16 +95,6 @@ pub(crate) struct AbandonRemoval {
     pub records: usize,
 }
 
-/// What [`ManagedCoreFundsAccount::confirm_transaction`] changed.
-#[derive(Debug, Default)]
-pub(crate) struct Confirmation {
-    /// The record to report: newly recorded, or changed by this delivery.
-    pub record: Option<TransactionRecord>,
-    /// Whether the re-delivery of a finalized transaction credited or spent
-    /// a coin. It can do so with no record to report.
-    pub coins_changed: bool,
-}
-
 /// What [`ManagedCoreFundsAccount::drop_conflicted_transactions`] removed
 /// from one account.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -939,7 +929,7 @@ impl ManagedCoreFundsAccount {
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
         external_final_parents: &BTreeSet<OutPoint>,
-    ) -> Confirmation {
+    ) -> Option<TransactionRecord> {
         let txid = tx.txid();
 
         // Already finalized via a chainlock: no context update and no
@@ -968,10 +958,7 @@ impl ManagedCoreFundsAccount {
                 spent_claims,
                 external_final_parents,
             );
-            return Confirmation {
-                record: Some(record),
-                coins_changed: false,
-            };
+            return Some(record);
         }
 
         let mut changed = false;
@@ -1029,10 +1016,7 @@ impl ManagedCoreFundsAccount {
         if drop_now {
             self.keys.drop_finalized_transaction(&txid);
         }
-        Confirmation {
-            record: record_after,
-            coins_changed: false,
-        }
+        record_after
     }
 
     /// Credit the outputs of the finalized `tx` that pay addresses derived
@@ -1057,13 +1041,12 @@ impl ManagedCoreFundsAccount {
         transaction_type: TransactionType,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
-    ) -> Confirmation {
+    ) -> Option<TransactionRecord> {
         let txid = tx.txid();
         let network = self.keys.network();
-        let mut coins_changed = false;
         for input in &tx.input {
             self.spent_outpoints.insert(input.previous_output);
-            coins_changed |= self.utxos.remove(&input.previous_output).is_some();
+            self.utxos.remove(&input.previous_output);
         }
 
         let owned = TransactionRecord::owned_indices;
@@ -1137,21 +1120,18 @@ impl ManagedCoreFundsAccount {
                 .map(|d| d.index)
                 .collect()
         });
-        coins_changed |= self.take_in_mined_outputs(
+        self.take_in_mined_outputs(
             tx,
             context,
             owned_outputs.iter().filter(|d| new_outputs.contains(&d.index)),
             observed_spent,
             spent_claims,
         );
-        Confirmation {
-            record,
-            coins_changed,
-        }
+        record
     }
 
     /// Take in the coins of the mined `tx`'s `outputs`, owned outputs not
-    /// yet in `utxos`, and return whether one was credited. A coin a recorded
+    /// yet in `utxos`. A coin a recorded
     /// transaction already spends is held under that spend while it is
     /// unsettled, so a fork dropping the spend gives it back.
     pub(crate) fn take_in_mined_outputs<'a>(
@@ -1161,10 +1141,9 @@ impl ManagedCoreFundsAccount {
         outputs: impl IntoIterator<Item = &'a OutputDetail>,
         observed_spent: &BTreeMap<OutPoint, CoreBlockHeight>,
         spent_claims: &BTreeMap<OutPoint, Option<Txid>>,
-    ) -> bool {
+    ) {
         let txid = tx.txid();
         let height = context.block_info().map_or(0, |info| info.height);
-        let mut credited = false;
         for detail in outputs {
             let Some(address) = detail.address.clone() else {
                 continue;
@@ -1175,12 +1154,10 @@ impl ManagedCoreFundsAccount {
             }
             let output = tx.output[detail.index as usize].clone();
             let utxo = Utxo::new(outpoint, output, address, height, tx.is_coin_base());
-            credited |=
-                self.take_in_output(utxo, Vec::new(), observed_spent, Some(spent_claims), |utxo| {
-                    utxo.is_confirmed = true
-                });
+            self.take_in_output(utxo, Vec::new(), observed_spent, Some(spent_claims), |utxo| {
+                utxo.is_confirmed = true
+            });
         }
-        credited
     }
 
     /// Record a new transaction and update UTXOs for spendable account types.
