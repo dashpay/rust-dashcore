@@ -105,11 +105,13 @@ def bump(version: str, released: str) -> str | None:
 
     `dev` keeps its version when it is already past `released`, after a patch release.
     """
-    if parse_version(version) < parse_version(released):
+    if parse_version(version) > parse_version(released):
+        return None
+    if version != released and parse_version(released)[2] > 0:
         raise ReleaseError(
             f"dev is on {version}, below the released {released}: merge the open version bump PR into dev, then rerun this job"
         )
-    return next_version(released) if version == released else None
+    return next_version(released)
 
 
 def bump_pr(released: str, new_version: str | None, repository: str, sha: str) -> tuple[str, str, str]:

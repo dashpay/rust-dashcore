@@ -100,8 +100,9 @@ class CheckTests(unittest.TestCase):
 
 
 class BumpTests(unittest.TestCase):
-    def test_moves_dev_on_the_released_version_to_the_next_minor(self):
+    def test_moves_dev_on_or_below_the_released_version_to_the_next_minor(self):
         self.assertEqual(bump("0.46.0", "0.46.0"), "0.47.0")
+        self.assertEqual(bump("0.47.0", "1.0.0"), "1.1.0")
 
     def test_dev_past_a_patch_release_keeps_its_version(self):
         self.assertIsNone(bump("0.47.0", "0.46.1"))
