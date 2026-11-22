@@ -631,7 +631,13 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             let in_flights: Vec<u64> = g.iter().map(ConnectedPeer::in_flight_bytes).collect();
             let total_in_flight: u64 = in_flights.iter().sum();
-            let stalled = link_stalled.load(Ordering::Relaxed);
+            let silent = link_silent(g.iter().zip(&in_flights).map(|(p, &in_flight)| {
+                let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
+                (p.bytes_read().saturating_sub(flow.limiter.last_bytes), in_flight)
+            }));
+            // The timeout monitor sees a stall only after the request timeout, by which time
+            // the caps would have decayed, so a silent tick counts as one at once.
+            let stalled = silent || link_stalled.load(Ordering::Relaxed);
             for (p, &in_flight) in g.iter().zip(&in_flights) {
                 let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
                 p.set_cap(flow.tick(p.bytes_read(), in_flight, stalled));
@@ -930,6 +936,20 @@ struct SlowPeer {
     addr: SocketAddr,
     rate: u64,
     best: u64,
+}
+
+/// Whether our own link looks stalled this tick, given each peer's bytes delivered in it and
+/// its bytes in flight: at least two peers owe us bytes and none sent any. One silent peer
+/// can be slow or bursty, all of them at once points at our link.
+fn link_silent(peers: impl IntoIterator<Item = (u64, u64)>) -> bool {
+    let mut owing = 0;
+    for (delivered, in_flight) in peers {
+        if delivered > 0 {
+            return false;
+        }
+        owing += usize::from(in_flight > 0);
+    }
+    owing >= 2
 }
 
 /// The connected peer clearly underserving the rest, if any: serving bytes at a small
@@ -2156,10 +2176,10 @@ mod tests {
     }
 
     /// Peer 2 serves a fifth of peer 1's rate, then both go silent and the supervisor starts
-    /// `start_at` seconds in. The silence drags their serving rates until the judge holds them
-    /// as a possible stall of our link, which says nothing about the peers, so the rates then
-    /// stay put. While held, the supervisor must not swap peer 2 out, nor dial once the hold
-    /// began. When the peers deliver again, the held back swap goes ahead.
+    /// `start_at` seconds in. Both falling silent at once points at our link, which says
+    /// nothing about the peers, so their rates stay put from the first silent tick. While held,
+    /// the supervisor must not swap peer 2 out, nor dial once the hold began. When the peers
+    /// deliver again, the held back swap goes ahead.
     #[test_case(REQUEST_TIMEOUT.as_secs() + 2, 0; "a round during the stall dials nobody")]
     #[test_case(REQUEST_TIMEOUT.as_secs() - 2, 1; "a stall during the dial keeps the slow peer")]
     #[tokio::test(start_paused = true)]
@@ -2188,7 +2208,7 @@ mod tests {
         assert_eq!(replacement.closed.load(Ordering::SeqCst), dials, "probed and closed");
         assert!(net.state.bans.banned().await.is_empty(), "a handshake failed");
         let held = serving_rates(&net).await;
-        assert!(held.iter().zip(&measured).all(|(h, m)| h < m), "{held:?} vs {measured:?}");
+        assert!(held.iter().zip(&measured).all(|(h, m)| h >= m), "{held:?} vs {measured:?}");
         advance_silent(REQUEST_TIMEOUT.as_secs() * 3).await;
         assert_eq!(serving_rates(&net).await, held);
         assert!(!slow.is_closed(), "the slow peer was swapped out");
@@ -2374,6 +2394,16 @@ mod tests {
             cap = limiter.tick(bytes, cap, false);
             assert!(cap as f64 > earned as f64 * 0.9, "{cap} fell from {earned}");
         }
+    }
+
+    #[test_case(&[(0, 1), (0, 1)] => true; "every peer owing is silent")]
+    #[test_case(&[(0, 1), (0, 1), (0, 0)] => true; "an idle peer says nothing")]
+    #[test_case(&[(0, 1), (1, 1)] => false; "another peer delivers")]
+    #[test_case(&[(0, 1), (1, 0)] => false; "a peer owing nothing delivers")]
+    #[test_case(&[(0, 1)] => false; "a single silent peer can be slow or bursty")]
+    #[test_case(&[(0, 1), (0, 0)] => false; "only one peer owes anything")]
+    fn a_silent_tick_is_a_stall_of_our_link(peers: &[(u64, u64)]) -> bool {
+        link_silent(peers.iter().copied())
     }
 
     #[test]
