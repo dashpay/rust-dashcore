@@ -63,17 +63,18 @@ jobs:
         with:
           ref: dev
 
-      - name: Add the released changelog section
+      # `master` holds the latest release, so its changelog has every section `dev` has.
+      - name: Copy the released changelog and bump the version
         id: bump
         env:
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
           git fetch --depth=1 origin "$GITHUB_SHA"
-          git show FETCH_HEAD:CHANGELOG.md > "$RUNNER_TEMP/CHANGELOG.md"
-          python3 .github/scripts/release.py bump "$VERSION" --released-changelog "$RUNNER_TEMP/CHANGELOG.md"
+          git show FETCH_HEAD:CHANGELOG.md > CHANGELOG.md
+          python3 .github/scripts/release.py bump "$VERSION"
 
+      # Opens no PR when `dev` already matches.
       - name: Open the pull request
-        if: steps.bump.outputs.branch
         uses: peter-evans/create-pull-request@v8.1.2
         with:
           # PRs opened with `github.token` start no workflows. A token from the secret lets CI run.

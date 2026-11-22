@@ -23,7 +23,6 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 WORKSPACE_VERSION = re.compile(r'(^\[workspace\.package\]\n(?:(?!\[)[^\n]*\n)*?version = ")(\d+\.\d+\.\d+)(")', re.MULTILINE)
 SECTION_START = re.compile(r"^## ", re.MULTILINE)
 RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+")
-SECTION_VERSION = re.compile(r"## (\d+\.\d+\.\d+) - ")
 # A changelog entry runs from its bullet to the next bullet, heading or blank line.
 ENTRY_END = re.compile(r"\n(?=[ \t]*[-*] |#|\n)")
 # The `(#123)` or `(#123, #124)` that ends an entry, before its authors. Any other `#123` in an
@@ -56,19 +55,16 @@ def set_workspace_version(cargo_toml: str, version: str) -> str:
     return WORKSPACE_VERSION.sub(rf"\g<1>{version}\g<3>", cargo_toml, count=1)
 
 
-def split_sections(changelog: str) -> tuple[str, list[str]]:
-    """Returns the text before the first `## ` heading, and each `## ` section with its body."""
+def split_sections(changelog: str) -> list[str]:
+    """Returns each `## ` section with its body."""
     starts = [match.start() for match in SECTION_START.finditer(changelog)]
-    if not starts:
-        return changelog, []
-    ends = starts[1:] + [len(changelog)]
-    return changelog[: starts[0]], [changelog[start:end] for start, end in zip(starts, ends)]
+    return [changelog[start:end] for start, end in zip(starts, starts[1:] + [len(changelog)])]
 
 
 def release_section(changelog: str, version: str) -> str:
     """Returns the `## <version> - <date>` section, heading included."""
     heading = re.compile(rf"## {re.escape(version)} - (\S+)\n")
-    for section in split_sections(changelog)[1]:
+    for section in split_sections(changelog):
         match = heading.match(section)
         if not match:
             continue
@@ -100,68 +96,38 @@ def check(version: str, changelog: str, tags: list[str]):
         latest = ".".join(map(str, max(released)))
         raise ReleaseError(f"{version} is not above the latest release v{latest}")
     listed = own_prs(section)
-    earlier = own_prs("".join(other for other in split_sections(changelog)[1] if not other.startswith(f"## {version} ")))
+    earlier = own_prs("".join(other for other in split_sections(changelog) if not other.startswith(f"## {version} ")))
     shipped = listed & earlier
     if shipped:
         raise ReleaseError(f"the {version} section lists PRs an earlier release already lists: {format_prs(shipped)}")
 
 
-def bump(
-    cargo_toml: str, changelog: str, released_changelog: str, released: str
-) -> tuple[str, str, str | None, bool] | None:
-    """Returns `Cargo.toml` and `CHANGELOG.md` for `dev` after `released`, the new version, and
-    whether the released section was added.
+def bump(version: str, released: str) -> str | None:
+    """Returns the version `dev` moves to after `released`, or `None` when `dev` keeps `version`.
 
-    `dev` on `released` moves to the next minor version. `dev` already past it, after a patch
-    release, only gains the released section and keeps its version (`None`). Returns `None` when
-    `dev` needs neither.
+    `dev` keeps its version when it is already past `released`, after a patch release.
     """
-    header, sections = split_sections(changelog)
-    versions = [match.group(1) if (match := SECTION_VERSION.match(section)) else None for section in sections]
-    if None in versions:
-        raise ReleaseError("CHANGELOG.md on dev has a section that is not a release, move its entries into one")
-    version = workspace_version(cargo_toml)
     if parse_version(version) < parse_version(released):
         raise ReleaseError(
             f"dev is on {version}, below the released {released}: merge the open version bump PR into dev, then rerun this job"
         )
-    if released in versions and version != released:
-        return None
-    new_changelog = changelog
-    added = released not in versions
-    if added:
-        # Above the first older release, so a patch release lands below the newer sections.
-        position = next(
-            (index for index, other in enumerate(versions) if parse_version(other) < parse_version(released)),
-            len(sections),
-        )
-        sections.insert(position, release_section(released_changelog, released))
-        new_changelog = header + "\n\n".join(section.strip() for section in sections) + "\n"
-    if version != released:
-        return cargo_toml, new_changelog, None, added
-    new_version = next_version(released)
-    return set_workspace_version(cargo_toml, new_version), new_changelog, new_version, added
+    return next_version(released) if version == released else None
 
 
-def bump_pr(released: str, new_version: str | None, added: bool, repository: str, sha: str) -> tuple[str, str, str]:
+def bump_pr(released: str, new_version: str | None, repository: str, sha: str) -> tuple[str, str, str]:
     """Returns the branch, title and body of the PR that brings a release to `dev`."""
     release = f"[`v{released}`](https://github.com/{repository}/releases/tag/v{released})"
-    tag = f"The release is the tag `v{released}` on {sha}"
-    footer = "Opened by `.github/workflows/release.yml`."
+    footer = f"This PR goes into `dev` only. The release is the tag `v{released}` on {sha}.\n\nOpened by `.github/workflows/release.yml`."
     if new_version is None:
         body = (
-            f"Adds the `{released}` changelog section to `dev` now that {release} is released from `master`. "
-            f"`dev` is already past `{released}`, so its version stays.\n\n"
-            f"This PR goes into `dev` only. {tag}.\n\n{footer}"
+            f"Copies `CHANGELOG.md` from `master` now that {release} is released. "
+            f"`dev` is already past `{released}`, so its version stays.\n\n{footer}"
         )
         return f"chore/changelog-v{released}", f"chore: add the `{released}` changelog", body
-    changes = f"- Bump the workspace version to `{new_version}`.\n"
-    if added:
-        changes += f"- Add the `{released}` changelog section, identical to the one on `master`.\n"
     body = (
-        f"Starts the `{new_version}` development cycle on `dev` now that {release} is released from `master`.\n\n"
-        f"{changes}\n"
-        f"This PR goes into `dev` only. {tag}, where the workspace version stays `{released}`.\n\n{footer}"
+        f"Starts the `{new_version}` development cycle on `dev` now that {release} is released.\n\n"
+        f"- Bump the workspace version to `{new_version}`.\n"
+        f"- Copy `CHANGELOG.md` from `master`.\n\n{footer}"
     )
     return f"chore/bump-version-to-{new_version}", f"chore: bump version to `{new_version}`", body
 
@@ -194,7 +160,6 @@ def main():
     notes.add_argument("version")
     bump_parser = commands.add_parser("bump")
     bump_parser.add_argument("released")
-    bump_parser.add_argument("--released-changelog", type=Path, required=True)
     args = parser.parse_args()
 
     cargo_toml = CARGO_TOML.read_text()
@@ -209,17 +174,12 @@ def main():
         elif args.command == "notes":
             print(release_section(changelog, args.version), end="")
         elif args.command == "bump":
-            result = bump(cargo_toml, changelog, args.released_changelog.read_text(), args.released)
-            if result is None:
-                print(f"::notice::dev already has the {args.released} changelog section")
-                return
-            new_cargo_toml, new_changelog, new_version, added = result
-            CARGO_TOML.write_text(new_cargo_toml)
-            CHANGELOG.write_text(new_changelog)
+            new_version = bump(workspace_version(cargo_toml), args.released)
+            if new_version:
+                CARGO_TOML.write_text(set_workspace_version(cargo_toml, new_version))
             branch, title, body = bump_pr(
                 args.released,
                 new_version,
-                added,
                 os.environ.get("GITHUB_REPOSITORY", ""),
                 os.environ.get("GITHUB_SHA", ""),
             )
