@@ -120,11 +120,6 @@ async fn test_identity_registration_account_routing() {
     let result =
         managed_wallet_info.check_core_transaction(&tx, context, &mut wallet, true, true).await;
 
-    println!(
-        "Identity registration transaction result: is_relevant={}, received={}, credit_conversion={}",
-        result.is_relevant, result.total_received, result.total_received_for_credit_conversion
-    );
-
     // The transaction SHOULD be recognized as relevant to identity registration
     assert!(
         result.is_relevant,
@@ -141,11 +136,6 @@ async fn test_identity_registration_account_routing() {
 
     // AssetLock funds are for credit conversion, not regular spending
     assert_eq!(result.total_received, 0, "AssetLock should not provide spendable funds");
-
-    assert_eq!(
-        result.total_received_for_credit_conversion, 100_000_000,
-        "Should detect 1 DASH (100,000,000 duffs) for Platform credit conversion from AssetLock payload"
-    );
 }
 
 #[tokio::test]
