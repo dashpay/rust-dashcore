@@ -54,8 +54,16 @@ impl Bans {
         *until = (*until).max(now + duration);
     }
 
+    /// Resets the dial backoff of `addr` after a handshake. A ban recorded while the dial was
+    /// in flight stays: only an unbanned address is dialed, so a live expiry here is that ban.
     pub async fn dialed(&self, addr: SocketAddr) {
-        self.entries.lock().await.remove(&addr);
+        let mut entries = self.entries.lock().await;
+        match entries.get_mut(&addr) {
+            Some((fails, until)) if *until > Instant::now() => *fails = 0,
+            _ => {
+                entries.remove(&addr);
+            }
+        }
     }
 
     pub async fn banned(&self) -> HashSet<SocketAddr> {
@@ -85,5 +93,26 @@ mod tests {
         tokio::time::advance(MAX_DIAL_BACKOFF * 10).await;
 
         assert!(bans.banned().await.contains(&addr));
+    }
+
+    /// A handshake resets the dial backoff but keeps a ban recorded during the dial.
+    #[tokio::test(start_paused = true)]
+    async fn a_handshake_keeps_a_ban_from_during_the_dial() {
+        let bans = Bans::new([]);
+        let addr: SocketAddr = "46.224.41.173:19999".parse().expect("an address");
+        for _ in 0..6 {
+            bans.ban(addr, Ban::DialFailed).await;
+        }
+        tokio::time::advance(MAX_DIAL_BACKOFF).await;
+        assert!(bans.banned().await.is_empty());
+
+        bans.ban(addr, Ban::Misbehaved).await;
+        bans.dialed(addr).await;
+        assert!(bans.banned().await.contains(&addr), "the handshake erased the ban");
+
+        tokio::time::advance(MISBEHAVIOUR_BAN).await;
+        bans.ban(addr, Ban::DialFailed).await;
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert!(bans.banned().await.is_empty(), "the handshake kept the dial backoff");
     }
 }
