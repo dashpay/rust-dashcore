@@ -29,7 +29,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: Nightly pre-commit failure
         run: |
-          number=$(gh issue list --repo "$REPO" --state open --search "\"$TITLE\" in:title" \
+          number=$(gh issue list --repo "$REPO" --state open --author "github-actions[bot]" --search "\"$TITLE\" in:title" \
             --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
           if [ -n "$number" ]; then
             gh issue comment "$number" --repo "$REPO" --body "Failed again: $RUN_URL"
