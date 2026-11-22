@@ -1,15 +1,11 @@
 name: Release
 
-# Publishes the release a merged release PR puts on `master`: tags the workspace version and
-# creates the GitHub release from its changelog section. Then opens the PR that brings the
-# section to `dev`, with the next version unless `dev` is already past the release. Each step
-# skips what already exists, so a failed run can be rerun. A patch release needs the PR that
-# brought the previous release to `dev` merged first, or the `bump` job fails until it is.
+# Tags and publishes the release a merged release PR puts on `master`, then opens the PR that
+# brings it to `dev`. Each step skips what already exists, so a failed run can be rerun.
 
 on:
   push:
     branches: [master]
-  workflow_dispatch:
 
 permissions: {}
 
@@ -20,7 +16,6 @@ concurrency:
 jobs:
   publish:
     name: Tag and release
-    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
       contents: write
