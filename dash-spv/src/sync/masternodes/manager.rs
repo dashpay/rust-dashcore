@@ -117,10 +117,8 @@ pub(super) struct MasternodeSyncState {
     /// one-shot degraded-cycle log message. There is no hard cap. QRInfo is fired
     /// on every new block inside the mining window until one succeeds.
     pub(super) current_cycle_attempts: u8,
-    /// Highest tip height a QRInfo has already been fired for inside the current
-    /// cycle's mining window. Gates `next_pipeline_mode` so that unrelated ticks
-    /// (peer events, response receipt, timers) cannot re-fire QRInfo for the same
-    /// tip when validation fails deterministically. Reset on cycle rollover.
+    /// Last tip requested by QRInfo in the current cycle, including a post-window catch-up.
+    /// Prevents repeated requests for one tip and resets on cycle rollover.
     pub(super) last_window_qrinfo_tip: Option<u32>,
     /// Block hash of the most recently successfully processed QRInfo's `mn_list_diff_tip`.
     /// A response carrying the same tip hash as the last successful processing is dropped
@@ -360,13 +358,11 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
     ///   success path to fresh rotated quorum validation. The mining window is short
     ///   (e.g. 9 blocks for `llmq_60_75`), so the per-cycle request volume is
     ///   naturally bounded by the window length.
-    /// - Once `feed_qr_info` returns a result where every rotated quorum was freshly
-    ///   validated, `mark_cycle_validated` records the cycle done and every
+    /// - Once the engine holds every signing slot of the cycle,
+    ///   `mark_cycle_validated` records the cycle done and every
     ///   subsequent header in that cycle falls through to `Incremental`.
-    /// - After `cycle_start + dkgMiningWindowEnd` without a successful validation:
-    ///   the cycle is degraded (DKG likely failed or commits were never mined). Log
-    ///   the condition and fall through to `Incremental` for the remainder of the
-    ///   cycle.
+    /// - After the mining window, request QRInfo once if the last attempt preceded
+    ///   its end. Later tips use `Incremental` even if DKG left the cycle incomplete.
     ///
     /// This applies only to the incremental-update path while state is `Synced`.
     /// Initial sync and explicit retry paths (timeout) bypass it.
@@ -392,11 +388,8 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
         // Past mining window without success.
         if tip_height > window.mining_end {
-            // If we never attempted QRInfo for this cycle (all blocks arrived
-            // in a batch that overshot the window), fire ONE QRInfo now so the
-            // cycle's rotated quorums get stored. Without this, IS locks from
-            // the new cycle can't be verified.
-            if self.sync_state.current_cycle_attempts == 0 {
+            // A batch can skip later commitments even after an early-window request.
+            if self.sync_state.last_window_qrinfo_tip.is_none_or(|tip| tip < window.mining_end) {
                 tracing::info!(
                     cycle_height,
                     tip_height,
@@ -436,10 +429,7 @@ impl<H: BlockHeaderStorage> MasternodesManager<H> {
         }
     }
 
-    /// Mark a cycle boundary height as freshly validated, so `next_pipeline_mode`
-    /// will return `Incremental` for any future tip update in this cycle. Called
-    /// after a successful `feed_qr_info` where every rotated quorum was freshly
-    /// validated.
+    /// Records a complete signing cycle so later tips only refresh the masternode list.
     pub(super) fn mark_cycle_validated(&mut self, cycle_height: u32) {
         if self.sync_state.validated_cycle_heights.insert(cycle_height) {
             self.progress.add_validated_cycles(1);
@@ -923,6 +913,10 @@ mod tests {
         assert!(matches!(manager.next_pipeline_mode(61), PipelineMode::Incremental));
         assert_eq!(manager.sync_state.current_cycle_attempts, 2);
 
+        assert!(matches!(manager.next_pipeline_mode(70), PipelineMode::QuorumValidation { .. }));
+        manager.sync_state.record_qrinfo_attempt(70);
+        assert!(matches!(manager.next_pipeline_mode(71), PipelineMode::Incremental));
+
         // Cycle rollover to cycle 72 resets the per-tip gate, so the first tip
         // inside the new window picks QuorumValidation and `rotation_cycles`
         // bumps to 2.
@@ -970,6 +964,11 @@ mod tests {
         assert!(matches!(manager.next_pipeline_mode(96), PipelineMode::Incremental));
         assert_eq!(manager.sync_state.current_cycle_height, Some(96));
         assert_eq!(manager.progress.rotation_cycles(), 2);
+
+        let mut manager = create_test_manager_for(dashcore::Network::Regtest).await;
+        assert!(matches!(manager.next_pipeline_mode(68), PipelineMode::QuorumValidation { .. }));
+        manager.sync_state.record_qrinfo_attempt(68);
+        assert!(matches!(manager.next_pipeline_mode(70), PipelineMode::Incremental));
 
         // `mark_cycle_validated` short-circuits any subsequent tip in that
         // cycle to Incremental, even tips inside the mining window. Calling

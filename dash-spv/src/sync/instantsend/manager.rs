@@ -241,7 +241,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
     ///
     /// Called both when a `MasternodeStateUpdated` event arrives and from `tick`
     /// once the engine has advanced. Locks that verify are emitted as
-    /// `InstantLockReceived` events, and locks their complete cycle refutes are
+    /// `InstantLockReceived` events, and locks a held quorum of their cycle refutes are
     /// dropped. Locks that still can't be verified are re-queued until they
     /// either become verifiable or exceed [`PENDING_TTL`].
     ///
@@ -293,10 +293,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         self.pending_instantlocks
             .retain(|pending| !validated_txids.contains(&pending.instant_lock.txid));
         if rejected > 0 {
-            tracing::warn!(
-                "Dropped {} pending InstantLocks refuted by their complete cycle",
-                rejected
-            );
+            tracing::warn!("Dropped {} pending InstantLocks refuted by a held quorum", rejected);
             self.progress.add_invalid(rejected);
         }
         self.last_validated_engine_height = engine_height;
@@ -383,7 +380,6 @@ mod tests {
     use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
     use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress, SyncState};
     use crate::test_utils::MockHeaderStorage;
-    use crate::validation::MAX_INSTANT_LOCK_INPUTS;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::hash_types::CycleHash;
     use dashcore::sml::masternode_list::MasternodeList;
@@ -499,7 +495,6 @@ mod tests {
     #[test_case(|lock| lock.signature = BLSSignature::from([0; 96]); "zero signature")]
     #[test_case(|lock| lock.inputs.clear(); "no inputs")]
     #[test_case(|lock| lock.inputs[0].txid = Txid::all_zeros(); "null input txid")]
-    #[test_case(|lock| lock.inputs = (0..=MAX_INSTANT_LOCK_INPUTS as u32).map(|vout| OutPoint::new(lock.inputs[0].txid, vout)).collect(); "too many inputs")]
     #[tokio::test]
     async fn a_malformed_lock_of_an_unknown_cycle_is_dropped(malform: fn(&mut InstantLock)) {
         let mut manager = create_test_manager();
@@ -546,7 +541,7 @@ mod tests {
         assert!(manager.process_instantlock(&forged).await.unwrap().is_empty());
     }
 
-    /// A lock its complete, verified cycle refutes is rejected, not kept pending.
+    /// A lock a held quorum of its cycle refutes is rejected, not kept pending.
     #[tokio::test]
     async fn should_reject_lock_refuted_by_its_complete_cycle() {
         let engine = TestEngine::mainnet_fixture();
@@ -555,7 +550,8 @@ mod tests {
         let mut forged = genuine.clone();
         forged.signature = BLSSignature::from([1; 96]);
 
-        assert!(manager.process_instantlock(&forged).await.unwrap().is_empty());
+        let events = manager.process_instantlock(&forged).await.unwrap();
+        assert!(events.is_empty(), "a refuted lock emits no event: {events:?}");
         assert_eq!(manager.pending_count(), 0);
         assert!(manager.verified_txids.is_empty(), "a rejected lock is not cached");
         assert_eq!(manager.progress.invalid(), 1);

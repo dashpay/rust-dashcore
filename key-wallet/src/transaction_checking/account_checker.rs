@@ -53,16 +53,12 @@ pub struct TransactionCheckResult {
     pub is_relevant: bool,
     /// Set to false if the transaction was already stored and is being re-processed (e.g., during rescan)
     pub is_new_transaction: bool,
-    /// Whether any wallet state was modified during this check (new recording, confirmation, or IS-lock).
-    pub state_modified: bool,
     /// Accounts that the transaction affects
     pub affected_accounts: Vec<AccountMatch>,
     /// Total value received by our accounts
     pub total_received: u64,
     /// Total value sent from our accounts
     pub total_sent: u64,
-    /// Total value received for Platform credit conversion
-    pub total_received_for_credit_conversion: u64,
     /// Addresses derived as a side effect of gap-limit maintenance during
     /// this check. Each entry carries the originating account type, pool
     /// type, and full [`AddressInfo`] so downstream emitters can attribute
@@ -409,8 +405,6 @@ pub struct AccountMatch {
     pub received: u64,
     /// Value sent from this account
     pub sent: u64,
-    /// Value received for Platform credit conversion (e.g., from AssetLock credit_outputs)
-    pub received_for_credit_conversion: u64,
 }
 
 impl AccountMatch {
@@ -452,11 +446,9 @@ impl ManagedAccountCollection {
         let mut result = TransactionCheckResult {
             is_relevant: false,
             is_new_transaction: false,
-            state_modified: false,
             affected_accounts: Vec::new(),
             total_received: 0,
             total_sent: 0,
-            total_received_for_credit_conversion: 0,
             new_addresses: Vec::new(),
             new_records: Vec::new(),
             updated_records: Vec::new(),
@@ -471,8 +463,6 @@ impl ManagedAccountCollection {
                 result.is_relevant = true;
                 result.total_received += match_info.received;
                 result.total_sent += match_info.sent;
-                result.total_received_for_credit_conversion +=
-                    match_info.received_for_credit_conversion;
                 result.affected_accounts.push(match_info);
             }
         }
@@ -890,7 +880,6 @@ impl ManagedCoreFundsAccount {
                 account_type_match,
                 received,
                 sent,
-                received_for_credit_conversion: 0, // Regular transactions don't convert to credits
             })
         } else {
             None
@@ -909,7 +898,6 @@ impl ManagedCoreFundsAccount {
             tx.special_transaction_payload
         {
             let mut involved_addresses = Vec::new();
-            let mut received = 0u64;
 
             // Check credit_outputs in the AssetLock payload
             for credit_output in &payload.credit_outputs {
@@ -922,7 +910,6 @@ impl ManagedCoreFundsAccount {
                             involved_addresses.push(address_info.clone());
                         }
                     }
-                    received += credit_output.value;
                 }
             }
 
@@ -970,7 +957,6 @@ impl ManagedCoreFundsAccount {
                     account_type_match,
                     received: 0,
                     sent: 0,
-                    received_for_credit_conversion: received, // These funds are locked for Platform credits
                 });
             }
         }
@@ -1009,7 +995,6 @@ impl ManagedCoreFundsAccount {
                                 },
                                 received: 0,
                                 sent: 0,
-                                received_for_credit_conversion: 0,
                             });
                         }
                     }
@@ -1046,7 +1031,6 @@ impl ManagedCoreFundsAccount {
                                 },
                                 received: 0,
                                 sent: 0,
-                                received_for_credit_conversion: 0,
                             });
                         }
                     }
@@ -1089,7 +1073,6 @@ impl ManagedCoreFundsAccount {
                                 },
                                 received: 0,
                                 sent: 0,
-                                received_for_credit_conversion: 0,
                             });
                         }
                     }
@@ -1131,109 +1114,10 @@ impl ManagedCoreFundsAccount {
                                 },
                                 received: 0,
                                 sent: 0,
-                                received_for_credit_conversion: 0,
                             });
                         }
                     }
                 }
-            }
-        }
-
-        None
-    }
-
-    /// Check if an address belongs to any account in the collection
-    pub fn find_address_account(
-        collection: &ManagedAccountCollection,
-        address: &Address,
-    ) -> Option<(AccountTypeToCheck, Option<u32>)> {
-        // Check standard BIP44 accounts
-        for (index, account) in &collection.standard_bip44_accounts {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::StandardBIP44, Some(*index)));
-            }
-        }
-
-        // Check standard BIP32 accounts
-        for (index, account) in &collection.standard_bip32_accounts {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::StandardBIP32, Some(*index)));
-            }
-        }
-
-        // Check CoinJoin accounts
-        for (index, account) in &collection.coinjoin_accounts {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::CoinJoin, Some(*index)));
-            }
-        }
-
-        // Check identity registration
-        if let Some(account) = &collection.identity_registration {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::IdentityRegistration, None));
-            }
-        }
-
-        // Check identity top-up accounts
-        for (index, account) in &collection.identity_topup {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::IdentityTopUp, Some(*index)));
-            }
-        }
-
-        // Check identity top-up not bound
-        if let Some(account) = &collection.identity_topup_not_bound {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::IdentityTopUpNotBound, None));
-            }
-        }
-
-        // Check identity invitation
-        if let Some(account) = &collection.identity_invitation {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::IdentityInvitation, None));
-            }
-        }
-
-        // Check asset lock address top-up
-        if let Some(asset_lock_address_topup) = &collection.asset_lock_address_topup {
-            if asset_lock_address_topup.contains_address(address) {
-                return Some((AccountTypeToCheck::AssetLockAddressTopUp, None));
-            }
-        }
-
-        // Check asset lock shielded address top-up
-        if let Some(asset_lock_shielded_address_topup) =
-            &collection.asset_lock_shielded_address_topup
-        {
-            if asset_lock_shielded_address_topup.contains_address(address) {
-                return Some((AccountTypeToCheck::AssetLockShieldedAddressTopUp, None));
-            }
-        }
-
-        // Check provider accounts
-        if let Some(account) = &collection.provider_voting_keys {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::ProviderVotingKeys, None));
-            }
-        }
-
-        if let Some(account) = &collection.provider_owner_keys {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::ProviderOwnerKeys, None));
-            }
-        }
-
-        if let Some(account) = &collection.provider_operator_keys {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::ProviderOperatorKeys, None));
-            }
-        }
-
-        if let Some(account) = &collection.provider_platform_keys {
-            if account.contains_address(address) {
-                return Some((AccountTypeToCheck::ProviderPlatformKeys, None));
             }
         }
 
@@ -1353,7 +1237,6 @@ impl crate::managed_account::ManagedCoreKeysAccount {
             account_type_match,
             received,
             sent: 0,
-            received_for_credit_conversion: 0,
         })
     }
 
@@ -1369,7 +1252,6 @@ impl crate::managed_account::ManagedCoreKeysAccount {
             tx.special_transaction_payload
         {
             let mut involved_addresses = Vec::new();
-            let mut received = 0u64;
 
             for credit_output in &payload.credit_outputs {
                 if self.contains_script_pub_key(&credit_output.script_pubkey) {
@@ -1380,7 +1262,6 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                             involved_addresses.push(address_info.clone());
                         }
                     }
-                    received += credit_output.value;
                 }
             }
 
@@ -1424,7 +1305,6 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                     account_type_match,
                     received: 0,
                     sent: 0,
-                    received_for_credit_conversion: received,
                 });
             }
         }
@@ -1461,7 +1341,6 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                                 },
                                 received: 0,
                                 sent: 0,
-                                received_for_credit_conversion: 0,
                             });
                         }
                     }
@@ -1495,7 +1374,6 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                                 },
                                 received: 0,
                                 sent: 0,
-                                received_for_credit_conversion: 0,
                             });
                         }
                     }
@@ -1536,7 +1414,6 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                                 },
                                 received: 0,
                                 sent: 0,
-                                received_for_credit_conversion: 0,
                             });
                         }
                     }
@@ -1578,7 +1455,6 @@ impl crate::managed_account::ManagedCoreKeysAccount {
                                 },
                                 received: 0,
                                 sent: 0,
-                                received_for_credit_conversion: 0,
                             });
                         }
                     }

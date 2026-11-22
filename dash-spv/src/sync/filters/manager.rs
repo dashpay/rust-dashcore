@@ -14,7 +14,7 @@ use super::batch::FiltersBatch;
 use super::block_match_tracker::{BlockMatchTracker, BlockTrackResult};
 use super::pipeline::FiltersPipeline;
 use crate::error::SyncResult;
-use crate::network::NetworkManager;
+use crate::network::{NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, FilterHeaderStorage, FilterStorage};
 use crate::sync::filters::util::get_prev_filter_header;
 use crate::sync::{FiltersProgress, SyncEvent, SyncManager, SyncState};
@@ -251,11 +251,15 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
     /// rolled-back `committed_height`. Used by the wallet-rescan trigger in
     /// `tick` when a wallet's `synced_height` falls below the manager's
     /// current scan progress. Distinct from `on_disconnect`, which keeps
-    /// in-progress work intact.
-    pub(super) fn reset_for_rescan(&mut self) {
+    /// in-progress work intact. Releases the wanted batches, since their
+    /// replies will not reach a tracker to do it.
+    pub(super) async fn reset_for_rescan(&mut self, network: &Arc<dyn NetworkManager>) {
         self.active_batches.clear();
         self.tracker.clear();
         self.pending_batches.clear();
+        for stop_hash in self.filter_pipeline.wanted_stops() {
+            network.release_request(RequestKey::CFilters(*stop_hash)).await;
+        }
         self.filter_pipeline = FiltersPipeline::new();
     }
 
@@ -1357,7 +1361,7 @@ mod tests {
     use dashcore::network::message::NetworkMessage;
     use dashcore::network::message_filter::CFilter;
     use dashcore::{Address, Header};
-    use dashcore::{Block, Network, Transaction};
+    use dashcore::{Block, BlockHash, Network, Transaction};
     use key_wallet_manager::test_utils::{
         MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };
@@ -3155,7 +3159,8 @@ mod tests {
         manager.filter_pipeline.init(2000, 2999);
         assert!(!manager.is_idle());
 
-        manager.reset_for_rescan();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        manager.reset_for_rescan(&requests).await;
         assert!(manager.is_idle());
     }
 
@@ -4041,7 +4046,14 @@ mod tests {
         // MockWallet defaults to synced_height=0, so wallets_behind(100) = {MOCK_WALLET_ID}.
         assert_eq!(manager.wallet.read().await.synced_height(), 0);
 
-        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        let header_storage = manager.header_storage.clone();
+        manager
+            .filter_pipeline
+            .send_pending(&requests, &*header_storage.read().await)
+            .await
+            .unwrap();
 
         // Sanity: the pre-populated stale processed record is present, so
         // `track` for the same wallet would short-circuit to AlreadyProcessed.
@@ -4059,6 +4071,11 @@ mod tests {
         // Old in-flight state was cleared and a fresh batch was created at scan_start=0.
         assert!(!manager.active_batches.contains_key(&101));
         assert!(manager.active_batches.contains_key(&0));
+        assert_eq!(
+            mock.released_keys().await,
+            vec![RequestKey::CFilters(headers[200].block_hash())],
+            "a dropped batch must not leave its request registered"
+        );
         // The stale pre-populated record was wiped by `reset_for_rescan`:
         // a fresh `track` for the same wallet now returns `NewlyTracked`.
         assert!(matches!(
@@ -4215,9 +4232,46 @@ mod tests {
                 *headers[10].hash(),
                 &filter.content
             ),
-            Some(200_000),
+            Some(*headers[10].hash()),
             "a tick re-requested filters that were still in flight"
         );
+    }
+
+    /// The broker settles a request when the last filter of its reply arrives, so
+    /// only the manager can tell that the reply was not enough.
+    #[tokio::test]
+    async fn a_reply_that_leaves_its_batch_incomplete_is_requested_again() {
+        let mut manager = create_anchored_test_manager(200_000, 10).await;
+        manager.filter_storage.write().await.clear_filters().await.unwrap();
+        manager.progress.update_stored_height(0);
+
+        let mock = Arc::new(MockNetworkManager::new());
+        let requests: Arc<dyn NetworkManager> = mock.clone();
+        manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
+        assert_eq!(drain_getcfilters(&mock).await, 1);
+
+        let stop_hash =
+            *manager.header_storage.read().await.get_header(200_010).await.unwrap().unwrap().hash();
+        let last_filter = |block_hash| {
+            NetworkMessage::CFilter(CFilter {
+                filter_type: 0,
+                block_hash,
+                filter: vec![0; 4],
+            })
+            .into()
+        };
+        let peer: SocketAddr = "127.0.0.1:19999".parse().unwrap();
+
+        manager.handle_message(peer, last_filter(stop_hash), &requests).await.unwrap();
+        assert_eq!(mock.released_keys().await, vec![RequestKey::CFilters(stop_hash)]);
+
+        manager.tick(&requests).await.unwrap();
+        assert_eq!(drain_getcfilters(&mock).await, 1, "the incomplete batch must return");
+
+        // A stop hash that no stored header resolves cannot reach the pipeline.
+        let unknown = BlockHash::dummy(7);
+        assert!(manager.handle_message(peer, last_filter(unknown), &requests).await.is_err());
+        assert_eq!(mock.released_keys().await.last(), Some(&RequestKey::CFilters(unknown)));
     }
 
     /// A wallet added at runtime reports `synced_height = 0` regardless of what
@@ -4350,7 +4404,8 @@ mod tests {
 
         // Sanity check: the full-reset path (`reset_for_rescan`) does wipe
         // everything — the two paths must remain distinct.
-        manager.reset_for_rescan();
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        manager.reset_for_rescan(&requests).await;
         assert!(manager.active_batches.is_empty());
         assert!(manager.pending_batches.is_empty());
         assert!(manager.tracker.is_empty());

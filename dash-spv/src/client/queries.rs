@@ -48,7 +48,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
     /// Authenticates a lock using the client's synchronized quorum state.
     ///
     /// Returns `None` while the masternode engine or the lock's quorum is unavailable.
-    /// Malformed locks, and signatures a complete cycle of quorums refutes, return an
+    /// Malformed locks, and signatures a held quorum of their cycle refutes, return an
     /// error. No network request or wallet mutation is made; callers may retry after
     /// masternode sync advances.
     /// Fetch this evidence before acquiring wallet or persistence write locks.

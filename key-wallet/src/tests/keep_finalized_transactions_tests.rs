@@ -282,7 +282,6 @@ fn proreg_tx_and_owner_match() -> (Transaction, AccountMatch) {
         },
         received: 0,
         sent: 0,
-        received_for_credit_conversion: 0,
     };
     (tx, account_match)
 }
@@ -373,7 +372,6 @@ fn test_provider_payload_record_dropped_on_non_provider_account() {
         },
         received: 0,
         sent: 0,
-        received_for_credit_conversion: 0,
     };
     let txid = tx.txid();
 
