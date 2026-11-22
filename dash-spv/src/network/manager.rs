@@ -1251,6 +1251,7 @@ fn spawn_pump(
             peer_wake,
             max_peers,
             discoverer,
+            required_services,
             ..
         } = &*state;
         // Per-peer received-message counter to check load balance across peers.
@@ -1334,13 +1335,14 @@ fn spawn_pump(
                     }
                     // Addr gossip feeds the discovery pool, otherwise it stays frozen at the seeds and
                     // one DNS lookup. Both spellings: a peer that ignored `sendaddrv2` answers
-                    // `getaddr` with legacy `addr`.
+                    // `getaddr` with legacy `addr`. An address whose services lack what we need
+                    // would only be dropped after its handshake.
                     let gossiped: Option<Vec<(SocketAddr, u32)>> = match &*msg {
                         NetworkMessage::AddrV2(addrs) if addrs.len() <= MAX_ADDR_PER_MESSAGE => {
                             Some(
                                 addrs
                                     .iter()
-                                    .filter(|a| a.services.has(ServiceFlags::NETWORK))
+                                    .filter(|a| a.services.has(*required_services))
                                     .filter_map(|a| Some((a.socket_addr().ok()?, a.time)))
                                     .collect(),
                             )
@@ -1348,7 +1350,7 @@ fn spawn_pump(
                         NetworkMessage::Addr(addrs) if addrs.len() <= MAX_ADDR_PER_MESSAGE => Some(
                             addrs
                                 .iter()
-                                .filter(|(_, a)| a.services.has(ServiceFlags::NETWORK))
+                                .filter(|(_, a)| a.services.has(*required_services))
                                 .filter_map(|(time, a)| Some((a.socket_addr().ok()?, *time)))
                                 .collect(),
                         ),
@@ -1450,11 +1452,13 @@ mod tests {
     use crate::network::peer::build_version;
     use crate::test_utils::test_socket_address;
     use dashcore::consensus::encode::serialize;
+    use dashcore::network::address::Address;
     use dashcore::network::message::{RawNetworkMessage, RawNetworkMessageCodec};
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::{BlockHash, Network};
     use std::sync::atomic::AtomicUsize;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use test_case::test_case;
     use tokio::io::AsyncWriteExt;
     use tokio::net::tcp::OwnedWriteHalf;
@@ -1775,6 +1779,46 @@ mod tests {
         }
         let slow = underserving_peer(&peers)?;
         peers.iter().position(|p| p.addr() == slow.addr)
+    }
+
+    /// A node that cannot serve compact filters is banned on the spot, not only backed
+    /// off like a failed dial, so it does not take a candidate slot round after round.
+    #[tokio::test]
+    async fn a_node_lacking_required_services_is_banned() {
+        let node = HandshakingPeer::serving(ServiceFlags::NETWORK | ServiceFlags::BLOOM).await;
+        node.go.notify_one();
+        let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
+        let net = PeerNetworkManager::new(&config).await;
+
+        let dialed = DisconnectedPeer::new(node.addr, Network::Regtest)
+            .connect(net.state.clone(), CancellationToken::new())
+            .await;
+
+        assert!(dialed.is_err());
+        assert!(net.state.bans.banned().await.contains(&node.addr));
+    }
+
+    /// Gossiped addresses whose service bits lack what the client needs are not learned.
+    #[tokio::test]
+    async fn gossip_without_required_services_is_not_learned() {
+        let net = PeerNetworkManager::new(&ClientConfig::regtest()).await;
+        let full = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let serves = SocketAddr::from(([62, 60, 244, 174], 19999));
+        let lacks = SocketAddr::from(([46, 224, 41, 173], 19999));
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        let addr = NetworkMessage::Addr(vec![
+            (now as u32, Address::new(&serves, full)),
+            (now as u32, Address::new(&lacks, ServiceFlags::NETWORK | ServiceFlags::BLOOM)),
+        ]);
+        net.state
+            .inbound
+            .send(PeerEvent::Message(conn(1, 0), addr.into()))
+            .expect("the pump is running");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let known = net.state.discoverer.lock().await.get(10).await;
+        let known: Vec<SocketAddr> = known.iter().map(|p| p.addr()).collect();
+        assert_eq!(known, [serves]);
     }
 
     #[test]
