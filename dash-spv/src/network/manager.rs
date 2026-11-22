@@ -764,8 +764,10 @@ impl Supervisor {
     }
 
     async fn next_candidates(&self, want: usize) -> Vec<DisconnectedPeer> {
-        let mut skip = self.state.bans.banned().await;
-        skip.extend(self.state.connected.read().await.iter().map(|p| p.addr()));
+        // Live before bans: a kick removes the peer before banning it, so one read sees it.
+        let mut skip: HashSet<SocketAddr> =
+            self.state.connected.read().await.iter().map(|p| p.addr()).collect();
+        skip.extend(self.state.bans.banned().await);
         self.state.discoverer.lock().await.get(want, &skip).await
     }
 
