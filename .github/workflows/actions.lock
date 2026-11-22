@@ -24,6 +24,7 @@ workflows:
     '.github/workflows/pr-review-policy.yml': []
     '.github/workflows/pr-title.yml':
         - 'amannn/action-semantic-pull-request@v6.1.2'
+    '.github/workflows/pre-commit-nightly.yml': []
     '.github/workflows/pre-commit.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-python@v7.1.0'

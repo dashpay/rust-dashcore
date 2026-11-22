@@ -1,0 +1,39 @@
+name: Pre-commit Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    name: Nightly
+    uses: $/.github/workflows/pre-commit.yml
+    with:
+      os: '["macos-latest", "windows-latest"]'
+
+  report-failure:
+    needs: pre-commit
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Nightly pre-commit failure
+        run: |
+          number=$(gh issue list --repo "$REPO" --state open --author "github-actions[bot]" --search "\"$TITLE\" in:title" \
+            --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$REPO" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --repo "$REPO" --title "$TITLE" --label bug \
+              --body "The nightly pre-commit run failed on macOS or Windows. See: $RUN_URL"
+          fi
