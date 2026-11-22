@@ -1278,6 +1278,12 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 continue;
             }
 
+            // Ban before removing, so the supervisor's candidate read sees the peer in the set
+            // or banned. A peer kicked only because its hold ran out is likely a victim of our
+            // own link. If it is unreachable after all, redialing it fails and backs off.
+            for peer in culprits.iter().filter(|&&peer| Some(peer) != unwitnessed) {
+                bans.ban(peer.addr(), Ban::Kicked).await;
+            }
             // Drop culprits still in the set (some may already be gone) before their work
             // is re-queued, so the router cannot hand it back to them.
             let (kicked, remaining) = connected.remove(&culprits).await;
@@ -1288,11 +1294,6 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // going away), keeping keys as Queued so de-dup holds.
             let retried = broker.requeue_from(&culprits).await;
             let dropped = kicked.len();
-            // A peer kicked only because its hold ran out is likely a victim of our own link.
-            // If it is unreachable after all, redialing it fails and backs off.
-            for peer in culprits.iter().filter(|&&peer| Some(peer) != unwitnessed) {
-                bans.ban(peer.addr(), Ban::Kicked).await;
-            }
             // The set is now short: wake the supervisor, which otherwise idles.
             if dropped > 0 && remaining < *max_peers {
                 peer_wake.notify_one();
@@ -2552,9 +2553,9 @@ mod tests {
         assert_eq!(banned, stalls, "a peer kicked beside a witness is banned");
     }
 
-    /// A timeout kick re-queues the stalled peer's work only once that peer is closed and out
-    /// of the set, so no router snapshot can hand the work back. Holding the filter queue
-    /// stops the monitor at that point. The work then goes to the peer that stays.
+    /// A timeout kick re-queues the stalled peer's work only once that peer is banned, closed
+    /// and out of the set, so neither the router nor the supervisor picks it again. Holding
+    /// the filter queue stops the monitor at that point. The work then goes to the peer that stays.
     #[tokio::test(start_paused = true)]
     async fn a_kicked_peer_gets_none_of_its_requeued_work() {
         let net = broker().await;
@@ -2581,6 +2582,10 @@ mod tests {
         );
         assert_eq!(net.connected_count().await, 1, "re-queued before the kick");
         assert!(handles[0].is_closed(), "re-queued before the stalled peer was closed");
+        assert!(
+            net.state.bans.banned().await.contains(&conn(1, 0).addr()),
+            "the kicked peer left the set before it was banned"
+        );
         drop(held);
         for _ in 0..4 {
             task::yield_now().await;
