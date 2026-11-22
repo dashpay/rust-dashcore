@@ -92,7 +92,10 @@ class CheckTests(unittest.TestCase):
     def test_mentions_upstream_links_and_foreign_references_are_not_own_prs(self):
         changelog = CHANGELOG + "\n## 0.1.0 - 2020-01-01\n\n- Upstream [#2](https://github.com/rust-bitcoin/rust-bitcoin/pull/2)\n"
         changelog = changelog.replace("New thing (#2)", "New thing, see rust-bitcoin#1 and https://example.com/x#1 (#2)")
-        changelog = changelog.replace("- New thing", '- Revert "feat: x (#1)" (#7) @c\n- Follow-up fixes to #1 (#8) @c\n- New thing')
+        changelog = changelog.replace(
+            "- New thing",
+            '- Revert "feat: x (#1)" (#7) @c\n- Follow-up fixes to #1 (#8) @c\n- Wrapped, finishing the old thing (#1)\n  for more cases (#9) @c\n- New thing',
+        )
         check("0.46.0", changelog, ["v0.45.0"])
 
 

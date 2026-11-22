@@ -24,9 +24,11 @@ WORKSPACE_VERSION = re.compile(r'(^\[workspace\.package\]\n(?:(?!\[)[^\n]*\n)*?v
 SECTION_START = re.compile(r"^## ", re.MULTILINE)
 RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+")
 SECTION_VERSION = re.compile(r"## (\d+\.\d+\.\d+) - ")
+# A changelog entry runs from its bullet to the next bullet, heading or blank line.
+ENTRY_END = re.compile(r"\n(?=[ \t]*[-*] |#|\n)")
 # The `(#123)` or `(#123, #124)` that ends an entry, before its authors. Any other `#123` in an
 # entry mentions another PR, as a revert or a follow-up does.
-OWN_PRS = re.compile(r"\((#\d+(?:, #\d+)*)\)\.?(?: @[\w-]+)*[ \t]*$", re.MULTILINE)
+OWN_PRS = re.compile(r"\((#\d+(?:, #\d+)*)\)\.?(?: @[\w-]+)*\s*$")
 
 
 class ReleaseError(Exception):
@@ -80,7 +82,8 @@ def release_section(changelog: str, version: str) -> str:
 
 def own_prs(text: str) -> set[int]:
     """Returns the PRs the entries in `text` are for."""
-    return {int(number) for group in OWN_PRS.findall(text) for number in re.findall(r"\d+", group)}
+    groups = (match.group(1) for entry in ENTRY_END.split(text) if (match := OWN_PRS.search(entry)))
+    return {int(number) for group in groups for number in re.findall(r"\d+", group)}
 
 
 def format_prs(numbers: set[int]) -> str:
