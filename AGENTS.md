@@ -45,8 +45,9 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 ## Branches and releases
 
 - Branch from `dev` and open every PR against `dev`. This includes fixes and docs.
-- `master` holds the latest release. Don't target `master` or a release branch.
-- To release, maintainers cut a `chore/release-vX.Y.Z` branch from `dev`, or from `master` for a patch release, add the `## X.Y.Z - YYYY-MM-DD` changelog section and open a PR into `master` with the `release` label. `Release Check` requires that section and a version above the latest tag, and rejects a PR an earlier release already lists. Merge with a merge commit, not a squash. The `Release` workflow then waits for approval in the `release` environment, tags `vX.Y.Z`, publishes the GitHub release and opens the PR that brings the changelog to `dev`, bumping `dev` to the next minor version unless it is already past the release.
+- `master` holds the latest release and takes only release PRs. Don't target a release branch.
+- To release, maintainers cut a `chore/release-vX.Y.Z` branch from `dev`, add the `## X.Y.Z - YYYY-MM-DD` changelog section and open a PR into `master` with the `release` label. `Release Check` requires that section and a version above the latest tag, and rejects a PR an earlier release already lists. Merge with a merge commit, not a squash. The `Release` workflow then waits for approval in the `release` environment, tags `vX.Y.Z`, publishes the GitHub release and opens the PR that brings the changelog to `dev`, bumping `dev` to the next minor version unless it is already past the release.
+- A patch release is cut from `master` instead and also sets its version in `Cargo.toml`. Merge the previous release's `dev` PR first: while it is open, `dev` is behind the patch and the job that opens the `dev` PR fails until it is merged and the job is rerun.
 - `CHANGELOG.md` is written from the merged PR titles when a release is cut. Don't edit it in a feature PR: CI fails a PR that touches it unless it carries the `release` label.
 
 ## Rust code style
