@@ -1,7 +1,8 @@
 name: Release Check
 
 # Every PR into `master` is a release. Requires a dated changelog section for the workspace
-# version, a version above every released one, and no PR an earlier release lists.
+# version, a version above every released one, no PR an earlier release lists, and every
+# section `master` already has.
 
 on:
   pull_request:
@@ -20,7 +21,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
         with:
+          # The merge commit and its first parent, the target branch.
+          fetch-depth: 2
           persist-credentials: false
 
       - name: Check the release version and changelog
-        run: python3 .github/scripts/release.py check
+        run: |
+          git show HEAD^1:CHANGELOG.md > "$RUNNER_TEMP/base-changelog.md"
+          python3 .github/scripts/release.py check --base-changelog "$RUNNER_TEMP/base-changelog.md"

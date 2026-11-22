@@ -61,6 +61,11 @@ def split_sections(changelog: str) -> list[str]:
     return [changelog[start:end] for start, end in zip(starts, starts[1:] + [len(changelog)])]
 
 
+def section_heading(section: str) -> str:
+    """Returns the `## <version>` part of a section's heading, without its date."""
+    return section.split("\n", 1)[0].split(" - ", 1)[0]
+
+
 def release_section(changelog: str, version: str) -> str:
     """Returns the `## <version> - <date>` section, heading included."""
     heading = re.compile(rf"## {re.escape(version)} - (\S+)\n")
@@ -86,9 +91,13 @@ def format_prs(numbers: set[int]) -> str:
     return ", ".join(f"#{number}" for number in sorted(numbers))
 
 
-def check(version: str, changelog: str, tags: list[str]):
-    """Raises if `version` is not ready to be released."""
+def check(version: str, changelog: str, tags: list[str], base_changelog: str):
+    """Raises if `version` is not ready to be released into the branch with `base_changelog`."""
     section = release_section(changelog, version)
+    headings = {section_heading(other) for other in split_sections(changelog)}
+    dropped = [heading for other in split_sections(base_changelog) if (heading := section_heading(other)) not in headings]
+    if dropped:
+        raise ReleaseError(f"CHANGELOG.md drops sections the target branch has: {', '.join(dropped)}")
     released = [parse_version(tag[1:]) for tag in tags]
     if released and parse_version(version) <= max(released):
         latest = ".".join(map(str, max(released)))
@@ -155,7 +164,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("version")
-    commands.add_parser("check")
+    check_parser = commands.add_parser("check")
+    check_parser.add_argument("--base-changelog", type=Path, required=True)
     notes = commands.add_parser("notes")
     notes.add_argument("version")
     bump_parser = commands.add_parser("bump")
@@ -169,7 +179,7 @@ def main():
             print(workspace_version(cargo_toml))
         elif args.command == "check":
             version = workspace_version(cargo_toml)
-            check(version, changelog, remote_tags())
+            check(version, changelog, remote_tags(), args.base_changelog.read_text())
             print(f"{version} is ready to be released")
         elif args.command == "notes":
             print(release_section(changelog, args.version), end="")

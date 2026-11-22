@@ -30,6 +30,8 @@ CHANGELOG = (
     + "## 0.46.0 - 2026-11-13\n\n### Added\n\n- New thing (#2) @a\n\n"
     + "## 0.45.0 - 2026-10-21\n\n### Fixed\n\n- Old thing (#1) @b\n"
 )
+# `master` before the 0.46.0 release.
+BASE = HEADER + "## 0.45.0 - 2026-10-21\n\n### Fixed\n\n- Old thing (#1) @b\n"
 
 
 class VersionTests(unittest.TestCase):
@@ -72,22 +74,28 @@ class ReleaseSectionTests(unittest.TestCase):
 
 class CheckTests(unittest.TestCase):
     def test_accepts_a_new_version_above_every_tag(self):
-        check("0.46.0", CHANGELOG, ["v0.44.0", "v0.45.0"])
-        check("0.46.0", CHANGELOG, [])
+        check("0.46.0", CHANGELOG, ["v0.44.0", "v0.45.0"], BASE)
+        check("0.46.0", CHANGELOG, [], BASE)
 
     def test_rejects_a_released_or_lower_version(self):
         for tags in (["v0.45.0", "v0.46.0"], ["v0.47.0"], ["v0.46.1"]):
             with self.subTest(tags=tags), self.assertRaises(ReleaseError):
-                check("0.46.0", CHANGELOG, tags)
+                check("0.46.0", CHANGELOG, tags, BASE)
+
+    def test_rejects_a_changelog_that_drops_a_section_of_the_target_branch(self):
+        patched = BASE.replace("## 0.45.0", "## 0.45.1 - 2026-10-30\n\n- Patch (#5) @d\n\n## 0.45.0")
+        with self.assertRaises(ReleaseError):
+            check("0.46.0", CHANGELOG, ["v0.45.1"], patched)
+        check("0.46.0", CHANGELOG, ["v0.45.0"], BASE.replace("2026-10-21", "2026-10-22"))
 
     def test_rejects_a_version_without_a_section(self):
         with self.assertRaises(ReleaseError):
-            check("0.47.0", CHANGELOG, ["v0.46.0"])
+            check("0.47.0", CHANGELOG, ["v0.46.0"], BASE)
 
     def test_rejects_a_pr_an_earlier_release_lists(self):
         carried_over = CHANGELOG.replace("- New thing (#2) @a", "- New thing (#2) @a\n- Old thing (#1) @b")
         with self.assertRaises(ReleaseError):
-            check("0.46.0", carried_over, ["v0.45.0"])
+            check("0.46.0", carried_over, ["v0.45.0"], BASE)
 
     def test_mentions_upstream_links_and_foreign_references_are_not_own_prs(self):
         changelog = CHANGELOG + "\n## 0.1.0 - 2020-01-01\n\n- Upstream [#2](https://github.com/rust-bitcoin/rust-bitcoin/pull/2)\n"
@@ -96,7 +104,7 @@ class CheckTests(unittest.TestCase):
             "- New thing",
             '- Revert "feat: x (#1)" (#7) @c\n- Follow-up fixes to #1 (#8) @c\n- Wrapped, finishing the old thing (#1)\n  for more cases (#9) @c\n- New thing',
         )
-        check("0.46.0", changelog, ["v0.45.0"])
+        check("0.46.0", changelog, ["v0.45.0"], BASE)
 
 
 class BumpTests(unittest.TestCase):
