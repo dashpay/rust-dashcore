@@ -163,7 +163,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         // A rejected lock is dropped before it is queued or cached, so it can
         // neither stay pending nor shadow the genuine lock for its txid.
         let engine = self.engine.read().await;
-        let result = VerifiedInstantLock::verify(instantlock, Some(&*engine));
+        let result = VerifiedInstantLock::verify_well_formed(instantlock, &engine);
         drop(engine);
         let verified = match result {
             Ok(Some(verified)) => Some(verified),
@@ -271,9 +271,10 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 continue;
             }
 
-            let result = VerifiedInstantLock::verify(
+            // A queued lock passed the structure check before it was queued.
+            let result = VerifiedInstantLock::verify_well_formed(
                 &pending_lock.instant_lock,
-                Some(&*self.engine.read().await),
+                &*self.engine.read().await,
             );
             match result {
                 Ok(Some(instant_lock)) => {
@@ -520,6 +521,7 @@ mod tests {
     async fn should_accept_genuine_lock_after_forged_lock_for_same_txid() {
         let engine = TestEngine::mainnet_fixture();
         let mut manager = InstantSendManager::new(Arc::new(RwLock::new(engine)));
+        manager.set_state(SyncState::Syncing);
         let genuine = mainnet_fixture_is_lock();
         let mut forged = genuine.clone();
         forged.cyclehash = CycleHash::from_byte_array([7; 32]);
@@ -537,13 +539,14 @@ mod tests {
             "genuine lock was shadowed by the forged one: {events:?}"
         );
         assert_eq!(manager.pending_count(), 0, "the forged lock no longer awaits quorum data");
+        assert_eq!(manager.state(), SyncState::Synced);
         assert!(manager.process_instantlock(&genuine).await.unwrap().is_empty());
         assert!(manager.process_instantlock(&forged).await.unwrap().is_empty());
     }
 
     /// A lock a held quorum of its cycle refutes is rejected, not kept pending.
     #[tokio::test]
-    async fn should_reject_lock_refuted_by_its_complete_cycle() {
+    async fn should_reject_lock_refuted_by_a_held_quorum() {
         let engine = TestEngine::mainnet_fixture();
         let mut manager = InstantSendManager::new(Arc::new(RwLock::new(engine)));
         let genuine = mainnet_fixture_is_lock();
@@ -560,15 +563,26 @@ mod tests {
         assert!(matches!(events.as_slice(), [SyncEvent::InstantLockReceived { .. }]));
     }
 
-    /// Once one lock for a txid verifies, its other pending locks never emit.
+    /// Once one lock for a txid verifies, its other pending locks, queued before or
+    /// after it, never emit and leave no pending entry.
+    #[test_case(|lock| lock.cyclehash = CycleHash::from_byte_array([7; 32]), false; "unknown cycle queued first")]
+    #[test_case(|lock| lock.signature = BLSSignature::from([1; 96]), true; "forged lock queued after")]
     #[tokio::test]
-    async fn should_drop_other_pending_locks_of_a_txid_once_one_verifies() {
+    async fn should_drop_other_pending_locks_of_a_txid_once_one_verifies(
+        alter: fn(&mut InstantLock),
+        genuine_first: bool,
+    ) {
         let mut manager =
             InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(Network::Mainnet))));
         let genuine = mainnet_fixture_is_lock();
-        let mut other_cycle = genuine.clone();
-        other_cycle.cyclehash = CycleHash::from_byte_array([7; 32]);
-        for lock in [&other_cycle, &genuine] {
+        let mut other = genuine.clone();
+        alter(&mut other);
+        let queue = if genuine_first {
+            [&genuine, &other]
+        } else {
+            [&other, &genuine]
+        };
+        for lock in queue {
             let events = manager.process_instantlock(lock).await.unwrap();
             assert!(events.is_empty(), "a lock awaiting quorum data emits no event");
         }
@@ -583,13 +597,13 @@ mod tests {
         ));
         assert_eq!(manager.pending_count(), 0);
         assert!(manager.validate_pending(Instant::now()).await.unwrap().is_empty());
-        assert!(manager.process_instantlock(&other_cycle).await.unwrap().is_empty());
+        assert!(manager.process_instantlock(&other).await.unwrap().is_empty());
     }
 
-    /// A pending lock refuted once its cycle completes is dropped on replay without
+    /// A pending lock refuted once its quorum arrives is dropped on replay without
     /// an event, and the drained queue lets the manager leave `Syncing`.
     #[tokio::test]
-    async fn should_drop_pending_lock_refuted_once_its_cycle_completes() {
+    async fn should_drop_pending_lock_refuted_once_its_quorum_arrives() {
         let mut manager =
             InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(Network::Mainnet))));
         manager.set_state(SyncState::Syncing);
@@ -618,49 +632,6 @@ mod tests {
             [SyncEvent::InstantLockReceived { instant_lock }]
                 if instant_lock.instant_lock() == &genuine
         ));
-    }
-
-    /// A lock queued behind the one that verifies for its txid is superseded:
-    /// it emits nothing and leaves no pending entry.
-    #[tokio::test]
-    async fn should_supersede_locks_queued_after_the_verified_lock_of_a_txid() {
-        let mut manager =
-            InstantSendManager::new(Arc::new(RwLock::new(TestEngine::empty(Network::Mainnet))));
-        let genuine = mainnet_fixture_is_lock();
-        let mut forged = genuine.clone();
-        forged.signature = BLSSignature::from([1; 96]);
-        for lock in [&genuine, &forged] {
-            manager.process_instantlock(lock).await.unwrap();
-        }
-        assert_eq!(manager.pending_count(), 2);
-
-        *manager.engine.write().await = TestEngine::mainnet_fixture();
-        let events = manager.validate_pending(Instant::now()).await.unwrap();
-
-        assert!(matches!(
-            events.as_slice(),
-            [SyncEvent::InstantLockReceived { instant_lock }]
-                if instant_lock.instant_lock() == &genuine
-        ));
-        assert_eq!(manager.pending_count(), 0);
-        assert!(manager.process_instantlock(&forged).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn should_leave_syncing_when_a_direct_verification_drains_the_pending_queue() {
-        let mut manager =
-            InstantSendManager::new(Arc::new(RwLock::new(TestEngine::mainnet_fixture())));
-        manager.set_state(SyncState::Syncing);
-        let genuine = mainnet_fixture_is_lock();
-        let mut unknown_cycle = genuine.clone();
-        unknown_cycle.cyclehash = CycleHash::from_byte_array([7; 32]);
-        manager.process_instantlock(&unknown_cycle).await.unwrap();
-        assert_eq!(manager.pending_count(), 1);
-
-        manager.process_instantlock(&genuine).await.unwrap();
-
-        assert_eq!(manager.pending_count(), 0);
-        assert_eq!(manager.state(), SyncState::Synced);
     }
 
     /// Locks awaiting quorum data settle nothing, so they must not push a verified

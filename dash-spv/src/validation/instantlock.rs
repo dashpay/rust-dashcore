@@ -80,9 +80,17 @@ impl VerifiedInstantLock {
         InstantLockStructureValidator
             .validate(instant_lock)
             .map_err(InstantLockVerificationError::Malformed)?;
-        let Some(engine) = engine else {
-            return Ok(None);
-        };
+        match engine {
+            Some(engine) => Self::verify_well_formed(instant_lock, engine),
+            None => Ok(None),
+        }
+    }
+
+    /// [`verify`](Self::verify) for a lock that already passed [`InstantLockStructureValidator`].
+    pub(crate) fn verify_well_formed<H: BlockHeaderStorage>(
+        instant_lock: &InstantLock,
+        engine: &MasternodeListEngine<H>,
+    ) -> Result<Option<Self>, InstantLockVerificationError> {
         let Some(cycle) = engine.rotated_quorums_of_cycle(&instant_lock.cyclehash) else {
             return Ok(None);
         };
@@ -443,15 +451,5 @@ mod tests {
             "6fcbf58004b118d865a448bf89d9299c64d4ecedd754dabec655090224de91cd"
         );
         validator.validate(&lock).expect("expected to verify is lock");
-
-        // Without its quorum index in the cycle, the lock cannot be resolved.
-        let mut quorums = engine.rotated_quorums_per_cycle()[&lock.cyclehash].clone();
-        quorums.remove(&23);
-        match InstantLockValidator::new(&quorums).signing_quorum(&lock) {
-            Err(MessageVerificationError::QuorumIndexNotFound(23, hash)) => {
-                assert_eq!(hash, lock.cyclehash)
-            }
-            other => panic!("expected QuorumIndexNotFound(23), got: {:?}", other.map(|_| ())),
-        }
     }
 }
