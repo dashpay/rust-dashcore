@@ -907,7 +907,10 @@ impl Supervisor {
                 }
                 continue;
             };
-            self.state.bans.dialed(addr).await;
+            if self.state.bans.dialed(addr).await {
+                peer.close();
+                continue;
+            }
             let handle = peer.handle();
             self.state.connected.raise_best_tip(peer.version().start_height.max(0) as u32);
 
@@ -1708,6 +1711,8 @@ mod tests {
     struct HandshakingPeer {
         addr: SocketAddr,
         go: Arc<Notify>,
+        /// How many connections the client opened to it.
+        accepted: Arc<AtomicUsize>,
         /// How many of its connections the client closed.
         closed: Arc<AtomicUsize>,
         /// Whether it sends neither filters nor pongs for now.
@@ -1745,12 +1750,15 @@ mod tests {
             let peer = HandshakingPeer {
                 addr: listener.local_addr().expect("bound address"),
                 go: Arc::new(Notify::new()),
+                accepted: Arc::new(AtomicUsize::new(0)),
                 closed: Arc::new(AtomicUsize::new(0)),
                 silent: Arc::new(AtomicBool::new(false)),
             };
-            let (go, closed, silent) = (peer.go.clone(), peer.closed.clone(), peer.silent.clone());
+            let (go, accepted, closed, silent) =
+                (peer.go.clone(), peer.accepted.clone(), peer.closed.clone(), peer.silent.clone());
             tokio::spawn(async move {
                 while let Ok((stream, client)) = listener.accept().await {
+                    accepted.fetch_add(1, Ordering::SeqCst);
                     answer_handshake(stream, client, &go, &silent, services, pong_delay, rate)
                         .await;
                     closed.fetch_add(1, Ordering::SeqCst);
@@ -1817,6 +1825,16 @@ mod tests {
                 },
             }
         }
+    }
+
+    /// Whether `count` turns non-zero within ten seconds of real time.
+    async fn counted(count: &AtomicUsize) -> bool {
+        let wait = async {
+            while count.load(Ordering::SeqCst) == 0 {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        time::timeout(Duration::from_secs(10), wait).await.is_ok()
     }
 
     /// Lets the spawned tasks run what the last time advance made due.
@@ -1962,6 +1980,31 @@ mod tests {
                 supervisor.next_candidates(3, false).await.iter().map(|p| p.addr()).collect();
             assert_eq!(picked, [addrs[9]]);
         }
+    }
+
+    /// A peer banned while its dial is in flight is closed after the handshake instead of
+    /// joining the set.
+    #[tokio::test]
+    async fn a_peer_banned_during_its_dial_never_joins() {
+        let node = HandshakingPeer::listen().await;
+        let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
+        let net = PeerNetworkManager::new(&config).await;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let gossip = NetworkMessage::Addr(vec![(now as u32, Address::new(&node.addr, services))]);
+        net.state
+            .inbound
+            .send(PeerEvent::Message(conn(1, 0), gossip.into()))
+            .expect("the pump is running");
+        settle().await;
+
+        net.start().await;
+        assert!(counted(&node.accepted).await, "the supervisor never dialed the node");
+        net.ban_peer(node.addr).await;
+        node.go.notify_one();
+
+        assert!(counted(&node.closed).await, "the banned peer was kept");
+        assert_eq!(net.connected_count().await, 0);
     }
 
     /// Gossiped addresses whose service bits lack what the client needs are not learned.
