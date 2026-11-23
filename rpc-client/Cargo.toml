@@ -36,6 +36,9 @@ tokio = { workspace = true, optional = true, features = ["net", "process", "time
 test-utils = ["dep:dashcore", "dashcore/test-utils", "dep:tempfile", "dep:tokio"]
 
 [dev-dependencies]
+dashcore-rpc = { workspace = true, features = ["test-utils"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
 test-case = { workspace = true }
 
 [lints]

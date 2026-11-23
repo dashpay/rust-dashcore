@@ -482,7 +482,7 @@ impl DashCoreNode {
     }
 
     /// Get an RPC client targeting a specific wallet.
-    pub(super) fn rpc_client_for_wallet(&self, wallet_name: &str) -> Client {
+    pub fn rpc_client_for_wallet(&self, wallet_name: &str) -> Client {
         let url = format!("http://127.0.0.1:{}/wallet/{}", self.config.rpc_port, wallet_name);
         let cookie_path = self.config.datadir.join("regtest/.cookie");
         assert!(

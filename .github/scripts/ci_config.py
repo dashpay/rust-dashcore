@@ -20,7 +20,7 @@ from pathlib import Path
 import yaml
 
 # Groups whose tests run against a regtest dashd
-DASHD_GROUPS = {"spv"}
+DASHD_GROUPS = {"rpc", "spv"}
 ROOT = Path(__file__).resolve().parents[2]
 # Absolute, as cargo runs each crate's tests from that crate's directory
 DASHD_TEST_RETAIN_DIR = ROOT / "target" / "dashd-test-logs"
