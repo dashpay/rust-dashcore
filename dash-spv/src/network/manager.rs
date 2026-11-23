@@ -1827,14 +1827,28 @@ mod tests {
         }
     }
 
-    /// Whether `count` turns non-zero within ten seconds of real time.
+    /// Whether `count` turns non-zero while the tasks run. Yielding never moves a paused
+    /// clock, so a test decides when each timeout fires.
     async fn counted(count: &AtomicUsize) -> bool {
-        let wait = async {
-            while count.load(Ordering::SeqCst) == 0 {
-                time::sleep(Duration::from_millis(10)).await;
+        for _ in 0..100_000 {
+            if count.load(Ordering::SeqCst) > 0 {
+                return true;
             }
-        };
-        time::timeout(Duration::from_secs(10), wait).await.is_ok()
+            task::yield_now().await;
+        }
+        false
+    }
+
+    /// A network that knows only `nodes`, learned from gossip.
+    async fn gossiped(nodes: &[&HandshakingPeer]) -> PeerNetworkManager {
+        let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
+        let net = PeerNetworkManager::new(&config).await;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let addrs = nodes.iter().map(|node| (now as u32, Address::new(&node.addr, services)));
+        net.dispatch_local(NetworkMessage::Addr(addrs.collect())).await;
+        settle().await;
+        net
     }
 
     /// Lets the spawned tasks run what the last time advance made due.
@@ -1984,19 +1998,10 @@ mod tests {
 
     /// A peer banned while its dial is in flight is closed after the handshake instead of
     /// joining the set.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_peer_banned_during_its_dial_never_joins() {
         let node = HandshakingPeer::listen().await;
-        let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
-        let net = PeerNetworkManager::new(&config).await;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
-        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
-        let gossip = NetworkMessage::Addr(vec![(now as u32, Address::new(&node.addr, services))]);
-        net.state
-            .inbound
-            .send(PeerEvent::Message(conn(1, 0), gossip.into()))
-            .expect("the pump is running");
-        settle().await;
+        let net = gossiped(&[&node]).await;
 
         net.start().await;
         assert!(counted(&node.accepted).await, "the supervisor never dialed the node");
