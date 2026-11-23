@@ -22,3 +22,7 @@ verify:
 # Check that every crate is in a CI test group and the matrix matches
 verify-groups:
     {{ python }} .github/scripts/ci_config.py verify-groups
+
+# Test the release script
+test-release:
+    {{ python }} -m unittest discover -s .github/scripts -p 'test_*.py'
