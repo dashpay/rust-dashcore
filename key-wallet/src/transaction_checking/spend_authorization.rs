@@ -150,6 +150,19 @@ mod tests {
             .into_script();
     }
 
+    /// A spend of a P2PKH output, signed `SIGHASH_ALL` by its owner.
+    fn owner_signed_spend() -> (Transaction, TxOut) {
+        let owner = key(7);
+        let address = Address::p2pkh(&owner.public_key(), Network::Regtest);
+        let mut tx = Transaction::dummy(&address, 1..2, &[90_000]);
+        let prevout = TxOut {
+            value: 100_000,
+            script_pubkey: address.script_pubkey(),
+        };
+        sign_input(&mut tx, 0, &prevout, &owner, 1);
+        (tx, prevout)
+    }
+
     #[test_case(|_, _| {}, Ok(true); "owner signature")]
     #[test_case(|tx, prevout| {
         let mut owner = key(7);
@@ -206,35 +219,47 @@ mod tests {
         bytes.rotate_left(signature_push_len);
         script.push_opcode(OP_SWAP);
     }, Err(SpendAuthorizationError::UnsupportedScriptSig); "reordered owner pushes")]
-    #[test_case(|tx, _| {
-        let script = &mut tx.input[0].script_sig;
-        let bytes = script.as_mut_bytes();
-        bytes[usize::from(bytes[0])] = 0x81;
-    }, Ok(false); "unsigned change of sighash flag")]
-    #[test_case(|tx, prevout| sign_input(tx, 0, prevout, &key(7), 2),
-        Err(SpendAuthorizationError::UnsupportedSighash(2)); "owner signed NONE")]
-    #[test_case(|tx, prevout| sign_input(tx, 0, prevout, &key(7), 3),
-        Err(SpendAuthorizationError::UnsupportedSighash(3)); "owner signed SINGLE")]
     #[test_case(|tx, prevout| {
         tx.output.clear();
         sign_input(tx, 0, prevout, &key(7), 3);
         tx.lock_time += 1;
     }, Err(SpendAuthorizationError::UnsupportedSighash(3)); "SINGLE without matching output")]
+    #[test_case(|tx, prevout| {
+        tx.output.clear();
+        sign_input(tx, 0, prevout, &key(7), 0x83);
+        tx.lock_time += 1;
+    }, Err(SpendAuthorizationError::UnsupportedSighash(0x83)); "SINGLE ANYONECANPAY without matching output")]
     fn input_authorization(
         mutate: fn(&mut Transaction, &mut TxOut),
         expected: Result<bool, SpendAuthorizationError>,
     ) {
-        let owner = key(7);
-        let address = Address::p2pkh(&owner.public_key(), Network::Regtest);
-        let mut tx = Transaction::dummy(&address, 1..2, &[90_000]);
-        let mut prevout = TxOut {
-            value: 100_000,
-            script_pubkey: address.script_pubkey(),
-        };
-        sign_input(&mut tx, 0, &prevout, &owner, 1);
-
+        let (mut tx, mut prevout) = owner_signed_spend();
         mutate(&mut tx, &mut prevout);
         assert_eq!(verify_input_authorization(&tx, 0, &prevout), expected);
+    }
+
+    #[test_case(0)]
+    #[test_case(2)]
+    #[test_case(3)]
+    #[test_case(4)]
+    #[test_case(0x81)]
+    #[test_case(0x82)]
+    #[test_case(0x83)]
+    #[test_case(0xff)]
+    fn should_keep_every_non_all_sighash_mode_unsupported(mode: u8) {
+        let (signed, prevout) = owner_signed_spend();
+        let mut resigned = signed.clone();
+        sign_input(&mut resigned, 0, &prevout, &key(7), mode);
+        assert_eq!(
+            verify_input_authorization(&resigned, 0, &prevout),
+            Err(SpendAuthorizationError::UnsupportedSighash(mode))
+        );
+
+        // Changing only the flag invalidates the owner's signature instead.
+        let mut flagged = signed;
+        let bytes = flagged.input[0].script_sig.as_mut_bytes();
+        bytes[usize::from(bytes[0])] = mode;
+        assert_eq!(verify_input_authorization(&flagged, 0, &prevout), Ok(false));
     }
 
     #[test]
