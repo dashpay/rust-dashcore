@@ -338,11 +338,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         tip_height: u32,
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
+        // Read from storage: progress counts an empty store as height 0.
+        let (_, next_height) = self.resume_height().await?;
         self.progress.update_block_header_tip_height(tip_height);
         self.update_target_height(tip_height);
 
-        // Read from storage: progress counts an empty store as height 0.
-        let (_, next_height) = self.resume_height().await?;
         if next_height > self.progress.block_header_tip_height() {
             let mut events = Vec::new();
             if let Some(event) = self.try_complete_sync() {
