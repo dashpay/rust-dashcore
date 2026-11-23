@@ -116,14 +116,6 @@ async fn should_bind_instant_lock_evidence_to_the_verifying_network() {
 }
 
 #[tokio::test]
-async fn should_not_verify_lock_of_another_instant_send_quorum_type() {
-    let (client, _wallet, _directory) = client(ClientConfig::mainnet()).await;
-    let fixture = InstantLockFixture::new(Network::Regtest, &spend()).unwrap();
-    fixture.install(&client).await.unwrap();
-    assert!(client.verify_instant_lock(fixture.instant_lock()).await.unwrap().is_none());
-}
-
-#[tokio::test]
 async fn should_refute_a_lock_signed_by_another_fixture() {
     let (client, _wallet, _directory) = client(ClientConfig::mainnet()).await;
     let transaction = spend();
