@@ -5,6 +5,7 @@ use std::io;
 
 use dashcore::bls_sig_utils::{BLSPublicKey, BLSSignature, BlsError, BlsScheme, BlsSkBytes};
 use dashcore::hash_types::QuorumVVecHash;
+use dashcore::hashes::sha256d;
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::network::NetworkLLMQExt;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
@@ -31,6 +32,8 @@ pub enum InstantLockFixtureError {
 ///
 /// `install` makes every lock signed by that key verify on the client it is installed
 /// into, so use it only on throwaway test clients. It is never a network proof.
+/// The cycle hash derives from the key, so fixtures installed into one client keep
+/// their own cycles.
 #[derive(Debug, Clone)]
 pub struct InstantLockFixture {
     instant_lock: InstantLock,
@@ -49,16 +52,18 @@ impl InstantLockFixture {
         let key = secret.as_scheme(BlsScheme::Modern);
         let llmq_type = network.isd_llmq_type();
         let quorum_hash = QuorumHash::from_byte_array([9; 32]);
+        let quorum_public_key = BLSPublicKey::from(key.public_key()?);
         let mut instant_lock = InstantLock {
             version: 1,
             inputs: InstantLock::lock_inputs(transaction),
             txid: transaction.txid(),
-            cyclehash: BlockHash::from_byte_array([8; 32]),
+            cyclehash: BlockHash::from_byte_array(
+                sha256d::Hash::hash(quorum_public_key.as_bytes()).to_byte_array(),
+            ),
             signature: BLSSignature::from([0; 96]),
         };
         let digest = instant_lock.sign_id(llmq_type, quorum_hash, None)?;
         instant_lock.signature = key.sign_digest(digest.as_byte_array())?;
-        let quorum_public_key = BLSPublicKey::from(key.public_key()?);
         let quorums = (0..llmq_type.active_quorum_count() as u16)
             .map(|index| {
                 let entry = QuorumEntry {

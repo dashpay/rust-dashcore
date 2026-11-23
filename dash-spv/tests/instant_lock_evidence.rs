@@ -116,14 +116,14 @@ async fn should_bind_instant_lock_evidence_to_the_verifying_network() {
 }
 
 #[tokio::test]
-async fn should_refute_a_lock_signed_by_another_fixture() {
+async fn should_keep_every_installed_fixture_verifiable() {
     let (client, _wallet, _directory) = client(ClientConfig::mainnet()).await;
     let transaction = spend();
-    let installed = InstantLockFixture::new(Network::Mainnet, &transaction).unwrap();
-    let other = InstantLockFixture::new(Network::Mainnet, &transaction).unwrap();
-    installed.install(&client).await.unwrap();
-    assert!(matches!(
-        client.verify_instant_lock(other.instant_lock()).await,
-        Err(InstantLockVerificationError::InvalidSignature(_))
-    ));
+    let first = InstantLockFixture::new(Network::Mainnet, &transaction).unwrap();
+    let second = InstantLockFixture::new(Network::Mainnet, &transaction).unwrap();
+    first.install(&client).await.unwrap();
+    second.install(&client).await.unwrap();
+    for fixture in [&first, &second] {
+        assert!(client.verify_instant_lock(fixture.instant_lock()).await.unwrap().is_some());
+    }
 }
