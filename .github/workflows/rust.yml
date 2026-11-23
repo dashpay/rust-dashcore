@@ -37,6 +37,7 @@ jobs:
                 - 'Cargo.toml'
                 - 'rust-toolchain.toml'
                 - 'Justfile'
+                - 'mod.just'
                 - '.codecov.yml'
                 - '.github/ci-groups.yml'
                 - '.github/scripts/ci_config.py'
@@ -96,6 +97,8 @@ jobs:
               - '.github/ci-groups.yml'
               - '.github/scripts/ci_config.py'
               - '.github/workflows/rust.yml'
+              - 'mod.just'
+              - '.github/mod.just'
 
   security:
     name: Security Audit
