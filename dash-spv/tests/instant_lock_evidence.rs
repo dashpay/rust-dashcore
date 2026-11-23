@@ -126,4 +126,10 @@ async fn should_keep_every_installed_fixture_verifiable() {
     for fixture in [&first, &second] {
         assert!(client.verify_instant_lock(fixture.instant_lock()).await.unwrap().is_some());
     }
+    let mut crossed = second.instant_lock().clone();
+    crossed.cyclehash = first.instant_lock().cyclehash;
+    assert!(matches!(
+        client.verify_instant_lock(&crossed).await,
+        Err(InstantLockVerificationError::InvalidSignature(_))
+    ));
 }
