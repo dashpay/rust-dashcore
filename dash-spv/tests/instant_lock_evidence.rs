@@ -76,15 +76,21 @@ async fn should_defer_instant_lock_until_selected_quorum_arrives() {
     let mut missing = 0;
     for index in 0..2 {
         fixture.clone().without_quorum(index).install(&client).await.unwrap();
+        let forged = client.verify_instant_lock(&with_wrong_signature(lock)).await;
         match client.verify_instant_lock(lock).await {
-            Ok(None) => missing += 1,
-            Ok(Some(proof)) => assert!(proof.matches_transaction(Network::Regtest, &transaction)),
+            Ok(None) => {
+                missing += 1;
+                assert!(forged.unwrap().is_none(), "a lock without its quorum is deferred");
+            }
+            Ok(Some(proof)) => {
+                assert!(proof.matches_transaction(Network::Regtest, &transaction));
+                assert!(
+                    matches!(forged, Err(InstantLockVerificationError::InvalidSignature(_))),
+                    "the held quorum refutes a forged lock, even in a partial cycle"
+                );
+            }
             Err(error) => panic!("incomplete quorum data is unavailable, not invalid: {error}"),
         }
-        assert!(
-            client.verify_instant_lock(&with_wrong_signature(lock)).await.unwrap().is_none(),
-            "a partial cycle cannot refute a lock"
-        );
     }
     assert_eq!(missing, 1);
     fixture.clone().without_quorum(0).without_quorum(1).install(&client).await.unwrap();
