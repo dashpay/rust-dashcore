@@ -2620,9 +2620,7 @@ mod tests {
         advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs() + 2).await;
         assert_eq!(net.connected_count().await, 2, "the kicked peer left the set before its ban");
         drop(bans_held);
-        for _ in 0..4 {
-            task::yield_now().await;
-        }
+        settle().await;
         let key = RequestKey::CFilters(BlockHash::dummy(0));
         assert_eq!(
             net.state.broker.state_of(&key).await,
@@ -2632,9 +2630,7 @@ mod tests {
         assert_eq!(net.connected_count().await, 1, "re-queued before the kick");
         assert!(handles[0].is_closed(), "re-queued before the stalled peer was closed");
         drop(held);
-        for _ in 0..4 {
-            task::yield_now().await;
-        }
+        settle().await;
 
         assert_eq!(net.state.broker.state_of(&key).await, Some("on_wire"));
         assert_eq!(handles[0].in_flight_bytes(), 0, "work went back to the kicked peer");

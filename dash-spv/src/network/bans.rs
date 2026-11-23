@@ -84,10 +84,10 @@ impl Bans {
         false
     }
 
-    /// Locks the table until the returned guard drops, so a test can stop a task at its
+    /// Locks the table until the returned guard drops. A test holds it to stop a task at its
     /// next ban.
     #[cfg(test)]
-    pub async fn hold(&self) -> impl Sized + '_ {
+    pub(super) async fn hold(&self) -> impl Sized + '_ {
         self.entries.lock().await
     }
 
