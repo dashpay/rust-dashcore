@@ -18,7 +18,7 @@ Workspace members, as listed in the root `Cargo.toml` (package name in brackets 
 - `masternode-seeds-fetcher/`: the tool that fetches those seed lists.
 - `dash-spv-bench/`: sync benchmark harness for `dash-spv`.
 - `git-state/`: proc macros exposing the git state at compile time.
-- `rpc-client/` (`dashcore-rpc`), `rpc-json/` (`dashcore-rpc-json`), `rpc-integration-test/`: Dash Core JSON-RPC client, its types and its tests.
+- `rpc-client/` (`dashcore-rpc`) and `rpc-json/` (`dashcore-rpc-json`): Dash Core JSON-RPC client and its types.
 - `fuzz/` (`dash-fuzz`): honggfuzz targets.
 
 Outside the workspace, `contrib/` holds scripts.

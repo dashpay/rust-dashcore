@@ -103,17 +103,3 @@ jobs:
     uses: $/.github/workflows/build-and-test.yml
     with:
       os: windows-latest
-
-  integrations_tests:
-    name: Integration Tests
-    if: ${{ false }} # Temporarily disabled
-    runs-on: ubuntu-22.04-arm
-    strategy:
-      matrix:
-        dashversion: ["22.1.3"]
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - name: Running test script
-        env:
-          DASHVERSION: ${{ matrix.dashversion }}
-        run: ./contrib/test-rpc.sh
