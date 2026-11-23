@@ -907,10 +907,7 @@ impl Supervisor {
                 }
                 continue;
             };
-            if self.state.bans.dialed(addr).await {
-                peer.close();
-                continue;
-            }
+            self.state.bans.dialed(addr).await;
             let handle = peer.handle();
             self.state.connected.raise_best_tip(peer.version().start_height.max(0) as u32);
 
@@ -937,7 +934,7 @@ impl Supervisor {
             match self
                 .state
                 .connected
-                .admit(peer, &self.shutdown, self.state.max_peers, target)
+                .admit(peer, &self.shutdown, &self.state.bans, self.state.max_peers, target)
                 .await
             {
                 Admission::Joined => accepted += 1,
@@ -960,7 +957,7 @@ impl Supervisor {
                     leftover.push(peer);
                     continue;
                 }
-                Admission::Stopped(peer) => {
+                Admission::Stopped(peer) | Admission::Banned(peer) => {
                     peer.close();
                     continue;
                 }
@@ -968,7 +965,8 @@ impl Supervisor {
             let _ = handle.send(&NetworkMessage::GetAddr).await;
         }
 
-        // A ban can land while the round waits on slower dials.
+        // Leave out leftovers banned while the round waited on slower dials, so the last
+        // resort can take another.
         let mut unbanned = Vec::with_capacity(leftover.len());
         for peer in leftover {
             if self.state.bans.is_banned(peer.addr()).await {
@@ -987,7 +985,11 @@ impl Supervisor {
             let peer = leftover.remove(0);
             let (addr, lag) = (peer.addr(), peer.lag_ms());
             let handle = peer.handle();
-            match self.state.connected.admit(peer, &self.shutdown, self.state.max_peers, None).await
+            match self
+                .state
+                .connected
+                .admit(peer, &self.shutdown, &self.state.bans, self.state.max_peers, None)
+                .await
             {
                 Admission::Joined => {
                     tracing::warn!(
@@ -1001,7 +1003,9 @@ impl Supervisor {
                 }
                 Admission::Full(peer) => leftover.push(peer),
                 // Nothing is swapped out without a slow peer to name.
-                Admission::Swapped(peer) | Admission::Stopped(peer) => peer.close(),
+                Admission::Swapped(peer) | Admission::Stopped(peer) | Admission::Banned(peer) => {
+                    peer.close()
+                }
             }
         }
 
@@ -1545,13 +1549,14 @@ mod tests {
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::{BlockHash, Network};
-    use futures::FutureExt;
+    use futures::{poll, FutureExt};
     use std::sync::atomic::AtomicUsize;
     use std::time::{SystemTime, UNIX_EPOCH};
     use test_case::test_case;
     use tokio::io::AsyncWriteExt;
     use tokio::net::tcp::OwnedWriteHalf;
     use tokio::net::{TcpListener, TcpStream};
+    use tokio::pin;
     use tokio::task;
     use tokio::time;
     use tokio_util::codec::FramedRead;
@@ -1674,8 +1679,11 @@ mod tests {
             let id = conn(n as u8 + 1, 0);
             let (peer, far) = ConnectedPeer::for_test_reading(id, net.state.clone()).await;
             let handle = peer.handle();
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
             feeders.push(Feeder {
                 id,
@@ -2002,7 +2010,11 @@ mod tests {
         let net = PeerNetworkManager::new(&config).await;
         let session = net.session.lock().await.clone();
         let live = ConnectedPeer::for_test(conn(1, 0)).await;
-        let admitted = net.state.connected.admit(live, &session, net.state.max_peers, None).await;
+        let admitted = net
+            .state
+            .connected
+            .admit(live, &session, &net.state.bans, net.state.max_peers, None)
+            .await;
         assert!(matches!(admitted, Admission::Joined));
         // Configured peers are only ever backed off after a failed dial.
         for addr in &addrs[1..9] {
@@ -2028,6 +2040,31 @@ mod tests {
         assert!(counted(&node.accepted).await, "the supervisor never dialed the node");
         net.ban_peer(node.addr).await;
         node.go.notify_one();
+
+        assert!(counted(&node.closed).await, "the banned peer was kept");
+        assert_eq!(net.connected_count().await, 0);
+    }
+
+    /// A ban recorded after the round's last ban check, while `ban_peer` finds the set
+    /// without the peer, still keeps the peer out.
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_banned_just_before_its_admission_never_joins() {
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let node = HandshakingPeer::serving(services, false).await;
+        let net = gossiped(&[&node]).await;
+
+        net.start().await;
+        node.go.notify_one();
+        assert!(counted(&node.pinged).await, "the handshake never finished");
+        // Holding the set stops the round at its last resort, past the leftover ban check.
+        let held = net.state.connected.read().await;
+        time::advance(Duration::from_secs(5)).await;
+        settle().await;
+        let ban = net.ban_peer(node.addr);
+        pin!(ban);
+        assert!(poll!(&mut ban).is_pending(), "the ban did not wait for the set");
+        drop(held);
+        ban.await;
 
         assert!(counted(&node.closed).await, "the banned peer was kept");
         assert_eq!(net.connected_count().await, 0);
@@ -2490,8 +2527,11 @@ mod tests {
         let peers: Vec<PeerId> = (1..=joined).map(|n| conn(n, 0)).collect();
         for (start, id) in peers.iter().enumerate() {
             let peer = ConnectedPeer::for_test(*id).await;
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
             net.state.broker.mark_on_wire(&get_cfilters(start as u32), *id).await;
         }
@@ -2518,7 +2558,10 @@ mod tests {
                 // A handshake that completed while `stop` ran.
                 let peer = ConnectedPeer::for_test(conn(9, 0)).await;
                 late = Some(
-                    net.state.connected.admit(peer, &session, net.state.max_peers, None).await,
+                    net.state
+                        .connected
+                        .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                        .await,
                 );
             }
         }
@@ -2594,8 +2637,11 @@ mod tests {
         for n in 1..=2 {
             let (peer, far) = ConnectedPeer::for_test_reading(conn(n, 0), net.state.clone()).await;
             far_ends.push(far);
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
         }
         net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
@@ -2661,8 +2707,11 @@ mod tests {
             ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
         let handles = [stalled.handle(), witness.handle()];
         for peer in [stalled, witness] {
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
         }
         net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
@@ -2699,8 +2748,11 @@ mod tests {
         let handles = [peers[0].handle(), peers[1].handle()];
         let writes = handles[1].hold_writes().await;
         for peer in peers {
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
             if handles[0].in_flight_bytes() == 0 {
                 net.state.broker.enqueue(0, get_cfilters(0)).await;
@@ -2736,8 +2788,11 @@ mod tests {
         let (witness, mut witness_far) =
             ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
         for peer in [stalled, witness] {
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
         }
         let (delivered, owed) = (get_cfilters(0), get_cfilters(1000));
@@ -2775,8 +2830,11 @@ mod tests {
         let (witness, mut witness_far) =
             ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
         for peer in [peer, witness] {
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
         }
 

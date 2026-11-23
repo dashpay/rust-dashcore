@@ -67,21 +67,20 @@ impl Bans {
         *until = (*until).max(now + duration);
     }
 
-    /// Clears the dial backoff of `addr` after a handshake and returns whether `addr` is
-    /// still banned. A ban recorded while the dial was in flight survives the handshake.
-    pub async fn dialed(&self, addr: SocketAddr) -> bool {
+    /// Clears the dial backoff of `addr` after a handshake. A ban recorded while the dial was
+    /// in flight survives the handshake.
+    pub async fn dialed(&self, addr: SocketAddr) {
         let mut entries = self.entries.lock().await;
-        let Some(entry) = entries.get_mut(&addr) else {
-            return false;
-        };
         let now = Instant::now();
-        if entry.banned_until > now {
-            entry.fails = 0;
-            entry.backoff_until = now;
-            return true;
+        match entries.get_mut(&addr) {
+            Some(entry) if entry.banned_until > now => {
+                entry.fails = 0;
+                entry.backoff_until = now;
+            }
+            _ => {
+                entries.remove(&addr);
+            }
         }
-        entries.remove(&addr);
-        false
     }
 
     /// Whether `addr` is banned, leaving out its dial backoff.
@@ -135,14 +134,14 @@ mod tests {
         for _ in 0..6 {
             bans.ban(addr, Ban::DialFailed).await;
         }
-        assert!(!bans.dialed(addr).await);
+        bans.dialed(addr).await;
         assert!(bans.banned().await.is_empty(), "the handshake kept a live dial backoff");
 
         for _ in 0..6 {
             bans.ban(addr, Ban::DialFailed).await;
         }
         bans.ban(addr, Ban::Misbehaved).await;
-        assert!(bans.dialed(addr).await);
+        bans.dialed(addr).await;
         assert!(bans.banned().await.contains(&addr), "the handshake erased the ban");
 
         tokio::time::advance(MISBEHAVIOUR_BAN).await;
