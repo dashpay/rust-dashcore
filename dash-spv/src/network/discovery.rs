@@ -122,11 +122,11 @@ impl PeerDiscoverer {
         } else if self.restrict_to_configured_peers {
             return Vec::new();
         } else {
-            if self.discovered.is_none() {
-                let found = Self::discover(self.network).await;
-                self.discovered = Some(found);
-            }
-            let mut all = self.discovered.clone().expect("just set");
+            let discovered = match self.discovered.take() {
+                Some(found) => found,
+                None => Self::discover(self.network).await,
+            };
+            let mut all = self.discovered.insert(discovered).clone();
             all.extend(self.learned.keys());
             all.sort();
             all.dedup();
