@@ -16,6 +16,87 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      crates: ${{ steps.crates.outputs.changes }}
+      rust: ${{ steps.jobs.outputs.rust }}
+      verify-groups: ${{ steps.jobs.outputs.verify-groups }}
+    steps:
+      # Each crate also lists the paths of the workspace crates it depends on.
+      - uses: dorny/paths-filter@v4.0.3
+        id: crates
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            dashcore_hashes: &dashcore_hashes
+              - &common
+                - 'Cargo.toml'
+                - 'rust-toolchain.toml'
+                - 'Justfile'
+                - '.codecov.yml'
+                - '.github/ci-groups.yml'
+                - '.github/scripts/ci_config.py'
+                - '.github/workflows/rust.yml'
+                - '.github/workflows/build-and-test.yml'
+              - 'hashes/**/!(*.md)'
+            dashcore-private: &dashcore-private
+              - *common
+              - 'internals/**/!(*.md)'
+            dash-network: &dash-network
+              - *common
+              - 'dash-network/**/!(*.md)'
+            dashcore-crypto: &dashcore-crypto
+              - *dashcore_hashes
+              - *dashcore-private
+              - *dash-network
+              - 'crypto/**/!(*.md)'
+            dashcore: &dashcore
+              - *dashcore-crypto
+              - 'dash/**/!(*.md)'
+            key-wallet: &key-wallet
+              - *dashcore
+              - 'key-wallet/**/!(*.md)'
+            key-wallet-manager: &key-wallet-manager
+              - *key-wallet
+              - 'key-wallet-manager/**/!(*.md)'
+            dashcore-rpc-json: &dashcore-rpc-json
+              - *key-wallet
+              - 'rpc-json/**/!(*.md)'
+            dashcore-rpc: &dashcore-rpc
+              - *dashcore-rpc-json
+              - 'rpc-client/**/!(*.md)'
+              - 'contrib/setup-dashd.py'
+            dash-network-seeds: &dash-network-seeds
+              - *dash-network
+              - 'dash-network-seeds/**/!(*.md)'
+            dash-spv:
+              - *key-wallet-manager
+              - *dashcore-rpc
+              - *dash-network-seeds
+              - 'git-state/**/!(*.md)'
+              - 'dash-spv/**/!(*.md)'
+      - uses: dorny/paths-filter@v4.0.3
+        id: jobs
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'deny.toml'
+              - 'rust-toolchain.toml'
+              - 'Justfile'
+              - '.github/workflows/rust.yml'
+            verify-groups:
+              - '**/Cargo.toml'
+              - '.github/ci-groups.yml'
+              - '.github/scripts/ci_config.py'
+              - '.github/workflows/rust.yml'
+
   security:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -39,6 +120,8 @@ jobs:
 
   docs:
     name: Documentation
+    needs: changes
+    if: needs.changes.outputs.rust != 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -53,6 +136,8 @@ jobs:
 
   verify-groups:
     name: Verify Test Groups
+    needs: changes
+    if: needs.changes.outputs.verify-groups != 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -91,26 +176,38 @@ jobs:
 
   test-ubuntu:
     name: Ubuntu
+    needs: changes
+    if: needs.changes.outputs.crates != '[]'
     uses: $/.github/workflows/build-and-test.yml
     with:
+      crates: ${{ join(fromJSON(needs.changes.outputs.crates || '[]'), ' ') }}
       os: ubuntu-latest
       coverage: true
     secrets: inherit
 
   test-ubuntu-arm:
     name: Ubuntu ARM
+    needs: changes
+    if: needs.changes.outputs.crates != '[]'
     uses: $/.github/workflows/build-and-test.yml
     with:
+      crates: ${{ join(fromJSON(needs.changes.outputs.crates || '[]'), ' ') }}
       os: ubuntu-22.04-arm
 
   test-macos:
     name: macOS
+    needs: changes
+    if: needs.changes.outputs.crates != '[]'
     uses: $/.github/workflows/build-and-test.yml
     with:
+      crates: ${{ join(fromJSON(needs.changes.outputs.crates || '[]'), ' ') }}
       os: macos-latest
 
   test-windows:
     name: Windows
+    needs: changes
+    if: needs.changes.outputs.crates != '[]'
     uses: $/.github/workflows/build-and-test.yml
     with:
+      crates: ${{ join(fromJSON(needs.changes.outputs.crates || '[]'), ' ') }}
       os: windows-latest

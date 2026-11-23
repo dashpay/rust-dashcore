@@ -10,6 +10,9 @@ on:
         required: false
         type: boolean
         default: false
+      crates:
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -22,12 +25,8 @@ env:
 
 jobs:
   test:
-    name: ${{ matrix.group }}
+    name: Test
     runs-on: ${{ inputs.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        group: ["core wallet rpc", "spv"]
     env:
       RUST_BACKTRACE: 1
       CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
@@ -35,7 +34,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: Swatinem/rust-cache@v2.9.3
         with:
-          shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
+          shared-key: "test-${{ inputs.os }}"
           prefix-key: "v1-rust"
           cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/dev' }}
@@ -54,9 +53,8 @@ jobs:
           python-version: "3.12"
       - run: pip install pyyaml
 
-      # Set up dashd and test data for groups that need it
       - name: Cache dashd and test data
-        if: contains(matrix.group, 'rpc') || matrix.group == 'spv'
+        if: inputs.crates == '' || contains(inputs.crates, 'dash-spv') || contains(inputs.crates, 'dashcore-rpc')
         uses: actions/cache@v6.1.0
         with:
           path: .rust-dashcore-test
@@ -66,8 +64,8 @@ jobs:
         id: tests
         env:
           CI_OS: ${{ inputs.os }}
-          DASHD_TEST_RETAIN_DIR: ${{ (contains(matrix.group, 'rpc') || matrix.group == 'spv') && format('{0}/dashd-test-logs', runner.temp) || '' }}
-        run: just ${{ inputs.coverage && 'coverage' || 'test' }} ${{ matrix.group }}
+          DASHD_TEST_RETAIN_DIR: ${{ runner.temp }}/dashd-test-logs
+        run: just ${{ inputs.coverage && 'coverage' || 'test' }} ${{ inputs.crates }}
 
       - name: Generate coverage report
         if: inputs.coverage && steps.tests.outputs.crate_flags
@@ -83,10 +81,10 @@ jobs:
           fail_ci_if_error: true
 
       - name: Upload failed dashd test logs
-        if: failure() && (contains(matrix.group, 'rpc') || matrix.group == 'spv')
+        if: failure()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: ${{ matrix.group }}-test-logs-${{ inputs.os }}
+          name: dashd-test-logs-${{ inputs.os }}
           path: ${{ runner.temp }}/dashd-test-logs/
           retention-days: 7
           if-no-files-found: ignore

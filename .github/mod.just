@@ -19,7 +19,7 @@ setup:
 verify:
     gh actions-lock --verify
 
-# Check that every crate is in a CI test group and the matrix matches
+# Check that every tested crate has a path filter in rust.yml
 verify-groups:
     {{ python }} .github/scripts/ci_config.py verify-groups
 

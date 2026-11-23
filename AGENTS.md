@@ -31,7 +31,7 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 - `just check` is the gate before every commit and PR. It runs all pre-commit hooks including the push stage: rustfmt, typos, actionlint, file checks and clippy in three profiles with `-D warnings`. Without just: `pre-commit run --all-files --hook-stage pre-push`.
 - `just doc` and `just msrv` run the documentation and MSRV checks CI runs.
 - Targeted tests: `cargo test -p <crate> --lib <name>`. Drop `--lib` only when you need doc tests or `tests/` integration tests.
-- `just test <group>` runs a CI test group from `.github/ci-groups.yml` (`core`, `spv`, `wallet`, `rpc`).
+- `just test [crates]` runs the tests of the given crates, or of every crate not excluded in `.github/ci-groups.yml`.
 
 ### dashd integration tests
 

@@ -41,15 +41,15 @@ msrv:
 deny:
     cargo deny check
 
-# Run test groups from `.github/ci-groups.yml`, or all when none are given
-test *groups:
-    {{ python }} .github/scripts/ci_config.py run-group {{ groups }}
+# Run the tests of some crates, or of every crate not excluded in `.github/ci-groups.yml`
+test *crates:
+    {{ python }} .github/scripts/ci_config.py test {{ crates }}
 
 # CI skips the summary, as its next step writes the lcov report
-# Run test groups under cargo-llvm-cov and print a coverage summary
-coverage *groups:
+# Run crates' tests under cargo-llvm-cov and print a coverage summary
+coverage *crates:
     cargo llvm-cov clean --workspace
-    {{ python }} .github/scripts/ci_config.py run-group --coverage {{ groups }}
+    {{ python }} .github/scripts/ci_config.py test --coverage {{ crates }}
     {{ if env("GITHUB_ACTIONS", "") == "true" { "" } else { "cargo llvm-cov report --summary-only" } }}
 
 # Defaults to the core crypto crates for their unsafe code

@@ -1,7 +1,6 @@
 codecov:
   notify:
-    # Must match the number of group entries in the build-and-test.yml matrix
-    after_n_builds: 2
+    after_n_builds: 1
 
 coverage:
   status:
@@ -21,25 +20,42 @@ comment:
 
 flag_management:
   default_rules:
-    carryforward: false
+    carryforward: true
 
 flags:
-  core:
+  dashcore:
     paths:
       - dash/src/
-      - hashes/src/
-      - internals/src/
-  spv:
+  dashcore-crypto:
     paths:
-      - dash-spv/src/
-  wallet:
+      - crypto/src/
+  dashcore_hashes:
+    paths:
+      - hashes/src/
+  dashcore-private:
+    paths:
+      - internals/src/
+  dash-network:
+    paths:
+      - dash-network/src/
+  dash-network-seeds:
+    paths:
+      - dash-network-seeds/src/
+  key-wallet:
     paths:
       - key-wallet/src/
+  key-wallet-manager:
+    paths:
       - key-wallet-manager/src/
-  rpc:
+  dashcore-rpc:
     paths:
       - rpc-client/src/
+  dashcore-rpc-json:
+    paths:
       - rpc-json/src/
+  dash-spv:
+    paths:
+      - dash-spv/src/
 
 ignore:
   - "**/tests/**"
