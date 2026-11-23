@@ -17,12 +17,10 @@ use crate::network::{NetworkManager, RequestKey};
 use crate::storage::{BlockHeaderStorage, BlockHeaderTip, MetadataStorage};
 use crate::sync::block_headers::HeadersPipeline;
 use crate::sync::{
-    BlockHeadersProgress, ProgressPercentage, SyncEvent, SyncManager, SyncState,
-    BEST_CHAINLOCK_METADATA_STORAGE_KEY,
+    BlockHeadersProgress, SyncEvent, SyncManager, SyncState, BEST_CHAINLOCK_METADATA_STORAGE_KEY,
 };
 use crate::types::HashedBlockHeader;
 use crate::validation::{BlockHeaderValidator, Validator};
-#[cfg(test)]
 use dashcore::block::Header;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::network::message_blockdata::Inventory;
@@ -113,27 +111,39 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             .ok_or_else(|| SyncError::MissingDependency("storage not initialized".to_string()))
     }
 
-    /// Validate and store headers batch.
-    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
-        debug_assert!(!headers.is_empty());
-
-        // Validate batch for internal continuity, PoW and difficulty
-        let tip = self.tip().await?;
+    /// The stored headers up to `height` the next one's difficulty is computed from.
+    async fn ancestors(&self, height: u32) -> SyncResult<Vec<Header>> {
         let storage = self.header_storage.read().await;
 
         // A storage started at a checkpoint holds less history than a full window.
-        let first = tip
-            .height()
+        let first = height
             .saturating_sub(DGW_PAST_BLOCKS as u32 - 1)
             .max(storage.get_start_height().await.unwrap_or(0));
 
-        let ancestors = storage.load_headers(first..tip.height() + 1).await?;
+        let headers = storage.load_headers(first..height + 1).await?;
+        Ok(headers.iter().map(|header| *header.header()).collect())
+    }
 
-        drop(storage);
+    /// Height and ancestors of the block `headers` extend, a stored block or a
+    /// segment's tip. `None` if it's neither, as then nothing follows from them.
+    async fn attach_point(
+        &self,
+        headers: &[HashedBlockHeader],
+    ) -> SyncResult<Option<(u32, Vec<Header>)>> {
+        let Some(first) = headers.first() else {
+            return Ok(None);
+        };
+        let parent = first.header().prev_blockhash;
+        let height = self.header_storage.read().await.get_header_height_by_hash(&parent).await?;
+        match height {
+            Some(height) => Ok(Some((height, self.ancestors(height).await?))),
+            None => Ok(self.pipeline.segment_ancestors(&parent)),
+        }
+    }
 
-        let ancestors = ancestors.iter().map(|header| *header.header()).collect();
-
-        BlockHeaderValidator::new(self.network, ancestors, tip.height()).validate(headers)?;
+    /// Store an already validated headers batch.
+    async fn store_headers(&mut self, headers: &[HashedBlockHeader]) -> SyncResult<BlockHeaderTip> {
+        debug_assert!(!headers.is_empty());
 
         // Store headers
         self.header_storage.write().await.store_headers(headers).await?;
@@ -169,6 +179,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             Some(first) => Some(first.header().prev_blockhash),
             None => self.pipeline.active_tip_locator(),
         };
+
+        if let Some((height, ancestors)) = self.attach_point(headers).await? {
+            let validator = BlockHeaderValidator::new(self.network, ancestors, height);
+            if let Err(e) = validator.validate(headers) {
+                network.ban_peer(peer).await;
+                return Err(e.into());
+            }
+        }
 
         // Route headers to the pipeline, validates checkpoint match.
         let matched = match self.pipeline.receive_headers(headers) {
@@ -317,10 +335,6 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
                 }
 
                 let new_tip = self.store_headers(&batch_headers).await?;
-                // Update target if we've exceeded it (post-sync case)
-                if new_tip.height() > self.progress.target_height() {
-                    self.progress.update_target_height(new_tip.height());
-                }
                 events.push(SyncEvent::BlockHeadersStored {
                     tip_height: new_tip.height(),
                 });
@@ -410,8 +424,8 @@ mod tests {
     };
     use crate::sync::block_headers::pipeline::ACTIVE_SEGMENT_WINDOW;
     use crate::sync::block_headers::segment_state::SegmentState;
-    use crate::sync::{ManagerIdentifier, SyncManager, SyncManagerProgress};
-    use crate::test_utils::{test_socket_address, MockNetworkManager};
+    use crate::sync::{ManagerIdentifier, ProgressPercentage, SyncManager, SyncManagerProgress};
+    use crate::test_utils::{test_socket_address, FailingMetadataStorage, MockNetworkManager};
     use dashcore::network::message::NetworkMessage;
     use test_case::test_case;
 
@@ -423,6 +437,12 @@ mod tests {
     }
 
     async fn create_test_manager() -> TestBlockHeadersManager {
+        create_test_manager_with_metadata(DiskStorageManager::metadata).await
+    }
+
+    async fn create_test_manager_with_metadata<M: MetadataStorage>(
+        metadata: impl FnOnce(&DiskStorageManager) -> Arc<RwLock<M>>,
+    ) -> BlockHeadersManager<PersistentBlockHeaderStorage, M> {
         let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
         // Store a genesis header so the manager can initialize
         let genesis = Header::dummy_batch(0..1);
@@ -435,7 +455,7 @@ mod tests {
         let checkpoint_manager = create_test_checkpoint_manager();
         BlockHeadersManager::new(
             storage.block_headers(),
-            storage.metadata(),
+            metadata(&storage),
             checkpoint_manager,
             Network::Regtest,
         )
@@ -517,6 +537,67 @@ mod tests {
             manager.fork_height(&[HashedBlockHeader::from(&branch)]).await.unwrap(),
             expected
         );
+    }
+
+    /// Headers are validated as they arrive, on the tip or branching off below it:
+    /// invalid ones are neither stored nor followed, and their peer is banned.
+    #[test_case(4, true; "valid on the tip")]
+    #[test_case(4, false; "invalid on the tip")]
+    #[test_case(2, true; "valid fork")]
+    #[test_case(2, false; "invalid fork")]
+    #[tokio::test]
+    async fn test_received_headers_are_validated(parent: usize, valid: bool) {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let chain: Vec<HashedBlockHeader> = Header::dummy_chain(5, BlockHash::dummy(0))
+            .iter()
+            .map(HashedBlockHeader::from)
+            .collect();
+        storage.store_headers(&chain).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        manager.pipeline.init(4, *chain[4].hash(), 4);
+        manager.progress.set_state(SyncState::Synced);
+
+        let parent_hash = *chain[parent].hash();
+        let header = if valid {
+            Header::dummy_chain(1, parent_hash)[0]
+        } else {
+            Header {
+                prev_blockhash: parent_hash,
+                ..Header::dummy(5)
+            }
+        };
+        let mock = Arc::new(MockNetworkManager::new());
+        let network: Arc<dyn NetworkManager> = mock.clone();
+        let peer = test_socket_address(1);
+
+        let result = manager.handle_headers_pipeline(peer, &[header.into()], &network).await;
+
+        assert_eq!(result.is_ok(), valid);
+        assert_eq!(
+            mock.banned_peers().await,
+            if valid {
+                vec![]
+            } else {
+                vec![peer]
+            }
+        );
+        let forked = result.is_ok_and(|events| {
+            events.iter().any(|event| matches!(event, SyncEvent::ForkDetected { .. }))
+        });
+        assert_eq!(forked, valid && parent < 4);
+        let tip = if valid && parent == 4 {
+            5
+        } else {
+            4
+        };
+        assert_eq!(manager.tip().await.unwrap().height(), tip);
     }
 
     /// Create a manager in synced state with an initialized pipeline.
@@ -629,6 +710,37 @@ mod tests {
         } else {
             panic!("Expected SyncManagerProgress::BlockHeaders");
         }
+    }
+
+    /// A target restored from storage or reported by peers can lag the stored tip,
+    /// since peers report their height only when they connect.
+    #[tokio::test]
+    async fn test_target_height_never_below_tip() {
+        let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let stored = Header::dummy_batch(0..10);
+        storage
+            .store_headers(&stored.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
+            .await
+            .unwrap();
+        storage.store_last_target_height(5).await.unwrap();
+        let mut manager = BlockHeadersManager::new(
+            storage.block_headers(),
+            storage.metadata(),
+            create_test_checkpoint_manager(),
+            Network::Regtest,
+        )
+        .await
+        .unwrap();
+        assert_eq!(manager.progress.target_height(), 9);
+
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        let lagging = NetworkEvent::PeersUpdated {
+            addresses: vec![],
+            best_height: 3,
+        };
+        manager.handle_network_event(&lagging, &network).await.unwrap();
+        assert_eq!(manager.progress.target_height(), 9);
+        assert_eq!(storage.load_last_target_height().await.unwrap(), 9);
     }
 
     #[tokio::test]
@@ -798,9 +910,26 @@ mod tests {
         assert!(mock.sent_to_messages().await.is_empty());
     }
 
+    #[test_case(false; "working metadata storage")]
+    #[test_case(true; "failing metadata storage")]
     #[tokio::test]
-    async fn test_disconnect_preserves_pipeline_and_resumes_from_advanced_tip() {
-        let mut manager = create_test_manager().await;
+    async fn test_disconnect_preserves_pipeline_and_resumes_from_advanced_tip(
+        failing_metadata: bool,
+    ) {
+        if failing_metadata {
+            let failing = |_: &DiskStorageManager| Arc::new(RwLock::new(FailingMetadataStorage));
+            disconnect_preserves_pipeline_and_resumes(
+                create_test_manager_with_metadata(failing).await,
+            )
+            .await;
+        } else {
+            disconnect_preserves_pipeline_and_resumes(create_test_manager().await).await;
+        }
+    }
+
+    async fn disconnect_preserves_pipeline_and_resumes<M: MetadataStorage>(
+        mut manager: BlockHeadersManager<PersistentBlockHeaderStorage, M>,
+    ) {
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
 
@@ -810,7 +939,8 @@ mod tests {
             addresses: vec![test_socket_address(1)],
             best_height: 40_000,
         };
-        manager.handle_network_event(&initial_event, &network).await.unwrap();
+        let events = manager.handle_network_event(&initial_event, &network).await.unwrap();
+        assert!(matches!(events.as_slice(), [SyncEvent::SyncStart { .. }]), "{events:?}");
         assert_eq!(manager.state(), SyncState::Syncing);
         assert!(manager.pipeline.is_initialized());
         assert_eq!(manager.pipeline.segment_count(), 1);
@@ -848,7 +978,8 @@ mod tests {
             addresses: vec![],
             best_height: 40_000,
         };
-        manager.handle_network_event(&disconnect_event, &network).await.unwrap();
+        let events = manager.handle_network_event(&disconnect_event, &network).await.unwrap();
+        assert!(events.is_empty(), "{events:?}");
         // The broker re-queues in-flight requests on disconnect, so the resumed request can go out.
         mock.release_requests_in_play().await;
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
@@ -860,7 +991,8 @@ mod tests {
 
         // Reconnect: start_sync must skip pipeline.init and resume by sending
         // GetHeaders from each segment's preserved current_tip_hash.
-        manager.handle_network_event(&initial_event, &network).await.unwrap();
+        let events = manager.handle_network_event(&initial_event, &network).await.unwrap();
+        assert!(matches!(events.as_slice(), [SyncEvent::SyncStart { .. }]), "{events:?}");
         assert_eq!(manager.state(), SyncState::Syncing);
 
         let sent = mock.sent_messages().await;

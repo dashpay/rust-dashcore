@@ -11,18 +11,20 @@ use std::time::{Duration, Instant};
 use dash_spv::{ProgressPercentage, SyncEvent, SyncState};
 use dashcore::sml::llmq_entry_verification::LLMQEntryVerificationStatus;
 use dashcore::sml::llmq_type::{LLMQType, QUORUM_MEMBER_LIST_OFFSET};
-use dashcore::QuorumHash;
+use dashcore::{Amount, QuorumHash};
 use tokio::sync::Mutex;
+use tokio::{task, time};
 
 use super::helpers::{
     assert_all_rotated_quorums_verified, assert_storage_did_not_shrink, assert_storage_persisted,
-    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_masternode_sync,
-    wait_for_mn_state_event, wait_for_mn_state_event_above,
+    storage_snapshot, wait_for_chainlock_height_at_least, wait_for_instant_lock_received,
+    wait_for_masternode_sync, wait_for_mn_state_event, wait_for_mn_state_event_above,
     wait_for_mn_state_with_stored_cycle_above,
 };
 use super::setup::{
     create_and_start_client, create_client, create_dummy_wallet, create_mn_test_config,
-    TestContext, SYNC_TIMEOUT,
+    create_wallet_from_controller, receive_address, wait_for_controller_islock, TestContext,
+    SYNC_TIMEOUT,
 };
 
 /// Sync masternode list against a pre-generated regtest controller node.
@@ -114,14 +116,19 @@ async fn test_masternode_list_sync() {
 }
 
 /// Sync masternode list, stop, restart with same storage twice without new blocks,
-/// and verify each start rebuilds the first session's list from storage.
+/// and verify each start rebuilds the first session's list and rotated cycles from storage, so an
+/// InstantSend lock sent after it verifies.
 #[tokio::test]
 async fn test_masternode_list_sync_with_restart() {
-    let Some(ctx) = TestContext::new(true).await else {
+    let Some(mut ctx) = TestContext::new(false).await else {
         return;
     };
 
-    let wallet = create_dummy_wallet();
+    // A live signing quorum, so the masternodes can lock a transaction after
+    // the restart.
+    ctx.mn_ctx.mine_dkg_cycle().expect("DKG cycle should succeed");
+
+    let (wallet, wallet_id) = create_wallet_from_controller(&ctx.mn_ctx);
     let config =
         create_mn_test_config(ctx.storage_path().to_path_buf(), ctx.mn_ctx.controller_addr);
 
@@ -140,6 +147,7 @@ async fn test_masternode_list_sync_with_restart() {
             .next_back()
             .map(|(height, list)| (*height, list.block_hash, list.masternodes.len()))
     };
+    let first_cycles = client_handle.engine.read().await.rotated_quorums_per_cycle().clone();
     let (_, _, first_masternodes) =
         first_tip.expect("the first session must build a masternode list before testing restart");
     assert!(
@@ -175,11 +183,43 @@ async fn test_masternode_list_sync_with_restart() {
         "startup must rebuild the first session's masternode list from storage, \
          not default and let a fresh dashd sync cover for it"
     );
+    {
+        let engine = client_handle.engine.read().await;
+        let restored_cycles = engine.rotated_quorums_per_cycle();
+        assert!(!restored_cycles.is_empty(), "a start must restore the stored rotated cycles");
+        assert!(
+            restored_cycles.iter().all(|(hash, cycle)| first_cycles.get(hash) == Some(cycle)),
+            "a start must restore only the first session's cycles, unchanged"
+        );
+    }
 
     client_handle.run().await;
+
+    // An InstantSend lock sent right after the restart, which the client may
+    // receive before its start QRInfo.
+    let addr = receive_address(&wallet, &wallet_id).await;
+    let txid = ctx.mn_ctx.controller.send_to_address(&addr, Amount::from_sat(50_000_000));
+    wait_for_controller_islock(&mut ctx.mn_ctx, &txid, 60).await;
+
     let second_mn_progress =
         wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
     let second_height = second_mn_progress.current_height();
+
+    let lock = wait_for_instant_lock_received(
+        &mut client_handle.sync_event_receiver,
+        txid,
+        true,
+        SYNC_TIMEOUT,
+    )
+    .await;
+    {
+        let engine = client_handle.engine.read().await;
+        assert!(
+            engine.rotated_quorums_of_cycle(&lock.cyclehash).is_some(),
+            "the lock is accepted against a stored cycle"
+        );
+        assert_all_rotated_quorums_verified(&engine);
+    }
 
     assert_eq!(
         second_height, first_height,
@@ -323,8 +363,28 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
             max_cycle
         };
 
-        let quorum_hash =
-            ctx.mn_ctx.mine_dkg_cycle().unwrap_or_else(|| panic!("DKG cycle {} failed", cycle));
+        let progress = client_handle.progress_receiver.clone();
+        let (next_ctx, quorum_hash) = task::spawn_blocking(move || {
+            let quorum_hash = ctx
+                .mn_ctx
+                .mine_dkg_cycle_with_hook(|_, height| {
+                    let window = LLMQType::LlmqtypeTestDIP0024.get_dkg_window_for_height(height);
+                    if height != window.mining_start {
+                        return;
+                    }
+                    // Let the client consume the first slot before the next one can be mined.
+                    let start = Instant::now();
+                    while progress.borrow().masternodes().unwrap().current_height() < height {
+                        assert!(start.elapsed() < Duration::from_secs(SYNC_TIMEOUT));
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                })
+                .unwrap_or_else(|| panic!("DKG cycle {cycle} failed"));
+            (ctx, quorum_hash)
+        })
+        .await
+        .unwrap();
+        ctx = next_ctx;
 
         // Wait for the SPV client to sync the new masternode state.
         // Using wait_for_mn_state_with_stored_cycle_above instead of
@@ -344,6 +404,27 @@ async fn test_masternode_list_sync_with_quorum_rotation() {
             updated_height,
             last_height
         );
+
+        time::timeout(Duration::from_secs(SYNC_TIMEOUT), async {
+            loop {
+                let complete = client_handle
+                    .engine
+                    .read()
+                    .await
+                    .rotated_quorums_per_cycle()
+                    .get(&quorum_hash)
+                    .is_some_and(|quorums| {
+                        quorums.len()
+                            == LLMQType::LlmqtypeTestDIP0024.active_quorum_count() as usize
+                    });
+                if complete {
+                    break;
+                }
+                time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("the later commitment must fill the cycle's remaining slot");
 
         // After each successful DKG cycle, the stored rotation cycle count
         // must not shrink and must reach at least `cycle` distinct entries.

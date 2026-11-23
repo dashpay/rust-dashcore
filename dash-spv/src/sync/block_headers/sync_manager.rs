@@ -237,9 +237,15 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                 best_height,
             } => {
                 self.progress.update_target_height(*best_height);
+                // The height is only a restart hint, so a failed write must not skip the peer change.
+                if let Err(e) = self
+                    .metadata_storage
+                    .write()
+                    .await
+                    .store_last_target_height(self.progress.target_height())
+                    .await
                 {
-                    let mut metadata_storage = self.metadata_storage.write().await;
-                    metadata_storage.store_last_target_height(*best_height).await?;
+                    tracing::warn!("Failed to store the last target height: {}", e);
                 }
                 if addresses.is_empty() {
                     self.stop_sync();

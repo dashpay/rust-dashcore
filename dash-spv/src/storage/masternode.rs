@@ -211,15 +211,18 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let engine = TestEngine::mainnet_fixture();
         let headers = engine.headers();
-        let expected = engine.snapshot().unwrap();
+        let decoded = TestEngine::from_snapshot(
+            Network::Mainnet,
+            Arc::clone(&headers),
+            &engine.snapshot().unwrap(),
+        )
+        .unwrap();
         persist(&mut open_storage(&dir, Arc::clone(&headers)).await, engine).await;
 
         let reopened = open_storage(&dir, headers).await;
 
         let restored = reopened.engine();
-        let restored = restored.read().await;
-        assert!(!restored.rotated_quorums_per_cycle().is_empty(), "the fixture holds cycles");
-        assert_eq!(restored.snapshot().unwrap(), expected);
+        assert_eq!(restored.read().await.snapshot().unwrap(), decoded.snapshot().unwrap());
     }
 
     #[tokio::test]

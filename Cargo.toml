@@ -43,11 +43,11 @@ serde = { version = "1.0.219", default-features = false }
 zeroize = { version = "1.8", features = ["derive"] }
 anyhow = "1.0"
 async-trait = "0.1"
-chrono = { version = "0.4.20", default-features = false }
 clap = { version = "4.0", features = ["derive", "env"] }
 criterion = "0.8.1"
 rand = "0.9"
 serde_json = "1.0.140"
+time = { version = "0.3.47", features = ["formatting", "macros"] }
 serde_test = "1.0.177"
 tempfile = "3.0"
 test-case = "3.4"
@@ -87,7 +87,7 @@ edition = "2024"
 license = "CC0-1.0"
 repository = "https://github.com/dashpay/rust-dashcore"
 rust-version = "1.89.0"
-version = "0.46.0"
+version = "0.46.1"
 
 [patch.crates-io]
 dashcore_hashes = { path = "hashes" }

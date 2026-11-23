@@ -29,6 +29,11 @@ workflows:
     '.github/workflows/ready-for-review-trigger.yml': []
     '.github/workflows/ready-for-review.yml':
         - 'actions/checkout@v7.0.1'
+    '.github/workflows/release-check.yml':
+        - 'actions/checkout@v7.0.1'
+    '.github/workflows/release.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'peter-evans/create-pull-request@v8.1.1'
     '.github/workflows/rust.yml':
         - 'actions/checkout@v7.0.1'
         - 'embarkstudios/cargo-deny-action@v2.1.1'
@@ -36,7 +41,6 @@ workflows:
         - 'taiki-e/install-action@v2.89.1'
     '.github/workflows/sanitizer.yml':
         - 'actions/checkout@v7.0.1'
-        - 'dtolnay/rust-toolchain@nightly'
         - 'taiki-e/install-action@v2.89.1'
     '.github/workflows/update-masternode-seeds.yml':
         - 'actions/checkout@v7.0.1'
@@ -86,11 +90,6 @@ dependencies:
         repo_id: 200299178
         uses:
             - 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd'
-    'dtolnay/rust-toolchain@nightly':
-        ref: 'nightly'
-        commit: 'sha1-2c76c034f9e32a5d6e2c104dc4df23a22476db04'
-        owner_id: 1940490
-        repo_id: 260749683
     'embarkstudios/cargo-deny-action@v2.1.1':
         ref: 'v2.1.1'
         commit: 'sha1-3c6349835b2b7b196a839186cb8b78e02f7b5f25'

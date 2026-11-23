@@ -14,9 +14,6 @@ updates:
       actions:
         patterns:
           - "*"
-    ignore:
-      # Its refs are toolchain branches, not action versions.
-      - dependency-name: dtolnay/rust-toolchain
 
   # Without a lockfile Dependabot only proposes Cargo-incompatible bumps. Those often
   # need code changes, so each gets its own PR instead of a group.
