@@ -1,7 +1,6 @@
 mod chain_tip;
 mod chain_work;
 mod checkpoint;
-mod context;
 mod event_handler;
 mod filter;
 mod header_storage;
@@ -15,10 +14,9 @@ use std::time::Duration;
 /// Default timeout for sync operations in integration tests.
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(180);
 
-pub use context::DashdTestContext;
 pub use dashcore_rpc::test_utils::{
-    retain_test_dir, ControllerInfo, DashCoreNode, MasternodeInfo, MasternodeTestContext,
-    NetworkMetadata, TestChain, WalletFile,
+    retain_test_dir, ControllerInfo, DashCoreNode, DashdTestContext, MasternodeInfo,
+    MasternodeTestContext, NetworkMetadata, TestChain, WalletFile,
 };
 pub use event_handler::TestEventHandler;
 pub use header_storage::MockHeaderStorage;

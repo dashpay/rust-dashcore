@@ -2,16 +2,13 @@
 //!
 //! Provides `DashdTestContext` which encapsulates the common setup logic for
 //! launching a dashd node with a pre-built blockchain and loading wallet data.
-//! Used by the `dash-spv` integration tests.
 
 use std::net::SocketAddr;
 
 use tempfile::TempDir;
 use tracing::info;
 
-use super::retain_test_dir;
-use super::TestChain;
-use super::{DashCoreNode, WalletFile};
+use super::{DashCoreNode, TestChain, WalletFile, retain_test_dir};
 
 /// Shared test infrastructure for dashd integration tests.
 ///
