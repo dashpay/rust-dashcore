@@ -163,6 +163,8 @@ mod tests {
     use super::*;
     use crate::network::bans::Ban;
     use crate::test_utils::test_socket_address;
+    use futures::poll;
+    use tokio::pin;
 
     fn conn(addr: u8) -> PeerId {
         PeerId::for_test(test_socket_address(addr), 0)
@@ -177,8 +179,8 @@ mod tests {
     }
 
     /// A swap announces the old peer out and the new one in exactly once, and a peer
-    /// that is not in the full set is no reason to make room. A banned peer is handed back
-    /// unannounced.
+    /// that is not in the full set is no reason to make room. A peer banned while its
+    /// admission waits for the set is handed back unannounced.
     #[tokio::test]
     async fn a_swap_announces_old_out_and_new_in_once() {
         let set = PeerSet::new(2);
@@ -190,10 +192,15 @@ mod tests {
         }
         let mut events = set.subscribe();
 
-        bans.ban(conn(4).addr(), Ban::Misbehaved).await;
+        let held = set.read().await;
         let peer = ConnectedPeer::for_test(conn(4)).await;
         let slow = Some(conn(1).addr());
-        assert!(matches!(set.admit(peer, &session, &bans, 2, slow).await, Admission::Banned(_)));
+        let admission = set.admit(peer, &session, &bans, 2, slow);
+        pin!(admission);
+        assert!(poll!(&mut admission).is_pending(), "the admission did not wait for the set");
+        bans.ban(conn(4).addr(), Ban::Misbehaved).await;
+        drop(held);
+        assert!(matches!(admission.await, Admission::Banned(_)));
 
         let peer = ConnectedPeer::for_test(conn(3)).await;
         let absent = Some(test_socket_address(9));

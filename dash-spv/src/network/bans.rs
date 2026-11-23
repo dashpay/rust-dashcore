@@ -111,6 +111,8 @@ impl Bans {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_case::test_case;
+    use tokio::time::advance;
 
     /// A node lacking a service the client needs stays banned past the longest dial
     /// backoff.
@@ -125,28 +127,35 @@ mod tests {
         assert!(bans.banned().await.contains(&addr));
     }
 
-    /// A handshake clears the dial backoff, even one a parallel dial just set, but keeps a
-    /// ban recorded during the dial.
+    /// A handshake clears the dial backoff and the fail count, even ones a parallel dial just
+    /// set, but keeps a ban recorded during the dial. Only the ban counts for `is_banned`.
+    #[test_case(Ban::Kicked, KICK_BAN; "kicked")]
+    #[test_case(Ban::MissingServices, MISBEHAVIOUR_BAN; "missing services")]
+    #[test_case(Ban::Misbehaved, MISBEHAVIOUR_BAN; "misbehaved")]
     #[tokio::test(start_paused = true)]
-    async fn a_handshake_keeps_a_ban_from_during_the_dial() {
+    async fn a_handshake_clears_the_dial_backoff_but_keeps_a_ban(ban: Ban, duration: Duration) {
         let bans = Bans::new([]);
         let addr: SocketAddr = "46.224.41.173:19999".parse().expect("an address");
-        for _ in 0..6 {
-            bans.ban(addr, Ban::DialFailed).await;
-        }
+        bans.ban(addr, Ban::DialFailed).await;
+        assert!(bans.banned().await.contains(&addr));
+        assert!(!bans.is_banned(addr).await, "a dial backoff counted as a ban");
         bans.dialed(addr).await;
         assert!(bans.banned().await.is_empty(), "the handshake kept a live dial backoff");
 
+        // The dial backoff set in the ban's last second outlives the ban.
+        bans.ban(addr, ban).await;
+        advance(duration - Duration::from_secs(1)).await;
         for _ in 0..6 {
             bans.ban(addr, Ban::DialFailed).await;
         }
-        bans.ban(addr, Ban::Misbehaved).await;
         bans.dialed(addr).await;
-        assert!(bans.banned().await.contains(&addr), "the handshake erased the ban");
+        assert!(bans.is_banned(addr).await, "the handshake erased the ban");
+        advance(Duration::from_secs(2)).await;
+        assert!(!bans.is_banned(addr).await, "an expired ban still counted");
+        assert!(bans.banned().await.is_empty(), "the handshake kept the dial backoff");
 
-        tokio::time::advance(MISBEHAVIOUR_BAN).await;
         bans.ban(addr, Ban::DialFailed).await;
-        tokio::time::advance(Duration::from_secs(2)).await;
+        advance(Duration::from_secs(2)).await;
         assert!(bans.banned().await.is_empty(), "the handshake kept the fail count");
     }
 }
