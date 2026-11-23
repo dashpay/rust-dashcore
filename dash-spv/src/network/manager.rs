@@ -2553,9 +2553,9 @@ mod tests {
         assert_eq!(banned, stalls, "a peer kicked beside a witness is banned");
     }
 
-    /// A timeout kick re-queues the stalled peer's work only once that peer is banned, closed
-    /// and out of the set, so neither the router nor the supervisor picks it again. Holding
-    /// the filter queue stops the monitor at that point. The work then goes to the peer that stays.
+    /// A peer kicked beside a witness is banned while still in the set, then closed and
+    /// removed before its work is re-queued, so neither the supervisor nor the router picks it
+    /// again. Holding the bans, then the filter queue, stops the monitor at each step.
     #[tokio::test(start_paused = true)]
     async fn a_kicked_peer_gets_none_of_its_requeued_work() {
         let net = broker().await;
@@ -2572,8 +2572,14 @@ mod tests {
         net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
 
         let held = net.state.broker.hold_queue_of(&get_cfilters(0)).await;
+        let bans_held = net.state.bans.hold().await;
         // The second peer keeps receiving, so the stall is not blamed on our link.
         advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs() + 2).await;
+        assert_eq!(net.connected_count().await, 2, "the kicked peer left the set before its ban");
+        drop(bans_held);
+        for _ in 0..4 {
+            task::yield_now().await;
+        }
         let key = RequestKey::CFilters(BlockHash::dummy(0));
         assert_eq!(
             net.state.broker.state_of(&key).await,
@@ -2582,10 +2588,6 @@ mod tests {
         );
         assert_eq!(net.connected_count().await, 1, "re-queued before the kick");
         assert!(handles[0].is_closed(), "re-queued before the stalled peer was closed");
-        assert!(
-            net.state.bans.banned().await.contains(&conn(1, 0).addr()),
-            "the kicked peer left the set before it was banned"
-        );
         drop(held);
         for _ in 0..4 {
             task::yield_now().await;

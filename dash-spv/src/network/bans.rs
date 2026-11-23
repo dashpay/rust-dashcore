@@ -66,6 +66,13 @@ impl Bans {
         }
     }
 
+    /// Locks the table until the returned guard drops, so a test can stop a task at its
+    /// next ban.
+    #[cfg(test)]
+    pub async fn hold(&self) -> impl Sized + '_ {
+        self.entries.lock().await
+    }
+
     pub async fn banned(&self) -> HashSet<SocketAddr> {
         let now = Instant::now();
         self.entries
