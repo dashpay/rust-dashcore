@@ -34,3 +34,6 @@ mod queryable;
 pub use client::*;
 pub use error::Error;
 pub use queryable::*;
+
+#[cfg(feature = "test-utils")]
+pub mod test_utils;

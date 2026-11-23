@@ -2,11 +2,11 @@
 //!
 //! This provides utilities for managing a dashd instance and loading test wallet data.
 
+use crate::json as rpc_json;
+use crate::jsonrpc::simple_http::SimpleHttpTransport;
+use crate::jsonrpc::{Client as JsonRpcClient, Error as JsonRpcError};
+use crate::{Auth, Client, Error as RpcError, RpcApi};
 use dashcore::{Address, Amount, BlockHash, Transaction, Txid};
-use dashcore_rpc::json as rpc_json;
-use dashcore_rpc::jsonrpc::simple_http::SimpleHttpTransport;
-use dashcore_rpc::jsonrpc::{Client as JsonRpcClient, Error as JsonRpcError};
-use dashcore_rpc::{Auth, Client, Error as RpcError, RpcApi};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -88,7 +88,7 @@ pub enum TestChain {
 }
 
 impl TestChain {
-    pub(crate) fn variant_dir(self) -> &'static str {
+    pub fn variant_dir(self) -> &'static str {
         match self {
             TestChain::Full => "regtest-40000",
             TestChain::Minimal => "regtest-200",
@@ -245,7 +245,7 @@ impl DashCoreNode {
 
     /// Has dashd load the datadir's wallet `name` when it starts, and makes it the wallet the
     /// node's RPC helpers use.
-    pub(crate) fn with_wallet(mut self, name: &str) -> Self {
+    pub fn with_wallet(mut self, name: &str) -> Self {
         self.config.wallet = name.to_string();
         self
     }
@@ -537,7 +537,7 @@ impl DashCoreNode {
         let addr = Address::dummy(dashcore::Network::Regtest, 0);
         match client.generate_to_address(0, &addr) {
             Ok(_) => true,
-            Err(dashcore_rpc::Error::JsonRpc(dashcore_rpc::jsonrpc::Error::Rpc(ref e)))
+            Err(RpcError::JsonRpc(JsonRpcError::Rpc(ref e)))
                 if e.message.contains("not available") =>
             {
                 false

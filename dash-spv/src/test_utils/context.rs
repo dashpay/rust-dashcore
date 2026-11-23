@@ -9,8 +9,8 @@ use std::net::SocketAddr;
 use tempfile::TempDir;
 use tracing::info;
 
-use super::fs_helpers::retain_test_dir;
-use super::node::TestChain;
+use super::retain_test_dir;
+use super::TestChain;
 use super::{DashCoreNode, WalletFile};
 
 /// Shared test infrastructure for dashd integration tests.

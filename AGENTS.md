@@ -89,7 +89,7 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 - Every fix comes with a regression test that fails without it.
 - Before adding a `#[test]`, look for an existing test with the same setup and extend it.
 - Test through the public API. Don't set internal fields or states by hand: a test that builds a state production never reaches proves nothing.
-- Reuse the existing helpers before writing new ones. Each crate keeps them in `src/test_utils/` behind its `test-utils` feature (`dashcore`, `key-wallet`, `key-wallet-manager`, `dash-spv`).
+- Reuse the existing helpers before writing new ones. Each crate keeps them in `src/test_utils/` behind its `test-utils` feature (`dashcore`, `dashcore-rpc`, `key-wallet`, `key-wallet-manager`, `dash-spv`).
 - Never skip or delete a failing test. `#[ignore]` needs a comment linking the issue that tracks the failure.
 
 ## Commits and pull requests
