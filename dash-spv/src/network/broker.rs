@@ -15,7 +15,7 @@ const KICKING_ATTEMPTS: u32 = 2;
 /// How many timeouts a request lives on bytes of a message still arriving, without an
 /// answer. A big answer on a slow link must fit, but a message that never finishes must
 /// not keep its request alive forever.
-const ANSWER_TIMEOUTS: u32 = 6;
+pub(super) const ANSWER_TIMEOUTS: u32 = 6;
 const HEDGE_AFTER: Duration = Duration::from_secs(2);
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
@@ -29,8 +29,8 @@ pub enum RequestKey {
     Headers(BlockHash),
     /// Stop hash.
     CfHeaders(BlockHash),
-    /// Start height.
-    CFilters(u32),
+    /// Stop hash.
+    CFilters(BlockHash),
     MnListDiff(BlockHash),
     Block(BlockHash),
 }
@@ -41,7 +41,7 @@ pub fn request_keys(msg: &NetworkMessage) -> Vec<RequestKey> {
             m.locator_hashes.first().map(|h| RequestKey::Headers(*h)).into_iter().collect()
         }
         NetworkMessage::GetCFHeaders(m) => vec![RequestKey::CfHeaders(m.stop_hash)],
-        NetworkMessage::GetCFilters(m) => vec![RequestKey::CFilters(m.start_height)],
+        NetworkMessage::GetCFilters(m) => vec![RequestKey::CFilters(m.stop_hash)],
         NetworkMessage::GetMnListD(m) => vec![RequestKey::MnListDiff(m.block_hash)],
         NetworkMessage::GetData(inv) => inv
             .iter()
@@ -58,7 +58,7 @@ enum ReqState {
     /// Attempts so far.
     Queued(u32),
     OnWire(Box<OnWire>),
-    /// The block was received and waits for its manager to release the key.
+    /// The whole reply was received and waits for its manager to release the key.
     Arrived,
 }
 
@@ -191,12 +191,12 @@ impl Broker {
         }
     }
 
-    /// Settled on arrival, not when processed: blocks wait in height order, and that
-    /// wait is not the peer's. The first copy of a hedged block settles it. A request
-    /// put back in the queue is settled by a copy from any peer, and its message dropped.
-    /// The key stays registered until released, so a re-declare before then sends nothing.
-    pub async fn block_arrived(&self, peer: PeerId, hash: BlockHash) {
-        let key = RequestKey::Block(hash);
+    /// Settles `key` on arrival of its whole reply from `peer`, not when processed, since
+    /// the wait for a manager is not the peer's. The first copy of a hedged request settles
+    /// it. A request put back in the queue is settled by a copy from any peer, and its message
+    /// dropped. The key stays registered until released, so a re-declare before then sends
+    /// nothing, and a manager that cannot use the reply must release the key.
+    pub async fn arrived(&self, peer: PeerId, key: RequestKey) {
         let mut reqs = self.requests.lock().await;
         match reqs.get(&key) {
             Some(ReqState::OnWire(o)) if o.peer == peer || o.hedge == Some(peer) => {}
@@ -237,25 +237,31 @@ impl Broker {
         }
     }
 
-    /// Returns the peers to kick for a stalled request. A request stalls after a timeout
-    /// without progress, or after [`ANSWER_TIMEOUTS`] timeouts without an answer. A request
-    /// that already stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
-    pub async fn expire(&self, timeout: impl Fn(&PeerId) -> Duration) -> HashSet<PeerId> {
+    /// Returns the peers of stalled requests, each with the earliest instant its stalled
+    /// requests are blamed from. A request stalls after a timeout without
+    /// progress, or after [`ANSWER_TIMEOUTS`] timeouts without an answer. A request that
+    /// already stalled [`KICKING_ATTEMPTS`] times is retried without blaming its peer.
+    pub async fn expire(&self, timeout: impl Fn(&PeerId) -> Duration) -> HashMap<PeerId, Instant> {
         let now = Instant::now();
-        let mut culprits = HashSet::new();
+        let mut culprits: HashMap<PeerId, Instant> = HashMap::new();
         let mut unanswerable = HashSet::new();
         for (key, state) in self.requests.lock().await.iter() {
             let ReqState::OnWire(o) = state else {
                 continue;
             };
             let timeout = timeout(&o.peer);
-            if now.duration_since(o.last_progress) <= timeout
-                && now.duration_since(o.last_answer) <= timeout * ANSWER_TIMEOUTS
-            {
+            let silent_since = if now.duration_since(o.last_answer) > timeout * ANSWER_TIMEOUTS {
+                // Blamed from the answer, not the later bytes, so those bytes show our
+                // link works and the peer is not held as a link stall.
+                o.last_answer
+            } else if now.duration_since(o.last_progress) > timeout {
+                o.last_progress
+            } else {
                 continue;
-            }
+            };
             if o.attempts < KICKING_ATTEMPTS {
-                culprits.insert(o.peer);
+                let since = culprits.entry(o.peer).or_insert(silent_since);
+                *since = (*since).min(silent_since);
             } else {
                 tracing::debug!(
                     target: "dash_spv::network",
@@ -272,23 +278,19 @@ impl Broker {
         culprits
     }
 
-    /// Sends what fits in both the peers' and the global byte caps, each message to
-    /// the peer [`choose_peer`] picks.
-    pub async fn route(
-        &self,
-        peers: &[PeerHandle],
-        global_cap: u64,
-        costs: &ResponseCosts,
-    ) -> usize {
+    /// Sends what fits in the peers' byte caps, each message to the peer [`choose_peer`]
+    /// picks.
+    pub async fn route(&self, peers: &[PeerHandle], costs: &ResponseCosts) -> usize {
         if peers.is_empty() {
             return 0;
         }
         // A closed peer still listed is sent nothing, so its room would pop work that only
         // goes back to the queue and wakes the router again at once.
-        let live = || peers.iter().filter(|p| !p.is_closed());
-        let total_in_flight: u64 = live().map(PeerHandle::in_flight_bytes).sum();
-        let per_peer_room: u64 = live().map(|p| p.cap().saturating_sub(p.in_flight_bytes())).sum();
-        let budget = per_peer_room.min(global_cap.saturating_sub(total_in_flight));
+        let budget: u64 = peers
+            .iter()
+            .filter(|p| !p.is_closed())
+            .map(|p| p.cap().saturating_sub(p.in_flight_bytes()))
+            .sum();
         if budget == 0 {
             return 0;
         }
@@ -335,7 +337,7 @@ impl Broker {
                         let attempts = match slot {
                             ReqState::Queued(attempts) => *attempts,
                             ReqState::OnWire(o) => o.attempts,
-                            // The block of a requeued request can arrive while it is resent.
+                            // The reply to a requeued request can arrive while it is resent.
                             ReqState::Arrived => continue,
                         };
                         *slot = ReqState::OnWire(Box::new(OnWire {
@@ -466,17 +468,15 @@ fn classify(msg: &NetworkMessage) -> MsgClass {
 /// Picks the peer among `open` for a message of `class`. A header or block request goes to
 /// the peer that will answer it soonest, since sync waits on each of them in height order.
 /// Bulk filter traffic goes to the peer least loaded relative to its own cap, and so does
-/// any request while a busy peer has no serving rate yet.
+/// any request while no peer has a rate yet.
 fn choose_peer<'a>(
     open: impl Iterator<Item = &'a PeerHandle> + Clone,
     class: MsgClass,
 ) -> Option<&'a PeerHandle> {
-    if matches!(class, MsgClass::Headers | MsgClass::Blocks) {
-        let waits: Option<Vec<(f64, &PeerHandle)>> =
-            open.clone().map(|p| Some((queued_secs(p)?, p))).collect();
-        if let Some(waits) = waits {
-            return waits.into_iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, p)| p);
-        }
+    if matches!(class, MsgClass::Headers | MsgClass::Blocks) && open.clone().any(|p| rate(p) > 0) {
+        // A busy peer that has not delivered anything yet has no known queue, so it goes last.
+        let wait = |p: &PeerHandle| queued_secs(p).unwrap_or(f64::INFINITY);
+        return open.min_by(|a, b| wait(a).total_cmp(&wait(b)));
     }
     open.min_by(|a, b| {
         (a.in_flight_bytes() as u128 * b.cap() as u128)
@@ -484,10 +484,18 @@ fn choose_peer<'a>(
     })
 }
 
+/// Bytes/s the peer serves: its serving rate once measured, its last two seconds before.
+fn rate(peer: &PeerHandle) -> u64 {
+    match peer.serving_rate() {
+        0 => peer.served(),
+        rate => rate,
+    }
+}
+
 /// Seconds the peer needs to serve what it already holds, `None` while it holds work
-/// but has no measured serving rate. Peers answer in order, so a new request waits that long.
+/// but has no rate. Peers answer in order, so a new request waits that long.
 fn queued_secs(peer: &PeerHandle) -> Option<f64> {
-    match (peer.in_flight_bytes(), peer.serving_rate()) {
+    match (peer.in_flight_bytes(), rate(peer)) {
         (0, _) => Some(0.0),
         (_, 0) => None,
         (bytes, rate) => Some(bytes as f64 / rate as f64),
@@ -634,7 +642,7 @@ mod tests {
         NetworkMessage::GetCFilters(GetCFilters {
             filter_type: 0,
             start_height: start,
-            stop_hash: BlockHash::dummy(9),
+            stop_hash: BlockHash::dummy(start),
         })
     }
 
@@ -658,6 +666,10 @@ mod tests {
         Inventory::Block(BlockHash::dummy(n))
     }
 
+    fn get_block(n: u32) -> NetworkMessage {
+        NetworkMessage::GetData(vec![block(n)])
+    }
+
     fn tx(n: u8) -> Inventory {
         Inventory::Transaction(Txid::from_byte_array([n; 32]))
     }
@@ -677,7 +689,7 @@ mod tests {
 
     #[test_case(get_headers(1) => vec![RequestKey::Headers(BlockHash::dummy(1))]; "getheaders")]
     #[test_case(get_cfheaders(2) => vec![RequestKey::CfHeaders(BlockHash::dummy(2))]; "getcfheaders")]
-    #[test_case(get_cfilters(100) => vec![RequestKey::CFilters(100)]; "getcfilters")]
+    #[test_case(get_cfilters(100) => vec![RequestKey::CFilters(BlockHash::dummy(100))]; "getcfilters")]
     #[test_case(get_mnlistdiff(3) => vec![RequestKey::MnListDiff(BlockHash::dummy(4))]; "getmnlistd")]
     #[test_case(NetworkMessage::GetData(vec![block(1), tx(7), block(2)])
         => vec![RequestKey::Block(BlockHash::dummy(1)), RequestKey::Block(BlockHash::dummy(2))];
@@ -711,7 +723,10 @@ mod tests {
             } else {
                 "on_wire"
             };
-            assert_eq!(broker.state_of(&RequestKey::CFilters(height)).await, Some(want));
+            assert_eq!(
+                broker.state_of(&RequestKey::CFilters(BlockHash::dummy(height))).await,
+                Some(want)
+            );
         }
     }
 
@@ -727,12 +742,15 @@ mod tests {
 
         // With only the closed peer listed nothing is popped, so the router is not woken
         // again and waits for a real change instead of spinning.
-        assert_eq!(broker.route(&[gone.handle()], u64::MAX, &ResponseCosts::new()).await, 0);
-        assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, Some("queued"));
+        assert_eq!(broker.route(&[gone.handle()], &ResponseCosts::new()).await, 0);
+        assert_eq!(
+            broker.state_of(&RequestKey::CFilters(BlockHash::dummy(0))).await,
+            Some("queued")
+        );
         assert!(broker.notified().now_or_never().is_none(), "the router was woken again");
 
         // Only the charge matters here: the loopback has no reader to answer it.
-        broker.route(&[gone.handle(), other.handle()], u64::MAX, &ResponseCosts::new()).await;
+        broker.route(&[gone.handle(), other.handle()], &ResponseCosts::new()).await;
 
         assert_eq!(gone.in_flight_bytes(), 0);
         assert!(other.in_flight_bytes() > 0);
@@ -745,13 +763,16 @@ mod tests {
         broker.mark_on_wire(&get_cfilters(0), peer).await;
         broker.requeue_from(&HashSet::from([peer])).await;
         broker.queue.pop_n(1).await;
-        assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, Some("queued"));
+        assert_eq!(
+            broker.state_of(&RequestKey::CFilters(BlockHash::dummy(0))).await,
+            Some("queued")
+        );
 
         broker.enqueue(0, get_cfilters(0)).await;
         assert_eq!(broker.len(), 0);
 
-        broker.release(&RequestKey::CFilters(0)).await;
-        assert_eq!(broker.state_of(&RequestKey::CFilters(0)).await, None);
+        broker.release(&RequestKey::CFilters(BlockHash::dummy(0))).await;
+        assert_eq!(broker.state_of(&RequestKey::CFilters(BlockHash::dummy(0))).await, None);
         broker.enqueue(0, get_cfilters(0)).await;
         assert_eq!(broker.len(), 1);
     }
@@ -772,7 +793,6 @@ mod tests {
             kicked.handle(),
         ];
         let (slow, idle) = (&peers[..1], peers[1].id());
-        let get_block = |n: u32| NetworkMessage::GetData(vec![block(n)]);
         let hedged_blocks = || async {
             let mut hedged: Vec<u32> = broker
                 .requests
@@ -791,10 +811,10 @@ mod tests {
         for n in [11, 12] {
             broker.enqueue(n, get_block(n)).await;
         }
-        assert_eq!(broker.route(slow, u64::MAX, &costs).await, 2);
+        assert_eq!(broker.route(slow, &costs).await, 2);
         tokio::time::advance(HEDGE_AFTER).await;
         broker.enqueue(10, get_block(10)).await;
-        assert_eq!(broker.route(slow, u64::MAX, &costs).await, 1);
+        assert_eq!(broker.route(slow, &costs).await, 1);
         assert_eq!(broker.hedge(&peers).await, None, "the lowest block has not waited long enough");
 
         tokio::time::advance(HEDGE_AFTER / 2).await;
@@ -808,28 +828,41 @@ mod tests {
         assert_eq!(broker.hedge(&peers).await, None, "later blocks wait for the lowest");
         assert_eq!(hedged_blocks().await, [10]);
 
-        broker.block_arrived(idle, BlockHash::dummy(10)).await;
+        broker.arrived(idle, RequestKey::Block(BlockHash::dummy(10))).await;
         assert_eq!(broker.hedge(&peers).await, Some(11));
         assert_eq!(hedged_blocks().await, [11]);
         assert_eq!(broker.hedge(slow).await, None, "no other peer to ask");
     }
 
     #[tokio::test]
-    async fn an_arrived_block_dedups_until_released() {
+    async fn a_new_peer_holds_two_header_requests() {
+        let broker = Broker::new();
+        let peer = ConnectedPeer::for_test(conn(1, 0)).await;
+        for n in 0..3 {
+            broker.enqueue(n, get_headers(n)).await;
+        }
+
+        assert_eq!(broker.route(&[peer.handle()], &ResponseCosts::new()).await, 2);
+        assert_eq!(broker.len(), 1);
+    }
+
+    #[test_case(NetworkMessage::GetData(vec![block(1)]), RequestKey::Block(BlockHash::dummy(1)); "a block")]
+    #[test_case(get_cfilters(1), RequestKey::CFilters(BlockHash::dummy(1)); "a filter batch")]
+    #[test_case(get_cfheaders(1), RequestKey::CfHeaders(BlockHash::dummy(1)); "a filter header batch")]
+    #[tokio::test]
+    async fn an_arrived_reply_dedups_until_released(request: NetworkMessage, key: RequestKey) {
         let broker = Broker::new();
         let id = conn(1, 0);
-        let getdata = NetworkMessage::GetData(vec![block(1)]);
-        let key = RequestKey::Block(BlockHash::dummy(1));
+        let peer = ConnectedPeer::for_test(id).await;
 
-        broker.enqueue(0, getdata.clone()).await;
-        assert_eq!(broker.queue.pop_n(1).await.len(), 1);
-        broker.mark_on_wire(&getdata, id).await;
-        broker.block_arrived(conn(2, 0), BlockHash::dummy(1)).await;
+        broker.enqueue(0, request.clone()).await;
+        assert_eq!(broker.route(&[peer.handle()], &ResponseCosts::new()).await, 1);
+        broker.arrived(conn(2, 0), key.clone()).await;
         assert_eq!(broker.state_of(&key).await, Some("on_wire"), "only its carrier settles it");
-        broker.block_arrived(id, BlockHash::dummy(1)).await;
+        broker.arrived(id, key.clone()).await;
         assert_eq!(broker.state_of(&key).await, Some("arrived"));
 
-        broker.enqueue(0, getdata.clone()).await;
+        broker.enqueue(0, request.clone()).await;
         assert_eq!(broker.len(), 0, "a re-declare before the release must not fetch it again");
         assert_eq!(broker.requeue_from(&HashSet::from([id])).await, 0);
         assert!(broker.expire(|_| Duration::ZERO).await.is_empty());
@@ -837,26 +870,29 @@ mod tests {
 
         broker.release(&key).await;
         assert_eq!(broker.state_of(&key).await, None);
-        broker.enqueue(0, getdata).await;
+        broker.enqueue(0, request).await;
         assert_eq!(broker.len(), 1);
     }
 
+    #[test_case(NetworkMessage::GetData(vec![block(1)]), RequestKey::Block(BlockHash::dummy(1)); "a block")]
+    #[test_case(get_cfilters(1), RequestKey::CFilters(BlockHash::dummy(1)); "a filter batch")]
     #[tokio::test]
-    async fn a_requeued_block_is_settled_by_a_copy_from_any_peer() {
+    async fn a_requeued_request_is_settled_by_a_copy_from_any_peer(
+        request: NetworkMessage,
+        key: RequestKey,
+    ) {
         let broker = Broker::new();
         let carrier = conn(1, 0);
-        let getdata = NetworkMessage::GetData(vec![block(1)]);
-        let key = RequestKey::Block(BlockHash::dummy(1));
 
-        broker.mark_on_wire(&getdata, carrier).await;
+        broker.mark_on_wire(&request, carrier).await;
         assert_eq!(broker.requeue_from(&HashSet::from([carrier])).await, 1);
         assert_eq!(broker.state_of(&key).await, Some("queued"));
 
-        broker.block_arrived(conn(2, 0), BlockHash::dummy(1)).await;
+        broker.arrived(conn(2, 0), key.clone()).await;
         assert_eq!(broker.state_of(&key).await, Some("arrived"));
-        assert_eq!(broker.len(), 0, "the queued getdata must not go out after the block arrived");
+        assert_eq!(broker.len(), 0, "the queued request must not go out after its reply arrived");
 
-        broker.enqueue(0, getdata).await;
+        broker.enqueue(0, request).await;
         assert_eq!(broker.len(), 0);
     }
 
@@ -907,15 +943,23 @@ mod tests {
         assert_eq!(broker.requests.lock().await.len(), tracked);
     }
 
-    /// `slow` holds 1 MB at 100 KB/s, a 10 s queue at a tenth of its cap. `fast` holds
-    /// 256 KB at `fast_rate`, half its cap. Returns which of them `msg` is routed to.
-    #[test_case(get_headers(1), 1 << 20 => "fast"; "a header request goes to the shortest queue")]
-    #[test_case(get_headers(1), 0 => "slow"; "a header request falls back to the cap ratio while a busy peer is unmeasured")]
-    #[test_case(NetworkMessage::GetData(vec![block(1)]), 1 << 20 => "fast"; "a block request goes to the shortest queue")]
-    #[test_case(NetworkMessage::GetData(vec![block(1)]), 0 => "slow"; "a block request falls back to the cap ratio while a busy peer is unmeasured")]
-    #[test_case(get_cfilters(0), 1 << 20 => "slow"; "bulk requests keep the cap ratio")]
+    /// `slow` holds 1 MB, a tenth of its cap, served at `slow_rate`. `fast` holds 256 KB, half
+    /// its cap, served at `fast_rate`, or at `fast_served` over the last two seconds while its
+    /// serving rate is unmeasured. Returns which of them `msg` is routed to.
+    #[test_case(get_headers(1), 100 << 10, 1 << 20, 0 => "fast"; "a header request goes to the shortest queue")]
+    #[test_case(get_headers(1), 100 << 10, 0, 1 << 20 => "fast"; "a peer still being measured is timed by its last two seconds")]
+    #[test_case(get_headers(1), 0, 1 << 20, 0 => "fast"; "a busy peer that delivered nothing yet goes last")]
+    #[test_case(get_headers(1), 0, 0, 0 => "slow"; "the cap ratio while no peer has a rate")]
+    #[test_case(get_block(1), 100 << 10, 1 << 20, 0 => "fast"; "a block request goes to the shortest queue")]
+    #[test_case(get_block(1), 100 << 10, 0, 1 << 20 => "fast"; "a block request times a peer by its last two seconds")]
+    #[test_case(get_cfilters(0), 100 << 10, 1 << 20, 0 => "slow"; "bulk requests keep the cap ratio")]
     #[tokio::test]
-    async fn route_picks_the_peer_by_class(msg: NetworkMessage, fast_rate: u64) -> &'static str {
+    async fn route_picks_the_peer_by_class(
+        msg: NetworkMessage,
+        slow_rate: u64,
+        fast_rate: u64,
+        fast_served: u64,
+    ) -> &'static str {
         let costs = ResponseCosts::new();
         let slow = ConnectedPeer::for_test(conn(1, 0)).await;
         let fast = ConnectedPeer::for_test(conn(2, 0)).await;
@@ -925,13 +969,14 @@ mod tests {
         fast.handle().send(&get_cfilters(4000)).await.expect("loopback send");
         slow.set_cap(slow.in_flight_bytes() * 10);
         fast.set_cap(fast.in_flight_bytes() * 2);
-        slow.set_serving_rate(100 << 10);
+        slow.set_serving_rate(slow_rate);
         fast.set_serving_rate(fast_rate);
+        fast.set_served(fast_served);
         let before = (slow.in_flight_bytes(), fast.in_flight_bytes());
 
         let broker = Broker::new();
         broker.enqueue(0, msg).await;
-        assert_eq!(broker.route(&[slow.handle(), fast.handle()], u64::MAX, &costs).await, 1);
+        assert_eq!(broker.route(&[slow.handle(), fast.handle()], &costs).await, 1);
 
         match (slow.in_flight_bytes() > before.0, fast.in_flight_bytes() > before.1) {
             (true, false) => "slow",

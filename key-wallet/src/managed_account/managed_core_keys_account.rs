@@ -155,6 +155,20 @@ impl ManagedCoreKeysAccount {
         self.finalized_summaries.get_mut(txid)
     }
 
+    /// Whether `txid` is finalized with neither its record nor a summary of it.
+    #[cfg(not(feature = "keep-finalized-transactions"))]
+    pub(crate) fn finalized_without_summary(&self, txid: &Txid) -> bool {
+        self.finalized_txids.contains(txid)
+            && !self.transactions.contains_key(txid)
+            && !self.finalized_summaries.contains_key(txid)
+    }
+
+    /// Always false: finalized records are kept whole with the feature on.
+    #[cfg(feature = "keep-finalized-transactions")]
+    pub(crate) fn finalized_without_summary(&self, _txid: &Txid) -> bool {
+        false
+    }
+
     /// Whether the record for `txid` must survive finalization: true only
     /// on provider-key accounts for transactions carrying a DIP-3
     /// provider payload. See [`Self::drop_finalized_transaction`].

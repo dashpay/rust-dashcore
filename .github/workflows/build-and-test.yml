@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ["core", "spv", "wallet", "rpc"]
+        group: ["core wallet rpc", "spv"]
     env:
       RUST_BACKTRACE: 1
       CACHE_DIR: ${{ github.workspace }}/.rust-dashcore-test
@@ -38,6 +38,7 @@ jobs:
           shared-key: "test-${{ inputs.os }}-${{ matrix.group }}"
           prefix-key: "v1-rust"
           cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/dev' }}
       - uses: taiki-e/install-action@v2.90.3
         with:
           tool: just

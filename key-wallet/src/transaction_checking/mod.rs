@@ -5,7 +5,6 @@
 //! transaction types.
 
 pub mod account_checker;
-pub mod platform_checker;
 pub mod spend_authorization;
 pub mod transaction_context;
 pub mod transaction_router;
@@ -14,7 +13,6 @@ pub mod wallet_checker;
 pub use account_checker::{
     AccountMatch, AddressClassification, DerivedAddressInfo, TransactionCheckResult,
 };
-pub use platform_checker::WalletPlatformChecker;
 pub use spend_authorization::{verify_input_authorization, SpendAuthorizationError};
 pub use transaction_context::{BlockInfo, TransactionContext};
 pub use transaction_router::{PlatformAccountConversionError, TransactionRouter, TransactionType};

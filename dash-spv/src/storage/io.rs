@@ -1,9 +1,12 @@
 //! Low-level I/O utilities for reading and writing segment files.
 
+use std::fs::{self, File};
+use std::io::{BufReader, Seek, SeekFrom, Write};
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use crate::error::{StorageError, StorageResult};
-use dashcore::consensus::Encodable;
+use dashcore::consensus::{Decodable, Encodable};
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 /// Get the temporary file path for atomic writes.
@@ -20,6 +23,109 @@ fn get_temp_path(path: &Path) -> PathBuf {
     temp_path
 }
 
+/// A file of encoded items followed by the blake3 hash of those items.
+pub(crate) struct ChecksummedFile<I> {
+    path: PathBuf,
+    _items: PhantomData<I>,
+}
+
+impl<I> ChecksummedFile<I> {
+    pub(crate) fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            _items: PhantomData,
+        }
+    }
+
+    /// Checks the file against its checksum without decoding the items.
+    pub(crate) fn verify_blocking(&self) -> StorageResult<()> {
+        self.verified(&fs::read(&self.path)?).map(|_| ())
+    }
+
+    fn verified<'a>(&self, bytes: &'a [u8]) -> StorageResult<&'a [u8]> {
+        let corruption =
+            || StorageError::Corruption(format!("Checksum mismatch in {:?}", self.path));
+
+        let split = bytes.len().checked_sub(blake3::OUT_LEN).ok_or_else(corruption)?;
+
+        let (data, checksum) = bytes.split_at(split);
+
+        if blake3::hash(data).as_bytes() != checksum {
+            return Err(corruption());
+        }
+
+        Ok(data)
+    }
+}
+
+impl<I: Encodable + Decodable> ChecksummedFile<I> {
+    /// Atomically writes `items` and their checksum
+    pub(crate) async fn write(&self, items: &[I]) -> StorageResult<()> {
+        atomic_write_with(&self.path, |file| async move {
+            let mut writer = BufWriter::with_capacity(1 << 20, file);
+            let mut hasher = blake3::Hasher::new();
+            let mut encoded = Vec::new();
+
+            for item in items {
+                encoded.clear();
+                item.consensus_encode(&mut encoded)?;
+                hasher.update(&encoded);
+                writer.write_all(&encoded).await?;
+            }
+
+            writer.write_all(hasher.finalize().as_bytes()).await?;
+            writer.flush().await?;
+            writer.into_inner().sync_all().await
+        })
+        .await
+    }
+
+    /// Returns the items after verifying the checksum
+    pub(crate) async fn read(&self) -> StorageResult<Vec<I>> {
+        let bytes = tokio::fs::read(&self.path).await?;
+        let mut data = self.verified(&bytes)?;
+        let mut items = Vec::new();
+
+        while !data.is_empty() {
+            items.push(I::consensus_decode(&mut data)?);
+        }
+
+        Ok(items)
+    }
+
+    /// Returns the item at byte `offset` without reading the rest
+    /// of the file and without checking the checksum.
+    pub(crate) fn read_unverified_at(&self, offset: u64) -> StorageResult<I> {
+        let mut file = File::open(&self.path)?;
+
+        file.seek(SeekFrom::Start(offset))?;
+
+        Ok(I::consensus_decode(&mut BufReader::new(file))?)
+    }
+}
+
+impl ChecksummedFile<u8> {
+    /// Atomically writes `data` and its checksum.
+    pub(crate) async fn write_bytes(&self, data: &[u8]) -> StorageResult<()> {
+        atomic_write_with(&self.path, |mut file| async move {
+            file.write_all(data).await?;
+            file.write_all(blake3::hash(data).as_bytes()).await?;
+            file.sync_all().await
+        })
+        .await
+    }
+
+    /// Returns the bytes after verifying the checksum.
+    pub(crate) async fn read_bytes(&self) -> StorageResult<Vec<u8>> {
+        let mut bytes = tokio::fs::read(&self.path).await?;
+        let len = self.verified(&bytes)?.len();
+
+        bytes.truncate(len);
+
+        Ok(bytes)
+    }
+}
+
 /// Atomically write data to a file.
 /// Uses temporary file + sync + rename pattern for crash resilience.
 pub(crate) async fn atomic_write(path: &Path, data: &[u8]) -> StorageResult<()> {
@@ -30,24 +136,29 @@ pub(crate) async fn atomic_write(path: &Path, data: &[u8]) -> StorageResult<()> 
     .await
 }
 
-/// Like [`atomic_write`], but encodes `items` into the file one at a time
-/// instead of into a buffer holding all of them.
-pub(crate) async fn atomic_write_items<I: Encodable>(
-    path: &Path,
-    items: &[I],
-) -> StorageResult<()> {
-    atomic_write_with(path, |file| async move {
-        let mut writer = BufWriter::with_capacity(1 << 20, file);
-        let mut encoded = Vec::new();
-        for item in items {
-            encoded.clear();
-            item.consensus_encode(&mut encoded)?;
-            writer.write_all(&encoded).await?;
-        }
-        writer.flush().await?;
-        writer.into_inner().sync_all().await
-    })
-    .await
+/// Blocking version of `atomic_write` without `sync_all`, for use inside `spawn_blocking`.
+/// Skipping the sync makes the migration several times faster
+pub(crate) fn atomic_write_blocking(path: &Path, data: &[u8]) -> StorageResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| StorageError::WriteFailed(format!("Failed to create directory: {}", e)))?;
+    }
+
+    let temp_path = get_temp_path(path);
+
+    let write_result = File::create(&temp_path).and_then(|mut file| file.write_all(data));
+
+    if let Err(e) = write_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(StorageError::WriteFailed(format!("Failed to write temp file: {}", e)));
+    }
+
+    if let Err(e) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(StorageError::WriteFailed(format!("Failed to rename temp file: {}", e)));
+    }
+
+    Ok(())
 }
 
 async fn atomic_write_with<F, Fut>(path: &Path, write: F) -> StorageResult<()>
@@ -87,17 +198,50 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use test_case::test_case;
 
     #[tokio::test]
-    async fn test_atomic_write_items_matches_encoding_all_at_once() {
+    async fn test_checksummed_file_write_read_roundtrip() {
         let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("items.dat");
-        let items = vec![vec![1u8, 2, 3], vec![], vec![4u8; 300]];
+        let file = ChecksummedFile::new(temp_dir.path().join("items.dat"));
+        let items = vec![vec![1, 2, 3], vec![], vec![4; 300]];
 
-        atomic_write_items(&path, &items).await.unwrap();
+        file.write(&items).await.unwrap();
 
-        let expected: Vec<u8> = items.iter().flat_map(dashcore::consensus::serialize).collect();
-        assert_eq!(fs::read(&path).unwrap(), expected);
+        assert_eq!(file.read().await.unwrap(), items);
+        assert_eq!(file.read_unverified_at(0).unwrap(), items[0]);
+        file.verify_blocking().unwrap();
+
+        let bytes_file = ChecksummedFile::<u8>::new(temp_dir.path().join("bytes.dat"));
+        bytes_file.write_bytes(b"snapshot").await.unwrap();
+        assert_eq!(bytes_file.read_bytes().await.unwrap(), b"snapshot");
+    }
+
+    #[test_case(|bytes| bytes[0] ^= 1 ; "flipped data byte")]
+    #[test_case(|bytes| *bytes.last_mut().unwrap() ^= 1 ; "flipped checksum byte")]
+    #[test_case(|bytes| { bytes.pop(); } ; "truncated")]
+    #[test_case(|bytes| bytes.push(0) ; "extra byte")]
+    #[test_case(|bytes| bytes.truncate(blake3::OUT_LEN - 1) ; "shorter than the checksum")]
+    #[tokio::test]
+    async fn test_checksummed_file_detects_corruption(corrupt: fn(&mut Vec<u8>)) {
+        let temp_dir = TempDir::new().unwrap();
+        let items_path = temp_dir.path().join("items.dat");
+        let bytes_path = temp_dir.path().join("bytes.dat");
+        let file = ChecksummedFile::new(&items_path);
+        let bytes_file = ChecksummedFile::<u8>::new(&bytes_path);
+
+        file.write(&[vec![1, 2, 3], vec![4; 300]]).await.unwrap();
+        bytes_file.write_bytes(b"snapshot").await.unwrap();
+
+        for path in [&items_path, &bytes_path] {
+            let mut bytes = fs::read(path).unwrap();
+            corrupt(&mut bytes);
+            fs::write(path, bytes).unwrap();
+        }
+
+        assert!(matches!(file.read().await, Err(StorageError::Corruption(_))));
+        assert!(matches!(file.verify_blocking(), Err(StorageError::Corruption(_))));
+        assert!(matches!(bytes_file.read_bytes().await, Err(StorageError::Corruption(_))));
     }
 
     #[test]
