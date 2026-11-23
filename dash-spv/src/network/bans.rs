@@ -84,6 +84,12 @@ impl Bans {
         false
     }
 
+    /// Whether `addr` is banned, leaving out its dial backoff.
+    pub async fn is_banned(&self, addr: SocketAddr) -> bool {
+        let entries = self.entries.lock().await;
+        entries.get(&addr).is_some_and(|entry| entry.banned_until > Instant::now())
+    }
+
     /// Locks the table until the returned guard drops. A test holds it to stop a task at its
     /// next ban.
     #[cfg(test)]

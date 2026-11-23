@@ -968,6 +968,17 @@ impl Supervisor {
             let _ = handle.send(&NetworkMessage::GetAddr).await;
         }
 
+        // A ban can land while the round waits on slower dials.
+        let mut unbanned = Vec::with_capacity(leftover.len());
+        for peer in leftover {
+            if self.state.bans.is_banned(peer.addr()).await {
+                peer.close();
+            } else {
+                unbanned.push(peer);
+            }
+        }
+        let mut leftover = unbanned;
+
         // Last resort: never sit at zero peers. If nothing decent connected and the
         // set is empty, take the least-bad handshake we got so sync can start; a
         // later round upgrades it once a decent peer appears.
@@ -1708,11 +1719,14 @@ mod tests {
 
     /// A peer on loopback that answers each version handshake once `go` is notified, then
     /// answers pings until the client closes the connection.
+    #[derive(Clone)]
     struct HandshakingPeer {
         addr: SocketAddr,
         go: Arc<Notify>,
         /// How many connections the client opened to it.
         accepted: Arc<AtomicUsize>,
+        /// How many pings it received after a handshake.
+        pinged: Arc<AtomicUsize>,
         /// How many of its connections the client closed.
         closed: Arc<AtomicUsize>,
         /// Whether it sends neither filters nor pongs for now.
@@ -1723,13 +1737,15 @@ mod tests {
         async fn listen() -> Self {
             Self::serving(
                 ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM,
+                true,
             )
             .await
         }
 
-        /// Like [`HandshakingPeer::listen`], advertising `services`.
-        async fn serving(services: ServiceFlags) -> Self {
-            Self::answering(services, Duration::ZERO, 0).await
+        /// Like [`HandshakingPeer::listen`], advertising `services` and answering pings only
+        /// if `pongs`.
+        async fn serving(services: ServiceFlags, pongs: bool) -> Self {
+            Self::answering(services, pongs.then_some(Duration::ZERO), 0).await
         }
 
         /// One peer for each of `rates`, serving filters at that many bytes/s.
@@ -1738,46 +1754,47 @@ mod tests {
                 ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
             let mut peers = Vec::new();
             for &rate in rates {
-                peers.push(Self::answering(services, Duration::ZERO, rate).await);
+                peers.push(Self::answering(services, Some(Duration::ZERO), rate).await);
             }
             peers
         }
 
-        /// Like [`HandshakingPeer::serving`], answering each ping after `pong_delay` and,
-        /// once asked for filters, sending `rate` bytes/s of them.
-        async fn answering(services: ServiceFlags, pong_delay: Duration, rate: usize) -> Self {
+        /// Like [`HandshakingPeer::serving`], answering each ping after `pong_delay`, or never
+        /// without one, and, once asked for filters, sending `rate` bytes/s of them.
+        async fn answering(
+            services: ServiceFlags,
+            pong_delay: Option<Duration>,
+            rate: usize,
+        ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
             let peer = HandshakingPeer {
                 addr: listener.local_addr().expect("bound address"),
                 go: Arc::new(Notify::new()),
                 accepted: Arc::new(AtomicUsize::new(0)),
+                pinged: Arc::new(AtomicUsize::new(0)),
                 closed: Arc::new(AtomicUsize::new(0)),
                 silent: Arc::new(AtomicBool::new(false)),
             };
-            let (go, accepted, closed, silent) =
-                (peer.go.clone(), peer.accepted.clone(), peer.closed.clone(), peer.silent.clone());
+            let shared = peer.clone();
             tokio::spawn(async move {
                 while let Ok((stream, client)) = listener.accept().await {
-                    accepted.fetch_add(1, Ordering::SeqCst);
-                    answer_handshake(stream, client, &go, &silent, services, pong_delay, rate)
-                        .await;
-                    closed.fetch_add(1, Ordering::SeqCst);
+                    shared.accepted.fetch_add(1, Ordering::SeqCst);
+                    answer_handshake(stream, client, &shared, services, pong_delay, rate).await;
+                    shared.closed.fetch_add(1, Ordering::SeqCst);
                 }
             });
             peer
         }
     }
 
-    /// Answers the version handshake of `client` on `stream` once `go` is notified, then its
-    /// pings after `pong_delay` and its filter requests at `rate` unless `silent`, for
-    /// [`HandshakingPeer`].
+    /// Answers the version handshake of `client` on `stream` once `peer.go` is notified, then
+    /// its pings after `pong_delay` and its filter requests at `rate` unless `peer.silent`.
     async fn answer_handshake(
         stream: TcpStream,
         client: SocketAddr,
-        go: &Notify,
-        silent: &AtomicBool,
+        peer: &HandshakingPeer,
         services: ServiceFlags,
-        pong_delay: Duration,
+        pong_delay: Option<Duration>,
         rate: usize,
     ) {
         stream.set_nodelay(true).expect("loopback nodelay");
@@ -1794,7 +1811,7 @@ mod tests {
                 break;
             }
         }
-        go.notified().await;
+        peer.go.notified().await;
         let mut version = build_version(client, "handshaking");
         version.services = services;
         let mut hello = framed(NetworkMessage::Version(version));
@@ -1806,18 +1823,21 @@ mod tests {
         loop {
             tokio::select! {
                 _ = ticker.tick(), if asked && rate > 0 => {
-                    if silent.load(Ordering::SeqCst) {
+                    if peer.silent.load(Ordering::SeqCst) {
                         continue;
                     }
                     let _ = write.write_all(&filters).await;
                 }
                 frame = frames.next() => match frame.and_then(Result::ok).map(|raw| raw.payload) {
                     Some(NetworkMessage::Ping(nonce)) => {
-                        if silent.load(Ordering::SeqCst) {
+                        peer.pinged.fetch_add(1, Ordering::SeqCst);
+                        if peer.silent.load(Ordering::SeqCst) {
                             continue;
                         }
-                        time::sleep(pong_delay).await;
-                        let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
+                        if let Some(delay) = pong_delay {
+                            time::sleep(delay).await;
+                            let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
+                        }
                     }
                     Some(NetworkMessage::GetCFilters(_)) => asked = true,
                     Some(_) => {}
@@ -1956,7 +1976,8 @@ mod tests {
     /// off like a failed dial, so it does not take a candidate slot round after round.
     #[tokio::test]
     async fn a_node_lacking_required_services_is_banned() {
-        let node = HandshakingPeer::serving(ServiceFlags::NETWORK | ServiceFlags::BLOOM).await;
+        let node =
+            HandshakingPeer::serving(ServiceFlags::NETWORK | ServiceFlags::BLOOM, true).await;
         node.go.notify_one();
         let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
         let net = PeerNetworkManager::new(&config).await;
@@ -2010,6 +2031,33 @@ mod tests {
 
         assert!(counted(&node.closed).await, "the banned peer was kept");
         assert_eq!(net.connected_count().await, 0);
+    }
+
+    /// A peer held back for the last resort is closed instead of admitted when its address is
+    /// banned while the round waits on a slower dial.
+    #[tokio::test(start_paused = true)]
+    async fn a_last_resort_peer_banned_while_waiting_never_joins() {
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let banned = HandshakingPeer::serving(services, false).await;
+        let other = HandshakingPeer::serving(services, false).await;
+        let net = gossiped(&[&banned, &other]).await;
+
+        // An unanswered latency ping holds a peer back as a last resort once it times out
+        // after five seconds. The other peer's ping goes out a second later.
+        net.start().await;
+        banned.go.notify_one();
+        assert!(counted(&banned.pinged).await, "the banned peer's handshake never finished");
+        time::advance(Duration::from_secs(1)).await;
+        other.go.notify_one();
+        assert!(counted(&other.pinged).await, "the other peer's handshake never finished");
+        time::advance(Duration::from_secs(4)).await;
+        settle().await;
+        net.ban_peer(banned.addr).await;
+        time::advance(Duration::from_secs(1)).await;
+
+        assert!(counted(&banned.closed).await, "the banned peer was kept");
+        let joined: Vec<_> = net.state.connected.read().await.iter().map(|p| p.addr()).collect();
+        assert_eq!(joined, [other.addr]);
     }
 
     /// Gossiped addresses whose service bits lack what the client needs are not learned.
@@ -2368,7 +2416,7 @@ mod tests {
         let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
         let pong_delay = Duration::from_millis(2 * BAD_LAG_FLOOR_MS as u64);
         let mut nodes = HandshakingPeer::filtering(&[FAST, FAST, SLOW]).await;
-        nodes.push(HandshakingPeer::answering(services, pong_delay, FAST).await);
+        nodes.push(HandshakingPeer::answering(services, Some(pong_delay), FAST).await);
         let (net, mut events) = started(&nodes, 3).await;
 
         // One dial is for the first fill, the other for the slow peer.
