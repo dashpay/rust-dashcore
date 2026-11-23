@@ -45,13 +45,9 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
         }
     }
 
-    /// Authenticates a lock using the client's synchronized quorum state.
-    ///
-    /// Returns `None` while the masternode engine or the lock's quorum is unavailable.
-    /// Malformed locks, and signatures a held quorum of their cycle refutes, return an
-    /// error. No network request or wallet mutation is made; callers may retry after
-    /// masternode sync advances.
-    /// Fetch this evidence before acquiring wallet or persistence write locks.
+    /// Verifies a lock against the client's quorum state, with no network or wallet access.
+    /// Returns `None` until the lock's quorum is held; a malformed or refuted lock is an error.
+    /// Call it before taking wallet or persistence write locks.
     pub async fn verify_instant_lock(
         &self,
         instant_lock: &InstantLock,

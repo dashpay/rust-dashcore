@@ -28,12 +28,9 @@ pub enum InstantLockFixtureError {
     Encoding(#[from] io::Error),
 }
 
-/// A lock signed by a random key of its own, and a synthetic quorum cycle for it.
-///
-/// `install` makes every lock signed by that key verify on the client it is installed
-/// into, so use it only on throwaway test clients. It is never a network proof.
-/// The cycle hash derives from the key, so fixtures installed into one client keep
-/// their own cycles.
+/// A lock signed by its own random key, and a synthetic quorum cycle derived from that key.
+/// `install` makes every lock signed by the key verify, so use it only on throwaway clients.
+/// It is never a network proof.
 #[derive(Debug, Clone)]
 pub struct InstantLockFixture {
     instant_lock: InstantLock,

@@ -11,11 +11,9 @@ use crate::sml_engine::MasternodeListEngine;
 use crate::storage::BlockHeaderStorage;
 use crate::validation::Validator;
 
-/// An InstantLock authenticated against the client's synchronized quorum state.
-///
-/// This evidence is process-local: persisted locks must be verified again on load.
-/// Obtain it with `DashSpvClient::verify_instant_lock` or from `SyncEvent::InstantLockReceived`;
-/// a stored context is not proof.
+/// An InstantLock verified against the client's quorum state, valid only in this process.
+/// Obtain it from `DashSpvClient::verify_instant_lock` or `SyncEvent::InstantLockReceived`;
+/// a persisted lock is not proof and must be verified again on load.
 #[derive(Debug, Clone)]
 pub struct VerifiedInstantLock {
     instant_lock: InstantLock,
