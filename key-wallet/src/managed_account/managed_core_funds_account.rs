@@ -1648,10 +1648,10 @@ mod conflict_sweep_walk_tests {
     use crate::account::AccountType;
     use crate::account::StandardAccountType;
     use crate::managed_account::transaction_record::TransactionDirection;
-    use crate::transaction_checking::BlockInfo;
+    use crate::test_utils::in_block;
     use dashcore::ephemerealdata::instant_lock::InstantLock;
     use dashcore::ScriptBuf;
-    use dashcore::{BlockHash, TxIn, TxOut, Witness};
+    use dashcore::{TxIn, TxOut, Witness};
 
     fn outpoint(seed: u32, vout: u32) -> OutPoint {
         let mut raw = [0u8; 32];
@@ -1711,14 +1711,6 @@ mod conflict_sweep_walk_tests {
             0,
         );
         account.keys.transactions_mut().insert(record.txid, record);
-    }
-
-    fn in_block(height: u32) -> TransactionContext {
-        TransactionContext::InBlock(BlockInfo::new(
-            height,
-            BlockHash::from_byte_array([height as u8; 32]),
-            1_700_000_000,
-        ))
     }
 
     /// The descendant closure sweeps a loser's whole unconfirmed chain —
