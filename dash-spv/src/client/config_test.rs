@@ -184,6 +184,13 @@ mod tests {
     }
 
     #[test]
+    fn test_mempool_during_sync_is_opt_in() {
+        assert!(!ClientConfig::default().mempool_during_sync);
+        let config = ClientConfig::default().with_mempool_during_sync(true);
+        assert!(config.mempool_during_sync);
+    }
+
+    #[test]
     fn test_validation_invalid_max_peers() {
         let config = ClientConfig {
             max_peers: 0,

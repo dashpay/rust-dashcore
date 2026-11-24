@@ -1,6 +1,7 @@
 //! Mempool manager for monitoring unconfirmed transactions.
 //!
-//! Activates after initial sync is complete and uses either BIP37 bloom
+//! Activates after initial sync is complete, or as peers connect with
+//! `ClientConfig::mempool_during_sync`, and uses either BIP37 bloom
 //! filters or local address matching to identify wallet-relevant
 //! transactions from the mempool.
 
@@ -50,7 +51,7 @@ const REBROADCAST_INTERVAL: Duration = Duration::from_secs(600);
 /// Mempool manager that monitors unconfirmed transactions from the P2P network.
 ///
 /// Tracks connected peers via a unified map where:
-/// - `None` = peer is connected but not yet activated (before sync completes)
+/// - `None` = peer is connected but not yet activated
 /// - `Some(VecDeque)` = peer is activated (relay enabled), queue holds pending getdata txids
 pub(crate) struct MempoolManager<W: WalletInterface> {
     pub(super) progress: MempoolProgress,
@@ -71,9 +72,13 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     /// Prevents duplicate downloads when multiple peers announce the same transactions.
     /// Entries expire after `SEEN_TXID_EXPIRY`.
     seen_txids: HashMap<Txid, Instant>,
-    /// Wallet monitor hash at the time of the last filter build.
-    /// Compared on each tick to detect when the wallet's monitored set has changed.
+    /// Wallet monitor hash the activated peers' mempool was last judged against. Activating a
+    /// single peer leaves it unchanged, so the refresh at filter sync completion covers every peer.
     pub(super) last_monitor_hash: u64,
+    /// Whether peers are activated as they connect rather than once filter sync completes.
+    pub(super) activate_during_sync: bool,
+    /// Whether filter sync has completed at least once.
+    pub(super) filters_synced: bool,
 }
 
 impl<W: WalletInterface> MempoolManager<W> {
@@ -99,7 +104,15 @@ impl<W: WalletInterface> MempoolManager<W> {
             pending_is_locks: HashMap::new(),
             seen_txids: HashMap::new(),
             last_monitor_hash: initial_monitor_hash,
+            activate_during_sync: false,
+            filters_synced: false,
         }
+    }
+
+    /// Activates peers as they connect when `enabled`, instead of once filter sync completes.
+    pub(crate) fn with_activation_during_sync(mut self, enabled: bool) -> Self {
+        self.activate_during_sync = enabled;
+        self
     }
 
     /// Activate mempool monitoring on a single peer.
@@ -179,6 +192,37 @@ impl<W: WalletInterface> MempoolManager<W> {
         network.send_to(peer, NetworkMessage::FilterLoad(filter_load)).await;
 
         Ok(())
+    }
+
+    /// Requests the mempool again from every activated peer, reloading the bloom filter first.
+    /// Peers never announce a transaction twice, so the txids found irrelevant while the wallet
+    /// was still syncing are forgotten first. An unchanged monitor hash means the wallet watches
+    /// nothing it did not watch when the mempool was first requested, so nothing is requested.
+    pub(super) async fn refresh_after_filter_sync(
+        &mut self,
+        network: &Arc<dyn NetworkManager>,
+    ) -> SyncResult<()> {
+        let current_hash = self.wallet.read().await.monitor_hash();
+        if current_hash == self.last_monitor_hash {
+            return Ok(());
+        }
+        self.forget_irrelevant_txids();
+        self.last_monitor_hash = current_hash;
+        if self.strategy == MempoolStrategy::BloomFilter {
+            return self.rebuild_filter(network).await;
+        }
+        let activated: Vec<SocketAddr> =
+            self.peers.iter().filter(|(_, v)| v.is_some()).map(|(k, _)| *k).collect();
+        for peer in activated {
+            network.send_to(peer, NetworkMessage::MemPool).await;
+        }
+        Ok(())
+    }
+
+    /// Forgets the downloaded txids the wallet found irrelevant, so a new announcement of
+    /// one is downloaded again.
+    pub(super) fn forget_irrelevant_txids(&mut self) {
+        self.seen_txids.retain(|txid, _| self.transactions.contains_key(txid));
     }
 
     /// Rebuild the bloom filter on all activated peers.
