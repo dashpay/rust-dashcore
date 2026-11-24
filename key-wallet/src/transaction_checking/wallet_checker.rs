@@ -7,6 +7,7 @@ pub(crate) use super::account_checker::TransactionCheckResult;
 use super::account_checker::{AccountMatch, DerivedAddressInfo};
 use super::transaction_context::TransactionContext;
 use super::transaction_router::{AccountTypeToCheck, TransactionRouter};
+use crate::account::AccountType;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::transaction_record::{InputDetail, TransactionRecord};
 use crate::managed_account::ManagedAccountRef;
@@ -17,6 +18,7 @@ use crate::{KeySource, Wallet};
 use async_trait::async_trait;
 use dashcore::blockdata::transaction::Transaction;
 use dashcore::{Address, Amount, OutPoint, SignedAmount, Txid};
+use std::collections::HashMap;
 
 /// Extension trait for ManagedWalletInfo to add transaction checking capabilities
 #[async_trait]
@@ -167,6 +169,7 @@ impl ManagedWalletInfo {
     /// Marks the addresses the matches in `result` involve as used and checks `tx` again until
     /// nothing new is derived. Without `include_recorded`, only accounts holding no record of `tx`
     /// take part. With it, funds accounts holding `tx` finalized without a summary are left out.
+    /// Then reports each derived address as its pool now holds it.
     fn use_addresses_until_settled(
         &mut self,
         wallet: &Wallet,
@@ -184,12 +187,35 @@ impl ManagedWalletInfo {
                 self.matches_without_record(&result.affected_accounts, &txid)
             };
             if !self.use_involved_addresses(wallet, &matches, &mut result.new_addresses) {
-                return;
+                break;
             }
             let rechecked = self.accounts.check_transaction(tx, relevant_types);
             result.affected_accounts = rechecked.affected_accounts;
             result.total_received = rechecked.total_received;
             result.total_sent = rechecked.total_sent;
+        }
+        self.refresh_reported_addresses(&mut result.new_addresses);
+    }
+
+    /// Replaces each entry of `new_addresses` with its account's current info, which a later
+    /// settle round may have marked used.
+    fn refresh_reported_addresses(&self, new_addresses: &mut [DerivedAddressInfo]) {
+        if new_addresses.is_empty() {
+            return;
+        }
+        let accounts: HashMap<AccountType, ManagedAccountRef<'_>> = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .map(|account| (account.managed_account_type().to_account_type(), account))
+            .collect();
+        for reported in new_addresses {
+            let current = accounts.get(&reported.account_type).and_then(|account| {
+                account.managed_account_type().get_address_info(&reported.info.address)
+            });
+            if let Some(current) = current {
+                reported.info = current;
+            }
         }
     }
 
@@ -4233,28 +4259,36 @@ mod tests {
         assert!(settled.updated_records.is_empty());
     }
 
-    /// A transaction's own window extension can reveal its further outputs:
-    /// it pays index 1, 1+gap and 1+2*gap, and each owned output extends the
-    /// window over the next. It is recorded whole on first sight, and the
-    /// rescan that re-delivers its block finds nothing to correct.
+    /// A transaction paying index 1, 1+gap, 1+2*gap and so on is recorded whole on first sight,
+    /// each paid address is reported once and used, and a rescan finds nothing to correct.
     #[tokio::test]
     async fn test_transaction_owning_outputs_its_own_extension_derives_is_recorded_whole() {
-        let mut ctx = TestWalletContext::new_random();
         let gap = DEFAULT_EXTERNAL_GAP_LIMIT as usize;
-        let addresses = bip44_receive_addresses(&ctx, 2 * gap as u32 + 2);
-        let tx = paying(1, &[&addresses[1], &addresses[1 + gap], &addresses[1 + 2 * gap]], 40_000);
+        for outputs in [3, 40] {
+            let mut ctx = TestWalletContext::new_random();
+            let addresses = bip44_receive_addresses(&ctx, ((outputs - 1) * gap + 2) as u32);
+            let paid: Vec<&Address> = (0..outputs).map(|k| &addresses[1 + k * gap]).collect();
+            let tx = paying(1, &paid, 40_000);
+            let total = 40_000 * outputs as i64;
 
-        let first = ctx.check_transaction(&tx, in_block(100, 1)).await;
-        assert_eq!(first.total_received, 120_000);
-        assert_eq!(first.new_records.len(), 1);
-        assert_eq!(first.new_records[0].net_amount, 120_000);
-        assert_eq!(owned_output_count(&first.new_records[0]), 3);
-        assert_eq!(ctx.transaction(&tx.txid()).net_amount, 120_000, "stored record");
-        let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == tx.txid()).count();
-        assert_eq!(credited, 3);
+            let first = ctx.check_transaction(&tx, in_block(100, 1)).await;
+            assert_eq!(first.total_received, total as u64);
+            assert_eq!(first.new_records.len(), 1);
+            assert_eq!(first.new_records[0].net_amount, total);
+            assert_eq!(owned_output_count(&first.new_records[0]), outputs);
+            assert_eq!(ctx.transaction(&tx.txid()).net_amount, total, "stored record");
+            let credited = ctx.bip44_account().utxos.keys().filter(|o| o.txid == tx.txid()).count();
+            assert_eq!(credited, outputs);
+            for address in &paid[1..] {
+                let reported: Vec<_> =
+                    first.new_addresses.iter().filter(|d| &d.info.address == *address).collect();
+                assert_eq!(reported.len(), 1, "derived once");
+                assert!(reported[0].info.is_used(), "reported as the pool holds it");
+            }
 
-        let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
-        assert!(again.updated_records.is_empty());
+            let again = ctx.check_transaction(&tx, in_block(100, 1)).await;
+            assert!(again.updated_records.is_empty());
+        }
     }
 
     /// The same on the change chain: the far output is recorded as `Change`.
