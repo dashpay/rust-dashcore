@@ -23,8 +23,8 @@ pub trait MetadataStorage: Send + Sync + 'static {
     ) -> StorageResult<Option<T>>;
     /// Persist the last target height to metadata storage.
     async fn store_last_target_height(&mut self, height: CoreBlockHeight) -> StorageResult<()>;
-    /// Load the last target height from metadata storage.
-    async fn load_last_target_height(&self) -> StorageResult<CoreBlockHeight>;
+    /// Load the last target height from metadata storage, if one is stored.
+    async fn load_last_target_height(&self) -> StorageResult<Option<CoreBlockHeight>>;
 }
 
 pub struct PersistentMetadataStorage {
@@ -85,28 +85,14 @@ impl MetadataStorage for PersistentMetadataStorage {
             Err(e) => {
                 let error = format!("Failed to serialize last target height: {}", e);
                 tracing::warn!(error);
-                Err(StorageError::Serialization(error))
+                Err(StorageError::WriteFailed(error))
             }
         }
     }
 
     /// Load the last target height from metadata storage. Used by the block headers manager to
     /// restore progress after restart.
-    async fn load_last_target_height(&self) -> StorageResult<CoreBlockHeight> {
-        match self.load_metadata::<CoreBlockHeight>(LAST_TARGET_HEIGHT_KEY).await {
-            Ok(Some(last_target_height)) => {
-                tracing::debug!("Restored last target height {}", last_target_height);
-                Ok(last_target_height)
-            }
-            Ok(None) => {
-                let error = "No last target height found (fresh start)".to_string();
-                tracing::debug!(error);
-                Err(StorageError::NotFound(error))
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load last target height: {}", e);
-                Err(e)
-            }
-        }
+    async fn load_last_target_height(&self) -> StorageResult<Option<CoreBlockHeight>> {
+        self.load_metadata::<CoreBlockHeight>(LAST_TARGET_HEIGHT_KEY).await
     }
 }

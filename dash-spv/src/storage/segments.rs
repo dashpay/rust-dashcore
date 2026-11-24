@@ -229,7 +229,7 @@ impl<I: Persistable> SegmentCache<I> {
 
     /// Load a contiguous range of items by height.
     ///
-    /// Returns `StorageError::InvalidArgument` when the requested range extends
+    /// Returns `StorageError::ReadFailed` when the requested range extends
     /// above the tip. Callers reading across a truncation boundary must clamp
     /// their range to `tip_height` first, or fall back to per-item reads via
     /// `get_item`, which returns `Ok(None)` for those slots.
@@ -242,7 +242,7 @@ impl<I: Persistable> SegmentCache<I> {
         // Reject ranges that extend past the current tip, including the
         // sentinel tail a `truncate_above` leaves in the boundary segment.
         if end > self.next_height() {
-            return Err(StorageError::InvalidArgument(format!(
+            return Err(StorageError::ReadFailed(format!(
                 "get_items range {height_range:?} extends above tip {:?}",
                 self.tip_height
             )));
@@ -253,7 +253,7 @@ impl<I: Persistable> SegmentCache<I> {
         // read would trip the `first_valid_offset` debug assertion below in
         // debug builds, and silently hand back sentinel data in release builds.
         if self.start_height.is_none_or(|lowest| start < lowest) {
-            return Err(StorageError::InvalidArgument(format!(
+            return Err(StorageError::ReadFailed(format!(
                 "get_items range {height_range:?} begins below the lowest stored height {:?}",
                 self.start_height
             )));
@@ -322,7 +322,7 @@ impl<I: Persistable> SegmentCache<I> {
     /// Unlike `get_items()`, this does not assert dense storage, safe for sparse data.
     ///
     /// For heights above the tip this returns `Ok(None)` rather than the
-    /// `StorageError::InvalidArgument` that `get_items` returns. Callers must
+    /// `StorageError::ReadFailed` that `get_items` returns. Callers must
     /// not interpret `Ok(None)` here as a fallback for an error from `get_items`.
     /// The two APIs report truncated slots differently by design.
     pub async fn get_item(&mut self, height: u32) -> StorageResult<Option<I>> {
@@ -1000,7 +1000,7 @@ mod tests {
         // than bring it back as sentinels.
         assert!(matches!(
             cache.get_items(ITEMS_PER_SEGMENT..ITEMS_PER_SEGMENT + 5).await,
-            Err(StorageError::InvalidArgument(_))
+            Err(StorageError::ReadFailed(_))
         ));
 
         cache.persist(tmp_dir.path()).await;
@@ -1020,8 +1020,8 @@ mod tests {
         // Reading past the truncated tip would land in the boundary segment's
         // sentinel tail. Fail fast instead of panicking on the
         // `last_valid_offset` debug_assert.
-        assert!(matches!(cache.get_items(0..15).await, Err(StorageError::InvalidArgument(_))));
-        assert!(matches!(cache.get_items(8..11).await, Err(StorageError::InvalidArgument(_))));
+        assert!(matches!(cache.get_items(0..15).await, Err(StorageError::ReadFailed(_))));
+        assert!(matches!(cache.get_items(8..11).await, Err(StorageError::ReadFailed(_))));
 
         let kept = cache.get_items(0..10).await.unwrap();
         assert_eq!(kept, items[0..10]);
@@ -1136,9 +1136,9 @@ mod tests {
 
         // Entirely below the stored range (the #892 shape: a scan start far
         // below tip-region storage, within the same segment).
-        assert!(matches!(cache.get_items(100..200).await, Err(StorageError::InvalidArgument(_))));
+        assert!(matches!(cache.get_items(100..200).await, Err(StorageError::ReadFailed(_))));
         // Straddling the lowest stored height.
-        assert!(matches!(cache.get_items(895..905).await, Err(StorageError::InvalidArgument(_))));
+        assert!(matches!(cache.get_items(895..905).await, Err(StorageError::ReadFailed(_))));
         // The stored range itself is readable.
         assert_eq!(cache.get_items(900..910).await.unwrap(), items);
 
@@ -1147,12 +1147,12 @@ mod tests {
         const ITEMS_PER_SEGMENT: u32 = Segment::<FilterHeader>::ITEMS_PER_SEGMENT;
         let mut cache = SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path()).await.unwrap();
         cache.store_items_at_height(&items, ITEMS_PER_SEGMENT + 5).await.unwrap();
-        assert!(matches!(cache.get_items(100..200).await, Err(StorageError::InvalidArgument(_))));
+        assert!(matches!(cache.get_items(100..200).await, Err(StorageError::ReadFailed(_))));
 
         // An empty cache rejects every range.
         let mut cache =
             SegmentCache::<FilterHeader>::load_or_new(tmp_dir.path().join("empty")).await.unwrap();
-        assert!(matches!(cache.get_items(0..1).await, Err(StorageError::InvalidArgument(_))));
+        assert!(matches!(cache.get_items(0..1).await, Err(StorageError::ReadFailed(_))));
     }
 
     #[tokio::test]

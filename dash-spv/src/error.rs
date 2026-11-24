@@ -77,23 +77,14 @@ pub enum StorageError {
     #[error("Corruption detected: {0}")]
     Corruption(String),
 
-    #[error("Data not found: {0}")]
-    NotFound(String),
-
     #[error("Write failed: {0}")]
     WriteFailed(String),
 
     #[error("Read failed: {0}")]
     ReadFailed(String),
 
-    #[error("Invalid argument: {0}")]
-    InvalidArgument(String),
-
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
 
     #[error("Data directory locked: {0}")]
     DirectoryLocked(String),

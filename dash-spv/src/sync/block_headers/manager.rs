@@ -83,7 +83,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 
         // Restore persisted target height, fall back to tip height
         let target_height =
-            metadata_storage.read().await.load_last_target_height().await.unwrap_or(tip.height());
+            metadata_storage.read().await.load_last_target_height().await?.unwrap_or(tip.height());
 
         let mut initial_progress = BlockHeadersProgress::default();
         initial_progress.set_state(SyncState::WaitingForConnections);
@@ -944,7 +944,7 @@ mod tests {
         };
         manager.handle_network_event(&lagging, &network).await.unwrap();
         assert_eq!(manager.progress.target_height(), 9);
-        assert_eq!(storage.load_last_target_height().await.unwrap(), 9);
+        assert_eq!(storage.load_last_target_height().await.unwrap(), Some(9));
     }
 
     #[tokio::test]

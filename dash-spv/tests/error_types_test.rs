@@ -97,20 +97,12 @@ fn test_storage_error_variants() {
             "Corruption detected: Invalid segment header",
         ),
         (
-            StorageError::NotFound("Header at height 1000".to_string()),
-            "Data not found: Header at height 1000",
-        ),
-        (
             StorageError::WriteFailed("/tmp/headers.dat: Permission denied".to_string()),
             "Write failed: /tmp/headers.dat: Permission denied",
         ),
         (
             StorageError::ReadFailed("Segment file truncated".to_string()),
             "Read failed: Segment file truncated",
-        ),
-        (
-            StorageError::Serialization("Invalid encoding".to_string()),
-            "Serialization error: Invalid encoding",
         ),
     ];
 
@@ -174,7 +166,7 @@ fn test_result_type_aliases() {
     }
 
     fn storage_operation() -> StorageResult<String> {
-        Err(StorageError::NotFound("test".to_string()))
+        Err(StorageError::ReadFailed("test".to_string()))
     }
 
     fn validation_operation() -> ValidationResult<bool> {
