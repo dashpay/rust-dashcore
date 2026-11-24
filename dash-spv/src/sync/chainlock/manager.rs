@@ -13,7 +13,7 @@ use dashcore::hash_types::ChainLockHash;
 use std::collections::HashSet;
 use tokio::sync::RwLock;
 
-use crate::error::{SyncResult, ValidationResult};
+use crate::error::{StorageResult, SyncResult, ValidationResult};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
 use crate::sync::{ChainLockProgress, SyncEvent, BEST_CHAINLOCK_METADATA_STORAGE_KEY};
 use crate::validation::{ChainLockValidator, Validator};
@@ -66,7 +66,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         header_storage: Arc<RwLock<H>>,
         metadata_storage: Arc<RwLock<M>>,
         masternode_engine: Arc<RwLock<MasternodeListEngine<H>>>,
-    ) -> Self {
+    ) -> StorageResult<Self> {
         let mut manager = Self {
             progress: ChainLockProgress::default(),
             header_storage,
@@ -80,9 +80,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
         };
 
         // TODO: Move load_best_chainlock() and save_best_chainlock() to MetadataStorage trait.
-        manager.load_best_chainlock().await;
+        manager.load_best_chainlock().await?;
 
-        manager
+        Ok(manager)
     }
 
     /// Apply the masternode-ready transition.
@@ -283,22 +283,20 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> ChainLockManager<H, M> {
     }
 
     /// Load the best chainlock from metadata storage and restore progress.
-    pub(super) async fn load_best_chainlock(&mut self) {
+    pub(super) async fn load_best_chainlock(&mut self) -> StorageResult<()> {
         let storage = self.metadata_storage.read().await;
-        match storage.load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY).await {
-            Ok(Some(chainlock)) => {
+        match storage.load_metadata::<ChainLock>(BEST_CHAINLOCK_METADATA_STORAGE_KEY).await? {
+            Some(chainlock) => {
                 let height = chainlock.block_height;
                 tracing::info!("Restored persisted ChainLock at height {}", height);
                 self.progress.update_best_validated_height(height);
                 self.best_chainlock = Some(chainlock);
             }
-            Ok(None) => {
+            None => {
                 tracing::debug!("No persisted chainlock found (fresh start)");
             }
-            Err(e) => {
-                tracing::warn!("Failed to load persisted chainlock: {}", e);
-            }
         }
+        Ok(())
     }
 
     /// Compares the ChainLock block hash with our stored header at its height.
@@ -333,6 +331,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> std::fmt::Debug for ChainLockMan
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::StorageError;
     use crate::network::{MessageType, NetworkManager};
     use crate::sml_engine::test_support::TestEngine;
     use crate::storage::{
@@ -355,7 +354,7 @@ mod tests {
             Network::Testnet,
             storage.block_headers(),
         )));
-        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
+        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await.unwrap()
     }
 
     async fn create_test_manager_with_storage(
@@ -365,7 +364,7 @@ mod tests {
             Network::Testnet,
             storage.block_headers(),
         )));
-        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await
+        ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await.unwrap()
     }
 
     fn create_test_chainlock(height: u32) -> ChainLock {
@@ -591,7 +590,8 @@ mod tests {
         let engine = TestEngine::mainnet_fixture();
         let headers = engine.headers();
         let engine = Arc::new(RwLock::new(engine));
-        let mut manager = ChainLockManager::new(headers, storage.metadata(), engine.clone()).await;
+        let mut manager =
+            ChainLockManager::new(headers, storage.metadata(), engine.clone()).await.unwrap();
         let _ = manager.on_masternode_ready().await;
 
         let [chain_lock, _] = ChainLock::mainnet_fixture_pair();
@@ -685,10 +685,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_corrupted_persisted_chainlock_fails_construction() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        storage
+            .metadata()
+            .write()
+            .await
+            .store_metadata(BEST_CHAINLOCK_METADATA_STORAGE_KEY, b"not json")
+            .await
+            .unwrap();
+        let engine = Arc::new(RwLock::new(MasternodeListEngine::new(
+            Network::Testnet,
+            storage.block_headers(),
+        )));
+
+        let result =
+            ChainLockManager::new(storage.block_headers(), storage.metadata(), engine).await;
+
+        assert!(matches!(result, Err(StorageError::Corruption(_))));
+    }
+
+    #[tokio::test]
     async fn test_load_from_empty_storage_returns_none() {
         let mut manager = create_test_manager().await;
 
-        manager.load_best_chainlock().await;
+        manager.load_best_chainlock().await.unwrap();
 
         assert!(manager.best_chainlock.as_ref().is_none());
         assert_eq!(manager.progress.best_validated_height(), 0);
@@ -782,7 +803,7 @@ mod tests {
         // Load and verify only the latest is stored
         {
             let mut manager = create_test_manager_with_storage(&storage).await;
-            manager.load_best_chainlock().await;
+            manager.load_best_chainlock().await.unwrap();
 
             let restored = manager.best_chainlock.as_ref().expect("chainlock should be restored");
             assert_eq!(restored.block_height, 200);
@@ -803,7 +824,7 @@ mod tests {
         // Load and try to process a lower chainlock
         {
             let mut manager = create_test_manager_with_storage(&storage).await;
-            manager.load_best_chainlock().await;
+            manager.load_best_chainlock().await.unwrap();
 
             // Try to process a lower chainlock
             let lower_chainlock = create_test_chainlock(100);

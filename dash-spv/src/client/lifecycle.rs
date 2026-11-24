@@ -172,7 +172,7 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     storage.metadata(),
                     masternode_list_engine.clone(),
                 )
-                .await,
+                .await?,
             );
             managers.instantsend = Some(InstantSendManager::new(masternode_list_engine.clone()));
         }
