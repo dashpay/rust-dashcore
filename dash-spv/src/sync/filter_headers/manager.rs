@@ -276,7 +276,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
     ) -> SyncResult<Vec<SyncEvent>> {
         // Get current filter tip
         let filter_headers_tip =
-            self.filter_header_storage.read().await.get_filter_tip_height().await?.unwrap_or(0);
+            self.filter_header_storage.read().await.get_filter_tip_height().await?;
 
         // Get header start height (for checkpoint sync)
         let header_start_height =
@@ -284,11 +284,11 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
 
         // Calculate start height
         let start_height = match filter_headers_tip {
-            0 => header_start_height,
-            n => (n + 1).max(header_start_height),
+            None => header_start_height,
+            Some(n) => (n + 1).max(header_start_height),
         };
 
-        self.progress.update_current_height(filter_headers_tip);
+        self.progress.update_current_height(filter_headers_tip.unwrap_or(0));
 
         // Check if already at target (nothing to download)
         if start_height > self.progress.block_header_tip_height() {
@@ -307,7 +307,7 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage> FilterHeadersManager<H, FH>
         // Track checkpoint start height for storing prev header on first batch.
         // Only needed on fresh checkpoint sync (no existing filter headers).
         // On resume, start_height-1 is already stored so re-inserting would panic in debug builds.
-        if start_height > 0 && filter_headers_tip == 0 {
+        if start_height > 0 && filter_headers_tip.is_none() {
             self.checkpoint_start_height = Some(start_height);
         }
 
