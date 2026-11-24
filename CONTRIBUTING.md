@@ -189,7 +189,7 @@ This library is NOT suitable for consensus‑critical validation. Always validat
 
 ## Testing
 
-Testing is a priority. Keep unit tests close to code and use `tests/` for integration. Add fuzz targets under `fuzz/` when appropriate. Use deterministic test vectors and avoid network dependencies unless explicitly required (mark such tests `#[ignore]`). `dash-spv` changes must also pass its `dashd` integration tests: `just dash-spv::test` downloads a regtest `dashd` and runs them.
+Testing is a priority. Keep unit tests close to code and use `tests/` for integration. Add fuzz targets under `fuzz/` when appropriate. Use deterministic test vectors and avoid network dependencies unless explicitly required (mark such tests `#[ignore]`). A change that can affect sync, networking, storage or wallet behavior must also pass the `dash-spv` `dashd` integration tests: `just dash-spv::test` downloads a regtest `dashd` and runs them.
 
 
 ## References

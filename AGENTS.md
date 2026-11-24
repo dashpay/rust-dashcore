@@ -35,7 +35,7 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 
 ### dashd integration tests
 
-`dash-spv` has integration tests against a real regtest `dashd`. They catch restart, resync and disconnect bugs that unit tests miss, so run them for every `dash-spv` change. Never set `SKIP_DASHD_TESTS=1`.
+`dash-spv` has integration tests against a real regtest `dashd`. They catch restart, resync and disconnect bugs that unit tests miss, so run them for a change that can affect sync, networking, storage or wallet behavior. Never set `SKIP_DASHD_TESTS=1`.
 
 - `just dash-spv::test [args]` downloads `dashd` and the regtest chains (cached in `~/.rust-dashcore-test/`) and runs the `dash-spv` tests against them.
 - To call cargo directly, load the environment first: `eval $(python3 contrib/setup-dashd.py)`.
