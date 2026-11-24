@@ -114,7 +114,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                     }
                 };
 
-                let request_pairs = engine.readable_missing_work_block_list_requests().await;
+                let request_pairs = engine.missing_work_block_list_requests().await?;
                 drop(engine);
 
                 tracing::info!(
@@ -205,8 +205,8 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                 // given up.
                 let work_block_lists =
                     if outcome == DiffOutcome::Applied && kind == DiffKind::TipUpdate {
-                        let mut lists = engine.missing_work_block_list_requests_for(diff).await;
-                        lists.extend(self.sync_state.retry_given_up_work_lists(&engine).await);
+                        let mut lists = engine.missing_work_block_list_requests_for(diff).await?;
+                        lists.extend(self.sync_state.retry_given_up_work_lists(&engine).await?);
                         lists
                     } else {
                         Vec::new()
@@ -1036,6 +1036,43 @@ mod tests {
                 NetworkMessage::MnListDiff(Box::new(MnListDiff {
                     base_block_hash: *headers[TIP as usize].hash(),
                     block_hash: *headers[20_000].hash(),
+                    ..MnListDiff::dummy_between(0, 0)
+                }))
+                .into(),
+                &network,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::Storage(StorageError::Corruption(_)))));
+    }
+
+    /// A storage corruption met while asking for the work-block list of a quorum a tip update
+    /// brings is reported.
+    #[tokio::test]
+    async fn a_corrupted_header_storage_on_a_new_quorum_is_reported() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let headers = storage.store_headers_and_corrupt_the_first_segment(20_000).await;
+        let hashes: Vec<BlockHash> = headers.iter().map(|header| *header.hash()).collect();
+        let block_headers = storage.block_headers();
+        let mut engine = MasternodeListEngine::new_without_validation(
+            Network::Regtest,
+            Arc::clone(&block_headers),
+        );
+        engine.masternode_lists.insert(TIP, MasternodeList::empty(hashes[TIP as usize], TIP));
+        let (mut manager, _, network, _) =
+            manager_after_a_tip_update_request_over(block_headers, engine).await;
+
+        let result = manager
+            .handle_message(
+                test_socket_address(1),
+                NetworkMessage::MnListDiff(Box::new(MnListDiff {
+                    base_block_hash: hashes[TIP as usize],
+                    block_hash: hashes[20_000],
+                    new_quorums: vec![test_quorum(hashes[MINED as usize])],
+                    quorums_chainlock_signatures: vec![QuorumCLSigObject {
+                        signature: BLSSignature::from([2; 96]),
+                        index_set: vec![0],
+                    }],
                     ..MnListDiff::dummy_between(0, 0)
                 }))
                 .into(),
