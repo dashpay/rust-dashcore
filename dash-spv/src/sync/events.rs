@@ -149,8 +149,7 @@ pub enum SyncEvent {
         validated: bool,
     },
 
-    /// InstantSend lock verified against its signing quorum.
-    /// Locks awaiting quorum data emit this event only after verification.
+    /// InstantSend lock received and processed.
     ///
     /// Emitted by: `InstantSendManager`
     /// Consumed by: External listeners, mempool state updates

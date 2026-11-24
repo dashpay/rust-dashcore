@@ -1112,7 +1112,7 @@ sync/<manager>/
 
 - Listens for InstantLock messages from network
 - Validates signatures
-- Emits `InstantLockReceived` only after verification; locks awaiting quorum data stay queued
+- Emits `InstantLockReceived` events
 
 ##### `src/sync/mempool/` - Mempool Transaction Tracking
 
