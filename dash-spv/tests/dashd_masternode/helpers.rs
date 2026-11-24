@@ -280,12 +280,14 @@ pub(super) async fn wait_for_mn_state_with_stored_cycle_above(
     }
 }
 
-/// Wait for the verified `InstantLockReceived` sync event for `txid`.
+/// Wait for an `InstantLockReceived` sync event for `txid` with the desired validation state.
 ///
-/// Returns the verified `InstantLock`. Ignores events for unrelated txids.
+/// Returns the received `InstantLock`. Ignores events for unrelated txids and events
+/// whose `validated` flag does not match `want_validated`.
 pub(super) async fn wait_for_instant_lock_received(
     event_receiver: &mut broadcast::Receiver<SyncEvent>,
     txid: Txid,
+    want_validated: bool,
     timeout_secs: u64,
 ) -> InstantLock {
     let timeout = time::sleep(Duration::from_secs(timeout_secs));
@@ -294,18 +296,26 @@ pub(super) async fn wait_for_instant_lock_received(
     loop {
         tokio::select! {
             _ = &mut timeout => {
-                panic!("Timeout waiting for InstantLockReceived(txid={})", txid);
+                panic!(
+                    "Timeout waiting for InstantLockReceived(txid={}, validated={})",
+                    txid, want_validated
+                );
             }
             result = event_receiver.recv() => {
                 match result {
-                    Ok(SyncEvent::InstantLockReceived { instant_lock }) if instant_lock.txid() == txid => {
-                        tracing::info!("InstantLockReceived(txid={})", txid);
-                        return instant_lock.instant_lock().clone();
+                    Ok(SyncEvent::InstantLockReceived { instant_lock, validated })
+                        if instant_lock.txid == txid && validated == want_validated =>
+                    {
+                        tracing::info!(
+                            "InstantLockReceived(txid={}, validated={})",
+                            txid, validated
+                        );
+                        return instant_lock;
                     }
-                    Ok(SyncEvent::InstantLockReceived { instant_lock }) => {
+                    Ok(SyncEvent::InstantLockReceived { instant_lock, validated }) => {
                         tracing::debug!(
-                            "Ignoring InstantLockReceived(txid={}) — waiting for txid={}",
-                            instant_lock.txid(), txid
+                            "Ignoring InstantLockReceived(txid={}, validated={}) — waiting for txid={} validated={}",
+                            instant_lock.txid, validated, txid, want_validated
                         );
                         continue;
                     }

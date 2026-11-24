@@ -4,104 +4,10 @@ use dashcore::bls_sig_utils::BlsScheme;
 use dashcore::constants::MAX_BLOCK_SIZE;
 use dashcore::sml::message_verification_error::MessageVerificationError;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
-use dashcore::{InstantLock, Network, QuorumSigningRequestId, Transaction, Txid};
+use dashcore::{InstantLock, QuorumSigningRequestId};
 
 use crate::error::{ValidationError, ValidationResult};
-use crate::sml_engine::MasternodeListEngine;
-use crate::storage::BlockHeaderStorage;
 use crate::validation::Validator;
-
-/// An InstantLock verified against the client's quorum state, valid only in this process.
-/// Obtain it from `DashSpvClient::verify_instant_lock` or `SyncEvent::InstantLockReceived`;
-/// a persisted lock is not proof and must be verified again on load.
-#[derive(Debug, Clone)]
-pub struct VerifiedInstantLock {
-    instant_lock: InstantLock,
-    network: Network,
-}
-
-#[cfg(test)]
-impl VerifiedInstantLock {
-    /// Evidence for `instant_lock` without authenticating it, for unit tests of its consumers.
-    pub(crate) fn assume_verified(instant_lock: InstantLock) -> Self {
-        Self {
-            instant_lock,
-            network: Network::Testnet,
-        }
-    }
-}
-
-/// A stored or received InstantLock failed authentication.
-#[derive(Debug, thiserror::Error)]
-pub enum InstantLockVerificationError {
-    /// The lock's fields are malformed.
-    #[error("malformed InstantLock: {0}")]
-    Malformed(#[source] ValidationError),
-    /// The lock is not signed by the selected quorum.
-    #[error("InstantLock authentication failed: {0}")]
-    InvalidSignature(#[source] ValidationError),
-}
-
-impl VerifiedInstantLock {
-    /// The authenticated lock, including its signed inputs.
-    pub fn instant_lock(&self) -> &InstantLock {
-        &self.instant_lock
-    }
-
-    /// The network of the client whose quorum state authenticated this lock.
-    pub fn network(&self) -> Network {
-        self.network
-    }
-
-    /// The transaction ID covered by the quorum signature.
-    pub fn txid(&self) -> Txid {
-        self.instant_lock.txid
-    }
-
-    /// Binds the evidence to the wallet's network, the complete transaction and the ordered
-    /// inputs its lock carries, see [`InstantLock::lock_inputs`].
-    ///
-    /// No wallet arithmetic or transaction consensus validation is performed.
-    pub fn matches_transaction(&self, network: Network, transaction: &Transaction) -> bool {
-        self.network == network
-            && self.txid() == transaction.txid()
-            && self.instant_lock.inputs == InstantLock::lock_inputs(transaction)
-    }
-
-    /// Authenticates a lock, or returns `None` while the engine lacks the quorum data to decide.
-    ///
-    /// Fails for a malformed lock, or one whose signature the held quorum of its cycle refutes.
-    pub(crate) fn verify<H: BlockHeaderStorage>(
-        instant_lock: &InstantLock,
-        engine: Option<&MasternodeListEngine<H>>,
-    ) -> Result<Option<Self>, InstantLockVerificationError> {
-        InstantLockStructureValidator
-            .validate(instant_lock)
-            .map_err(InstantLockVerificationError::Malformed)?;
-        match engine {
-            Some(engine) => Self::verify_well_formed(instant_lock, engine),
-            None => Ok(None),
-        }
-    }
-
-    /// [`verify`](Self::verify) for a lock that already passed [`InstantLockStructureValidator`].
-    pub(crate) fn verify_well_formed<H: BlockHeaderStorage>(
-        instant_lock: &InstantLock,
-        engine: &MasternodeListEngine<H>,
-    ) -> Result<Option<Self>, InstantLockVerificationError> {
-        let Some(cycle) = engine.rotated_quorums_of_cycle(&instant_lock.cyclehash) else {
-            return Ok(None);
-        };
-        match InstantLockValidator::new(cycle).validate(instant_lock) {
-            Ok(()) => Ok(Some(Self {
-                instant_lock: instant_lock.clone(),
-                network: engine.network(),
-            })),
-            Err(ValidationError::MissingQuorumData) => Ok(None),
-            Err(e) => Err(InstantLockVerificationError::InvalidSignature(e)),
-        }
-    }
-}
 
 /// The most inputs a valid InstantLock can carry, as Dash Core caps them.
 /// Its transaction fits in a block, and every input takes at least 41 bytes.
@@ -185,7 +91,7 @@ impl Validator<&InstantLock> for InstantLockValidator<'_> {
 }
 
 impl<'a> InstantLockValidator<'a> {
-    pub(crate) fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
+    pub fn new(cycle_quorums: &'a BTreeMap<u16, QualifiedQuorumEntry>) -> Self {
         Self {
             cycle_quorums,
         }
@@ -237,11 +143,11 @@ impl<'a> InstantLockValidator<'a> {
             BlsScheme::Modern,
         );
         match &result {
-            Ok(()) => tracing::trace!(
+            Ok(()) => tracing::info!(
                 "IS lock {} verified by quorum {quorum_hash} (index {quorum_index})",
                 instant_lock.txid
             ),
-            Err(e) => tracing::debug!(
+            Err(e) => tracing::warn!(
                 "IS lock {} failed against quorum {quorum_hash} (index {quorum_index}): {e}",
                 instant_lock.txid
             ),
@@ -254,98 +160,11 @@ impl<'a> InstantLockValidator<'a> {
 mod tests {
     use super::*;
     use crate::sml_engine::test_support::{mainnet_fixture_is_lock, TestEngine};
-    use crate::test_utils::MockHeaderStorage;
     use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::sml::llmq_type::LLMQType;
-    use dashcore::{Address, BlockHash, OutPoint, QuorumHash, ScriptBuf, TxIn, TxOut};
+    use dashcore::{BlockHash, OutPoint, QuorumHash};
     use hex_conservative::DisplayHex;
     use test_case::test_case;
-
-    #[test]
-    fn should_authenticate_stored_lock_only_with_available_cycle() {
-        let engine = TestEngine::mainnet_fixture();
-        let lock = mainnet_fixture_is_lock();
-        assert!(VerifiedInstantLock::verify::<MockHeaderStorage>(&lock, None,).unwrap().is_none());
-        let empty = TestEngine::empty(Network::Mainnet);
-        assert!(VerifiedInstantLock::verify(&lock, Some(&empty)).unwrap().is_none());
-        let verified = VerifiedInstantLock::verify(&lock, Some(&engine)).unwrap().unwrap();
-        assert_eq!(verified.txid(), lock.txid);
-        assert_eq!(verified.instant_lock(), &lock);
-        let mut unknown_cycle = lock.clone();
-        unknown_cycle.cyclehash = BlockHash::all_zeros();
-        assert!(VerifiedInstantLock::verify(&unknown_cycle, Some(&engine)).unwrap().is_none());
-        let mut invalid = lock.clone();
-        invalid.txid = Txid::from_byte_array([7; 32]);
-        assert!(matches!(
-            VerifiedInstantLock::verify(&invalid, Some(&engine)),
-            Err(InstantLockVerificationError::InvalidSignature(_))
-        ));
-        let mut changed_input = lock.clone();
-        changed_input.inputs[0].vout += 1;
-        assert!(matches!(
-            VerifiedInstantLock::verify(&changed_input, Some(&engine)),
-            Err(InstantLockVerificationError::InvalidSignature(_))
-        ));
-        let mut changed_signature = lock.clone();
-        changed_signature.signature = BLSSignature::from([1; 96]);
-        assert!(matches!(
-            VerifiedInstantLock::verify(&changed_signature, Some(&engine)),
-            Err(InstantLockVerificationError::InvalidSignature(_))
-        ));
-        let mut malformed = lock;
-        malformed.inputs.clear();
-        assert!(matches!(
-            VerifiedInstantLock::verify(&malformed, Some(&empty)),
-            Err(InstantLockVerificationError::Malformed(_))
-        ));
-    }
-
-    #[test]
-    fn should_bind_verified_evidence_without_wallet_arithmetic() {
-        let transaction = Transaction {
-            version: 1,
-            lock_time: 0,
-            input: vec![TxIn {
-                previous_output: OutPoint::new(Txid::from_byte_array([3; 32]), 0),
-                ..Default::default()
-            }],
-            output: vec![
-                TxOut {
-                    value: u64::MAX,
-                    script_pubkey: ScriptBuf::new(),
-                };
-                2
-            ],
-            special_transaction_payload: None,
-        };
-        // This unit tests binding only; authentication is exercised with the signed fixture.
-        let mut lock = mainnet_fixture_is_lock();
-        lock.txid = transaction.txid();
-        lock.inputs = InstantLock::lock_inputs(&transaction);
-        let verified = VerifiedInstantLock {
-            instant_lock: lock,
-            network: Network::Mainnet,
-        };
-        assert!(verified.matches_transaction(Network::Mainnet, &transaction));
-        assert!(!verified.matches_transaction(Network::Testnet, &transaction));
-        let mut changed = transaction.clone();
-        changed.output[0].value -= 1;
-        assert!(!verified.matches_transaction(Network::Mainnet, &changed));
-        let mut wrong_inputs = verified.clone();
-        wrong_inputs.instant_lock.inputs[0].vout += 1;
-        assert!(!wrong_inputs.matches_transaction(Network::Mainnet, &transaction));
-
-        let address = Address::dummy(Network::Mainnet, 0);
-        let withdrawal = Transaction::dummy_asset_unlock(&address, 7, 1);
-        let mut lock = mainnet_fixture_is_lock();
-        lock.txid = withdrawal.txid();
-        lock.inputs = InstantLock::lock_inputs(&withdrawal);
-        let verified = VerifiedInstantLock {
-            instant_lock: lock,
-            network: Network::Mainnet,
-        };
-        assert!(verified.matches_transaction(Network::Mainnet, &withdrawal));
-    }
 
     #[test]
     fn a_well_formed_lock_passes_the_structure_check() {

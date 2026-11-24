@@ -30,7 +30,7 @@ impl<H: BlockHeaderStorage> SyncManager for InstantSendManager<H> {
     }
 
     fn on_disconnect(&mut self) {
-        // Clear the queue so a lock re-announced after reconnect is processed fresh.
+        // Pending locks can be queued again after reconnect.
         self.clear_pending_on_disconnect();
         // Nothing is queued anymore, so the height at which we last validated is
         // meaningless; reset it so re-validation runs again after reconnect.

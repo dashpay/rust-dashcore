@@ -132,6 +132,7 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
             }
             SyncEvent::InstantLockReceived {
                 instant_lock,
+                ..
             } => Ok(self.process_instant_send(instant_lock.clone()).await),
             _ => Ok(vec![]),
         }
@@ -182,8 +183,6 @@ mod tests {
     use super::*;
     use crate::sync::BroadcastConfig;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
-    use crate::validation::VerifiedInstantLock;
-    use dashcore::Transaction;
     use key_wallet_manager::test_utils::MockWallet;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
@@ -351,7 +350,7 @@ mod tests {
         // Add transactions to mempool
         let mut txids = Vec::new();
         for i in 0..2u32 {
-            let tx = Transaction {
+            let tx = dashcore::Transaction {
                 version: 1,
                 lock_time: i,
                 input: vec![],
@@ -399,7 +398,7 @@ mod tests {
         manager.handle_sync_event(&sync, &network).await.unwrap();
 
         // Add a transaction to mempool
-        let tx = Transaction {
+        let tx = dashcore::Transaction {
             version: 1,
             lock_time: 0,
             input: vec![],
@@ -424,7 +423,8 @@ mod tests {
         is_lock.txid = txid;
 
         let event = SyncEvent::InstantLockReceived {
-            instant_lock: VerifiedInstantLock::assume_verified(is_lock),
+            instant_lock: is_lock,
+            validated: true,
         };
         let events = manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(events.is_empty());
@@ -493,7 +493,8 @@ mod tests {
             ..InstantLock::default()
         };
         let event = SyncEvent::InstantLockReceived {
-            instant_lock: VerifiedInstantLock::assume_verified(lock),
+            instant_lock: lock,
+            validated: true,
         };
         manager.handle_sync_event(&event, &network).await.unwrap();
         let mut corrections = Vec::new();
@@ -572,10 +573,11 @@ mod tests {
             }
             while rx.try_recv().is_ok() {}
             let event = SyncEvent::InstantLockReceived {
-                instant_lock: VerifiedInstantLock::assume_verified(InstantLock {
+                instant_lock: InstantLock {
                     txid: tx.txid(),
                     ..InstantLock::default()
-                }),
+                },
+                validated: true,
             };
             manager.handle_sync_event(&event, &network).await.unwrap();
             let mut locks = 0;
@@ -616,10 +618,11 @@ mod tests {
             .unwrap();
         while rx.try_recv().is_ok() {}
         let event = SyncEvent::InstantLockReceived {
-            instant_lock: VerifiedInstantLock::assume_verified(InstantLock {
+            instant_lock: InstantLock {
                 txid: outgoing.txid(),
                 ..InstantLock::default()
-            }),
+            },
+            validated: true,
         };
         manager.handle_sync_event(&event, &network).await.unwrap();
         assert!(
@@ -1014,7 +1017,7 @@ mod tests {
         network_mock.clear_sent().await;
 
         // handle_tx with a relevant transaction should NOT eagerly rebuild
-        let tx = Transaction {
+        let tx = dashcore::Transaction {
             version: 1,
             lock_time: 0,
             input: vec![],
