@@ -6,7 +6,6 @@ use crate::storage::BlockHeaderStorage;
 use crate::sync::{
     ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
-use crate::SyncError;
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
 use std::net::SocketAddr;
@@ -110,7 +109,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         // the next peer, and the existing budget still gives up on a
                         // deterministically-bad response after MAX_RETRY_ATTEMPTS.
                         self.sync_state.qrinfo_rejected();
-                        return Err(SyncError::MasternodeSyncFailed(e.to_string()));
+                        return Err(e.into_sync_error());
                     }
                 };
 
@@ -188,7 +187,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                             e
                         );
                         network.ban_peer(peer).await;
-                        return Err(SyncError::MasternodeSyncFailed(e.to_string()));
+                        return Err(e.into_sync_error());
                     }
                     Err(e) => {
                         tracing::warn!("Giving up MnListDiff for {}: {}", diff.block_hash, e);
@@ -535,6 +534,7 @@ mod tests {
     use super::{
         qrinfo_timeout_for, MAX_RETRY_ATTEMPTS, QRINFO_STALL_WATCHDOG, QRINFO_TIMEOUT_SCHEDULE_SECS,
     };
+    use crate::error::StorageError;
     use crate::network::{InboundMessage, NetworkManager, RequestKey};
     use crate::sml_engine::test_support::quorum_entry;
     use crate::sml_engine::MasternodeListEngine;
@@ -706,6 +706,16 @@ mod tests {
             Network::Regtest,
             Arc::clone(&block_headers),
         );
+        manager_awaiting_qrinfo(block_headers, engine, tip).await
+    }
+
+    /// A manager over `block_headers` and `engine` once it sent the initial QRInfo for
+    /// `tip`, as [`syncing_manager_awaiting_qrinfo`] returns it.
+    async fn manager_awaiting_qrinfo(
+        block_headers: Arc<RwLock<PersistentBlockHeaderStorage>>,
+        engine: MasternodeListEngine<PersistentBlockHeaderStorage>,
+        tip: u32,
+    ) -> (TestMasternodesManager, Arc<dyn NetworkManager>, Arc<MockNetworkManager>, BlockHash) {
         let mut manager = MasternodesManager::new(
             block_headers,
             Arc::new(RwLock::new(engine)),
@@ -758,6 +768,23 @@ mod tests {
         for list in lists(&hashes) {
             engine.masternode_lists.insert(list.known_height, list);
         }
+        let (manager, engine, network, mock) =
+            manager_after_a_tip_update_request_over(block_headers, engine).await;
+        (manager, engine, network, mock, hashes)
+    }
+
+    /// A synced manager over `block_headers` and `engine` once it sent the tip update from
+    /// the list at `TIP` to the stored header tip, as [`manager_after_a_tip_update_request`]
+    /// returns it.
+    async fn manager_after_a_tip_update_request_over(
+        block_headers: Arc<RwLock<PersistentBlockHeaderStorage>>,
+        engine: MasternodeListEngine<PersistentBlockHeaderStorage>,
+    ) -> (
+        MasternodesManager<PersistentBlockHeaderStorage>,
+        Arc<RwLock<MasternodeListEngine<PersistentBlockHeaderStorage>>>,
+        Arc<dyn NetworkManager>,
+        Arc<MockNetworkManager>,
+    ) {
         let engine = Arc::new(RwLock::new(engine));
         let mut manager =
             MasternodesManager::new(block_headers, Arc::clone(&engine), Network::Regtest, None)
@@ -768,7 +795,7 @@ mod tests {
         let network: Arc<dyn NetworkManager> = mock.clone();
         manager.send_tip_mnlistdiff_update(Instant::now(), &network).await.unwrap();
         assert_eq!(diff_requests(&mock).await.len(), 1, "the tip update is sent");
-        (manager, engine, network, mock, hashes)
+        (manager, engine, network, mock)
     }
 
     /// A synced manager that sent a tip update from `TIP` to `TIP + 1`, whose
@@ -956,6 +983,29 @@ mod tests {
         assert_eq!(engine.read().await.latest_masternode_list().unwrap().known_height, TIP);
         assert!(diff_requests(&mock).await.is_empty(), "a refused tip update asks for nothing");
         assert!(mock.banned_peers().await.is_empty(), "the peer is not proven wrong");
+    }
+
+    /// A storage corruption met while validating a QRInfo is reported.
+    #[tokio::test]
+    async fn a_corrupted_header_storage_on_a_qrinfo_is_reported() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let headers = storage.store_headers_and_corrupt_the_first_segment(20_000).await;
+        let block_headers = storage.block_headers();
+        let engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
+        let (mut manager, network, _, tip_hash) =
+            manager_awaiting_qrinfo(block_headers, engine, 20_000).await;
+        let mut qr_info = qrinfo_with_tip_hash(tip_hash);
+        qr_info.mn_list_diff_at_h_minus_3c.block_hash = *headers[5].hash();
+
+        let result = manager
+            .handle_message(
+                test_socket_address(1),
+                NetworkMessage::QRInfo(Box::new(qr_info)).into(),
+                &network,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::Storage(StorageError::Corruption(_)))));
     }
 
     /// A work-block list with a ChainLock signature for a quorum it does not contain contradicts

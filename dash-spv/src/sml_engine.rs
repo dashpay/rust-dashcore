@@ -4,9 +4,10 @@ mod snapshot_codec;
 mod validation;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Display;
 use std::sync::Arc;
 
-use crate::error::{StorageError, StorageResult};
+use crate::error::{StorageError, StorageResult, SyncError};
 use crate::storage::BlockHeaderStorage;
 use crate::validation::MasternodeListValidator;
 use dashcore::bls_sig_utils::{BLSSignature, BlsScheme};
@@ -105,6 +106,15 @@ impl FeedError<SmlError> {
                 | SmlError::IncompleteSignatureSet
                 | SmlError::CoinbaseCommitmentMismatch(_),
             ) => false,
+        }
+    }
+}
+
+impl<E: Display> FeedError<E> {
+    pub(crate) fn into_sync_error(self) -> SyncError {
+        match self {
+            FeedError::HeaderStorage(e) => SyncError::Storage(e),
+            FeedError::Refused(e) => SyncError::MasternodeSyncFailed(e.to_string()),
         }
     }
 }
