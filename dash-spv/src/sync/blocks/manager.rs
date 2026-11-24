@@ -278,6 +278,41 @@ mod tests {
         assert!(matches!(result, Err(SyncError::Storage(StorageError::Corruption(_)))));
     }
 
+    /// A storage corruption met while looking for a needed block in storage is reported.
+    #[tokio::test]
+    async fn test_corrupted_block_storage_on_needed_block_is_reported() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut manager: TestBlocksManager = BlocksManager::new(
+            Arc::new(RwLock::new(MockWallet::new())),
+            storage.block_headers(),
+            storage.blocks(),
+        )
+        .await;
+        {
+            let blocks = storage.blocks();
+            let mut blocks = blocks.write().await;
+            for height in [200, 1_100, 2_100] {
+                blocks.store_block(height, HashedBlock::dummy(height, vec![])).await.unwrap();
+            }
+        }
+        storage.corrupt_first_block_segment();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+
+        let result = manager
+            .handle_sync_event(
+                &SyncEvent::BlocksNeeded {
+                    blocks: BTreeMap::from([(
+                        FilterMatchKey::new(200, *HashedBlock::dummy(200, vec![]).hash()),
+                        BTreeSet::from([MOCK_WALLET_ID]),
+                    )]),
+                },
+                &network,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::Storage(StorageError::Corruption(_)))));
+    }
+
     #[tokio::test]
     async fn test_blocks_manager_new() {
         let manager = create_test_manager().await;
