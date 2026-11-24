@@ -138,6 +138,13 @@ impl DiskStorageManager {
         self.corrupt_segment::<HashedBlockHeader>("block_headers", segment_id);
     }
 
+    /// Corrupts the first block segment on disk. A read of its heights fails with
+    /// `StorageError::Corruption` while the cache does not hold the segment, as after
+    /// storing blocks in two later segments.
+    pub(crate) fn corrupt_first_block_segment(&self) {
+        self.corrupt_segment::<HashedBlock>("blocks", 0);
+    }
+
     fn corrupt_segment<I: Persistable>(&self, folder: &str, segment_id: u32) {
         let path = self.storage_path.join(folder).join(I::segment_file_name(segment_id));
         let mut bytes = fs::read(&path).unwrap();
