@@ -127,7 +127,15 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
     manager.process_mempool_transaction(&tx, Some(dummy_instant_lock(tx.txid()))).await;
 
     let events = drain_events(&mut rx);
-    assert_eq!(events.len(), 1, "one event expected for first-seen IS-locked tx, got {:?}", events);
+    assert_eq!(
+        events.len(),
+        2,
+        "detection and lock expected for first-seen IS-locked tx, got {:?}",
+        events
+    );
+    assert!(
+        matches!(&events[1], WalletEvent::TransactionInstantLocked { txid, .. } if *txid == tx.txid())
+    );
     match &events[0] {
         WalletEvent::TransactionDetected {
             wallet_id: wid,
@@ -193,6 +201,56 @@ async fn test_irrelevant_mempool_tx_emits_no_events() {
 // ---------------------------------------------------------------------------
 // InstantSend path
 // ---------------------------------------------------------------------------
+
+/// The locks a consumer storing them from `TransactionInstantLocked` keeps.
+fn stored_locks(events: &[WalletEvent]) -> Vec<(WalletId, InstantLock)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            WalletEvent::TransactionInstantLocked {
+                wallet_id,
+                instant_lock,
+                ..
+            } => Some((*wallet_id, instant_lock.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test_case(true ; "lock before its transaction")]
+#[test_case(false ; "lock after its transaction")]
+#[tokio::test]
+async fn test_lock_is_announced_once_after_its_record(lock_first: bool) {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let tx = create_tx_paying_to(&addr, 0xe7);
+    let lock = InstantLock {
+        txid: tx.txid(),
+        cyclehash: CycleHash::from_byte_array([0xab; 32]),
+        signature: BLSSignature::from([0xcd; 96]),
+        ..InstantLock::default()
+    };
+    let mut rx = manager.subscribe_events();
+
+    if lock_first {
+        manager.process_mempool_transaction(&tx, Some(lock.clone())).await;
+    } else {
+        manager.process_mempool_transaction(&tx, None).await;
+        manager.process_mempool_instant_send_lock(&tx, lock.clone()).await;
+    }
+
+    let events = drain_events(&mut rx);
+    assert_eq!(stored_locks(&events), vec![(wallet_id, lock)], "events: {:?}", events);
+    let detected = events
+        .iter()
+        .position(|e| matches!(e, WalletEvent::TransactionDetected { .. }))
+        .expect("the transaction is detected");
+    let locked = events
+        .iter()
+        .position(|e| matches!(e, WalletEvent::TransactionInstantLocked { .. }))
+        .expect("the lock is announced");
+    assert!(detected < locked, "the record comes before its lock: {:?}", events);
+    assert_eq!(manager.get_wallet_info(&wallet_id).unwrap().balance().confirmed(), TX_AMOUNT);
+}
 
 #[tokio::test]
 async fn test_instant_send_lock_on_known_mempool_tx_emits_instant_locked_event() {
