@@ -10,17 +10,19 @@ use dash_spv::network::{
 use dash_spv::test_utils::{test_socket_address, TestEventHandler};
 use dash_spv::{DashSpvClient, SyncEvent};
 use dashcore::consensus::deserialize;
+use dashcore::hash_types::CycleHash;
 use dashcore::network::message::NetworkMessage;
 use dashcore::{Amount, InstantLock, Transaction};
 use hex_conservative::decode_to_vec;
 use key_wallet::transaction_checking::TransactionContext;
 use key_wallet_manager::WalletEvent;
 use serde_json::json;
+use test_case::test_case;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio::sync::{broadcast, Mutex};
 use tokio::time::timeout;
 
-use super::helpers::wait_for_wallet_tx_status;
+use super::helpers::{wait_for_masternode_sync, wait_for_wallet_tx_status};
 use super::setup::{
     create_mn_test_config, create_wallet_from_controller, receive_address,
     wait_for_controller_islock, TestContext, SYNC_TIMEOUT,
@@ -34,7 +36,7 @@ struct HeldInstantLocksNetwork {
 #[async_trait]
 impl NetworkManager for HeldInstantLocksNetwork {
     async fn start(&self) {
-        // Quorum data must stay unavailable until both locks are queued.
+        // Quorum data must stay unavailable until the test queues the locks.
     }
     async fn stop(&self) {
         self.peer.stop().await;
@@ -75,8 +77,10 @@ impl NetworkManager for HeldInstantLocksNetwork {
     }
 }
 
+#[test_case(false; "replayed")]
+#[test_case(true; "received after quorum sync")]
 #[tokio::test]
-async fn deferred_lock_finalizes_only_after_real_quorum_sync() {
+async fn deferred_lock_finalizes_only_after_real_quorum_sync(receive_after_sync: bool) {
     let Some(mut ctx) = TestContext::new(false).await else {
         return;
     };
@@ -121,14 +125,21 @@ async fn deferred_lock_finalizes_only_after_real_quorum_sync() {
 
     let mut forged = genuine.clone();
     forged.inputs[0].vout += 1;
-    for lock in [forged, genuine.clone()] {
+    let mut unknown_cycle = genuine.clone();
+    unknown_cycle.cyclehash = CycleHash::from_byte_array([1; 32]);
+    let mut queued = vec![unknown_cycle, forged];
+    if !receive_after_sync {
+        queued.push(genuine.clone());
+    }
+    let pending_count = queued.len();
+    for lock in queued {
         lock_tx
             .send((test_socket_address(0), Arc::new(NetworkMessage::ISLock(lock).into())))
             .unwrap();
     }
     timeout(Duration::from_secs(SYNC_TIMEOUT), async {
         loop {
-            if progress.borrow_and_update().instantsend().is_ok_and(|p| p.pending() == 2) {
+            if progress.borrow_and_update().instantsend().is_ok_and(|p| p.pending() == pending_count) {
                 break;
             }
             tokio::select! {
@@ -141,11 +152,20 @@ async fn deferred_lock_finalizes_only_after_real_quorum_sync() {
                 }
             }
         }
-    }).await.expect("both distinct locks remain pending");
+    }).await.expect("distinct locks remain pending");
     assert_eq!(progress.borrow().instantsend().unwrap().valid(), 0);
 
-    // This subscription excludes peer reannouncements, so only pending replay can emit.
+    // The controlled subscription excludes peer reannouncements.
     peer.start().await;
+    if receive_after_sync {
+        wait_for_masternode_sync(&mut progress, SYNC_TIMEOUT).await;
+        lock_tx
+            .send((
+                test_socket_address(0),
+                Arc::new(NetworkMessage::ISLock(genuine.clone()).into()),
+            ))
+            .unwrap();
+    }
     let received = timeout(Duration::from_secs(SYNC_TIMEOUT), async {
         loop {
             if let SyncEvent::InstantLockReceived {
@@ -171,17 +191,14 @@ async fn deferred_lock_finalizes_only_after_real_quorum_sync() {
     assert!(matches!(status, TransactionContext::InstantSend(lock) if lock == genuine));
     timeout(Duration::from_secs(SYNC_TIMEOUT), async {
         loop {
-            if progress
-                .borrow_and_update()
-                .instantsend()
-                .is_ok_and(|p| p.valid() == 1 && p.pending() == 0)
-            {
+            if progress.borrow_and_update().instantsend().is_ok_and(|p| p.valid() == 1) {
                 break;
             }
             progress.changed().await.unwrap();
         }
     })
     .await
-    .expect("exactly one lock verified and the pending queue drained");
+    .expect("exactly one lock verified");
+    assert_eq!(progress.borrow().instantsend().unwrap().pending(), 0);
     client.stop().await;
 }
