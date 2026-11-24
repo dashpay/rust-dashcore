@@ -39,13 +39,13 @@ jobs:
           prefix-key: "v1-rust"
           cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/dev' }}
-      - uses: taiki-e/install-action@v2.90.3
+      - uses: taiki-e/install-action@v2.90.5
         with:
           tool: just
 
       - name: Install cargo-llvm-cov
         if: inputs.coverage
-        uses: taiki-e/install-action@v2.90.3
+        uses: taiki-e/install-action@v2.90.5
         with:
           tool: cargo-llvm-cov
 
