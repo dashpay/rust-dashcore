@@ -255,9 +255,8 @@ impl MasternodeTestContext {
             mn.set_mocktime(mocktime);
         }
 
-        info!("Network ready: controller at height {}, mocktime={}", expected_height, mocktime);
-
-        Some(MasternodeTestContext {
+        // Built before the waits because `Drop` retains the test data when one of them panics.
+        let ctx = MasternodeTestContext {
             controller,
             masternodes,
             metadata,
@@ -265,7 +264,13 @@ impl MasternodeTestContext {
             wallet,
             expected_height,
             mocktime,
-        })
+        };
+        ctx.wait_for_sync();
+        ctx.wait_for_masternodes_ready().await;
+
+        info!("Network ready: controller at height {}, mocktime={}", expected_height, mocktime);
+
+        Some(ctx)
     }
 
     pub fn bump_mocktime(&mut self, seconds: u64) {
@@ -307,6 +312,32 @@ impl MasternodeTestContext {
                     panic!("Masternode sync timeout: at {}, expected {}", h, target_height);
                 }
                 thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
+
+    /// Wait for every masternode to report the `READY` state.
+    ///
+    /// dashd updates the state asynchronously after connecting a block, so a synced masternode
+    /// can still reject its own service address.
+    async fn wait_for_masternodes_ready(&self) {
+        let timeout = Duration::from_secs(60);
+        let start = Instant::now();
+
+        for (mn, mn_info) in self.masternodes.iter().zip(&self.metadata.masternodes) {
+            loop {
+                let status = mn.try_rpc_call("masternode", &["status".into()]);
+                if status.as_ref().is_some_and(|s| s["state"] == "READY") {
+                    break;
+                }
+                assert!(
+                    start.elapsed() < timeout,
+                    "{} not READY after {:?}, last status: {:?}",
+                    mn_info.datadir,
+                    timeout,
+                    status
+                );
+                time::sleep(Duration::from_millis(100)).await;
             }
         }
     }
