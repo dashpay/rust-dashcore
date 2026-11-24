@@ -859,7 +859,8 @@ impl TransactionBuilder {
     /// the token is needed and how to release with it.
     ///
     /// A payload finalizer set via [`Self::set_payload_finalizer`] runs
-    /// between input selection and input signing.
+    /// between input selection and input signing. The signer's
+    /// [`TransactionSigner::approve_inputs`] runs after it, before any input is signed.
     pub async fn build_signed_reserved<S, P>(
         mut self,
         signer: &S,
@@ -875,16 +876,17 @@ impl TransactionBuilder {
 
         let (mut tx, inputs, reservation) = self.assemble_unsigned()?;
         let total_input: u64 = inputs.iter().map(|utxo| utxo.value()).sum();
-        // A failure past this point — payload finalization or signing — leaves
-        // the reserved inputs spendable, so release them now instead of
-        // stranding the funds until the TTL backstop reclaims them.
+        // A failure past this point — payload finalization, input approval or
+        // signing — leaves the reserved inputs spendable, so release them now
+        // instead of stranding the funds until the TTL backstop reclaims them.
         //
-        // Release owner-guarded: `sign_tx` is an `.await`, and while it runs the
-        // TTL sweep could reclaim this build's reservation and a concurrent
-        // build could re-reserve the same outpoint under a new token. An
-        // unconditional release-by-outpoint would then free that other build's
-        // inputs (the double-spend window of `dashpay/platform#4185`), so we
-        // release only outpoints still owned by the token this build stamped.
+        // Release owner-guarded: `approve_inputs` and `sign_tx` are `.await`s,
+        // and while either runs the TTL sweep could reclaim this build's
+        // reservation and a concurrent build could re-reserve the same outpoint
+        // under a new token. An unconditional release-by-outpoint would then
+        // free that other build's inputs (the double-spend window of
+        // `dashpay/platform#4185`), so we release only outpoints still owned by
+        // the token this build stamped.
         let reserved: Vec<OutPoint> = inputs.iter().map(|utxo| utxo.outpoint).collect();
 
         // Input sighashes cover the finalized payload (the legacy sighash
@@ -895,6 +897,11 @@ impl TransactionBuilder {
                 Self::release_reservation(&funding, &reserved, reservation);
                 return Err(err);
             }
+        }
+
+        if let Err(err) = signer.approve_inputs(&tx, &inputs).await {
+            Self::release_reservation(&funding, &reserved, reservation);
+            return Err(err);
         }
 
         let tx = match signer.sign_tx(tx, inputs, path_resolver).await {
@@ -981,6 +988,12 @@ impl TransactionBuilder {
 
 #[async_trait::async_trait]
 pub trait TransactionSigner {
+    /// Approves or refuses a build's inputs before [`Self::sign_tx`]; see [`Signer::approve_inputs`].
+    async fn approve_inputs(&self, tx: &Transaction, inputs: &[Utxo]) -> Result<(), BuilderError> {
+        let _ = (tx, inputs);
+        Ok(())
+    }
+
     async fn sign_tx(
         &self,
         mut tx: Transaction,
@@ -1064,6 +1077,12 @@ impl TransactionSigner for Wallet {
 
 #[async_trait::async_trait]
 impl<S: Signer> TransactionSigner for S {
+    async fn approve_inputs(&self, tx: &Transaction, inputs: &[Utxo]) -> Result<(), BuilderError> {
+        Signer::approve_inputs(self, tx, inputs)
+            .await
+            .map_err(|e| BuilderError::SigningFailed(e.to_string()))
+    }
+
     async fn sig_and_pubkey(
         &self,
         sighash: LegacySighash,
@@ -1167,12 +1186,16 @@ impl std::error::Error for BuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::managed_account::managed_account_trait::ManagedAccountTrait;
+    use crate::signer::SignerMethod;
     use crate::test_utils::TestWalletContext;
     use crate::Network;
     use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
+    use dashcore::bls_sig_utils::BLSSignature;
     use dashcore::consensus::serialize;
     use dashcore::{OutPoint, Txid};
     use dashcore_hashes::sha256d;
+    use std::sync::Mutex;
 
     fn op_return_script(data: &[u8]) -> ScriptBuf {
         let push_bytes = <&PushBytes>::try_from(data).expect("test OP_RETURN bytes");
@@ -2717,5 +2740,191 @@ mod tests {
             tx.input.iter().all(|input| input.script_sig.is_empty()),
             "the unsigned build leaves input signing to the caller"
         );
+    }
+
+    /// A [`Signer`] over a test wallet's keys that logs the approval hook and
+    /// every signature in call order, and can refuse the inputs it is shown.
+    struct ApprovalProbe<'a> {
+        wallet: &'a Wallet,
+        refuse: bool,
+        log: Mutex<Vec<ProbeCall>>,
+    }
+
+    #[derive(Debug)]
+    enum ProbeCall {
+        Approve {
+            tx: Box<Transaction>,
+            inputs: Vec<Utxo>,
+        },
+        Sign,
+    }
+
+    impl<'a> ApprovalProbe<'a> {
+        fn new(wallet: &'a Wallet, refuse: bool) -> Self {
+            Self {
+                wallet,
+                refuse,
+                log: Default::default(),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<'a> Signer for ApprovalProbe<'a> {
+        type Error = String;
+
+        fn supported_methods(&self) -> &[SignerMethod] {
+            &[SignerMethod::Digest]
+        }
+
+        async fn sign_ecdsa(
+            &self,
+            path: &DerivationPath,
+            sighash: [u8; 32],
+        ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
+            self.log.lock().unwrap().push(ProbeCall::Sign);
+            self.wallet
+                .sig_and_pubkey(LegacySighash::from_byte_array(sighash), path.clone())
+                .await
+                .map_err(|e| e.to_string())
+        }
+
+        async fn public_key(&self, _path: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
+            Err("not used by input signing".into())
+        }
+
+        async fn approve_inputs(
+            &self,
+            tx: &Transaction,
+            inputs: &[Utxo],
+        ) -> Result<(), Self::Error> {
+            self.log.lock().unwrap().push(ProbeCall::Approve {
+                tx: Box::new(tx.clone()),
+                inputs: inputs.to_vec(),
+            });
+            if self.refuse {
+                Err("inputs not approved".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn approve_inputs_sees_the_selected_inputs_and_the_finalized_transaction() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        for id in [0x03, 0x01, 0x02] {
+            let utxo = Utxo::dummy(id, 400_000, 100, false, true);
+            funds.utxos.insert(utxo.outpoint, utxo);
+        }
+
+        let probe = ApprovalProbe::new(&ctx.wallet, false);
+        let (tx, _fee, _token) = TransactionBuilder::new()
+            .set_current_height(200)
+            .set_fee_rate(FeeRate::normal())
+            .add_funding(&mut funds, &account)
+            .set_change_address(Address::dummy(Network::Testnet, 1))
+            .add_output(&Address::dummy(Network::Testnet, 0), 1_000_000)
+            .set_special_payload(pro_up_serv_placeholder(ScriptBuf::new()))
+            .set_payload_finalizer(|unsigned| {
+                let Some(TransactionPayload::ProviderUpdateServicePayloadType(placeholder)) =
+                    &unsigned.special_transaction_payload
+                else {
+                    panic!("placeholder payload must still be attached");
+                };
+                let mut finalized = placeholder.clone();
+                finalized.inputs_hash = unsigned.hash_inputs();
+                finalized.payload_sig = BLSSignature::from([0xAB; 96]);
+                Ok(TransactionPayload::ProviderUpdateServicePayloadType(finalized))
+            })
+            .build_signed_reserved(&probe, |_addr| Some(DerivationPath::master()))
+            .await
+            .expect("approved build signs");
+        assert_eq!(tx.input.len(), 3, "the output needs all three coins");
+
+        let log = probe.log.into_inner().unwrap();
+        let (
+            ProbeCall::Approve {
+                tx: approved_tx,
+                inputs,
+            },
+            signs,
+        ) = log.split_first().expect("the probe was called")
+        else {
+            panic!("the approval must come before any signature, got {log:?}");
+        };
+        assert_eq!(signs.len(), tx.input.len(), "one signature per input, after the approval");
+        assert!(signs.iter().all(|call| matches!(call, ProbeCall::Sign)), "approval runs once");
+
+        let approved: Vec<(OutPoint, u64)> =
+            inputs.iter().map(|utxo| (utxo.outpoint, utxo.value())).collect();
+        let expected: Vec<(OutPoint, u64)> = tx
+            .input
+            .iter()
+            .map(|input| (input.previous_output, funds.utxos[&input.previous_output].value()))
+            .collect();
+        assert_eq!(approved, expected, "the hook sees exactly the signed inputs, in input order");
+
+        let mut unsigned = tx.clone();
+        for input in &mut unsigned.input {
+            input.script_sig = ScriptBuf::new();
+        }
+        assert_eq!(**approved_tx, unsigned, "the hook sees the transaction exactly as signed");
+        let Some(TransactionPayload::ProviderUpdateServicePayloadType(payload)) =
+            &approved_tx.special_transaction_payload
+        else {
+            panic!("the approved transaction carries the payload");
+        };
+        assert_eq!(payload.payload_sig, BLSSignature::from([0xAB; 96]), "payload is finalized");
+        assert_eq!(payload.inputs_hash, approved_tx.hash_inputs());
+    }
+
+    #[tokio::test]
+    async fn refused_inputs_sign_nothing_and_release_the_reservation() {
+        let ctx = TestWalletContext::new_random();
+        let account =
+            ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44 account").clone();
+
+        let mut funds = ManagedCoreFundsAccount::dummy_bip44();
+        let utxo = Utxo::dummy(0x01, 1_000_000, 100, false, true);
+        funds.utxos.insert(utxo.outpoint, utxo.clone());
+        let build = |funds: &mut ManagedCoreFundsAccount| {
+            TransactionBuilder::new()
+                .set_current_height(200)
+                .set_fee_rate(FeeRate::normal())
+                .add_funding(funds, &account)
+                .set_change_address(Address::dummy(Network::Testnet, 1))
+                .add_output(&Address::dummy(Network::Testnet, 0), 500_000)
+        };
+
+        let probe = ApprovalProbe::new(&ctx.wallet, true);
+        let result = build(&mut funds)
+            .build_signed_reserved(&probe, |_addr| Some(DerivationPath::master()))
+            .await;
+
+        match result {
+            Err(BuilderError::SigningFailed(msg)) => {
+                assert!(msg.contains("inputs not approved"), "refusal must surface, got {msg}")
+            }
+            other => panic!("expected the refusal as a signing failure, got {other:?}"),
+        }
+        let log = probe.log.into_inner().unwrap();
+        assert!(
+            matches!(log.as_slice(), [ProbeCall::Approve { .. }]),
+            "a refusal must end the build before any signature, got {log:?}"
+        );
+        assert!(funds.reservations().reserved(200).is_empty(), "refusal releases the inputs");
+        assert!(funds.transactions().is_empty(), "nothing is recorded for the attempt");
+        assert!(funds.utxos.contains_key(&utxo.outpoint), "the coin stays in the account");
+
+        let (tx, _fee, _token) = build(&mut funds)
+            .build_signed_reserved(&ctx.wallet, |_addr| Some(DerivationPath::master()))
+            .await
+            .expect("the released coin funds the next build");
+        assert_eq!(tx.input[0].previous_output, utxo.outpoint);
     }
 }
