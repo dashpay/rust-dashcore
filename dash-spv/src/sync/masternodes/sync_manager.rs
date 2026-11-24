@@ -2,6 +2,7 @@ use super::manager::{DiffOutcome, PipelineMode};
 use super::pipeline::{DiffKind, MNLISTDIFF_DEADLINE};
 use crate::error::SyncResult;
 use crate::network::{InboundMessage, MessageType, NetworkManager};
+use crate::sml_engine::FeedError;
 use crate::storage::BlockHeaderStorage;
 use crate::sync::{
     ManagerIdentifier, MasternodesManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
@@ -189,6 +190,7 @@ impl<H: BlockHeaderStorage> SyncManager for MasternodesManager<H> {
                         network.ban_peer(peer).await;
                         return Err(e.into_sync_error());
                     }
+                    Err(FeedError::HeaderStorage(e)) => return Err(e.into()),
                     Err(e) => {
                         tracing::warn!("Giving up MnListDiff for {}: {}", diff.block_hash, e);
                         DiffOutcome::GivenUp
@@ -1001,6 +1003,42 @@ mod tests {
             .handle_message(
                 test_socket_address(1),
                 NetworkMessage::QRInfo(Box::new(qr_info)).into(),
+                &network,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::Storage(StorageError::Corruption(_)))));
+    }
+
+    /// A storage corruption met while validating a tip update is reported.
+    #[tokio::test]
+    async fn a_corrupted_header_storage_on_a_tip_update_is_reported() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let headers: Vec<_> =
+            Header::dummy_batch(0..20_001).iter().map(HashedBlockHeader::from).collect();
+        let block_headers = storage.block_headers();
+        block_headers.write().await.store_headers(&headers).await.unwrap();
+        let mut engine = MasternodeListEngine::new(Network::Regtest, Arc::clone(&block_headers));
+        engine
+            .masternode_lists
+            .insert(TIP, MasternodeList::empty(*headers[TIP as usize].hash(), TIP));
+        let (mut manager, _, network, _) =
+            manager_after_a_tip_update_request_over(Arc::clone(&block_headers), engine).await;
+        // The request read the tip segment. Reading the two earlier ones evicts it.
+        for height in [0, 10_000] {
+            block_headers.read().await.get_header(height).await.unwrap();
+        }
+        storage.corrupt_header_segment(2);
+
+        let result = manager
+            .handle_message(
+                test_socket_address(1),
+                NetworkMessage::MnListDiff(Box::new(MnListDiff {
+                    base_block_hash: *headers[TIP as usize].hash(),
+                    block_hash: *headers[20_000].hash(),
+                    ..MnListDiff::dummy_between(0, 0)
+                }))
+                .into(),
                 &network,
             )
             .await;
