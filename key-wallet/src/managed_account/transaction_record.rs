@@ -375,6 +375,7 @@ impl TransactionRecord {
 mod tests {
     use super::*;
     use crate::account::StandardAccountType;
+    use crate::ChildIndex;
     #[cfg(feature = "serde")]
     use bincode::config;
     #[cfg(feature = "serde")]
@@ -383,7 +384,7 @@ mod tests {
 
     fn test_account_type() -> AccountType {
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         }
     }

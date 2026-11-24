@@ -5,6 +5,7 @@ use crate::bip32::DerivationPath;
 use crate::managed_account::address_pool::{AddressPool, AddressPoolType};
 use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::transaction_checking::transaction_router::AccountTypeToCheck;
+use crate::ChildIndex;
 use crate::Network;
 
 /// Helper to create a test address pool
@@ -25,7 +26,7 @@ fn test_single_pool() -> AddressPool {
 #[test]
 fn test_try_from_standard_bip44_account() {
     let managed_account = ManagedAccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
         external_addresses: test_address_pool(AddressPoolType::External),
         internal_addresses: test_address_pool(AddressPoolType::Internal),
@@ -38,7 +39,7 @@ fn test_try_from_standard_bip44_account() {
 #[test]
 fn test_try_from_standard_bip32_account() {
     let managed_account = ManagedAccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP32Account,
         external_addresses: test_address_pool(AddressPoolType::External),
         internal_addresses: test_address_pool(AddressPoolType::Internal),
@@ -51,7 +52,7 @@ fn test_try_from_standard_bip32_account() {
 #[test]
 fn test_try_from_coinjoin_account() {
     let managed_account = ManagedAccountType::CoinJoin {
-        index: 0,
+        index: ChildIndex::ZERO,
         external_addresses: test_single_pool(),
         internal_addresses: test_single_pool(),
     };
@@ -73,7 +74,7 @@ fn test_try_from_identity_registration() {
 #[test]
 fn test_try_from_identity_topup() {
     let managed_account = ManagedAccountType::IdentityTopUp {
-        registration_index: 1,
+        registration_index: ChildIndex::new_const(1),
         addresses: test_single_pool(),
     };
 
@@ -144,8 +145,8 @@ fn test_try_from_provider_platform_keys() {
 #[test]
 fn test_try_from_platform_payment_fails() {
     let managed_account = ManagedAccountType::PlatformPayment {
-        account: 0,
-        key_class: 0,
+        account: ChildIndex::ZERO,
+        key_class: ChildIndex::ZERO,
         addresses: test_single_pool(),
     };
 
@@ -156,7 +157,7 @@ fn test_try_from_platform_payment_fails() {
 #[test]
 fn test_try_from_ref_standard_bip44_account() {
     let managed_account = ManagedAccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
         external_addresses: test_address_pool(AddressPoolType::External),
         internal_addresses: test_address_pool(AddressPoolType::Internal),
@@ -172,7 +173,7 @@ fn test_try_from_ref_all_account_types() {
     let test_cases = vec![
         (
             ManagedAccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP32Account,
                 external_addresses: test_address_pool(AddressPoolType::External),
                 internal_addresses: test_address_pool(AddressPoolType::Internal),
@@ -181,7 +182,7 @@ fn test_try_from_ref_all_account_types() {
         ),
         (
             ManagedAccountType::CoinJoin {
-                index: 0,
+                index: ChildIndex::ZERO,
                 external_addresses: test_single_pool(),
                 internal_addresses: test_single_pool(),
             },
@@ -195,7 +196,7 @@ fn test_try_from_ref_all_account_types() {
         ),
         (
             ManagedAccountType::IdentityTopUp {
-                registration_index: 1,
+                registration_index: ChildIndex::new_const(1),
                 addresses: test_single_pool(),
             },
             AccountTypeToCheck::IdentityTopUp,
@@ -247,8 +248,8 @@ fn test_try_from_ref_all_account_types() {
 #[test]
 fn test_try_from_ref_platform_payment_fails() {
     let managed_account = ManagedAccountType::PlatformPayment {
-        account: 0,
-        key_class: 0,
+        account: ChildIndex::ZERO,
+        key_class: ChildIndex::ZERO,
         addresses: test_single_pool(),
     };
 

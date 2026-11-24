@@ -10,6 +10,7 @@ use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::ChildIndex;
 use dashcore::{OutPoint, Transaction, Txid};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -414,23 +415,26 @@ impl ManagedWalletInfo {
 
     /// Get the first BIP44 managed account
     pub fn first_bip44_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
-        self.bip44_managed_account_at_index(0)
+        self.bip44_managed_account_at_index(ChildIndex::ZERO)
     }
 
     /// Get the first BIP44 managed account (mutable)
     pub fn first_bip44_managed_account_mut(&mut self) -> Option<&mut ManagedCoreFundsAccount> {
-        self.bip44_managed_account_at_index_mut(0)
+        self.bip44_managed_account_at_index_mut(ChildIndex::ZERO)
     }
 
     /// Get a BIP44 managed account at a specific index
-    pub fn bip44_managed_account_at_index(&self, index: u32) -> Option<&ManagedCoreFundsAccount> {
+    pub fn bip44_managed_account_at_index(
+        &self,
+        index: ChildIndex,
+    ) -> Option<&ManagedCoreFundsAccount> {
         self.accounts.standard_bip44_accounts.get(&index)
     }
 
     /// Get a BIP44 managed account at a specific index (mutable)
     pub fn bip44_managed_account_at_index_mut(
         &mut self,
-        index: u32,
+        index: ChildIndex,
     ) -> Option<&mut ManagedCoreFundsAccount> {
         self.accounts.standard_bip44_accounts.get_mut(&index)
     }
@@ -439,23 +443,26 @@ impl ManagedWalletInfo {
 
     /// Get the first BIP32 managed account
     pub fn first_bip32_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
-        self.bip32_managed_account_at_index(0)
+        self.bip32_managed_account_at_index(ChildIndex::ZERO)
     }
 
     /// Get the first BIP32 managed account (mutable)
     pub fn first_bip32_managed_account_mut(&mut self) -> Option<&mut ManagedCoreFundsAccount> {
-        self.bip32_managed_account_at_index_mut(0)
+        self.bip32_managed_account_at_index_mut(ChildIndex::ZERO)
     }
 
     /// Get a BIP32 managed account at a specific index
-    pub fn bip32_managed_account_at_index(&self, index: u32) -> Option<&ManagedCoreFundsAccount> {
+    pub fn bip32_managed_account_at_index(
+        &self,
+        index: ChildIndex,
+    ) -> Option<&ManagedCoreFundsAccount> {
         self.accounts.standard_bip32_accounts.get(&index)
     }
 
     /// Get a BIP32 managed account at a specific index (mutable)
     pub fn bip32_managed_account_at_index_mut(
         &mut self,
-        index: u32,
+        index: ChildIndex,
     ) -> Option<&mut ManagedCoreFundsAccount> {
         self.accounts.standard_bip32_accounts.get_mut(&index)
     }
@@ -464,18 +471,18 @@ impl ManagedWalletInfo {
 
     /// Get the first CoinJoin managed account
     pub fn first_coinjoin_managed_account(&self) -> Option<&ManagedCoreFundsAccount> {
-        self.coinjoin_managed_account_at_index(0)
+        self.coinjoin_managed_account_at_index(ChildIndex::ZERO)
     }
 
     /// Get the first CoinJoin managed account (mutable)
     pub fn first_coinjoin_managed_account_mut(&mut self) -> Option<&mut ManagedCoreFundsAccount> {
-        self.coinjoin_managed_account_at_index_mut(0)
+        self.coinjoin_managed_account_at_index_mut(ChildIndex::ZERO)
     }
 
     /// Get a CoinJoin managed account at a specific index
     pub fn coinjoin_managed_account_at_index(
         &self,
-        index: u32,
+        index: ChildIndex,
     ) -> Option<&ManagedCoreFundsAccount> {
         self.accounts.coinjoin_accounts.get(&index)
     }
@@ -483,7 +490,7 @@ impl ManagedWalletInfo {
     /// Get a CoinJoin managed account at a specific index (mutable)
     pub fn coinjoin_managed_account_at_index_mut(
         &mut self,
-        index: u32,
+        index: ChildIndex,
     ) -> Option<&mut ManagedCoreFundsAccount> {
         self.accounts.coinjoin_accounts.get_mut(&index)
     }
@@ -503,7 +510,7 @@ impl ManagedWalletInfo {
     /// Get a TopUp managed account at a specific registration index
     pub fn topup_managed_account_at_registration_index(
         &self,
-        registration_index: u32,
+        registration_index: ChildIndex,
     ) -> Option<&ManagedCoreKeysAccount> {
         self.accounts.identity_topup.get(&registration_index)
     }
@@ -511,7 +518,7 @@ impl ManagedWalletInfo {
     /// Get a TopUp managed account at a specific registration index (mutable)
     pub fn topup_managed_account_at_registration_index_mut(
         &mut self,
-        registration_index: u32,
+        registration_index: ChildIndex,
     ) -> Option<&mut ManagedCoreKeysAccount> {
         self.accounts.identity_topup.get_mut(&registration_index)
     }
@@ -620,7 +627,7 @@ impl ManagedWalletInfo {
     ///
     /// Returns the platform payment account with the lowest account index and key_class 0.
     pub fn first_platform_payment_managed_account(&self) -> Option<&ManagedPlatformAccount> {
-        self.platform_payment_managed_account(0, 0)
+        self.platform_payment_managed_account(ChildIndex::ZERO, ChildIndex::ZERO)
     }
 
     /// Get the first platform payment managed account (mutable)
@@ -629,30 +636,30 @@ impl ManagedWalletInfo {
     pub fn first_platform_payment_managed_account_mut(
         &mut self,
     ) -> Option<&mut ManagedPlatformAccount> {
-        self.platform_payment_managed_account_mut(0, 0)
+        self.platform_payment_managed_account_mut(ChildIndex::ZERO, ChildIndex::ZERO)
     }
 
     /// Get a platform payment managed account by account index (with default key_class 0)
     pub fn platform_payment_managed_account_at_index(
         &self,
-        account_index: u32,
+        account_index: ChildIndex,
     ) -> Option<&ManagedPlatformAccount> {
-        self.platform_payment_managed_account(account_index, 0)
+        self.platform_payment_managed_account(account_index, ChildIndex::ZERO)
     }
 
     /// Get a platform payment managed account by account index (mutable, with default key_class 0)
     pub fn platform_payment_managed_account_at_index_mut(
         &mut self,
-        account_index: u32,
+        account_index: ChildIndex,
     ) -> Option<&mut ManagedPlatformAccount> {
-        self.platform_payment_managed_account_mut(account_index, 0)
+        self.platform_payment_managed_account_mut(account_index, ChildIndex::ZERO)
     }
 
     /// Get a platform payment managed account by account index and key class
     pub fn platform_payment_managed_account(
         &self,
-        account_index: u32,
-        key_class: u32,
+        account_index: ChildIndex,
+        key_class: ChildIndex,
     ) -> Option<&ManagedPlatformAccount> {
         let key = PlatformPaymentAccountKey {
             account: account_index,
@@ -664,8 +671,8 @@ impl ManagedWalletInfo {
     /// Get a platform payment managed account by account index and key class (mutable)
     pub fn platform_payment_managed_account_mut(
         &mut self,
-        account_index: u32,
-        key_class: u32,
+        account_index: ChildIndex,
+        key_class: ChildIndex,
     ) -> Option<&mut ManagedPlatformAccount> {
         let key = PlatformPaymentAccountKey {
             account: account_index,
@@ -692,7 +699,11 @@ impl ManagedWalletInfo {
     }
 
     /// Check if a platform payment account exists
-    pub fn has_platform_payment_account(&self, account_index: u32, key_class: u32) -> bool {
+    pub fn has_platform_payment_account(
+        &self,
+        account_index: ChildIndex,
+        key_class: ChildIndex,
+    ) -> bool {
         let key = PlatformPaymentAccountKey {
             account: account_index,
             key_class,
@@ -755,7 +766,7 @@ mod retain_unclaimed_tests {
         let mut record = TransactionRecord::new(
             tx,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             TransactionContext::Mempool,
@@ -798,7 +809,7 @@ mod retain_unclaimed_tests {
         }
         let mut accounts =
             crate::managed_account::managed_account_collection::ManagedAccountCollection::new();
-        accounts.standard_bip44_accounts.insert(0, account);
+        accounts.standard_bip44_accounts.insert(ChildIndex::ZERO, account);
 
         // Candidates: the claimed half, plus an equal number nothing spends.
         let mut sweep = WalletConflictSweep {

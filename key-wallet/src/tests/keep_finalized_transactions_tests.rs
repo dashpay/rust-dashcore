@@ -15,6 +15,7 @@
 //! [`crate::transaction_checking::TransactionContext::is_chain_locked`].
 //! IS-lock alone is **not** finality.
 
+use crate::ChildIndex;
 use crate::{
     account::{AccountType, StandardAccountType},
     managed_account::managed_account_trait::ManagedAccountTrait,
@@ -38,7 +39,7 @@ use dashcore::{BlockHash, Transaction};
 
 fn bip44_account_type() -> AccountType {
     AccountType::Standard {
-        index: 0,
+        index: ChildIndex::ZERO,
         standard_account_type: StandardAccountType::BIP44Account,
     }
 }

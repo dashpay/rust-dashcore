@@ -6,6 +6,7 @@
 //! Ed25519), so the keys match dashwallet-ios / DashSync for the same
 //! mnemonic. See <https://github.com/dashpay/rust-dashcore/issues/878>.
 
+use crate::ChildIndex;
 #[cfg(feature = "eddsa")]
 use dashcore::eddsa::{EddsaPkBytes, EddsaPkHash, EddsaSecretKey, EddsaSkBytes};
 use hex_conservative::DisplayHex;
@@ -51,7 +52,7 @@ fn bls_operator_keys_match_dashbls_reference() {
 
     // Operator key 0 via watch-side (non-hardened public) derivation.
     let key0_pub =
-        account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+        account.bls_public_key.derive_pub_legacy(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
     assert_eq!(
         key0_pub.to_bytes_legacy().unwrap().to_lower_hex_string(),
         "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
@@ -88,7 +89,7 @@ fn bls_operator_keys_testnet_match_dashbls_reference() {
         .expect("operator account should be auto-created for mnemonic wallets");
 
     let key0_pub =
-        account.bls_public_key.derive_pub_legacy(ChildNumber::from_normal_idx(0).unwrap()).unwrap();
+        account.bls_public_key.derive_pub_legacy(ChildNumber::Normal(ChildIndex::ZERO)).unwrap();
     assert_eq!(
         key0_pub.to_bytes_legacy().unwrap().to_lower_hex_string(),
         "09d8beabae708de1638487f1aff44b38e8c07d9b09f22d76329d6c8ec01e2ad4d030b660bca40ddbd222373a72c5bcef"
@@ -145,7 +146,8 @@ fn ed25519_platform_node_id_matches_tenderdash_convention() {
     // SLIP-0010 vector above pins. Public key and node id cross-checked with
     // an independent Ed25519 implementation (pyca/cryptography).
     let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
-    let sk0 = EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, 0).unwrap();
+    let sk0 =
+        EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, ChildIndex::ZERO).unwrap();
     let pubkey: EddsaPkBytes = EddsaSecretKey::from(sk0).public_key().into();
     assert_eq!(
         pubkey.to_bytes().to_lower_hex_string(),
@@ -173,7 +175,7 @@ fn platform_pool_entries_are_keyed_by_tenderdash_node_id() {
     let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
     let master = ExtendedEd25519PrivKey::new_master(Network::Mainnet, &seed).unwrap();
     let account_xpriv = master
-        .derive_priv(&AccountType::ProviderPlatformKeys.derivation_path(Network::Mainnet).unwrap())
+        .derive_priv(&AccountType::ProviderPlatformKeys.derivation_path(Network::Mainnet))
         .unwrap();
 
     let (verifying_key, entry) = info
@@ -223,7 +225,9 @@ fn operator_key_at_is_wallet_state_agnostic() {
     assert!(resident.derive_bls_key_at_index(0).is_err());
 
     for account in [resident, &watch_only] {
-        let key0 = account.operator_public_key_at(0).expect("gate-free derivation must succeed");
+        let key0 = account
+            .operator_public_key_at(ChildIndex::ZERO)
+            .expect("gate-free derivation must succeed");
         assert_eq!(
             key0.to_bytes_legacy().unwrap().to_lower_hex_string(),
             "078cad04aae29eb76171937eb7101452b401b026efbc27db840f130374e6a9ec8443d917277f8921e0ba6678a7709875"
@@ -236,19 +240,23 @@ fn operator_key_at_is_wallet_state_agnostic() {
 
     // Seed-based private derivation needs no account state at all.
     let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
-    let sk0 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 0).unwrap();
+    let sk0 =
+        BLSAccount::operator_private_key_at(&seed, Network::Mainnet, ChildIndex::ZERO).unwrap();
     assert_eq!(
         (*sk0.to_bytes()).to_lower_hex_string(),
         "11122e1ad656d0610ce0f80d40da874d67ea656a3e66ed371c915ec3a488a43a"
     );
-    let sk1 = BLSAccount::operator_private_key_at(&seed, Network::Mainnet, 1).unwrap();
+    let sk1 =
+        BLSAccount::operator_private_key_at(&seed, Network::Mainnet, ChildIndex::new_const(1))
+            .unwrap();
     assert_eq!(
         (*sk1.to_bytes()).to_lower_hex_string(),
         "1a4e3318640cd4e50222184d0ea111abf8a0c18a0e5dc3ed45dad85009db4e31"
     );
 
     // Testnet vectors (coin type 1: m/9'/1'/3'/3').
-    let sk0_testnet = BLSAccount::operator_private_key_at(&seed, Network::Testnet, 0).unwrap();
+    let sk0_testnet =
+        BLSAccount::operator_private_key_at(&seed, Network::Testnet, ChildIndex::ZERO).unwrap();
     assert_eq!(
         (*sk0_testnet.to_bytes()).to_lower_hex_string(),
         "3346dfd71627f9f31cad3ee66fe7b673c32cb077b2eb38c621d7e61c30e46dbd"
@@ -266,7 +274,7 @@ fn operator_public_key_at_rejects_non_operator_accounts() {
     let account =
         BLSAccount::from_seed(None, AccountType::IdentityRegistration, &seed, Network::Mainnet)
             .unwrap();
-    assert!(account.operator_public_key_at(0).is_err());
+    assert!(account.operator_public_key_at(ChildIndex::ZERO).is_err());
 }
 
 #[cfg(feature = "eddsa")]
@@ -277,7 +285,8 @@ fn platform_node_key_at_is_wallet_state_agnostic() {
     // Seed-based hardened derivation, pinned to the SLIP-0010 reference
     // vector for m/9'/5'/3'/4'/0'. No account state is involved.
     let seed = hex_conservative::decode_to_vec(TEST_SEED_HEX).unwrap();
-    let sk0 = EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, 0).unwrap();
+    let sk0 =
+        EdDSAAccount::platform_node_key_at(&seed, Network::Mainnet, ChildIndex::ZERO).unwrap();
     assert_eq!(
         sk0.to_bytes().to_lower_hex_string(),
         "5fa238b12be77347abf9b5957bd902d16c6aaca28d25c4267ffacbd7458dceb1"

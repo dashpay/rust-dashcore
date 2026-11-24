@@ -6,39 +6,39 @@ use super::initialization::WalletAccountCreationOptions;
 use super::{Wallet, WalletType};
 use crate::account::{Account, AccountType, StandardAccountType};
 use crate::error::Result;
-use crate::Error;
+use crate::{ChildIndex, Error};
 use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSecretKey};
 use hex_conservative::DisplayHex;
 use zeroize::Zeroizing;
 
 impl Wallet {
     /// Get a bip44 account and index
-    pub fn get_bip44_account(&self, index: u32) -> Option<&Account> {
+    pub fn get_bip44_account(&self, index: ChildIndex) -> Option<&Account> {
         self.accounts.standard_bip44_accounts.get(&index)
     }
 
     /// Get a bip32 account and index
-    pub fn get_bip32_account(&self, index: u32) -> Option<&Account> {
+    pub fn get_bip32_account(&self, index: ChildIndex) -> Option<&Account> {
         self.accounts.standard_bip32_accounts.get(&index)
     }
 
     /// Get a coinjoin account and index
-    pub fn get_coinjoin_account(&self, index: u32) -> Option<&Account> {
+    pub fn get_coinjoin_account(&self, index: ChildIndex) -> Option<&Account> {
         self.accounts.coinjoin_accounts.get(&index)
     }
 
     /// Get a mutable bip44 account by index
-    pub fn get_bip44_account_mut(&mut self, index: u32) -> Option<&mut Account> {
+    pub fn get_bip44_account_mut(&mut self, index: ChildIndex) -> Option<&mut Account> {
         self.accounts.standard_bip44_accounts.get_mut(&index)
     }
 
     /// Get a mutable bip32 account and index
-    pub fn get_bip32_account_mut(&mut self, index: u32) -> Option<&mut Account> {
+    pub fn get_bip32_account_mut(&mut self, index: ChildIndex) -> Option<&mut Account> {
         self.accounts.standard_bip32_accounts.get_mut(&index)
     }
 
     /// Get a mutable coinjoin account by index
-    pub fn get_coinjoin_account_mut(&mut self, index: u32) -> Option<&mut Account> {
+    pub fn get_coinjoin_account_mut(&mut self, index: ChildIndex) -> Option<&mut Account> {
         self.accounts.coinjoin_accounts.get_mut(&index)
     }
 
@@ -53,7 +53,7 @@ impl Wallet {
     }
 
     /// Get all account indices (both standard and coinjoin)
-    pub fn account_indices(&self) -> Vec<u32> {
+    pub fn account_indices(&self) -> Vec<ChildIndex> {
         let mut indices = self.accounts.all_indices();
         indices.sort();
         indices
@@ -135,7 +135,7 @@ impl Wallet {
                 // Create default BIP32 account 0
                 self.add_account(
                     AccountType::Standard {
-                        index: 0,
+                        index: ChildIndex::ZERO,
                         standard_account_type: StandardAccountType::BIP32Account,
                     },
                     None,
@@ -144,7 +144,7 @@ impl Wallet {
                 // Create default BIP44 account 0
                 self.add_account(
                     AccountType::Standard {
-                        index: 0,
+                        index: ChildIndex::ZERO,
                         standard_account_type: StandardAccountType::BIP44Account,
                     },
                     None,
@@ -153,7 +153,7 @@ impl Wallet {
                 // Create default CoinJoin account 0
                 self.add_account(
                     AccountType::CoinJoin {
-                        index: 0,
+                        index: ChildIndex::ZERO,
                     },
                     None,
                 )?;
@@ -164,8 +164,8 @@ impl Wallet {
                 // Create default PlatformPayment account (account=0, key_class=0)
                 self.add_account(
                     AccountType::PlatformPayment {
-                        account: 0,
-                        key_class: 0,
+                        account: ChildIndex::ZERO,
+                        key_class: ChildIndex::ZERO,
                     },
                     None,
                 )?;
@@ -557,7 +557,7 @@ impl Wallet {
     pub fn extended_public_key_for_account_type(
         &self,
         account_type: &crate::transaction_checking::transaction_router::AccountTypeToCheck,
-        account_index: Option<u32>,
+        account_index: Option<ChildIndex>,
     ) -> Option<crate::bip32::ExtendedPubKey> {
         let coll = &self.accounts;
         match account_type {

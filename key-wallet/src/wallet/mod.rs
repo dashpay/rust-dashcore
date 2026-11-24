@@ -244,6 +244,7 @@ mod tests {
     use crate::account::account_collection::AccountCollection;
     use crate::account::{AccountType, StandardAccountType};
     use crate::bip32::{ChildNumber, ExtendedPubKey};
+    use crate::ChildIndex;
     use crate::Error;
     use test_case::test_case;
 
@@ -275,12 +276,12 @@ mod tests {
 
         // Default creates multiple accounts
         assert!(wallet.accounts.count() >= 2);
-        let default_account = wallet.get_bip44_account(0).unwrap();
+        let default_account = wallet.get_bip44_account(ChildIndex::ZERO).unwrap();
         match &default_account.account_type {
             AccountType::Standard {
                 index,
                 ..
-            } => assert_eq!(*index, 0),
+            } => assert_eq!(*index, ChildIndex::ZERO),
             _ => panic!("Expected standard account"),
         }
     }
@@ -291,7 +292,7 @@ mod tests {
 
         // Create wallet with only BIP44 account 0
         let mut bip44_set = BTreeSet::new();
-        bip44_set.insert(0);
+        bip44_set.insert(ChildIndex::ZERO);
         let mut wallet = Wallet::new_random(
             Network::Testnet,
             initialization::WalletAccountCreationOptions::BIP44AccountsOnly(bip44_set),
@@ -301,7 +302,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -310,7 +311,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::CoinJoin {
-                    index: 2,
+                    index: ChildIndex::new_const(2),
                 },
                 None,
             )
@@ -333,7 +334,7 @@ mod tests {
         .unwrap();
 
         // Verify we have a default account
-        assert!(wallet.get_bip44_account(0).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::ZERO).is_some());
 
         // Address generation and tracking would happen through ManagedAccount
         // which is not directly accessible from Wallet in this refactored version
@@ -380,8 +381,8 @@ mod tests {
         .unwrap();
 
         // Both wallets should generate the same addresses
-        let account1_1 = wallet1.accounts.standard_bip44_accounts.get(&0).unwrap();
-        let account2_1 = wallet2.accounts.standard_bip44_accounts.get(&0).unwrap();
+        let account1_1 = wallet1.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
+        let account2_1 = wallet2.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
 
         // Should have same extended public keys
         assert_eq!(account1_1.extended_public_key(), account2_1.extended_public_key());
@@ -400,7 +401,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -409,7 +410,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::CoinJoin {
-                    index: 2,
+                    index: ChildIndex::new_const(2),
                 },
                 None,
             )
@@ -419,7 +420,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::IdentityTopUp {
-                    registration_index: 0,
+                    registration_index: ChildIndex::ZERO,
                 },
                 None,
             )
@@ -428,7 +429,7 @@ mod tests {
         assert_eq!(wallet.accounts.standard_bip44_accounts.len(), 2); // 2 standard accounts (0 and 1)
         assert_eq!(wallet.accounts.coinjoin_accounts.len(), 2); // 2 coinjoin accounts (0 from Default and 2)
         assert!(wallet.accounts.identity_registration.is_some());
-        assert!(wallet.accounts.identity_topup.contains_key(&0));
+        assert!(wallet.accounts.identity_topup.contains_key(&ChildIndex::ZERO));
         // 2 special accounts
     }
 
@@ -478,7 +479,7 @@ mod tests {
         // Snapshot the id and a single BIP44 account so the watch-only wallet
         // has something to track without needing a root xpub.
         let wallet_id = wallet.wallet_id;
-        let account = wallet.get_bip44_account(0).unwrap();
+        let account = wallet.get_bip44_account(ChildIndex::ZERO).unwrap();
         let account_xpub = account.extended_public_key();
 
         // Build a watch-only wallet via the unit-variant constructor.
@@ -496,7 +497,7 @@ mod tests {
         watch_only
             .add_account(
                 AccountType::Standard {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 Some(account_xpub),
@@ -505,7 +506,7 @@ mod tests {
 
         // Now the watch-only wallet has the account
         assert_eq!(watch_only.accounts.count(), 1);
-        let watch_only_account = watch_only.get_bip44_account(0).unwrap();
+        let watch_only_account = watch_only.get_bip44_account(ChildIndex::ZERO).unwrap();
         assert_eq!(watch_only_account.extended_public_key(), account_xpub);
     }
 
@@ -514,7 +515,9 @@ mod tests {
     fn test_account_management() {
         let mut wallet = Wallet::new_random(
             Network::Testnet,
-            initialization::WalletAccountCreationOptions::BIP44AccountsOnly([0].into()),
+            initialization::WalletAccountCreationOptions::BIP44AccountsOnly(
+                [ChildIndex::ZERO].into(),
+            ),
         )
         .unwrap();
 
@@ -522,7 +525,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -530,13 +533,13 @@ mod tests {
             .unwrap();
 
         // Test getting accounts
-        assert!(wallet.get_bip44_account(0).is_some());
-        assert!(wallet.get_bip44_account(1).is_some());
-        assert!(wallet.get_bip44_account(2).is_none());
+        assert!(wallet.get_bip44_account(ChildIndex::ZERO).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::new_const(1)).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::new_const(2)).is_none());
 
         // Test mutable access
-        assert!(wallet.get_bip44_account_mut(0).is_some());
-        assert!(wallet.get_bip44_account_mut(2).is_none());
+        assert!(wallet.get_bip44_account_mut(ChildIndex::ZERO).is_some());
+        assert!(wallet.get_bip44_account_mut(ChildIndex::new_const(2)).is_none());
 
         // Test account count
         assert_eq!(wallet.account_count(), 2);
@@ -544,8 +547,8 @@ mod tests {
         // Test listing accounts
         let account_indices = wallet.account_indices();
         assert_eq!(account_indices.len(), 2);
-        assert!(account_indices.contains(&0));
-        assert!(account_indices.contains(&1));
+        assert!(account_indices.contains(&ChildIndex::ZERO));
+        assert!(account_indices.contains(&ChildIndex::new_const(1)));
     }
 
     // ✓ Test error conditions
@@ -560,7 +563,7 @@ mod tests {
         // Test duplicate account creation should fail
         let result = wallet.add_account(
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             None,
@@ -581,13 +584,13 @@ mod tests {
             initialization::WalletAccountCreationOptions::Default,
         )
         .unwrap();
-        let mut xpub = wallet.get_bip44_account(0).unwrap().account_xpub;
+        let mut xpub = wallet.get_bip44_account(ChildIndex::ZERO).unwrap().account_xpub;
         alter(&mut xpub);
         let count = wallet.accounts.count();
 
         let result = wallet.add_account(
             AccountType::Standard {
-                index: 5,
+                index: ChildIndex::new_const(5),
                 standard_account_type: StandardAccountType::BIP32Account,
             },
             Some(xpub),
@@ -605,16 +608,15 @@ mod tests {
         )
         .unwrap();
         let bip44 = AccountType::Standard {
-            index: 5,
+            index: ChildIndex::new_const(5),
             standard_account_type: StandardAccountType::BIP44Account,
         };
-        let xpub = wallet
-            .derive_extended_public_key(&bip44.derivation_path(Network::Testnet).unwrap())
-            .unwrap();
+        let xpub =
+            wallet.derive_extended_public_key(&bip44.derivation_path(Network::Testnet)).unwrap();
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 5,
+                    index: ChildIndex::new_const(5),
                     standard_account_type: StandardAccountType::BIP32Account,
                 },
                 Some(xpub),
@@ -639,7 +641,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::DashpayReceivingFunds {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                     user_identity_id: us,
                     friend_identity_id: them,
                 },
@@ -650,7 +652,7 @@ mod tests {
 
         let result = wallet.add_account(
             AccountType::DashpayExternalAccount {
-                index: 0,
+                index: ChildIndex::ZERO,
                 user_identity_id: them,
                 friend_identity_id: us,
             },

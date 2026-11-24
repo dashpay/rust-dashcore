@@ -32,7 +32,7 @@ use crate::wallet::managed_wallet_info::transaction_building::AccountTypePrefere
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 #[cfg(feature = "serde")]
 use crate::wallet::ManagedWalletInfo;
-use crate::Utxo;
+use crate::{ChildIndex, Utxo};
 
 const DASH: u64 = 100_000_000;
 const COLLATERAL: u64 = 1_000 * DASH;
@@ -120,7 +120,7 @@ fn send(
     let (tx, _fee) = ctx.managed_wallet.build_unsigned_transaction(
         &ctx.wallet,
         &[AccountTypePreference::BIP44],
-        0,
+        ChildIndex::ZERO,
         vec![(elsewhere(), amount)],
         FeeRate::normal(),
         strategy,
@@ -752,7 +752,7 @@ async fn the_asset_lock_builder_skips_the_collateral(drain: bool) {
             script_pubkey: elsewhere().assume_checked().script_pubkey(),
         },
         funding_type: AssetLockFundingType::AssetLockAddressTopUp,
-        identity_index: 0,
+        identity_index: ChildIndex::ZERO,
     };
 
     let built = ctx
@@ -760,7 +760,7 @@ async fn the_asset_lock_builder_skips_the_collateral(drain: bool) {
         .build_asset_lock(
             &ctx.wallet,
             &[AccountTypePreference::BIP44],
-            0,
+            ChildIndex::ZERO,
             vec![credit],
             1000,
             drain,
@@ -780,12 +780,19 @@ async fn the_asset_lock_builder_has_nothing_to_lock_from_the_collateral_alone() 
             script_pubkey: elsewhere().assume_checked().script_pubkey(),
         },
         funding_type: AssetLockFundingType::AssetLockAddressTopUp,
-        identity_index: 0,
+        identity_index: ChildIndex::ZERO,
     };
 
     let built = ctx
         .managed_wallet
-        .build_asset_lock(&ctx.wallet, &[AccountTypePreference::BIP44], 0, vec![credit], 1000, true)
+        .build_asset_lock(
+            &ctx.wallet,
+            &[AccountTypePreference::BIP44],
+            ChildIndex::ZERO,
+            vec![credit],
+            1000,
+            true,
+        )
         .await;
 
     assert!(
@@ -827,8 +834,14 @@ fn stale_copy(ctx: &TestWalletContext, collateral: OutPoint) -> Utxo {
 async fn special_transaction_funding_skips_the_collateral_even_when_seeded() {
     let (mut ctx, collateral, spare) = registered_wallet(Some(SPARE)).await;
     let stale = stale_copy(&ctx, collateral);
-    let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
-    let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
+    let account =
+        ctx.wallet.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).expect("BIP44").clone();
+    let funds = ctx
+        .managed_wallet
+        .accounts
+        .standard_bip44_accounts
+        .get_mut(&ChildIndex::ZERO)
+        .expect("BIP44");
 
     let (tx, _fee, _reservation) = TransactionBuilder::new()
         .set_current_height(TIP)
@@ -849,8 +862,14 @@ async fn special_transaction_funding_skips_the_collateral_even_when_seeded() {
 async fn funding_drops_a_collateral_seeded_after_it() {
     let (mut ctx, collateral, spare) = registered_wallet(Some(SPARE)).await;
     let stale = stale_copy(&ctx, collateral);
-    let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
-    let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
+    let account =
+        ctx.wallet.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).expect("BIP44").clone();
+    let funds = ctx
+        .managed_wallet
+        .accounts
+        .standard_bip44_accounts
+        .get_mut(&ChildIndex::ZERO)
+        .expect("BIP44");
 
     let (tx, _fee, _reservation) = TransactionBuilder::new()
         .set_current_height(TIP)
@@ -870,8 +889,14 @@ async fn funding_drops_a_collateral_seeded_after_it() {
 async fn reservation_only_funding_drops_a_collateral_seeded_after_it() {
     let (mut ctx, collateral, _) = registered_wallet(None).await;
     let stale = stale_copy(&ctx, collateral);
-    let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
-    let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
+    let account =
+        ctx.wallet.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).expect("BIP44").clone();
+    let funds = ctx
+        .managed_wallet
+        .accounts
+        .standard_bip44_accounts
+        .get_mut(&ChildIndex::ZERO)
+        .expect("BIP44");
 
     let result = TransactionBuilder::new()
         .set_current_height(TIP)
@@ -892,8 +917,14 @@ async fn a_locked_coin_is_not_reported_as_awaiting_finality() {
     let (mut ctx, collateral, _) = registered_wallet(None).await;
     let mut stale = stale_copy(&ctx, collateral);
     stale.is_confirmed = false;
-    let account = ctx.wallet.accounts.standard_bip44_accounts.get(&0).expect("BIP44").clone();
-    let funds = ctx.managed_wallet.accounts.standard_bip44_accounts.get_mut(&0).expect("BIP44");
+    let account =
+        ctx.wallet.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).expect("BIP44").clone();
+    let funds = ctx
+        .managed_wallet
+        .accounts
+        .standard_bip44_accounts
+        .get_mut(&ChildIndex::ZERO)
+        .expect("BIP44");
 
     let result = TransactionBuilder::new()
         .set_current_height(TIP)

@@ -6,6 +6,7 @@ use crate::transaction_checking::transaction_router::{
     AccountTypeToCheck, TransactionRouter, TransactionType,
 };
 use crate::transaction_checking::{BlockInfo, TransactionContext, WalletTransactionChecker};
+use crate::ChildIndex;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::qualified_asset_unlock::AssetUnlockPayload;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::request_info::AssetUnlockRequestInfo;
 use dashcore::blockdata::transaction::special_transaction::asset_unlock::unqualified_asset_unlock::AssetUnlockBasePayload;
@@ -208,7 +209,7 @@ async fn test_asset_unlock_credits_dashpay_contact() {
 
     let mut ctx = TestWalletContext::new_random();
     let account_type = AccountType::DashpayReceivingFunds {
-        index: 0,
+        index: ChildIndex::ZERO,
         user_identity_id: [0xaa; 32],
         friend_identity_id: [0xbb; 32],
     };

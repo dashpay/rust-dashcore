@@ -64,6 +64,7 @@ mod tests {
     #[cfg(feature = "eddsa")]
     use crate::account::EdDSAAccount;
     use crate::Account;
+    use crate::ChildIndex;
 
     #[test]
     #[cfg(feature = "bincode")]
@@ -94,7 +95,7 @@ mod tests {
         let account = BLSAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             public_key_bytes,
@@ -130,7 +131,7 @@ mod tests {
         let account = EdDSAAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             public_key_bytes,
