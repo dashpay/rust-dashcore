@@ -14,9 +14,9 @@ use dashcore::hash_types::InstantSendLockHash;
 use dashcore::Txid;
 use tokio::sync::RwLock;
 
-use crate::error::{SyncResult, ValidationError, ValidationResult};
+use crate::error::SyncResult;
 use crate::sync::{InstantSendProgress, SyncEvent, SyncState};
-use crate::validation::{InstantLockStructureValidator, InstantLockValidator, Validator};
+use crate::validation::{InstantLockStructureValidator, Validator, VerifiedInstantLock};
 
 /// Maximum number of pending InstantLocks awaiting validation.
 const MAX_PENDING_INSTANTLOCKS: usize = 500;
@@ -156,12 +156,14 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         }
 
         // A lock stays pending while its quorum is missing; a held quorum refutes it.
-        let validated = match self.verify(instantlock).await {
-            Ok(()) => {
+        let result =
+            VerifiedInstantLock::verify_well_formed(instantlock, &*self.engine.read().await);
+        let verified = match result {
+            Ok(Some(verified)) => {
                 self.progress.add_valid(1);
-                true
+                verified
             }
-            Err(ValidationError::MissingQuorumData) => {
+            Ok(None) => {
                 let hash = instantlock.hash();
                 if self.pending_instantlocks.iter().any(|pending| pending.hash == hash) {
                     return Ok(vec![]);
@@ -185,25 +187,14 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         // Store in cache
         let entry = InstantLockEntry {
             received_at: SystemTime::now(),
-            validated,
+            validated: true,
         };
         self.store_instantlock(txid, entry);
         self.transition_synced_if_idle();
 
         Ok(vec![SyncEvent::InstantLockReceived {
-            instant_lock: instantlock.clone(),
-            validated,
+            instant_lock: verified,
         }])
-    }
-
-    /// Verifies `lock` against its stored cycle.
-    async fn verify(&self, lock: &InstantLock) -> ValidationResult<()> {
-        self.engine
-            .read()
-            .await
-            .rotated_quorums_of_cycle(&lock.cyclehash)
-            .ok_or(ValidationError::MissingQuorumData)
-            .and_then(|cycle| InstantLockValidator::new(cycle).validate(lock))
     }
 
     /// Queue an InstantLock for later validation.
@@ -275,8 +266,12 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                 continue;
             }
 
-            match self.verify(&pending_lock.instant_lock).await {
-                Ok(()) => {
+            let result = VerifiedInstantLock::verify_well_formed(
+                &pending_lock.instant_lock,
+                &*self.engine.read().await,
+            );
+            match result {
+                Ok(Some(instant_lock)) => {
                     self.progress.add_valid(1);
                     self.store_instantlock(
                         txid,
@@ -286,12 +281,11 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
                         },
                     );
                     events.push(SyncEvent::InstantLockReceived {
-                        instant_lock: pending_lock.instant_lock.clone(),
-                        validated: true,
+                        instant_lock,
                     });
                 }
                 // Still can't validate, re-queue
-                Err(ValidationError::MissingQuorumData) => self.queue_pending(pending_lock),
+                Ok(None) => self.queue_pending(pending_lock),
                 Err(_) => {
                     if self.instantlocks.get(&txid).is_some_and(|entry| !entry.validated) {
                         self.instantlocks.remove(&txid);
@@ -542,13 +536,7 @@ mod tests {
 
         let events = manager.process_instantlock(&mainnet_fixture_is_lock()).await.unwrap();
         assert!(
-            matches!(
-                events.as_slice(),
-                [SyncEvent::InstantLockReceived {
-                    validated: true,
-                    ..
-                }]
-            ),
+            matches!(events.as_slice(), [SyncEvent::InstantLockReceived { .. }]),
             "the genuine lock for the txid still gets in: {events:?}"
         );
     }

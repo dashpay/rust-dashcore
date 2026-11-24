@@ -145,7 +145,7 @@ async fn deferred_lock_finalizes_only_after_real_quorum_sync(receive_after_sync:
             tokio::select! {
                 result = progress.changed() => result.unwrap(),
                 event = events.recv() => {
-                    assert!(!matches!(event.unwrap(), SyncEvent::InstantLockReceived { instant_lock, .. } if instant_lock.txid == txid), "a deferred lock emitted an event");
+                    assert!(!matches!(event.unwrap(), SyncEvent::InstantLockReceived { instant_lock, .. } if instant_lock.txid() == txid), "a deferred lock emitted an event");
                 }
                 event = wallet_events.recv() => {
                     assert!(!matches!(event.unwrap(), WalletEvent::TransactionInstantLocked { txid: locked, .. } if locked == txid), "a deferred lock finalized the wallet");
@@ -170,12 +170,10 @@ async fn deferred_lock_finalizes_only_after_real_quorum_sync(receive_after_sync:
         loop {
             if let SyncEvent::InstantLockReceived {
                 instant_lock,
-                validated,
             } = events.recv().await.unwrap()
             {
-                if instant_lock.txid == txid {
-                    assert!(validated);
-                    break instant_lock;
+                if instant_lock.txid() == txid {
+                    break instant_lock.instant_lock().clone();
                 }
             }
         }
