@@ -13,8 +13,10 @@
 
 use async_trait::async_trait;
 use dashcore::ecdsa::{EcdsaPublicKey, EcdsaSignature};
+use dashcore::Transaction;
 
 use crate::bip32::{DerivationPath, ExtendedPubKey};
+use crate::Utxo;
 
 /// A signing method a [`Signer`] can perform.
 ///
@@ -118,6 +120,14 @@ pub trait Signer: Send + Sync {
         path: &DerivationPath,
         sighash: [u8; 32],
     ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error>;
+
+    /// Approves or refuses the coins a signed build is about to spend, before it signs them.
+    /// `tx` is the transaction as it will be signed, and `inputs` are its coins in input order.
+    /// Unsigned builds and direct signing calls skip it. An error aborts the build.
+    async fn approve_inputs(&self, tx: &Transaction, inputs: &[Utxo]) -> Result<(), Self::Error> {
+        let _ = (tx, inputs);
+        Ok(())
+    }
 
     /// Return the compressed public key at `path` without signing.
     ///

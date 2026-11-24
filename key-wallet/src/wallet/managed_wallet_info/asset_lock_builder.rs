@@ -645,10 +645,13 @@ mod tests {
     use super::*;
     use crate::signer::{ExtendedPubKeySigner, SignerMethod};
     use crate::wallet::initialization::WalletAccountCreationOptions;
+    use crate::wallet::WalletType;
     use crate::{Network, Utxo};
     use dashcore::ecdsa::EcdsaSignature;
     use dashcore::{OutPoint, ScriptBuf, Txid};
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use test_case::test_case;
 
     fn test_credit_outputs(amounts: &[u64]) -> Vec<CreditOutputFunding> {
@@ -1612,6 +1615,229 @@ mod tests {
         assert!(
             reserved_outpoints(&info).is_empty(),
             "both pooled accounts must have released this build's reservation"
+        );
+    }
+
+    /// An [`InMemorySigner`] that records what [`Signer::approve_inputs`] is
+    /// shown and counts every signing call, and can refuse the inputs.
+    struct ProbeSigner {
+        inner: InMemorySigner,
+        refuse: bool,
+        approvals: Mutex<Vec<Approval>>,
+        signatures: AtomicUsize,
+        public_keys: AtomicUsize,
+    }
+
+    struct Approval {
+        tx: Transaction,
+        inputs: Vec<Utxo>,
+        signatures_before: usize,
+    }
+
+    const REFUSAL: &str = "inputs differ from the approved plan";
+
+    impl ProbeSigner {
+        fn new(wallet: &Wallet, refuse: bool) -> Self {
+            let root = match &wallet.wallet_type {
+                WalletType::Mnemonic {
+                    root_extended_private_key,
+                    ..
+                } => root_extended_private_key.clone(),
+                _ => unreachable!("test_wallet_and_info produces a mnemonic wallet"),
+            };
+            Self {
+                inner: InMemorySigner {
+                    root,
+                    network: Network::Testnet,
+                },
+                refuse,
+                approvals: Default::default(),
+                signatures: Default::default(),
+                public_keys: Default::default(),
+            }
+        }
+
+        fn signatures(&self) -> usize {
+            self.signatures.load(Ordering::SeqCst)
+        }
+
+        fn public_keys(&self) -> usize {
+            self.public_keys.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Signer for ProbeSigner {
+        type Error = String;
+
+        fn supported_methods(&self) -> &[SignerMethod] {
+            IN_MEMORY_METHODS
+        }
+
+        async fn sign_ecdsa(
+            &self,
+            path: &DerivationPath,
+            sighash: [u8; 32],
+        ) -> Result<(EcdsaSignature, EcdsaPublicKey), Self::Error> {
+            self.signatures.fetch_add(1, Ordering::SeqCst);
+            self.inner.sign_ecdsa(path, sighash).await
+        }
+
+        async fn public_key(&self, path: &DerivationPath) -> Result<EcdsaPublicKey, Self::Error> {
+            self.public_keys.fetch_add(1, Ordering::SeqCst);
+            self.inner.public_key(path).await
+        }
+
+        async fn approve_inputs(
+            &self,
+            tx: &Transaction,
+            inputs: &[Utxo],
+        ) -> Result<(), Self::Error> {
+            self.approvals.lock().unwrap().push(Approval {
+                tx: tx.clone(),
+                inputs: inputs.to_vec(),
+                signatures_before: self.signatures(),
+            });
+            if self.refuse {
+                Err(REFUSAL.to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn next_credit_path(info: &mut ManagedWalletInfo) -> DerivationPath {
+        resolve_funding_account(&mut info.accounts, AssetLockFundingType::AssetLockAddressTopUp, 0)
+            .expect("default wallet has the asset-lock top-up account")
+            .peek_next_path()
+            .expect("credit pool has a next path")
+            .0
+    }
+
+    /// A refused drain requests no signature and no credit key, records no
+    /// transaction, consumes no credit-key index, and releases its reservation
+    /// so the next build selects the very same coins.
+    #[tokio::test]
+    async fn refused_inputs_abort_a_drain_before_any_signature() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let a = insert_funded_utxo(&mut info, &wallet, 0x51, 300_000, true);
+        let b = insert_funded_utxo(&mut info, &wallet, 0x52, 200_000, true);
+        info.update_last_processed_height(1100);
+        let credit_path_before = next_credit_path(&mut info);
+        let utxos_before = info.accounts.funds_account(&bip44_0()).unwrap().utxos.clone();
+
+        let refusing = ProbeSigner::new(&wallet, true);
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                &[AccountTypePreference::BIP44],
+                0,
+                test_credit_outputs(&[0]),
+                1000,
+                true,
+                &refusing,
+            )
+            .await;
+
+        match result {
+            Err(AssetLockError::Builder(BuilderError::SigningFailed(msg))) => {
+                assert!(msg.contains(REFUSAL), "the signer's refusal must surface, got {msg}")
+            }
+            Err(other) => panic!("expected the refusal as a signing failure, got {other:?}"),
+            Ok(_) => panic!("a refused build must not produce a transaction"),
+        }
+        assert_eq!(refusing.approvals.lock().unwrap().len(), 1, "the hook runs once per build");
+        assert_eq!(refusing.signatures(), 0, "no input may be signed after a refusal");
+        assert_eq!(refusing.public_keys(), 0, "no credit key may be requested after a refusal");
+        assert!(reserved_outpoints(&info).is_empty(), "the refused build must release its inputs");
+        assert!(info.transaction_history().is_empty(), "nothing is recorded for the attempt");
+        assert_eq!(
+            info.accounts.funds_account(&bip44_0()).unwrap().utxos,
+            utxos_before,
+            "the funding UTXOs are untouched"
+        );
+        assert_eq!(
+            next_credit_path(&mut info),
+            credit_path_before,
+            "no credit-key index is consumed by a refused build"
+        );
+
+        let approving = ProbeSigner::new(&wallet, false);
+        let retry = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                &[AccountTypePreference::BIP44],
+                0,
+                test_credit_outputs(&[0]),
+                1000,
+                true,
+                &approving,
+            )
+            .await
+            .expect("the released coins fund the next drain");
+        let spent: HashSet<OutPoint> =
+            retry.transaction.input.iter().map(|input| input.previous_output).collect();
+        assert_eq!(spent, HashSet::from([a, b]), "the next build re-selects the same coins");
+    }
+
+    /// The hook sees exactly the coins being spent, in transaction-input order
+    /// with their values, and the transaction exactly as it is then signed,
+    /// drain-rewritten credit included, before any signature is requested.
+    #[tokio::test]
+    async fn approve_inputs_sees_the_drain_inputs_and_the_transaction_to_sign() {
+        let (wallet, mut info) = test_wallet_and_info();
+        let values: HashMap<OutPoint, u64> = [(0x61, 100_000), (0x62, 200_000), (0x63, 300_000)]
+            .into_iter()
+            .map(|(byte, value)| (insert_funded_utxo(&mut info, &wallet, byte, value, true), value))
+            .collect();
+        info.update_last_processed_height(1100);
+
+        let signer = ProbeSigner::new(&wallet, false);
+        let result = info
+            .build_asset_lock_with_signer(
+                &wallet,
+                &[AccountTypePreference::BIP44],
+                0,
+                test_credit_outputs(&[0]),
+                1000,
+                true,
+                &signer,
+            )
+            .await
+            .expect("approved drain builds");
+
+        let approvals = signer.approvals.lock().unwrap();
+        let [approval] = approvals.as_slice() else {
+            panic!("the hook must run exactly once, ran {} times", approvals.len());
+        };
+        assert_eq!(approval.signatures_before, 0, "the hook runs before any signature");
+        let tx = &result.transaction;
+        assert_eq!(signer.signatures(), tx.input.len(), "every approved input is then signed");
+
+        let approved: Vec<(OutPoint, u64)> =
+            approval.inputs.iter().map(|utxo| (utxo.outpoint, utxo.value())).collect();
+        let expected: Vec<(OutPoint, u64)> = tx
+            .input
+            .iter()
+            .map(|input| (input.previous_output, values[&input.previous_output]))
+            .collect();
+        assert_eq!(approved, expected, "the hook sees exactly the spent coins, in input order");
+        assert_eq!(approved.len(), values.len(), "a drain spends every coin");
+
+        let mut unsigned = tx.clone();
+        for input in &mut unsigned.input {
+            input.script_sig = ScriptBuf::new();
+        }
+        assert_eq!(approval.tx, unsigned, "the hook sees the transaction exactly as signed");
+        let Some(TransactionPayload::AssetLockPayloadType(payload)) =
+            &approval.tx.special_transaction_payload
+        else {
+            panic!("the approved transaction carries the asset-lock payload");
+        };
+        assert_eq!(
+            payload.credit_outputs[0].value,
+            600_000 - result.fee,
+            "the hook sees the drain-rewritten credit, not the caller's placeholder"
         );
     }
 }
