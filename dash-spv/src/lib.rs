@@ -93,6 +93,7 @@ pub use sync::{
 };
 pub use tracing::level_filters::LevelFilter;
 pub use types::{FilterMatch, ValidationMode};
+pub use validation::{InstantLockVerificationError, VerifiedInstantLock};
 
 // Re-export commonly used dashcore types
 pub use dashcore::{Address, BlockHash, Network, OutPoint, QuorumHash, ScriptBuf};

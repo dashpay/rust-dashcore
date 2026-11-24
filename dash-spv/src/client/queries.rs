@@ -10,12 +10,14 @@ use crate::error::{Result, SpvError};
 use crate::network::NetworkManager;
 use crate::sml_engine::MasternodeListEngine;
 use crate::storage::PersistentBlockHeaderStorage;
+use crate::validation::{InstantLockVerificationError, VerifiedInstantLock};
 use dashcore::sml::llmq_type::LLMQType;
 use dashcore::sml::masternode_list::MasternodeList;
 use dashcore::sml::quorum_entry::qualified_quorum_entry::QualifiedQuorumEntry;
 use dashcore::transaction::special_transaction::coinbase::CoinbasePayload;
-use dashcore::QuorumHash;
+use dashcore::{InstantLock, QuorumHash};
 use key_wallet_manager::WalletInterface;
+use std::result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -41,6 +43,20 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
             Some(ref masternode_engine) => Ok(masternode_engine.clone()),
             None => Err(SpvError::Config("Masternode list engine not initialized".to_string())),
         }
+    }
+
+    /// Verifies a lock against the client's quorum state, with no network or wallet access.
+    /// Returns `None` until the lock's quorum is held; a malformed or refuted lock is an error.
+    /// Call it before taking wallet or persistence write locks.
+    pub async fn verify_instant_lock(
+        &self,
+        instant_lock: &InstantLock,
+    ) -> result::Result<Option<VerifiedInstantLock>, InstantLockVerificationError> {
+        let Some(engine) = &self.masternode_engine else {
+            return VerifiedInstantLock::verify::<PersistentBlockHeaderStorage>(instant_lock, None);
+        };
+        let engine = engine.read().await;
+        VerifiedInstantLock::verify(instant_lock, Some(&*engine))
     }
 
     /// The newest masternode list, `None` while masternode sync is off or has

@@ -31,7 +31,7 @@ use super::setup::{
 /// up). The sends are sequential rather than concurrent because regtest's
 /// 4-MN quorum has trouble keeping multiple concurrent IS signing sessions
 /// alive past the session timeout. For each transaction the test asserts:
-///   1. `SyncEvent::InstantLockReceived { validated: true }` fires.
+///   1. `SyncEvent::InstantLockReceived` fires for the verified lock.
 ///   2. A wallet event reports `TransactionContext::InstantSend(_)` for the txid.
 /// Then it mines blocks until a ChainLock is produced and asserts each tx
 /// transitions to `TransactionContext::InChainLockedBlock(_)`.
@@ -80,7 +80,6 @@ async fn test_instantsend_full_lifecycle() {
         let lock = wait_for_instant_lock_received(
             &mut client_handle.sync_event_receiver,
             txid,
-            true,
             SYNC_TIMEOUT,
         )
         .await;
@@ -181,7 +180,6 @@ async fn test_instantsend_across_quorum_rotation() {
     let _ = wait_for_instant_lock_received(
         &mut client_handle.sync_event_receiver,
         pre_txid,
-        true,
         SYNC_TIMEOUT,
     )
     .await;
@@ -215,7 +213,6 @@ async fn test_instantsend_across_quorum_rotation() {
     let _ = wait_for_instant_lock_received(
         &mut client_handle.sync_event_receiver,
         post_txid,
-        true,
         SYNC_TIMEOUT,
     )
     .await;
@@ -239,7 +236,7 @@ async fn test_instantsend_across_quorum_rotation() {
 /// path where an islock is held until the matching mempool entry arrives.
 ///
 /// Regardless of exact ordering, the test asserts the end-to-end outcome: a
-/// validated `InstantLockReceived` event plus a wallet event reporting the
+/// verified `InstantLockReceived` event plus a wallet event reporting the
 /// transaction in an `InstantSend` context.
 #[tokio::test]
 async fn test_instantsend_islock_arrives_before_tx() {
@@ -288,18 +285,14 @@ async fn test_instantsend_islock_arrives_before_tx() {
     // rotated_quorums_per_cycle so the pending islock can be validated.
     wait_for_masternode_sync(&mut client_handle.progress_receiver, SYNC_TIMEOUT).await;
 
-    // The isdlock may have arrived before MN sync (validated=false, queued as
-    // pending). MasternodeStateUpdated triggers validate_pending which re-emits
-    // with validated=true. Bump mocktime again to ensure the scheduler fires.
+    // The isdlock may have arrived before MN sync and been queued as pending.
+    // MasternodeStateUpdated triggers validate_pending, which emits it once it
+    // verifies. Bump mocktime again to ensure the scheduler fires.
     ctx.mn_ctx.bump_mocktime(30);
 
-    let lock = wait_for_instant_lock_received(
-        &mut client_handle.sync_event_receiver,
-        txid,
-        true,
-        SYNC_TIMEOUT,
-    )
-    .await;
+    let lock =
+        wait_for_instant_lock_received(&mut client_handle.sync_event_receiver, txid, SYNC_TIMEOUT)
+            .await;
     assert_eq!(lock.txid, txid);
 
     // And the wallet must observe it with an InstantSend context regardless of
