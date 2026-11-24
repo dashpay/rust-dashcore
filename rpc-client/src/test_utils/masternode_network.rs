@@ -325,9 +325,10 @@ impl MasternodeTestContext {
         let start = Instant::now();
 
         for (mn, mn_info) in self.masternodes.iter().zip(&self.metadata.masternodes) {
+            let client = mn.rpc_client_for_wallet("");
             loop {
-                let status = mn.try_rpc_call("masternode", &["status".into()]);
-                if status.as_ref().is_some_and(|s| s["state"] == "READY") {
+                let status: Result<Value, _> = client.call("masternode", &["status".into()]);
+                if status.as_ref().is_ok_and(|s| s["state"] == "READY") {
                     break;
                 }
                 assert!(
