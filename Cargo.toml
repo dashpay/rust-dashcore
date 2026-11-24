@@ -8,7 +8,6 @@ members = [
     "fuzz",
     "rpc-client",
     "rpc-json",
-    "rpc-integration-test",
     "key-wallet",
     "key-wallet-manager",
     "dash-spv",

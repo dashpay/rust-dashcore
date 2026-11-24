@@ -19,6 +19,7 @@ name = "dashcore_rpc"
 path = "src/lib.rs"
 
 [dependencies]
+dashcore = { workspace = true, optional = true }
 dashcore-rpc-json = { workspace = true }
 hex-conservative = { workspace = true }
 
@@ -28,8 +29,15 @@ tracing = { workspace = true }
 # Used for deserialization of JSON.
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
+tempfile = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["net", "process", "time"] }
+
+[features]
+test-utils = ["dep:dashcore", "dashcore/test-utils", "dep:tempfile", "dep:tokio"]
 
 [dev-dependencies]
+dashcore-rpc = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
 test-case = { workspace = true }
 
 [lints]

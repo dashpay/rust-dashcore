@@ -18,7 +18,7 @@ Workspace members, as listed in the root `Cargo.toml` (package name in brackets 
 - `masternode-seeds-fetcher/`: the tool that fetches those seed lists.
 - `dash-spv-bench/`: sync benchmark harness for `dash-spv`.
 - `git-state/`: proc macros exposing the git state at compile time.
-- `rpc-client/` (`dashcore-rpc`), `rpc-json/` (`dashcore-rpc-json`), `rpc-integration-test/`: Dash Core JSON-RPC client, its types and its tests.
+- `rpc-client/` (`dashcore-rpc`), `rpc-json/` (`dashcore-rpc-json`): Dash Core JSON-RPC client and its types. The client's tests run against a regtest `dashd`.
 - `fuzz/` (`dash-fuzz`): honggfuzz targets.
 
 Outside the workspace, `contrib/` holds scripts.
@@ -91,7 +91,7 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 - Every fix comes with a regression test that fails without it.
 - Before adding a `#[test]`, look for an existing test with the same setup and extend it.
 - Test through the public API. Don't set internal fields or states by hand: a test that builds a state production never reaches proves nothing.
-- Reuse the existing helpers before writing new ones. Each crate keeps them in `src/test_utils/` behind its `test-utils` feature (`dashcore`, `key-wallet`, `key-wallet-manager`, `dash-spv`).
+- Reuse the existing helpers before writing new ones. Each crate keeps them in `src/test_utils/` behind its `test-utils` feature (`dashcore`, `dashcore-rpc`, `key-wallet`, `key-wallet-manager`, `dash-spv`).
 - Never skip or delete a failing test. `#[ignore]` needs a comment linking the issue that tracks the failure.
 
 ## Commits and pull requests

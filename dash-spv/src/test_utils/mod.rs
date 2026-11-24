@@ -1,15 +1,11 @@
 mod chain_tip;
 mod chain_work;
 mod checkpoint;
-mod context;
 mod event_handler;
 mod filter;
-mod fs_helpers;
 mod header_storage;
-pub(crate) mod masternode_network;
 mod metadata_storage;
 mod network;
-mod node;
 mod types;
 mod wallet;
 
@@ -18,22 +14,18 @@ use std::time::Duration;
 /// Default timeout for sync operations in integration tests.
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(180);
 
-pub use context::DashdTestContext;
-pub use event_handler::TestEventHandler;
-pub use fs_helpers::retain_test_dir;
-pub use header_storage::MockHeaderStorage;
-pub use masternode_network::{
-    ControllerInfo, MasternodeInfo, MasternodeTestContext, NetworkMetadata,
+pub use dashcore_rpc::test_utils::{
+    retain_test_dir, ControllerInfo, DashCoreNode, DashdTestContext, MasternodeInfo,
+    MasternodeTestContext, NetworkMetadata, TestChain, WalletFile,
 };
+pub use event_handler::TestEventHandler;
+pub use header_storage::MockHeaderStorage;
 pub use metadata_storage::FailingMetadataStorage;
 pub use network::{test_socket_address, MockNetworkManager};
-pub use node::{DashCoreNode, TestChain, WalletFile};
 pub use wallet::{
     create_test_wallet, default_test_account_options, init_test_logging,
     next_unused_receive_address,
 };
-
-pub(crate) use node::DashCoreConfig;
 
 pub use crate::sml_engine::{FeedError, MasternodeListEngine, WORK_DIFF_DEPTH};
 
