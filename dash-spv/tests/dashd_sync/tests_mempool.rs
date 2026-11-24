@@ -3,15 +3,18 @@ use std::time::Duration;
 
 use dash_spv::client::config::MempoolStrategy;
 use dash_spv::network::NetworkEvent;
-use dash_spv::test_utils::{create_test_wallet, DashCoreNode, DashdTestContext, TestChain};
-use dashcore::Amount;
+use dash_spv::test_utils::{
+    create_test_wallet, next_unused_receive_address, DashCoreNode, DashdTestContext, TestChain,
+};
+use dash_spv::Network;
+use dashcore::{Amount, Txid};
 
 use super::helpers::{
-    assert_no_mempool_tx_both, wait_for_mempool_synced_both, wait_for_mempool_tx_both,
-    wait_for_mempool_txs_both, wait_for_network_event, wait_for_network_event_both,
-    wait_for_sync_both,
+    assert_no_mempool_tx_both, wait_for_mempool_synced_both, wait_for_mempool_tx,
+    wait_for_mempool_tx_both, wait_for_mempool_txs_both, wait_for_network_event,
+    wait_for_network_event_both, wait_for_sync_both,
 };
-use super::setup::{client_has_transaction, create_and_start_client, TestContext};
+use super::setup::{client_has_transaction, create_and_start_client, ClientHandle, TestContext};
 
 const MEMPOOL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -42,6 +45,44 @@ async fn test_mempool_detects_incoming_tx() {
     fa.stop().await;
     bf.stop().await;
     tracing::info!("test_mempool_detects_incoming_tx passed");
+}
+
+/// With mempool relay on during sync, a payment already in the node's mempool when the
+/// client starts reaches the wallet before the client has synced.
+#[tokio::test]
+async fn test_mempool_during_sync_detects_a_payment_before_sync_completes() {
+    let Some(ctx) = TestContext::new(TestChain::Full).await else {
+        return;
+    };
+    if !ctx.dashd.supports_mining {
+        eprintln!("Skipping test (dashd RPC miner not available)");
+        return;
+    }
+
+    // The first receive address of a wallet that has not synced, so the client knows it
+    // from the start.
+    let (fresh, fresh_id) = create_test_wallet(&ctx.dashd.wallet.mnemonic, Network::Regtest);
+    let address = next_unused_receive_address(&fresh, &fresh_id).await;
+    let txid = ctx.dashd.node.send_to_address(&address, Amount::from_sat(100_000_000));
+    let (mut fa, _fa_dir) = ctx.spawn_client_with(MempoolStrategy::FetchAll, true).await;
+    let (mut bf, _bf_dir) = ctx.spawn_client_with(MempoolStrategy::BloomFilter, true).await;
+
+    let (fa_detected, bf_detected) =
+        tokio::join!(detect_before_sync(&mut fa), detect_before_sync(&mut bf));
+    assert_eq!(fa_detected, Some(txid));
+    assert_eq!(bf_detected, Some(txid));
+    wait_for_sync_both(&mut fa, &mut bf, ctx.dashd.initial_height).await;
+
+    fa.stop().await;
+    bf.stop().await;
+}
+
+async fn detect_before_sync(client: &mut ClientHandle) -> Option<Txid> {
+    let detected = wait_for_mempool_tx(&mut client.wallet_event_receiver, MEMPOOL_TIMEOUT).await;
+    if detected.is_some() {
+        assert!(!client.progress_receiver.borrow().is_synced(), "detected while still syncing");
+    }
+    detected
 }
 
 /// Verify mempool ignores transactions not relevant to the SPV wallet.
