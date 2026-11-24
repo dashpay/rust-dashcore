@@ -279,6 +279,9 @@ async fn test_clear_storage_stops_running_client() {
 
 /// Verify a storage file corrupted while the client is stopped is wiped and synced again.
 #[test_case("block_headers/segment_000000.dat"; "block headers")]
+#[test_case("filter_headers/segment_000000.dat"; "filter headers")]
+#[test_case("filters/segment_000000.dat"; "filters")]
+#[test_case("blocks/segment_000000.dat"; "blocks")]
 #[tokio::test]
 async fn test_restart_corruption_resyncs(file: &str) {
     let Some(ctx) = TestContext::new(TestChain::Full).await else {
@@ -293,15 +296,19 @@ async fn test_restart_corruption_resyncs(file: &str) {
     let path = ctx.client_config.storage_path.join(file);
     let original = corrupt(&path);
 
-    let mut client_handle = ctx.spawn_new_client().await;
+    // A fresh wallet rescans from genesis, so the client downloads every wiped file again.
+    let (wallet, wallet_id) = create_test_wallet(&ctx.dashd.wallet.mnemonic, Network::Regtest);
+    let mut client_handle = create_and_start_client(&ctx.client_config, Arc::clone(&wallet)).await;
     wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
     client_handle.stop().await;
-    ctx.assert_synced(&client_handle.client.progress().await).await;
+    ctx.assert_wallet_synced(&client_handle.client.progress().await, &wallet, &wallet_id).await;
     assert_eq!(fs::read(&path).unwrap(), original, "Corrupted file not synced again");
 }
 
 /// Verify a storage file corrupted while the client runs is wiped and synced again.
+#[test_case("block_headers/segment_000000.dat"; "block headers")]
 #[test_case("filters/segment_000000.dat"; "filters")]
+#[test_case("blocks/segment_000000.dat"; "blocks")]
 #[tokio::test]
 async fn test_runtime_corruption_resyncs(file: &str) {
     let Some(ctx) = TestContext::new(TestChain::Full).await else {
