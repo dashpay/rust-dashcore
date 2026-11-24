@@ -320,6 +320,12 @@ impl PeerHandle {
         self.token.is_cancelled()
     }
 
+    /// Holds back every write to the peer until the returned guard drops.
+    #[cfg(test)]
+    pub(super) async fn hold_writes(&self) -> impl Sized + '_ {
+        self.writer.lock().await
+    }
+
     pub async fn send(&self, msg: &NetworkMessage) -> NetworkResult<()> {
         // The sync layer sends a plain `getheaders`, since it does not know the peer.
         // The reader decompresses `Headers2` back to `Headers`.
@@ -816,6 +822,9 @@ fn spawn_reader(
             }
         }
 
+        // Closed before it is announced, so no work is given to the peer once the work it
+        // holds was re-queued.
+        shutdown.cancel();
         let _ = inbound.send(PeerEvent::Disconnected(addr));
     });
 }
@@ -948,10 +957,10 @@ mod tests {
         };
         let (delayed, overtaking) = (request(1), request(2));
 
-        let writer = peer.writer.lock().await;
+        let writes = peer.hold_writes().await;
         let mut delayed = pin!(peer.send(&delayed));
         assert!(delayed.as_mut().now_or_never().is_none(), "another write is in progress");
-        drop(writer);
+        drop(writes);
         peer.send(&overtaking).await.expect("loopback send");
         delayed.await.expect("loopback send");
         assert!(peer.in_flight_bytes() > 0);
