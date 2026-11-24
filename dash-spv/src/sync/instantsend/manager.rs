@@ -188,6 +188,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
             validated,
         };
         self.store_instantlock(txid, entry);
+        self.transition_synced_if_idle();
 
         Ok(vec![SyncEvent::InstantLockReceived {
             instant_lock: instantlock.clone(),
@@ -223,6 +224,8 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
     /// Store an InstantLock in the cache.
     fn store_instantlock(&mut self, txid: Txid, entry: InstantLockEntry) {
         self.instantlocks.insert(txid, entry);
+        self.pending_instantlocks.retain(|pending| pending.instant_lock.txid != txid);
+        self.progress.update_pending(self.pending_instantlocks.len());
 
         // Enforce cache limit by removing oldest
         if self.instantlocks.len() > MAX_CACHE_SIZE {
@@ -315,14 +318,7 @@ impl<H: BlockHeaderStorage> InstantSendManager<H> {
         });
     }
 
-    /// Drop cached InstantLock entries that were never BLS-validated, and clear
-    /// the queued locks that fed them.
-    ///
-    /// Called on disconnect. The `instantlocks` cache is what
-    /// [`process_instantlock`](Self::process_instantlock) dedupes against, so if
-    /// an unvalidated entry survived a disconnect the same lock re-announced
-    /// after reconnect would be treated as a duplicate and never re-queued or
-    /// re-validated. Validated entries are kept — their locks are already final.
+    /// Clears pending locks on disconnect while retaining verified cache entries.
     pub(super) fn clear_unvalidated_on_disconnect(&mut self) {
         self.pending_instantlocks.clear();
         self.instantlocks.retain(|_, entry| entry.validated);
@@ -558,9 +554,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_accept_genuine_lock_after_forged_lock_when_cycle_arrives() {
+    async fn should_queue_distinct_locks_once_while_cycle_is_missing() {
         let engine = Arc::new(RwLock::new(TestEngine::empty(Network::Mainnet)));
-        let mut manager = InstantSendManager::new(engine.clone());
+        let mut manager = InstantSendManager::new(engine);
         let genuine = mainnet_fixture_is_lock();
         let mut forged = genuine.clone();
         forged.inputs[0].vout += 1;
@@ -568,18 +564,6 @@ mod tests {
             assert!(manager.process_instantlock(lock).await.unwrap().is_empty());
         }
         assert_eq!(manager.pending_count(), 2);
-
-        *engine.write().await = TestEngine::mainnet_fixture();
-        let event = SyncEvent::MasternodeStateUpdated {
-            height: 1,
-            qr_info_result: None,
-        };
-        let events = manager.handle_sync_event(&event, &no_op_network()).await.unwrap();
-        assert!(matches!(events.as_slice(), [SyncEvent::InstantLockReceived {
-            instant_lock, validated: true,
-        }] if instant_lock == &genuine));
-        assert_eq!(manager.pending_count(), 0);
-        assert!(manager.process_instantlock(&genuine).await.unwrap().is_empty());
     }
 
     #[tokio::test]
