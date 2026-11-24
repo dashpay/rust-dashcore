@@ -1426,6 +1426,24 @@ mod tests {
         (manager, headers)
     }
 
+    /// A storage corruption met while requesting a filter batch is reported.
+    #[tokio::test]
+    async fn test_corrupted_header_storage_on_request_is_reported() {
+        let (mut manager, _) = manager_over_corrupted_headers(0).await;
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+
+        let result = manager
+            .handle_sync_event(
+                &SyncEvent::FilterHeadersSyncComplete {
+                    tip_height: 20_000,
+                },
+                &network,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::Storage(StorageError::Corruption(_)))));
+    }
+
     /// A storage corruption met while resolving the height of a received filter is reported.
     /// Its batch starts in the corrupted segment and ends in the next one, so requesting the
     /// batch reads only the healthy segment.

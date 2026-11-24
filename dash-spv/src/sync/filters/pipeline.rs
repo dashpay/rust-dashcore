@@ -123,19 +123,16 @@ impl FiltersPipeline {
             .map(|(&start, tracker)| (start, tracker.end_height()))
             .collect();
         for (start, batch_end) in uncached {
-            match storage.get_header(batch_end).await {
-                Ok(Some(h)) => {
+            match storage.get_header(batch_end).await? {
+                Some(h) => {
                     self.batch_stops.insert(start, *h.hash());
                 }
-                Ok(None) => {
+                None => {
                     tracing::debug!(
                         "Header at height {} not yet available, deferring filter batch {}",
                         batch_end,
                         start
                     );
-                }
-                Err(e) => {
-                    tracing::warn!("Error reading header at height {}: {}", batch_end, e);
                 }
             }
         }
