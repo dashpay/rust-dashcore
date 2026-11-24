@@ -15,12 +15,18 @@ mod segments;
 use crate::error::StorageResult;
 use crate::storage::lockfile::LockFile;
 use crate::storage::migrator::StorageMigrator;
+#[cfg(test)]
+use crate::storage::segments::Persistable;
 use crate::types::{HashedBlock, HashedBlockHeader};
 use crate::ClientConfig;
 use async_trait::async_trait;
+#[cfg(test)]
+use dashcore::block::Header as BlockHeader;
 use dashcore::hash_types::FilterHeader;
 use dashcore::prelude::CoreBlockHeight;
 use serde::de::DeserializeOwned;
+#[cfg(test)]
+use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -107,6 +113,37 @@ pub struct DiskStorageManager {
     worker_handle: Option<tokio::task::JoinHandle<()>>,
 
     _lock_file: LockFile,
+}
+
+#[cfg(test)]
+impl DiskStorageManager {
+    /// Stores dummy headers up to `tip` and corrupts the first header segment on disk.
+    /// `tip` lies past the first two segments, so the cache no longer holds the first one and
+    /// a read of its heights fails with `StorageError::Corruption`. Returns the headers.
+    pub(crate) async fn store_headers_and_corrupt_the_first_segment(
+        &self,
+        tip: u32,
+    ) -> Vec<HashedBlockHeader> {
+        assert!(tip >= 2 * HashedBlockHeader::ITEMS_PER_SEGMENT, "the first segment stays cached");
+        let headers: Vec<_> =
+            BlockHeader::dummy_batch(0..tip + 1).iter().map(HashedBlockHeader::from).collect();
+        self.block_headers.write().await.store_headers(&headers).await.unwrap();
+        self.corrupt_header_segment(0);
+        headers
+    }
+
+    /// Corrupts the header segment `segment_id` on disk. A read of its heights fails with
+    /// `StorageError::Corruption` while the cache does not hold the segment.
+    pub(crate) fn corrupt_header_segment(&self, segment_id: u32) {
+        self.corrupt_segment::<HashedBlockHeader>("block_headers", segment_id);
+    }
+
+    fn corrupt_segment<I: Persistable>(&self, folder: &str, segment_id: u32) {
+        let path = self.storage_path.join(folder).join(I::segment_file_name(segment_id));
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[0] ^= 1;
+        fs::write(&path, bytes).unwrap();
+    }
 }
 
 /// Derives the lockfile path for a storage directory by appending `.lock` to

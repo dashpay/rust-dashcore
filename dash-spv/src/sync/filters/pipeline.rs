@@ -182,14 +182,8 @@ impl FiltersPipeline {
             .find_batch_for_height(height)
             .and_then(|start| self.batch_trackers.get(&start).map(|t| (start, t.end_height())))
         {
-            match storage.load_headers(start..end + 1).await {
-                Ok(headers) => self
-                    .block_heights
-                    .extend(headers.iter().zip(start..).map(|(h, i)| (*h.hash(), i))),
-                Err(e) => {
-                    tracing::warn!("Failed to cache header hashes of filter batch {}: {}", start, e)
-                }
-            }
+            let headers = storage.load_headers(start..end + 1).await?;
+            self.block_heights.extend(headers.iter().zip(start..).map(|(h, i)| (*h.hash(), i)));
         }
         Ok(Some(height))
     }
