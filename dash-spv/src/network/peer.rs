@@ -325,10 +325,11 @@ impl PeerHandle {
         // The reader decompresses `Headers2` back to `Headers`.
         let msg = as_sent(msg, self.headers2);
 
-        self.ledger.charge(&msg).await;
-
         let write = async {
             let mut writer = self.writer.lock().await;
+            // Charged under the writer lock, since filter replies settle in the order their
+            // requests are written.
+            self.ledger.charge(&msg).await;
             writer.write_message(&msg).await
         };
         let outcome = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
@@ -868,7 +869,11 @@ async fn handshake_send(writer: &mut PeerWriter, payload: NetworkMessage) -> Net
 #[cfg(test)]
 mod tests {
     use std::io::{Error as IoError, ErrorKind};
+    use std::pin::pin;
 
+    use dashcore::network::message_filter::{CFilter, GetCFilters};
+    use dashcore::BlockHash;
+    use futures::FutureExt;
     use test_case::test_case;
 
     use super::*;
@@ -928,5 +933,37 @@ mod tests {
         let mut src = BytesMut::from(&[ping.clone(), ping].concat()[..n]);
         while codec.decode(&mut src).unwrap().is_some() {}
         codec.partial.load(Ordering::Relaxed)
+    }
+
+    #[tokio::test]
+    async fn concurrent_filter_requests_are_charged_in_the_order_they_are_written() {
+        let id = PeerId::for_test(([127, 0, 0, 1], 9999).into(), 0);
+        let peer = ConnectedPeer::for_test(id).await.handle();
+        let request = |n: u32| {
+            NetworkMessage::GetCFilters(GetCFilters {
+                filter_type: 0,
+                start_height: n,
+                stop_hash: BlockHash::dummy(n),
+            })
+        };
+        let (delayed, overtaking) = (request(1), request(2));
+
+        let writer = peer.writer.lock().await;
+        let mut delayed = pin!(peer.send(&delayed));
+        assert!(delayed.as_mut().now_or_never().is_none(), "another write is in progress");
+        drop(writer);
+        peer.send(&overtaking).await.expect("loopback send");
+        delayed.await.expect("loopback send");
+        assert!(peer.in_flight_bytes() > 0);
+
+        for n in [2, 1] {
+            let reply = NetworkMessage::CFilter(CFilter {
+                filter_type: 0,
+                block_hash: BlockHash::dummy(n),
+                filter: Vec::new(),
+            });
+            peer.ledger.settle(&reply, 100).await;
+        }
+        assert_eq!(peer.in_flight_bytes(), 0);
     }
 }
