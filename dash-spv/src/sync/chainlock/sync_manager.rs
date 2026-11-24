@@ -111,7 +111,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
         if self.masternode_ready {
             return Ok(self
                 .revalidate_pending()
-                .await
+                .await?
                 .map(|chain_lock| SyncEvent::ChainLockReceived {
                     chain_lock,
                     validated: true,
@@ -120,7 +120,7 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for ChainLockManager
                 .collect());
         }
 
-        let chainlock = self.on_masternode_ready().await;
+        let chainlock = self.on_masternode_ready().await?;
         self.set_state(SyncState::Synced);
         tracing::info!("ChainLock manager synced (masternode data available)");
 
