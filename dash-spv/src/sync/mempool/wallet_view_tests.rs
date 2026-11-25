@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::ops::Range;
 use std::sync::Arc;
 
+use dashcore::bls_sig_utils::BLSSignature;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::network::message::NetworkMessage;
 use dashcore::network::message_blockdata::Inventory;
@@ -25,9 +26,12 @@ use tokio::sync::{broadcast, RwLock};
 
 use super::{BroadcastConfig, MempoolManager};
 use crate::client::config::MempoolStrategy;
-use crate::network::NetworkManager;
-use crate::sync::{SyncEvent, SyncManager, SyncState};
-use crate::test_utils::{next_unused_receive_address, test_socket_address, MockNetworkManager};
+use crate::network::{InboundMessage, NetworkManager};
+use crate::sml_engine::test_support::TestEngine;
+use crate::sync::{InstantSendManager, SyncEvent, SyncManager, SyncState};
+use crate::test_utils::{
+    next_unused_receive_address, test_socket_address, MockHeaderStorage, MockNetworkManager,
+};
 
 const MNEMONIC_A: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -1930,4 +1934,116 @@ async fn a_locked_spend_a_chain_lock_overturned_is_refused_when_it_arrives_again
     let unrelated = Transaction::dummy(&to_a, 183..184, &[50_000]);
     let taken = h.wallets.write().await.process_mempool_transaction(&unrelated, None).await;
     assert!(taken.is_relevant, "an unrelated payment to A is taken in");
+}
+
+/// An unsigned claim on a coin seen before the coin's funding, and a signed spend of its change,
+/// both pending in A, with the funding still unseen.
+async fn claim_and_child(h: &mut Harness, a: &WalletId) -> (Transaction, Transaction, Transaction) {
+    let to_a = next_unused_receive_address(&h.wallets, a).await;
+    let elsewhere = address_of_unregistered(MNEMONIC_C).await;
+    let funding = Transaction::dummy(&to_a, 60..61, &[COIN]);
+    let claim = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint::new(funding.txid(), 0),
+            ..Default::default()
+        }],
+        output: vec![
+            TxOut {
+                value: COIN - PAYMENT - 1_000,
+                script_pubkey: elsewhere.script_pubkey(),
+            },
+            TxOut {
+                value: PAYMENT,
+                script_pubkey: to_a.script_pubkey(),
+            },
+        ],
+        special_transaction_payload: None,
+    };
+    assert!(h.announce(&claim).await);
+    let outputs = vec![TxOut {
+        value: PAYMENT - 1_000,
+        script_pubkey: elsewhere.script_pubkey(),
+    }];
+    let change = OutPoint::new(claim.txid(), 1);
+    let child = signed_spend_of(&h.wallets, a, &to_a, change, &claim, outputs).await;
+    assert!(h.announce(&child).await);
+    assert!(h.context_of(a, &claim.txid()).await.is_some());
+    assert!(h.context_of(a, &child.txid()).await.is_some());
+    (funding, claim, child)
+}
+
+/// Relays `tx`'s lock to an InstantSend manager that holds no quorum to check it, passes on
+/// whatever it emits to the mempool manager, and returns how many locks it keeps pending.
+async fn relay_quorum_pending_lock(h: &mut Harness, tx: &Transaction) -> usize {
+    let engine = TestEngine::empty(Network::Testnet);
+    let mut instant_send =
+        InstantSendManager::<MockHeaderStorage>::new(Arc::new(RwLock::new(engine)));
+    let lock = InstantLock {
+        signature: BLSSignature::from([1; 96]),
+        ..lock_for(tx)
+    };
+    let message = InboundMessage::new(NetworkMessage::ISLock(lock));
+    let events = instant_send.handle_message(h.peer, message, &h.network).await.unwrap();
+    for event in &events {
+        h.manager.handle_sync_event(event, &h.network).await.unwrap();
+    }
+    instant_send.pending_count()
+}
+
+/// A lock on the claim, or on its child, that waits for its quorum reaches the wallet as nothing,
+/// so the claim is dropped with the child once its funding shows the owner never signed it.
+#[test_case::test_case(false; "lock on the claim")]
+#[test_case::test_case(true; "lock on the child")]
+#[tokio::test]
+async fn a_quorum_pending_lock_does_not_keep_an_unsigned_claim(lock_child: bool) {
+    let (mut h, ids) = Harness::new(&[MNEMONIC_A]).await;
+    let a = ids[0];
+    h.filters_synced().await;
+    h.tick().await;
+    let (funding, claim, child) = claim_and_child(&mut h, &a).await;
+    let locked = if lock_child {
+        &child
+    } else {
+        &claim
+    };
+
+    assert_eq!(relay_quorum_pending_lock(&mut h, locked).await, 1, "the lock waits for its quorum");
+    assert!(h.announce(&funding).await);
+
+    assert!(h.context_of(&a, &claim.txid()).await.is_none(), "the unsigned claim is dropped");
+    assert!(h.context_of(&a, &child.txid()).await.is_none(), "and its child with it");
+}
+
+/// Once the lock on the claim or on its child verifies, the network accepted the claim, so it
+/// stays when its funding arrives.
+#[test_case::test_case(false; "lock on the claim")]
+#[test_case::test_case(true; "lock on the child")]
+#[tokio::test]
+async fn a_lock_once_verified_keeps_an_unsigned_claim(lock_child: bool) {
+    let (mut h, ids) = Harness::new(&[MNEMONIC_A]).await;
+    let a = ids[0];
+    h.filters_synced().await;
+    h.tick().await;
+    let (funding, claim, child) = claim_and_child(&mut h, &a).await;
+    let locked = if lock_child {
+        &child
+    } else {
+        &claim
+    };
+    relay_quorum_pending_lock(&mut h, locked).await;
+
+    // What the InstantSend manager emits once the lock's quorum verifies it.
+    let verified = SyncEvent::InstantLockReceived {
+        instant_lock: lock_for(locked),
+        validated: true,
+    };
+    h.manager.handle_sync_event(&verified, &h.network).await.unwrap();
+    assert!(h.announce(&funding).await);
+
+    assert!(h.context_of(&a, &claim.txid()).await.is_some(), "the verified lock keeps the claim");
+    assert!(h.context_of(&a, &child.txid()).await.is_some());
+    let context = h.context_of(&a, &locked.txid()).await.unwrap();
+    assert!(matches!(context, TransactionContext::InstantSend(_)));
 }
