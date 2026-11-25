@@ -17,7 +17,7 @@ use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::wallet::managed_wallet_info::transaction_builder::TransactionSigner;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
-use crate::wallet::managed_wallet_info::DismissalChange;
+use crate::wallet::managed_wallet_info::{DismissalChange, ManagedWalletInfo};
 
 const FUNDED: u64 = 1_000_000;
 const CHANGE: u64 = 600_000;
@@ -393,6 +393,75 @@ async fn a_dropped_claim_is_dismissed_not_abandoned() {
     assert_eq!(changes.len(), 2, "{changes:?}");
     assert!(changes.contains(&DismissalChange::Dismissed(spend.txid())));
     assert!(changes.contains(&DismissalChange::Dismissed(child.txid())));
+}
+
+/// A pending claim on the wallet's coin, as the wallet judges it.
+#[derive(Clone, Copy, Debug)]
+enum Claim {
+    Unsigned,
+    Structural,
+    NotPushOnly,
+}
+
+/// A claim dropped with no event to report it stays stored. Reloading the stored records, in
+/// either order, judges it as before: a provably unauthorized claim is dropped again, any other
+/// holds the coin.
+#[test_case(Claim::Unsigned, false ; "unsigned, stored order")]
+#[test_case(Claim::Unsigned, true ; "unsigned, funding first")]
+#[test_case(Claim::Structural, false ; "structural, stored order")]
+#[test_case(Claim::Structural, true ; "structural, funding first")]
+#[test_case(Claim::NotPushOnly, false ; "not push-only, stored order")]
+#[test_case(Claim::NotPushOnly, true ; "not push-only, funding first")]
+#[tokio::test]
+async fn an_unreported_dropped_claim_is_judged_the_same_on_reload(
+    claim: Claim,
+    funding_first: bool,
+) {
+    let (mut ctx, funding, spend) = spend_first();
+    let spend = match claim {
+        Claim::Unsigned => spend,
+        Claim::Structural => {
+            structurally_invalid(&ctx, &funding, spend, Structural::Unparseable).await
+        }
+        Claim::NotPushOnly => rewritten(&ctx, &funding, spend, NotPushOnly::Nop).await,
+    };
+    let child = ctx.signed(child_of(&ctx, &spend), &[&spend]).await;
+    let mut stored = vec![
+        (spend.clone(), TransactionContext::Mempool),
+        (child.clone(), TransactionContext::Mempool),
+        (funding.clone(), in_block(100)),
+    ];
+    for (tx, context) in &stored {
+        ctx.check_transaction(tx, context.clone()).await;
+    }
+    ctx.managed_wallet.drop_unreported_dismissals();
+    let changes = ctx.managed_wallet.take_dismissal_changes();
+    assert!(!changes.contains(&DismissalChange::Dismissed(spend.txid())), "{changes:?}");
+    let dropped = !matches!(claim, Claim::NotPushOnly);
+    assert_eq!(holds_coin(&ctx, &funding), dropped);
+    let balance = ctx.managed_wallet.balance().total();
+
+    ctx.managed_wallet = ManagedWalletInfo::from_wallet_with_name(&ctx.wallet, "Test".into(), 0);
+    if funding_first {
+        stored.rotate_right(1);
+    }
+    for (tx, context) in &stored {
+        ctx.check_transaction(tx, context.clone()).await;
+    }
+
+    assert_eq!(holds_coin(&ctx, &funding), dropped);
+    let transactions = ctx.bip44_account().transactions();
+    assert_eq!(transactions.contains_key(&spend.txid()), !dropped);
+    // Known gap: replayed funding first, the refused claim isn't remembered, so its child is
+    // taken as a pending payment from an unknown parent.
+    let gap = dropped && funding_first;
+    assert_eq!(transactions.contains_key(&child.txid()), !dropped || gap);
+    let taken = if gap {
+        CHANGE - 1_000
+    } else {
+        0
+    };
+    assert_eq!(ctx.managed_wallet.balance().total(), balance + taken);
 }
 
 /// The wallet holding a mined coin, and an unsigned spend of it paying change back to the
