@@ -570,19 +570,23 @@ fn choose_peer<'a>(
 }
 
 /// Picks the peer among `others` for the second copy of `msg`: the one that finishes its reply
-/// soonest. A peer without a serving rate looks idle before it gets work and may be slow, so
-/// it is asked only when no peer with a serving rate is among `others`.
+/// soonest at its rate. A rate not measured yet is less reliable, so such a peer is asked only
+/// when no measured peer is among `others`.
 fn hedge_peer<'a>(
     others: impl Iterator<Item = &'a PeerHandle> + Clone,
     msg: &NetworkMessage,
 ) -> Option<&'a PeerHandle> {
-    let finish = |p: &PeerHandle| {
-        (p.in_flight_bytes() + p.expected_cost(msg)) as f64 / p.serving_rate() as f64
+    let key = |p: &PeerHandle| {
+        let finish = (p.in_flight_bytes() + p.expected_cost(msg)) as f64 / rate(p) as f64;
+        (p.serving_rate() == 0, finish)
     };
     others
         .clone()
-        .filter(|p| p.serving_rate() > 0)
-        .min_by(|a, b| finish(a).total_cmp(&finish(b)))
+        .filter(|p| rate(p) > 0)
+        .min_by(|a, b| {
+            let (a, b) = (key(a), key(b));
+            a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
+        })
         .or_else(|| choose_peer(others, MsgClass::Headers))
 }
 
@@ -1067,8 +1071,8 @@ mod tests {
         assert_eq!(broker.hedge_filters(&peers[..1]).await, None, "no other peer to ask");
     }
 
-    /// Whether the second copy goes to a measured, busy peer rather than an unmeasured, idle
-    /// one. Only a block skips a peer at its cap.
+    /// Whether the second copy goes to a measured, busy peer rather than a faster idle one not
+    /// measured yet. Only a block skips a peer at its cap.
     #[test_case(get_cfilters(0), false => true; "a filter batch does")]
     #[test_case(get_cfilters(0), true => true; "a filter batch does while the measured peer is full")]
     #[test_case(get_block(0), false => true; "a block does")]
@@ -1079,6 +1083,7 @@ mod tests {
         let holder = ConnectedPeer::for_test(conn(1, 0)).await;
         let unmeasured = ConnectedPeer::for_test(conn(2, 0)).await;
         let measured = ConnectedPeer::for_test(conn(3, 0)).await;
+        unmeasured.set_served(1000 << 10);
         measured.set_serving_rate(100 << 10);
         broker.enqueue(0, request.clone()).await;
         assert_eq!(broker.route(&[holder.handle()], &ResponseCosts::new()).await, 1);
@@ -1100,10 +1105,10 @@ mod tests {
     /// the request each already holds. Returns whether the second copy goes to the fast peer.
     #[test_case(get_cfilters(0), [0, 1], true => true; "a filter batch to a fast peer with a short queue")]
     #[test_case(get_cfilters(0), [0, 20], true => false; "a filter batch to an idle slow peer")]
-    #[test_case(get_cfilters(0), [1, 2], false => true; "a filter batch to a fast peer not measured yet")]
+    #[test_case(get_cfilters(0), [0, 1], false => true; "a filter batch to a fast peer not measured yet")]
     #[test_case(get_block(0), [0, 1], true => true; "a block to a fast peer with a short queue")]
     #[test_case(get_block(0), [0, 20], true => false; "a block to an idle slow peer")]
-    #[test_case(get_block(0), [1, 2], false => true; "a block to a fast peer not measured yet")]
+    #[test_case(get_block(0), [0, 1], false => true; "a block to a fast peer not measured yet")]
     #[tokio::test(start_paused = true)]
     async fn a_hedge_goes_to_the_peer_that_finishes_first(
         request: NetworkMessage,
