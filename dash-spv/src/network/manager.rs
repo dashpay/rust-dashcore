@@ -824,15 +824,25 @@ impl Supervisor {
         // Snapshot under the lock, so a ban landing during the wait for it is seen. Live
         // before bans: a peer banned before it leaves the set is seen by one of the reads.
         let mut discoverer = self.state.discoverer.lock().await;
-        let mut skip: HashSet<SocketAddr> =
+        let live: HashSet<SocketAddr> =
             self.state.connected.read().await.iter().map(|p| p.addr()).collect();
-        skip.extend(self.state.bans.banned().await);
+        let mut skip = self.state.bans.banned().await;
         if swap {
             let mut swapped_out = self.swapped_out.lock().await;
             swapped_out.retain(|_, at| at.elapsed() < SWAP_BACK_AFTER);
             skip.extend(swapped_out.keys());
         }
-        discoverer.get(want, &skip).await
+        discoverer.get(want, &live, &skip).await
+    }
+
+    /// Whether a handshake ping turns a candidate away. An unmeasured one (0) does.
+    fn is_bad_lag(&self, lag: u32) -> bool {
+        let bad_lag = self
+            .best_lag_ms
+            .load(Ordering::Relaxed)
+            .saturating_mul(BAD_LAG_MULTIPLIER)
+            .max(BAD_LAG_FLOOR_MS);
+        lag == 0 || lag >= bad_lag
     }
 
     /// Closes probed-but-unused peers and remembers them for the next round.
@@ -840,7 +850,7 @@ impl Supervisor {
         let mut discoverer = self.state.discoverer.lock().await;
         for peer in peers {
             peer.close();
-            discoverer.probed(peer.addr(), peer.lag_ms());
+            discoverer.probed(peer.addr(), peer.lag_ms(), self.is_bad_lag(peer.lag_ms()));
         }
     }
 
@@ -915,16 +925,12 @@ impl Supervisor {
             if lag > 0 {
                 self.best_lag_ms.fetch_min(lag, Ordering::Relaxed);
             }
-            let bad_lag = self
-                .best_lag_ms
-                .load(Ordering::Relaxed)
-                .saturating_mul(BAD_LAG_MULTIPLIER)
-                .max(BAD_LAG_FLOOR_MS);
+            let turned_away = self.is_bad_lag(lag);
             // A late pong is a measurement, stall or not.
-            if held_back && lag < bad_lag {
+            if held_back && !(turned_away && lag > 0) {
                 self.state.swap_wanted.store(true, Ordering::Relaxed);
             }
-            if lag == 0 || lag >= bad_lag {
+            if turned_away {
                 leftover.push(peer);
                 continue;
             }
@@ -1431,7 +1437,7 @@ fn spawn_pump(
                     }
                     .filter(|_| addr_answered.insert(peer));
                     if let Some(gossiped) = gossiped {
-                        let learned = discoverer.lock().await.learn(gossiped);
+                        let learned = discoverer.lock().await.learn(addr, gossiped);
                         if learned > 0 {
                             tracing::debug!(
                                 target: "dash_spv::network",
@@ -1991,7 +1997,8 @@ mod tests {
             .expect("the pump is running");
         settle().await;
 
-        let known = net.state.discoverer.lock().await.get(10, &HashSet::new()).await;
+        let none = HashSet::new();
+        let known = net.state.discoverer.lock().await.get(10, &none, &none).await;
         let known: Vec<SocketAddr> = known.iter().map(|p| p.addr()).collect();
         assert_eq!(known, [serves]);
     }
@@ -2009,6 +2016,26 @@ mod tests {
         let events = net.state.connected.subscribe();
         net.start().await;
         (net, events)
+    }
+
+    /// Like [`started`], with the `nodes` as seeds instead of configured peers.
+    async fn started_from_seeds(
+        nodes: &[HandshakingPeer],
+        slots: usize,
+    ) -> (PeerNetworkManager, broadcast::Receiver<NetworkEvent>) {
+        let mut config = ClientConfig::regtest();
+        config.max_peers = slots as u32;
+        config.transport_preference = TransportPreference::V1Only;
+        let net = PeerNetworkManager::new(&config).await;
+        set_seeds(&net, nodes).await;
+        let events = net.state.connected.subscribe();
+        net.start().await;
+        (net, events)
+    }
+
+    async fn set_seeds(net: &PeerNetworkManager, nodes: &[HandshakingPeer]) {
+        let seeds = nodes.iter().map(|node| node.addr).collect();
+        net.state.discoverer.lock().await.set_seeds(seeds);
     }
 
     /// Runs a [`FLOW_TICK`] with work for every peer and handshakes answered by `nodes`.
@@ -2358,6 +2385,36 @@ mod tests {
         }
         assert_eq!(net.state.connected.len().await, 3);
         assert_eq!(dials(), 3);
+    }
+
+    /// Candidates turned away for their ping go after every other one. Otherwise they would
+    /// fill every batch and keep a slot empty.
+    #[tokio::test(start_paused = true)]
+    async fn rejected_candidates_do_not_hide_another() {
+        let mut nodes = HandshakingPeer::filtering(&[SLOW; 2]).await;
+        let (net, mut events) = started_from_seeds(&nodes, 3).await;
+        let late = Duration::from_millis(2 * BAD_LAG_FLOOR_MS as u64);
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        for _ in 0..1 + DIAL_MARGIN {
+            nodes.push(HandshakingPeer::answering(services, late, SLOW).await);
+        }
+        set_seeds(&net, &nodes).await;
+        let rejected = |node: &HandshakingPeer| node.closed.load(Ordering::SeqCst) > 0;
+        let end = Instant::now() + SWAP_COOLDOWN;
+        while !nodes[2..].iter().all(rejected) && Instant::now() < end {
+            work(&net, &mut events, &nodes).await;
+        }
+        assert_eq!(net.state.connected.len().await, 2);
+        assert!(nodes[2..].iter().all(rejected));
+
+        nodes.extend(HandshakingPeer::filtering(&[SLOW]).await);
+        set_seeds(&net, &nodes).await;
+        let end = Instant::now() + SWAP_COOLDOWN;
+        while net.state.connected.len().await < 3 && Instant::now() < end {
+            work(&net, &mut events, &nodes).await;
+        }
+        let joined = net.state.connected.read().await.iter().any(|p| p.addr() == nodes[5].addr);
+        assert!(joined, "the slot was not refilled by the candidate that answers in time");
     }
 
     #[test]
