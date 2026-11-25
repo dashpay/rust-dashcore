@@ -15,6 +15,7 @@ use crate::test_utils::TestWalletContext;
 use crate::transaction_checking::{BlockInfo, TransactionContext};
 use crate::wallet::managed_wallet_info::transaction_builder::TransactionSigner;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::wallet::managed_wallet_info::DismissalChange;
 
 const FUNDED: u64 = 1_000_000;
 const CHANGE: u64 = 600_000;
@@ -306,6 +307,24 @@ async fn an_unsigned_claim_with_a_pending_descendant_is_dropped_with_it() {
     assert_eq!(result.swept_transactions, dropped);
     assert!(holds_coin(&ctx, &funding));
     assert_eq!(ctx.managed_wallet.balance().total(), FUNDED);
+}
+
+/// A claim the funding shows unsigned is dismissed as a sweep is, not as the user's abandon,
+/// so a peer's forgeries can't push the user's abandons out.
+#[tokio::test]
+async fn a_dropped_claim_is_dismissed_not_abandoned() {
+    let (mut ctx, funding, spend) = spend_first();
+    ctx.check_transaction(&spend, TransactionContext::Mempool).await;
+    let child = ctx.signed(child_of(&ctx, &spend), &[&spend]).await;
+    ctx.check_transaction(&child, TransactionContext::Mempool).await;
+    ctx.managed_wallet.take_dismissal_changes();
+
+    ctx.check_transaction(&funding, in_block(100)).await;
+
+    let changes = ctx.managed_wallet.take_dismissal_changes();
+    assert_eq!(changes.len(), 2, "{changes:?}");
+    assert!(changes.contains(&DismissalChange::Dismissed(spend.txid())));
+    assert!(changes.contains(&DismissalChange::Dismissed(child.txid())));
 }
 
 /// The wallet holding a mined coin, and an unsigned spend of it paying change back to the

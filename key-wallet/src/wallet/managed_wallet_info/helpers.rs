@@ -385,6 +385,9 @@ impl ManagedWalletInfo {
         if abandoned.is_empty() {
             return result;
         }
+        for txid in &abandoned {
+            self.dismissed.sweep(*txid);
+        }
         result.txids = abandoned.iter().copied().collect();
         result.released_outpoints = abandoned
             .iter()
@@ -544,7 +547,11 @@ impl ManagedWalletInfo {
         root: Txid,
         external_spends: &BTreeMap<OutPoint, Txid>,
     ) -> AbandonOutcome {
-        self.abandon_roots(BTreeSet::from([root]), external_spends)
+        let outcome = self.abandon_roots(BTreeSet::from([root]), external_spends);
+        for txid in &outcome.abandoned {
+            self.dismissed.abandon(*txid);
+        }
+        outcome
     }
 
     /// Abandons each unsettled root of `roots` with its unsettled descendants, in one walk.
@@ -620,9 +627,6 @@ impl ManagedWalletInfo {
         }
 
         self.release_spent_claims(&abandoned);
-        for txid in &abandoned {
-            self.dismissed.abandon(*txid);
-        }
 
         AbandonOutcome {
             abandoned,
