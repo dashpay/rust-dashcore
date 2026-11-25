@@ -312,6 +312,10 @@ impl PeerHandle {
         self.ledger.in_flight_bytes()
     }
 
+    pub(super) async fn silent_for(&self) -> Duration {
+        self.ledger.silent_for().await
+    }
+
     pub fn cap(&self) -> u64 {
         self.cap.load(Ordering::Relaxed)
     }

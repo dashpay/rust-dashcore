@@ -5,10 +5,23 @@ use dash_spv::network::NetworkEvent;
 use dash_spv::test_utils::{DashdTestContext, TestChain, SYNC_TIMEOUT};
 use dash_spv::{SyncEvent, SyncProgress};
 use tokio::sync::broadcast::error::TryRecvError;
+use tokio::sync::broadcast::Receiver;
 use tokio::time::{sleep, timeout};
 
 use super::helpers::{is_progress_event, wait_for_network_event, wait_for_sync};
 use super::setup::{create_and_start_client, TestContext};
+
+/// Panics if a peer disconnect is among the events not read yet.
+fn assert_no_peer_dropped(events: &mut Receiver<NetworkEvent>) {
+    loop {
+        match events.try_recv() {
+            Ok(NetworkEvent::PeerDisconnected(addr)) => panic!("peer {addr} was dropped"),
+            Ok(_) => {}
+            Err(TryRecvError::Empty) => break,
+            Err(e) => panic!("network events lost: {e}"),
+        }
+    }
+}
 
 /// Verify a peer that goes silent mid-sync, as when our own link stalls, stays connected.
 ///
@@ -55,14 +68,7 @@ async fn test_sync_keeps_a_peer_frozen_mid_sync() {
     ctx.dashd.node.set_paused(false).await;
 
     wait_for_sync(&mut client_handle.progress_receiver, ctx.dashd.initial_height).await;
-    loop {
-        match client_handle.network_event_receiver.try_recv() {
-            Ok(NetworkEvent::PeerDisconnected(addr)) => panic!("peer {addr} was dropped"),
-            Ok(_) => {}
-            Err(TryRecvError::Empty) => break,
-            Err(e) => panic!("network events lost: {e}"),
-        }
-    }
+    assert_no_peer_dropped(&mut client_handle.network_event_receiver);
 
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
@@ -137,6 +143,7 @@ async fn test_filter_sync_passes_frozen_peers() {
     })
     .await
     .expect("Timeout waiting for the filters");
+    assert_no_peer_dropped(&mut client_handle.network_event_receiver);
 
     for peer in &frozen {
         peer.node.set_paused(false).await;

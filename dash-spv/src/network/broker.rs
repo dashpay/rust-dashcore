@@ -409,10 +409,17 @@ impl Broker {
     pub(super) async fn hedge_filters(&self, peers: &[PeerHandle]) -> Option<u32> {
         // Read first, so a held queue does not also hold up every user of the requests lock.
         let lowest_queued = self.queue.lowest_height(MsgClass::CFilters).await;
+        // A frozen peer keeps the rate and cap it had, so ranking alone can pick it.
+        let mut answering: Vec<&PeerHandle> = Vec::new();
+        for peer in peers {
+            if peer.silent_for().await < HEDGE_AFTER {
+                answering.push(peer);
+            }
+        }
         let (msg, height, peer) = {
             let mut reqs = self.requests.lock().await;
             let o = lowest_on_wire(&mut reqs, |key| matches!(key, RequestKey::CFilters(_)))?;
-            if o.hedge.is_some()
+            if o.hedge.is_some_and(|hedge| answering.iter().any(|p| p.id() == hedge))
                 || o.last_answer.elapsed() < HEDGE_AFTER
                 || lowest_queued.is_some_and(|h| h < o.height)
             {
@@ -420,7 +427,7 @@ impl Broker {
             }
             // Bulk download keeps every peer at its cap, so a cap would rule out all of them.
             // Like a header request, the second copy goes where it is answered soonest.
-            let others = peers.iter().filter(|p| p.id() != o.peer && !p.is_closed());
+            let others = answering.into_iter().filter(|p| p.id() != o.peer && !p.is_closed());
             let peer = choose_peer(others, MsgClass::Headers)?;
             o.hedge_to(peer)
         };
@@ -958,13 +965,13 @@ mod tests {
             broker.enqueue(start, get_cfilters(start)).await;
         }
         assert_eq!(broker.route(&peers[..1], &costs).await, 2);
+        assert_eq!(broker.hedge_filters(&peers).await, None, "it has not waited long enough");
+        tokio::time::advance(HEDGE_AFTER).await;
+
         broker.enqueue(3000, get_cfilters(3000)).await;
         assert_eq!(broker.route(&peers[1..], &costs).await, 1);
         broker.arrived(idle.id(), RequestKey::CFilters(BlockHash::dummy(3000))).await;
         idle.set_cap(idle.in_flight_bytes().max(1));
-
-        assert_eq!(broker.hedge_filters(&peers).await, None, "it has not waited long enough");
-        tokio::time::advance(HEDGE_AFTER).await;
 
         broker.enqueue(500, get_cfilters(500)).await;
         assert_eq!(broker.hedge_filters(&peers).await, None, "the lowest one is queued");
@@ -993,10 +1000,10 @@ mod tests {
         tokio::time::advance(HEDGE_AFTER).await;
 
         let writes = first.hold_writes().await;
-        let peers = [holder.clone(), first.clone()];
-        let mut hedge = pin!(broker.hedge_filters(&peers));
+        let peers = [holder.clone(), first.clone(), second];
+        let mut hedge = pin!(broker.hedge_filters(&peers[..2]));
         assert_eq!(hedge.as_mut().now_or_never(), None, "the write is held");
-        assert_eq!(broker.hedge_filters(&[holder.clone(), second.clone()]).await, None);
+        assert_eq!(broker.hedge_filters(&peers).await, None);
 
         let gone = HashSet::from([first.id()]);
         if sending {
@@ -1009,7 +1016,35 @@ mod tests {
         }
         let key = RequestKey::CFilters(BlockHash::dummy(0));
         assert_eq!(broker.carrier_of(&key).await, Some(holder.id()), "the request stays put");
-        assert_eq!(broker.hedge_filters(&[holder, second]).await, Some(0));
+        assert_eq!(broker.hedge_filters(&peers).await, Some(0));
+    }
+
+    /// `frozen` keeps the rate it had, so ranking prefers it to `busy`, which has none yet.
+    #[tokio::test(start_paused = true)]
+    async fn hedge_filters_asks_no_silent_peer() {
+        let broker = Broker::new();
+        let holder = ConnectedPeer::for_test(conn(1, 0)).await;
+        let frozen = ConnectedPeer::for_test(conn(2, 0)).await;
+        let busy = ConnectedPeer::for_test(conn(3, 0)).await;
+        let idle = ConnectedPeer::for_test(conn(4, 0)).await;
+        let peers = [holder.handle(), frozen.handle(), busy.handle(), idle.handle()];
+        frozen.set_served(1 << 20);
+        frozen.handle().send(&get_cfilters(9000)).await.expect("loopback send");
+        broker.enqueue(0, get_cfilters(0)).await;
+        assert_eq!(broker.route(&peers[..1], &ResponseCosts::new()).await, 1);
+        tokio::time::advance(HEDGE_AFTER).await;
+
+        assert_eq!(broker.hedge_filters(&peers[..2]).await, None, "both are silent");
+        busy.handle().send(&get_cfilters(8000)).await.expect("loopback send");
+        let before = (frozen.in_flight_bytes(), busy.in_flight_bytes());
+        assert_eq!(broker.hedge_filters(&peers[..3]).await, Some(0));
+        assert_eq!(frozen.in_flight_bytes(), before.0);
+        assert!(busy.in_flight_bytes() > before.1);
+        assert_eq!(broker.hedge_filters(&peers).await, None, "the second peer may still answer");
+
+        tokio::time::advance(HEDGE_AFTER).await;
+        assert_eq!(broker.hedge_filters(&peers).await, Some(0), "the second peer is silent too");
+        assert!(idle.in_flight_bytes() > 0);
     }
 
     #[test_case(false, Some(0); "a silent peer")]
