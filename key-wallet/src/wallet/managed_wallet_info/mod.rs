@@ -6,6 +6,7 @@
 pub mod asset_lock_builder;
 pub mod coin_selection;
 mod dismissed;
+pub use dismissed::DismissalChange;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
@@ -348,6 +349,18 @@ impl ManagedWalletInfo {
     /// inside this crate.
     pub fn instant_send_locks(&self) -> &HashSet<Txid> {
         &self.instant_send_locks
+    }
+
+    /// Dismisses again the transactions a persister kept from earlier sessions: `abandoned` those
+    /// last reported as `Abandoned`, `swept` those last reported as `Dismissed`, each in the order
+    /// first reported. Call it while loading, before any transaction is processed, and leave out a
+    /// txid the store holds as locked or mined. The same caps as for live dismissals apply.
+    pub fn restore_dismissed(
+        &mut self,
+        abandoned: impl IntoIterator<Item = Txid>,
+        swept: impl IntoIterator<Item = Txid>,
+    ) {
+        self.dismissed.restore(abandoned, swept);
     }
 
     /// Read-only access to the wallet-level observed-spent outpoint set

@@ -322,6 +322,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             }
             None => TransactionContext::Mempool,
         };
+        let all_wallets: BTreeSet<WalletId> = self.wallets.keys().copied().collect();
         let CheckTransactionsResult {
             affected_wallets,
             new_addresses: mut per_wallet_derived,
@@ -334,7 +335,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             per_wallet_released_outpoints: mut per_wallet_released,
             per_wallet_locked_outpoints: mut per_wallet_locked,
             ..
-        } = self.check_transaction_in_all_wallets(tx, context, true, false).await;
+        } = self.check_transaction_in_wallets(tx, context, &all_wallets, true, false).await;
 
         let is_relevant = !affected_wallets.is_empty();
         let net_amount = if is_relevant {
@@ -675,7 +676,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             .collect();
         // Collect the events under the `iter_mut` borrow, then emit them once
         // the mutable borrow of `self.wallet_infos` has ended. `emit_event`
-        // takes `&self`, which cannot overlap the live `iter_mut` borrow.
+        // takes `&mut self`, which cannot overlap the live `iter_mut` borrow.
         let mut events = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
             let outcome = info.apply_chain_lock(chain_lock.clone());
@@ -717,6 +718,13 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                         continue;
                     }
                     beaten.push((sweep.txids.clone(), block.height()));
+                    let changes = info.take_dismissal_changes();
+                    if !changes.is_empty() {
+                        events.push(WalletEvent::DismissalsChanged {
+                            wallet_id: *wallet_id,
+                            changes,
+                        });
+                    }
                     events.push(WalletEvent::TransactionsSwept {
                         wallet_id: *wallet_id,
                         txids: sweep.txids,
@@ -770,6 +778,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 info.update_balance();
                 affected_wallets.push(*wallet_id);
             }
+            // No event reports a sweep here, so the loser's record stays stored and the next
+            // load sweeps it again.
+            info.drop_unreported_dismissals();
         }
 
         if affected_wallets.is_empty() {
@@ -782,11 +793,12 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             };
             let prior = prior_account_balances.remove(&wallet_id).unwrap_or_default();
             let account_balances = diff_account_balances(&prior, &info.account_balances());
+            let balance = info.balance();
             self.emit_event(WalletEvent::TransactionInstantLocked {
                 wallet_id,
                 txid,
                 instant_lock: instant_lock.clone(),
-                balance: info.balance(),
+                balance,
                 account_balances,
             });
         }
