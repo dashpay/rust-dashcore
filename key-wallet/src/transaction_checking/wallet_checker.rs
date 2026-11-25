@@ -3247,14 +3247,13 @@ mod tests {
     }
 
     /// A loser can spend inputs the winner does not. Sweeping it frees those
-    /// coins from the spent set, but their `Utxo` values were discarded when
-    /// the loser was recorded — so the sweep alone cannot put them back, and
-    /// the coins must be recoverable by the rescan the release enables.
+    /// coins and credits them again, as they were when the loser took them;
+    /// a rescan re-delivering their funding does not count them twice.
     ///
     /// The loser is an asset lock, so the identity account it pays records it
     /// too: a record left there would keep claiming B and withhold its release.
     #[tokio::test]
-    async fn test_a_swept_losers_extra_input_is_recoverable_by_rescan() {
+    async fn test_a_swept_losers_extra_input_is_credited_again() {
         use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
         use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 
@@ -3365,9 +3364,8 @@ mod tests {
             )
             .await;
 
-        // The loser is gone from every account that recorded it, and B is not
-        // credited — its `Utxo` was discarded when the loser was recorded and
-        // cannot be invented.
+        // The loser is gone from every account that recorded it, and B, which
+        // only the loser spent, is credited again as it was.
         assert!(
             !ctx.managed_wallet
                 .accounts
@@ -3376,7 +3374,10 @@ mod tests {
                 .any(|account| account.has_transaction(&loser.txid())),
             "a swept loser must not stay recorded in any account"
         );
-        assert!(!ctx.bip44_account().utxos.contains_key(&coin_b));
+        let restored = ctx.bip44_account().utxos.get(&coin_b).expect("B is unspent");
+        assert!(restored.is_confirmed);
+        assert_eq!(restored.txout.value, 400_000);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000, "B plus the winner's change");
 
         // The event carries exactly what was released: B, and not A — A is
         // the winner's own input, still spent on chain by `winner` itself.
@@ -3386,14 +3387,9 @@ mod tests {
             "the sweep must name B as released and must not name A"
         );
 
-        // But B was freed from the spent set, so re-delivering the funding
-        // block restores it. That is what makes the loss recoverable rather
-        // than permanent.
+        // Re-delivering the funding block keeps B once.
         ctx.check_transaction(&funding_tx, funding_context).await;
-        assert!(
-            ctx.bip44_account().utxos.contains_key(&coin_b),
-            "a rescan must be able to rediscover the loser's extra input"
-        );
+        assert!(ctx.bip44_account().utxos.contains_key(&coin_b));
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000, "B plus the winner's change");
     }
 
