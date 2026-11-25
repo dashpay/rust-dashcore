@@ -74,8 +74,18 @@ struct OnWire {
     last_answer: Instant,
     msg: NetworkMessage,
     height: u32,
-    hedge: Option<PeerId>,
+    /// The peers sent a further copy, any of which can settle the request.
+    hedges: Vec<PeerId>,
     attempts: u32,
+}
+
+impl OnWire {
+    /// Records `peer` as the holder of a further copy and returns what to send it. Recorded
+    /// before the send, so [`Broker::requeue_from`] clears it if `peer` goes meanwhile.
+    fn hedge_to(&mut self, peer: &PeerHandle) -> (NetworkMessage, u32, PeerHandle) {
+        self.hedges.push(peer.id());
+        (self.msg.clone(), self.height, peer.clone())
+    }
 }
 
 /// The request queue plus the registry of every keyed request in play, queued, on the
@@ -174,7 +184,14 @@ impl Broker {
         n
     }
 
+    /// Re-queues the requests of the `gone` peers. A request they only hedged stays with its
+    /// peer and may be hedged again, since the copy is lost.
     pub async fn requeue_from(&self, gone: &HashSet<PeerId>) -> usize {
+        for state in self.requests.lock().await.values_mut() {
+            if let ReqState::OnWire(o) = state {
+                o.hedges.retain(|hedge| !gone.contains(hedge));
+            }
+        }
         self.requeue(|_, o| gone.contains(&o.peer)).await
     }
 
@@ -199,7 +216,7 @@ impl Broker {
     pub async fn arrived(&self, peer: PeerId, key: RequestKey) {
         let mut reqs = self.requests.lock().await;
         match reqs.get(&key) {
-            Some(ReqState::OnWire(o)) if o.peer == peer || o.hedge == Some(peer) => {}
+            Some(ReqState::OnWire(o)) if o.peer == peer || o.hedges.contains(&peer) => {}
             Some(ReqState::Queued(_)) => {
                 reqs.remove(&key);
                 self.drop_queued(&key, &reqs).await;
@@ -346,7 +363,7 @@ impl Broker {
                             height,
                             last_progress: Instant::now(),
                             last_answer: Instant::now(),
-                            hedge: None,
+                            hedges: Vec::new(),
                             attempts: attempts + 1,
                         }));
                     }
@@ -370,34 +387,50 @@ impl Broker {
     /// nothing for [`HEDGE_AFTER`], and returns its height. Blocks are processed in height
     /// order, so only the lowest one holds up progress and a second copy of any other is wasted.
     pub async fn hedge(&self, peers: &[PeerHandle]) -> Option<u32> {
-        let (key, msg, height, peer) = {
-            let reqs = self.requests.lock().await;
-            let (key, o) = reqs
-                .iter()
-                .filter_map(|(key, state)| match state {
-                    ReqState::OnWire(o) if matches!(key, RequestKey::Block(_)) => {
-                        Some((key, o.as_ref()))
-                    }
-                    _ => None,
-                })
-                .min_by_key(|(_, o)| o.height)?;
-            if o.hedge.is_some() || o.last_answer.elapsed() < HEDGE_AFTER {
+        let (msg, height, peer) = {
+            let mut reqs = self.requests.lock().await;
+            let o = lowest_on_wire(&mut reqs, |key| matches!(key, RequestKey::Block(_)))?;
+            if !o.hedges.is_empty() || o.last_answer.elapsed() < HEDGE_AFTER {
                 return None;
             }
             let peer = peers
                 .iter()
                 .filter(|p| !p.is_closed() && p.id() != o.peer && p.in_flight_bytes() < p.cap())
                 .max_by_key(|p| p.cap().saturating_sub(p.in_flight_bytes()))?;
-            (key.clone(), o.msg.clone(), o.height, peer.clone())
+            o.hedge_to(peer)
         };
-        peer.send(&msg).await.ok()?;
-        match self.requests.lock().await.get_mut(&key) {
-            Some(ReqState::OnWire(o)) if o.hedge.is_none() => {
-                o.hedge = Some(peer.id());
-                Some(height)
+        peer.send(&msg).await.ok().map(|()| height)
+    }
+
+    /// Asks a second peer for the lowest filter batch not yet delivered once its peer answered
+    /// nothing for [`HEDGE_AFTER`], and returns its height. Filters are stored in height order,
+    /// so it holds back all above it. A lower one still queued goes out next and needs no hedge.
+    pub(super) async fn hedge_filters(&self, peers: &[PeerHandle]) -> Option<u32> {
+        // Read first, so a held queue does not also hold up every user of the requests lock.
+        let lowest_queued = self.queue.lowest_height(MsgClass::CFilters).await;
+        // A frozen peer keeps the rate and cap it had, so ranking alone can pick it.
+        let mut answering: Vec<&PeerHandle> = Vec::new();
+        for peer in peers {
+            if peer.silent_for().await < HEDGE_AFTER {
+                answering.push(peer);
             }
-            _ => None,
         }
+        let (msg, height, peer) = {
+            let mut reqs = self.requests.lock().await;
+            let o = lowest_on_wire(&mut reqs, |key| matches!(key, RequestKey::CFilters(_)))?;
+            if answering.iter().any(|p| o.hedges.contains(&p.id()))
+                || o.last_answer.elapsed() < HEDGE_AFTER
+                || lowest_queued.is_some_and(|h| h < o.height)
+            {
+                return None;
+            }
+            // Bulk download keeps every peer at its cap, so a cap would rule out all of them.
+            // Like a header request, the second copy goes where it is answered soonest.
+            let others = answering.into_iter().filter(|p| p.id() != o.peer && !p.is_closed());
+            let peer = choose_peer(others, MsgClass::Headers)?;
+            o.hedge_to(peer)
+        };
+        peer.send(&msg).await.ok().map(|()| height)
     }
 
     #[cfg(test)]
@@ -410,7 +443,7 @@ impl Broker {
                 last_answer: Instant::now(),
                 msg: msg.clone(),
                 height: 0,
-                hedge: None,
+                hedges: Vec::new(),
                 attempts: 1,
             };
             reqs.insert(key, ReqState::OnWire(Box::new(on_wire)));
@@ -440,6 +473,19 @@ impl Broker {
     pub async fn hold_queue_of(&self, msg: &NetworkMessage) -> impl Sized + '_ {
         self.queue.queue(classify(msg)).lock().await
     }
+}
+
+/// Returns the on-wire request of the lowest height among the keys `wanted` selects.
+fn lowest_on_wire(
+    reqs: &mut HashMap<RequestKey, ReqState>,
+    wanted: impl Fn(&RequestKey) -> bool,
+) -> Option<&mut OnWire> {
+    reqs.iter_mut()
+        .filter_map(|(key, state)| match state {
+            ReqState::OnWire(o) if wanted(key) => Some(o.as_mut()),
+            _ => None,
+        })
+        .min_by_key(|o| o.height)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -547,6 +593,10 @@ impl MsgQueue {
         }
     }
 
+    async fn lowest_height(&self, class: MsgClass) -> Option<u32> {
+        self.queue(class).lock().await.first_key_value().map(|(&(height, _), _)| height)
+    }
+
     async fn pop_n(&self, n: usize) -> Vec<(u32, NetworkMessage)> {
         self.pop_guaranteed(n as u64, &[0; MSG_CLASSES], |_| 1).await
     }
@@ -629,6 +679,8 @@ mod tests {
     use dashcore::network::message_sml::GetMnListDiff;
     use dashcore::Txid;
     use futures::FutureExt;
+    use std::pin::pin;
+    use std::slice;
     use test_case::test_case;
 
     fn get_headers(locator: u32) -> NetworkMessage {
@@ -800,7 +852,7 @@ mod tests {
                 .await
                 .values()
                 .filter_map(|state| match state {
-                    ReqState::OnWire(o) if o.hedge == Some(idle) => Some(o.height),
+                    ReqState::OnWire(o) if o.hedges.contains(&idle) => Some(o.height),
                     _ => None,
                 })
                 .collect();
@@ -894,6 +946,137 @@ mod tests {
 
         broker.enqueue(0, request).await;
         assert_eq!(broker.len(), 0);
+    }
+
+    /// Peers at their caps must not stop it: the batch blocks the store, and every bulk
+    /// download keeps them there. Peer 2 is at its cap with the batch that completes first.
+    #[tokio::test(start_paused = true)]
+    async fn hedge_filters_asks_another_peer_once_for_the_lowest_missing_batch() {
+        let broker = Broker::new();
+        let costs = ResponseCosts::new();
+        let slow = ConnectedPeer::for_test(conn(1, 0)).await;
+        let idle = ConnectedPeer::for_test(conn(2, 0)).await;
+        let peers = [slow.handle(), idle.handle()];
+        let lowest = RequestKey::CFilters(BlockHash::dummy(1000));
+
+        slow.set_cap(1 << 30);
+        for start in [1000, 2000] {
+            broker.enqueue(start, get_cfilters(start)).await;
+        }
+        assert_eq!(broker.route(&peers[..1], &costs).await, 2);
+        assert_eq!(broker.hedge_filters(&peers).await, None, "it has not waited long enough");
+        tokio::time::advance(HEDGE_AFTER).await;
+
+        broker.enqueue(3000, get_cfilters(3000)).await;
+        assert_eq!(broker.route(&peers[1..], &costs).await, 1);
+        broker.arrived(idle.id(), RequestKey::CFilters(BlockHash::dummy(3000))).await;
+        idle.set_cap(idle.in_flight_bytes().max(1));
+
+        broker.enqueue(500, get_cfilters(500)).await;
+        assert_eq!(broker.hedge_filters(&peers).await, None, "the lowest one is queued");
+        broker.release(&RequestKey::CFilters(BlockHash::dummy(500))).await;
+
+        assert_eq!(broker.hedge_filters(&peers).await, Some(1000));
+        assert_eq!(broker.hedge_filters(&peers).await, None, "a batch is hedged once");
+        assert_eq!(broker.hedge_filters(&peers[..1]).await, None);
+
+        broker.arrived(idle.id(), lowest.clone()).await;
+        assert_eq!(broker.state_of(&lowest).await, Some("arrived"), "the first copy settles it");
+        assert_eq!(broker.hedge_filters(&peers).await, Some(2000));
+        assert_eq!(broker.hedge_filters(&peers[..1]).await, None, "no other peer to ask");
+    }
+
+    #[test_case(false; "after it was sent")]
+    #[test_case(true; "while it is sent")]
+    #[tokio::test(start_paused = true)]
+    async fn a_hedge_lost_with_its_peer_is_sent_again(sending: bool) {
+        let broker = Broker::new();
+        let holder = ConnectedPeer::for_test(conn(1, 0)).await.handle();
+        let departing = ConnectedPeer::for_test(conn(2, 0)).await;
+        let first = departing.handle();
+        let second = ConnectedPeer::for_test(conn(3, 0)).await.handle();
+        broker.enqueue(0, get_cfilters(0)).await;
+        assert_eq!(broker.route(slice::from_ref(&holder), &ResponseCosts::new()).await, 1);
+        tokio::time::advance(HEDGE_AFTER).await;
+
+        let writes = first.hold_writes().await;
+        let peers = [holder.clone(), first.clone(), second.clone()];
+        let mut hedge = pin!(broker.hedge_filters(&peers[..2]));
+        assert_eq!(hedge.as_mut().now_or_never(), None, "the write is held");
+        assert_eq!(broker.hedge_filters(&peers).await, None);
+
+        let gone = HashSet::from([first.id()]);
+        departing.close();
+        if sending {
+            assert_eq!(broker.requeue_from(&gone).await, 0);
+        }
+        drop(writes);
+        assert_eq!(hedge.await, Some(0));
+        if !sending {
+            assert_eq!(broker.requeue_from(&gone).await, 0);
+        }
+        let key = RequestKey::CFilters(BlockHash::dummy(0));
+        assert_eq!(broker.carrier_of(&key).await, Some(holder.id()), "the request stays put");
+        let charged = first.in_flight_bytes();
+        assert_eq!(broker.hedge_filters(&peers).await, Some(0));
+        assert!(second.in_flight_bytes() > 0, "the peer that stays is asked");
+        assert_eq!(first.in_flight_bytes(), charged);
+    }
+
+    /// `frozen` keeps the rate it had, so ranking prefers it to `busy`, which has none yet.
+    #[tokio::test(start_paused = true)]
+    async fn hedge_filters_asks_no_silent_peer() {
+        let broker = Broker::new();
+        let holder = ConnectedPeer::for_test(conn(1, 0)).await;
+        let frozen = ConnectedPeer::for_test(conn(2, 0)).await;
+        let busy = ConnectedPeer::for_test(conn(3, 0)).await;
+        let idle = ConnectedPeer::for_test(conn(4, 0)).await;
+        let peers = [holder.handle(), frozen.handle(), busy.handle(), idle.handle()];
+        frozen.set_served(1 << 20);
+        frozen.handle().send(&get_cfilters(9000)).await.expect("loopback send");
+        broker.enqueue(0, get_cfilters(0)).await;
+        assert_eq!(broker.route(&peers[..1], &ResponseCosts::new()).await, 1);
+        tokio::time::advance(HEDGE_AFTER).await;
+
+        assert_eq!(broker.hedge_filters(&peers[..2]).await, None, "both are silent");
+        busy.handle().send(&get_cfilters(8000)).await.expect("loopback send");
+        let before = (frozen.in_flight_bytes(), busy.in_flight_bytes());
+        assert_eq!(broker.hedge_filters(&peers[..3]).await, Some(0));
+        assert_eq!(frozen.in_flight_bytes(), before.0);
+        assert!(busy.in_flight_bytes() > before.1);
+        assert_eq!(broker.hedge_filters(&peers).await, None, "the second peer may still answer");
+
+        tokio::time::advance(HEDGE_AFTER).await;
+        assert_eq!(broker.hedge_filters(&peers).await, Some(0), "the second peer is silent too");
+        assert!(idle.in_flight_bytes() > 0);
+
+        let key = RequestKey::CFilters(BlockHash::dummy(0));
+        broker.arrived(frozen.id(), key.clone()).await;
+        assert_eq!(broker.state_of(&key).await, Some("on_wire"), "it was sent no copy");
+        broker.arrived(busy.id(), key.clone()).await;
+        assert_eq!(broker.state_of(&key).await, Some("arrived"), "a late copy settles it too");
+    }
+
+    #[test_case(false, Some(0); "a silent peer")]
+    #[test_case(true, None; "a peer still delivering")]
+    #[tokio::test(start_paused = true)]
+    async fn hedge_filters_asks_another_peer_only_for_a_batch_stuck_at_a_silent_one(
+        delivering: bool,
+        hedged: Option<u32>,
+    ) {
+        let broker = Broker::new();
+        let slow = ConnectedPeer::for_test(conn(1, 0)).await;
+        let idle = ConnectedPeer::for_test(conn(2, 0)).await;
+        broker.enqueue(0, get_cfilters(0)).await;
+        assert_eq!(broker.route(&[slow.handle()], &ResponseCosts::new()).await, 1);
+
+        tokio::time::advance(HEDGE_AFTER / 2).await;
+        if delivering {
+            broker.progress(conn(1, 0)).await;
+        }
+        tokio::time::advance(HEDGE_AFTER / 2).await;
+
+        assert_eq!(broker.hedge_filters(&[slow.handle(), idle.handle()]).await, hedged);
     }
 
     #[test_case(get_mnlistdiff(3), vec![RequestKey::MnListDiff(BlockHash::dummy(4))], 0; "its only key")]

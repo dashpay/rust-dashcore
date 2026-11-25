@@ -719,6 +719,11 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                     tracing::debug!(target: "dash_spv::network", "endgame: hedged block {}", height);
                 }
             }
+            // Sent even while our link looks stalled: two frozen peers look the same, and
+            // another peer may be idle only because the batch they owe blocks the store.
+            if let Some(height) = broker.hedge_filters(&handles).await {
+                tracing::debug!(target: "dash_spv::network", "hedged filter batch {}", height);
+            }
             if let Some(slow) = underserving.filter(|slow| Some(slow.addr) != last_underserving) {
                 tracing::debug!(
                     target: "dash_spv::network",
