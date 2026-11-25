@@ -710,7 +710,7 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
 
             // Only the transition wakes the supervisor, so a peer with no replacement
             // is not re-probed every tick. A stall of our own link drags every rate down
-            // unevenly, so nobody is underserving during one.
+            // unevenly, so nobody is judged during one and the last verdict stands.
             let underserving = (!stalled).then(|| underserving_peer(&g)).flatten();
             let handles: Vec<PeerHandle> = g.iter().map(|p| p.handle()).collect();
             drop(g);
@@ -734,7 +734,9 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 );
                 peer_wake.notify_one();
             }
-            last_underserving = underserving.map(|slow| slow.addr);
+            if !stalled {
+                last_underserving = underserving.map(|slow| slow.addr);
+            }
         }
     })
 }
@@ -820,9 +822,10 @@ impl Supervisor {
 
     /// One pass at whatever the peer set needs: fill a deficit, replace a peer that is
     /// underserving the rest, or both. Returns whether the next pass can wait for a wake.
-    /// The end of a cooldown wakes nobody, so a pass woken during one cannot.
+    /// The end of a cooldown or of a stall of our link wakes nobody, so a pass held back by
+    /// one cannot.
     async fn repair_round(&self) -> bool {
-        let (deficit, cooled, slow) = {
+        let (deficit, cooled, stalled, slow) = {
             let peers = self.state.connected.read().await;
             let deficit = self.state.max_peers.saturating_sub(peers.len());
             // Only look for a laggard once full: below cap every arrival is wanted anyway.
@@ -833,10 +836,10 @@ impl Supervisor {
                 .then(|| underserving_peer(&peers))
                 .flatten()
                 .map(|slow| slow.addr);
-            (deficit, cooled, slow)
+            (deficit, cooled, stalled, slow)
         };
         if deficit == 0 && slow.is_none() {
-            return cooled;
+            return cooled && !stalled;
         }
 
         // Scale the probe to the need: a few candidates to find one replacement, a
@@ -868,6 +871,7 @@ impl Supervisor {
             .collect();
 
         let mut accepted = 0usize;
+        let mut held_back = false;
         let mut replaced: Option<SocketAddr> = None;
         let mut leftover: Vec<ConnectedPeer> = Vec::new();
         while let Some((addr, result)) = inflight.next().await {
@@ -896,7 +900,9 @@ impl Supervisor {
             let new_addr = peer.addr();
             // Our link can stall while the candidates are dialed, and then `slow` is stale.
             let stalled = self.state.link_looks_stalled();
-            let slow = slow.filter(|_| replaced.is_none() && !stalled);
+            let slow = slow.filter(|_| replaced.is_none());
+            held_back |= stalled && slow.is_some();
+            let slow = slow.filter(|_| !stalled);
             match self.state.connected.admit(peer, &self.shutdown, self.state.max_peers, slow).await
             {
                 Admission::Joined => accepted += 1,
@@ -963,7 +969,7 @@ impl Supervisor {
                 self.state.connected.read().await.len(),
             );
         }
-        cooled && self.state.connected.len().await >= self.state.max_peers
+        cooled && !held_back && self.state.connected.len().await >= self.state.max_peers
     }
 }
 
@@ -2098,7 +2104,8 @@ mod tests {
     }
 
     /// A slow peer whose only candidate answers pings too late to replace it is kept, and the
-    /// candidate is dialed for it once. Each fill of a slot dials it once too.
+    /// candidate is dialed for it once, even after a stall of our link. Each fill of a slot dials
+    /// it once too.
     #[tokio::test(start_paused = true)]
     async fn a_rejected_candidate_is_dialed_once_for_a_slow_peer() {
         let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
@@ -2114,6 +2121,16 @@ mod tests {
             assert_eq!(work(&net, &mut events, &nodes).await, None);
         }
         assert_eq!(dials(), 2);
+
+        // The second of two flow controller ticks in a row finds nobody delivering.
+        time::advance(FLOW_TICK * 2).await;
+        settle().await;
+        assert!(net.state.link_looks_stalled());
+        let end = Instant::now() + SWAP_COOLDOWN;
+        while Instant::now() < end {
+            assert_eq!(work(&net, &mut events, &nodes).await, None);
+        }
+        assert_eq!(dials(), 2, "dialed again after the stall");
 
         // The refill dials it, but the slow peer is no reason to dial it again after that.
         let fast = |peer: &&ConnectedPeer| peer.addr() != nodes[2].addr;
@@ -2565,6 +2582,8 @@ mod tests {
             // The second tick is the first to see bytes.
             feed(&net, &mut feeders[..1], 2).await;
         }
+        // The round at the start is the only one the slow peer wakes.
+        net.state.peer_wake.notified().now_or_never();
         net.start().await;
         settle().await;
         advance_silent(answered_at - start_at).await;
