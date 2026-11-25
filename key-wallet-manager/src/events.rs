@@ -227,9 +227,10 @@ pub enum WalletEvent {
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
     },
     /// Transactions were removed from the wallet: each was a recorded spend
-    /// that a later, final transaction provably beat to one of its inputs, so
-    /// it can never confirm. Their outputs are gone from the UTXO set and
-    /// their records deleted.
+    /// that a later, final transaction provably beat to one of its inputs, or
+    /// a pending spend whose input `superseded_by` showed its coin's owner
+    /// never signed, so it can never confirm. Their outputs are gone from the
+    /// UTXO set and their records deleted.
     ///
     /// The only removal-shaped event on this bus. A consumer mirroring wallet
     /// state to disk must act on it — every other variant is additive, so
@@ -243,10 +244,10 @@ pub enum WalletEvent {
         /// The transaction whose arrival settled the inputs, for provenance.
         superseded_by: Txid,
         /// Mined height of `superseded_by` when this sweep was triggered by
-        /// its arrival in a block; `None` when it was triggered by an
-        /// InstantSend-locked transaction still waiting to be mined (those
-        /// are the only two triggers — an unlocked mempool arrival never
-        /// sweeps, see `WalletTransactionChecker::check_core_transaction`).
+        /// its arrival in a block; `None` when it was triggered by a
+        /// transaction still waiting to be mined: an InstantSend-locked one,
+        /// or a funding transaction that exposed an unsigned pending spend of
+        /// its output (see `WalletTransactionChecker::check_core_transaction`).
         ///
         /// This is the winner's finality context, and only the emission site
         /// has it: `superseded_by` need not be wallet-relevant (see

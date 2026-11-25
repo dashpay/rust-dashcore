@@ -8,7 +8,7 @@ use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
-use crate::transaction_checking::TransactionContext;
+use crate::transaction_checking::{verify_input_authorization, TransactionContext};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use dashcore::{OutPoint, Transaction, Txid};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -227,6 +227,130 @@ impl ManagedWalletInfo {
             });
         }
         result
+    }
+
+    /// Drops each pending spend of an output of `tx` that provably lacks that output's owner's
+    /// authorization, with everything built on it, and returns what went in the shape of a
+    /// conflict sweep.
+    ///
+    /// A spend seen before its funding marks the coin spent at a peer's word, since the output it
+    /// claims wasn't known. Once `tx` makes the output known, a claimant keeps that mark unless
+    /// [`verify_input_authorization`] returns `Ok(false)` for its input. A claimant that is
+    /// mined or InstantSend-locked is not checked, and neither is one with such a descendant:
+    /// the network accepted the spend, so it can't be a forgery.
+    pub(crate) fn drop_unauthorized_spends_of(&mut self, tx: &Transaction) -> WalletConflictSweep {
+        let funding = tx.txid();
+        let mut unauthorized = BTreeSet::new();
+        for account in self.accounts.all_accounts() {
+            let Some(funds) = account.as_funds() else {
+                continue;
+            };
+            for (vout, output) in tx.output.iter().enumerate() {
+                let outpoint = OutPoint::new(funding, vout as u32);
+                if !funds.is_outpoint_spent(&outpoint) {
+                    continue;
+                }
+                for record in funds.transactions().values() {
+                    let inputs = &record.transaction.input;
+                    let unsigned = (0..inputs.len())
+                        .filter(|&index| inputs[index].previous_output == outpoint)
+                        .any(|index| {
+                            verify_input_authorization(&record.transaction, index, output)
+                                == Ok(false)
+                        });
+                    if unsigned {
+                        unauthorized.insert(record.txid);
+                    }
+                }
+            }
+        }
+        unauthorized.retain(|txid| {
+            !self.transaction_is_settled(txid)
+                && !self.instant_send_locks.contains(txid)
+                && !self.has_settled_descendant(*txid)
+        });
+        let mut result = WalletConflictSweep::default();
+        if unauthorized.is_empty() {
+            return result;
+        }
+        let pending_inputs: BTreeMap<Txid, Vec<OutPoint>> = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .flat_map(|account| account.transactions().values())
+            .filter(|record| !record.is_confirmed())
+            .map(|record| {
+                let inputs = record.transaction.input.iter().map(|input| input.previous_output);
+                (record.txid, inputs.collect())
+            })
+            .collect();
+        let mut abandoned = BTreeSet::new();
+        for root in unauthorized {
+            if abandoned.contains(&root) {
+                continue;
+            }
+            tracing::info!(%root, %funding, "Dropped a pending spend its coin's owner did not sign");
+            abandoned.extend(self.abandon_transaction(root).abandoned);
+        }
+        if abandoned.is_empty() {
+            return result;
+        }
+        self.update_balance();
+        result.txids = abandoned.iter().copied().collect();
+        result.released_outpoints = abandoned
+            .iter()
+            .filter_map(|txid| pending_inputs.get(txid))
+            .flatten()
+            .filter(|outpoint| !abandoned.contains(&outpoint.txid))
+            .copied()
+            .collect();
+        result.released_outpoints.sort_unstable();
+        result.released_outpoints.dedup();
+        result.retain_unclaimed(&self.accounts);
+        let funds: Vec<_> =
+            self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()).collect();
+        result.released_outpoints.retain(|outpoint| {
+            !self.spent_claims.contains_key(outpoint)
+                && !funds.iter().any(|account| account.is_outpoint_spent(outpoint))
+        });
+        result
+    }
+
+    /// Whether a transaction spending an output of `root`, directly or through others, is mined,
+    /// InstantSend-locked or ChainLocked. A spend seen in a block counts even when its record is
+    /// gone.
+    fn has_settled_descendant(&self, root: Txid) -> bool {
+        let records: Vec<&TransactionRecord> = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .flat_map(|account| account.transactions().values())
+            .collect();
+        let mut pending = vec![root];
+        let mut seen = BTreeSet::from([root]);
+        while let Some(parent) = pending.pop() {
+            let outputs = OutPoint::new(parent, 0)..=OutPoint::new(parent, u32::MAX);
+            if self.observed_spent_outpoints.range(outputs).next().is_some() {
+                return true;
+            }
+            for record in &records {
+                let spends_parent = record
+                    .transaction
+                    .input
+                    .iter()
+                    .any(|input| input.previous_output.txid == parent);
+                if !spends_parent || !seen.insert(record.txid) {
+                    continue;
+                }
+                if self.transaction_is_settled(&record.txid)
+                    || self.instant_send_locks.contains(&record.txid)
+                {
+                    return true;
+                }
+                pending.push(record.txid);
+            }
+        }
+        false
     }
 
     /// Release every spent-output claim whose claimant is in `removed`, with

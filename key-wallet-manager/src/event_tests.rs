@@ -2507,6 +2507,7 @@ async fn late_funding_mempool_publishes_complete_correction() {
             value: 1000,
             script_pubkey: Address::dummy(Network::Testnet, 999).script_pubkey(),
         });
+        let spender = signed_by_wallet(&manager, &wallet_id, &addr, spender).await;
         manager.process_mempool_transaction(&spender, None).await;
         manager.process_mempool_transaction(&earlier_funding, None).await;
         let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
@@ -2633,4 +2634,33 @@ async fn late_funding_block_publishes_spender_correction() {
         manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
         assert_no_events(&mut rx);
     }
+}
+
+#[tokio::test]
+async fn funding_that_exposes_an_unsigned_claim_sweeps_it_and_credits_the_coin() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let funding = create_tx_paying_to(&addr, 0xb1);
+    let coin = OutPoint::new(funding.txid(), 0);
+    let mut claim = create_tx_paying_to(&addr, 0xb2);
+    claim.input[0].previous_output = coin;
+    claim.output[0].value = TX_AMOUNT - 1000;
+    manager.process_mempool_transaction(&claim, None).await;
+
+    let mut rx = manager.subscribe_events();
+    manager.process_mempool_transaction(&funding, None).await;
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|event| {
+            matches!(event, WalletEvent::TransactionsSwept {
+                wallet_id: id, txids, superseded_by, winner_mined_height: None, released_outpoints, ..
+            } if *id == wallet_id
+                && *txids == vec![claim.txid()]
+                && *superseded_by == funding.txid()
+                && *released_outpoints == vec![coin])
+        }),
+        "the unsigned claim is swept: {events:?}"
+    );
+    let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+    assert!(account.utxos.contains_key(&coin));
+    assert!(!account.transactions().contains_key(&claim.txid()));
 }

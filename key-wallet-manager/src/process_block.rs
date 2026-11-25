@@ -312,9 +312,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 wallet_id,
                 txids,
                 superseded_by: tx.txid(),
-                // Off-chain arrival: only an InstantSend-locked winner sweeps
-                // from this path (an unlocked mempool arrival never does),
-                // and an IS-locked winner is by definition not mined yet.
+                // Off-chain arrival: an InstantSend-locked winner, or the
+                // funding that exposed an unsigned pending spend, neither of
+                // them mined yet.
                 winner_mined_height: None,
                 released_outpoints,
                 balance: info.balance(),

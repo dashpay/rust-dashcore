@@ -59,6 +59,32 @@ pub(crate) fn create_tx_paying(addrs: &[Address], input_seed: u8) -> Transaction
     }
 }
 
+/// `tx` with each input signed by the wallet's key for `addr`, as the spend of a coin of
+/// [`TX_AMOUNT`] paying `addr`.
+pub(crate) async fn signed_by_wallet(
+    manager: &WalletManager<ManagedWalletInfo>,
+    wallet_id: &WalletId,
+    addr: &Address,
+    tx: Transaction,
+) -> Transaction {
+    use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
+    use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionSigner;
+    let account = manager.wallet_infos[wallet_id].first_bip44_managed_account().unwrap();
+    let path = account.address_derivation_path(addr).unwrap();
+    let coins = tx
+        .input
+        .iter()
+        .map(|input| {
+            let txout = TxOut {
+                value: TX_AMOUNT,
+                script_pubkey: addr.script_pubkey(),
+            };
+            key_wallet::Utxo::new(input.previous_output, txout, addr.clone(), 0, false)
+        })
+        .collect();
+    manager.wallets[wallet_id].sign_tx(tx, coins, move |_| Some(path.clone())).await.unwrap()
+}
+
 pub(crate) fn drain_events(rx: &mut broadcast::Receiver<WalletEvent>) -> Vec<WalletEvent> {
     let mut events = Vec::new();
     while let Ok(e) = rx.try_recv() {
