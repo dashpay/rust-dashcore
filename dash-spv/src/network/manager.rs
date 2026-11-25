@@ -1549,13 +1549,14 @@ mod tests {
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::{BlockHash, Network};
-    use futures::FutureExt;
+    use futures::{poll, FutureExt};
     use std::sync::atomic::AtomicUsize;
     use std::time::{SystemTime, UNIX_EPOCH};
     use test_case::test_case;
     use tokio::io::AsyncWriteExt;
     use tokio::net::tcp::OwnedWriteHalf;
     use tokio::net::{TcpListener, TcpStream};
+    use tokio::pin;
     use tokio::task;
     use tokio::time;
     use tokio_util::codec::FramedRead;
@@ -2039,6 +2040,31 @@ mod tests {
         assert!(counted(&node.accepted).await, "the supervisor never dialed the node");
         net.ban_peer(node.addr).await;
         node.go.notify_one();
+
+        assert!(counted(&node.closed).await, "the banned peer was kept");
+        assert_eq!(net.connected_count().await, 0);
+    }
+
+    /// A ban recorded after the round's last ban check, while `ban_peer` finds the set
+    /// without the peer, still keeps the peer out.
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_banned_just_before_its_admission_never_joins() {
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let node = HandshakingPeer::serving(services, false).await;
+        let net = gossiped(&[&node]).await;
+
+        net.start().await;
+        node.go.notify_one();
+        assert!(counted(&node.pinged).await, "the handshake never finished");
+        // Holding the set stops the round at its last resort, past the leftover ban check.
+        let held = net.state.connected.read().await;
+        time::advance(Duration::from_secs(5)).await;
+        settle().await;
+        let ban = net.ban_peer(node.addr);
+        pin!(ban);
+        assert!(poll!(&mut ban).is_pending(), "the ban did not wait for the set");
+        drop(held);
+        ban.await;
 
         assert!(counted(&node.closed).await, "the banned peer was kept");
         assert_eq!(net.connected_count().await, 0);
