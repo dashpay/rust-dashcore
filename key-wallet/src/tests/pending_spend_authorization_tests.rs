@@ -1,6 +1,8 @@
-//! A pending spend holds a coin back only when its owner signed it, before or after the coin's
-//! funding is seen, or when the network has accepted it or something built on it.
+//! A pending spend holds a coin back unless it provably lacks its owner's signature, before or
+//! after the coin's funding is seen, and always once the network has accepted it or something
+//! built on it.
 
+use dashcore::blockdata::constants::MAX_SCRIPT_SIZE;
 use dashcore::blockdata::script::{Builder, PushBytes, ScriptBuf};
 use dashcore::ecdsa::Signature;
 use dashcore::opcodes::all::{OP_CAT, OP_NOP};
@@ -87,13 +89,24 @@ fn holds_coin(ctx: &TestWalletContext, funding: &Transaction) -> bool {
     ctx.bip44_account().utxos.contains_key(&OutPoint::new(funding.txid(), 0))
 }
 
-/// An input script with opcodes other than pushes, which relay policy rejects.
+/// An input script with opcodes other than pushes. The wallet can't rule out that it builds the
+/// owner's signature or key at run time.
 #[derive(Clone, Copy, Debug)]
 enum NotPushOnly {
     SignatureBuiltWithOpCat,
+    KeyBuiltWithOpCat,
     Nop,
     SignatureThenNop,
     SignatureAndKeyThenNop,
+    InvalidSignatureAndKeyThenNop,
+}
+
+/// An input that makes its transaction invalid whatever its script computes.
+#[derive(Clone, Copy, Debug)]
+enum Structural {
+    Unparseable,
+    Oversized,
+    DuplicateOutpoint,
 }
 
 /// `spend`, signed for `funding`, with its input script rewritten as `script`.
@@ -111,12 +124,20 @@ async fn rewritten(
         .collect();
     let push = |bytes: &[u8]| <&PushBytes>::try_from(bytes).expect("push").to_owned();
     let (head, tail) = pushes[0].split_at(10);
+    let (key_head, key_tail) = pushes[1].split_at(1);
+    let mut invalid_signature = pushes[0].clone();
+    invalid_signature[pushes[0].len() - 2] ^= 1;
     spend.input[0].script_sig = match script {
         NotPushOnly::SignatureBuiltWithOpCat => Builder::new()
             .push_slice(push(head))
             .push_slice(push(tail))
             .push_opcode(OP_CAT)
             .push_slice(push(&pushes[1])),
+        NotPushOnly::KeyBuiltWithOpCat => Builder::new()
+            .push_slice(push(&pushes[0]))
+            .push_slice(push(key_head))
+            .push_slice(push(key_tail))
+            .push_opcode(OP_CAT),
         NotPushOnly::Nop => Builder::new().push_opcode(OP_NOP),
         NotPushOnly::SignatureThenNop => {
             Builder::new().push_slice(push(&pushes[0])).push_opcode(OP_NOP)
@@ -125,8 +146,33 @@ async fn rewritten(
             .push_slice(push(&pushes[0]))
             .push_slice(push(&pushes[1]))
             .push_opcode(OP_NOP),
+        NotPushOnly::InvalidSignatureAndKeyThenNop => Builder::new()
+            .push_slice(push(&invalid_signature))
+            .push_slice(push(&pushes[1]))
+            .push_opcode(OP_NOP),
     }
     .into_script();
+    spend
+}
+
+/// `spend`, signed for `funding`, with its input made structurally invalid as `invalidity`.
+async fn structurally_invalid(
+    ctx: &TestWalletContext,
+    funding: &Transaction,
+    spend: Transaction,
+    invalidity: Structural,
+) -> Transaction {
+    let mut spend = ctx.signed(spend, &[funding]).await;
+    let mut script = spend.input[0].script_sig.to_bytes();
+    match invalidity {
+        Structural::Unparseable => script.push(1),
+        Structural::Oversized => script.resize(MAX_SCRIPT_SIZE + 1, OP_NOP.to_u8()),
+        Structural::DuplicateOutpoint => script.push(OP_NOP.to_u8()),
+    }
+    spend.input[0].script_sig = ScriptBuf::from_bytes(script);
+    if let Structural::DuplicateOutpoint = invalidity {
+        spend.input.push(spend.input[0].clone());
+    }
     spend
 }
 
@@ -185,18 +231,40 @@ async fn a_claim_signed_for_a_different_coin_does_not_hide_the_coin() {
 }
 
 #[test_case(NotPushOnly::SignatureBuiltWithOpCat; "signature built with OP_CAT")]
+#[test_case(NotPushOnly::KeyBuiltWithOpCat; "key built with OP_CAT")]
 #[test_case(NotPushOnly::Nop; "no pushes")]
 #[test_case(NotPushOnly::SignatureThenNop; "signature then OP_NOP")]
 #[test_case(NotPushOnly::SignatureAndKeyThenNop; "valid signature and key then OP_NOP")]
+#[test_case(NotPushOnly::InvalidSignatureAndKeyThenNop; "invalid signature and key then OP_NOP")]
 #[tokio::test]
-async fn a_pending_claim_that_is_not_push_only_does_not_hide_the_coin(script: NotPushOnly) {
+async fn a_pending_claim_that_is_not_push_only_keeps_the_coin_spent(script: NotPushOnly) {
     let (mut ctx, funding, spend) = spend_first();
     let spend = rewritten(&ctx, &funding, spend, script).await;
     assert!(ctx.check_transaction(&spend, TransactionContext::Mempool).await.is_relevant);
 
     let result = ctx.check_transaction(&funding, in_block(100)).await;
+    assert!(result.is_relevant);
+    assert!(result.swept_transactions.is_empty());
+    assert!(result.released_outpoints.is_empty());
+    assert!(!holds_coin(&ctx, &funding), "the claimed coin is not credited");
+    assert!(ctx.bip44_account().transactions().contains_key(&spend.txid()));
+    assert_eq!(ctx.managed_wallet.balance().total(), CHANGE);
+}
+
+#[test_case(Structural::Unparseable; "unparseable script")]
+#[test_case(Structural::Oversized; "script over the size limit")]
+#[test_case(Structural::DuplicateOutpoint; "outpoint spent twice")]
+#[tokio::test]
+async fn a_structurally_invalid_pending_claim_does_not_hide_the_coin(invalidity: Structural) {
+    let (mut ctx, funding, spend) = spend_first();
+    let spend = structurally_invalid(&ctx, &funding, spend, invalidity).await;
+    assert!(ctx.check_transaction(&spend, TransactionContext::Mempool).await.is_relevant);
+
+    let result = ctx.check_transaction(&funding, in_block(100)).await;
     assert_eq!(result.swept_transactions, vec![spend.txid()]);
+    assert_eq!(result.released_outpoints, vec![OutPoint::new(funding.txid(), 0)]);
     assert!(holds_coin(&ctx, &funding));
+    assert!(!ctx.bip44_account().transactions().contains_key(&spend.txid()));
     assert_eq!(ctx.managed_wallet.balance().total(), FUNDED);
 }
 
@@ -356,16 +424,33 @@ async fn a_claim_on_a_held_coin_signed_for_another_coin_is_ignored() {
 }
 
 #[test_case(NotPushOnly::SignatureBuiltWithOpCat; "signature built with OP_CAT")]
+#[test_case(NotPushOnly::KeyBuiltWithOpCat; "key built with OP_CAT")]
 #[test_case(NotPushOnly::Nop; "no pushes")]
 #[test_case(NotPushOnly::SignatureThenNop; "signature then OP_NOP")]
 #[test_case(NotPushOnly::SignatureAndKeyThenNop; "valid signature and key then OP_NOP")]
+#[test_case(NotPushOnly::InvalidSignatureAndKeyThenNop; "invalid signature and key then OP_NOP")]
 #[tokio::test]
-async fn a_pending_claim_on_a_held_coin_that_is_not_push_only_is_ignored(script: NotPushOnly) {
+async fn a_pending_claim_on_a_held_coin_that_is_not_push_only_is_taken(script: NotPushOnly) {
     let (mut ctx, funding, spend) = coin_held().await;
     let spend = rewritten(&ctx, &funding, spend, script).await;
 
+    assert!(ctx.check_transaction(&spend, TransactionContext::Mempool).await.is_relevant);
+    assert!(!holds_coin(&ctx, &funding), "the coin is spent");
+    assert!(ctx.bip44_account().transactions().contains_key(&spend.txid()));
+    assert_eq!(ctx.managed_wallet.balance().total(), CHANGE);
+}
+
+#[test_case(Structural::Unparseable; "unparseable script")]
+#[test_case(Structural::Oversized; "script over the size limit")]
+#[test_case(Structural::DuplicateOutpoint; "outpoint spent twice")]
+#[tokio::test]
+async fn a_structurally_invalid_pending_claim_on_a_held_coin_is_ignored(invalidity: Structural) {
+    let (mut ctx, funding, spend) = coin_held().await;
+    let spend = structurally_invalid(&ctx, &funding, spend, invalidity).await;
+
     assert!(!ctx.check_transaction(&spend, TransactionContext::Mempool).await.is_relevant);
     assert!(holds_coin(&ctx, &funding));
+    assert!(!ctx.bip44_account().transactions().contains_key(&spend.txid()));
     assert_eq!(ctx.managed_wallet.balance().total(), FUNDED);
 }
 

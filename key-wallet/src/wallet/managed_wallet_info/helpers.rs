@@ -10,6 +10,7 @@ use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
 use crate::transaction_checking::{verify_input_authorization, TransactionContext};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use dashcore::blockdata::constants::MAX_SCRIPT_SIZE;
 use dashcore::blockdata::script::Instruction;
 use dashcore::{OutPoint, Transaction, TxOut, Txid};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -230,8 +231,8 @@ impl ManagedWalletInfo {
         result
     }
 
-    /// Returns the first coin this wallet holds or keeps aside that an input of `tx` spends
-    /// without its owner's authorization, as [`lacks_authorization`] judges it.
+    /// Returns the first coin this wallet holds or keeps aside that an input of `tx` provably
+    /// spends without its owner's authorization, as [`lacks_authorization`] judges it.
     pub(crate) fn unauthorized_spend_of_held_coin(&self, tx: &Transaction) -> Option<OutPoint> {
         let funds: Vec<_> =
             self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()).collect();
@@ -242,8 +243,8 @@ impl ManagedWalletInfo {
         })
     }
 
-    /// Drops each pending spend of an output of `tx` that [`lacks_authorization`], with everything
-    /// built on it, and returns what went as a conflict sweep. A claimant that is mined,
+    /// Drops each pending spend of an output of `tx` that provably [`lacks_authorization`], with
+    /// everything built on it, and returns what went as a conflict sweep. A claimant that is mined,
     /// InstantSend-locked or has such a descendant is kept, since the network accepted it.
     pub(crate) fn drop_unauthorized_spends_of(&mut self, tx: &Transaction) -> WalletConflictSweep {
         let funding = tx.txid();
@@ -852,13 +853,22 @@ impl ManagedWalletInfo {
     }
 }
 
-/// Whether input `index` of a pending `tx` spends `prevout` without its owner's authorization.
-/// An input script that isn't push-only counts, as relay policy rejects it.
+/// Whether input `index` of a pending `tx` provably lacks its owner's authorization for `prevout`:
+/// its script doesn't parse or exceeds `MAX_SCRIPT_SIZE`, `tx` spends its outpoint twice, or the
+/// script is push-only and fails verification. Other opcodes may build a key or signature.
 fn lacks_authorization(tx: &Transaction, index: usize, prevout: &TxOut) -> bool {
-    let push_only = tx.input.get(index).is_some_and(|input| {
-        input.script_sig.instructions().all(|i| matches!(i, Ok(Instruction::PushBytes(_))))
+    let Some(input) = tx.input.get(index) else {
+        return false;
+    };
+    let instructions = input.script_sig.instructions().collect::<Result<Vec<_>, _>>();
+    let structural = instructions.is_err()
+        || input.script_sig.len() > MAX_SCRIPT_SIZE
+        || tx.input.iter().filter(|other| other.previous_output == input.previous_output).count()
+            > 1;
+    let push_only = instructions.is_ok_and(|instructions| {
+        instructions.iter().all(|i| matches!(i, Instruction::PushBytes(_)))
     });
-    !push_only || verify_input_authorization(tx, index, prevout) == Ok(false)
+    structural || (push_only && verify_input_authorization(tx, index, prevout) == Ok(false))
 }
 
 #[cfg(test)]
@@ -958,5 +968,48 @@ mod retain_unclaimed_tests {
         assert!(sweep.released_outpoints.iter().all(|o| {
             u32::from_le_bytes(o.txid.as_byte_array()[..4].try_into().expect("4 bytes")) >= HISTORY
         }));
+    }
+}
+
+#[cfg(test)]
+mod lacks_authorization_tests {
+    use super::*;
+    use dashcore::hashes::hash160;
+    use dashcore::opcodes::all::OP_NOP;
+    use dashcore::script::{Builder, ScriptBuf};
+    use dashcore::{PubkeyHash, TxIn};
+    use test_case::test_case;
+
+    /// A push whose hash a P2PKH output commits to, but that doesn't parse as a public key.
+    const NOT_A_KEY: [u8; 33] = [5; 33];
+
+    #[test_case(false, true; "push-only")]
+    #[test_case(true, false; "not push-only")]
+    fn an_owner_push_that_is_not_a_key_proves_a_missing_signature_only_when_push_only(
+        padded: bool,
+        lacks: bool,
+    ) {
+        let owner = hash160::Hash::hash(&NOT_A_KEY).to_byte_array();
+        let prevout = TxOut {
+            value: 100_000,
+            script_pubkey: ScriptBuf::new_p2pkh(&PubkeyHash::from_byte_array(owner)),
+        };
+        let mut script = Builder::new().push_slice([1]).push_slice(NOT_A_KEY);
+        if padded {
+            script = script.push_opcode(OP_NOP);
+        }
+        let tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                script_sig: script.into_script(),
+                ..Default::default()
+            }],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+
+        assert_eq!(verify_input_authorization(&tx, 0, &prevout), Ok(false));
+        assert_eq!(lacks_authorization(&tx, 0, &prevout), lacks);
     }
 }
