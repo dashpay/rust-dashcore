@@ -12,6 +12,7 @@ use crate::managed_account::managed_account_type::ManagedAccountType;
 use crate::managed_account::ManagedCoreFundsAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
+use crate::wallet::managed_wallet_info::helpers::WalletConflictSweep;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
@@ -240,6 +241,24 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// with it.
     fn undismiss(&mut self, _txid: &Txid) {}
 
+    /// Returns each outpoint the wallet's unconfirmed records spend, pending or InstantSend-locked,
+    /// with the txids of those records: what a transaction in a block the wallet didn't fetch can
+    /// beat. The default is none.
+    fn unconfirmed_spent_outpoints(&self) -> BTreeMap<OutPoint, BTreeSet<Txid>> {
+        BTreeMap::new()
+    }
+
+    /// Drops the records `tx`, in a block this wallet didn't fetch, provably beat, by the same rule
+    /// as for a transaction it checks, and gives back what only they spent. `tx` itself is not
+    /// recorded. The default does nothing.
+    fn sweep_conflicts_only(
+        &mut self,
+        _tx: &Transaction,
+        _context: &TransactionContext,
+    ) -> WalletConflictSweep {
+        WalletConflictSweep::default()
+    }
+
     /// Return the highest chainlock that has been applied to this
     /// wallet, retaining the signing proof. Blocks at or below
     /// `chain_lock.block_height` are considered chainlock-finalized
@@ -393,6 +412,31 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn undismiss(&mut self, txid: &Txid) {
         self.dismissed.settled(txid);
+    }
+
+    fn unconfirmed_spent_outpoints(&self) -> BTreeMap<OutPoint, BTreeSet<Txid>> {
+        let mut spent: BTreeMap<OutPoint, BTreeSet<Txid>> = BTreeMap::new();
+        let records = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .filter_map(|account| account.as_funds())
+            .flat_map(|funds| funds.transactions().values())
+            .filter(|record| !record.is_confirmed());
+        for record in records {
+            for input in &record.transaction.input {
+                spent.entry(input.previous_output).or_default().insert(record.txid);
+            }
+        }
+        spent
+    }
+
+    fn sweep_conflicts_only(
+        &mut self,
+        tx: &Transaction,
+        context: &TransactionContext,
+    ) -> WalletConflictSweep {
+        self.sweep_conflicts(tx, context)
     }
 
     fn last_applied_chain_lock(&self) -> Option<&ChainLock> {

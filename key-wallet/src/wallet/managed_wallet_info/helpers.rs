@@ -192,7 +192,8 @@ impl ManagedWalletInfo {
         let mut taken = Vec::new();
         for account in self.accounts.all_accounts_mut() {
             if let ManagedAccountRefMut::Funds(funds) = account {
-                let swept = funds.drop_conflicted_transactions(tx, context);
+                let swept =
+                    funds.drop_conflicted_transactions(tx, context, &self.instant_send_locks);
                 result.txids.extend(swept.txids);
                 result.released_outpoints.extend(swept.released_outpoints);
                 taken.push(swept.taken);
