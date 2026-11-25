@@ -1,7 +1,7 @@
 //! A pending claim on a held coin that its funding exposes, checked where no event reports the
-//! sweep, keeps its stored row while its dismissal goes unreported. Each load judges it again by
-//! the rule that dropped it: one that provably lacks authorization is dropped again and the coin
-//! offered, and one that may be authorized holds the coin.
+//! sweep, keeps its stored row while its dismissal goes unreported. The next load judges it again
+//! by the rule that dropped it: one that provably lacks authorization is dropped or refused again
+//! and the coin offered, and one that may be authorized holds the coin.
 
 use super::test_helpers::*;
 use super::*;
@@ -215,6 +215,7 @@ async fn first_session(kind: Claim) -> (Session, Store, Transaction, Vec<Txid>) 
         wallet_id,
         coin: OutPoint::new(funding.txid(), 0),
     };
+    // An abandon's change is kept until taken, so an empty list also rules one out.
     assert!(session.info().take_dismissal_changes().is_empty(), "no dismissal is reported");
     assert!(store.swept.is_empty() && store.abandoned.is_empty());
     (session, store, claim, swept)
@@ -255,8 +256,10 @@ async fn reload(store: &mut Store, order: Replay, coin: OutPoint) -> Session {
 }
 
 /// A claim the rule drops is dismissed as a sweep, but no event reports it, so its row stays
-/// stored. Each load drops it again by the same rule, from either replay order, and offers the
-/// coin; a peer relaying it again changes nothing.
+/// stored. Replayed as stored, the next load drops it again when its funding arrives and reports
+/// the sweep, and later loads restore that dismissal with no row left. Mined first, every load
+/// refuses it by the same rule and reports nothing, so its row stays. Each load offers the coin,
+/// and a peer relaying the claim again changes nothing.
 #[test_case(Claim::Unsigned, Replay::AsStored; "unsigned, replayed as stored")]
 #[test_case(Claim::Unsigned, Replay::MinedFirst; "unsigned, mined first")]
 #[test_case(Claim::BadSignature, Replay::AsStored; "bad signature, replayed as stored")]
@@ -268,7 +271,7 @@ async fn an_unreported_dropped_claim_is_dropped_again_on_each_load(kind: Claim, 
     let (mut session, mut store, claim, swept) = first_session(kind).await;
     let (txid, coin) = (claim.txid(), session.coin);
     assert_eq!(swept, vec![txid], "the claim is dropped");
-    assert!(session.info().is_dismissed(&txid), "the claim is dismissed as a sweep");
+    assert!(session.info().is_dismissed(&txid), "the claim is dismissed");
     assert!(session.offers_coin());
     assert!(store.holds(&txid), "the dropped claim's row stays stored");
 
@@ -284,7 +287,7 @@ async fn an_unreported_dropped_claim_is_dropped_again_on_each_load(kind: Claim, 
             }
             Replay::MinedFirst => {
                 assert!(store.removed.is_empty() && store.swept.is_empty(), "load {load}");
-                assert!(store.holds(&txid), "load {load}: the row waits for the next load");
+                assert!(store.holds(&txid), "load {load}: the refused claim's row stays stored");
             }
         }
 
