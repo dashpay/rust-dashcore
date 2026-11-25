@@ -1,6 +1,8 @@
 use crate::events::{diff_account_balances, project_derived_addresses, DerivedAddress};
 use crate::wallet_interface::{BlockProcessingResult, MempoolTransactionResult, WalletInterface};
-use crate::{CheckTransactionsResult, WalletError, WalletEvent, WalletId, WalletManager};
+use crate::{
+    AwaitingChainLock, CheckTransactionsResult, WalletError, WalletEvent, WalletId, WalletManager,
+};
 use async_trait::async_trait;
 use dashcore::ephemerealdata::chain_lock::ChainLock;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
@@ -66,6 +68,20 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut per_wallet_locked: BTreeMap<WalletId, Vec<OutPoint>> = BTreeMap::new();
         let mut relevant_positions: BTreeMap<WalletId, BTreeSet<usize>> = BTreeMap::new();
         let mut listed_txids: HashSet<Txid> = HashSet::new();
+        // A block transaction spending an input of an unconfirmed record in a wallet the block wasn't
+        // fetched for sweeps that wallet by the same rule, recording nothing of it. Each wallet's
+        // unconfirmed spends are collected once per block.
+        let unconfirmed: Vec<(WalletId, BTreeMap<OutPoint, BTreeSet<Txid>>, bool)> = self
+            .wallet_infos
+            .iter()
+            .filter_map(|(wallet_id, wallet_info)| {
+                let spent = wallet_info.unconfirmed_spent_outpoints();
+                let chain_locked = wallet_info
+                    .last_applied_chain_lock()
+                    .is_some_and(|cl| height <= cl.block_height);
+                (!spent.is_empty()).then_some((*wallet_id, spent, chain_locked))
+            })
+            .collect();
 
         // A mined transaction is not dead for any wallet, matched or not.
         for tx in &block.txdata {
@@ -148,6 +164,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                     if txids.is_empty() {
                         continue;
                     }
+                    if all_chainlocked {
+                        self.remember_beaten_by_chain_lock(&txids, height);
+                    }
                     let Some(info) = self.wallet_infos.get(&wallet_id) else {
                         continue;
                     };
@@ -172,6 +191,66 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 );
             }
             pass_wallets = derived_wallets;
+        }
+
+        for (position, tx) in block.txdata.iter().enumerate() {
+            let tx_info = info.with_position(position as u32);
+            let txid = tx.txid();
+            for (wallet_id, spent, chain_locked) in &unconfirmed {
+                let overlap: Vec<&BTreeSet<Txid>> =
+                    tx.input.iter().filter_map(|input| spent.get(&input.previous_output)).collect();
+                if overlap.is_empty() {
+                    continue;
+                }
+                // The wallet's own payment, mined, beats nothing.
+                let beaten: BTreeSet<Txid> = overlap
+                    .iter()
+                    .flat_map(|spenders| spenders.iter())
+                    .filter(|spender| **spender != txid)
+                    .copied()
+                    .collect();
+                let fetched = wallets.contains(wallet_id);
+                // A fetched wallet was swept with the call's context, a plain block when any
+                // fetched wallet lags. A locked record outlives a plain block, and an unlocked one
+                // it overturns can come back with a late lock: both are left to the ChainLock.
+                let swept_chain_locked = if fetched {
+                    all_chainlocked
+                } else {
+                    *chain_locked
+                };
+                if !swept_chain_locked && !beaten.is_empty() {
+                    self.await_chain_lock(tx, tx_info, beaten);
+                }
+                if fetched {
+                    continue;
+                }
+                let Some(wallet_info) = self.wallet_infos.get_mut(wallet_id) else {
+                    continue;
+                };
+                let context = if *chain_locked {
+                    TransactionContext::InChainLockedBlock(tx_info)
+                } else {
+                    TransactionContext::InBlock(tx_info)
+                };
+                let sweep = wallet_info.sweep_conflicts_only(tx, &context);
+                if sweep.txids.is_empty() {
+                    continue;
+                }
+                let balance = wallet_info.balance();
+                if *chain_locked {
+                    self.remember_beaten_by_chain_lock(&sweep.txids, height);
+                }
+                let event = WalletEvent::TransactionsSwept {
+                    wallet_id: *wallet_id,
+                    txids: sweep.txids,
+                    superseded_by: txid,
+                    winner_block: Some(tx_info),
+                    released_outpoints: sweep.released_outpoints,
+                    balance,
+                    account_balances: BTreeMap::new(),
+                };
+                self.emit_event(event);
+            }
         }
 
         for (wallet_id, positions) in relevant_positions {
@@ -209,6 +288,10 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         tx: &Transaction,
         instant_lock: Option<InstantLock>,
     ) -> MempoolTransactionResult {
+        // A ChainLock overturned it, so its lock no longer counts.
+        if self.beaten_by_chain_lock.contains_key(&tx.txid()) {
+            return MempoolTransactionResult::default();
+        }
         // Unlocked, a dismissed transaction reaches no wallet. A spend of one is held back in the
         // wallets that dismissed what it spends, and reaches the others only if each dismissed
         // parent is held by some wallet.
@@ -556,6 +639,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                 account_balances: diff_account_balances(&prior, &info.account_balances()),
             });
         }
+        self.awaiting_chain_lock.retain(|_, kept| kept.block.height() <= height);
         for event in events {
             self.emit_event(event);
         }
@@ -587,11 +671,25 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
     }
 
     fn apply_chain_lock(&mut self, chain_lock: ChainLock) {
+        // A transaction the lock makes final overturns, in every wallet, what its plain block
+        // could not, and every other spend of its inputs is dead.
+        let covered: Vec<Txid> = self
+            .awaiting_chain_lock
+            .iter()
+            .filter(|(_, awaiting)| awaiting.block.height() <= chain_lock.block_height)
+            .map(|(txid, _)| *txid)
+            .collect();
+        let finalized: Vec<(Txid, AwaitingChainLock)> = covered
+            .into_iter()
+            .filter_map(|txid| self.awaiting_chain_lock.remove(&txid).map(|kept| (txid, kept)))
+            .collect();
+        let mut beaten: Vec<(Vec<Txid>, CoreBlockHeight)> = finalized
+            .iter()
+            .map(|(_, kept)| (kept.beaten.iter().copied().collect(), kept.block.height()))
+            .collect();
         // Collect the events under the `iter_mut` borrow, then emit them once
         // the mutable borrow of `self.wallet_infos` has ended. `emit_event`
-        // takes `&self`, which cannot overlap the live `iter_mut` borrow; the
-        // BTreeMap iteration order is preserved, so the emit order is
-        // unchanged.
+        // takes `&self`, which cannot overlap the live `iter_mut` borrow.
         let mut events = Vec::new();
         for (wallet_id, info) in self.wallet_infos.iter_mut() {
             let outcome = info.apply_chain_lock(chain_lock.clone());
@@ -608,6 +706,45 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                     locked_transactions: outcome.locked_transactions,
                 });
             }
+        }
+        if !finalized.is_empty() {
+            for (wallet_id, info) in self.wallet_infos.iter_mut() {
+                let spent = info.unconfirmed_spent_outpoints();
+                if spent.is_empty() {
+                    continue;
+                }
+                for (
+                    txid,
+                    AwaitingChainLock {
+                        tx,
+                        block,
+                        ..
+                    },
+                ) in &finalized
+                {
+                    if !tx.input.iter().any(|input| spent.contains_key(&input.previous_output)) {
+                        continue;
+                    }
+                    let context = TransactionContext::InChainLockedBlock(*block);
+                    let sweep = info.sweep_conflicts_only(tx, &context);
+                    if sweep.txids.is_empty() {
+                        continue;
+                    }
+                    beaten.push((sweep.txids.clone(), block.height()));
+                    events.push(WalletEvent::TransactionsSwept {
+                        wallet_id: *wallet_id,
+                        txids: sweep.txids,
+                        superseded_by: *txid,
+                        winner_block: Some(*block),
+                        released_outpoints: sweep.released_outpoints,
+                        balance: info.balance(),
+                        account_balances: BTreeMap::new(),
+                    });
+                }
+            }
+        }
+        for (txids, height) in beaten {
+            self.remember_beaten_by_chain_lock(&txids, height);
         }
         for event in events {
             self.emit_event(event);

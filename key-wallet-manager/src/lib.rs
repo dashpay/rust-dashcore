@@ -31,7 +31,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
 use key_wallet::account::AccountCollection;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
-use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
+use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -122,6 +122,38 @@ pub struct CheckTransactionsResult {
     pub per_wallet_locked_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
 }
 
+/// The most block transactions [`WalletManager`] keeps waiting for a
+/// ChainLock, should ChainLocks stall.
+pub const MAX_AWAITING_CHAIN_LOCK: usize = 1_000;
+
+/// How many transactions a ChainLocked conflict overturned are remembered,
+/// so that they are refused if they arrive again.
+pub const MAX_BEATEN_BY_CHAIN_LOCK: usize = 1_000;
+
+/// Returns the txids, lowest height first, that take `entries` past `max`.
+fn lowest_past(
+    entries: impl ExactSizeIterator<Item = (Txid, CoreBlockHeight)>,
+    max: usize,
+) -> Vec<Txid> {
+    let excess = entries.len().saturating_sub(max);
+    if excess == 0 {
+        return Vec::new();
+    }
+    let mut by_height: Vec<(CoreBlockHeight, Txid)> =
+        entries.map(|(txid, height)| (height, txid)).collect();
+    by_height.sort_unstable();
+    by_height.into_iter().take(excess).map(|(_, txid)| txid).collect()
+}
+
+/// A block transaction kept until a ChainLock covers its block.
+#[derive(Debug)]
+pub(crate) struct AwaitingChainLock {
+    pub(crate) tx: Transaction,
+    pub(crate) block: BlockInfo,
+    /// Unconfirmed transactions it conflicts with, dead once the ChainLock lands.
+    pub(crate) beaten: BTreeSet<Txid>,
+}
+
 /// High-level wallet manager that manages multiple wallets
 ///
 /// Each wallet can contain multiple accounts following BIP44 standard.
@@ -136,6 +168,14 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
     wallet_infos: BTreeMap<WalletId, T>,
     /// Bumped whenever a wallet is added or removed, including one removed and added again.
     wallet_set_revision: u64,
+    /// Block transactions no ChainLock covers yet that conflict with another transaction's
+    /// unconfirmed record, with their blocks. Once a ChainLock covers one, every wallet sweeps with
+    /// it; a reorg below its block drops it. At most [`MAX_AWAITING_CHAIN_LOCK`], lowest block first.
+    awaiting_chain_lock: BTreeMap<Txid, AwaitingChainLock>,
+    /// Transactions a conflict in a ChainLocked block overturned, with that block's height. They
+    /// can never confirm, so each is refused in every wallet when it arrives again. In memory for
+    /// this session; at most [`MAX_BEATEN_BY_CHAIN_LOCK`], the one beaten lowest going first.
+    beaten_by_chain_lock: BTreeMap<Txid, CoreBlockHeight>,
     /// Event sender for wallet events.
     ///
     /// This is a *bounded, lossy* fan-out (capacity
@@ -198,6 +238,63 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
 }
 
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
+    /// Keeps `tx`, in the block `block` no ChainLock covers yet, with the transactions it beats,
+    /// until one does. Past [`MAX_AWAITING_CHAIN_LOCK`], the one in the lowest block goes.
+    pub(crate) fn await_chain_lock(
+        &mut self,
+        tx: &Transaction,
+        block: BlockInfo,
+        beaten: BTreeSet<Txid>,
+    ) {
+        self.awaiting_chain_lock
+            .entry(tx.txid())
+            .or_insert_with(|| AwaitingChainLock {
+                tx: tx.clone(),
+                block,
+                beaten: BTreeSet::new(),
+            })
+            .beaten
+            .extend(beaten);
+        let lowest = lowest_past(
+            self.awaiting_chain_lock.iter().map(|(txid, kept)| (*txid, kept.block.height())),
+            MAX_AWAITING_CHAIN_LOCK,
+        );
+        for txid in lowest {
+            self.awaiting_chain_lock.remove(&txid);
+        }
+    }
+
+    /// How many block transactions are kept until a ChainLock covers their
+    /// block.
+    pub fn awaiting_chain_lock_len(&self) -> usize {
+        self.awaiting_chain_lock.len()
+    }
+
+    /// Forgets every block transaction kept for a ChainLock, as when the chain data is deleted
+    /// and the blocks are fetched again.
+    pub fn clear_awaiting_chain_lock(&mut self) {
+        self.awaiting_chain_lock.clear();
+    }
+
+    /// Remembers `txids`, which a conflict in a ChainLocked block at `height` overturned. Past
+    /// [`MAX_BEATEN_BY_CHAIN_LOCK`], the one beaten lowest goes.
+    pub(crate) fn remember_beaten_by_chain_lock(
+        &mut self,
+        txids: &[Txid],
+        height: CoreBlockHeight,
+    ) {
+        for txid in txids {
+            self.beaten_by_chain_lock.insert(*txid, height);
+        }
+        let lowest = lowest_past(
+            self.beaten_by_chain_lock.iter().map(|(txid, height)| (*txid, *height)),
+            MAX_BEATEN_BY_CHAIN_LOCK,
+        );
+        for txid in lowest {
+            self.beaten_by_chain_lock.remove(&txid);
+        }
+    }
+
     /// Create a new wallet manager
     pub fn new(network: Network) -> Self {
         Self {
@@ -205,6 +302,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
             wallet_set_revision: 0,
+            awaiting_chain_lock: BTreeMap::new(),
+            beaten_by_chain_lock: BTreeMap::new(),
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
             // Persistence delivery is opt-in; the channel is created lazily when
             // a consumer calls `take_persistence_receiver`. See that field's docs.
@@ -798,3 +897,17 @@ mod test_helpers;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    #[test]
+    fn past_the_cap_the_lowest_go_first_ties_by_txid() {
+        let txid = |n: u8| Txid::from_byte_array([n; 32]);
+        let entries = [(txid(4), 9), (txid(3), 7), (txid(2), 9), (txid(1), 8)];
+        assert!(lowest_past(entries.into_iter(), 4).is_empty());
+        assert_eq!(lowest_past(entries.into_iter(), 3), vec![txid(3)]);
+        assert_eq!(lowest_past(entries.into_iter(), 1), vec![txid(3), txid(1), txid(2)]);
+    }
+}
