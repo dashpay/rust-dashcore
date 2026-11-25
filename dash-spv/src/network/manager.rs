@@ -33,7 +33,11 @@ const BAD_LAG_FLOOR_MS: u32 = 1000;
 /// Shortest time between two slow-peer swaps.
 const SWAP_COOLDOWN: Duration = Duration::from_secs(60);
 
-/// How often the supervisor re-checks a below-cap set and probes to keep filling.
+/// How long a swapped out peer is no replacement for another slow one. Two slow peers would
+/// otherwise take turns in one slot.
+const SWAP_BACK_AFTER: Duration = Duration::from_secs(10 * 60);
+
+/// How often the supervisor re-checks a set it is not done with.
 const FILL_TICK: Duration = Duration::from_secs(2);
 
 const DIAL_MARGIN: usize = 2;
@@ -214,6 +218,16 @@ pub struct NetworkState {
     pub transport_preference: TransportPreference,
     /// Whether the timeout monitor sees our own link stalled.
     link_stalled: AtomicBool,
+    /// Whether the flow controller's last tick saw our own link silent.
+    link_silent: AtomicBool,
+}
+
+impl NetworkState {
+    /// Whether our own link looks stalled. A silent tick counts at once, the timeout monitor
+    /// sees a stall only after the request timeout.
+    fn link_looks_stalled(&self) -> bool {
+        self.link_silent.load(Ordering::Relaxed) || self.link_stalled.load(Ordering::Relaxed)
+    }
 }
 
 pub struct PeerNetworkManager {
@@ -263,6 +277,7 @@ impl PeerNetworkManager {
             user_agent: config.user_agent.clone(),
             transport_preference: config.transport_preference,
             link_stalled: AtomicBool::new(false),
+            link_silent: AtomicBool::new(false),
         });
         let shutdown = CancellationToken::new();
 
@@ -604,7 +619,6 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             peer_wake,
             broker,
             costs,
-            link_stalled,
             ..
         } = &*state;
         let mut peers: HashMap<PeerId, PeerFlow> = HashMap::new();
@@ -635,9 +649,10 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
                 (p.bytes_read().saturating_sub(flow.limiter.last_bytes), in_flight)
             }));
-            // The timeout monitor sees a stall only after the request timeout, by which time
-            // the caps would have decayed, so a silent tick counts as one at once.
-            let stalled = silent || link_stalled.load(Ordering::Relaxed);
+            state.link_silent.store(silent, Ordering::Relaxed);
+            // By the time the timeout monitor sees a stall the caps would have decayed, so the
+            // silent tick itself holds them.
+            let stalled = state.link_looks_stalled();
             for (p, &in_flight) in g.iter().zip(&in_flights) {
                 let flow = peers.entry(p.id()).or_insert_with(|| PeerFlow::new(p.bytes_read()));
                 p.set_cap(flow.tick(p.bytes_read(), in_flight, stalled));
@@ -746,6 +761,8 @@ struct Supervisor {
     best_lag_ms: AtomicU32,
     /// When a slow peer was last swapped out, for [`SWAP_COOLDOWN`].
     last_swap: Mutex<Option<Instant>>,
+    /// When each peer was swapped out, for [`SWAP_BACK_AFTER`].
+    swapped_out: Mutex<HashMap<SocketAddr, Instant>>,
 }
 
 impl Supervisor {
@@ -755,30 +772,35 @@ impl Supervisor {
             shutdown,
             best_lag_ms: AtomicU32::new(u32::MAX),
             last_swap: Mutex::new(None),
+            swapped_out: Mutex::default(),
         }
     }
 
     async fn run(self) {
         loop {
-            self.repair_round().await;
-
-            let short = self.state.connected.read().await.len() < self.state.max_peers;
+            let done = self.repair_round().await;
 
             tokio::select! {
                 _ = self.shutdown.cancelled() => break,
                 _ = self.state.peer_wake.notified() => {}
-                _ = tokio::time::sleep(FILL_TICK), if short => {}
+                _ = tokio::time::sleep(FILL_TICK), if !done => {}
             }
         }
     }
 
-    async fn next_candidates(&self, want: usize) -> Vec<DisconnectedPeer> {
+    /// Up to `want` peers to dial, for a `swap` none that was itself swapped out lately.
+    async fn next_candidates(&self, want: usize, swap: bool) -> Vec<DisconnectedPeer> {
         // Snapshot under the lock, so a ban landing during the wait for it is seen. Live
         // before bans: a peer banned before it leaves the set is seen by one of the reads.
         let mut discoverer = self.state.discoverer.lock().await;
         let mut skip: HashSet<SocketAddr> =
             self.state.connected.read().await.iter().map(|p| p.addr()).collect();
         skip.extend(self.state.bans.banned().await);
+        if swap {
+            let mut swapped_out = self.swapped_out.lock().await;
+            swapped_out.retain(|_, at| at.elapsed() < SWAP_BACK_AFTER);
+            skip.extend(swapped_out.keys());
+        }
         discoverer.get(want, &skip).await
     }
 
@@ -792,31 +814,32 @@ impl Supervisor {
     }
 
     /// One pass at whatever the peer set needs: fill a deficit, replace a peer that is
-    /// underserving the rest, or both.
-    async fn repair_round(&self) {
-        let (deficit, slow) = {
+    /// underserving the rest, or both. Returns whether the next pass can wait for a wake.
+    /// The end of a cooldown wakes nobody, so a pass woken during one cannot.
+    async fn repair_round(&self) -> bool {
+        let (deficit, cooled, slow) = {
             let peers = self.state.connected.read().await;
             let deficit = self.state.max_peers.saturating_sub(peers.len());
             // Only look for a laggard once full: below cap every arrival is wanted anyway.
             // Each swap re-sends the work the old peer held, so at most one per cooldown.
             let cooled = self.last_swap.lock().await.is_none_or(|t| t.elapsed() >= SWAP_COOLDOWN);
-            let stalled = self.state.link_stalled.load(Ordering::Relaxed);
+            let stalled = self.state.link_looks_stalled();
             let slow = (deficit == 0 && cooled && !stalled)
                 .then(|| underserving_peer(&peers))
                 .flatten()
                 .map(|slow| slow.addr);
-            (deficit, slow)
+            (deficit, cooled, slow)
         };
         if deficit == 0 && slow.is_none() {
-            return;
+            return cooled;
         }
 
         // Scale the probe to the need: a few candidates to find one replacement, a
         // full chunk when several slots are open and sync is waiting on them.
         let want = (deficit.max(1) + DIAL_MARGIN).min(CONNECT_CHUNK);
-        let batch = self.next_candidates(want).await;
+        let batch = self.next_candidates(want, slow.is_some()).await;
         if batch.is_empty() {
-            return;
+            return deficit == 0;
         }
 
         // Take each peer as soon as ITS handshake lands rather than waiting for the batch,
@@ -867,7 +890,7 @@ impl Supervisor {
 
             let new_addr = peer.addr();
             // Our link can stall while the candidates are dialed, and then `slow` is stale.
-            let stalled = self.state.link_stalled.load(Ordering::Relaxed);
+            let stalled = self.state.link_looks_stalled();
             let slow = slow.filter(|_| replaced.is_none() && !stalled);
             match self.state.connected.admit(peer, &self.shutdown, self.state.max_peers, slow).await
             {
@@ -885,6 +908,7 @@ impl Supervisor {
                     // reconnection to the same peer is not disturbed.
                     old.close();
                     *self.last_swap.lock().await = Some(Instant::now());
+                    self.swapped_out.lock().await.insert(old.addr(), Instant::now());
                 }
                 Admission::Full(peer) => {
                     leftover.push(peer);
@@ -934,6 +958,7 @@ impl Supervisor {
                 self.state.connected.read().await.len(),
             );
         }
+        cooled && self.state.connected.len().await >= self.state.max_peers
     }
 }
 
@@ -1456,6 +1481,7 @@ mod tests {
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::{BlockHash, Network};
+    use futures::FutureExt;
     use std::sync::atomic::AtomicUsize;
     use std::time::{SystemTime, UNIX_EPOCH};
     use test_case::test_case;
@@ -1538,6 +1564,10 @@ mod tests {
         }
     }
 
+    /// Rates of peers of which the second is slow next to the first.
+    const FAST: usize = 128 << 10;
+    const SLOW: usize = 16 << 10;
+
     /// A connected peer that receives a run of framed `cfilter`s at its own rate.
     struct Feeder {
         id: PeerId,
@@ -1559,6 +1589,16 @@ mod tests {
                 due -= piece.len();
             }
         }
+    }
+
+    /// A `cfilter` with `bytes` of filter. Its block hash is not the stop hash of
+    /// [`get_cfilters`], so it settles no charge and the peers' work stays in flight.
+    fn filter_of(bytes: usize) -> NetworkMessage {
+        NetworkMessage::CFilter(CFilter {
+            filter_type: 0,
+            block_hash: BlockHash::dummy(1),
+            filter: vec![0; bytes],
+        })
     }
 
     /// Connects peer `n + 1` for each of `rates` and feeds it `rates[n]` bytes/s until the
@@ -1590,15 +1630,9 @@ mod tests {
     /// Feeds every peer at its rate for `ticks` flow controller ticks, with work up to its
     /// cap, as bulk download keeps it.
     async fn feed(net: &PeerNetworkManager, feeders: &mut [Feeder], ticks: u32) {
-        // Its block hash is not the stop hash of `get_cfilters`, so it settles no charge and
-        // the peers' work stays in flight.
         let frame = serialize(&RawNetworkMessage {
             magic: Network::Regtest.magic(),
-            payload: NetworkMessage::CFilter(CFilter {
-                filter_type: 0,
-                block_hash: BlockHash::dummy(1),
-                filter: vec![0; 32 * 1024],
-            }),
+            payload: filter_of(32 * 1024),
         });
         for _ in 0..ticks {
             for feeder in feeders.iter() {
@@ -1638,6 +1672,23 @@ mod tests {
 
         /// Like [`HandshakingPeer::listen`], advertising `services`.
         async fn serving(services: ServiceFlags) -> Self {
+            Self::answering(services, Duration::ZERO, 0).await
+        }
+
+        /// One peer for each of `rates`, serving filters at that many bytes/s.
+        async fn filtering(rates: &[usize]) -> Vec<Self> {
+            let services =
+                ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+            let mut peers = Vec::new();
+            for &rate in rates {
+                peers.push(Self::answering(services, Duration::ZERO, rate).await);
+            }
+            peers
+        }
+
+        /// Like [`HandshakingPeer::serving`], answering each ping after `pong_delay` and,
+        /// once asked for filters, sending `rate` bytes/s of them.
+        async fn answering(services: ServiceFlags, pong_delay: Duration, rate: usize) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
             let peer = HandshakingPeer {
                 addr: listener.local_addr().expect("bound address"),
@@ -1647,7 +1698,7 @@ mod tests {
             let (go, closed) = (peer.go.clone(), peer.closed.clone());
             tokio::spawn(async move {
                 while let Ok((stream, client)) = listener.accept().await {
-                    answer_handshake(stream, client, &go, services).await;
+                    answer_handshake(stream, client, &go, services, pong_delay, rate).await;
                     closed.fetch_add(1, Ordering::SeqCst);
                 }
             });
@@ -1656,12 +1707,14 @@ mod tests {
     }
 
     /// Answers the version handshake of `client` on `stream` once `go` is notified, then its
-    /// pings, for [`HandshakingPeer`].
+    /// pings after `pong_delay` and its filter requests at `rate`, for [`HandshakingPeer`].
     async fn answer_handshake(
         stream: TcpStream,
         client: SocketAddr,
         go: &Notify,
         services: ServiceFlags,
+        pong_delay: Duration,
+        rate: usize,
     ) {
         stream.set_nodelay(true).expect("loopback nodelay");
         let (read, mut write) = stream.into_split();
@@ -1683,9 +1736,23 @@ mod tests {
         let mut hello = framed(NetworkMessage::Version(version));
         hello.extend(framed(NetworkMessage::Verack));
         let _ = write.write_all(&hello).await;
-        while let Some(Ok(raw)) = frames.next().await {
-            if let NetworkMessage::Ping(nonce) = raw.payload {
-                let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
+        let filters = framed(filter_of(rate / 4));
+        let mut asked = false;
+        let mut ticker = time::interval(FLOW_TICK);
+        loop {
+            tokio::select! {
+                _ = ticker.tick(), if asked && rate > 0 => {
+                    let _ = write.write_all(&filters).await;
+                }
+                frame = frames.next() => match frame.and_then(Result::ok).map(|raw| raw.payload) {
+                    Some(NetworkMessage::Ping(nonce)) => {
+                        time::sleep(pong_delay).await;
+                        let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
+                    }
+                    Some(NetworkMessage::GetCFilters(_)) => asked = true,
+                    Some(_) => {}
+                    None => break,
+                },
             }
         }
     }
@@ -1819,7 +1886,7 @@ mod tests {
 
         for _ in 0..20 {
             let picked: Vec<SocketAddr> =
-                supervisor.next_candidates(3).await.iter().map(|p| p.addr()).collect();
+                supervisor.next_candidates(3, false).await.iter().map(|p| p.addr()).collect();
             assert_eq!(picked, [addrs[9]]);
         }
     }
@@ -1855,6 +1922,203 @@ mod tests {
         let known = net.state.discoverer.lock().await.get(10, &HashSet::new()).await;
         let known: Vec<SocketAddr> = known.iter().map(|p| p.addr()).collect();
         assert_eq!(known, [serves]);
+    }
+
+    /// A started manager with `slots` slots and the configured `nodes`, and its events.
+    async fn started(
+        nodes: &[HandshakingPeer],
+        slots: usize,
+    ) -> (PeerNetworkManager, broadcast::Receiver<NetworkEvent>) {
+        let mut config = ClientConfig::regtest().with_restrict_to_configured_peers(true);
+        config.peers = nodes.iter().map(|node| node.addr).collect();
+        config.max_peers = slots as u32;
+        config.transport_preference = TransportPreference::V1Only;
+        let net = PeerNetworkManager::new(&config).await;
+        let events = net.state.connected.subscribe();
+        net.start().await;
+        (net, events)
+    }
+
+    /// Runs a [`FLOW_TICK`] with work for every peer and handshakes answered by `nodes`.
+    /// Returns the peers swapped in it, the one that left first.
+    async fn work(
+        net: &PeerNetworkManager,
+        events: &mut broadcast::Receiver<NetworkEvent>,
+        nodes: &[HandshakingPeer],
+    ) -> Option<(SocketAddr, SocketAddr)> {
+        nodes.iter().for_each(|node| node.go.notify_one());
+        let handles: Vec<_> =
+            net.state.connected.read().await.iter().map(|peer| peer.handle()).collect();
+        for handle in &handles {
+            while !handle.is_closed() && handle.in_flight_bytes() < handle.cap() {
+                let _ = handle.send(&get_cfilters(0)).await;
+            }
+        }
+        time::advance(FLOW_TICK).await;
+        // The nodes answer over real sockets.
+        for _ in 0..100 {
+            task::yield_now().await;
+        }
+        let mut left = None;
+        while let Ok(event) = events.try_recv() {
+            // Only a swap announces an arrival right after a departure.
+            match (event, left.take()) {
+                (NetworkEvent::PeerDisconnected(addr), _) => left = Some(addr),
+                (NetworkEvent::PeerConnected(addr), Some(old)) => return Some((old, addr)),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// The nodes that answer handshakes. The ones past the first set are spares and answer
+    /// once the set is full.
+    async fn answering<'a>(
+        net: &PeerNetworkManager,
+        nodes: &'a [HandshakingPeer],
+    ) -> &'a [HandshakingPeer] {
+        let slots = net.state.max_peers;
+        if net.state.connected.len().await < slots {
+            &nodes[..slots]
+        } else {
+            nodes
+        }
+    }
+
+    /// What happens between the two swaps of a test.
+    #[derive(PartialEq)]
+    enum Between {
+        Nothing,
+        /// The supervisor is woken all the time.
+        Wakes,
+        /// A fast peer leaves and its slot is filled again.
+        Refill,
+    }
+
+    /// Two swaps are `gap` apart, or there is no second one. A slow peer flagged during the
+    /// cooldown goes at its end without a wake. A swapped out one is back only by a wake after
+    /// [`SWAP_BACK_AFTER`].
+    #[test_case(&[FAST, SLOW, SLOW], &[FAST, FAST], Between::Nothing, Some(SWAP_COOLDOWN); "a slow peer flagged during the cooldown goes after it")]
+    #[test_case(&[FAST, SLOW, SLOW], &[FAST, FAST], Between::Refill, Some(SWAP_COOLDOWN); "so it does after a refill during the cooldown")]
+    #[test_case(&[FAST, FAST, SLOW], &[SLOW], Between::Wakes, Some(SWAP_BACK_AFTER); "two slow peers do not take turns")]
+    #[test_case(&[FAST, FAST, SLOW], &[SLOW], Between::Nothing, None; "a round without a candidate waits for a wake")]
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_peer_is_swapped_out_again_after(
+        rates: &[usize],
+        spares: &[usize],
+        between: Between,
+        gap: Option<Duration>,
+    ) {
+        let rates_of = [rates, spares].concat();
+        let nodes = HandshakingPeer::filtering(&rates_of).await;
+        let (net, mut events) = started(&nodes, rates.len()).await;
+        let mut swaps = Vec::new();
+        let end = Instant::now() + gap.unwrap_or(SWAP_BACK_AFTER) + SWAP_COOLDOWN * 2;
+        while swaps.len() < 2 && Instant::now() < end {
+            if between == Between::Wakes {
+                net.state.peer_wake.notify_one();
+            }
+            if let Some((old, _)) = work(&net, &mut events, answering(&net, &nodes).await).await {
+                let old = nodes.iter().position(|node| node.addr == old).expect("a node");
+                assert_eq!(rates_of[old], SLOW, "node {old} left");
+                swaps.push(Instant::now());
+                if swaps.len() == 1 && between == Between::Refill {
+                    // Not at once: the second slow peer has to be flagged before the refill.
+                    for _ in 0..SWAP_COOLDOWN.as_secs() * 2 {
+                        assert_eq!(work(&net, &mut events, &nodes).await, None);
+                    }
+                    let first = nodes[0].addr;
+                    let peers = net.state.connected.read().await;
+                    peers.iter().find(|p| p.addr() == first).expect("connected").close();
+                }
+            }
+        }
+
+        assert!(!swaps.is_empty(), "no swap");
+        let after = swaps.get(1).map(|second| *second - swaps[0]);
+        match gap {
+            Some(gap) => {
+                let in_time = after.is_some_and(|a| (gap..gap + SWAP_COOLDOWN).contains(&a));
+                assert!(in_time, "after {after:?}");
+            }
+            None => assert_eq!(after, None),
+        }
+        assert_eq!(net.state.connected.len().await, rates.len());
+    }
+
+    /// A short set is filled without a wake, even after a round with every candidate backed off.
+    #[tokio::test(start_paused = true)]
+    async fn a_short_set_is_dialed_for_until_full() {
+        let nodes = HandshakingPeer::filtering(&[FAST]).await;
+        let (net, mut events) = started(&nodes, 1).await;
+        // Long enough for two failed dials, the second of which backs off past the next round.
+        let silent = Instant::now() + CONNECT_DEADLINE;
+        let mut backed_off = false;
+        while Instant::now() < silent {
+            work(&net, &mut events, &[]).await;
+            backed_off |= !net.state.bans.banned().await.is_empty();
+        }
+        assert!(backed_off, "no dial failed");
+
+        let end = Instant::now() + SWAP_COOLDOWN;
+        while net.state.connected.len().await == 0 && Instant::now() < end {
+            work(&net, &mut events, &nodes).await;
+        }
+        assert_eq!(net.state.connected.len().await, 1, "the set stays short");
+    }
+
+    /// A swapped out peer is no replacement, but it still fills an empty slot.
+    #[tokio::test(start_paused = true)]
+    async fn a_swapped_out_peer_fills_an_empty_slot() {
+        let nodes = HandshakingPeer::filtering(&[FAST, FAST, SLOW, FAST]).await;
+        let (net, mut events) = started(&nodes, 3).await;
+        let mut swapped_out = None;
+        let end = Instant::now() + SWAP_COOLDOWN;
+        while swapped_out.is_none() && Instant::now() < end {
+            swapped_out = work(&net, &mut events, answering(&net, &nodes).await).await;
+        }
+        assert_eq!(swapped_out, Some((nodes[2].addr, nodes[3].addr)));
+
+        // Only the swapped out peer answers the dials for the slot. The peer that leaves may
+        // have a notification left, which would let it answer too.
+        nodes[0].go.notified().now_or_never();
+        let slot = |peer: &&ConnectedPeer| peer.addr() == nodes[0].addr;
+        net.state.connected.read().await.iter().find(slot).expect("connected").close();
+        let filled = |peer: &ConnectedPeer| peer.addr() == nodes[2].addr;
+        let end = Instant::now() + SWAP_COOLDOWN;
+        while !net.state.connected.read().await.iter().any(filled) && Instant::now() < end {
+            work(&net, &mut events, &nodes[2..3]).await;
+        }
+        assert!(net.state.connected.read().await.iter().any(filled), "another peer joined");
+    }
+
+    /// A slow peer whose only candidate answers pings too late to replace it is kept, and the
+    /// candidate is dialed for it once. Each fill of a slot dials it once too.
+    #[tokio::test(start_paused = true)]
+    async fn a_rejected_candidate_is_dialed_once_for_a_slow_peer() {
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let pong_delay = Duration::from_millis(2 * BAD_LAG_FLOOR_MS as u64);
+        let mut nodes = HandshakingPeer::filtering(&[FAST, FAST, SLOW]).await;
+        nodes.push(HandshakingPeer::answering(services, pong_delay, FAST).await);
+        let (net, mut events) = started(&nodes, 3).await;
+
+        // One dial is for the first fill, the other for the slow peer.
+        let dials = || nodes[3].closed.load(Ordering::SeqCst);
+        let end = Instant::now() + SWAP_COOLDOWN * 4;
+        while Instant::now() < end {
+            assert_eq!(work(&net, &mut events, &nodes).await, None);
+        }
+        assert_eq!(dials(), 2);
+
+        // The refill dials it, but the slow peer is no reason to dial it again after that.
+        let fast = |peer: &&ConnectedPeer| peer.addr() != nodes[2].addr;
+        net.state.connected.read().await.iter().find(fast).expect("a fast peer").close();
+        let end = Instant::now() + SWAP_COOLDOWN;
+        while Instant::now() < end {
+            work(&net, &mut events, &nodes).await;
+        }
+        assert_eq!(net.state.connected.len().await, 3);
+        assert_eq!(dials(), 3);
     }
 
     #[test]
@@ -2267,15 +2531,20 @@ mod tests {
         assert_eq!(stalled_at, link_stalled);
     }
 
-    /// Peer 2 serves a fifth of peer 1's rate, then both go silent and the supervisor starts
-    /// `start_at` seconds in. Both falling silent at once points at our link, which says
-    /// nothing about the peers, so their rates stay put from the first silent tick. While held,
-    /// the supervisor must not swap peer 2 out, nor dial once the hold began. When the peers
-    /// deliver again, the held back swap goes ahead.
-    #[test_case(REQUEST_TIMEOUT.as_secs() + 2, 0; "a round during the stall dials nobody")]
-    #[test_case(REQUEST_TIMEOUT.as_secs() - 2, 1; "a stall during the dial keeps the slow peer")]
+    /// All peers falling silent points at our link, so no rate changes, a round dials nobody
+    /// and a candidate dialed before replaces nobody until they deliver again. After a `burst`
+    /// of one peer only the timeout monitor still sees the stall.
+    #[test_case(REQUEST_TIMEOUT.as_secs() + 2, REQUEST_TIMEOUT.as_secs() + 2, false, 0; "a round during the stall dials nobody")]
+    #[test_case(REQUEST_TIMEOUT.as_secs() + 2, REQUEST_TIMEOUT.as_secs() + 2, true, 0; "a round after a burst during the stall dials nobody")]
+    #[test_case(2, 4, false, 0; "a round early in the silence dials nobody")]
+    #[test_case(0, 2, false, 1; "a silence during the dial keeps the slow peer")]
     #[tokio::test(start_paused = true)]
-    async fn no_slow_peer_is_swapped_out_while_our_link_stalls(start_at: u64, dials: usize) {
+    async fn no_slow_peer_is_swapped_out_while_our_link_stalls(
+        start_at: u64,
+        answered_at: u64,
+        burst: bool,
+        dials: usize,
+    ) {
         let replacement = HandshakingPeer::listen().await;
         let mut config = ClientConfig::regtest().with_restrict_to_configured_peers(true);
         config.add_peer(replacement.addr);
@@ -2287,9 +2556,13 @@ mod tests {
         let measured = serving_rates(&net).await;
 
         advance_silent(start_at).await;
+        if burst {
+            // The second tick is the first to see bytes.
+            feed(&net, &mut feeders[..1], 2).await;
+        }
         net.start().await;
         settle().await;
-        advance_silent((REQUEST_TIMEOUT.as_secs() + 2).saturating_sub(start_at)).await;
+        advance_silent(answered_at - start_at).await;
         replacement.go.notify_one();
         for _ in 0..100_000 {
             if replacement.closed.load(Ordering::SeqCst) > 0 || slow.is_closed() {
@@ -2307,7 +2580,7 @@ mod tests {
         assert_eq!(net.connected_count().await, 2);
 
         // The peers deliver again, which proves our link works, and the held back swap goes
-        // ahead. Nothing but the pick of a slow peer wakes a full supervisor.
+        // ahead.
         replacement.go.notify_one();
         for _ in 0..8 * 4 {
             feed(&net, &mut feeders, 1).await;
