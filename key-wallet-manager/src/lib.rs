@@ -323,7 +323,31 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// guard is held, whereas a bounded blocking send there would deadlock the
     /// persistence consumer (which needs a `read()` lock to drain). See the
     /// `persistence_sender` field docs for the full rationale.
-    fn emit_event(&self, event: WalletEvent) {
+    ///
+    /// The wallet's dismissal changes not yet sent go first, as one
+    /// [`WalletEvent::DismissalsChanged`] right ahead of `event`. While one
+    /// waits for its sweep, nothing is taken until a
+    /// [`WalletEvent::TransactionsSwept`], which keeps the changes in order.
+    fn emit_event(&mut self, event: WalletEvent) {
+        let wallet_id = event.wallet_id();
+        let sweep = matches!(event, WalletEvent::TransactionsSwept { .. });
+        let changes = self
+            .wallet_infos
+            .get_mut(&wallet_id)
+            .filter(|info| sweep || !info.dismissal_pending())
+            .map(|info| info.take_dismissal_changes())
+            .unwrap_or_default();
+        if !changes.is_empty() {
+            self.send_event(WalletEvent::DismissalsChanged {
+                wallet_id,
+                changes,
+            });
+        }
+        self.send_event(event);
+    }
+
+    /// Sends `event` on both channels.
+    fn send_event(&self, event: WalletEvent) {
         self.events_emitted.store(true, std::sync::atomic::Ordering::Relaxed);
         // Lossless path: the persistence consumer must never miss a row-bearing
         // or watermark event, or its durable sync height freezes. Only enqueue
@@ -654,7 +678,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Collects — but does not emit — the per-wallet records affected by the
     /// check. Callers are responsible for emitting the appropriate
     /// `WalletEvent` *after* refreshing wallet balances so events never
-    /// carry a stale balance.
+    /// carry a stale balance. The dismissals of what it sweeps are not
+    /// reported.
     pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,
@@ -663,14 +688,20 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         update_balance: bool,
     ) -> CheckTransactionsResult {
         let wallet_ids: BTreeSet<WalletId> = self.wallets.keys().cloned().collect();
-        self.check_transaction_in_wallets(
-            tx,
-            context,
-            &wallet_ids,
-            update_state_if_found,
-            update_balance,
-        )
-        .await
+        let result = self
+            .check_transaction_in_wallets(
+                tx,
+                context,
+                &wallet_ids,
+                update_state_if_found,
+                update_balance,
+            )
+            .await;
+        // No event reports a sweep this check made, so its dismissals would wait forever.
+        for info in self.wallet_infos.values_mut() {
+            info.drop_unreported_dismissals();
+        }
+        result
     }
 
     /// Check a transaction against the given subset of wallets and update their states if relevant.
@@ -814,6 +845,8 @@ impl WalletManager<ManagedWalletInfo> {
     /// are refused, but the judgement otherwise belongs to the caller that
     /// owns broadcast policy.
     ///
+    /// Sends the abandon's [`WalletEvent::DismissalsChanged`] before it returns.
+    ///
     /// Returns `None` when the wallet is unknown.
     pub fn abandon_transaction(
         &mut self,
@@ -823,15 +856,28 @@ impl WalletManager<ManagedWalletInfo> {
     ) -> Option<AbandonOutcome> {
         let info = self.get_wallet_info_mut(wallet_id)?;
         let outcome = info.abandon_transaction_with_spends(root, external_spends);
-        if !outcome.is_empty() {
-            info.update_balance();
-            tracing::info!(
-                %root,
-                abandoned = outcome.abandoned.len(),
-                records_removed = outcome.records_removed,
-                utxos_removed = outcome.utxos_removed,
-                "Abandoned a dead transaction and everything built on it"
-            );
+        if outcome.is_empty() {
+            return Some(outcome);
+        }
+        info.update_balance();
+        tracing::info!(
+            %root,
+            abandoned = outcome.abandoned.len(),
+            records_removed = outcome.records_removed,
+            utxos_removed = outcome.utxos_removed,
+            "Abandoned a dead transaction and everything built on it"
+        );
+        // No other event reports an abandon, so its changes go now unless a sweep's wait first.
+        let changes = if info.dismissal_pending() {
+            Vec::new()
+        } else {
+            info.take_dismissal_changes()
+        };
+        if !changes.is_empty() {
+            self.send_event(WalletEvent::DismissalsChanged {
+                wallet_id: *wallet_id,
+                changes,
+            });
         }
         Some(outcome)
     }

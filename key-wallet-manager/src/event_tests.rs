@@ -20,6 +20,7 @@ use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
 use key_wallet::managed_account::managed_account_type::ManagedAccountType;
 use key_wallet::transaction_checking::{BlockInfo, TransactionRouter, TransactionType};
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+use key_wallet::wallet::managed_wallet_info::DismissalChange;
 use key_wallet::AccountType;
 use std::collections::{BTreeMap, BTreeSet};
 use test_case::test_case;
@@ -1100,6 +1101,18 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
     );
     assert_eq!(block.position(), Some(1), "the winner's index in that block");
     assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
+
+    let at =
+        events.iter().position(|e| matches!(e, WalletEvent::TransactionsSwept { .. })).unwrap();
+    assert!(
+        matches!(
+            &events[at - 1],
+            WalletEvent::DismissalsChanged { changes, .. }
+                if changes == &vec![DismissalChange::Dismissed(loser.txid())]
+        ),
+        "the dismissal goes right ahead of its sweep: {:?}",
+        events
+    );
 }
 
 /// The mempool emission site's counterpart to the block test above, pinning
@@ -1208,6 +1221,208 @@ async fn test_is_locked_mempool_winner_sweeps_with_no_mined_height() {
          consumer a finality horizon the winner does not have"
     );
     assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
+
+    let at =
+        events.iter().position(|e| matches!(e, WalletEvent::TransactionsSwept { .. })).unwrap();
+    assert!(
+        matches!(
+            &events[at - 1],
+            WalletEvent::DismissalsChanged { wallet_id: wid, changes }
+                if *wid == wallet_id && changes == &vec![DismissalChange::Dismissed(loser.txid())]
+        ),
+        "the dismissal goes right ahead of its sweep: {:?}",
+        events
+    );
+    assert_eq!(
+        events.iter().filter(|e| matches!(e, WalletEvent::DismissalsChanged { .. })).count(),
+        1
+    );
+}
+
+/// A conflict that a lock alone sweeps is reported by no `TransactionsSwept`, so its loser's
+/// dismissal is not sent either, and holds back no later change.
+#[tokio::test]
+async fn test_a_lock_only_sweep_sends_no_dismissal() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let funding = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x6b; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: 500_000,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    let funding_block = make_block(vec![funding.clone()], 0x6b, 2000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
+        .await;
+    let coin = OutPoint {
+        txid: funding.txid(),
+        vout: 0,
+    };
+    let spend = |value: u64| Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: coin,
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    let loser = spend(490_000);
+    let winner = spend(480_000);
+    manager.process_mempool_transaction(&loser, None).await;
+    manager.process_mempool_transaction(&winner, None).await;
+
+    let mut rx = manager.subscribe_events();
+    manager.process_instant_send_lock(dummy_instant_lock(winner.txid()));
+    let held = |m: &WalletManager<ManagedWalletInfo>, t: &Txid| {
+        m.get_wallet_info(&wallet_id)
+            .unwrap()
+            .accounts
+            .all_accounts()
+            .iter()
+            .any(|a| a.transactions().contains_key(t))
+    };
+    assert!(!held(&manager, &loser.txid()), "the lock swept the loser");
+    assert!(held(&manager, &winner.txid()));
+
+    manager.update_wallet_synced_height(&wallet_id, 101);
+    assert!(!manager.get_wallet_info(&wallet_id).unwrap().dismissal_pending());
+    let incoming = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x6e; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: 100_000,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    manager.process_mempool_transaction(&incoming, None).await;
+    let outcome =
+        manager.abandon_transaction(&wallet_id, incoming.txid(), &BTreeMap::new()).unwrap();
+    assert!(!outcome.is_empty());
+    let events = drain_events(&mut rx);
+    let changes: Vec<&Vec<DismissalChange>> = events
+        .iter()
+        .filter_map(|e| match e {
+            WalletEvent::DismissalsChanged {
+                changes,
+                ..
+            } => Some(changes),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        changes,
+        vec![&vec![DismissalChange::Abandoned(incoming.txid())]],
+        "the lock's sweep is not sent and holds nothing back: {:?}",
+        events
+    );
+}
+
+/// An abandon is sent when it happens, and forgotten ahead of the block that mines it.
+#[tokio::test]
+async fn test_an_abandon_is_sent_at_once_and_forgotten_once_mined() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let funding = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x6c; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: 500_000,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    let funding_block = make_block(vec![funding.clone()], 0x6c, 2000);
+    let wallets = BTreeSet::from([wallet_id]);
+    manager
+        .process_block_for_wallets(&funding_block, funding_block.block_hash(), 100, &wallets)
+        .await;
+    let payment = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: funding.txid(),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: 490_000,
+            script_pubkey: addr.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    manager.process_mempool_transaction(&payment, None).await;
+
+    let mut rx = manager.subscribe_events();
+    let outcome =
+        manager.abandon_transaction(&wallet_id, payment.txid(), &BTreeMap::new()).unwrap();
+    assert!(!outcome.is_empty());
+    let events = drain_events(&mut rx);
+    assert!(
+        matches!(
+            events.as_slice(),
+            [WalletEvent::DismissalsChanged { changes, .. }]
+                if changes == &vec![DismissalChange::Abandoned(payment.txid())]
+        ),
+        "the abandon is sent at once: {:?}",
+        events
+    );
+
+    let block = make_block(vec![payment.clone()], 0x6d, 2100);
+    manager.process_block_for_wallets(&block, block.block_hash(), 102, &wallets).await;
+    let events = drain_events(&mut rx);
+    let at = events
+        .iter()
+        .position(|e| matches!(e, WalletEvent::DismissalsChanged { .. }))
+        .unwrap_or_else(|| panic!("the mined abandon is not forgotten: {:?}", events));
+    assert!(
+        matches!(&events[at], WalletEvent::DismissalsChanged { changes, .. }
+            if changes == &vec![DismissalChange::Forgotten(payment.txid())]),
+        "{:?}",
+        events
+    );
+    assert!(at + 1 < events.len(), "sent alone at the end: {:?}", events);
 }
 
 #[tokio::test]

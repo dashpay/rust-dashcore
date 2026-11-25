@@ -14,6 +14,7 @@ use crate::transaction_checking::TransactionContext;
 use crate::transaction_checking::WalletTransactionChecker;
 use crate::wallet::managed_wallet_info::helpers::WalletConflictSweep;
 use crate::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
+use crate::wallet::managed_wallet_info::DismissalChange;
 use crate::wallet::managed_wallet_info::TransactionRecord;
 use crate::wallet::ManagedWalletInfo;
 use crate::{Error, Network, Utxo, Wallet, WalletCoreBalance};
@@ -241,6 +242,23 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
     /// with it.
     fn undismiss(&mut self, _txid: &Txid) {}
 
+    /// Returns the changes to the wallet's own dismissals since the last call, in order, for a
+    /// persister to store with their cause. They accumulate until taken. The default is none, and
+    /// a wrapper forwards this, `dismissal_pending` and `drop_unreported_dismissals` together.
+    fn take_dismissal_changes(&mut self) -> Vec<DismissalChange> {
+        Vec::new()
+    }
+
+    /// Whether a change not yet taken waits for the report of the sweep that caused it. The
+    /// default is `false`.
+    fn dismissal_pending(&self) -> bool {
+        false
+    }
+
+    /// Drops the changes not yet taken whose sweep no event reports. Those losers' records stay
+    /// stored, and the next load sweeps them again. The default does nothing.
+    fn drop_unreported_dismissals(&mut self) {}
+
     /// Returns each outpoint the wallet's unconfirmed records spend, pending or InstantSend-locked,
     /// with the txids of those records: what a transaction in a block the wallet didn't fetch can
     /// beat. The default is none.
@@ -412,6 +430,18 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn undismiss(&mut self, txid: &Txid) {
         self.dismissed.settled(txid);
+    }
+
+    fn take_dismissal_changes(&mut self) -> Vec<DismissalChange> {
+        self.dismissed.take_changes()
+    }
+
+    fn dismissal_pending(&self) -> bool {
+        self.dismissed.awaits_sweep()
+    }
+
+    fn drop_unreported_dismissals(&mut self) {
+        self.dismissed.drop_unreported();
     }
 
     fn unconfirmed_spent_outpoints(&self) -> BTreeMap<OutPoint, BTreeSet<Txid>> {

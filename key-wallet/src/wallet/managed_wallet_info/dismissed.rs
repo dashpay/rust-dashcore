@@ -11,6 +11,19 @@ const MAX_SPENDS: usize = 4_096;
 /// The most dismissed transactions one spend is released by.
 const MAX_PARENTS: usize = 16;
 
+/// A change to the wallet's own dismissals, for a persister to mirror. Spends held back with a
+/// dismissed transaction are not included: a delivery after a restart holds them back again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum DismissalChange {
+    /// A locked or mined conflict beat the transaction, and the user did not abandon it.
+    Dismissed(Txid),
+    /// The user abandoned the transaction.
+    Abandoned(Txid),
+    /// The transaction is no longer dismissed: it was locked or mined, or pushed out at capacity.
+    Forgotten(Txid),
+}
+
 /// Unconfirmed transactions the wallet dropped as dead (swept losers, abandoned transactions),
 /// and unlocked spends of them held back until what they spend settles. Anyone can cause a sweep
 /// or send such a spend, so each kind has its own cap and cannot push out the user's abandons.
@@ -25,21 +38,88 @@ pub(crate) struct DismissedTxids {
     pinned: HashSet<Txid>,
     /// For each dismissed transaction, the remembered spends it holds back.
     holds: HashMap<Txid, HashSet<Txid>>,
+    /// Changes not yet taken, in order. They accumulate until taken.
+    changes: Vec<Pending>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Pending {
+    change: DismissalChange,
+    /// Whether the change waits for the report of the sweep that caused it.
+    awaits_sweep: bool,
 }
 
 impl DismissedTxids {
     /// Dismisses `txid` because the user abandoned it.
     pub(crate) fn abandon(&mut self, txid: Txid) {
+        if !self.abandoned.contains(&txid) {
+            self.record(DismissalChange::Abandoned(txid), false);
+        }
         if let Some(evicted) = self.abandoned.insert(txid) {
-            self.release_unless_dismissed(evicted);
+            self.pushed_out(evicted);
         }
     }
 
     /// Dismisses `txid` because a locked or mined conflict beat it.
     pub(crate) fn sweep(&mut self, txid: Txid) {
-        if let Some(evicted) = self.swept.insert(txid) {
-            self.release_unless_dismissed(evicted);
+        if !self.swept.contains(&txid) && !self.abandoned.contains(&txid) {
+            self.record(DismissalChange::Dismissed(txid), true);
         }
+        if let Some(evicted) = self.swept.insert(txid) {
+            self.pushed_out(evicted);
+        }
+    }
+
+    /// Dismisses again, oldest first, the transactions a persister kept. Only an entry pushed out
+    /// at capacity is a change.
+    pub(crate) fn restore(
+        &mut self,
+        abandoned: impl IntoIterator<Item = Txid>,
+        swept: impl IntoIterator<Item = Txid>,
+    ) {
+        for txid in abandoned {
+            if let Some(evicted) = self.abandoned.insert(txid) {
+                self.pushed_out(evicted);
+            }
+        }
+        for txid in swept {
+            if let Some(evicted) = self.swept.insert(txid) {
+                self.pushed_out(evicted);
+            }
+        }
+    }
+
+    /// Returns the changes since the last call, in order.
+    pub(crate) fn take_changes(&mut self) -> Vec<DismissalChange> {
+        self.changes.drain(..).map(|pending| pending.change).collect()
+    }
+
+    /// Whether a change not yet taken waits for the report of the sweep that caused it.
+    pub(crate) fn awaits_sweep(&self) -> bool {
+        self.changes.iter().any(|pending| pending.awaits_sweep)
+    }
+
+    /// Drops the changes not yet taken that wait for the report of a sweep.
+    pub(crate) fn drop_unreported(&mut self) {
+        self.changes.retain(|pending| !pending.awaits_sweep);
+    }
+
+    fn record(&mut self, change: DismissalChange, awaits_sweep: bool) {
+        self.changes.push(Pending {
+            change,
+            awaits_sweep,
+        });
+    }
+
+    /// Records what pushing `txid` out of one set changed, and releases its spends if it is no
+    /// longer dismissed.
+    fn pushed_out(&mut self, txid: Txid) {
+        if self.swept.contains(&txid) {
+            self.record(DismissalChange::Dismissed(txid), false);
+        } else if !self.abandoned.contains(&txid) {
+            self.record(DismissalChange::Forgotten(txid), false);
+        }
+        self.release_unless_dismissed(txid);
     }
 
     fn is_own(&self, txid: &Txid) -> bool {
@@ -103,8 +183,11 @@ impl DismissedTxids {
     /// Marks `txid` locked or mined: it is not dead, and the spends it held back are released,
     /// recursively. A spend the wallet dismissed in its own right stays dismissed.
     pub(crate) fn settled(&mut self, txid: &Txid) {
-        self.abandoned.remove(txid);
-        self.swept.remove(txid);
+        let was_abandoned = self.abandoned.remove(txid);
+        let was_swept = self.swept.remove(txid);
+        if was_abandoned || was_swept {
+            self.record(DismissalChange::Forgotten(*txid), false);
+        }
         if self.spends.remove(txid) {
             self.forget_spend(txid);
         }
@@ -182,6 +265,96 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[..4].copy_from_slice(&n.to_le_bytes());
         Txid::from_byte_array(bytes)
+    }
+
+    #[test]
+    fn changes_to_the_wallets_own_dismissals_are_kept_in_order_until_taken() {
+        use DismissalChange::{Abandoned, Dismissed, Forgotten};
+        let mut dismissed = DismissedTxids::default();
+        let (a, b, spend) = (txid(1), txid(2), txid(3));
+        dismissed.abandon(a);
+        dismissed.abandon(a);
+        dismissed.sweep(b);
+        dismissed.sweep(a);
+        assert!(dismissed.hold_spend(spend, [a]));
+        dismissed.settled(&a);
+        dismissed.settled(&spend);
+        assert_eq!(dismissed.take_changes(), vec![Abandoned(a), Dismissed(b), Forgotten(a)]);
+        assert!(dismissed.take_changes().is_empty());
+        dismissed.settled(&a);
+        assert!(dismissed.take_changes().is_empty(), "a second settle is no change");
+    }
+
+    #[test]
+    fn an_abandon_of_a_swept_transaction_and_its_push_out_change_its_kind() {
+        use DismissalChange::{Abandoned, Dismissed, Forgotten};
+        let mut dismissed = DismissedTxids::default();
+        let swept = txid(0);
+        dismissed.sweep(swept);
+        dismissed.abandon(swept);
+        assert_eq!(dismissed.take_changes(), vec![Dismissed(swept), Abandoned(swept)]);
+        dismissed.restore((1..MAX_DISMISSED as u32).map(txid), []);
+        assert!(dismissed.take_changes().is_empty(), "a restore records nothing");
+        let newest = txid(MAX_DISMISSED as u32);
+        dismissed.abandon(newest);
+        assert_eq!(dismissed.take_changes(), vec![Abandoned(newest), Dismissed(swept)]);
+        assert!(dismissed.contains(&swept));
+        dismissed.abandon(swept);
+        assert_eq!(dismissed.take_changes(), vec![Abandoned(swept), Forgotten(txid(1))]);
+    }
+
+    #[test]
+    fn a_swept_transaction_pushed_out_while_abandoned_is_no_change() {
+        let mut dismissed = DismissedTxids::default();
+        let abandoned = txid(0);
+        dismissed.sweep(abandoned);
+        dismissed.abandon(abandoned);
+        dismissed.restore([], (1..MAX_DISMISSED as u32).map(txid));
+        dismissed.take_changes();
+        dismissed.sweep(txid(MAX_DISMISSED as u32));
+        assert_eq!(
+            dismissed.take_changes(),
+            vec![DismissalChange::Dismissed(txid(MAX_DISMISSED as u32))]
+        );
+        assert!(dismissed.contains(&abandoned));
+    }
+
+    #[test]
+    fn a_dismissal_pushed_out_at_capacity_is_forgotten() {
+        use DismissalChange::{Dismissed, Forgotten};
+        let mut dismissed = DismissedTxids::default();
+        dismissed.restore([], (0..MAX_DISMISSED as u32).map(txid));
+        assert!(dismissed.take_changes().is_empty());
+        let newest = txid(MAX_DISMISSED as u32);
+        dismissed.sweep(newest);
+        assert_eq!(dismissed.take_changes(), vec![Dismissed(newest), Forgotten(txid(0))]);
+        assert!(!dismissed.contains(&txid(0)));
+        dismissed.restore([], [txid(MAX_DISMISSED as u32 + 1)]);
+        assert_eq!(
+            dismissed.take_changes(),
+            vec![Forgotten(txid(1))],
+            "the restore pushed one out"
+        );
+    }
+
+    #[test]
+    fn only_a_sweeps_dismissal_waits_for_its_report() {
+        use DismissalChange::{Abandoned, Forgotten};
+        let mut dismissed = DismissedTxids::default();
+        let (swept, abandoned, settled) = (txid(1), txid(2), txid(3));
+        dismissed.abandon(settled);
+        dismissed.settled(&settled);
+        dismissed.abandon(abandoned);
+        assert!(!dismissed.awaits_sweep());
+        dismissed.sweep(swept);
+        assert!(dismissed.awaits_sweep());
+        dismissed.drop_unreported();
+        assert!(!dismissed.awaits_sweep());
+        assert!(dismissed.contains(&swept), "dropping the change keeps the dismissal");
+        assert_eq!(
+            dismissed.take_changes(),
+            vec![Abandoned(settled), Forgotten(settled), Abandoned(abandoned)]
+        );
     }
 
     #[test]
