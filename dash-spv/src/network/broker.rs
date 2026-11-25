@@ -598,7 +598,11 @@ fn rate(peer: &PeerHandle) -> u64 {
 /// delivering: [`HEDGE_QUEUE_FACTOR`] times the queue it ends, its own reply included, at least
 /// [`HEDGE_OVERDUE`]. The queue is taken at send. Requests sent later wait behind this one,
 /// and a rate taken later would give a peer that slowed down the more time the slower it got.
+/// A rate not measured yet starts near zero, so it gives [`HEDGE_OVERDUE`].
 fn overdue_after(peer: &PeerHandle) -> Duration {
+    if peer.serving_rate() == 0 {
+        return HEDGE_OVERDUE;
+    }
     queued_secs(peer)
         .and_then(|secs| Duration::try_from_secs_f64(secs * HEDGE_QUEUE_FACTOR).ok())
         .map_or(HEDGE_OVERDUE, |queued| queued.max(HEDGE_OVERDUE))
@@ -1302,6 +1306,8 @@ mod tests {
         let broker = Broker::new();
         let slow = ConnectedPeer::for_test(conn(1, 0)).await;
         let idle = ConnectedPeer::for_test(conn(2, 0)).await;
+        // A first sample, not a measured rate, so it must not move the deadline.
+        slow.set_served(1);
         broker.enqueue(0, request.clone()).await;
         assert_eq!(broker.route(&[slow.handle()], &ResponseCosts::new()).await, 1);
 
