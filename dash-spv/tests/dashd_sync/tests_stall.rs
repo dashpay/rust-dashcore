@@ -68,34 +68,40 @@ async fn test_sync_keeps_a_peer_frozen_mid_sync() {
     ctx.assert_synced(&client_handle.client.progress().await).await;
 }
 
-/// Verify one of two peers going silent during filter sync does not hold the filters back
-/// until its requests time out.
+/// Verify two of three peers going silent during filter sync do not hold the filters back
+/// until their requests time out.
 ///
-/// The filter batches the frozen peer owes block the store. The other peer must deliver them
-/// while the frozen one is still connected, so before a timeout drops it.
+/// The filter batches the frozen peers owe block the store, and two silent peers look like a
+/// stall of our own link. The third peer must deliver them before a timeout drops a frozen one.
 #[tokio::test]
-async fn test_filter_sync_passes_a_frozen_peer() {
+async fn test_filter_sync_passes_frozen_peers() {
     let Some(ctx) = TestContext::new(TestChain::Full).await else {
         return;
     };
-    let Some(frozen) = DashdTestContext::new(TestChain::Full).await else {
-        return;
-    };
+    let mut frozen = Vec::new();
+    for _ in 0..2 {
+        let Some(node) = DashdTestContext::new(TestChain::Full).await else {
+            return;
+        };
+        frozen.push(node);
+    }
     let tip = ctx.dashd.initial_height;
     let mut config = ctx.client_config.clone();
-    config.add_peer(frozen.addr);
+    for peer in &frozen {
+        config.add_peer(peer.addr);
+    }
     let mut client_handle = create_and_start_client(&config, Arc::clone(&ctx.wallet)).await;
 
-    let both_connected = wait_for_network_event(
+    let all_connected = wait_for_network_event(
         &mut client_handle.network_event_receiver,
         |event| {
-            matches!(event, NetworkEvent::PeersUpdated { addresses, .. } if addresses.len() == 2)
+            matches!(event, NetworkEvent::PeersUpdated { addresses, .. } if addresses.len() == 3)
         },
         SYNC_TIMEOUT,
     )
     .await;
-    assert!(both_connected, "expected the client to connect to both nodes");
-    // Past the headers and filter headers, the frozen peer can only owe filters and blocks.
+    assert!(all_connected, "expected the client to connect to all nodes");
+    // Past the headers and filter headers, the frozen peers can only owe filters and blocks.
     timeout(SYNC_TIMEOUT, async {
         loop {
             match client_handle.sync_event_receiver.recv().await {
@@ -110,7 +116,9 @@ async fn test_filter_sync_passes_a_frozen_peer() {
     })
     .await
     .expect("Timeout waiting for filter headers");
-    frozen.node.set_paused(true).await;
+    for peer in &frozen {
+        peer.node.set_paused(true).await;
+    }
 
     let mut progress = client_handle.progress_receiver.clone();
     let stored = |progress: &SyncProgress| progress.filters().unwrap().stored_height();
@@ -130,7 +138,9 @@ async fn test_filter_sync_passes_a_frozen_peer() {
     .await
     .expect("Timeout waiting for the filters");
 
-    frozen.node.set_paused(false).await;
+    for peer in &frozen {
+        peer.node.set_paused(false).await;
+    }
     wait_for_sync(&mut client_handle.progress_receiver, tip).await;
     client_handle.stop().await;
     ctx.assert_synced(&client_handle.client.progress().await).await;
