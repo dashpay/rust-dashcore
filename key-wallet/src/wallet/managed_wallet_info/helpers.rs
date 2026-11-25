@@ -212,6 +212,9 @@ impl ManagedWalletInfo {
             // per-account results overlap.
             result.txids.sort_unstable();
             result.txids.dedup();
+            for txid in &result.txids {
+                self.dismissed.sweep(*txid);
+            }
             let removed = result.txids.iter().copied().collect();
             result.released_outpoints.extend(self.release_spent_claims(&removed));
             result.released_outpoints.sort_unstable();
@@ -227,6 +230,24 @@ impl ManagedWalletInfo {
             });
         }
         result
+    }
+
+    /// Whether `tx`, arriving unconfirmed and unlocked, is a transaction the
+    /// wallet dropped as dead or spends an output of one. Such a spend is
+    /// held back with it.
+    pub(crate) fn dismiss_if_dead(&mut self, tx: &Transaction, txid: Txid) -> bool {
+        self.dismissed.contains(&txid) || self.hold_spend_of_dismissed(tx, txid)
+    }
+
+    /// Holds `tx` back if it spends an output of a transaction the wallet
+    /// dropped as dead, until that transaction is locked or mined. Returns
+    /// whether it does.
+    pub(crate) fn hold_spend_of_dismissed(&mut self, tx: &Transaction, txid: Txid) -> bool {
+        if self.accounts.all_accounts().into_iter().any(|account| account.has_transaction(&txid)) {
+            return false;
+        }
+        let parents = tx.input.iter().map(|input| input.previous_output.txid);
+        self.dismissed.hold_spend(txid, parents)
     }
 
     /// Release every spent-output claim whose claimant is in `removed`, with
@@ -403,6 +424,9 @@ impl ManagedWalletInfo {
         }
 
         self.release_spent_claims(&abandoned);
+        for txid in &abandoned {
+            self.dismissed.abandon(*txid);
+        }
 
         AbandonOutcome {
             abandoned,

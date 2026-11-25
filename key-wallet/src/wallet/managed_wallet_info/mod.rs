@@ -5,6 +5,7 @@
 
 pub mod asset_lock_builder;
 pub mod coin_selection;
+mod dismissed;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
@@ -150,6 +151,10 @@ pub struct ManagedWalletInfo {
     pub(crate) account_generation: u64,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) noted_chain_lock_height: Option<CoreBlockHeight>,
+    /// Unconfirmed transactions dropped as dead (swept losers, abandoned
+    /// transactions) and unlocked spends of them; in memory only.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) dismissed: dismissed::DismissedTxids,
     /// Outpoints the wallet will not spend; see [`Self::locked_outpoints`].
     /// `serde(default)` loads a snapshot written before the field existed
     /// with no locks, in self-describing formats only.
@@ -262,6 +267,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            dismissed: Default::default(),
             locked_outpoints: BTreeSet::new(),
         }
     }
@@ -281,6 +287,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            dismissed: Default::default(),
             locked_outpoints: BTreeSet::new(),
         }
     }
@@ -310,6 +317,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            dismissed: Default::default(),
             locked_outpoints: BTreeSet::new(),
         }
     }
