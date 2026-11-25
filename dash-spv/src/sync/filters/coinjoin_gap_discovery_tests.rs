@@ -31,6 +31,9 @@
 //! 6. [`coinjoin_scripts_derived_in_one_batch_find_blocks_in_the_next`] —
 //!    scripts derived by the lowest batch are deferred to the next batch and
 //!    still find its blocks before it commits.
+//! 7. [`a_pool_widened_mid_commit_does_not_certify_the_batch`] and
+//!    [`a_payment_to_a_pool_widened_mid_commit_is_found_on_the_next_pass`] — a
+//!    `set_gap_limit` between a commit's reconcile and its write lock holds the batch.
 //!
 //! Each test drives the manager exactly the way the production event loop
 //! does: `try_process_batch` → `BlocksNeeded` → (blocks-manager stand-in)
@@ -47,16 +50,23 @@ use crate::storage::{
 use crate::test_utils::MockNetworkManager;
 use dashcore::bip158::BlockFilterWriter;
 use dashcore::consensus::encode::serialize;
+use dashcore::ephemerealdata::chain_lock::ChainLock;
+use dashcore::ephemerealdata::instant_lock::InstantLock;
+use dashcore::prelude::CoreBlockHeight;
 use dashcore::{
     Address, Block, BlockHash, Network, OutPoint, Transaction, TxIn, TxOut, Txid, Witness,
 };
-use key_wallet::account::ManagedAccountTrait;
+use key_wallet::account::{AccountType, ManagedAccountTrait, StandardAccountType};
 use key_wallet::managed_account::address_pool::DEFAULT_COINJOIN_GAP_LIMIT;
-use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType};
+use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
-use key_wallet_manager::test_utils::coinjoin_external_addresses;
-use key_wallet_manager::WalletManager;
+use key_wallet_manager::test_utils::{coinjoin_external_addresses, external_addresses};
+use key_wallet_manager::{
+    BlockProcessingResult, MempoolTransactionResult, WalletError, WalletEvent, WalletManager,
+};
+use std::sync::atomic::{AtomicU32, Ordering};
+use tokio::sync::broadcast;
 
 /// Deterministic test wallet seed (standard BIP-39 test vector mnemonic).
 const TEST_MNEMONIC: &str =
@@ -182,9 +192,14 @@ fn filter_with_elements(block: &Block, elements: &[Vec<u8>]) -> BlockFilter {
 /// no more blocks are requested. Blocks are processed in height order, like
 /// the real `BlocksPipeline`, and the manager ticks once per round. Returns how
 /// often each block was applied.
-async fn drive_to_quiescence(
-    manager: &mut CjFiltersManager,
-    wallet: &Arc<RwLock<WalletManager<ManagedWalletInfo>>>,
+async fn drive_to_quiescence<W: WalletInterface>(
+    manager: &mut FiltersManager<
+        PersistentBlockHeaderStorage,
+        PersistentFilterHeaderStorage,
+        PersistentFilterStorage,
+        W,
+    >,
+    wallet: &Arc<RwLock<W>>,
     blocks: &HashMap<BlockHash, Block>,
     initial_events: Vec<SyncEvent>,
 ) -> HashMap<BlockHash, usize> {
@@ -461,4 +476,240 @@ async fn coinjoin_scripts_derived_in_one_batch_find_blocks_in_the_next() {
     assert!(passes.values().all(|count| *count == 1), "each block is applied once: {passes:?}");
     assert!(manager.active_batches.is_empty(), "both batches commit");
     assert_eq!(manager.progress.committed_height(), 199);
+}
+
+/// A real wallet manager whose BIP44 account 0 pools are widened with
+/// `set_gap_limit` right after the next scan-script read once armed: the gap
+/// between a commit's reconcile and its write lock. Its wallets are born at
+/// height 0, since `earliest_required_height` keeps the trait default.
+struct WideningWallet {
+    inner: tokio::sync::Mutex<WalletManager<ManagedWalletInfo>>,
+    widen_to: AtomicU32,
+}
+
+const BIP44: AccountType = AccountType::Standard {
+    index: 0,
+    standard_account_type: StandardAccountType::BIP44Account,
+};
+
+impl WideningWallet {
+    fn lock(&self) -> tokio::sync::MutexGuard<'_, WalletManager<ManagedWalletInfo>> {
+        self.inner.try_lock().expect("one task uses the wallet at a time")
+    }
+
+    fn manager(&mut self) -> &mut WalletManager<ManagedWalletInfo> {
+        self.inner.get_mut()
+    }
+
+    fn widen_after_next_read(&self, gap_limit: u32) {
+        self.widen_to.store(gap_limit, Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl WalletInterface for WideningWallet {
+    async fn process_block_for_wallets(
+        &mut self,
+        block: &Block,
+        block_hash: BlockHash,
+        height: CoreBlockHeight,
+        wallets: &BTreeSet<WalletId>,
+    ) -> BlockProcessingResult {
+        self.manager().process_block_for_wallets(block, block_hash, height, wallets).await
+    }
+
+    fn checks_derived_addresses(&self) -> bool {
+        self.lock().checks_derived_addresses()
+    }
+
+    async fn process_mempool_transaction(
+        &mut self,
+        tx: &Transaction,
+        instant_lock: Option<InstantLock>,
+    ) -> MempoolTransactionResult {
+        self.manager().process_mempool_transaction(tx, instant_lock).await
+    }
+
+    fn monitored_addresses(&self) -> Vec<Address> {
+        self.lock().monitored_addresses()
+    }
+
+    fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        self.lock().monitored_script_pubkeys_for(wallet_id)
+    }
+
+    fn scan_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        let mut manager = self.lock();
+        let scripts = manager.scan_script_pubkeys_for(wallet_id);
+        let gap_limit = self.widen_to.swap(0, Ordering::SeqCst);
+        if gap_limit > 0 {
+            let (wallet, info) = manager.get_wallet_and_info_mut(wallet_id).expect("wallet");
+            let xpub = wallet.accounts.account_of_type(BIP44).expect("BIP44 account").account_xpub;
+            let account = info.accounts.funds_account_mut(&BIP44).expect("managed BIP44 account");
+            let widened = account.set_gap_limit(gap_limit, &KeySource::Public(xpub));
+            assert!(!widened.expect("widen").is_empty(), "the widening derives new addresses");
+        }
+        scripts
+    }
+
+    fn monitored_filter_elements_for(&self, wallet_id: &WalletId) -> Vec<Vec<u8>> {
+        self.lock().monitored_filter_elements_for(wallet_id)
+    }
+
+    fn watched_outpoints(&self) -> Vec<OutPoint> {
+        self.lock().watched_outpoints()
+    }
+
+    fn last_processed_height(&self) -> CoreBlockHeight {
+        self.lock().last_processed_height()
+    }
+
+    fn synced_height(&self) -> CoreBlockHeight {
+        self.lock().synced_height()
+    }
+
+    fn wallets_behind(&self, height: CoreBlockHeight) -> BTreeSet<WalletId> {
+        self.lock().wallets_behind(height)
+    }
+
+    fn wallets_not_yet_at(&self, height: CoreBlockHeight) -> BTreeSet<WalletId> {
+        self.lock().wallets_not_yet_at(height)
+    }
+
+    fn wallet_synced_height(&self, wallet_id: &WalletId) -> CoreBlockHeight {
+        self.lock().wallet_synced_height(wallet_id)
+    }
+
+    fn wallet_account_generation(&self, wallet_id: &WalletId) -> u64 {
+        self.lock().wallet_account_generation(wallet_id)
+    }
+
+    fn update_wallet_synced_height(&mut self, wallet_id: &WalletId, height: CoreBlockHeight) {
+        self.manager().update_wallet_synced_height(wallet_id, height)
+    }
+
+    fn truncate_above(&mut self, height: CoreBlockHeight) -> Result<(), WalletError> {
+        self.manager().truncate_above(height)
+    }
+
+    fn update_wallet_last_processed_height(
+        &mut self,
+        wallet_id: &WalletId,
+        height: CoreBlockHeight,
+    ) {
+        self.manager().update_wallet_last_processed_height(wallet_id, height)
+    }
+
+    fn monitor_hash(&self) -> u64 {
+        self.lock().monitor_hash()
+    }
+
+    fn sweep_expired_reservations(&mut self, now: u64, ttl: u64) -> usize {
+        self.manager().sweep_expired_reservations(now, ttl)
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {
+        self.lock().subscribe_events()
+    }
+
+    fn process_instant_send_lock(&mut self, instant_lock: InstantLock) {
+        self.manager().process_instant_send_lock(instant_lock)
+    }
+
+    fn apply_chain_lock(&mut self, chain_lock: ChainLock) {
+        self.manager().apply_chain_lock(chain_lock)
+    }
+
+    fn note_chain_lock_height(&mut self, height: CoreBlockHeight) {
+        self.manager().note_chain_lock_height(height)
+    }
+}
+
+type WideningFiltersManager = FiltersManager<
+    PersistentBlockHeaderStorage,
+    PersistentFilterHeaderStorage,
+    PersistentFilterStorage,
+    WideningWallet,
+>;
+
+/// Returns a fresh wallet, its BIP44 External address at `index` past the
+/// initial gap, and a manager whose batch 0..=99, scanned with the narrow pool,
+/// holds the filter of the returned block paying that address.
+async fn widening_setup(
+    index: u32,
+) -> (WideningFiltersManager, Arc<RwLock<WideningWallet>>, WalletId, Block, Address) {
+    let mut wm = WalletManager::<ManagedWalletInfo>::new(Network::Regtest);
+    let wallet_id = wm
+        .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
+        .expect("create deterministic test wallet");
+    let address = external_addresses(&wm, &wallet_id, BIP44, index + 1).remove(index as usize);
+    assert!(
+        !wm.monitored_script_pubkeys_for(&wallet_id).contains(&address.script_pubkey()),
+        "the address lies past the initial gap"
+    );
+    let wallet = Arc::new(RwLock::new(WideningWallet {
+        inner: tokio::sync::Mutex::new(wm),
+        widen_to: AtomicU32::new(0),
+    }));
+
+    let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+    let mut manager = FiltersManager::new(
+        Arc::clone(&wallet),
+        storage.block_headers(),
+        storage.filter_headers(),
+        storage.filters(),
+        0,
+    )
+    .await;
+    manager.set_state(SyncState::Syncing);
+
+    let (block, filter, key) = block_paying(40, std::slice::from_ref(&address));
+    let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key, filter)]));
+    batch.mark_verified();
+    manager.active_batches.insert(0, batch);
+    manager.progress.update_stored_height(99);
+    manager.progress.update_filter_header_tip_height(99);
+    assert!(manager.scan_batch(0).await.unwrap().is_empty(), "the narrow pool matches nothing");
+    (manager, wallet, wallet_id, block, address)
+}
+
+/// A pool widened with `set_gap_limit` after the commit's reconcile read the
+/// narrow pool, and before its write lock, adds no account. The commit must
+/// not certify the wallet over the widened scripts the batch never matched.
+#[tokio::test]
+async fn a_pool_widened_mid_commit_does_not_certify_the_batch() {
+    let (mut manager, wallet, wallet_id, _, _) = widening_setup(100).await;
+    let synced = wallet.read().await.wallet_synced_height(&wallet_id);
+    let committed = manager.progress.committed_height();
+
+    wallet.read().await.widen_after_next_read(200);
+    let events = manager.try_commit_batches().await.unwrap();
+
+    assert!(events.is_empty());
+    assert!(manager.active_batches.contains_key(&0), "the batch stays active");
+    assert_eq!(manager.progress.committed_height(), committed);
+    assert_eq!(
+        wallet.read().await.wallet_synced_height(&wallet_id),
+        synced,
+        "the widened scripts were never matched against 0..=99"
+    );
+}
+
+/// Across two passes, a payment in a held batch to an address the widening
+/// derived is found and applied before the batch certifies the wallet.
+#[tokio::test]
+async fn a_payment_to_a_pool_widened_mid_commit_is_found_on_the_next_pass() {
+    let (mut manager, wallet, wallet_id, block, address) = widening_setup(100).await;
+
+    wallet.read().await.widen_after_next_read(200);
+    let events = manager.try_commit_batches().await.unwrap();
+    let blocks = HashMap::from([(block.block_hash(), block.clone())]);
+    let passes = drive_to_quiescence(&mut manager, &wallet, &blocks, events).await;
+
+    assert_eq!(passes.get(&block.block_hash()), Some(&1), "the paying block is applied once");
+    let wm = wallet.read().await;
+    let balance = wm.lock().get_wallet_balance(&wallet_id).expect("balance");
+    assert_eq!(balance.total(), DENOMINATION, "the payment to {address} is found");
+    assert!(manager.active_batches.is_empty());
+    assert_eq!(wm.wallet_synced_height(&wallet_id), 99);
 }
