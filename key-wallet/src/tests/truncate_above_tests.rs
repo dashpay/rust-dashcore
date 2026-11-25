@@ -115,7 +115,7 @@ async fn truncate_above_never_drops_a_chain_locked_block(height: u32, truncates:
 async fn a_mempool_spend_mined_in_a_chain_locked_block_is_settled() {
     let mut ctx = TestWalletContext::new_random();
     let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[FUNDING_VALUE]);
-    let spend = spend_to_external(&funding);
+    let spend = ctx.signed(spend_to_external(&funding), &[&funding]).await;
     assert!(
         ctx.check_transaction(&funding, TransactionContext::InBlock(in_block(100)))
             .await

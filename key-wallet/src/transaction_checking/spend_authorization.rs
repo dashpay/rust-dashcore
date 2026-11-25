@@ -48,11 +48,9 @@ impl core::fmt::Display for SpendAuthorizationError {
 
 impl std::error::Error for SpendAuthorizationError {}
 
-/// Whether input `input_index` carries the owner's P2PKH `SIGHASH_ALL` signature for `prevout`.
-/// The caller takes `prevout` from the funding transaction of that input's outpoint.
-/// `Ok(false)` means the input can't authorize the spend. An unsupported form, a missing input,
-/// or an input script that may build the owner's key or signature at run time, for example with
-/// `OP_CAT`, returns an error, so a pending hold is not released.
+/// Whether input `input_index` carries the owner's P2PKH `SIGHASH_ALL` signature for `prevout`,
+/// the funding output its outpoint names. An unsupported form, a missing input, or a script that
+/// may build the key or signature at run time, for example with `OP_CAT`, returns an error.
 pub fn verify_input_authorization(
     transaction: &Transaction,
     input_index: usize,

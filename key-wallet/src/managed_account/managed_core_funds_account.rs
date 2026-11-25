@@ -213,10 +213,18 @@ impl ManagedCoreFundsAccount {
     /// Whether the account holds `outpoint` as a UTXO or keeps it aside as
     /// spent or claimed, to take it back if that spend or claim goes away.
     pub(crate) fn holds_or_keeps_aside(&self, outpoint: &OutPoint) -> bool {
-        self.utxos.contains_key(outpoint)
-            || self.spent_before_funded.contains_key(outpoint)
-            || self.claim_guarded_outputs.contains_key(outpoint)
-            || self.unsettled_spends.values().flatten().any(|utxo| utxo.outpoint == *outpoint)
+        self.held_or_kept_aside(outpoint).is_some()
+    }
+
+    /// Returns the coin at `outpoint` if the account holds it as a UTXO or keeps it aside.
+    pub(crate) fn held_or_kept_aside(&self, outpoint: &OutPoint) -> Option<&Utxo> {
+        self.utxos
+            .get(outpoint)
+            .or_else(|| self.spent_before_funded.get(outpoint))
+            .or_else(|| self.claim_guarded_outputs.get(outpoint))
+            .or_else(|| {
+                self.unsettled_spends.values().flatten().find(|utxo| utxo.outpoint == *outpoint)
+            })
     }
 
     /// Fill `claim_guarded_outputs` for a claim restored after its funding:

@@ -1,12 +1,70 @@
-use dashcore::{Address, Network, Transaction, Txid};
+use dashcore::blockdata::script::Builder;
+use dashcore::ecdsa::Signature;
+use dashcore::sighash::{EcdsaSighashType, SighashCache};
+use dashcore::{Address, Network, PublicKey, Transaction, TxIn, TxOut, Txid};
 
 use crate::{
     account::{ManagedCoreFundsAccount, TransactionRecord},
     managed_account::managed_account_trait::ManagedAccountTrait,
     transaction_checking::{TransactionCheckResult, TransactionContext, WalletTransactionChecker},
-    wallet::{initialization::WalletAccountCreationOptions, ManagedWalletInfo},
+    wallet::{
+        initialization::WalletAccountCreationOptions,
+        managed_wallet_info::transaction_builder::TransactionSigner, ManagedWalletInfo,
+    },
     ExtendedPubKey, Utxo, Wallet,
 };
+
+/// Returns `tx` with every input signed as its coin's owner signs it, where the coin pays an
+/// address of `info`'s funds accounts. A coin is looked up in `fundings`, then among the coins
+/// `info` holds; other inputs are left as they are.
+pub async fn sign_owned_inputs(
+    wallet: &Wallet,
+    info: &ManagedWalletInfo,
+    mut tx: Transaction,
+    fundings: &[&Transaction],
+) -> Transaction {
+    let funds: Vec<_> =
+        info.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()).collect();
+    let prevout = |input: &TxIn| -> Option<TxOut> {
+        let outpoint = input.previous_output;
+        fundings
+            .iter()
+            .find(|funding| funding.txid() == outpoint.txid)
+            .and_then(|funding| funding.output.get(outpoint.vout as usize).cloned())
+            .or_else(|| funds.iter().find_map(|a| a.utxos.get(&outpoint)).map(|u| u.txout.clone()))
+    };
+    let mut tasks = Vec::new();
+    {
+        let cache = SighashCache::new(&tx);
+        for (index, input) in tx.input.iter().enumerate() {
+            let Some(prevout) = prevout(input) else {
+                continue;
+            };
+            let Ok(address) = Address::from_script(&prevout.script_pubkey, wallet.network) else {
+                continue;
+            };
+            let Some(path) = funds.iter().find_map(|a| a.address_derivation_path(&address)) else {
+                continue;
+            };
+            let sighash = cache
+                .legacy_signature_hash(
+                    index,
+                    &prevout.script_pubkey,
+                    EcdsaSighashType::All.to_u32(),
+                )
+                .expect("sighash");
+            tasks.push((index, sighash, path));
+        }
+    }
+    for (index, sighash, path) in tasks {
+        let (signature, public_key) = wallet.sig_and_pubkey(sighash, path).await.expect("signs");
+        tx.input[index].script_sig = Builder::new()
+            .push_slice(Signature::sighash_all(signature.into()).serialize())
+            .push_key(&PublicKey::new(public_key))
+            .into_script();
+    }
+    tx
+}
 
 impl ManagedWalletInfo {
     pub fn dummy(id: u8) -> Self {
@@ -83,6 +141,11 @@ impl TestWalletContext {
         context: TransactionContext,
     ) -> TransactionCheckResult {
         self.managed_wallet.check_core_transaction(tx, context, &mut self.wallet, true, true).await
+    }
+
+    /// Returns `tx` signed by this wallet; see [`sign_owned_inputs`].
+    pub async fn signed(&self, tx: Transaction, fundings: &[&Transaction]) -> Transaction {
+        sign_owned_inputs(&self.wallet, &self.managed_wallet, tx, fundings).await
     }
 
     /// Funds the wallet's receive address via a mempool transaction and

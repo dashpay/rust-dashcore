@@ -228,7 +228,7 @@ pub enum WalletEvent {
     },
     /// Transactions were removed from the wallet: each was a recorded spend
     /// that a later, final transaction provably beat to one of its inputs, or
-    /// a pending spend whose input `superseded_by` showed its coin's owner
+    /// a pending spend of an output of `superseded_by` that the output's owner
     /// never signed, so it can never confirm. Their outputs are gone from the
     /// UTXO set and their records deleted.
     ///

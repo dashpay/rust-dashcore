@@ -1,6 +1,7 @@
 use super::*;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::{OutPoint, ScriptBuf, TxIn, TxOut, Txid, Witness};
+use key_wallet::test_utils::sign_owned_inputs;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
@@ -59,30 +60,16 @@ pub(crate) fn create_tx_paying(addrs: &[Address], input_seed: u8) -> Transaction
     }
 }
 
-/// `tx` with each input signed by the wallet's key for `addr`, as the spend of a coin of
-/// [`TX_AMOUNT`] paying `addr`.
-pub(crate) async fn signed_by_wallet(
+/// Returns `tx` with each input that spends a coin of the wallet, held or paid by one of
+/// `fundings`, signed as that coin's owner signs it.
+pub(crate) async fn signed_spend(
     manager: &WalletManager<ManagedWalletInfo>,
     wallet_id: &WalletId,
-    addr: &Address,
     tx: Transaction,
+    fundings: &[&Transaction],
 ) -> Transaction {
-    use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
-    use key_wallet::wallet::managed_wallet_info::transaction_builder::TransactionSigner;
-    let account = manager.wallet_infos[wallet_id].first_bip44_managed_account().unwrap();
-    let path = account.address_derivation_path(addr).unwrap();
-    let coins = tx
-        .input
-        .iter()
-        .map(|input| {
-            let txout = TxOut {
-                value: TX_AMOUNT,
-                script_pubkey: addr.script_pubkey(),
-            };
-            key_wallet::Utxo::new(input.previous_output, txout, addr.clone(), 0, false)
-        })
-        .collect();
-    manager.wallets[wallet_id].sign_tx(tx, coins, move |_| Some(path.clone())).await.unwrap()
+    let (wallet, info) = (&manager.wallets[wallet_id], &manager.wallet_infos[wallet_id]);
+    sign_owned_inputs(wallet, info, tx, fundings).await
 }
 
 pub(crate) fn drain_events(rx: &mut broadcast::Receiver<WalletEvent>) -> Vec<WalletEvent> {

@@ -435,7 +435,7 @@ mod tests {
         use key_wallet::account::StandardAccountType;
         use key_wallet::managed_account::managed_account_trait::ManagedAccountTrait;
         use key_wallet::managed_account::transaction_record::TransactionDirection;
-        use key_wallet::test_utils::TestWalletContext;
+        use key_wallet::test_utils::{sign_owned_inputs, TestWalletContext};
         use key_wallet::transaction_checking::TransactionContext;
         use key_wallet::wallet::managed_wallet_info::managed_account_operations::ManagedAccountOperations;
         use key_wallet::wallet::ManagedWalletInfo;
@@ -612,6 +612,11 @@ mod tests {
         let foreign = dashcore::Address::dummy(dashcore::Network::Testnet, 999);
         let mut outgoing = Transaction::dummy(&foreign, 20..21, &[99_000]);
         outgoing.input[0].previous_output = OutPoint::new(funding.txid(), 0);
+        let outgoing = {
+            let wallet = wallet.read().await;
+            let (inner, info) = wallet.get_wallet_and_info(&wallet_id).unwrap();
+            sign_owned_inputs(inner, info, outgoing, &[&funding]).await
+        };
         manager
             .handle_message(peer, NetworkMessage::Tx(outgoing.clone().into()).into(), &network)
             .await
