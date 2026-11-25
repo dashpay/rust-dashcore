@@ -757,19 +757,12 @@ async fn a_spend_of_a_payment_one_wallet_abandoned_reaches_a_wallet_that_holds_i
         info.abandon_transaction(payment.txid());
         info.update_balance();
     }
-    let spend = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(payment.txid(), 1),
-            ..Default::default()
-        }],
-        output: vec![TxOut {
-            value: PAYMENT,
-            script_pubkey: elsewhere.script_pubkey(),
-        }],
-        special_transaction_payload: None,
-    };
+    let outputs = vec![TxOut {
+        value: PAYMENT,
+        script_pubkey: elsewhere.script_pubkey(),
+    }];
+    let paid_b = OutPoint::new(payment.txid(), 1);
+    let spend = signed_spend_of(&h.wallets, &b, &to_b, paid_b, &payment, outputs).await;
 
     assert!(h.announce(&spend).await);
     assert!(h.context_of(&b, &spend.txid()).await.is_some(), "B records its own spend");
@@ -800,19 +793,12 @@ async fn a_held_spend_of_a_dismissed_payment_takes_its_lock_once_validated() {
         info.abandon_transaction(payment.txid());
         info.update_balance();
     }
-    let spend = Transaction {
-        version: 2,
-        lock_time: 0,
-        input: vec![TxIn {
-            previous_output: OutPoint::new(payment.txid(), 1),
-            ..Default::default()
-        }],
-        output: vec![TxOut {
-            value: PAYMENT,
-            script_pubkey: elsewhere.script_pubkey(),
-        }],
-        special_transaction_payload: None,
-    };
+    let outputs = vec![TxOut {
+        value: PAYMENT,
+        script_pubkey: elsewhere.script_pubkey(),
+    }];
+    let paid_b = OutPoint::new(payment.txid(), 1);
+    let spend = signed_spend_of(&h.wallets, &b, &to_b, paid_b, &payment, outputs).await;
 
     h.manager.process_instant_lock(lock_for(&spend), false).await;
     assert!(h.announce(&spend).await);

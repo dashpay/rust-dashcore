@@ -1287,8 +1287,8 @@ async fn test_a_lock_only_sweep_sends_no_dismissal() {
         }],
         special_transaction_payload: None,
     };
-    let loser = spend(490_000);
-    let winner = spend(480_000);
+    let loser = signed_spend(&manager, &wallet_id, spend(490_000), &[&funding]).await;
+    let winner = signed_spend(&manager, &wallet_id, spend(480_000), &[&funding]).await;
     manager.process_mempool_transaction(&loser, None).await;
     manager.process_mempool_transaction(&winner, None).await;
 
@@ -1393,6 +1393,7 @@ async fn test_an_abandon_is_sent_at_once_and_forgotten_once_mined() {
         }],
         special_transaction_payload: None,
     };
+    let payment = signed_spend(&manager, &wallet_id, payment, &[&funding]).await;
     manager.process_mempool_transaction(&payment, None).await;
 
     let mut rx = manager.subscribe_events();

@@ -88,8 +88,8 @@ async fn a_locked_loser_beaten_by_a_chain_locked_winner_gives_back_only_its_othe
 
 #[tokio::test]
 async fn a_coin_another_recorded_spend_takes_stays_spent_when_a_loser_is_swept() {
-    let (mut ctx, _, a, b) = funded().await;
-    let loser = spend(&[a, b], A + B - 1_000);
+    let (mut ctx, funding, a, b) = funded().await;
+    let loser = ctx.signed(spend(&[a, b], A + B - 1_000), &[&funding]).await;
     ctx.check_transaction(&loser, TransactionContext::Mempool).await;
     let change = change_address(&mut ctx);
     let mut other = spend(&[b], 100_000);
@@ -97,6 +97,7 @@ async fn a_coin_another_recorded_spend_takes_stays_spent_when_a_loser_is_swept()
         value: B - 101_000,
         script_pubkey: change.script_pubkey(),
     });
+    let other = ctx.signed(other, &[&funding]).await;
     ctx.check_transaction(&other, TransactionContext::Mempool).await;
     assert!(ctx.bip44_account().transactions().contains_key(&other.txid()));
 
@@ -125,7 +126,7 @@ fn change_address(ctx: &mut TestWalletContext) -> Address {
 /// account: F dies with L0, so F:0 never existed and is not credited.
 #[tokio::test]
 async fn a_coin_whose_funding_the_same_sweep_removed_is_not_credited() {
-    let (mut ctx, _, a, b) = funded().await;
+    let (mut ctx, funding, a, b) = funded().await;
     let coinjoin_xpub =
         ctx.wallet.accounts.coinjoin_accounts.get(&0).expect("CoinJoin").account_xpub;
     let coinjoin_address = ctx
@@ -141,6 +142,7 @@ async fn a_coin_whose_funding_the_same_sweep_removed_is_not_credited() {
         value: A - 101_000,
         script_pubkey: change.script_pubkey(),
     });
+    let first = ctx.signed(first, &[&funding]).await;
     ctx.check_transaction(&first, TransactionContext::Mempool).await;
     let pass_on = Transaction {
         version: 2,
@@ -155,6 +157,7 @@ async fn a_coin_whose_funding_the_same_sweep_removed_is_not_credited() {
         }],
         special_transaction_payload: None,
     };
+    let pass_on = ctx.signed(pass_on, &[&first]).await;
     ctx.check_transaction(&pass_on, TransactionContext::Mempool).await;
     let passed = OutPoint::new(pass_on.txid(), 0);
     assert!(ctx
@@ -163,7 +166,7 @@ async fn a_coin_whose_funding_the_same_sweep_removed_is_not_credited() {
         .unwrap()
         .utxos
         .contains_key(&passed));
-    let second = spend(&[passed, b], A + B - 200_000);
+    let second = ctx.signed(spend(&[passed, b], A + B - 200_000), &[&pass_on, &funding]).await;
     ctx.check_transaction(&second, TransactionContext::Mempool).await;
 
     let winner = spend(&[a, b], A + B - 1_000);
@@ -188,7 +191,7 @@ async fn a_coin_whose_funding_a_fork_dropped_is_not_credited_when_its_spend_lose
     let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[A]);
     ctx.check_transaction(&funding, TransactionContext::InBlock(block_info(100))).await;
     let (coin, z) = (OutPoint::new(funding.txid(), 0), OutPoint::new(other_funding.txid(), 0));
-    let loser = spend(&[coin, z], A + B - 1_000);
+    let loser = ctx.signed(spend(&[coin, z], A + B - 1_000), &[&funding, &other_funding]).await;
     ctx.check_transaction(&loser, TransactionContext::Mempool).await;
 
     ctx.managed_wallet.truncate_above(99).expect("no ChainLock");
@@ -212,12 +215,12 @@ async fn a_coin_whose_funding_a_fork_dropped_is_not_credited_when_its_spend_lose
 #[tokio::test]
 async fn known_gap_a_coin_another_device_spent_shows_again_when_the_abandoned_payment_loses() {
     let (mut ctx, funding, a, b) = funded().await;
-    let loser = spend(&[a, b], A + B - 1_000);
+    let loser = ctx.signed(spend(&[a, b], A + B - 1_000), &[&funding]).await;
     ctx.check_transaction(&loser, TransactionContext::Mempool).await;
     ctx.managed_wallet.abandon_transaction(loser.txid());
     ctx.check_transaction(&funding, TransactionContext::InBlock(block_info(100))).await;
     assert_eq!(ctx.managed_wallet.balance.total(), A + B, "the abandon frees A and B");
-    let other_device = spend(&[b], B - 1_000);
+    let other_device = ctx.signed(spend(&[b], B - 1_000), &[&funding]).await;
     ctx.check_transaction(&other_device, TransactionContext::Mempool).await;
     assert!(!ctx.bip44_account().utxos.contains_key(&b), "E spends B");
 
@@ -251,7 +254,7 @@ async fn a_coin_given_back_takes_its_fundings_lock_as_it_is_now() {
     let funding = Transaction::dummy(&ctx.receive_address, 0..2, &[A, B]);
     ctx.check_transaction(&funding, TransactionContext::Mempool).await;
     let (a, b) = (OutPoint::new(funding.txid(), 0), OutPoint::new(funding.txid(), 1));
-    let loser = spend(&[a, b], A + B - 1_000);
+    let loser = ctx.signed(spend(&[a, b], A + B - 1_000), &[&funding]).await;
     ctx.check_transaction(&loser, TransactionContext::Mempool).await;
     let funding_lock = InstantLock {
         txid: funding.txid(),

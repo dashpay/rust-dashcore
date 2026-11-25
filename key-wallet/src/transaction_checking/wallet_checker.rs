@@ -2835,6 +2835,7 @@ mod tests {
             ],
             special_transaction_payload: None,
         };
+        let spend = ctx.signed(spend, &[&funding]).await;
         assert!(ctx.check_transaction(&spend, TransactionContext::Mempool).await.is_relevant);
         ctx.managed_wallet.abandon_transaction(spend.txid());
         ctx.managed_wallet.update_balance();
