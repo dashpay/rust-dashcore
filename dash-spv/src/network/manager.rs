@@ -80,6 +80,7 @@ use crate::network::peer_set::{Admission, PeerSet};
 use crate::network::NetworkManager;
 use crate::network::TransportPreference;
 use crate::{
+    chain::CheckpointManager,
     network::{
         costs::ResponseCosts,
         discovery::PeerDiscoverer,
@@ -214,6 +215,7 @@ pub struct NetworkState {
     pub costs: Arc<ResponseCosts>,
     pub max_peers: usize,
     pub required_services: ServiceFlags,
+    pub min_start_height: u32,
     pub user_agent: String,
     pub transport_preference: TransportPreference,
     /// Whether the timeout monitor sees our own link stalled.
@@ -274,6 +276,9 @@ impl PeerNetworkManager {
             costs: Arc::new(ResponseCosts::new()),
             max_peers,
             required_services,
+            min_start_height: CheckpointManager::for_network(config.network)
+                .last_checkpoint_before_height(u32::MAX)
+                .map_or(0, |checkpoint| checkpoint.height()),
             user_agent: config.user_agent.clone(),
             transport_preference: config.transport_preference,
             link_stalled: AtomicBool::new(false),
@@ -1861,6 +1866,23 @@ mod tests {
         let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
         let net = PeerNetworkManager::new(&config).await;
 
+        let dialed = DisconnectedPeer::new(node.addr, Network::Regtest)
+            .connect(net.state.clone(), CancellationToken::new())
+            .await;
+
+        assert!(dialed.is_err());
+        assert!(net.state.bans.banned().await.contains(&node.addr));
+    }
+
+    /// A node whose handshake height is below the newest checkpoint is banned on the spot.
+    #[tokio::test]
+    async fn a_node_below_the_newest_checkpoint_is_banned() {
+        let node = HandshakingPeer::listen().await;
+        node.go.notify_one();
+        let config = ClientConfig::testnet().with_transport_preference(TransportPreference::V1Only);
+        let net = PeerNetworkManager::new(&config).await;
+
+        // The loopback node speaks regtest and advertises height 0.
         let dialed = DisconnectedPeer::new(node.addr, Network::Regtest)
             .connect(net.state.clone(), CancellationToken::new())
             .await;

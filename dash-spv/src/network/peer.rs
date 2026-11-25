@@ -654,6 +654,21 @@ impl DisconnectedPeer {
             )));
         }
 
+        // A peer behind our newest checkpoint cannot serve the chain we sync to.
+        let start_height = version.start_height.max(0) as u32;
+        if start_height < state.min_start_height {
+            tracing::info!(
+                target: "dash_spv::network",
+                "dropping {}: height {} is below the checkpoint at {}",
+                self.addr, start_height, state.min_start_height
+            );
+            state.bans.ban(self.addr, Ban::MissingServices).await;
+            return Err(NetworkError::ConnectionFailed(format!(
+                "peer {} is at height {}, below the checkpoint at {}",
+                self.addr, start_height, state.min_start_height
+            )));
+        }
+
         // Announce sendheaders only after the handshake is fully complete, compressed
         // (DIP-25, ~half the bytes) if the peer advertises it.
         let headers2 = version.services.has(NODE_HEADERS_COMPRESSED);
