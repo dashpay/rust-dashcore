@@ -19,6 +19,9 @@ pub enum SpendAuthorizationError {
     UnsupportedScriptSig,
     /// The signature does not commit to the complete transaction.
     UnsupportedSighash(u8),
+    /// The input script has other opcodes and lacks a plain push of the owner's key or a
+    /// signature that verifies, so it may build them at run time, for example with `OP_CAT`.
+    RuntimeAuthorization,
 }
 
 impl core::fmt::Display for SpendAuthorizationError {
@@ -36,6 +39,9 @@ impl core::fmt::Display for SpendAuthorizationError {
             Self::UnsupportedSighash(mode) => {
                 write!(f, "pending spend uses unsupported signature hash type {:#x}", mode)
             }
+            Self::RuntimeAuthorization => {
+                write!(f, "pending spend may build its authorization at run time")
+            }
         }
     }
 }
@@ -44,8 +50,9 @@ impl std::error::Error for SpendAuthorizationError {}
 
 /// Whether input `input_index` carries the owner's P2PKH `SIGHASH_ALL` signature for `prevout`.
 /// The caller takes `prevout` from the funding transaction of that input's outpoint.
-/// An unsupported form or a missing input returns an error, so a pending hold is not released.
-/// A signature or key built at run time, for example by `OP_CAT`, returns `false`.
+/// `Ok(false)` means the input can't authorize the spend. An unsupported form, a missing input,
+/// or an input script that may build the owner's key or signature at run time, for example with
+/// `OP_CAT`, returns an error, so a pending hold is not released.
 pub fn verify_input_authorization(
     transaction: &Transaction,
     input_index: usize,
@@ -90,7 +97,15 @@ pub fn verify_input_authorization(
     } else {
         (pushes.as_slice(), pushes.iter().copied().find(is_owner_key))
     };
-    let Some(Ok(public_key)) = public_key.map(EcdsaPublicKey::from_bytes) else {
+    // Without the owner's key among its pushes, a script with other opcodes may still build it.
+    let Some(public_key) = public_key else {
+        return if push_only {
+            Ok(false)
+        } else {
+            Err(SpendAuthorizationError::RuntimeAuthorization)
+        };
+    };
+    let Ok(public_key) = EcdsaPublicKey::from_bytes(public_key) else {
         return Ok(false);
     };
     // Signatures with the same hash type share a digest, which bounds the hashing per script.
@@ -107,7 +122,11 @@ pub fn verify_input_authorization(
         public_key.verify(&(*digest)?, signature).ok()?;
         Some(mode)
     }) else {
-        return Ok(false);
+        return if push_only {
+            Ok(false)
+        } else {
+            Err(SpendAuthorizationError::RuntimeAuthorization)
+        };
     };
     // Other modes can authorize only part of a transaction; SINGLE can even
     // produce a constant digest. They cannot authorize this durable reservation.
@@ -129,7 +148,7 @@ mod tests {
     use crate::test_utils::TestWalletContext;
     use crate::wallet::managed_wallet_info::transaction_builder::TransactionSigner;
     use dashcore::crypto::ecdsa::EcdsaSecretKey;
-    use dashcore::opcodes::all::{OP_NOP, OP_SWAP};
+    use dashcore::opcodes::all::{OP_CAT, OP_NOP, OP_SWAP};
     use dashcore::script::{Builder, PushBytesBuf};
     use dashcore::{Address, Network, PrivateKey, ScriptBuf, TxIn};
     use test_case::test_case;
@@ -211,7 +230,34 @@ mod tests {
         let last_der_byte = usize::from(script.as_bytes()[0]) - 1;
         script.as_mut_bytes()[last_der_byte] ^= 1;
         script.push_opcode(OP_NOP);
-    }, Ok(false); "padded script with invalid owner signature")]
+    }, Err(SpendAuthorizationError::RuntimeAuthorization); "padded script with invalid owner signature")]
+    #[test_case(|tx, _| {
+        let pushes: Vec<_> = tx.input[0].script_sig.instructions().map(Result::unwrap).collect();
+        let (signature, owner) = (pushes[0].push_bytes().unwrap(), pushes[1].push_bytes().unwrap());
+        let (head, tail) = signature.as_bytes().split_at(10);
+        tx.input[0].script_sig = Builder::new()
+            .push_slice(<&PushBytes>::try_from(head).unwrap())
+            .push_slice(<&PushBytes>::try_from(tail).unwrap())
+            .push_opcode(OP_CAT)
+            .push_slice(owner)
+            .into_script();
+    }, Err(SpendAuthorizationError::RuntimeAuthorization); "signature built with OP_CAT")]
+    #[test_case(|tx, _| {
+        let pushes: Vec<_> = tx.input[0].script_sig.instructions().map(Result::unwrap).collect();
+        let (signature, owner) = (pushes[0].push_bytes().unwrap(), pushes[1].push_bytes().unwrap());
+        let (head, tail) = owner.as_bytes().split_at(1);
+        tx.input[0].script_sig = Builder::new()
+            .push_slice(signature)
+            .push_slice(<&PushBytes>::try_from(head).unwrap())
+            .push_slice(<&PushBytes>::try_from(tail).unwrap())
+            .push_opcode(OP_CAT)
+            .into_script();
+    }, Err(SpendAuthorizationError::RuntimeAuthorization); "owner key built with OP_CAT")]
+    #[test_case(|tx, _| {
+        let script = &mut tx.input[0].script_sig;
+        let last_der_byte = usize::from(script.as_bytes()[0]) - 1;
+        script.as_mut_bytes()[last_der_byte] ^= 1;
+    }, Ok(false); "push-only script with invalid owner signature")]
     #[test_case(|tx, _| {
         let script = &mut tx.input[0].script_sig;
         let bytes = script.as_mut_bytes();
