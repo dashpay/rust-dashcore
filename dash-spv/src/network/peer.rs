@@ -662,7 +662,7 @@ impl DisconnectedPeer {
                 "dropping {}: height {} is below the checkpoint at {}",
                 self.addr, start_height, state.min_start_height
             );
-            state.bans.ban(self.addr, Ban::MissingServices).await;
+            state.bans.ban(self.addr, Ban::Kicked).await;
             return Err(NetworkError::ConnectionFailed(format!(
                 "peer {} is at height {}, below the checkpoint at {}",
                 self.addr, start_height, state.min_start_height
