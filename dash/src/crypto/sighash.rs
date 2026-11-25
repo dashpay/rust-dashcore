@@ -364,10 +364,14 @@ mod tests {
 
     use super::*;
     use crate::blockdata::script::Instruction;
+    use crate::blockdata::transaction::special_transaction::{
+        TransactionPayload, asset_lock::AssetLockPayload,
+    };
     use crate::blockdata::transaction::txin::TxIn;
     use crate::consensus::deserialize;
     use crate::crypto::ecdsa::{EcdsaPublicKey, EcdsaSignature};
     use crate::internal_macros::hex;
+    use crate::{Address, Network};
 
     #[test]
     fn sighash_single_bug() {
@@ -465,6 +469,28 @@ mod tests {
                 .unwrap();
             assert_eq!(got, LegacySighash::from_slice(&expected).unwrap(), "vector {i}");
         }
+    }
+
+    #[test]
+    fn legacy_sighash_all_commits_to_asset_lock_credit_outputs() {
+        let address = Address::dummy(Network::Regtest, 1);
+        let mut tx = Transaction::dummy(&address, 1..2, &[90_000]);
+        tx.version = 3;
+        let sighash_for_credit_value = |value| {
+            let mut tx = tx.clone();
+            tx.special_transaction_payload =
+                Some(TransactionPayload::AssetLockPayloadType(AssetLockPayload::new(vec![
+                    TxOut {
+                        value,
+                        script_pubkey: address.script_pubkey(),
+                    },
+                ])));
+            SighashCache::new(&tx)
+                .legacy_signature_hash(0, &address.script_pubkey(), EcdsaSighashType::All.to_u32())
+                .unwrap()
+        };
+
+        assert_ne!(sighash_for_credit_value(10_000), sighash_for_credit_value(9_999));
     }
 
     #[test]

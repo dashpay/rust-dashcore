@@ -238,9 +238,10 @@ pub enum WalletEvent {
         changes: Vec<DismissalChange>,
     },
     /// Transactions were removed from the wallet: each was a recorded spend
-    /// that a later, final transaction provably beat to one of its inputs, so
-    /// it can never confirm. Their outputs are gone from the UTXO set and
-    /// their records deleted.
+    /// that a later, final transaction provably beat to one of its inputs, or
+    /// a pending spend of an output of `superseded_by` that the output's owner
+    /// never signed, so it can never confirm. Their outputs are gone from the
+    /// UTXO set and their records deleted.
     ///
     /// The only removal-shaped event on this bus. A consumer mirroring wallet
     /// state to disk must act on it — every other variant is additive, so
@@ -255,9 +256,9 @@ pub enum WalletEvent {
         superseded_by: Txid,
         /// The block `superseded_by` was mined in, and its position there,
         /// when this sweep was triggered by its arrival in a block; `None`
-        /// when it was triggered by an InstantSend-locked transaction still
-        /// waiting to be mined (those are the only two triggers — an unlocked
-        /// mempool arrival never sweeps, see
+        /// when it was triggered by a transaction still waiting to be mined:
+        /// an InstantSend-locked one, or a funding transaction that exposed an
+        /// unsigned pending spend of its output (see
         /// `WalletTransactionChecker::check_core_transaction`).
         ///
         /// This is the winner's finality context, and only the emission site

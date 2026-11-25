@@ -8,10 +8,11 @@ use crate::managed_account::managed_account_ref::ManagedAccountRefMut;
 use crate::managed_account::managed_account_trait::ManagedAccountTrait;
 use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
-use crate::transaction_checking::TransactionContext;
+use crate::transaction_checking::{verify_input_authorization, TransactionContext};
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use crate::Utxo;
-use dashcore::{OutPoint, Transaction, Txid};
+use dashcore::blockdata::script::Instruction;
+use dashcore::{OutPoint, Transaction, TxOut, Txid};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// What [`ManagedWalletInfo::abandon_transaction`] removed.
@@ -312,6 +313,124 @@ impl ManagedWalletInfo {
         self.dismissed.hold_spend(txid, parents)
     }
 
+    /// Returns the first coin this wallet holds or keeps aside that an input of `tx` spends
+    /// without its owner's authorization, as [`lacks_authorization`] judges it.
+    pub(crate) fn unauthorized_spend_of_held_coin(&self, tx: &Transaction) -> Option<OutPoint> {
+        let funds: Vec<_> =
+            self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()).collect();
+        tx.input.iter().enumerate().find_map(|(index, input)| {
+            let outpoint = input.previous_output;
+            let utxo = funds.iter().find_map(|account| account.held_or_kept_aside(&outpoint))?;
+            lacks_authorization(tx, index, &utxo.txout).then_some(outpoint)
+        })
+    }
+
+    /// Drops each pending spend of an output of `tx` that [`lacks_authorization`], with everything
+    /// built on it, and returns what went as a conflict sweep. A claimant that is mined,
+    /// InstantSend-locked or has such a descendant is kept, since the network accepted it.
+    pub(crate) fn drop_unauthorized_spends_of(&mut self, tx: &Transaction) -> WalletConflictSweep {
+        let funding = tx.txid();
+        let mut result = WalletConflictSweep::default();
+        let funds: Vec<_> =
+            self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()).collect();
+        let claimed: BTreeSet<u32> = (0..tx.output.len() as u32)
+            .filter(|&vout| {
+                let outpoint = OutPoint::new(funding, vout);
+                funds.iter().any(|account| account.is_outpoint_spent(&outpoint))
+            })
+            .collect();
+        if claimed.is_empty() {
+            return result;
+        }
+        let records: Vec<&TransactionRecord> = self
+            .accounts
+            .all_accounts()
+            .into_iter()
+            .flat_map(|account| account.transactions().values())
+            .collect();
+        let mut children: BTreeMap<Txid, BTreeSet<Txid>> = BTreeMap::new();
+        let mut unauthorized = BTreeSet::new();
+        for record in &records {
+            for (index, input) in record.transaction.input.iter().enumerate() {
+                let outpoint = input.previous_output;
+                children.entry(outpoint.txid).or_default().insert(record.txid);
+                if outpoint.txid == funding
+                    && claimed.contains(&outpoint.vout)
+                    && lacks_authorization(
+                        &record.transaction,
+                        index,
+                        &tx.output[outpoint.vout as usize],
+                    )
+                {
+                    unauthorized.insert(record.txid);
+                }
+            }
+        }
+        unauthorized.retain(|txid| !self.settled_here_or_below(*txid, &children));
+        if unauthorized.is_empty() {
+            return result;
+        }
+        let pending_inputs: BTreeMap<Txid, Vec<OutPoint>> = records
+            .iter()
+            .filter(|record| !record.is_confirmed())
+            .map(|record| {
+                let inputs = record.transaction.input.iter().map(|input| input.previous_output);
+                (record.txid, inputs.collect())
+            })
+            .collect();
+        for root in &unauthorized {
+            tracing::info!(%root, %funding, "Dropped a pending spend its coin's owner did not sign");
+        }
+        let abandoned = self.abandon_roots(unauthorized, &BTreeMap::new()).abandoned;
+        if abandoned.is_empty() {
+            return result;
+        }
+        result.txids = abandoned.iter().copied().collect();
+        result.released_outpoints = abandoned
+            .iter()
+            .filter_map(|txid| pending_inputs.get(txid))
+            .flatten()
+            .filter(|outpoint| !abandoned.contains(&outpoint.txid))
+            .copied()
+            .collect();
+        result.released_outpoints.sort_unstable();
+        result.released_outpoints.dedup();
+        result.retain_unclaimed(&self.accounts);
+        let funds: Vec<_> =
+            self.accounts.all_accounts().into_iter().filter_map(|a| a.as_funds()).collect();
+        let spent_by_tx: HashSet<OutPoint> = tx.input.iter().map(|i| i.previous_output).collect();
+        result.released_outpoints.retain(|outpoint| {
+            !self.spent_claims.contains_key(outpoint)
+                && !self.observed_spent_outpoints.contains_key(outpoint)
+                && !spent_by_tx.contains(outpoint)
+                && !funds.iter().any(|account| account.is_outpoint_spent(outpoint))
+        });
+        result
+    }
+
+    /// Whether `root` or a transaction spending its outputs, directly or through others, is
+    /// mined, InstantSend-locked or ChainLocked. `children` maps a txid to its recorded spenders;
+    /// a spend seen in a block counts even when its record is gone.
+    fn settled_here_or_below(&self, root: Txid, children: &BTreeMap<Txid, BTreeSet<Txid>>) -> bool {
+        let mut pending = vec![root];
+        let mut seen = BTreeSet::from([root]);
+        while let Some(txid) = pending.pop() {
+            let outputs = OutPoint::new(txid, 0)..=OutPoint::new(txid, u32::MAX);
+            if self.transaction_is_settled(&txid)
+                || self.instant_send_locks.contains(&txid)
+                || self.observed_spent_outpoints.range(outputs).next().is_some()
+            {
+                return true;
+            }
+            for child in children.get(&txid).into_iter().flatten() {
+                if seen.insert(*child) {
+                    pending.push(*child);
+                }
+            }
+        }
+        false
+    }
+
     /// Release every spent-output claim whose claimant is in `removed`, with
     /// the output an account kept for it, whether or not the claimant has a
     /// record. Returns the outpoints released, except outputs of a removed
@@ -425,18 +544,33 @@ impl ManagedWalletInfo {
         root: Txid,
         external_spends: &BTreeMap<OutPoint, Txid>,
     ) -> AbandonOutcome {
-        if self.transaction_is_settled(&root) {
-            tracing::warn!(
-                txid = %root,
-                "refusing to abandon a transaction the wallet holds as settled"
-            );
+        self.abandon_roots(BTreeSet::from([root]), external_spends)
+    }
+
+    /// Abandons each unsettled root of `roots` with its unsettled descendants, in one walk.
+    fn abandon_roots(
+        &mut self,
+        mut roots: BTreeSet<Txid>,
+        external_spends: &BTreeMap<OutPoint, Txid>,
+    ) -> AbandonOutcome {
+        roots.retain(|root| {
+            let settled = self.transaction_is_settled(root);
+            if settled {
+                tracing::warn!(
+                    txid = %root,
+                    "refusing to abandon a transaction the wallet holds as settled"
+                );
+            }
+            !settled
+        });
+        if roots.is_empty() {
             return AbandonOutcome {
                 abandoned: BTreeSet::new(),
                 utxos_removed: 0,
                 records_removed: 0,
             };
         }
-        let mut abandoned = BTreeSet::from([root]);
+        let mut abandoned = roots;
 
         // Transitive closure over recorded spenders. Each pass can only add
         // txids, and the set is bounded by the recorded transactions, so this
@@ -802,6 +936,15 @@ impl ManagedWalletInfo {
     pub fn all_managed_accounts(&self) -> Vec<crate::managed_account::ManagedAccountRef<'_>> {
         self.accounts.all_accounts()
     }
+}
+
+/// Whether input `index` of a pending `tx` spends `prevout` without its owner's authorization.
+/// An input script that isn't push-only counts, as relay policy rejects it.
+fn lacks_authorization(tx: &Transaction, index: usize, prevout: &TxOut) -> bool {
+    let push_only = tx.input.get(index).is_some_and(|input| {
+        input.script_sig.instructions().all(|i| matches!(i, Ok(Instruction::PushBytes(_))))
+    });
+    !push_only || verify_input_authorization(tx, index, prevout) == Ok(false)
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use super::*;
 use dashcore::ephemerealdata::instant_lock::InstantLock;
 use dashcore::{OutPoint, ScriptBuf, TxIn, TxOut, Txid, Witness};
+use key_wallet::test_utils::sign_owned_inputs;
 use key_wallet::wallet::initialization::WalletAccountCreationOptions;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
 use key_wallet::Network;
@@ -57,6 +58,18 @@ pub(crate) fn create_tx_paying(addrs: &[Address], input_seed: u8) -> Transaction
             .collect(),
         special_transaction_payload: None,
     }
+}
+
+/// Returns `tx` with each input that spends a coin of the wallet, held or paid by one of
+/// `fundings`, signed as that coin's owner signs it.
+pub(crate) async fn signed_spend(
+    manager: &WalletManager<ManagedWalletInfo>,
+    wallet_id: &WalletId,
+    tx: Transaction,
+    fundings: &[&Transaction],
+) -> Transaction {
+    let (wallet, info) = (&manager.wallets[wallet_id], &manager.wallet_infos[wallet_id]);
+    sign_owned_inputs(wallet, info, tx, fundings).await
 }
 
 pub(crate) fn drain_events(rx: &mut broadcast::Receiver<WalletEvent>) -> Vec<WalletEvent> {
