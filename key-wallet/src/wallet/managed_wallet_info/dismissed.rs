@@ -11,14 +11,16 @@ const MAX_SPENDS: usize = 4_096;
 /// The most dismissed transactions one spend is released by.
 const MAX_PARENTS: usize = 16;
 
-/// A change to the wallet's own dismissals, for a persister to mirror. Spends held back with a
-/// dismissed transaction are not included: a delivery after a restart holds them back again.
+/// A change to the wallet's own dismissals, for a persister to mirror set by set with the same
+/// caps. A set pushing out a transaction the other still holds is no change, since the persister's
+/// set pushes it out too. Spends held back with a dismissed transaction are not included: a
+/// delivery after a restart holds them back again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DismissalChange {
-    /// A locked or mined conflict beat the transaction, and the user did not abandon it.
+    /// A locked or mined conflict beat the transaction. The user may have abandoned it as well.
     Dismissed(Txid),
-    /// The user abandoned the transaction.
+    /// The user abandoned the transaction. A conflict may have beaten it as well.
     Abandoned(Txid),
     /// The transaction is no longer dismissed: it was locked or mined, or pushed out at capacity.
     Forgotten(Txid),
@@ -62,7 +64,7 @@ impl DismissedTxids {
 
     /// Dismisses `txid` because a locked or mined conflict beat it.
     pub(crate) fn sweep(&mut self, txid: Txid) {
-        if !self.swept.contains(&txid) && !self.abandoned.contains(&txid) {
+        if !self.swept.contains(&txid) {
             self.record(DismissalChange::Dismissed(txid), true);
         }
         if let Some(evicted) = self.swept.insert(txid) {
@@ -77,14 +79,13 @@ impl DismissedTxids {
         abandoned: impl IntoIterator<Item = Txid>,
         swept: impl IntoIterator<Item = Txid>,
     ) {
-        for txid in abandoned {
-            if let Some(evicted) = self.abandoned.insert(txid) {
-                self.pushed_out(evicted);
-            }
-        }
-        for txid in swept {
-            if let Some(evicted) = self.swept.insert(txid) {
-                self.pushed_out(evicted);
+        let mut evicted: Vec<Txid> =
+            abandoned.into_iter().filter_map(|txid| self.abandoned.insert(txid)).collect();
+        evicted.extend(swept.into_iter().filter_map(|txid| self.swept.insert(txid)));
+        let mut seen = HashSet::new();
+        for txid in evicted {
+            if seen.insert(txid) {
+                self.pushed_out(txid);
             }
         }
     }
@@ -111,12 +112,10 @@ impl DismissedTxids {
         });
     }
 
-    /// Records what pushing `txid` out of one set changed, and releases its spends if it is no
-    /// longer dismissed.
+    /// Records `txid` forgotten once pushed out of the last set that held it, and releases its
+    /// spends if it is no longer dismissed.
     fn pushed_out(&mut self, txid: Txid) {
-        if self.swept.contains(&txid) {
-            self.record(DismissalChange::Dismissed(txid), false);
-        } else if !self.abandoned.contains(&txid) {
+        if !self.is_own(&txid) {
             self.record(DismissalChange::Forgotten(txid), false);
         }
         self.release_unless_dismissed(txid);
@@ -279,14 +278,17 @@ mod tests {
         assert!(dismissed.hold_spend(spend, [a]));
         dismissed.settled(&a);
         dismissed.settled(&spend);
-        assert_eq!(dismissed.take_changes(), vec![Abandoned(a), Dismissed(b), Forgotten(a)]);
+        assert_eq!(
+            dismissed.take_changes(),
+            vec![Abandoned(a), Dismissed(b), Dismissed(a), Forgotten(a)]
+        );
         assert!(dismissed.take_changes().is_empty());
         dismissed.settled(&a);
         assert!(dismissed.take_changes().is_empty(), "a second settle is no change");
     }
 
     #[test]
-    fn an_abandon_of_a_swept_transaction_and_its_push_out_change_its_kind() {
+    fn each_set_a_transaction_joins_is_a_change_and_its_push_out_from_one_is_not() {
         use DismissalChange::{Abandoned, Dismissed, Forgotten};
         let mut dismissed = DismissedTxids::default();
         let swept = txid(0);
@@ -297,7 +299,7 @@ mod tests {
         assert!(dismissed.take_changes().is_empty(), "a restore records nothing");
         let newest = txid(MAX_DISMISSED as u32);
         dismissed.abandon(newest);
-        assert_eq!(dismissed.take_changes(), vec![Abandoned(newest), Dismissed(swept)]);
+        assert_eq!(dismissed.take_changes(), vec![Abandoned(newest)], "still swept");
         assert!(dismissed.contains(&swept));
         dismissed.abandon(swept);
         assert_eq!(dismissed.take_changes(), vec![Abandoned(swept), Forgotten(txid(1))]);
@@ -305,10 +307,16 @@ mod tests {
 
     #[test]
     fn a_swept_transaction_pushed_out_while_abandoned_is_no_change() {
+        use DismissalChange::{Abandoned, Dismissed};
         let mut dismissed = DismissedTxids::default();
         let abandoned = txid(0);
-        dismissed.sweep(abandoned);
         dismissed.abandon(abandoned);
+        dismissed.sweep(abandoned);
+        assert_eq!(
+            dismissed.take_changes(),
+            vec![Abandoned(abandoned), Dismissed(abandoned)],
+            "a sweep of an abandoned transaction joins the swept set"
+        );
         dismissed.restore([], (1..MAX_DISMISSED as u32).map(txid));
         dismissed.take_changes();
         dismissed.sweep(txid(MAX_DISMISSED as u32));
@@ -317,6 +325,77 @@ mod tests {
             vec![DismissalChange::Dismissed(txid(MAX_DISMISSED as u32))]
         );
         assert!(dismissed.contains(&abandoned));
+    }
+
+    #[test]
+    fn a_transaction_in_both_sets_is_forgotten_once_pushed_out_of_the_second() {
+        use DismissalChange::Forgotten;
+        let mut dismissed = DismissedTxids::default();
+        let both = txid(u32::MAX);
+        dismissed.abandon(both);
+        dismissed.sweep(both);
+        dismissed.take_changes();
+        dismissed.restore((0..MAX_DISMISSED as u32).map(txid), []);
+        assert!(dismissed.take_changes().is_empty(), "still swept");
+        assert!(dismissed.contains(&both));
+        let newest = txid(MAX_DISMISSED as u32);
+        dismissed.restore([], (MAX_DISMISSED as u32..2 * MAX_DISMISSED as u32).map(txid));
+        assert_eq!(dismissed.take_changes(), vec![Forgotten(both)]);
+        assert!(!dismissed.contains(&both));
+        assert!(dismissed.contains(&newest));
+    }
+
+    #[test]
+    fn a_restore_does_not_forget_a_transaction_its_swept_list_keeps() {
+        let mut dismissed = DismissedTxids::default();
+        let both = txid(u32::MAX);
+        let abandoned = std::iter::once(both).chain((0..MAX_DISMISSED as u32).map(txid));
+        dismissed.restore(abandoned, [both]);
+        assert!(dismissed.take_changes().is_empty());
+        assert!(dismissed.contains(&both));
+    }
+
+    /// A store applying the changes in order, set by set with the same caps, holds the same sets.
+    #[test]
+    fn a_persister_mirroring_the_changes_holds_the_same_sets() {
+        use DismissalChange::{Abandoned, Dismissed, Forgotten};
+        let mut dismissed = DismissedTxids::default();
+        let (mut abandoned, mut swept) =
+            (Fifo::<MAX_DISMISSED>::default(), Fifo::<MAX_DISMISSED>::default());
+        let mut seed = 0x2545_f491_u64;
+        let mut full = (false, false);
+        for step in 0..24_000 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let id = txid((seed >> 33) as u32 % (3 * MAX_DISMISSED as u32));
+            match (seed >> 20) % 5 {
+                0 | 1 => dismissed.abandon(id),
+                2 | 3 => dismissed.sweep(id),
+                _ => dismissed.settled(&id),
+            }
+            for change in dismissed.take_changes() {
+                match change {
+                    Abandoned(t) => {
+                        abandoned.insert(t);
+                    }
+                    Dismissed(t) => {
+                        swept.insert(t);
+                    }
+                    Forgotten(t) => {
+                        abandoned.remove(&t);
+                        swept.remove(&t);
+                    }
+                }
+            }
+            full.0 |= dismissed.abandoned.order.len() == MAX_DISMISSED;
+            full.1 |= dismissed.swept.order.len() == MAX_DISMISSED;
+            if step % 8 == 0 {
+                assert_eq!(abandoned.order, dismissed.abandoned.order, "step {step}");
+                assert_eq!(swept.order, dismissed.swept.order, "step {step}");
+            }
+        }
+        assert_eq!(full, (true, true), "both sets reached their caps");
+        assert_eq!(abandoned.order, dismissed.abandoned.order);
+        assert_eq!(swept.order, dismissed.swept.order);
     }
 
     #[test]

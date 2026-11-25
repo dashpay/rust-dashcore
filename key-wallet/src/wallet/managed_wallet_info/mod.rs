@@ -352,8 +352,8 @@ impl ManagedWalletInfo {
     }
 
     /// Dismisses again the transactions a persister kept from earlier sessions: `abandoned` those
-    /// last reported as `Abandoned`, `swept` those last reported as `Dismissed`, each in the order
-    /// first reported. Call it while loading, before any transaction is processed, and leave out a
+    /// it holds as abandoned, `swept` those it holds as swept, a txid possibly in both, each in the
+    /// order it joined. Call it while loading, before any transaction is processed, and leave out a
     /// txid the store holds as locked or mined. The same caps as for live dismissals apply.
     pub fn restore_dismissed(
         &mut self,
