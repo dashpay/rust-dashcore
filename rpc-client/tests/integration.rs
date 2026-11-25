@@ -132,7 +132,8 @@ async fn evo_node_endpoints() {
     let evo_client = ctx.masternodes[0].rpc_client_for_wallet("");
     test_get_network_info(&evo_client);
 
-    test_evo_node_endpoints(&evo_client, &wallet_client);
+    let pro_tx_hash = ProTxHash::from_str(&ctx.metadata.masternodes[0].pro_tx_hash).unwrap();
+    test_evo_node_endpoints(&evo_client, &wallet_client, pro_tx_hash);
 }
 fn test_wallet_node_endpoints(wallet_client: &Client, node: &DashCoreNode) {
     test_get_mining_info(wallet_client);
@@ -216,7 +217,7 @@ fn test_wallet_node_endpoints(wallet_client: &Client, node: &DashCoreNode) {
     // //TODO backup_wallet(&self, destination: Option<&str>) -> Result<()> {
 }
 
-fn test_evo_node_endpoints(evo_client: &Client, wallet_client: &Client) {
+fn test_evo_node_endpoints(evo_client: &Client, wallet_client: &Client, pro_tx_hash: ProTxHash) {
     test_get_masternode_count(evo_client);
     test_get_masternode_list(evo_client);
 
@@ -224,7 +225,7 @@ fn test_evo_node_endpoints(evo_client: &Client, wallet_client: &Client) {
     // test_get_masternode_outputs(evo_client);
 
     // SKIP test_get_masternode_payments(evo_client);
-    test_get_masternode_status(evo_client);
+    test_get_masternode_status(evo_client, pro_tx_hash);
     test_get_masternode_winners(evo_client);
     test_get_quorum_list(evo_client);
     test_get_quorum_listextended(evo_client);
@@ -1256,8 +1257,10 @@ fn test_get_masternode_payments(cl: &Client) {
     );
 }
 
-fn test_get_masternode_status(cl: &Client) {
-    let _masternode_status = cl.get_masternode_status().unwrap();
+fn test_get_masternode_status(cl: &Client, pro_tx_hash: ProTxHash) {
+    let status = cl.get_masternode_status().unwrap();
+    assert_eq!(status.state, json::MasternodeState::MasternodeReady);
+    assert_eq!(status.pro_tx_hash, pro_tx_hash);
 }
 
 fn test_get_masternode_winners(cl: &Client) {
