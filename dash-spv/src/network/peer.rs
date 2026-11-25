@@ -822,9 +822,6 @@ fn spawn_reader(
             }
         }
 
-        // Closed before it is announced, so no work is given to the peer once the work it
-        // holds was re-queued.
-        shutdown.cancel();
         let _ = inbound.send(PeerEvent::Disconnected(addr));
     });
 }

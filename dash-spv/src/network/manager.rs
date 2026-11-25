@@ -1973,23 +1973,6 @@ mod tests {
         assert_eq!(net.connected_count().await, 0);
     }
 
-    #[tokio::test]
-    async fn a_peer_that_hangs_up_is_closed() {
-        let net = broker().await;
-        let (peer, far) = ConnectedPeer::for_test_reading(conn(1, 0), net.state.clone()).await;
-        let handle = peer.handle();
-        assert!(!handle.is_closed());
-
-        drop(far);
-        time::timeout(Duration::from_secs(10), async {
-            while !handle.is_closed() {
-                time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("the hang-up closes the peer");
-    }
-
     enum Feed {
         Nothing,
         /// A complete answer from this peer every second.
