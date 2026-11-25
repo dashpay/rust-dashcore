@@ -1732,3 +1732,72 @@ async fn a_wallet_restored_in_the_same_session_is_passed_a_held_locked_spend_aga
         "the held C is passed to the restored wallet again"
     );
 }
+
+/// Wallet A abandoned live P. Locked C spends P's change and another coin, pays wallet B, and P
+/// returns by its lock. D spends the other coin in a ChainLocked block, so C can never confirm
+/// and P's change is A's again.
+#[tokio::test]
+async fn a_chain_locked_conflict_beating_a_locked_spend_gives_back_the_abandoned_change() {
+    let (mut h, ids) = Harness::new(&[MNEMONIC_A, MNEMONIC_B]).await;
+    let (a, b) = (ids[0], ids[1]);
+    h.filters_synced().await;
+    h.tick().await;
+    let elsewhere = address_of_unregistered(MNEMONIC_C).await;
+    let (payment, _) = abandoned_payment_with_change(&mut h, &a, &elsewhere, 161..162, false).await;
+    let to_b = next_unused_receive_address(&h.wallets, &b).await;
+    let other = OutPoint::new(Txid::from_byte_array([0x58; 32]), 0);
+    let child = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![
+            TxIn {
+                previous_output: OutPoint::new(payment.txid(), 1),
+                ..Default::default()
+            },
+            TxIn {
+                previous_output: other,
+                ..Default::default()
+            },
+        ],
+        output: vec![TxOut {
+            value: CHANGE,
+            script_pubkey: to_b.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    h.manager.process_instant_send(lock_for(&child)).await;
+    assert!(h.announce(&child).await);
+    assert!(h.manager.transactions.contains_key(&child.txid()), "C pays B");
+    h.manager.process_instant_send(lock_for(&payment)).await;
+    h.manager.send_queued(&h.network).await.unwrap();
+    assert!(asked_for(&h.sent_messages().await, payment.txid()));
+    h.manager.handle_tx(payment.clone(), h.peer, &h.network).await.unwrap();
+    let change = OutPoint::new(payment.txid(), 1);
+    let shows = |wallets: &WalletManager<ManagedWalletInfo>| {
+        wallets.get_wallet_info(&a).unwrap().utxos().iter().any(|utxo| utxo.outpoint == change)
+    };
+    assert!(!shows(&*h.wallets.read().await), "C spends P's change");
+
+    let winner = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: other,
+            ..Default::default()
+        }],
+        output: vec![TxOut {
+            value: 500_000,
+            script_pubkey: elsewhere.script_pubkey(),
+        }],
+        special_transaction_payload: None,
+    };
+    let block = Block::dummy(971, vec![winner]);
+    let mut wallets = h.wallets.write().await;
+    wallets.apply_chain_lock(dashcore::ChainLock::dummy(971));
+    wallets
+        .process_block_for_wallets(&block, block.block_hash(), 971, &BTreeSet::from([a, b]))
+        .await;
+    assert!(shows(&wallets), "D beat C, so P's change is unspent");
+    drop(wallets);
+    assert_eq!(h.total(&a).await, CHANGE);
+}

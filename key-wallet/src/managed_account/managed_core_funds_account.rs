@@ -108,6 +108,9 @@ pub(crate) struct ConflictSweep {
     /// learn which coins actually came free without redoing the
     /// freed-versus-still-spent comparison itself.
     pub released_outpoints: Vec<OutPoint>,
+    /// The coins the removed losers had taken out of `utxos`, as they were then. Those released
+    /// are unspent again.
+    pub taken: Vec<Utxo>,
 }
 
 impl ManagedCoreFundsAccount {
@@ -741,22 +744,9 @@ impl ManagedCoreFundsAccount {
     /// inputs are correctly accounted for by `tx`, the transaction that
     /// actually spent them.
     ///
-    /// A loser may also spend inputs the winner does not. Those coins are
-    /// freed from `spent_outpoints` below, but they cannot be re-credited
-    /// here: `update_utxos` discarded their `Utxo` — and its flags — when the
-    /// loser was recorded, and `InputDetail` keeps only index/value/address.
-    /// The release is what makes them recoverable: a rescan re-delivering the
-    /// funding transaction inserts them again. Until that rescan they are
-    /// absent from the balance.
-    ///
-    /// That recovery has a boundary worth knowing. A funding transaction that
-    /// was chainlock-finalized keeps only its txid and summary, so
-    /// `has_transaction` stays true and re-delivery is not a new sighting —
-    /// `confirm_transaction` returns before `update_utxos` and credits only
-    /// outputs its record did not own, and the coin does not come back.
-    /// Recovering it needs a rescan deep enough to re-fetch the block, which
-    /// is above this layer. Since Dash chainlocks within a block or two, that
-    /// is the normal posture for older coins.
+    /// A loser may also spend inputs the winner does not. Those coins are freed from
+    /// `spent_outpoints` below and returned in `taken`, as the loser took them, for the wallet
+    /// to credit again.
     ///
     /// Scope: account-local. A loser recorded here has its outputs dropped
     /// here; a loser whose change landed in a *different* account is not
@@ -764,7 +754,7 @@ impl ManagedCoreFundsAccount {
     /// per-account. That covers the ordinary shape — a resend keeps the same
     /// funding account and so the same change account — but not every one.
     ///
-    /// Returns the txids it removed, together with the outpoints that
+    /// Returns the txids it removed and the coins they had taken, together with the outpoints that
     /// removal released from `spent_outpoints` (see
     /// [`Self::release_spent_marks`]). The latter is not derivable by a
     /// caller from the txids alone: the winner that triggers this sweep does
@@ -853,6 +843,7 @@ impl ManagedCoreFundsAccount {
         }
 
         let mut freed: HashSet<OutPoint> = HashSet::new();
+        let mut taken = Vec::new();
         for loser in &losers {
             let removed: Vec<OutPoint> =
                 self.utxos.keys().filter(|outpoint| outpoint.txid == *loser).copied().collect();
@@ -861,7 +852,7 @@ impl ManagedCoreFundsAccount {
             }
             self.spent_before_funded.retain(|outpoint, _| outpoint.txid != *loser);
             self.claim_guarded_outputs.retain(|outpoint, _| outpoint.txid != *loser);
-            self.unsettled_spends.remove(loser);
+            taken.extend(self.unsettled_spends.remove(loser).unwrap_or_default());
             if let Some(record) = self.keys.transactions_mut().remove(loser) {
                 freed.extend(record.transaction.input.iter().map(|input| input.previous_output));
             }
@@ -899,6 +890,7 @@ impl ManagedCoreFundsAccount {
         ConflictSweep {
             txids: losers.into_iter().collect(),
             released_outpoints,
+            taken,
         }
     }
 
