@@ -103,22 +103,32 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
             // Activate as soon as filter sync completes — the wallet's address
             // and UTXO set is fully populated at this point.
             SyncEvent::FiltersSyncComplete {
-                ..
+                tip_height,
             } => {
                 let first = !self.filters_synced;
                 self.filters_synced = true;
-                if first && self.activate_during_sync {
+                let behind = self.wallet.read().await.synced_height() < *tip_height;
+                let after_scan = self.refresh_after_scan && !behind;
+                if (first && self.activate_during_sync) || after_scan {
+                    // A wallet still behind is looked at again once its scan reaches the tip.
+                    self.refresh_after_scan = behind;
                     if self.state() == SyncState::Synced {
-                        self.refresh_after_filter_sync(network).await?;
+                        self.refresh_wallet_view(network, after_scan).await?;
                         return Ok(vec![]);
                     }
+                    self.replay_held().await;
                     self.forget_irrelevant_txids();
+                }
+                if first && behind {
+                    self.refresh_after_scan = true;
                 }
                 if self.state() != SyncState::Synced {
                     self.activate_all_peers(network).await?;
                     let has_activated = self.peers.values().any(|v| v.is_some());
                     if has_activated {
                         self.set_state(SyncState::Synced);
+                        self.last_wallet_set_revision =
+                            Some(self.wallet.read().await.wallet_set_revision());
                         tracing::info!("Mempool manager activated after filter sync");
                         return Ok(vec![]);
                     } else {
@@ -167,6 +177,22 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         // Send queued getdata requests now that slots may have freed up
         self.send_queued(network).await?;
 
+        // A wallet registered since the last look: fetch the payments to it already in the
+        // mempool now, and look again once its scan has caught up.
+        if self.filters_synced || !self.activate_during_sync {
+            let wallet_set_revision = self.wallet.read().await.wallet_set_revision();
+            match self.last_wallet_set_revision {
+                None => self.last_wallet_set_revision = Some(wallet_set_revision),
+                Some(last) if last != wallet_set_revision => {
+                    tracing::info!("Wallet set changed, looking at the mempool again");
+                    self.refresh_after_scan = true;
+                    self.refresh_wallet_view(network, true).await?;
+                    return Ok(events);
+                }
+                Some(_) => {}
+            }
+        }
+
         // Rebuild bloom filter if the wallet's monitored set has changed.
         //
         // The hash covers exactly what the filter is built from, so polling it
@@ -196,9 +222,11 @@ mod tests {
     use super::*;
     use crate::sync::BroadcastConfig;
     use crate::test_utils::{test_socket_address, MockNetworkManager};
+    use crate::types::UnconfirmedTransaction;
     use dashcore::network::message_blockdata::Inventory;
+    use dashcore::Amount;
     use dashcore::{Address, Network, Transaction, Txid};
-    use key_wallet_manager::test_utils::MockWallet;
+    use key_wallet_manager::test_utils::{MockWallet, MOCK_WALLET_ID};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -1252,6 +1280,144 @@ mod tests {
             tip_height: 1000,
         };
         manager.handle_sync_event(&complete, &network).await.unwrap();
+        assert!(network_mock.sent_to_messages().await.is_empty());
+    }
+
+    /// A wallet registered after filter sync completes gets the payments already in the
+    /// mempool at once, and the mempool is looked at again once its scan reaches the tip.
+    #[tokio::test]
+    async fn test_wallet_registered_after_sync_is_looked_at_now_and_after_its_scan() {
+        let (mut manager, network, network_mock) =
+            during_sync_manager(MempoolStrategy::FetchAll, MockWallet::new());
+        let peer = test_socket_address(1);
+        manager.handle_network_event(&NetworkEvent::PeerConnected(peer), &network).await.unwrap();
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 1000);
+        let complete = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
+        };
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        manager.tick(&network).await.unwrap();
+        network_mock.clear_sent().await;
+
+        {
+            let mut wallet = manager.wallet.write().await;
+            wallet.set_wallet_set_revision(7);
+            wallet.set_addresses(vec![Address::dummy(Network::Regtest, 1)]);
+        }
+        manager.tick(&network).await.unwrap();
+        assert!(sent_mempool(&network_mock, peer).await, "looked at on registration");
+        assert!(manager.refresh_after_scan);
+        network_mock.clear_sent().await;
+
+        // The new wallet's scan finds an address; a completion before it reaches the tip
+        // changes nothing.
+        manager.wallet.write().await.set_addresses(vec![
+            Address::dummy(Network::Regtest, 1),
+            Address::dummy(Network::Regtest, 2),
+        ]);
+        let complete = SyncEvent::FiltersSyncComplete {
+            tip_height: 1001,
+        };
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        assert!(!sent_mempool(&network_mock, peer).await, "the scan is still behind");
+        assert!(manager.refresh_after_scan);
+
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 1001);
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        assert!(sent_mempool(&network_mock, peer).await, "looked at after the scan");
+        assert!(!manager.refresh_after_scan);
+    }
+
+    /// Under a bloom filter the tick reloads the filter as the new wallet's scan changes the
+    /// monitored set, and the held transactions are still replayed once the scan is done.
+    #[tokio::test]
+    async fn test_bloom_replays_held_after_a_new_wallets_scan() {
+        let (mut manager, network, _network_mock) =
+            during_sync_manager(MempoolStrategy::BloomFilter, MockWallet::new());
+        let peer = test_socket_address(1);
+        manager.wallet.write().await.set_addresses(vec![Address::dummy(Network::Regtest, 1)]);
+        manager.handle_network_event(&NetworkEvent::PeerConnected(peer), &network).await.unwrap();
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 1000);
+        let complete = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
+        };
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        manager.tick(&network).await.unwrap();
+        let held = Transaction {
+            version: 3,
+            lock_time: 7,
+            input: vec![],
+            output: vec![],
+            special_transaction_payload: None,
+        };
+        manager.transactions.insert(
+            held.txid(),
+            UnconfirmedTransaction::new(held.clone(), Amount::ZERO, false, false, Vec::new(), 0),
+        );
+
+        manager.wallet.write().await.set_wallet_set_revision(7);
+        manager.tick(&network).await.unwrap();
+        manager.wallet.write().await.set_addresses(vec![
+            Address::dummy(Network::Regtest, 1),
+            Address::dummy(Network::Regtest, 2),
+        ]);
+        manager.tick(&network).await.unwrap();
+        let processed = manager.wallet.read().await.processed_transactions();
+        processed.lock().await.clear();
+
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 1001);
+        let complete = SyncEvent::FiltersSyncComplete {
+            tip_height: 1001,
+        };
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        assert_eq!(*processed.lock().await, vec![held.txid()]);
+    }
+
+    /// A wallet still behind when filter sync first completes is looked at again once it
+    /// reaches the tip, and not again on later completions.
+    #[test_case::test_case(true; "activated during sync")]
+    #[test_case::test_case(false; "activated at completion")]
+    #[tokio::test]
+    async fn test_wallet_behind_at_first_completion_is_looked_at_after_its_scan(during_sync: bool) {
+        let (manager, network, network_mock) =
+            during_sync_manager(MempoolStrategy::FetchAll, MockWallet::new());
+        let mut manager = manager.with_activation_during_sync(during_sync);
+        let peer = test_socket_address(1);
+        manager.handle_network_event(&NetworkEvent::PeerConnected(peer), &network).await.unwrap();
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 500);
+        let complete = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
+        };
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        assert!(manager.refresh_after_scan);
+        network_mock.clear_sent().await;
+
+        manager.wallet.write().await.update_wallet_synced_height(&MOCK_WALLET_ID, 1000);
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        assert!(sent_mempool(&network_mock, peer).await);
+        assert!(!manager.refresh_after_scan);
+        network_mock.clear_sent().await;
+
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        assert!(network_mock.sent_to_messages().await.is_empty());
+    }
+
+    /// An unchanged wallet set doesn't make the tick ask for the mempool.
+    #[tokio::test]
+    async fn test_unchanged_wallet_set_does_not_refresh_on_tick() {
+        let (mut manager, network, network_mock) =
+            during_sync_manager(MempoolStrategy::FetchAll, MockWallet::new());
+        let peer = test_socket_address(1);
+        manager.handle_network_event(&NetworkEvent::PeerConnected(peer), &network).await.unwrap();
+        let complete = SyncEvent::FiltersSyncComplete {
+            tip_height: 1000,
+        };
+        manager.handle_sync_event(&complete, &network).await.unwrap();
+        manager.tick(&network).await.unwrap();
+        network_mock.clear_sent().await;
+
+        manager.wallet.write().await.set_addresses(vec![Address::dummy(Network::Regtest, 1)]);
+        manager.tick(&network).await.unwrap();
         assert!(network_mock.sent_to_messages().await.is_empty());
     }
 
