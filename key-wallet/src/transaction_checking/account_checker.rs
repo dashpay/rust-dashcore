@@ -47,7 +47,7 @@ pub struct DerivedAddressInfo {
 }
 
 /// Result of checking a transaction against accounts
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TransactionCheckResult {
     /// Whether the transaction belongs to any account
     pub is_relevant: bool,
@@ -443,19 +443,7 @@ impl ManagedAccountCollection {
         tx: &Transaction,
         account_types: &[AccountTypeToCheck],
     ) -> TransactionCheckResult {
-        let mut result = TransactionCheckResult {
-            is_relevant: false,
-            is_new_transaction: false,
-            affected_accounts: Vec::new(),
-            total_received: 0,
-            total_sent: 0,
-            new_addresses: Vec::new(),
-            new_records: Vec::new(),
-            updated_records: Vec::new(),
-            swept_transactions: Vec::new(),
-            released_outpoints: Vec::new(),
-            locked_outpoints: Vec::new(),
-        };
+        let mut result = TransactionCheckResult::default();
 
         for account_type in account_types {
             let matches = self.check_account_type(tx, *account_type);

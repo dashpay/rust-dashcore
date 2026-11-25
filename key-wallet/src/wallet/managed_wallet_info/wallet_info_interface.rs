@@ -218,6 +218,28 @@ pub trait WalletInfoInterface: Sized + WalletTransactionChecker + ManagedAccount
         0
     }
 
+    /// Whether the wallet dropped `txid` as dead (a conflict loser to a final transaction, or
+    /// abandoned), or holds it back as an unlocked spend of one. The default opts out.
+    fn is_dismissed(&self, _txid: &Txid) -> bool {
+        false
+    }
+
+    /// Whether a verified lock for `txid` should have it fetched again: it was dismissed, or
+    /// held back as a spend of a dismissed transaction, even if since released.
+    fn refetch_on_lock(&self, txid: &Txid) -> bool {
+        self.is_dismissed(txid)
+    }
+
+    /// Holds `tx`, seen unlocked, back with a dismissed transaction it spends, until that
+    /// transaction or `tx` is locked or mined. Returns whether it spends one.
+    fn dismiss_spend(&mut self, _tx: &Transaction) -> bool {
+        false
+    }
+
+    /// Forgets the dismissal of `txid`, which was mined, and releases the spends held back only
+    /// with it.
+    fn undismiss(&mut self, _txid: &Txid) {}
+
     /// Return the highest chainlock that has been applied to this
     /// wallet, retaining the signing proof. Blocks at or below
     /// `chain_lock.block_height` are considered chainlock-finalized
@@ -355,6 +377,22 @@ impl WalletInfoInterface for ManagedWalletInfo {
 
     fn account_generation(&self) -> u64 {
         self.account_generation
+    }
+
+    fn is_dismissed(&self, txid: &Txid) -> bool {
+        self.dismissed.contains(txid)
+    }
+
+    fn refetch_on_lock(&self, txid: &Txid) -> bool {
+        self.dismissed.refetch_on_lock(txid)
+    }
+
+    fn dismiss_spend(&mut self, tx: &Transaction) -> bool {
+        self.hold_spend_of_dismissed(tx, tx.txid())
+    }
+
+    fn undismiss(&mut self, txid: &Txid) {
+        self.dismissed.settled(txid);
     }
 
     fn last_applied_chain_lock(&self) -> Option<&ChainLock> {

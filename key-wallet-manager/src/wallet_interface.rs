@@ -210,6 +210,24 @@ pub trait WalletInterface: Send + Sync + 'static {
         true
     }
 
+    /// Whether a managed wallet dropped `txid` as dead (a conflict loser to a final transaction,
+    /// or abandoned), or holds it back as an unlocked spend of one. The default opts out.
+    fn is_dismissed(&self, _txid: &Txid) -> bool {
+        false
+    }
+
+    /// Whether the mempool manager should fetch `txid` again when its verified lock arrives: a
+    /// wallet dismissed it, or held it back as a spend of a dismissed transaction.
+    fn refetch_on_lock(&self, txid: &Txid) -> bool {
+        self.is_dismissed(txid)
+    }
+
+    /// Whether `tx` spends a transaction a wallet dismissed, or a spend it remembers with one,
+    /// while that wallet has not recorded `tx`. The default opts out.
+    fn spends_dismissed_elsewhere(&self, _tx: &Transaction) -> bool {
+        false
+    }
+
     /// Returns a revision of the set of wallets, which changes whenever a wallet is added or
     /// removed, so the mempool manager looks at the mempool again for it. The default
     /// (constant `0`) opts out.

@@ -146,14 +146,16 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 // Remove confirmed transactions from mempool.
                 // Bloom filter rebuild is handled by the tick's monitor hash check.
                 if !confirmed_txids.is_empty() {
-                    return Ok(self.remove_confirmed(confirmed_txids));
+                    let events = self.remove_confirmed(confirmed_txids);
+                    self.recheck_locked_spends_of(confirmed_txids).await;
+                    return Ok(events);
                 }
                 Ok(vec![])
             }
             SyncEvent::InstantLockReceived {
                 instant_lock,
-                ..
-            } => Ok(self.process_instant_send(instant_lock.clone()).await),
+                validated,
+            } => Ok(self.process_instant_lock(instant_lock.clone(), *validated).await),
             _ => Ok(vec![]),
         }
     }
