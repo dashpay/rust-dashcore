@@ -183,6 +183,10 @@ impl Ledger {
         self.in_flight_bytes.load(Ordering::Relaxed)
     }
 
+    pub(super) fn expected_cost(&self, msg: &NetworkMessage) -> u64 {
+        self.costs.cost(msg)
+    }
+
     /// Returns how long the peer has owed a reply without answering anything, zero while it
     /// owes none.
     pub(super) async fn silent_for(&self) -> Duration {
