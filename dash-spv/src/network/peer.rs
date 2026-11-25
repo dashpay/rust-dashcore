@@ -312,6 +312,10 @@ impl PeerHandle {
         self.ledger.in_flight_bytes()
     }
 
+    pub(super) fn expected_cost(&self, msg: &NetworkMessage) -> u64 {
+        self.ledger.expected_cost(msg)
+    }
+
     pub(super) async fn silent_for(&self) -> Duration {
         self.ledger.silent_for().await
     }
