@@ -878,8 +878,8 @@ mod tests {
     use std::thread;
     use test_case::test_case;
 
-    /// Answers JSON-RPC requests on its own port, keeps connections open like dashd, and counts
-    /// them in `connections`.
+    /// Answers each JSON-RPC request on its own port with the request's path, keeps connections
+    /// open like dashd, and counts them in `connections`.
     fn serve_rpc(connections: Arc<AtomicUsize>) -> u16 {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -890,11 +890,13 @@ mod tests {
                     let mut stream = BufReader::new(stream.unwrap());
                     loop {
                         let mut length = 0;
+                        let mut path = None;
                         loop {
                             let mut line = String::new();
                             if stream.read_line(&mut line).unwrap_or(0) == 0 {
                                 return;
                             }
+                            path = path.or(line.split(' ').nth(1).map(str::to_string));
                             if let Some(n) = line.strip_prefix("Content-Length: ") {
                                 length = n.trim().parse().unwrap();
                             }
@@ -905,8 +907,8 @@ mod tests {
                         let mut body = vec![0; length];
                         stream.read_exact(&mut body).unwrap();
                         let id = serde_json::from_slice::<Value>(&body).unwrap()["id"].clone();
-                        let reply =
-                            serde_json::json!({"result": 7, "error": null, "id": id}).to_string();
+                        let reply = serde_json::json!({"result": path, "error": null, "id": id})
+                            .to_string();
                         let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}", reply.len());
                         write!(stream.get_mut(), "{head}\r\n\r\n{reply}").unwrap();
                     }
@@ -916,17 +918,21 @@ mod tests {
         port
     }
 
-    #[test_case(|node| node.try_rpc_call("getblockcount", &[]).unwrap(); "base")]
-    #[test_case(|node| node.get_block_count().into(); "primary wallet")]
+    #[test_case(|node| vec![node.try_rpc_call("ping", &[]).unwrap()], &["/"]; "base")]
+    #[test_case(
+        |node| vec![node.rpc_client().call("ping", &[]).unwrap()],
+        &["/wallet/default"];
+        "primary wallet"
+    )]
     #[test_case(
         |node| {
-            let [a, b] = ["a", "b"].map(|name| node.rpc_client_for_wallet(name));
-            a.get_block_count().unwrap();
-            b.get_block_count().unwrap().into()
-        };
+            let wallets = ["a", "b"].map(|name| node.rpc_client_for_wallet(name));
+            wallets.iter().map(|wallet| wallet.call("ping", &[]).unwrap()).collect()
+        },
+        &["/wallet/a", "/wallet/b"];
         "several wallets"
     )]
-    fn rpc_calls_share_a_connection(call: fn(&DashCoreNode) -> Value) {
+    fn rpc_calls_share_a_connection(call: fn(&DashCoreNode) -> Vec<Value>, paths: &[&str]) {
         let connections = Arc::new(AtomicUsize::new(0));
         let datadir = tempfile::tempdir().unwrap();
         fs::create_dir(datadir.path().join("regtest")).unwrap();
@@ -941,7 +947,7 @@ mod tests {
         });
 
         for _ in 0..5 {
-            assert_eq!(call(&node), Value::from(7));
+            assert_eq!(call(&node), paths);
         }
         assert_eq!(connections.load(Ordering::SeqCst), 1);
     }
