@@ -20,10 +20,9 @@ const HEDGE_AFTER: Duration = Duration::from_secs(2);
 /// A request on the wire this long gets a second copy even while its peer delivers other
 /// replies, unless [`HEDGE_QUEUE_FACTOR`] gives it longer.
 const HEDGE_OVERDUE: Duration = Duration::from_secs(10);
-/// A request may wait this many times its peer's queue at send before a second copy is sent
-/// to a peer still delivering, so it is hedged only once its peer serves at under half the
-/// rate the request was routed by. A peer's queue can hold many seconds of work, and a copy
-/// sent while the batch merely waits in it is downloaded twice.
+/// A request may wait this many times its peer's queue at send before a second copy goes to a
+/// peer still delivering. A queue can hold many seconds of work, and a copy sent while the batch
+/// merely waits in it is downloaded twice.
 const HEDGE_QUEUE_FACTOR: f64 = 2.0;
 const MIN_IN_FLIGHT_PER_CLASS: usize = 4;
 const MSG_CLASSES: usize = 5;
@@ -600,10 +599,9 @@ fn rate(peer: &PeerHandle) -> u64 {
 
 /// Returns how long a request just sent to `peer` may stay on the wire while `peer` keeps
 /// delivering: [`HEDGE_QUEUE_FACTOR`] times the queue it ends, its own reply included, at least
-/// [`HEDGE_OVERDUE`]. The queue is taken at send. Requests sent later wait behind this one,
-/// and a rate taken later would give a peer that slowed down the more time the slower it got.
-/// A rate not measured yet starts near zero, so it gives [`HEDGE_OVERDUE`].
+/// [`HEDGE_OVERDUE`]. Taken at send, as a later rate gives a peer that slows down more time.
 fn overdue_after(peer: &PeerHandle) -> Duration {
+    // A rate not measured yet starts near zero.
     if peer.serving_rate() == 0 {
         return HEDGE_OVERDUE;
     }
@@ -756,6 +754,7 @@ mod tests {
     use std::pin::pin;
     use std::slice;
     use test_case::test_case;
+    use tokio::time;
 
     fn get_headers(locator: u32) -> NetworkMessage {
         NetworkMessage::GetHeaders(GetHeadersMessage::new(
@@ -1087,7 +1086,7 @@ mod tests {
         measured.set_serving_rate(100 << 10);
         broker.enqueue(0, request.clone()).await;
         assert_eq!(broker.route(&[holder.handle()], &ResponseCosts::new()).await, 1);
-        tokio::time::advance(HEDGE_AFTER).await;
+        time::advance(HEDGE_AFTER).await;
         measured.handle().send(&get_cfilters(5000)).await.expect("loopback send");
         let queued = measured.in_flight_bytes();
         if full {
@@ -1121,7 +1120,7 @@ mod tests {
         let fast = ConnectedPeer::for_test(conn(3, 0)).await;
         broker.enqueue(0, request.clone()).await;
         assert_eq!(broker.route(&[holder.handle()], &ResponseCosts::new()).await, 1);
-        tokio::time::advance(HEDGE_AFTER).await;
+        time::advance(HEDGE_AFTER).await;
         for (peer, rate, queued) in [(&slow, 100 << 10, queued[0]), (&fast, 1000 << 10, queued[1])]
         {
             peer.set_cap(1 << 30);
@@ -1174,7 +1173,7 @@ mod tests {
         for (deadline, hedged) in [(10, None), (39, None), (41, Some(1000))] {
             let deadline = Duration::from_secs(deadline);
             while waited < deadline {
-                tokio::time::advance(step).await;
+                time::advance(step).await;
                 broker.progress(holder.id()).await;
                 waited += step;
             }
@@ -1281,7 +1280,7 @@ mod tests {
         let mut route = pin!(broker.route(&peers, &costs));
         assert_eq!(route.as_mut().now_or_never(), None, "the second write is held");
         assert!(holder.in_flight_bytes() > 0, "the first request is sent");
-        tokio::time::advance(HEDGE_AFTER).await;
+        time::advance(HEDGE_AFTER).await;
         drop(writes);
         assert_eq!(route.await, 2);
 
@@ -1289,7 +1288,7 @@ mod tests {
         let mut waited = HEDGE_AFTER;
         while waited < HEDGE_OVERDUE {
             assert_eq!(broker.hedge_filters(&peers).await, None, "after {waited:?}");
-            tokio::time::advance(HEDGE_AFTER / 2).await;
+            time::advance(HEDGE_AFTER / 2).await;
             broker.progress(holder.id()).await;
             waited += HEDGE_AFTER / 2;
         }
@@ -1318,7 +1317,7 @@ mod tests {
 
         let step = HEDGE_AFTER / 2;
         for _ in 0..waited.as_millis() / step.as_millis() {
-            tokio::time::advance(step).await;
+            time::advance(step).await;
             if delivering {
                 broker.progress(conn(1, 0)).await;
             }
