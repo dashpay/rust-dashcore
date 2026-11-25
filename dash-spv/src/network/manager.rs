@@ -758,7 +758,7 @@ fn spawn_hedger(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHa
             }
             // Sent even while our link looks stalled: two frozen peers look the same, and
             // another peer may be idle only because the batch they owe blocks the store.
-            if let Some(height) = broker.hedge_filters(&handles).await {
+            while let Some(height) = broker.hedge_filters(&handles).await {
                 tracing::debug!(target: "dash_spv::network", "hedged filter batch {}", height);
             }
         }
@@ -2625,6 +2625,41 @@ mod tests {
         assert_eq!(handles[1].in_flight_bytes(), 0);
         drop(writes);
         yield_until(|| handles[1].in_flight_bytes() > 0).await;
+    }
+
+    /// Two silent peers owe four filter batches. The peer that joins idle is asked for more
+    /// than one of them in the tick that hedges, not for one per tick.
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_answering_for_silent_ones_is_asked_for_their_batches_at_once() {
+        let net = broker().await;
+        let session = net.session.lock().await.clone();
+        let mut handles = Vec::new();
+        for n in 1..=3 {
+            let peer = ConnectedPeer::for_test(conn(n, 0)).await;
+            handles.push(peer.handle());
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+            if n == 2 {
+                for start in [0, 1000, 2000, 3000] {
+                    net.state.broker.enqueue(start, get_cfilters(start)).await;
+                }
+                settle().await;
+                assert!(handles.iter().all(|h| h.in_flight_bytes() > 0), "the work is routed");
+            }
+        }
+
+        let answering = &handles[2];
+        // Short of a timeout, so the copies cannot be requeued work.
+        for _ in 0..REQUEST_TIMEOUT.as_millis() / FLOW_TICK.as_millis() / 2 {
+            if answering.in_flight_bytes() > 0 {
+                break;
+            }
+            time::advance(FLOW_TICK).await;
+            settle().await;
+        }
+        let copies = answering.in_flight_bytes() / net.state.costs.cost(&get_cfilters(0));
+        assert!(copies > 1, "{copies} copies in the first tick");
     }
 
     /// A kick re-sends what the peer still owes, not a batch that it delivered and that
