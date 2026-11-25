@@ -937,6 +937,8 @@ fn current_timestamp() -> u64 {
 }
 
 #[cfg(test)]
+mod dismissal_reload_tests;
+#[cfg(test)]
 mod event_tests;
 #[cfg(test)]
 mod test_helpers;
