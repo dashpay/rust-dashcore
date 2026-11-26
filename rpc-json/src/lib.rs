@@ -3367,7 +3367,7 @@ pub struct MetaInfo {
 }
 
 #[serde_as]
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProTxInfo {
     #[serde(rename = "type")]
@@ -3381,7 +3381,7 @@ pub struct ProTxInfo {
     /// shared masternode's), or Core cannot look the collateral transaction up (no `-txindex`).
     #[serde(default, deserialize_with = "deserialize_address_optional")]
     pub collateral_address: Option<[u8; 20]>,
-    pub operator_reward: u32,
+    pub operator_reward: f32,
     pub state: DMNState,
     pub confirmations: u32,
     #[serde(default)]
@@ -3389,7 +3389,7 @@ pub struct ProTxInfo {
     pub meta_info: MetaInfo,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ProTxList {
     Hex(Vec<ProTxHash>),
@@ -4832,6 +4832,11 @@ mod tests {
     /// `protx info` for a `CORE_V24_LISTDIFF` added masternode: the listdiff entry plus
     /// confirmations and meta info.
     fn core_v24_protx_info(added_index: usize) -> ProTxInfo {
+        serde_json::from_value(core_v24_protx_info_json(added_index))
+            .expect("Core v24 protx info must deserialize")
+    }
+
+    fn core_v24_protx_info_json(added_index: usize) -> serde_json::Value {
         let listdiff: serde_json::Value =
             serde_json::from_str(CORE_V24_LISTDIFF).expect("valid json");
         let mut info = listdiff["addedMNs"][added_index].clone();
@@ -4847,7 +4852,7 @@ mod tests {
             "is_platform_banned": false,
             "platform_ban_height_updated": 0
         });
-        serde_json::from_value(info).expect("Core v24 protx info must deserialize")
+        info
     }
 
     fn hash160(hex: &str) -> [u8; 20] {
@@ -4862,6 +4867,14 @@ mod tests {
             Some(hash160("1ba1ae9799af495a38619dad703a079919a48144")),
             "yNqYnF9sHURjwRmhZMLFGQ3WjC5DZNJMUi"
         );
+    }
+
+    #[test]
+    fn protx_info_decodes_fractional_operator_reward() {
+        let mut info = core_v24_protx_info_json(1);
+        info["operatorReward"] = json!(12.5);
+        let info: ProTxInfo = serde_json::from_value(info).unwrap();
+        assert_eq!(info.operator_reward, 12.5);
     }
 
     #[test]

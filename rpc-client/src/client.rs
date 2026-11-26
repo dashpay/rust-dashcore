@@ -1442,7 +1442,7 @@ pub trait RpcApi: Sized {
         protx_hash: &ProTxHash,
         block_hash: Option<&BlockHash>,
     ) -> Result<json::ProTxInfo> {
-        let mut args = ["info".into(), into_json(protx_hash.to_hex())?, opt_into_json(block_hash)?];
+        let mut args = ["info".into(), into_json(protx_hash)?, opt_into_json(block_hash)?];
 
         self.call::<json::ProTxInfo>("protx", handle_defaults(&mut args, &[null()]))
     }
