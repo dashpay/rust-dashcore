@@ -9,7 +9,7 @@ use std::{
 };
 
 // Tokio's clock, so tests can pause time to drive the request-timeout machinery.
-use tokio::time::Instant;
+use tokio::time::{self, Instant};
 
 use dashcore::network::constants::ServiceFlags;
 use dashcore::network::message::NetworkMessage;
@@ -285,6 +285,7 @@ impl PeerNetworkManager {
         spawn_router(state.clone(), shutdown.clone());
         spawn_timeout_monitor(state.clone(), shutdown.clone());
         spawn_flow_controller(state.clone(), shutdown.clone());
+        spawn_hedger(state.clone(), shutdown.clone());
 
         PeerNetworkManager {
             state,
@@ -617,7 +618,6 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             bytes,
             connected,
             peer_wake,
-            broker,
             costs,
             ..
         } = &*state;
@@ -712,18 +712,7 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // is not re-probed every tick. A stall of our own link drags every rate down
             // unevenly, so nobody is underserving during one.
             let underserving = (!stalled).then(|| underserving_peer(&g)).flatten();
-            let handles: Vec<PeerHandle> = g.iter().map(|p| p.handle()).collect();
             drop(g);
-            if broker.len() == 0 {
-                if let Some(height) = broker.hedge(&handles).await {
-                    tracing::debug!(target: "dash_spv::network", "endgame: hedged block {}", height);
-                }
-            }
-            // Sent even while our link looks stalled: two frozen peers look the same, and
-            // another peer may be idle only because the batch they owe blocks the store.
-            if let Some(height) = broker.hedge_filters(&handles).await {
-                tracing::debug!(target: "dash_spv::network", "hedged filter batch {}", height);
-            }
             if let Some(slow) = underserving.filter(|slow| Some(slow.addr) != last_underserving) {
                 tracing::debug!(
                     target: "dash_spv::network",
@@ -735,6 +724,36 @@ fn spawn_flow_controller(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 peer_wake.notify_one();
             }
             last_underserving = underserving.map(|slow| slow.addr);
+        }
+    })
+}
+
+/// Hedges the requests that hold up sync. A task of its own, since a hedge waits for its write
+/// and the flow controller must keep measuring meanwhile.
+fn spawn_hedger(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let broker = &state.broker;
+        let mut ticker = time::interval(FLOW_TICK);
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                _ = ticker.tick() => {}
+            }
+            let handles: Vec<PeerHandle> =
+                state.connected.read().await.iter().map(|p| p.handle()).collect();
+            if handles.is_empty() {
+                continue;
+            }
+            if broker.len() == 0 {
+                if let Some(height) = broker.hedge(&handles).await {
+                    tracing::debug!(target: "dash_spv::network", "endgame: hedged block {}", height);
+                }
+            }
+            // Sent even while our link looks stalled: two frozen peers look the same, and
+            // another peer may be idle only because the batch they owe blocks the store.
+            if let Some(height) = broker.hedge_filters(&handles).await {
+                tracing::debug!(target: "dash_spv::network", "hedged filter batch {}", height);
+            }
         }
     })
 }
@@ -1769,6 +1788,17 @@ mod tests {
         }
     }
 
+    /// Lets the spawned tasks run until `done`, with the clock standing still.
+    async fn yield_until(done: impl Fn() -> bool) {
+        for _ in 0..100_000 {
+            if done() {
+                return;
+            }
+            task::yield_now().await;
+        }
+        panic!("the spawned tasks never got there");
+    }
+
     /// The events received until none arrives for a while.
     async fn drain(events: &mut broadcast::Receiver<NetworkEvent>) -> Vec<NetworkEvent> {
         let mut received = Vec::new();
@@ -2355,6 +2385,42 @@ mod tests {
         assert_eq!(net.state.broker.state_of(&key).await, Some("on_wire"));
         assert_eq!(handles[0].in_flight_bytes(), 0, "work went back to the kicked peer");
         assert!(handles[1].in_flight_bytes() > 0, "the peer that stays carries the work");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hedge_waiting_for_its_write_holds_up_no_flow_tick() {
+        let net = broker().await;
+        let session = net.session.lock().await.clone();
+        let peers =
+            [ConnectedPeer::for_test(conn(1, 0)).await, ConnectedPeer::for_test(conn(2, 0)).await];
+        let handles = [peers[0].handle(), peers[1].handle()];
+        let writes = handles[1].hold_writes().await;
+        for peer in peers {
+            let admitted =
+                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            assert!(matches!(admitted, Admission::Joined));
+            if handles[0].in_flight_bytes() == 0 {
+                net.state.broker.enqueue(0, get_cfilters(0)).await;
+                // The request is timed from the end of its write.
+                let key = RequestKey::CFilters(BlockHash::dummy(0));
+                let on_wire =
+                    || net.state.broker.state_of(&key).now_or_never() == Some(Some("on_wire"));
+                yield_until(on_wire).await;
+            }
+        }
+        assert!(handles[0].in_flight_bytes() > 0, "the first peer holds the batch");
+        advance_silent(3).await;
+
+        // A tick replaces the caps it finds.
+        for peer in net.state.connected.read().await.iter() {
+            peer.set_cap(1);
+        }
+        time::advance(FLOW_TICK).await;
+        yield_until(|| handles.iter().all(|h| h.cap() > 1)).await;
+
+        assert_eq!(handles[1].in_flight_bytes(), 0);
+        drop(writes);
+        yield_until(|| handles[1].in_flight_bytes() > 0).await;
     }
 
     /// A kick re-sends what the peer still owes, not a batch that it delivered and that
