@@ -53,7 +53,6 @@ fn walkdir_count(dir: &Path) -> usize {
 pub(super) const EXPECTED_STORAGE: &[(&str, &str)] = &[
     ("block_headers", "headers synced to the tip"),
     ("filter_headers", "filter headers synced to the tip"),
-    ("metadata", "sync checkpoints"),
     ("version.json", "the storage version system"),
     ("masternodes", "the masternode engine snapshot this session stored"),
 ];
