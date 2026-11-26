@@ -402,9 +402,9 @@ impl Broker {
         peer.send(&msg).await.ok().map(|()| height)
     }
 
-    /// Asks a second peer for the lowest filter batch not yet delivered once its peer answered
-    /// nothing for [`HEDGE_AFTER`], and returns its height. Filters are stored in height order,
-    /// so it holds back all above it. A lower one still queued goes out next and needs no hedge.
+    /// Asks a second peer for the lowest filter batch whose peer answered nothing for
+    /// [`HEDGE_AFTER`], and returns its height, unless a lower one is still queued. Filters are
+    /// stored in height order, so only the lowest on the wire may go past a peer's cap.
     pub(super) async fn hedge_filters(&self, peers: &[PeerHandle]) -> Option<u32> {
         // Read first, so a held queue does not also hold up every user of the requests lock.
         let lowest_queued = self.queue.lowest_height(MsgClass::CFilters).await;
@@ -417,18 +417,43 @@ impl Broker {
         }
         let (msg, height, peer) = {
             let mut reqs = self.requests.lock().await;
-            let o = lowest_on_wire(&mut reqs, |key| matches!(key, RequestKey::CFilters(_)))?;
-            if answering.iter().any(|p| o.hedges.contains(&p.id()))
-                || o.last_answer.elapsed() < HEDGE_AFTER
-                || lowest_queued.is_some_and(|h| h < o.height)
-            {
-                return None;
-            }
-            // Bulk download keeps every peer at its cap, so a cap would rule out all of them.
-            // Like a header request, the second copy goes where it is answered soonest.
-            let others = answering.into_iter().filter(|p| p.id() != o.peer && !p.is_closed());
-            let peer = choose_peer(others, MsgClass::Headers)?;
-            o.hedge_to(peer)
+            let mut batches: Vec<&mut OnWire> = reqs
+                .iter_mut()
+                .filter_map(|(key, state)| match state {
+                    ReqState::OnWire(o) if matches!(key, RequestKey::CFilters(_)) => {
+                        Some(o.as_mut())
+                    }
+                    _ => None,
+                })
+                .collect();
+            batches.sort_unstable_by_key(|o| o.height);
+            let lowest = batches.first()?.height;
+            batches
+                .into_iter()
+                .take_while(|o| !lowest_queued.is_some_and(|h| h < o.height))
+                .filter(|o| {
+                    // A peer still receiving a big message answers nothing meanwhile. Only the
+                    // lowest batch is worth a copy then, any other would be downloaded twice.
+                    let silent_since = if o.height == lowest {
+                        o.last_answer
+                    } else {
+                        o.last_progress
+                    };
+                    !answering.iter().any(|p| o.hedges.contains(&p.id()))
+                        && silent_since.elapsed() >= HEDGE_AFTER
+                })
+                .find_map(|o| {
+                    // Bulk download keeps every peer at its cap, so a cap would rule out all of
+                    // them for the lowest batch. Like a header request, the second copy goes
+                    // where it is answered soonest.
+                    let others = answering.iter().copied().filter(|p| {
+                        p.id() != o.peer
+                            && !p.is_closed()
+                            && (o.height == lowest || p.in_flight_bytes() < p.cap())
+                    });
+                    let peer = choose_peer(others, MsgClass::Headers)?;
+                    Some(o.hedge_to(peer))
+                })?
         };
         peer.send(&msg).await.ok().map(|()| height)
     }
@@ -682,6 +707,7 @@ mod tests {
     use std::pin::pin;
     use std::slice;
     use test_case::test_case;
+    use tokio::time;
 
     fn get_headers(locator: u32) -> NetworkMessage {
         NetworkMessage::GetHeaders(GetHeadersMessage::new(
@@ -984,6 +1010,56 @@ mod tests {
         assert_eq!(broker.state_of(&lowest).await, Some("arrived"), "the first copy settles it");
         assert_eq!(broker.hedge_filters(&peers).await, Some(2000));
         assert_eq!(broker.hedge_filters(&peers[..1]).await, None, "no other peer to ask");
+    }
+
+    /// Two peers owe four batches. The peer left answering is asked for them one after another
+    /// as far as its cap allows, without waiting for a copy to arrive. Bytes still arriving from
+    /// the holders leave all but the lowest batch to them. Returns the copies of each round.
+    #[test_case(false => vec![vec![1000, 2000], vec![3000], vec![4000]]; "from silent peers")]
+    #[test_case(true => vec![vec![1000], vec![], vec![]]; "from peers still receiving bytes")]
+    #[tokio::test(start_paused = true)]
+    async fn hedge_filters_asks_an_answering_peer_for_batches_of_silent_ones_up_to_its_cap(
+        receiving: bool,
+    ) -> Vec<Vec<u32>> {
+        let broker = Broker::new();
+        let costs = ResponseCosts::new();
+        let holders =
+            [ConnectedPeer::for_test(conn(1, 0)).await, ConnectedPeer::for_test(conn(2, 0)).await];
+        let answering = ConnectedPeer::for_test(conn(3, 0)).await;
+        let peers = [holders[0].handle(), holders[1].handle(), answering.handle()];
+        for (n, peer) in holders.iter().enumerate() {
+            peer.set_cap(1 << 30);
+            for start in [1000, 3000].map(|start| start + n as u32 * 1000) {
+                broker.enqueue(start, get_cfilters(start)).await;
+            }
+            assert_eq!(broker.route(&peers[n..=n], &costs).await, 2);
+        }
+        time::advance(HEDGE_AFTER / 2).await;
+        if receiving {
+            broker.receiving(&[holders[0].id(), holders[1].id()]).await;
+        }
+        time::advance(HEDGE_AFTER / 2).await;
+        broker.enqueue(5000, get_cfilters(5000)).await;
+        assert_eq!(broker.route(&peers[2..], &costs).await, 1);
+        let hedge_all = || async {
+            let mut hedged = Vec::new();
+            while let Some(height) = broker.hedge_filters(&peers).await {
+                hedged.push(height);
+            }
+            hedged
+        };
+
+        // The lowest goes out past the cap, the next fills it.
+        answering.set_cap(answering.in_flight_bytes() * 3);
+        let mut rounds = vec![hedge_all().await];
+        // A lower batch still queued goes out before any batch above it.
+        answering.set_cap(u64::MAX);
+        broker.enqueue(3500, get_cfilters(3500)).await;
+        rounds.push(hedge_all().await);
+        // The answering peer delivers its own batch.
+        broker.release(&RequestKey::CFilters(BlockHash::dummy(3500))).await;
+        rounds.push(hedge_all().await);
+        rounds
     }
 
     #[test_case(false; "after it was sent")]
