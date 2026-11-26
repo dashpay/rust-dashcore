@@ -15,7 +15,7 @@ use super::setup::{create_and_start_client, TestContext};
 fn assert_no_peer_dropped(events: &mut Receiver<NetworkEvent>) {
     loop {
         match events.try_recv() {
-            Ok(NetworkEvent::PeerDisconnected(addr)) => panic!("peer {addr} was dropped"),
+            Ok(NetworkEvent::PeerDisconnected(peer)) => panic!("peer {} was dropped", peer.addr),
             Ok(_) => {}
             Err(TryRecvError::Empty) => break,
             Err(e) => panic!("network events lost: {e}"),
@@ -100,9 +100,7 @@ async fn test_filter_sync_passes_frozen_peers() {
 
     let all_connected = wait_for_network_event(
         &mut client_handle.network_event_receiver,
-        |event| {
-            matches!(event, NetworkEvent::PeersUpdated { addresses, .. } if addresses.len() == 3)
-        },
+        |event| matches!(event, NetworkEvent::PeersUpdated(peers) if peers.len() == 3),
         SYNC_TIMEOUT,
     )
     .await;
@@ -134,8 +132,8 @@ async fn test_filter_sync_passes_frozen_peers() {
             tokio::select! {
                 changed = progress.changed() => changed.expect("progress channel closed"),
                 event = client_handle.network_event_receiver.recv() => {
-                    if let NetworkEvent::PeerDisconnected(addr) = event.expect("network events lost") {
-                        panic!("peer {addr} was dropped before the filters were stored");
+                    if let NetworkEvent::PeerDisconnected(peer) = event.expect("network events lost") {
+                        panic!("peer {} was dropped before the filters were stored", peer.addr);
                     }
                 }
             }

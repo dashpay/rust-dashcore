@@ -1,10 +1,9 @@
 use crate::error::SyncResult;
-use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
+use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager, PeerInfo};
 use crate::storage::{BlockHeaderStorage, MetadataStorage};
-use crate::sync::sync_manager::ensure_not_started;
+use crate::sync::sync_manager::{best_start_height, ensure_not_started};
 use crate::sync::{
-    BlockHeadersManager, ManagerIdentifier, ProgressPercentage, SyncEvent, SyncManager,
-    SyncManagerProgress, SyncState,
+    BlockHeadersManager, ManagerIdentifier, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
 use async_trait::async_trait;
 use dashcore::network::message::NetworkMessage;
@@ -55,15 +54,11 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
 
         if !self.pipeline.is_initialized() {
             let tip = self.tip().await?;
-            let target_height = self.progress.target_height();
-
-            // Initialize the pipeline with checkpoint-based segments
-            self.pipeline.init(tip.height(), *tip.hash(), target_height);
+            self.pipeline.init(tip.height(), *tip.hash());
 
             tracing::info!(
-                "Starting parallel header sync from {} to {} ({} segments)",
+                "Starting parallel header sync from {} ({} segments)",
                 tip.height(),
-                target_height,
                 self.pipeline.segment_count()
             );
         } else {
@@ -213,7 +208,10 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
-            NetworkEvent::PeerConnected(address) => {
+            NetworkEvent::PeerConnected(PeerInfo {
+                addr: address,
+                ..
+            }) => {
                 // When synced, send GetHeaders to new peers so Dash Core learns our tip
                 // and sends header announcements instead of inv. Skip when the
                 // pipeline has an active catch-up request to avoid the empty
@@ -239,44 +237,15 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> SyncManager for BlockHeadersMana
                     self.announced_peers.insert(*address);
                 }
             }
-            NetworkEvent::PeerDisconnected(address) => {
-                self.announced_peers.remove(address);
+            NetworkEvent::PeerDisconnected(peer) => {
+                self.announced_peers.remove(&peer.addr);
             }
-            NetworkEvent::PeersUpdated {
-                addresses,
-                best_height,
-            } => {
-                self.progress.update_target_height(*best_height);
-                // The height is only a restart hint, so a failed write must not skip the peer change.
-                if let Err(e) = self
-                    .metadata_storage
-                    .write()
-                    .await
-                    .store_last_target_height(self.progress.target_height())
-                    .await
-                {
-                    tracing::warn!("Failed to store the last target height: {}", e);
-                }
-                if addresses.is_empty() {
+            NetworkEvent::PeersUpdated(peers) => {
+                if peers.is_empty() {
                     self.stop_sync();
-                } else {
-                    if self.state() == SyncState::WaitingForConnections {
-                        return self.start_sync(network).await;
-                    }
-                    // When already synced but behind peer height, request missing headers
-                    if self.state() == SyncState::Synced
-                        && *best_height > self.progress.tip_height()
-                        && !self.pipeline.tip_segment_has_pending_request()
-                    {
-                        tracing::info!(
-                            "Peer height {} > our height {}, requesting headers to catch up",
-                            best_height,
-                            self.progress.tip_height()
-                        );
-                        // Reset tip segment and send requests via pipeline
-                        self.pipeline.reset_tip_segment();
-                        self.pipeline.send_pending(network).await?;
-                    }
+                } else if self.state() == SyncState::WaitingForConnections {
+                    self.progress.update_target_height(best_start_height(peers));
+                    return self.start_sync(network).await;
                 }
             }
         }

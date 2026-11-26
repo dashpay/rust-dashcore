@@ -66,9 +66,6 @@ impl NetworkManager for HeldInstantLocksNetwork {
     fn events(&self) -> broadcast::Receiver<NetworkEvent> {
         self.peer.events()
     }
-    fn tip(&self) -> u32 {
-        self.peer.tip()
-    }
     async fn connected_count(&self) -> u32 {
         self.peer.connected_count().await
     }

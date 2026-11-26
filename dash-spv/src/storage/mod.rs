@@ -459,14 +459,6 @@ impl metadata::MetadataStorage for DiskStorageManager {
     ) -> StorageResult<Option<T>> {
         self.metadata.read().await.load_metadata(key).await
     }
-
-    async fn store_last_target_height(&mut self, height: CoreBlockHeight) -> StorageResult<()> {
-        self.metadata.write().await.store_last_target_height(height).await
-    }
-
-    async fn load_last_target_height(&self) -> StorageResult<CoreBlockHeight> {
-        self.metadata.read().await.load_last_target_height().await
-    }
 }
 
 #[async_trait]

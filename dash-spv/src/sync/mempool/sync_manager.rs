@@ -1,7 +1,7 @@
 use super::manager::MEMPOOL_TX_EXPIRY;
 use crate::client::config::MempoolStrategy;
 use crate::error::SyncResult;
-use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
+use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager, PeerInfo};
 use crate::sync::{
     ManagerIdentifier, MempoolManager, SyncEvent, SyncManager, SyncManagerProgress, SyncState,
 };
@@ -53,7 +53,10 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
         network: &Arc<dyn NetworkManager>,
     ) -> SyncResult<Vec<SyncEvent>> {
         match event {
-            NetworkEvent::PeerConnected(addr) => {
+            NetworkEvent::PeerConnected(PeerInfo {
+                addr,
+                ..
+            }) => {
                 self.handle_peer_connected(*addr);
                 // If synced, activate the new peer immediately; otherwise
                 // `FiltersSyncComplete` (or `start_sync`) will.
@@ -65,7 +68,10 @@ impl<W: WalletInterface + 'static> SyncManager for MempoolManager<W> {
                 }
                 Ok(vec![])
             }
-            NetworkEvent::PeerDisconnected(addr) => {
+            NetworkEvent::PeerDisconnected(PeerInfo {
+                addr,
+                ..
+            }) => {
                 // Hands this peer's queued txids to another activated peer.
                 self.handle_peer_disconnected(*addr);
                 Ok(vec![])
@@ -298,7 +304,7 @@ mod tests {
 
         // New peer connects while synced => should activate immediately
         let peer2 = test_socket_address(2);
-        let connect = NetworkEvent::PeerConnected(peer2);
+        let connect = NetworkEvent::PeerConnected(PeerInfo::dummy(peer2));
         let events = manager.handle_network_event(&connect, &network).await.unwrap();
         assert!(events.is_empty());
         assert!(matches!(manager.peers.get(&peer2), Some(Some(_))));
@@ -312,17 +318,17 @@ mod tests {
         let peer2 = test_socket_address(2);
 
         // Connecting peers should return empty events (not synced yet)
-        let connect1 = NetworkEvent::PeerConnected(peer1);
+        let connect1 = NetworkEvent::PeerConnected(PeerInfo::dummy(peer1));
         let events = manager.handle_network_event(&connect1, &network).await.unwrap();
         assert!(events.is_empty());
         assert!(manager.peers.contains_key(&peer1));
 
-        let connect2 = NetworkEvent::PeerConnected(peer2);
+        let connect2 = NetworkEvent::PeerConnected(PeerInfo::dummy(peer2));
         let events = manager.handle_network_event(&connect2, &network).await.unwrap();
         assert!(events.is_empty());
         assert_eq!(manager.peers.len(), 2);
 
-        let disconnect1 = NetworkEvent::PeerDisconnected(peer1);
+        let disconnect1 = NetworkEvent::PeerDisconnected(PeerInfo::dummy(peer1));
         let events = manager.handle_network_event(&disconnect1, &network).await.unwrap();
         assert!(events.is_empty());
 
@@ -651,7 +657,7 @@ mod tests {
         manager.handle_sync_event(&sync, &network).await.unwrap();
 
         // Disconnect the only peer
-        let disconnect = NetworkEvent::PeerDisconnected(peer);
+        let disconnect = NetworkEvent::PeerDisconnected(PeerInfo::dummy(peer));
         let events = manager.handle_network_event(&disconnect, &network).await.unwrap();
         assert!(events.is_empty());
         assert!(manager.peers.is_empty());
@@ -698,7 +704,7 @@ mod tests {
         assert_eq!(manager.state(), SyncState::Synced);
 
         // Disconnect peer
-        let disconnect = NetworkEvent::PeerDisconnected(peer);
+        let disconnect = NetworkEvent::PeerDisconnected(PeerInfo::dummy(peer));
         manager.handle_network_event(&disconnect, &network).await.unwrap();
 
         // Losing the last peer makes the coordinator reset the manager
@@ -706,19 +712,13 @@ mod tests {
         manager.set_state(SyncState::WaitingForConnections);
 
         // PeersUpdated with 1 but no peers tracked yet: stays WaitingForConnections
-        let update = NetworkEvent::PeersUpdated {
-            addresses: vec![peer],
-            best_height: 1000,
-        };
+        let update = NetworkEvent::PeersUpdated(vec![PeerInfo::dummy(peer)]);
         manager.handle_network_event(&update, &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
 
         // Peer reconnects and PeersUpdated fires again
         manager.handle_peer_connected(peer);
-        let update = NetworkEvent::PeersUpdated {
-            addresses: vec![peer],
-            best_height: 1000,
-        };
+        let update = NetworkEvent::PeersUpdated(vec![PeerInfo::dummy(peer)]);
         manager.handle_network_event(&update, &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::Synced);
         assert!(matches!(manager.peers.get(&peer), Some(Some(_))));

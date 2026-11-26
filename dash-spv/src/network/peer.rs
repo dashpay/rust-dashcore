@@ -38,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::network::bans::Ban;
 use crate::network::costs::{as_sent, Ledger, HEADERS2_RESP_BYTES};
-use crate::network::manager::{InboundMessage, NetworkState};
+use crate::network::manager::{InboundMessage, NetworkState, PeerInfo};
 use crate::network::transport::{encrypt_message, TransportPreference, V2Decoder};
 use crate::{error::NetworkResult, NetworkError};
 
@@ -379,8 +379,11 @@ impl ConnectedPeer {
         self.handle.id()
     }
 
-    pub fn version(&self) -> &VersionMessage {
-        &self.version
+    pub(crate) fn info(&self) -> PeerInfo {
+        PeerInfo {
+            addr: self.addr(),
+            start_height: self.version.start_height.max(0) as u32,
+        }
     }
 
     pub fn handle(&self) -> PeerHandle {

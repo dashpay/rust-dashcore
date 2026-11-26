@@ -190,16 +190,20 @@ impl MessageType {
     }
 }
 
+/// A connected peer, as it described itself in its handshake.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerInfo {
+    pub addr: SocketAddr,
+    /// Tip height the peer advertised in its handshake. It is not updated afterwards.
+    pub start_height: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NetworkEvent {
-    PeersUpdated {
-        /// Addresses of every connected peer.
-        addresses: Vec<SocketAddr>,
-        /// Best tip height advertised across those peers.
-        best_height: u32,
-    },
-    PeerConnected(SocketAddr),
-    PeerDisconnected(SocketAddr),
+    /// Every connected peer.
+    PeersUpdated(Vec<PeerInfo>),
+    PeerConnected(PeerInfo),
+    PeerDisconnected(PeerInfo),
 }
 
 pub struct NetworkState {
@@ -402,10 +406,6 @@ impl NetworkManager for PeerNetworkManager {
             subscribers.entry(kind).or_default().push(tx.clone());
         }
         rx
-    }
-
-    fn tip(&self) -> u32 {
-        self.state.connected.best_tip()
     }
 
     async fn connected_count(&self) -> u32 {
@@ -909,7 +909,6 @@ impl Supervisor {
             };
             self.state.bans.dialed(addr).await;
             let handle = peer.handle();
-            self.state.connected.raise_best_tip(peer.version().start_height.max(0) as u32);
 
             let lag = peer.lag_ms();
             if lag > 0 {
@@ -2157,8 +2156,8 @@ mod tests {
         while let Ok(event) = events.try_recv() {
             // Only a swap announces an arrival right after a departure.
             match (event, left.take()) {
-                (NetworkEvent::PeerDisconnected(addr), _) => left = Some(addr),
-                (NetworkEvent::PeerConnected(addr), Some(old)) => return Some((old, addr)),
+                (NetworkEvent::PeerDisconnected(peer), _) => left = Some(peer.addr),
+                (NetworkEvent::PeerConnected(peer), Some(old)) => return Some((old, peer.addr)),
                 _ => {}
             }
         }
@@ -2557,17 +2556,14 @@ mod tests {
         let mut tracked = HashSet::new();
         for event in &received {
             match event {
-                NetworkEvent::PeerConnected(addr) => {
-                    tracked.insert(*addr);
+                NetworkEvent::PeerConnected(peer) => {
+                    tracked.insert(peer.addr);
                 }
-                NetworkEvent::PeerDisconnected(addr) => {
-                    tracked.remove(addr);
+                NetworkEvent::PeerDisconnected(peer) => {
+                    tracked.remove(&peer.addr);
                 }
-                NetworkEvent::PeersUpdated {
-                    addresses,
-                    ..
-                } => {
-                    let listed: HashSet<_> = addresses.iter().copied().collect();
+                NetworkEvent::PeersUpdated(peers) => {
+                    let listed: HashSet<_> = peers.iter().map(|p| p.addr).collect();
                     assert_eq!(listed, tracked, "got {received:?}");
                 }
             }
@@ -2576,7 +2572,7 @@ mod tests {
         let mut departed: Vec<_> = received
             .iter()
             .filter_map(|event| match event {
-                NetworkEvent::PeerDisconnected(addr) => Some(*addr),
+                NetworkEvent::PeerDisconnected(peer) => Some(peer.addr),
                 _ => None,
             })
             .collect();
@@ -2584,10 +2580,7 @@ mod tests {
         let expected: Vec<_> = peers.iter().map(|id| id.addr()).collect();
         assert_eq!(departed, expected, "got {received:?}");
         let last_listed = received.iter().rev().find_map(|event| match event {
-            NetworkEvent::PeersUpdated {
-                addresses,
-                ..
-            } => Some(addresses.clone()),
+            NetworkEvent::PeersUpdated(peers) => Some(peers.clone()),
             _ => None,
         });
         assert_eq!(last_listed, (joined > 0).then(Vec::new), "got {received:?}");
@@ -2776,8 +2769,11 @@ mod tests {
         for n in 1..=3 {
             let peer = ConnectedPeer::for_test(conn(n, 0)).await;
             handles.push(peer.handle());
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
             if n == 2 {
                 for start in [0, 1000, 2000, 3000] {
@@ -3080,10 +3076,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reports_no_peers_and_no_tip_before_start() {
+    async fn reports_no_peers_before_start() {
         let net = broker().await;
         assert_eq!(net.connected_count().await, 0);
-        assert_eq!(net.tip(), 0);
         assert!(net.broadcast(NetworkMessage::MemPool).await.is_err());
     }
 

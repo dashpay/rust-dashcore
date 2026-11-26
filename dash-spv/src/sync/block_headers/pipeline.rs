@@ -59,14 +59,13 @@ impl HeadersPipeline {
         }
     }
 
-    /// Initialize the pipeline for downloading from current_height to target_height.
-    pub fn init(&mut self, current_height: u32, current_hash: BlockHash, target_height: u32) {
+    /// Initialize the pipeline for downloading from current_height to the chain tip.
+    pub fn init(&mut self, current_height: u32, current_hash: BlockHash) {
         self.segments.clear();
         self.next_to_store = 0;
         self.initialized = true;
         self.below.clear();
 
-        // Find checkpoints between current_height and target_height
         let mut boundaries: Vec<(u32, BlockHash)> = Vec::new();
 
         // Start from current position
@@ -75,7 +74,7 @@ impl HeadersPipeline {
         // Add checkpoints that are above current_height
         for checkpoint in self.checkpoint_manager.checkpoints() {
             let height = checkpoint.height();
-            if height > current_height && height <= target_height {
+            if height > current_height {
                 boundaries.push((height, *checkpoint.hash()));
             }
         }
@@ -109,10 +108,9 @@ impl HeadersPipeline {
         }
 
         tracing::info!(
-            "HeadersPipeline initialized with {} segments for heights {} to {}",
+            "HeadersPipeline initialized with {} segments from height {}",
             self.segments.len(),
-            current_height,
-            target_height
+            current_height
         );
     }
 
@@ -460,7 +458,7 @@ mod tests {
         let cm = create_test_checkpoint_manager(true);
         let mut pipeline = HeadersPipeline::new(cm);
 
-        pipeline.init(0, testnet_genesis_hash(), 1_200_000);
+        pipeline.init(0, testnet_genesis_hash());
 
         assert!(pipeline.is_initialized());
         // Should have segments: 0->500k, 500k->800k, 800k->1.1M, 1.1M->tip
@@ -474,7 +472,7 @@ mod tests {
 
         // Start from checkpoint 500k
         let cp_500k = cm.last_checkpoint_before_height(500_000).unwrap();
-        pipeline.init(500_000, *cp_500k.hash(), 1_200_000);
+        pipeline.init(500_000, *cp_500k.hash());
 
         // Should have fewer segments since we're starting from 500k
         assert!(pipeline.is_initialized());
@@ -487,7 +485,7 @@ mod tests {
         let cm = create_test_checkpoint_manager(true);
         let mut pipeline = HeadersPipeline::new(cm);
 
-        pipeline.init(0, testnet_genesis_hash(), 1_200_000);
+        pipeline.init(0, testnet_genesis_hash());
 
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
@@ -520,7 +518,7 @@ mod tests {
         let cm = create_test_checkpoint_manager(true);
         let mut pipeline = HeadersPipeline::new(cm);
 
-        pipeline.init(0, testnet_genesis_hash(), 1_200_000);
+        pipeline.init(0, testnet_genesis_hash());
 
         assert!(!pipeline.is_complete());
     }
@@ -530,7 +528,7 @@ mod tests {
         let cm = create_test_checkpoint_manager(true);
         let mut pipeline = HeadersPipeline::new(cm);
 
-        pipeline.init(0, testnet_genesis_hash(), 1_200_000);
+        pipeline.init(0, testnet_genesis_hash());
 
         let ready = pipeline.take_ready_to_store();
         assert!(ready.is_empty());

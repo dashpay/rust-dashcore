@@ -295,7 +295,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{spawn_broadcast_monitor, spawn_progress_monitor, EventHandler};
-    use crate::network::NetworkEvent;
+    use crate::network::{NetworkEvent, PeerInfo};
     use crate::sync::{ManagerIdentifier, SyncEvent, SyncProgress};
     use crate::test_utils::test_socket_address;
     use key_wallet_manager::WalletEvent;
@@ -351,10 +351,7 @@ mod tests {
             tip_height: 100,
         };
         handler.on_sync_event(&event);
-        handler.on_network_event(&NetworkEvent::PeersUpdated {
-            addresses: vec![],
-            best_height: 0,
-        });
+        handler.on_network_event(&NetworkEvent::PeersUpdated(vec![]));
         handler.on_progress(&SyncProgress::default());
         handler.on_error("test error");
     }
@@ -561,8 +558,8 @@ mod tests {
 
         for id in 0..16 {
             let addr = test_socket_address(id);
-            tx.send(NetworkEvent::PeerConnected(addr)).unwrap();
-            tx.send(NetworkEvent::PeerDisconnected(addr)).unwrap();
+            tx.send(NetworkEvent::PeerConnected(PeerInfo::dummy(addr))).unwrap();
+            tx.send(NetworkEvent::PeerDisconnected(PeerInfo::dummy(addr))).unwrap();
         }
         // Before the monitor first runs, so all the events are still queued.
         shutdown.cancel();

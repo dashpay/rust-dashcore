@@ -410,12 +410,12 @@ async fn test_mempool_peer_disconnect_reactivation() {
     let (fa_disc, bf_disc) = tokio::join!(
         wait_for_network_event(
             &mut fa_net_rx,
-            |e| matches!(e, NetworkEvent::PeerDisconnected(address) if *address == ctx.dashd.addr),
+            |e| matches!(e, NetworkEvent::PeerDisconnected(peer) if peer.addr == ctx.dashd.addr),
             Duration::from_secs(10),
         ),
         wait_for_network_event(
             &mut bf_net_rx,
-            |e| matches!(e, NetworkEvent::PeerDisconnected(address) if *address == ctx.dashd.addr),
+            |e| matches!(e, NetworkEvent::PeerDisconnected(peer) if peer.addr == ctx.dashd.addr),
             Duration::from_secs(10),
         ),
     );
@@ -449,10 +449,10 @@ async fn test_mempool_peer_disconnect_reactivation() {
                 _ = &mut deadline => panic!("{}: timed out waiting for both peer disconnects", label),
                 result = receiver.recv() => {
                     match result {
-                        Ok(NetworkEvent::PeerDisconnected(address)) if address == ctx.dashd.addr => {
+                        Ok(NetworkEvent::PeerDisconnected(peer)) if peer.addr == ctx.dashd.addr => {
                             seen_dashd1 = true;
                         }
-                        Ok(NetworkEvent::PeerDisconnected(address)) if address == dashd2.addr => {
+                        Ok(NetworkEvent::PeerDisconnected(peer)) if peer.addr == dashd2.addr => {
                             seen_dashd2 = true;
                         }
                         _ => {}
@@ -637,9 +637,7 @@ async fn test_broadcast_transaction_network_acceptance() {
     // single peer no holdout is possible and the echo can never arrive.
     let both_connected = wait_for_network_event(
         &mut handle.network_event_receiver,
-        |event| {
-            matches!(event, NetworkEvent::PeersUpdated { addresses, .. } if addresses.len() >= 2)
-        },
+        |event| matches!(event, NetworkEvent::PeersUpdated(peers) if peers.len() >= 2),
         MEMPOOL_TIMEOUT,
     )
     .await;
