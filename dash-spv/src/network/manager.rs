@@ -2776,8 +2776,11 @@ mod tests {
         for n in 1..=3 {
             let peer = ConnectedPeer::for_test(conn(n, 0)).await;
             handles.push(peer.handle());
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
             if n == 2 {
                 for start in [0, 1000, 2000, 3000] {
