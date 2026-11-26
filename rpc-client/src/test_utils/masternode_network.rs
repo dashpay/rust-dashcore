@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::RpcApi;
+use crate::json::MasternodeState;
 use dashcore::BlockHash;
 use dashcore::sml::llmq_type::LLMQType;
 use serde::Deserialize;
@@ -327,8 +328,8 @@ impl MasternodeTestContext {
         for (mn, mn_info) in self.masternodes.iter().zip(&self.metadata.masternodes) {
             let client = mn.rpc_client_for_wallet("");
             loop {
-                let status: Result<Value, _> = client.call("masternode", &["status".into()]);
-                if status.as_ref().is_ok_and(|s| s["state"] == "READY") {
+                let status = client.get_masternode_status();
+                if status.as_ref().is_ok_and(|s| s.state == MasternodeState::MasternodeReady) {
                     break;
                 }
                 assert!(
