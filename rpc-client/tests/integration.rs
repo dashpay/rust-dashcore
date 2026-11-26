@@ -1260,7 +1260,7 @@ fn test_get_masternode_payments(cl: &Client) {
 fn test_get_masternode_status(cl: &Client, pro_tx_hash: ProTxHash) {
     let status = cl.get_masternode_status().unwrap();
     assert_eq!(status.state, json::MasternodeState::MasternodeReady);
-    assert_eq!(status.pro_tx_hash, pro_tx_hash);
+    assert_eq!(status.pro_tx_hash, Some(pro_tx_hash));
 }
 
 fn test_get_masternode_winners(cl: &Client) {

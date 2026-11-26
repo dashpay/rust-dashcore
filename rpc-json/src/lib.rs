@@ -2727,15 +2727,15 @@ pub struct MasternodeStatus {
     #[serde_as(serialize_as = "DisplayFromStr", deserialize_as = "ServiceOrUnspecified")]
     pub service: SocketAddr,
     #[serde(rename = "proTxHash")]
-    pub pro_tx_hash: ProTxHash,
+    pub pro_tx_hash: Option<ProTxHash>,
     #[serde(rename = "type")]
-    pub node_type: String,
-    #[serde(rename = "collateralHash", with = "serde_hex")]
-    pub collateral_hash: Vec<u8>,
+    pub node_type: Option<String>,
+    #[serde(rename = "collateralHash")]
+    pub collateral_hash: Option<Txid>,
     #[serde(rename = "collateralIndex")]
-    pub collateral_index: u32,
+    pub collateral_index: Option<u32>,
     #[serde(rename = "dmnState")]
-    pub dmn_state: DMNState,
+    pub dmn_state: Option<DMNState>,
     #[serde(deserialize_with = "deserialize_mn_state")]
     pub state: MasternodeState,
     pub status: String,
@@ -3702,8 +3702,9 @@ mod tests {
     use crate::{
         Bip9SoftforkStatus, DMNPayout, DMNState, DMNStateDiff, ExtendedQuorumListResult,
         GetBlockchainInfoResult, GetDeploymentInfoResult, Masternode, MasternodeAddresses,
-        MasternodeListDiff, MasternodeStatus, MnSyncStatus, ProTxInfo, QuorumMasternodeListItem,
-        QuorumType, SoftforkInfo, SoftforkType, deserialize_u32_opt, parse_host_port,
+        MasternodeListDiff, MasternodeState, MasternodeStatus, MnSyncStatus, ProTxInfo,
+        QuorumMasternodeListItem, QuorumType, SoftforkInfo, SoftforkType, deserialize_u32_opt,
+        parse_host_port,
     };
     use hex_conservative::DisplayHex;
 
@@ -4427,7 +4428,21 @@ mod tests {
         }))
         .expect("non-IP service must not fail the status");
         assert_eq!(status.service, unspecified_service());
-        assert_eq!(status.dmn_state.service, unspecified_service());
+        assert_eq!(status.dmn_state.unwrap().service, unspecified_service());
+    }
+
+    #[test]
+    fn masternode_status_not_ready_deserializes_without_its_protx_fields() {
+        let status: MasternodeStatus = serde_json::from_value(json!({
+            "outpoint": "0000000000000000000000000000000000000000000000000000000000000000-4294967295",
+            "service": "192.0.2.1:9999",
+            "state": "ERROR",
+            "status": "Error. Local address 192.0.2.1:9999 does not match the ProTx address"
+        }))
+        .expect("a masternode that is not ready must deserialize");
+        assert_eq!(status.state, MasternodeState::MasternodeError);
+        assert_eq!(status.pro_tx_hash, None);
+        assert_eq!(status.dmn_state, None);
     }
 
     #[test]
@@ -4881,7 +4896,7 @@ mod tests {
             "quorumParticipation": true
         }))
         .expect("extended-address masternode status must deserialize");
-        assert_eq!(status.dmn_state.service, unspecified_service());
+        assert_eq!(status.dmn_state.unwrap().service, unspecified_service());
     }
 
     fn p2pkh_payout(key_hash: [u8; 20], reward: u16) -> DMNPayout {
