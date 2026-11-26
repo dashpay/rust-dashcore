@@ -6,6 +6,7 @@ on:
       - main
       - dev
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_call:
     inputs:
       os:
@@ -19,8 +20,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  draft-gate:
+    name: Draft Gate
+    permissions:
+      pull-requests: read
+    uses: $/.github/workflows/draft-gate.yml
+
   pre-commit:
     name: Pre-commit (${{ matrix.os }})
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

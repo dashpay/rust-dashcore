@@ -1,0 +1,45 @@
+name: Draft Gate
+
+# Decides whether CI runs. A draft PR runs it only when its run is restarted, which is how
+# `draft-ci.yml` starts it, or when the "Run CI on every push" box of its CI comment is ticked.
+# Every other event runs it.
+
+on:
+  workflow_call:
+    outputs:
+      run:
+        description: Whether the calling workflow runs its jobs
+        value: ${{ jobs.check.outputs.run }}
+
+permissions: {}
+
+jobs:
+  check:
+    name: check
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Decide whether CI runs
+        id: decide
+        env:
+          # A restarted run keeps its first event payload, so the attempt is the only sign of a request.
+          RUN: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft || github.run_attempt > 1 }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$RUN" != true ]; then
+            # Only the bot's comment counts, since editing it takes write access.
+            if ! ticked=$(gh api --paginate "repos/$REPO/issues/$PR/comments?per_page=100" --jq '.[]
+                | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- draft-ci -->")))
+                | .body | test("(?m)^- \\[[xX]\\] <!-- draft-ci:auto -->")'); then
+              echo "::warning::Could not read the CI comment, so CI runs."
+              ticked=true
+            fi
+            case "$ticked" in *true*) RUN=true ;; esac
+          fi
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          [ "$RUN" = true ] || echo "::notice::CI is off for draft PRs. Tick a box in the CI comment on the PR to start it."

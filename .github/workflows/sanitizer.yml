@@ -7,6 +7,7 @@ on:
       - main
       - dev
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'dash/**'
       - 'hashes/**'
@@ -30,8 +31,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  draft-gate:
+    name: Draft Gate
+    permissions:
+      pull-requests: read
+    uses: $/.github/workflows/draft-gate.yml
+
   asan:
     name: Address Sanitizer
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -47,6 +56,8 @@ jobs:
 
   tsan:
     name: Thread Sanitizer
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
