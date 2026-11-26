@@ -20,7 +20,10 @@ BOT = "github-actions[bot]"
 GATE = "Draft Gate"
 ONCE = "once"
 AUTO = "auto"
+# The workflows whose jobs wait for `Draft Gate`.
+GATED = {".github/workflows/rust.yml", ".github/workflows/pre-commit.yml", ".github/workflows/sanitizer.yml"}
 POLL_SECONDS = 10
+# Shared by all runs of one request, so the wait stays below the job's 15 minute timeout.
 POLLS = 60
 NOTE = re.compile(r"\n*<!-- draft-ci:note -->.*", re.DOTALL)
 
@@ -91,19 +94,17 @@ def jobs_of(gh, run_id: int) -> list:
     return gh.get_list(f"actions/runs/{run_id}/jobs?per_page=100", "jobs")
 
 
-def is_gated(jobs: list) -> bool:
-    return any(job["name"].startswith(GATE) for job in jobs)
-
-
 def ran_ci(jobs: list) -> bool:
     """Whether any job besides the gate started. Jobs behind a gate that is still running are not listed."""
     return any(not job["name"].startswith(GATE) and job["conclusion"] != "skipped" for job in jobs)
 
 
 def newest_runs(gh, sha: str) -> list:
-    """Returns the newest pull request run of each workflow on the commit."""
+    """Returns the newest pull request run of each gated workflow on the commit."""
     newest = {}
     for run in gh.get_list(f"actions/runs?head_sha={sha}&event=pull_request&per_page=100", "workflow_runs"):
+        if run["path"] not in GATED:
+            continue
         known = newest.get(run["workflow_id"])
         if known is None or run["run_number"] > known["run_number"]:
             newest[run["workflow_id"]] = run
@@ -115,23 +116,23 @@ def start_runs(gh, sha: str, again: bool, sleep=time.sleep) -> str:
 
     Leaves a run whose CI is in progress alone, and with `again` unset also one whose CI finished.
     """
-    gated, started, failed = 0, [], []
-    for run in newest_runs(gh, sha):
+    runs = newest_runs(gh, sha)
+    started, failed, polls = [], [], 0
+    for run in runs:
         if run["conclusion"] == "action_required":
             failed.append(f"{run['name']}: waits for a maintainer to approve the run")
             continue
         jobs = jobs_of(gh, run["id"])
-        if not is_gated(jobs):
-            continue
-        gated += 1
         # GitHub refuses to restart a run before it completes.
-        polls = 0
         while run["status"] != "completed" and not ran_ci(jobs) and polls < POLLS:
             sleep(POLL_SECONDS)
             polls += 1
             run = gh.request("GET", f"actions/runs/{run['id']}")
             jobs = jobs_of(gh, run["id"])
         if ran_ci(jobs) and (run["status"] != "completed" or not again):
+            continue
+        if run["status"] != "completed":
+            failed.append(f"{run['name']}: its gate has not finished yet, tick a box again later")
             continue
         try:
             gh.request("POST", f"actions/runs/{run['id']}/rerun")
@@ -143,14 +144,13 @@ def start_runs(gh, sha: str, again: bool, sleep=time.sleep) -> str:
         return f"CI did not start fully for {sha[:8]}. {'. '.join(failed)}."
     if started:
         return f"CI started for {sha[:8]}: {', '.join(started)}."
-    if gated:
+    if runs:
         return f"CI already ran or is running for {sha[:8]}."
     return f"There is no CI run to start for {sha[:8]}. Resolve any merge conflict and push again."
 
 
 def notice(gh, run_id: int, sha: str) -> None:
-    jobs = jobs_of(gh, run_id)
-    if not is_gated(jobs) or ran_ci(jobs):
+    if ran_ci(jobs_of(gh, run_id)):
         return
     # The run lists no PR when it comes from a fork, and the commit endpoint knows no fork heads.
     for pr in gh.get_list("pulls?state=open&per_page=100"):

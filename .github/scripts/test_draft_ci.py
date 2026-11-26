@@ -1,11 +1,15 @@
 import re
 import unittest
+from pathlib import Path
 
-from draft_ci import BODY, BOT, MARKER, GitHubError, boxes, gate, is_ticked, notice
+from draft_ci import BODY, BOT, GATED, MARKER, POLLS, GitHubError, boxes, gate, is_ticked, notice
 
 SHA = "a" * 40
 OTHER_SHA = "b" * 40
 GATE = {"name": "Draft Gate / check", "conclusion": "success"}
+WORKFLOWS = Path(__file__).resolve().parents[1] / "workflows"
+PATHS = {"Continuous integration": ".github/workflows/rust.yml", "Sanitizer": ".github/workflows/sanitizer.yml",
+         "Pre-commit Checks": ".github/workflows/pre-commit.yml", "Changelog Guard": ".github/workflows/changelog-guard.yml"}
 
 
 class FakeGitHub:
@@ -20,19 +24,20 @@ class FakeGitHub:
         self.fail_run_list = False
         self.fail_comments = False
 
-    def push(self, sha=SHA, workflows=("Continuous integration", "Sanitizer"), running=False, gated=True):
+    def push(self, sha=SHA, workflows=("Continuous integration", "Sanitizer"), running=False, listed=True):
         self.pr["head"]["sha"] = sha
         for name in workflows:
             run = {"id": len(self.runs) + 1, "workflow_id": name, "run_number": len(self.runs) + 1, "name": name,
-                   "head_sha": sha, "status": "completed", "conclusion": "success", "attempt": 1}
-            run["ci"] = not self.pr["draft"] or gate(self, 1)
-            run["gated"] = gated
+                   "path": PATHS[name], "head_sha": sha, "status": "completed", "conclusion": "success", "attempt": 1}
+            run["gated"] = run["path"] in GATED
+            run["ci"] = not run["gated"] or not self.pr["draft"] or gate(self, 1)
+            run["listed"] = listed
             run["status"] = "in_progress" if running else "completed"
             self.runs.append(run)
         return self.runs[-len(workflows)]
 
     def jobs(self, run):
-        if run["conclusion"] == "action_required":
+        if run["conclusion"] == "action_required" or not run["listed"]:
             return []
         gate = [GATE] if run["gated"] else []
         if run["status"] != "completed" and not run["ci"]:
@@ -42,7 +47,7 @@ class FakeGitHub:
 
     def finish_runs(self, _seconds):
         for run in self.runs:
-            run["status"] = "completed"
+            run.update(status="completed", listed=True)
 
     def tick(self, *names, untick=()):
         previous = body = self.comments[-1]["body"]
@@ -107,12 +112,10 @@ class NoticeTests(unittest.TestCase):
         self.assertFalse(is_ticked(gh.body, "once") or is_ticked(gh.body, "auto"))
 
     def test_posts_nothing_when_ci_ran(self):
-        for draft, gated in ((False, True), (True, False)):
-            with self.subTest(draft=draft, gated=gated):
-                gh = FakeGitHub(draft)
-                run = gh.push(gated=gated)
-                notice(gh, run["id"], SHA)
-                self.assertEqual(gh.comments, [])
+        gh = FakeGitHub(draft=False)
+        run = gh.push()
+        notice(gh, run["id"], SHA)
+        self.assertEqual(gh.comments, [])
 
     def test_posts_nothing_once_the_pr_moved_on_or_is_ready(self):
         gh = FakeGitHub()
@@ -209,7 +212,7 @@ class BoxTests(unittest.TestCase):
         self.assertEqual(len(self.gh.reruns), 2)
 
     def test_restarts_only_the_newest_gated_runs_of_the_current_commit(self):
-        self.gh.push(OTHER_SHA, workflows=("Changelog Guard",), gated=False)
+        self.gh.push(OTHER_SHA, workflows=("Changelog Guard",))
         self.gh.tick("once")
         self.assertIn("no CI run to start", self.gh.body)
         first = self.gh.push(OTHER_SHA, workflows=("Continuous integration",))
@@ -218,17 +221,36 @@ class BoxTests(unittest.TestCase):
         self.assertEqual(self.gh.reruns, ["Continuous integration"])
         self.assertEqual((first["attempt"], second["attempt"]), (1, 2))
 
+    def test_waits_for_a_run_that_lists_no_jobs_yet(self):
+        self.gh.push(OTHER_SHA, running=True, listed=False)
+        self.gh.tick("once")
+        self.assertEqual(self.gh.reruns, ["Continuous integration", "Sanitizer"])
+
+    def test_all_runs_share_one_wait(self):
+        sleeps = []
+        self.gh.push(OTHER_SHA, workflows=("Continuous integration", "Pre-commit Checks", "Sanitizer"), running=True)
+        self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
+        boxes(self.gh, 1, 1, BODY, sleep=sleeps.append)
+        self.assertEqual((len(sleeps), self.gh.reruns), (POLLS, []))
+        self.assertEqual(self.gh.body.count("gate has not finished yet"), 3)
+
+    def test_gated_lists_every_workflow_that_calls_the_gate(self):
+        callers = {f".github/workflows/{path.name}" for path in WORKFLOWS.glob("*.yml") if "/draft-gate.yml" in path.read_text()}
+        self.assertEqual(callers, GATED)
+
     def test_no_run_on_the_commit(self):
         self.gh.pr["head"]["sha"] = OTHER_SHA
         self.gh.tick("once")
         self.assertIn("no CI run to start", self.gh.body)
 
     def test_a_run_waiting_for_approval_is_reported(self):
+        self.gh.push(OTHER_SHA, workflows=("Continuous integration", "Changelog Guard"))
         for run in self.gh.runs:
             run["conclusion"] = "action_required"
         self.gh.tick("once")
         self.assertEqual(self.gh.reruns, [])
-        self.assertIn("approve the run", self.gh.body)
+        self.assertIn("Continuous integration: waits for a maintainer to approve the run.", self.gh.body)
+        self.assertNotIn("Changelog Guard", self.gh.body)
 
     def test_failures_are_reported(self):
         self.gh.fail_reruns = True
