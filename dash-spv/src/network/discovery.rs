@@ -35,13 +35,13 @@ const MAX_PROBED: usize = 32;
 /// The address block a peer belongs to, a /16 for IPv4 and a /32 for IPv6. Peers of one
 /// block tend to share an operator and an uplink, so they slow down together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum NetGroup {
+enum NetGroup {
     V4(u8, u8),
     V6(u16, u16),
 }
 
 impl NetGroup {
-    pub(crate) fn of(addr: SocketAddr) -> Self {
+    fn of(addr: SocketAddr) -> Self {
         match addr.ip().to_canonical() {
             IpAddr::V4(ip) => {
                 let [a, b, ..] = ip.octets();
@@ -217,15 +217,19 @@ impl PeerDiscoverer {
     }
 
     /// Reorders `pool` to one address per [`Turn`] in turn, in each the groups without a
-    /// `connected` peer first. A turn takes its addresses in the order of `pool`. Those turned
-    /// away go last whatever their group, or they would take every batch.
+    /// `connected` peer first. A turn takes those groups first too, then goes by the order of
+    /// `pool`. Those turned away go last whatever their group, or they would take every batch.
     fn spread_across_groups(
         &self,
-        pool: Vec<SocketAddr>,
+        mut pool: Vec<SocketAddr>,
         seeds: &HashSet<SocketAddr>,
         connected: &HashSet<SocketAddr>,
     ) -> Vec<SocketAddr> {
         let covered: HashSet<NetGroup> = connected.iter().map(|addr| NetGroup::of(*addr)).collect();
+        pool.sort_by_key(|addr| {
+            let (rank, lag) = self.probe_rank(*addr);
+            (rank == ProbeRank::TurnedAway, covered.contains(&NetGroup::of(*addr)), rank, lag)
+        });
         let mut turns: HashMap<Turn, usize> = HashMap::new();
         let mut ranked: Vec<(bool, usize, SocketAddr)> = pool
             .into_iter()
@@ -459,6 +463,23 @@ mod tests {
         }
         let due = 200 * sources / (2 + sources);
         assert!((due - 50..due + 50).contains(&first), "{first} of 200, due {due}");
+    }
+
+    /// Of the addresses gossiped by one source, those of groups without a connected peer go
+    /// first, even past faster ones of a connected group.
+    #[tokio::test]
+    async fn gossip_of_a_new_group_goes_first_within_its_source() {
+        let seed = "206.245.167.63:1";
+        let mut discoverer = discoverer(&[seed]);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        let gossip = ["100.0.0.1:1", "100.0.0.2:1", "100.0.0.3:1", "101.0.0.1:1"].map(addr);
+        discoverer.learn(addr(seed), gossip.iter().map(|addr| (*addr, now as u32)));
+        for (n, addr) in gossip.iter().enumerate() {
+            discoverer.probed(*addr, 10 + n as u32, false);
+        }
+
+        let got = picks(&mut discoverer, 1, &[seed, "100.0.0.9:1"]).await;
+        assert_eq!(got, [addr("101.0.0.1:1")]);
     }
 
     #[tokio::test]
