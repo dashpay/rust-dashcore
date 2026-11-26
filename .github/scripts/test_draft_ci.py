@@ -1,7 +1,7 @@
 import re
 import unittest
 
-from draft_ci import AUTO, BODY, BOT, MARKER, GitHubError, boxes, is_ticked, notice
+from draft_ci import BODY, BOT, MARKER, GitHubError, boxes, gate, is_ticked, notice
 
 SHA = "a" * 40
 OTHER_SHA = "b" * 40
@@ -18,13 +18,14 @@ class FakeGitHub:
         self.reruns = []
         self.fail_reruns = False
         self.fail_run_list = False
+        self.fail_comments = False
 
     def push(self, sha=SHA, workflows=("Continuous integration", "Sanitizer"), running=False, gated=True):
         self.pr["head"]["sha"] = sha
         for name in workflows:
             run = {"id": len(self.runs) + 1, "workflow_id": name, "run_number": len(self.runs) + 1, "name": name,
                    "head_sha": sha, "status": "completed", "conclusion": "success", "attempt": 1}
-            run["ci"] = not self.pr["draft"] or self.every_push
+            run["ci"] = not self.pr["draft"] or gate(self, 1)
             run["gated"] = gated
             run["status"] = "in_progress" if running else "completed"
             self.runs.append(run)
@@ -57,11 +58,6 @@ class FakeGitHub:
         notice(self, run["id"], SHA)
 
     @property
-    def every_push(self):
-        return any(comment["user"]["login"] == BOT and MARKER in comment["body"] and is_ticked(comment["body"], AUTO)
-                   for comment in self.comments)
-
-    @property
     def body(self):
         return self.comments[-1]["body"]
 
@@ -75,6 +71,8 @@ class FakeGitHub:
         if path.startswith("pulls?"):
             return [self.pr]
         if path.startswith("issues/1/comments"):
+            if self.fail_comments:
+                raise GitHubError("HTTP 502")
             return self.comments
         raise AssertionError(path)
 
@@ -130,6 +128,26 @@ class NoticeTests(unittest.TestCase):
         gh.comments = [{"id": 1, "user": {"login": "someone"}, "body": MARKER}]
         gh.open_draft()
         self.assertEqual(len(gh.comments), 2)
+
+
+class GateTests(unittest.TestCase):
+    def test_reads_the_every_push_box_of_the_bot_comment(self):
+        gh = FakeGitHub()
+        self.assertFalse(gate(gh, 1))
+        gh.open_draft()
+        self.assertFalse(gate(gh, 1))
+        ticked = BODY.replace("- [ ] <!-- draft-ci:auto", "- [x] <!-- draft-ci:auto")
+        for body, user, expected in ((ticked, BOT, True), (ticked.replace("\n", "\r\n"), BOT, True),
+                                     (ticked.replace(MARKER, ""), BOT, False), (ticked, "someone", False),
+                                     (BODY.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once"), BOT, False)):
+            with self.subTest(body=body, user=user):
+                gh.comments = [{"id": 1, "user": {"login": user}, "body": body}]
+                self.assertEqual(gate(gh, 1), expected)
+
+    def test_a_read_error_runs_ci(self):
+        gh = FakeGitHub()
+        gh.fail_comments = True
+        self.assertTrue(gate(gh, 1))
 
 
 class BoxTests(unittest.TestCase):

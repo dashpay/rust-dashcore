@@ -23,6 +23,7 @@ jobs:
   draft-gate:
     name: Draft Gate
     permissions:
+      contents: read
       pull-requests: read
     uses: $/.github/workflows/draft-gate.yml
 

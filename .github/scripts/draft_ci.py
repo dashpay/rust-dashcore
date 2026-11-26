@@ -2,6 +2,7 @@
 """CI control of draft PRs for the `Draft CI` workflow.
 
 Subcommands:
+    gate      Decide whether a draft push runs CI, for `Draft Gate`
     notice    Post the comment with the CI boxes on the draft PR of a skipped run
     boxes     Apply the boxes of the comment
 """
@@ -68,6 +69,22 @@ def set_note(body: str, note: str) -> str:
 
 def untick(body: str, box: str) -> str:
     return re.sub(rf"^- \[[xX]\] (<!-- draft-ci:{box} -->)", r"- [ ] \1", body, flags=re.MULTILINE)
+
+
+def ci_comments(gh, number: int) -> list:
+    """Returns the bot's CI comments. Only the bot's count, since editing them takes write access."""
+    comments = gh.get_list(f"issues/{number}/comments?per_page=100")
+    return [comment for comment in comments if comment["user"]["login"] == BOT and MARKER in comment["body"]]
+
+
+def gate(gh, number: int) -> bool:
+    """Whether a draft push runs CI, which it does when the "Run CI on every push" box is ticked."""
+    try:
+        return any(is_ticked(comment["body"], AUTO) for comment in ci_comments(gh, number))
+    except GitHubError as error:
+        # A read error must not hide CI.
+        print(f"::warning::Could not read the CI comment, so CI runs. {error}")
+        return True
 
 
 def jobs_of(gh, run_id: int) -> list:
@@ -139,8 +156,7 @@ def notice(gh, run_id: int, sha: str) -> None:
     for pr in gh.get_list("pulls?state=open&per_page=100"):
         if pr["head"]["sha"] != sha or not pr["draft"]:
             continue
-        comments = gh.get_list(f"issues/{pr['number']}/comments?per_page=100")
-        if not any(comment["user"]["login"] == BOT and MARKER in comment["body"] for comment in comments):
+        if not ci_comments(gh, pr["number"]):
             gh.request("POST", f"issues/{pr['number']}/comments", {"body": BODY})
 
 
@@ -179,6 +195,8 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep) -> 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
+    gate_parser = commands.add_parser("gate")
+    gate_parser.add_argument("pr", type=int)
     notice_parser = commands.add_parser("notice")
     notice_parser.add_argument("run_id", type=int)
     notice_parser.add_argument("sha")
@@ -189,7 +207,13 @@ def main() -> int:
 
     gh = GitHub(os.environ["GITHUB_REPOSITORY"])
     try:
-        if args.command == "notice":
+        if args.command == "gate":
+            run = gate(gh, args.pr)
+            with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                output.write(f"run={str(run).lower()}\n")
+            if not run:
+                print("::notice::CI is off for draft PRs. Tick a box in the CI comment on the PR to start it.")
+        elif args.command == "notice":
             notice(gh, args.run_id, args.sha)
         else:
             boxes(gh, args.pr, args.comment_id, os.environ.get("PREVIOUS_BODY", ""))
