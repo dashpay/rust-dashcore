@@ -848,9 +848,15 @@ impl Supervisor {
     /// Closes probed-but-unused peers and remembers them for the next round.
     async fn stash_backups(&self, peers: impl IntoIterator<Item = ConnectedPeer>) {
         let mut discoverer = self.state.discoverer.lock().await;
+        let stalled = self.state.link_looks_stalled();
         for peer in peers {
             peer.close();
-            discoverer.probed(peer.addr(), peer.lag_ms(), self.is_bad_lag(peer.lag_ms()));
+            let lag = peer.lag_ms();
+            // A pong missing in a stall of our own link says nothing about the peer.
+            if lag == 0 && stalled {
+                continue;
+            }
+            discoverer.probed(peer.addr(), lag, self.is_bad_lag(lag));
         }
     }
 
@@ -2003,31 +2009,24 @@ mod tests {
         assert_eq!(known, [serves]);
     }
 
-    /// A started manager with `slots` slots and the configured `nodes`, and its events.
+    /// A started manager with `slots` slots and the `nodes` as configured peers, or as seeds
+    /// if `as_seeds`, and its events.
     async fn started(
         nodes: &[HandshakingPeer],
         slots: usize,
-    ) -> (PeerNetworkManager, broadcast::Receiver<NetworkEvent>) {
-        let mut config = ClientConfig::regtest().with_restrict_to_configured_peers(true);
-        config.peers = nodes.iter().map(|node| node.addr).collect();
-        config.max_peers = slots as u32;
-        config.transport_preference = TransportPreference::V1Only;
-        let net = PeerNetworkManager::new(&config).await;
-        let events = net.state.connected.subscribe();
-        net.start().await;
-        (net, events)
-    }
-
-    /// Like [`started`], with the `nodes` as seeds instead of configured peers.
-    async fn started_from_seeds(
-        nodes: &[HandshakingPeer],
-        slots: usize,
+        as_seeds: bool,
     ) -> (PeerNetworkManager, broadcast::Receiver<NetworkEvent>) {
         let mut config = ClientConfig::regtest();
+        if !as_seeds {
+            config = config.with_restrict_to_configured_peers(true);
+            config.peers = nodes.iter().map(|node| node.addr).collect();
+        }
         config.max_peers = slots as u32;
         config.transport_preference = TransportPreference::V1Only;
         let net = PeerNetworkManager::new(&config).await;
-        set_seeds(&net, nodes).await;
+        if as_seeds {
+            set_seeds(&net, nodes).await;
+        }
         let events = net.state.connected.subscribe();
         net.start().await;
         (net, events)
@@ -2141,7 +2140,7 @@ mod tests {
     ) {
         let rates_of = [rates, spares].concat();
         let nodes = HandshakingPeer::filtering(&rates_of).await;
-        let (net, mut events) = started(&nodes, rates.len()).await;
+        let (net, mut events) = started(&nodes, rates.len(), false).await;
         let mut swaps = Vec::new();
         let end = Instant::now() + gap.unwrap_or(SWAP_BACK_AFTER) + SWAP_COOLDOWN * 2;
         while swaps.len() < 2 && Instant::now() < end {
@@ -2180,7 +2179,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_short_set_is_dialed_for_until_full() {
         let nodes = HandshakingPeer::filtering(&[FAST]).await;
-        let (net, mut events) = started(&nodes, 1).await;
+        let (net, mut events) = started(&nodes, 1, false).await;
         // Long enough for two failed dials, the second of which backs off past the next round.
         let silent = Instant::now() + CONNECT_DEADLINE;
         let mut backed_off = false;
@@ -2201,7 +2200,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_peer_slow_in_a_short_set_is_swapped_out_once_full() {
         let nodes = HandshakingPeer::filtering(&[FAST, SLOW, FAST, FAST]).await;
-        let (net, mut events) = started(&nodes, 3).await;
+        let (net, mut events) = started(&nodes, 3, false).await;
         let end = Instant::now() + SWAP_COOLDOWN;
         while Instant::now() < end {
             work(&net, &mut events, &nodes[..2]).await;
@@ -2223,7 +2222,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_peer_slow_during_a_fill_is_swapped_out_despite_a_departure() {
         let nodes = HandshakingPeer::filtering(&[FAST, SLOW, FAST, FAST]).await;
-        let (net, mut events) = started(&nodes, 3).await;
+        let (net, mut events) = started(&nodes, 3, false).await;
         let close_third = || async {
             let third = |peer: &&ConnectedPeer| peer.addr() == nodes[2].addr;
             net.state.connected.read().await.iter().find(third).expect("connected").close();
@@ -2272,7 +2271,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_swap_is_made_after_a_stall_with(in_stall: InStall) {
         let nodes = HandshakingPeer::filtering(&[FAST, FAST, SLOW, FAST, FAST]).await;
-        let (net, mut events) = started(&nodes, 3).await;
+        let (net, mut events) = started(&nodes, 3, false).await;
         until_one_is_slow(&net, &mut events, &nodes[..3]).await;
         stall(&net, &mut events, &nodes[..3]).await;
         let (set, spares) = nodes.split_at(3);
@@ -2315,7 +2314,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_swapped_out_peer_fills_an_empty_slot() {
         let nodes = HandshakingPeer::filtering(&[FAST, FAST, SLOW, FAST]).await;
-        let (net, mut events) = started(&nodes, 3).await;
+        let (net, mut events) = started(&nodes, 3, false).await;
         let mut swapped_out = None;
         let end = Instant::now() + SWAP_COOLDOWN;
         while swapped_out.is_none() && Instant::now() < end {
@@ -2347,7 +2346,7 @@ mod tests {
         let pong_delay = Duration::from_millis(2 * BAD_LAG_FLOOR_MS as u64);
         let mut nodes = HandshakingPeer::filtering(&[FAST, FAST, SLOW]).await;
         nodes.push(HandshakingPeer::answering(services, pong_delay, FAST).await);
-        let (net, mut events) = started(&nodes, 3).await;
+        let (net, mut events) = started(&nodes, 3, false).await;
 
         // One dial is for the first fill, the other for the slow peer.
         let dials = || nodes[3].closed.load(Ordering::SeqCst);
@@ -2388,11 +2387,12 @@ mod tests {
     }
 
     /// Candidates turned away for their ping go after every other one. Otherwise they would
-    /// fill every batch and keep a slot empty.
+    /// fill every batch and keep a slot empty. A pong missing in a stall of our link turns
+    /// nobody away.
     #[tokio::test(start_paused = true)]
     async fn rejected_candidates_do_not_hide_another() {
         let mut nodes = HandshakingPeer::filtering(&[SLOW; 2]).await;
-        let (net, mut events) = started_from_seeds(&nodes, 3).await;
+        let (net, mut events) = started(&nodes, 3, true).await;
         let late = Duration::from_millis(2 * BAD_LAG_FLOOR_MS as u64);
         let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
         for _ in 0..1 + DIAL_MARGIN {
@@ -2407,11 +2407,22 @@ mod tests {
         assert_eq!(net.state.connected.len().await, 2);
         assert!(nodes[2..].iter().all(rejected));
 
+        stall(&net, &mut events, &nodes[..2]).await;
         nodes.extend(HandshakingPeer::filtering(&[SLOW]).await);
+        nodes[5].silent.store(true, Ordering::SeqCst);
         set_seeds(&net, &nodes).await;
         let end = Instant::now() + SWAP_COOLDOWN;
+        while !rejected(&nodes[5]) && Instant::now() < end {
+            work(&net, &mut events, &nodes[2..]).await;
+        }
+        assert!(net.state.link_looks_stalled());
+        assert!(rejected(&nodes[5]));
+
+        // Its pongs come back while the rest of our link still looks stalled.
+        nodes[5].silent.store(false, Ordering::SeqCst);
+        let end = Instant::now() + SWAP_COOLDOWN;
         while net.state.connected.len().await < 3 && Instant::now() < end {
-            work(&net, &mut events, &nodes).await;
+            work(&net, &mut events, &nodes[2..]).await;
         }
         let joined = net.state.connected.read().await.iter().any(|p| p.addr() == nodes[5].addr);
         assert!(joined, "the slot was not refilled by the candidate that answers in time");
