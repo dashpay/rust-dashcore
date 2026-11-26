@@ -741,6 +741,9 @@ fn spawn_hedger(state: Arc<NetworkState>, shutdown: CancellationToken) -> JoinHa
             }
             let handles: Vec<PeerHandle> =
                 state.connected.read().await.iter().map(|p| p.handle()).collect();
+            if handles.is_empty() {
+                continue;
+            }
             if broker.len() == 0 {
                 if let Some(height) = broker.hedge(&handles).await {
                     tracing::debug!(target: "dash_spv::network", "endgame: hedged block {}", height);
