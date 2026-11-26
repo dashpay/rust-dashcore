@@ -1855,18 +1855,6 @@ mod tests {
         }
     }
 
-    /// Whether `count` turns non-zero while the tasks run. Yielding never moves a paused
-    /// clock, so a test decides when each timeout fires.
-    async fn counted(count: &AtomicUsize) -> bool {
-        for _ in 0..100_000 {
-            if count.load(Ordering::SeqCst) > 0 {
-                return true;
-            }
-            task::yield_now().await;
-        }
-        false
-    }
-
     /// A network that knows only `nodes`, learned from gossip.
     async fn gossiped(nodes: &[&HandshakingPeer]) -> PeerNetworkManager {
         let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
@@ -2037,11 +2025,11 @@ mod tests {
         let net = gossiped(&[&node]).await;
 
         net.start().await;
-        assert!(counted(&node.accepted).await, "the supervisor never dialed the node");
+        yield_until(|| node.accepted.load(Ordering::SeqCst) > 0).await;
         net.ban_peer(node.addr).await;
         node.go.notify_one();
 
-        assert!(counted(&node.closed).await, "the banned peer was kept");
+        yield_until(|| node.closed.load(Ordering::SeqCst) > 0).await;
         assert_eq!(net.connected_count().await, 0);
     }
 
@@ -2055,7 +2043,7 @@ mod tests {
 
         net.start().await;
         node.go.notify_one();
-        assert!(counted(&node.pinged).await, "the handshake never finished");
+        yield_until(|| node.pinged.load(Ordering::SeqCst) > 0).await;
         // Holding the set stops the round at its last resort, past the leftover ban check.
         let held = net.state.connected.read().await;
         time::advance(Duration::from_secs(5)).await;
@@ -2066,7 +2054,7 @@ mod tests {
         drop(held);
         ban.await;
 
-        assert!(counted(&node.closed).await, "the banned peer was kept");
+        yield_until(|| node.closed.load(Ordering::SeqCst) > 0).await;
         assert_eq!(net.connected_count().await, 0);
     }
 
@@ -2083,16 +2071,16 @@ mod tests {
         // after five seconds. The other peer's ping goes out a second later.
         net.start().await;
         banned.go.notify_one();
-        assert!(counted(&banned.pinged).await, "the banned peer's handshake never finished");
+        yield_until(|| banned.pinged.load(Ordering::SeqCst) > 0).await;
         time::advance(Duration::from_secs(1)).await;
         other.go.notify_one();
-        assert!(counted(&other.pinged).await, "the other peer's handshake never finished");
+        yield_until(|| other.pinged.load(Ordering::SeqCst) > 0).await;
         time::advance(Duration::from_secs(4)).await;
         settle().await;
         net.ban_peer(banned.addr).await;
         time::advance(Duration::from_secs(1)).await;
 
-        assert!(counted(&banned.closed).await, "the banned peer was kept");
+        yield_until(|| banned.closed.load(Ordering::SeqCst) > 0).await;
         let joined: Vec<_> = net.state.connected.read().await.iter().map(|p| p.addr()).collect();
         assert_eq!(joined, [other.addr]);
     }
