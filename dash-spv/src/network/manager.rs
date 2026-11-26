@@ -934,7 +934,7 @@ impl Supervisor {
             match self
                 .state
                 .connected
-                .admit(peer, &self.shutdown, self.state.max_peers, target)
+                .admit(peer, &self.shutdown, &self.state.bans, self.state.max_peers, target)
                 .await
             {
                 Admission::Joined => accepted += 1,
@@ -957,13 +957,25 @@ impl Supervisor {
                     leftover.push(peer);
                     continue;
                 }
-                Admission::Stopped(peer) => {
+                Admission::Stopped(peer) | Admission::Banned(peer) => {
                     peer.close();
                     continue;
                 }
             }
             let _ = handle.send(&NetworkMessage::GetAddr).await;
         }
+
+        // Leave out leftovers banned while the round waited on slower dials, so the last
+        // resort can take another.
+        let mut unbanned = Vec::with_capacity(leftover.len());
+        for peer in leftover {
+            if self.state.bans.is_banned(peer.addr()).await {
+                peer.close();
+            } else {
+                unbanned.push(peer);
+            }
+        }
+        let mut leftover = unbanned;
 
         // Last resort: never sit at zero peers. If nothing decent connected and the
         // set is empty, take the least-bad handshake we got so sync can start; a
@@ -973,7 +985,11 @@ impl Supervisor {
             let peer = leftover.remove(0);
             let (addr, lag) = (peer.addr(), peer.lag_ms());
             let handle = peer.handle();
-            match self.state.connected.admit(peer, &self.shutdown, self.state.max_peers, None).await
+            match self
+                .state
+                .connected
+                .admit(peer, &self.shutdown, &self.state.bans, self.state.max_peers, None)
+                .await
             {
                 Admission::Joined => {
                     tracing::warn!(
@@ -987,7 +1003,9 @@ impl Supervisor {
                 }
                 Admission::Full(peer) => leftover.push(peer),
                 // Nothing is swapped out without a slow peer to name.
-                Admission::Swapped(peer) | Admission::Stopped(peer) => peer.close(),
+                Admission::Swapped(peer) | Admission::Stopped(peer) | Admission::Banned(peer) => {
+                    peer.close()
+                }
             }
         }
 
@@ -1278,6 +1296,12 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
                 continue;
             }
 
+            // Ban before removing, so the supervisor's candidate read sees the peer in the set
+            // or banned. A peer kicked only because its hold ran out is likely a victim of our
+            // own link. If it is unreachable after all, redialing it fails and backs off.
+            for peer in culprits.iter().filter(|&&peer| Some(peer) != unwitnessed) {
+                bans.ban(peer.addr(), Ban::Kicked).await;
+            }
             // Drop culprits still in the set (some may already be gone) before their work
             // is re-queued, so the router cannot hand it back to them.
             let (kicked, remaining) = connected.remove(&culprits).await;
@@ -1288,11 +1312,6 @@ fn spawn_timeout_monitor(state: Arc<NetworkState>, shutdown: CancellationToken) 
             // going away), keeping keys as Queued so de-dup holds.
             let retried = broker.requeue_from(&culprits).await;
             let dropped = kicked.len();
-            // A peer kicked only because its hold ran out is likely a victim of our own link.
-            // If it is unreachable after all, redialing it fails and backs off.
-            for peer in culprits.iter().filter(|&&peer| Some(peer) != unwitnessed) {
-                bans.ban(peer.addr(), Ban::Kicked).await;
-            }
             // The set is now short: wake the supervisor, which otherwise idles.
             if dropped > 0 && remaining < *max_peers {
                 peer_wake.notify_one();
@@ -1530,13 +1549,14 @@ mod tests {
     use dashcore::network::message_blockdata::Inventory;
     use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::{BlockHash, Network};
-    use futures::FutureExt;
+    use futures::{poll, FutureExt};
     use std::sync::atomic::AtomicUsize;
     use std::time::{SystemTime, UNIX_EPOCH};
     use test_case::test_case;
     use tokio::io::AsyncWriteExt;
     use tokio::net::tcp::OwnedWriteHalf;
     use tokio::net::{TcpListener, TcpStream};
+    use tokio::pin;
     use tokio::task;
     use tokio::time;
     use tokio_util::codec::FramedRead;
@@ -1659,8 +1679,11 @@ mod tests {
             let id = conn(n as u8 + 1, 0);
             let (peer, far) = ConnectedPeer::for_test_reading(id, net.state.clone()).await;
             let handle = peer.handle();
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
             feeders.push(Feeder {
                 id,
@@ -1704,9 +1727,14 @@ mod tests {
 
     /// A peer on loopback that answers each version handshake once `go` is notified, then
     /// answers pings until the client closes the connection.
+    #[derive(Clone)]
     struct HandshakingPeer {
         addr: SocketAddr,
         go: Arc<Notify>,
+        /// How many connections the client opened to it.
+        accepted: Arc<AtomicUsize>,
+        /// How many pings it received after a handshake.
+        pinged: Arc<AtomicUsize>,
         /// How many of its connections the client closed.
         closed: Arc<AtomicUsize>,
         /// Whether it sends neither filters nor pongs for now.
@@ -1717,13 +1745,15 @@ mod tests {
         async fn listen() -> Self {
             Self::serving(
                 ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM,
+                true,
             )
             .await
         }
 
-        /// Like [`HandshakingPeer::listen`], advertising `services`.
-        async fn serving(services: ServiceFlags) -> Self {
-            Self::answering(services, Duration::ZERO, 0).await
+        /// Like [`HandshakingPeer::listen`], advertising `services` and answering pings only
+        /// if `pongs`.
+        async fn serving(services: ServiceFlags, pongs: bool) -> Self {
+            Self::answering(services, pongs.then_some(Duration::ZERO), 0).await
         }
 
         /// One peer for each of `rates`, serving filters at that many bytes/s.
@@ -1732,43 +1762,47 @@ mod tests {
                 ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
             let mut peers = Vec::new();
             for &rate in rates {
-                peers.push(Self::answering(services, Duration::ZERO, rate).await);
+                peers.push(Self::answering(services, Some(Duration::ZERO), rate).await);
             }
             peers
         }
 
-        /// Like [`HandshakingPeer::serving`], answering each ping after `pong_delay` and,
-        /// once asked for filters, sending `rate` bytes/s of them.
-        async fn answering(services: ServiceFlags, pong_delay: Duration, rate: usize) -> Self {
+        /// Like [`HandshakingPeer::serving`], answering each ping after `pong_delay`, or never
+        /// without one, and, once asked for filters, sending `rate` bytes/s of them.
+        async fn answering(
+            services: ServiceFlags,
+            pong_delay: Option<Duration>,
+            rate: usize,
+        ) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
             let peer = HandshakingPeer {
                 addr: listener.local_addr().expect("bound address"),
                 go: Arc::new(Notify::new()),
+                accepted: Arc::new(AtomicUsize::new(0)),
+                pinged: Arc::new(AtomicUsize::new(0)),
                 closed: Arc::new(AtomicUsize::new(0)),
                 silent: Arc::new(AtomicBool::new(false)),
             };
-            let (go, closed, silent) = (peer.go.clone(), peer.closed.clone(), peer.silent.clone());
+            let shared = peer.clone();
             tokio::spawn(async move {
                 while let Ok((stream, client)) = listener.accept().await {
-                    answer_handshake(stream, client, &go, &silent, services, pong_delay, rate)
-                        .await;
-                    closed.fetch_add(1, Ordering::SeqCst);
+                    shared.accepted.fetch_add(1, Ordering::SeqCst);
+                    answer_handshake(stream, client, &shared, services, pong_delay, rate).await;
+                    shared.closed.fetch_add(1, Ordering::SeqCst);
                 }
             });
             peer
         }
     }
 
-    /// Answers the version handshake of `client` on `stream` once `go` is notified, then its
-    /// pings after `pong_delay` and its filter requests at `rate` unless `silent`, for
-    /// [`HandshakingPeer`].
+    /// Answers the version handshake of `client` on `stream` once `peer.go` is notified, then
+    /// its pings after `pong_delay` and its filter requests at `rate` unless `peer.silent`.
     async fn answer_handshake(
         stream: TcpStream,
         client: SocketAddr,
-        go: &Notify,
-        silent: &AtomicBool,
+        peer: &HandshakingPeer,
         services: ServiceFlags,
-        pong_delay: Duration,
+        pong_delay: Option<Duration>,
         rate: usize,
     ) {
         stream.set_nodelay(true).expect("loopback nodelay");
@@ -1785,7 +1819,7 @@ mod tests {
                 break;
             }
         }
-        go.notified().await;
+        peer.go.notified().await;
         let mut version = build_version(client, "handshaking");
         version.services = services;
         let mut hello = framed(NetworkMessage::Version(version));
@@ -1797,18 +1831,21 @@ mod tests {
         loop {
             tokio::select! {
                 _ = ticker.tick(), if asked && rate > 0 => {
-                    if silent.load(Ordering::SeqCst) {
+                    if peer.silent.load(Ordering::SeqCst) {
                         continue;
                     }
                     let _ = write.write_all(&filters).await;
                 }
                 frame = frames.next() => match frame.and_then(Result::ok).map(|raw| raw.payload) {
                     Some(NetworkMessage::Ping(nonce)) => {
-                        if silent.load(Ordering::SeqCst) {
+                        peer.pinged.fetch_add(1, Ordering::SeqCst);
+                        if peer.silent.load(Ordering::SeqCst) {
                             continue;
                         }
-                        time::sleep(pong_delay).await;
-                        let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
+                        if let Some(delay) = pong_delay {
+                            time::sleep(delay).await;
+                            let _ = write.write_all(&framed(NetworkMessage::Pong(nonce))).await;
+                        }
                     }
                     Some(NetworkMessage::GetCFilters(_)) => asked = true,
                     Some(_) => {}
@@ -1816,6 +1853,18 @@ mod tests {
                 },
             }
         }
+    }
+
+    /// A network that knows only `nodes`, learned from gossip.
+    async fn gossiped(nodes: &[&HandshakingPeer]) -> PeerNetworkManager {
+        let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
+        let net = PeerNetworkManager::new(&config).await;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("after epoch").as_secs();
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let addrs = nodes.iter().map(|node| (now as u32, Address::new(&node.addr, services)));
+        net.dispatch_local(NetworkMessage::Addr(addrs.collect())).await;
+        settle().await;
+        net
     }
 
     /// Lets the spawned tasks run what the last time advance made due.
@@ -1923,7 +1972,8 @@ mod tests {
     /// off like a failed dial, so it does not take a candidate slot round after round.
     #[tokio::test]
     async fn a_node_lacking_required_services_is_banned() {
-        let node = HandshakingPeer::serving(ServiceFlags::NETWORK | ServiceFlags::BLOOM).await;
+        let node =
+            HandshakingPeer::serving(ServiceFlags::NETWORK | ServiceFlags::BLOOM, true).await;
         node.go.notify_one();
         let config = ClientConfig::regtest().with_transport_preference(TransportPreference::V1Only);
         let net = PeerNetworkManager::new(&config).await;
@@ -1948,7 +1998,11 @@ mod tests {
         let net = PeerNetworkManager::new(&config).await;
         let session = net.session.lock().await.clone();
         let live = ConnectedPeer::for_test(conn(1, 0)).await;
-        let admitted = net.state.connected.admit(live, &session, net.state.max_peers, None).await;
+        let admitted = net
+            .state
+            .connected
+            .admit(live, &session, &net.state.bans, net.state.max_peers, None)
+            .await;
         assert!(matches!(admitted, Admission::Joined));
         // Configured peers are only ever backed off after a failed dial.
         for addr in &addrs[1..9] {
@@ -1961,6 +2015,74 @@ mod tests {
                 supervisor.next_candidates(3, false).await.iter().map(|p| p.addr()).collect();
             assert_eq!(picked, [addrs[9]]);
         }
+    }
+
+    /// A peer banned while its dial is in flight is closed after the handshake instead of
+    /// joining the set.
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_banned_during_its_dial_never_joins() {
+        let node = HandshakingPeer::listen().await;
+        let net = gossiped(&[&node]).await;
+
+        net.start().await;
+        yield_until(|| node.accepted.load(Ordering::SeqCst) > 0).await;
+        net.ban_peer(node.addr).await;
+        node.go.notify_one();
+
+        yield_until(|| node.closed.load(Ordering::SeqCst) > 0).await;
+        assert_eq!(net.connected_count().await, 0);
+    }
+
+    /// A ban recorded after the round's last ban check, while `ban_peer` finds the set
+    /// without the peer, still keeps the peer out.
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_banned_just_before_its_admission_never_joins() {
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let node = HandshakingPeer::serving(services, false).await;
+        let net = gossiped(&[&node]).await;
+
+        net.start().await;
+        node.go.notify_one();
+        yield_until(|| node.pinged.load(Ordering::SeqCst) > 0).await;
+        // Holding the set stops the round at its last resort, past the leftover ban check.
+        let held = net.state.connected.read().await;
+        time::advance(Duration::from_secs(5)).await;
+        settle().await;
+        let ban = net.ban_peer(node.addr);
+        pin!(ban);
+        assert!(poll!(&mut ban).is_pending(), "the ban did not wait for the set");
+        drop(held);
+        ban.await;
+
+        yield_until(|| node.closed.load(Ordering::SeqCst) > 0).await;
+        assert_eq!(net.connected_count().await, 0);
+    }
+
+    /// A peer held back for the last resort is closed instead of admitted when its address is
+    /// banned while the round waits on a slower dial.
+    #[tokio::test(start_paused = true)]
+    async fn a_last_resort_peer_banned_while_waiting_never_joins() {
+        let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
+        let banned = HandshakingPeer::serving(services, false).await;
+        let other = HandshakingPeer::serving(services, false).await;
+        let net = gossiped(&[&banned, &other]).await;
+
+        // An unanswered latency ping holds a peer back as a last resort once it times out
+        // after five seconds. The other peer's ping goes out a second later.
+        net.start().await;
+        banned.go.notify_one();
+        yield_until(|| banned.pinged.load(Ordering::SeqCst) > 0).await;
+        time::advance(Duration::from_secs(1)).await;
+        other.go.notify_one();
+        yield_until(|| other.pinged.load(Ordering::SeqCst) > 0).await;
+        time::advance(Duration::from_secs(4)).await;
+        settle().await;
+        net.ban_peer(banned.addr).await;
+        time::advance(Duration::from_secs(1)).await;
+
+        yield_until(|| banned.closed.load(Ordering::SeqCst) > 0).await;
+        let joined: Vec<_> = net.state.connected.read().await.iter().map(|p| p.addr()).collect();
+        assert_eq!(joined, [other.addr]);
     }
 
     /// Gossiped addresses whose service bits lack what the client needs are not learned.
@@ -2319,7 +2441,7 @@ mod tests {
         let services = ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS | ServiceFlags::BLOOM;
         let pong_delay = Duration::from_millis(2 * BAD_LAG_FLOOR_MS as u64);
         let mut nodes = HandshakingPeer::filtering(&[FAST, FAST, SLOW]).await;
-        nodes.push(HandshakingPeer::answering(services, pong_delay, FAST).await);
+        nodes.push(HandshakingPeer::answering(services, Some(pong_delay), FAST).await);
         let (net, mut events) = started(&nodes, 3).await;
 
         // One dial is for the first fill, the other for the slow peer.
@@ -2393,8 +2515,11 @@ mod tests {
         let peers: Vec<PeerId> = (1..=joined).map(|n| conn(n, 0)).collect();
         for (start, id) in peers.iter().enumerate() {
             let peer = ConnectedPeer::for_test(*id).await;
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
             net.state.broker.mark_on_wire(&get_cfilters(start as u32), *id).await;
         }
@@ -2421,7 +2546,10 @@ mod tests {
                 // A handshake that completed while `stop` ran.
                 let peer = ConnectedPeer::for_test(conn(9, 0)).await;
                 late = Some(
-                    net.state.connected.admit(peer, &session, net.state.max_peers, None).await,
+                    net.state
+                        .connected
+                        .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                        .await,
                 );
             }
         }
@@ -2497,8 +2625,11 @@ mod tests {
         for n in 1..=2 {
             let (peer, far) = ConnectedPeer::for_test_reading(conn(n, 0), net.state.clone()).await;
             far_ends.push(far);
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
         }
         net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
@@ -2552,9 +2683,9 @@ mod tests {
         assert_eq!(banned, stalls, "a peer kicked beside a witness is banned");
     }
 
-    /// A timeout kick re-queues the stalled peer's work only once that peer is closed and out
-    /// of the set, so no router snapshot can hand the work back. Holding the filter queue
-    /// stops the monitor at that point. The work then goes to the peer that stays.
+    /// A peer kicked beside a witness is banned while still in the set, then closed and
+    /// removed before its work is re-queued, so neither the supervisor nor the router picks it
+    /// again. Holding the bans, then the filter queue, stops the monitor at each step.
     #[tokio::test(start_paused = true)]
     async fn a_kicked_peer_gets_none_of_its_requeued_work() {
         let net = broker().await;
@@ -2564,15 +2695,22 @@ mod tests {
             ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
         let handles = [stalled.handle(), witness.handle()];
         for peer in [stalled, witness] {
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
         }
         net.state.broker.mark_on_wire(&get_cfilters(0), conn(1, 0)).await;
 
         let held = net.state.broker.hold_queue_of(&get_cfilters(0)).await;
+        let bans_held = net.state.bans.hold().await;
         // The second peer keeps receiving, so the stall is not blamed on our link.
         advance_receiving(&net, conn(2, 0), &mut witness_far, REQUEST_TIMEOUT.as_secs() + 2).await;
+        assert_eq!(net.connected_count().await, 2, "the kicked peer left the set before its ban");
+        drop(bans_held);
+        settle().await;
         let key = RequestKey::CFilters(BlockHash::dummy(0));
         assert_eq!(
             net.state.broker.state_of(&key).await,
@@ -2582,9 +2720,7 @@ mod tests {
         assert_eq!(net.connected_count().await, 1, "re-queued before the kick");
         assert!(handles[0].is_closed(), "re-queued before the stalled peer was closed");
         drop(held);
-        for _ in 0..4 {
-            task::yield_now().await;
-        }
+        settle().await;
 
         assert_eq!(net.state.broker.state_of(&key).await, Some("on_wire"));
         assert_eq!(handles[0].in_flight_bytes(), 0, "work went back to the kicked peer");
@@ -2600,8 +2736,11 @@ mod tests {
         let handles = [peers[0].handle(), peers[1].handle()];
         let writes = handles[1].hold_writes().await;
         for peer in peers {
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
             if handles[0].in_flight_bytes() == 0 {
                 net.state.broker.enqueue(0, get_cfilters(0)).await;
@@ -2672,8 +2811,11 @@ mod tests {
         let (witness, mut witness_far) =
             ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
         for peer in [stalled, witness] {
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
         }
         let (delivered, owed) = (get_cfilters(0), get_cfilters(1000));
@@ -2711,8 +2853,11 @@ mod tests {
         let (witness, mut witness_far) =
             ConnectedPeer::for_test_reading(conn(2, 0), net.state.clone()).await;
         for peer in [peer, witness] {
-            let admitted =
-                net.state.connected.admit(peer, &session, net.state.max_peers, None).await;
+            let admitted = net
+                .state
+                .connected
+                .admit(peer, &session, &net.state.bans, net.state.max_peers, None)
+                .await;
             assert!(matches!(admitted, Admission::Joined));
         }
 
