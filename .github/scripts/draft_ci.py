@@ -218,7 +218,7 @@ def main() -> int:
         else:
             boxes(gh, args.pr, args.comment_id, os.environ.get("PREVIOUS_BODY", ""))
     except GitHubError as error:
-        print(f"::error::{error}", file=sys.stderr)
+        print(f"::error::{error}")
         return 1
     return 0
 
