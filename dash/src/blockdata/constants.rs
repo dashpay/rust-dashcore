@@ -34,6 +34,8 @@ pub const WITNESS_SCALE_FACTOR: usize = 4;
 pub const MAX_BLOCK_SIGOPS_COST: i64 = 80_000;
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
+/// The maximum size of a script Dash Core executes, its `MAX_SCRIPT_SIZE` (consensus rule).
+pub const MAX_SCRIPT_SIZE: usize = 10_000;
 /// Number of blocks needed for an output from a coinbase transaction to be spendable.
 pub const COINBASE_MATURITY: u32 = 100;
 

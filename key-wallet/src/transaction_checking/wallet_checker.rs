@@ -453,6 +453,37 @@ impl ManagedWalletInfo {
             return result;
         }
 
+        let txid = tx.txid();
+        let is_new = !self.accounts.all_accounts().into_iter().any(|a| a.has_transaction(&txid));
+        result.is_new_transaction = is_new;
+
+        // A pending spend carries only a peer's word until it's locked or mined, so one that
+        // provably lacks the owner's signature for a coin this wallet holds is not taken.
+        if is_new
+            && !context.confirmed()
+            && !context.is_instant_send()
+            && !self.instant_send_locks.contains(&txid)
+        {
+            if let Some(outpoint) = self.unauthorized_spend_of_held_coin(tx) {
+                tracing::info!(%txid, %outpoint, "Ignored a pending spend its coin's owner did not sign");
+                return TransactionCheckResult::default();
+            }
+        }
+
+        // The outputs of a new transaction were unknown until now, so a spend of them
+        // already recorded was taken at a peer's word.
+        if is_new {
+            let dropped = self.drop_unauthorized_spends_of(tx);
+            if !dropped.is_empty() {
+                result.swept_transactions.extend(dropped.txids);
+                result.swept_transactions.sort_unstable();
+                result.swept_transactions.dedup();
+                result.released_outpoints.extend(dropped.released_outpoints);
+                result.released_outpoints.sort_unstable();
+                result.released_outpoints.dedup();
+            }
+        }
+
         // Wallet-wide view of this transaction's input parents, taken while
         // every account is still readable and before any `update_utxos` call
         // starts removing spent parents. Without it a pooled self-send — the
@@ -461,10 +492,6 @@ impl ManagedWalletInfo {
         // the account holding the change, and that change lands in the
         // `unconfirmed` bucket.
         let external_final_parents = self.accounts.final_parents_of(tx);
-
-        let txid = tx.txid();
-        let is_new = !self.accounts.all_accounts().into_iter().any(|a| a.has_transaction(&txid));
-        result.is_new_transaction = is_new;
 
         if !is_new {
             // IS lock on a transaction that is already confirmed is stale — ignore
@@ -2471,6 +2498,7 @@ mod tests {
             special_transaction_payload: None,
         };
 
+        let spend_tx = ctx.signed(spend_tx, &[&funding_tx]).await;
         let result = ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
         assert!(result.is_relevant);
         assert!(result.is_new_transaction);
@@ -2556,6 +2584,7 @@ mod tests {
             ],
             special_transaction_payload: None,
         };
+        let spend = ctx.signed(spend, &[&funding_tx]).await;
         ctx.check_transaction(&spend, TransactionContext::Mempool).await;
 
         ctx.managed_wallet.abandon_transaction(spend.txid());
@@ -2630,6 +2659,7 @@ mod tests {
             ],
             special_transaction_payload: None,
         };
+        let loser = ctx.signed(loser, &[&funding_tx]).await;
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
         assert_eq!(
             ctx.managed_wallet.balance.confirmed(),
@@ -3059,6 +3089,7 @@ mod tests {
             ],
             special_transaction_payload: None,
         };
+        let loser = ctx.signed(loser, &[&funding_tx]).await;
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
 
         // The winner arrives InstantSend-locked and pays only outside the
@@ -3187,6 +3218,7 @@ mod tests {
                     script_pubkey: identity_address.script_pubkey(),
                 }],
             }));
+        let loser = ctx.signed(loser, &[&funding_tx]).await;
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
         assert!(
             ctx.managed_wallet
@@ -3320,6 +3352,7 @@ mod tests {
             .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let parent = spend(vec![coin_x], &parent_change, 99_000, 400_000);
+        let parent = ctx.signed(parent, &[&funding_tx]).await;
         ctx.check_transaction(&parent, TransactionContext::Mempool).await;
         let parent_change_outpoint = OutPoint {
             txid: parent.txid(),
@@ -3335,6 +3368,7 @@ mod tests {
             .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let child = spend(vec![parent_change_outpoint, coin_c], &child_change, 89_000, 400_000);
+        let child = ctx.signed(child, &[&funding_tx]).await;
         ctx.check_transaction(&child, TransactionContext::Mempool).await;
 
         // The winner takes X and confirms, sweeping the parent and, through
@@ -3456,6 +3490,7 @@ mod tests {
 
         // The loser spends A and B, paying its change into the BIP32 account.
         let loser = spend(vec![coin_a, coin_b], &bip32_change, 99_000, 800_000);
+        let loser = ctx.signed(loser, &[&funding_tx]).await;
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
 
         // A second unconfirmed transaction also claims B. Neither is final, so
@@ -3467,6 +3502,7 @@ mod tests {
             .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let rival = spend(vec![coin_b], &rival_change, 50_000, 340_000);
+        let rival = ctx.signed(rival, &[&funding_tx]).await;
         ctx.check_transaction(&rival, TransactionContext::Mempool).await;
 
         // The winner takes A and confirms, sweeping the loser — but not the
@@ -3562,6 +3598,7 @@ mod tests {
             .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let loser = spend_of(&loser_change, 399_000, 600_000);
+        let loser = ctx.signed(loser, &[&funding_tx]).await;
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
 
         let winner_change = ctx
@@ -3571,6 +3608,7 @@ mod tests {
             .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let winner = spend_of(&winner_change, 299_000, 700_000);
+        let winner = ctx.signed(winner, &[&funding_tx]).await;
         ctx.check_transaction(&winner, TransactionContext::Mempool).await;
 
         let loser_change_outpoint = OutPoint {
@@ -3690,6 +3728,7 @@ mod tests {
                 output: outputs,
                 special_transaction_payload: None,
             };
+            let tx = ctx.signed(tx, &[&funding_tx]).await;
             ctx.check_transaction(&tx, TransactionContext::Mempool).await;
             parent = OutPoint {
                 txid: tx.txid(),
@@ -3821,6 +3860,7 @@ mod tests {
             .next_change_address(Some(&ctx.xpub))
             .expect("change address");
         let loser = spend_of(&first_change, 399_000, 600_000);
+        let loser = ctx.signed(loser, &[&funding_tx]).await;
         ctx.check_transaction(&loser, TransactionContext::Mempool).await;
 
         let loser_change = OutPoint {
@@ -3948,6 +3988,7 @@ mod tests {
             special_transaction_payload: None,
         };
 
+        let spend_tx = ctx.signed(spend_tx, &[&funding_tx]).await;
         let result = ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
         assert!(result.is_relevant);
 
@@ -4028,6 +4069,7 @@ mod tests {
             ],
             special_transaction_payload: None,
         };
+        let spend_tx = ctx.signed(spend_tx, &[&funding_tx]).await;
         ctx.check_transaction(&spend_tx, TransactionContext::Mempool).await;
 
         let change_outpoint = OutPoint {

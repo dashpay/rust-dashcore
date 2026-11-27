@@ -551,7 +551,7 @@ async fn setup_known_mempool_spend_only_asset_lock(
     };
     let regular_external_script =
         Builder::new().push_opcode(opcodes::all::OP_RETURN).push_slice([0x52u8; 20]).into_script();
-    let asset_lock_tx = Transaction {
+    let unsigned = Transaction {
         version: 3,
         lock_time: 0,
         input: vec![TxIn {
@@ -571,6 +571,7 @@ async fn setup_known_mempool_spend_only_asset_lock(
             }]),
         )),
     };
+    let asset_lock_tx = signed_spend(&manager, &wallet_id, unsigned, &[]).await;
     assert_eq!(
         TransactionRouter::classify_transaction(&asset_lock_tx),
         TransactionType::AssetLock,
@@ -1013,7 +1014,7 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
         special_transaction_payload: None,
     };
 
-    let loser = spend(vec![coin_a, coin_b], 800_000);
+    let loser = signed_spend(&manager, &wallet_id, spend(vec![coin_a, coin_b], 800_000), &[]).await;
     manager.process_mempool_transaction(&loser, None).await;
 
     // Subscribe only now: the funding block and the loser's arrival are
@@ -1126,7 +1127,7 @@ async fn test_is_locked_mempool_winner_sweeps_with_no_mined_height() {
         special_transaction_payload: None,
     };
 
-    let loser = spend(vec![coin_a, coin_b], 800_000);
+    let loser = signed_spend(&manager, &wallet_id, spend(vec![coin_a, coin_b], 800_000), &[]).await;
     manager.process_mempool_transaction(&loser, None).await;
 
     let mut rx = manager.subscribe_events();
@@ -2535,6 +2536,8 @@ async fn late_funding_mempool_publishes_complete_correction() {
             value: 1000,
             script_pubkey: Address::dummy(Network::Testnet, 999).script_pubkey(),
         });
+        let spender =
+            signed_spend(&manager, &wallet_id, spender, &[&funding, &earlier_funding]).await;
         manager.process_mempool_transaction(&spender, None).await;
         manager.process_mempool_transaction(&earlier_funding, None).await;
         let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
@@ -2661,4 +2664,33 @@ async fn late_funding_block_publishes_spender_correction() {
         manager.process_block_for_wallets(&fund_block, fund_block.block_hash(), 1, &wallets).await;
         assert_no_events(&mut rx);
     }
+}
+
+#[tokio::test]
+async fn funding_that_exposes_an_unsigned_claim_sweeps_it_and_credits_the_coin() {
+    let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
+    let funding = create_tx_paying_to(&addr, 0xb1);
+    let coin = OutPoint::new(funding.txid(), 0);
+    let mut claim = create_tx_paying_to(&addr, 0xb2);
+    claim.input[0].previous_output = coin;
+    claim.output[0].value = TX_AMOUNT - 1000;
+    manager.process_mempool_transaction(&claim, None).await;
+
+    let mut rx = manager.subscribe_events();
+    manager.process_mempool_transaction(&funding, None).await;
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|event| {
+            matches!(event, WalletEvent::TransactionsSwept {
+                wallet_id: id, txids, superseded_by, winner_mined_height: None, released_outpoints, ..
+            } if *id == wallet_id
+                && *txids == vec![claim.txid()]
+                && *superseded_by == funding.txid()
+                && *released_outpoints == vec![coin])
+        }),
+        "the unsigned claim is swept: {events:?}"
+    );
+    let account = manager.wallet_infos[&wallet_id].first_bip44_managed_account().unwrap();
+    assert!(account.utxos.contains_key(&coin));
+    assert!(!account.transactions().contains_key(&claim.txid()));
 }
