@@ -395,6 +395,19 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         self.monitored_addresses()
     }
 
+    fn holds_transaction(&self, txid: &Txid) -> bool {
+        self.wallet_infos.values().any(|info| {
+            info.accounts()
+                .all_accounts()
+                .iter()
+                .any(|account| account.transactions().contains_key(txid))
+        })
+    }
+
+    fn wallet_set_revision(&self) -> u64 {
+        self.wallet_set_revision
+    }
+
     fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
         self.wallet_infos
             .get(wallet_id)
@@ -1521,5 +1534,20 @@ mod tests {
 
         manager.remove_wallet(&wallet_id).unwrap();
         assert_eq!(manager.monitor_hash(), empty, "after remove_wallet");
+    }
+
+    #[test]
+    fn test_wallet_set_revision_changes_when_a_wallet_is_restored() {
+        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+        let wallet_id = manager
+            .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
+            .unwrap();
+        let registered = manager.wallet_set_revision();
+        manager.remove_wallet(&wallet_id).unwrap();
+        let restored = manager
+            .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
+            .unwrap();
+        assert_eq!(restored, wallet_id);
+        assert_ne!(manager.wallet_set_revision(), registered);
     }
 }

@@ -67,6 +67,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         }
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -76,6 +77,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             self.wallets.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
         let info =
             self.wallet_infos.remove(wallet_id).ok_or(WalletError::WalletNotFound(*wallet_id))?;
+        self.wallet_set_revision += 1;
         Ok((wallet, info))
     }
 
