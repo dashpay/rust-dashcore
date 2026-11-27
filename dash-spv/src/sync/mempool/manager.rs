@@ -103,6 +103,9 @@ pub(crate) struct MempoolManager<W: WalletInterface> {
     /// The lock of each held transaction that has one, and whether it was validated, for when it
     /// is replayed.
     held_locks: HashMap<Txid, (InstantLock, bool)>,
+    /// Txids a block confirmed for a wallet, with when, so a lock that comes after the block is
+    /// passed to the wallet. Pruned with the mempool.
+    confirmed: HashMap<Txid, Instant>,
     /// Locked transactions that spend a transaction a wallet dismissed, with their lock and
     /// arrival time. Passed to the wallet again when what they spend comes back by a lock or
     /// block, since that can restore the coin they spend.
@@ -147,6 +150,7 @@ impl<W: WalletInterface> MempoolManager<W> {
             peers: HashMap::new(),
             pending_is_locks: HashMap::new(),
             held_locks: HashMap::new(),
+            confirmed: HashMap::new(),
             locked_spends: HashMap::new(),
             seen_txids: HashMap::new(),
             last_monitor_hash: initial_monitor_hash,
@@ -850,6 +854,7 @@ impl<W: WalletInterface> MempoolManager<W> {
             self.held_locks.remove(txid);
             self.pending_is_locks.remove(txid);
             self.locked_spends.remove(txid);
+            self.confirmed.insert(*txid, Instant::now());
         }
         if !removed.is_empty() {
             self.progress.add_removed(removed.len() as u32);
@@ -857,6 +862,27 @@ impl<W: WalletInterface> MempoolManager<W> {
             tracing::debug!("Removed {} confirmed transactions from mempool", removed.len());
         }
         events
+    }
+
+    /// Passes the validated lock remembered for each of `txids`, which a block confirmed before
+    /// the mempool held them, to a wallet that holds the transaction. The wallet then keeps the
+    /// transaction as unconfirmed when a fork drops that block.
+    pub(super) async fn pass_locks_of_confirmed(&mut self, txids: &[Txid]) {
+        let locks: Vec<InstantLock> = txids
+            .iter()
+            .filter_map(|txid| self.pending_is_locks.get(txid))
+            .filter(|pending| pending.validated)
+            .map(|pending| pending.lock.clone())
+            .collect();
+        if locks.is_empty() {
+            return;
+        }
+        let mut wallet = self.wallet.write().await;
+        for lock in locks {
+            if wallet.holds_transaction(&lock.txid) {
+                wallet.process_instant_send_lock(lock);
+            }
+        }
     }
 
     /// Processes a lock whose signature was validated.
@@ -898,6 +924,14 @@ impl<W: WalletInterface> MempoolManager<W> {
             self.hold_lock(txid, instant_lock.clone(), validated);
             Some(instant_lock)
         } else {
+            // Only for a mined transaction: on an unconfirmed record, a lock-only call would
+            // sweep its conflicts without the full check's removal event.
+            if validated && self.confirmed.contains_key(&txid) {
+                let mut wallet = self.wallet.write().await;
+                if wallet.holds_transaction(&txid) {
+                    wallet.process_instant_send_lock(instant_lock.clone());
+                }
+            }
             self.remember_pending_lock(instant_lock, validated);
             if validated && self.wallet.read().await.refetch_on_lock(&txid) {
                 self.fetch_again(txid);
@@ -1005,6 +1039,7 @@ impl<W: WalletInterface> MempoolManager<W> {
         }
 
         self.locked_spends.retain(|_, (_, _, at)| at.elapsed() < timeout);
+        self.confirmed.retain(|_, at| at.elapsed() < timeout);
 
         // Prune pending IS locks whose transaction never arrived
         let before = self.pending_is_locks.len();

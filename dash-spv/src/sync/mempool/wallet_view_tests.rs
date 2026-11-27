@@ -1784,3 +1784,142 @@ async fn the_rebroadcast_timer_skips_abandoned_and_swept_broadcasts() {
     assert_eq!(resent, vec![kept.txid()]);
     assert_eq!(h.manager.broadcasts.len(), 3, "dismissed broadcasts stay tracked");
 }
+
+/// When a validated InstantSend lock reaches the mempool manager.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum LockArrives {
+    BeforeTheBlock,
+    AfterTheBlock,
+}
+
+/// A payment first seen in a block that is not ChainLocked, with a validated lock that came
+/// before or after the block, stays as unconfirmed when a short fork drops the block: its
+/// input stays spent. An unvalidated lock doesn't keep it.
+#[test_case::test_case(LockArrives::BeforeTheBlock, true; "lock before the block")]
+#[test_case::test_case(LockArrives::AfterTheBlock, true; "lock after the block")]
+#[test_case::test_case(LockArrives::BeforeTheBlock, false; "unvalidated lock")]
+#[tokio::test]
+async fn a_locked_payment_first_seen_in_a_block_survives_a_short_fork(
+    arrives: LockArrives,
+    validated: bool,
+) {
+    let (mut h, ids) = Harness::new(&[MNEMONIC_A]).await;
+    let a = ids[0];
+    h.filters_synced().await;
+    h.tick().await;
+    let to_a = next_unused_receive_address(&h.wallets, &a).await;
+    let elsewhere = address_of_unregistered(MNEMONIC_B).await;
+    let funding = Transaction::dummy(&to_a, 51..52, &[COIN]);
+    {
+        let mut wallets = h.wallets.write().await;
+        let funding_block = Block::dummy(960, vec![funding.clone()]);
+        wallets
+            .process_block_for_wallets(
+                &funding_block,
+                funding_block.block_hash(),
+                960,
+                &BTreeSet::from([a]),
+            )
+            .await;
+    }
+    let payment = signed_spend(&h.wallets, &a, &to_a, &funding, &elsewhere).await;
+    let spent = OutPoint::new(funding.txid(), 0);
+
+    if arrives == LockArrives::BeforeTheBlock {
+        h.manager.process_instant_lock(lock_for(&payment), validated).await;
+    }
+    let block = Block::dummy(970, vec![payment.clone()]);
+    let result = h
+        .wallets
+        .write()
+        .await
+        .process_block_for_wallets(&block, block.block_hash(), 970, &BTreeSet::from([a]))
+        .await;
+    let event = SyncEvent::BlockProcessed {
+        block_hash: block.block_hash(),
+        height: 970,
+        wallets: BTreeSet::from([a]),
+        new_scripts: Default::default(),
+        confirmed_txids: result.relevant_txids().cloned().collect(),
+    };
+    h.manager.handle_sync_event(&event, &h.network).await.unwrap();
+    if arrives == LockArrives::AfterTheBlock {
+        h.manager.process_instant_lock(lock_for(&payment), validated).await;
+    }
+    assert!(matches!(
+        h.context_of(&a, &payment.txid()).await,
+        Some(TransactionContext::InBlock(_))
+    ));
+
+    h.wallets.write().await.truncate_above(965).unwrap();
+
+    let wallets = h.wallets.read().await;
+    let account = wallets.get_wallet_info(&a).unwrap().first_bip44_managed_account().unwrap();
+    if validated {
+        assert_eq!(
+            account.transactions().get(&payment.txid()).map(|record| record.context.clone()),
+            Some(TransactionContext::Mempool),
+            "kept as unconfirmed"
+        );
+        assert!(!account.utxos.contains_key(&spent), "the input stays spent");
+    } else {
+        assert!(!account.transactions().contains_key(&payment.txid()), "dropped with the block");
+        assert!(account.utxos.contains_key(&spent), "the input is given back");
+    }
+}
+
+/// A validated lock for a transaction the wallet holds unconfirmed but the mempool doesn't, as
+/// after a restart, waits for the transaction: passed lock-only it would sweep the conflicts
+/// without the full check's removal event.
+#[tokio::test]
+async fn a_lock_for_an_unconfirmed_record_the_mempool_does_not_hold_waits_for_the_transaction() {
+    let (mut h, ids) = Harness::new(&[MNEMONIC_A]).await;
+    let a = ids[0];
+    h.filters_synced().await;
+    h.tick().await;
+    let to_a = next_unused_receive_address(&h.wallets, &a).await;
+    let payment = Transaction::dummy(&to_a, 61..62, &[COIN]);
+    h.wallets.write().await.process_mempool_transaction(&payment, None).await;
+    assert_eq!(h.context_of(&a, &payment.txid()).await, Some(TransactionContext::Mempool));
+
+    h.manager.process_instant_send(lock_for(&payment)).await;
+
+    assert_eq!(h.context_of(&a, &payment.txid()).await, Some(TransactionContext::Mempool));
+    assert!(!h
+        .wallets
+        .read()
+        .await
+        .get_wallet_info(&a)
+        .unwrap()
+        .instant_send_locks()
+        .contains(&payment.txid()));
+}
+
+/// A validated lock, before or after a block, for a transaction no wallet holds is not recorded
+/// by any wallet.
+#[tokio::test]
+async fn a_lock_for_a_transaction_no_wallet_holds_is_not_recorded() {
+    let (mut h, ids) = Harness::new(&[MNEMONIC_A]).await;
+    let a = ids[0];
+    h.filters_synced().await;
+    h.tick().await;
+    let elsewhere = address_of_unregistered(MNEMONIC_B).await;
+    let before = Transaction::dummy(&elsewhere, 71..72, &[COIN]);
+    let after = Transaction::dummy(&elsewhere, 72..73, &[COIN]);
+
+    h.manager.process_instant_send(lock_for(&before)).await;
+    let event = SyncEvent::BlockProcessed {
+        block_hash: BlockHash::from_byte_array([7; 32]),
+        height: 970,
+        wallets: BTreeSet::from([a]),
+        new_scripts: Default::default(),
+        confirmed_txids: vec![before.txid(), after.txid()],
+    };
+    h.manager.handle_sync_event(&event, &h.network).await.unwrap();
+    h.manager.process_instant_send(lock_for(&after)).await;
+
+    let wallets = h.wallets.read().await;
+    let locks = wallets.get_wallet_info(&a).unwrap().instant_send_locks();
+    assert!(!locks.contains(&before.txid()));
+    assert!(!locks.contains(&after.txid()));
+}
