@@ -23,8 +23,10 @@ AUTO = "auto"
 # The workflows whose jobs wait for `Draft Gate`.
 GATED = {".github/workflows/rust.yml", ".github/workflows/pre-commit.yml", ".github/workflows/sanitizer.yml"}
 POLL_SECONDS = 10
-# Shared by all runs of one request, so the wait stays below the job's 15 minute timeout.
-POLLS = 60
+# Shared by all runs of one request and counted in real time, so a request ends within the job's
+# 15 minute timeout and still reports what happened.
+WAIT_SECONDS = 600
+CALL_SECONDS = 30
 NOTE = re.compile(r"\n*<!-- draft-ci:note -->.*", re.DOTALL)
 
 BODY = f"""{MARKER}
@@ -52,7 +54,11 @@ class GitHub:
             command += ["--paginate", "--slurp"]
         if fields is not None:
             command += ["--input", "-"]
-        result = subprocess.run(command, input=json.dumps(fields) if fields is not None else None, capture_output=True, text=True)
+        try:
+            result = subprocess.run(command, input=json.dumps(fields) if fields is not None else None, capture_output=True,
+                                    text=True, timeout=CALL_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise GitHubError(f"{method} {path}: no answer within {CALL_SECONDS} seconds") from None
         if result.returncode != 0:
             raise GitHubError(f"{method} {path}: {result.stderr.strip()}")
         return json.loads(result.stdout) if result.stdout.strip() else None
@@ -111,22 +117,21 @@ def newest_runs(gh, sha: str) -> list:
     return sorted(newest.values(), key=lambda run: run["name"])
 
 
-def start_runs(gh, sha: str, again: bool, sleep=time.sleep) -> str:
+def start_runs(gh, sha: str, again: bool, sleep=time.sleep, clock=time.monotonic) -> str:
     """Restarts the commit's gated runs and returns what happened.
 
     Leaves a run whose CI is in progress alone, and with `again` unset also one whose CI finished.
     """
     runs = newest_runs(gh, sha)
-    started, failed, polls = [], [], 0
+    started, failed, deadline = [], [], clock() + WAIT_SECONDS
     for run in runs:
         if run["conclusion"] == "action_required":
             failed.append(f"{run['name']}: waits for a maintainer to approve the run")
             continue
         jobs = jobs_of(gh, run["id"])
         # GitHub refuses to restart a run before it completes.
-        while run["status"] != "completed" and not ran_ci(jobs) and polls < POLLS:
+        while run["status"] != "completed" and not ran_ci(jobs) and clock() < deadline:
             sleep(POLL_SECONDS)
-            polls += 1
             run = gh.request("GET", f"actions/runs/{run['id']}")
             jobs = jobs_of(gh, run["id"])
         if ran_ci(jobs) and (run["status"] != "completed" or not again):
@@ -160,7 +165,7 @@ def notice(gh, run_id: int, sha: str) -> None:
             gh.request("POST", f"issues/{pr['number']}/comments", {"body": BODY})
 
 
-def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep) -> None:
+def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep, clock=time.monotonic) -> None:
     """Applies the live boxes, so ticks that arrive while this runs are not lost.
 
     `previous` is the body before the edit. `draft-gate.yml` reads the "Run CI on every push" box
@@ -181,7 +186,7 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep) -> 
         note = "This PR is not a draft, so CI runs on every push."
     elif once or enabled:
         try:
-            note = start_runs(gh, pr["head"]["sha"], again=once, sleep=sleep)
+            note = start_runs(gh, pr["head"]["sha"], again=once, sleep=sleep, clock=clock)
         except GitHubError as error:
             # The box is already unticked, so without a note the tick would seem to do nothing.
             print(f"::error::{error}")

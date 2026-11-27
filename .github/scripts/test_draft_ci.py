@@ -1,11 +1,13 @@
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from draft_ci import BODY, BOT, GATED, MARKER, POLLS, GitHubError, boxes, gate, is_ticked, notice, set_output
+from draft_ci import (BODY, BOT, CALL_SECONDS, GATED, MARKER, POLL_SECONDS, WAIT_SECONDS, GitHub, GitHubError, boxes, gate, is_ticked,
+                      notice, set_output)
 
 SHA = "a" * 40
 OTHER_SHA = "b" * 40
@@ -229,12 +231,13 @@ class BoxTests(unittest.TestCase):
         self.gh.tick("once")
         self.assertEqual(self.gh.reruns, ["Continuous integration", "Sanitizer"])
 
-    def test_all_runs_share_one_wait(self):
+    def test_all_runs_share_one_wait_in_real_time(self):
+        # Each poll also spends time on its API calls, which the deadline counts too.
         sleeps = []
         self.gh.push(OTHER_SHA, workflows=("Continuous integration", "Pre-commit Checks", "Sanitizer"), running=True)
         self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
-        boxes(self.gh, 1, 1, BODY, sleep=sleeps.append)
-        self.assertEqual((len(sleeps), self.gh.reruns), (POLLS, []))
+        boxes(self.gh, 1, 1, BODY, sleep=sleeps.append, clock=lambda: 2 * sum(sleeps))
+        self.assertEqual((len(sleeps), self.gh.reruns), (WAIT_SECONDS // (2 * POLL_SECONDS), []))
         self.assertEqual(self.gh.body.count("gate has not finished yet"), 3)
 
     def test_gated_lists_every_workflow_that_calls_the_gate(self):
@@ -292,6 +295,12 @@ class OutputTests(unittest.TestCase):
             self.assertEqual(path.read_text(), "run=true\n")
         with mock.patch.dict(os.environ, clear=True):
             set_output("run", "true")
+
+    def test_a_call_without_an_answer_is_an_error(self):
+        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("gh", CALL_SECONDS)) as run:
+            with self.assertRaisesRegex(GitHubError, "no answer within"):
+                GitHub("owner/repo").request("GET", "pulls/1")
+        self.assertEqual(run.call_args.kwargs["timeout"], CALL_SECONDS)
 
 
 if __name__ == "__main__":
