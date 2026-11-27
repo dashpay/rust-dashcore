@@ -8,7 +8,7 @@ use crate::account::AccountType;
 use crate::derivation_bls_bip32::{ExtendedBLSPrivKey, ExtendedBLSPubKey};
 use crate::error::{Error, Result};
 use crate::managed_account::address_pool::AddressPoolType;
-use crate::{ChildNumber, DerivationPath, Network};
+use crate::{ChildIndex, ChildNumber, DerivationPath, Network};
 use core::fmt;
 use dashcore::hashes::hash160;
 use dashcore::Address;
@@ -75,7 +75,7 @@ impl BLSAccount {
             network,
             depth: 0,
             parent_fingerprint: Fingerprint::default(),
-            child_number: ChildNumber::from_normal_idx(0).expect("Invalid child number"),
+            child_number: ChildNumber::Normal(ChildIndex::ZERO),
             public_key,
             chain_code: ChainCode::from([0u8; 32]),
         };
@@ -121,7 +121,7 @@ impl BLSAccount {
         network: Network,
     ) -> Result<Self> {
         let master = ExtendedBLSPrivKey::new_master(network, seed)?;
-        let path = account_type.derivation_path(network)?;
+        let path = account_type.derivation_path(network);
         let account_xpriv = master.derive_path_legacy(&path)?;
         let bls_public_key = ExtendedBLSPubKey::from_private_key(&account_xpriv)?;
 
@@ -151,15 +151,14 @@ impl BLSAccount {
     /// Returns an error if this account is not an
     /// [`AccountType::ProviderOperatorKeys`] account, so a mixed-up account
     /// lookup fails loudly instead of yielding valid-looking wrong keys.
-    pub fn operator_public_key_at(&self, index: u32) -> Result<ExtendedBLSPubKey> {
+    pub fn operator_public_key_at(&self, index: ChildIndex) -> Result<ExtendedBLSPubKey> {
         if self.account_type != AccountType::ProviderOperatorKeys {
             return Err(Error::InvalidParameter(format!(
                 "operator_public_key_at requires a ProviderOperatorKeys account, got {}",
                 self.account_type
             )));
         }
-        let child = ChildNumber::from_normal_idx(index)?;
-        Ok(self.bls_public_key.derive_pub_legacy(child)?)
+        Ok(self.bls_public_key.derive_pub_legacy(ChildNumber::Normal(index))?)
     }
 
     /// Derive the operator (masternode) BLS secret key at `index` directly
@@ -174,12 +173,12 @@ impl BLSAccount {
     pub fn operator_private_key_at(
         seed: &[u8],
         network: Network,
-        index: u32,
+        index: ChildIndex,
     ) -> Result<BlsSkBytes> {
         let master = ExtendedBLSPrivKey::new_master(network, seed)?;
-        let path = AccountType::ProviderOperatorKeys.derivation_path(network)?;
+        let path = AccountType::ProviderOperatorKeys.derivation_path(network);
         let account_xpriv = master.derive_path_legacy(&path)?;
-        let child = account_xpriv.derive_priv_legacy(ChildNumber::from_normal_idx(index)?)?;
+        let child = account_xpriv.derive_priv_legacy(ChildNumber::Normal(index))?;
         Ok(child.private_key().clone())
     }
 
@@ -193,7 +192,7 @@ impl BLSAccount {
                 if index >= 0x80000000 {
                     return Err(Error::WatchOnly);
                 }
-                let child_num = ChildNumber::from_normal_idx(index)?;
+                let child_num = ChildNumber::Normal(ChildIndex::new(index)?);
                 current_key = current_key.derive_pub_legacy(child_num)?;
             }
 
@@ -298,9 +297,7 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey, BlsS
         match self.account_type {
             AccountType::IdentityTopUp {
                 registration_index,
-            } => Some(ChildNumber::Hardened {
-                index: registration_index,
-            }),
+            } => Some(ChildNumber::Hardened(registration_index)),
             _ => None,
         }
     }
@@ -318,7 +315,7 @@ impl AccountDerivation<ExtendedBLSPrivKey, ExtendedBLSPubKey, BLSPublicKey, BlsS
         }
 
         // Get the derivation path for this account type
-        let path = self.account_type.derivation_path(self.network)?;
+        let path = self.account_type.derivation_path(self.network);
 
         // Derive the account private key from master (legacy mode, matching
         // dashbls/DashSync for provider operator keys)
@@ -485,7 +482,7 @@ mod tests {
         let account = BLSAccount::from_public_key_bytes(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             public_key_bytes,
@@ -495,7 +492,7 @@ mod tests {
 
         assert_eq!(account.get_public_key_bytes().len(), 48);
         assert!(account.is_watch_only);
-        assert_eq!(account.index(), Some(0));
+        assert_eq!(account.index(), Some(ChildIndex::ZERO));
     }
 
     #[test]
@@ -504,7 +501,7 @@ mod tests {
         let account = BLSAccount::from_seed(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             &seed,
@@ -521,7 +518,7 @@ mod tests {
         let account = BLSAccount::from_seed(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             &seed,
@@ -540,7 +537,7 @@ mod tests {
         let account = BLSAccount::from_seed(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             &seed,

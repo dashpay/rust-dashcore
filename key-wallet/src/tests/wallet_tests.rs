@@ -8,6 +8,7 @@ use crate::mnemonic::Mnemonic;
 use crate::seed::Seed;
 use crate::wallet::root_extended_keys::RootExtendedPrivKey;
 use crate::wallet::{Wallet, WalletType};
+use crate::ChildIndex;
 use crate::Network;
 
 /// Known test mnemonic for deterministic testing
@@ -207,8 +208,8 @@ fn test_wallet_recovery_same_mnemonic() {
     assert_eq!(wallet1.wallet_id, wallet2.wallet_id);
 
     // Both should generate the same addresses
-    let account1 = wallet1.accounts.standard_bip44_accounts.get(&0).unwrap();
-    let account2 = wallet2.accounts.standard_bip44_accounts.get(&0).unwrap();
+    let account1 = wallet1.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
+    let account2 = wallet2.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
 
     assert_eq!(account1.extended_public_key(), account2.extended_public_key());
 }
@@ -225,7 +226,7 @@ fn test_wallet_account_addition() {
     wallet
         .add_account(
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             None,
@@ -237,7 +238,7 @@ fn test_wallet_account_addition() {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: i,
+                    index: ChildIndex::new_const(i),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -261,7 +262,7 @@ fn test_wallet_duplicate_account_error() {
     wallet
         .add_account(
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             None,
@@ -271,7 +272,7 @@ fn test_wallet_duplicate_account_error() {
     // Try to add the same account twice
     let result = wallet.add_account(
         AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         },
         None,
@@ -310,14 +311,14 @@ fn test_wallet_special_accounts() {
     wallet
         .add_account(
             AccountType::IdentityTopUp {
-                registration_index: 0,
+                registration_index: ChildIndex::ZERO,
             },
             None,
         )
         .unwrap();
 
     assert!(wallet.accounts.identity_registration.is_some());
-    assert!(wallet.accounts.identity_topup.contains_key(&0));
+    assert!(wallet.accounts.identity_topup.contains_key(&ChildIndex::ZERO));
     assert!(wallet.accounts.provider_voting_keys.is_some());
 }
 
@@ -346,7 +347,7 @@ fn test_wallet_deterministic_key_derivation() {
         test_wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -354,8 +355,8 @@ fn test_wallet_deterministic_key_derivation() {
             .unwrap();
 
         // Verify keys match
-        let account1 = wallet.accounts.standard_bip44_accounts.get(&0).unwrap();
-        let account2 = test_wallet.accounts.standard_bip44_accounts.get(&0).unwrap();
+        let account1 = wallet.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
+        let account2 = test_wallet.accounts.standard_bip44_accounts.get(&ChildIndex::ZERO).unwrap();
 
         assert_eq!(account1.extended_public_key(), account2.extended_public_key());
     }

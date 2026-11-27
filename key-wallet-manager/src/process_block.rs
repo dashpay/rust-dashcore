@@ -767,6 +767,7 @@ mod tests {
     use key_wallet::mnemonic::Language;
     use key_wallet::wallet::initialization::WalletAccountCreationOptions;
     use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+    use key_wallet::ChildIndex;
     use key_wallet::{AccountType, Mnemonic};
     use std::collections::HashMap;
 
@@ -781,7 +782,7 @@ mod tests {
             .expect("wallet info")
             .accounts
             .coinjoin_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("CoinJoin account 0")
     }
 
@@ -807,7 +808,7 @@ mod tests {
             account(manager, wallet_id).external_gap_limit().expect("BIP44 external gap limit");
         let far = gap + gap / 3;
         let bip44 = AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: StandardAccountType::BIP44Account,
         };
         let addresses = external_addresses(manager, wallet_id, bip44, far + 1);

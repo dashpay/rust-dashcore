@@ -15,6 +15,7 @@
 //! Run with:
 //! `cargo bench -p key-wallet-manager --bench filter_scan`
 
+use key_wallet::ChildIndex;
 use std::collections::HashMap;
 use std::hint::black_box;
 
@@ -63,13 +64,17 @@ fn wallet_with_mixing_history(used: u32) -> (Manager, [u8; 32]) {
             .expect("wallet")
             .accounts
             .coinjoin_accounts
-            .get(&0)
+            .get(&ChildIndex::ZERO)
             .expect("CoinJoin account 0")
             .account_xpub,
     );
 
     let info = manager.get_wallet_info_mut(&wallet_id).expect("wallet info");
-    let coinjoin = info.accounts.coinjoin_accounts.get_mut(&0).expect("managed CoinJoin account");
+    let coinjoin = info
+        .accounts
+        .coinjoin_accounts
+        .get_mut(&ChildIndex::ZERO)
+        .expect("managed CoinJoin account");
 
     // Extend the external (mixed-coin) branch so the pool holds `used`
     // historical addresses plus the pre-generated gap window above them.

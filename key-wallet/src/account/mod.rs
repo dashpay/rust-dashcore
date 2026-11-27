@@ -16,6 +16,7 @@ pub mod account_type;
 pub mod derivation;
 mod serialization;
 
+use crate::ChildIndex;
 use core::fmt;
 
 #[cfg(feature = "bincode")]
@@ -113,7 +114,7 @@ impl Account {
     }
 
     /// Get the account index
-    pub fn index(&self) -> Option<u32> {
+    pub fn index(&self) -> Option<ChildIndex> {
         self.account_type.index()
     }
 
@@ -123,7 +124,7 @@ impl Account {
     }
 
     /// Get the derivation path for this account
-    pub fn derivation_path(&self) -> Result<DerivationPath> {
+    pub fn derivation_path(&self) -> DerivationPath {
         self.account_type.derivation_path(self.network)
     }
 
@@ -173,9 +174,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
         match self.account_type {
             AccountType::IdentityTopUp {
                 registration_index,
-            } => Some(ChildNumber::Hardened {
-                index: registration_index,
-            }),
+            } => Some(ChildNumber::Hardened(registration_index)),
             _ => None,
         }
     }
@@ -195,7 +194,7 @@ impl AccountDerivation<ExtendedPrivKey, ExtendedPubKey, PublicKey, dashcore::Pri
             return Err(Error::WatchOnly);
         }
 
-        let path = self.derivation_path()?;
+        let path = self.derivation_path();
         master_xpriv.derive_priv(&path).map_err(Error::Bip32)
     }
 
@@ -395,16 +394,16 @@ mod tests {
 
         // Derive account key (m/44'/1'/0')
         let path = DerivationPath::from(vec![
-            ChildNumber::from_hardened_idx(44).unwrap(),
-            ChildNumber::from_hardened_idx(1).unwrap(),
-            ChildNumber::from_hardened_idx(0).unwrap(),
+            ChildNumber::Hardened(ChildIndex::new_const(44)),
+            ChildNumber::Hardened(ChildIndex::new_const(1)),
+            ChildNumber::Hardened(ChildIndex::ZERO),
         ]);
         let account_xpriv = master.derive_priv(&path).unwrap();
 
         Account::from_xpriv(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             account_xpriv,
@@ -416,11 +415,11 @@ mod tests {
     #[test]
     fn test_account_creation() {
         let account = test_account();
-        assert_eq!(account.index(), Some(0));
+        assert_eq!(account.index(), Some(ChildIndex::ZERO));
         assert_eq!(
             account.account_type,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account
             }
         );
@@ -433,7 +432,7 @@ mod tests {
         let watch_only = Account::from_xpub(
             None,
             AccountType::Standard {
-                index: 0,
+                index: ChildIndex::ZERO,
                 standard_account_type: StandardAccountType::BIP44Account,
             },
             account.account_xpub,

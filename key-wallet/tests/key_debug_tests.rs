@@ -1,6 +1,6 @@
 //! `{:?}` and `{:#?}` of the private key types show no phrase word, chain code or private key.
 
-use key_wallet::bip32::ChildNumber;
+use key_wallet::bip32::{ChildIndex, ChildNumber};
 use key_wallet::derivation_bls_bip32::ExtendedBLSPrivKey;
 use key_wallet::derivation_slip10::ExtendedEd25519PrivKey;
 use key_wallet::wallet::root_extended_keys::RootExtendedPrivKey;
@@ -44,7 +44,7 @@ fn extended_priv_key_debug_hides_the_chain_code_and_key() {
 fn extended_bls_priv_key_debug_hides_the_chain_code_and_key() {
     let seed = Mnemonic::from_phrase(PHRASE).unwrap().to_seed("");
     let master = ExtendedBLSPrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
-    let child = master.derive_priv(ChildNumber::from_hardened_idx(0).unwrap()).unwrap();
+    let child = master.derive_priv(ChildNumber::Hardened(ChildIndex::ZERO)).unwrap();
     for key in [master, child] {
         assert_hides(&key, &[&key.chain_code.to_bytes(), key.private_key().as_bytes()]);
         assert!(format!("{key:?}").contains("child_number"));
@@ -55,7 +55,7 @@ fn extended_bls_priv_key_debug_hides_the_chain_code_and_key() {
 fn extended_ed25519_priv_key_debug_hides_the_chain_code_and_key() {
     let seed = Mnemonic::from_phrase(PHRASE).unwrap().to_seed("");
     let master = ExtendedEd25519PrivKey::new_master(Network::Testnet, &seed[..]).unwrap();
-    let child = master.ckd_priv(ChildNumber::from_hardened_idx(0).unwrap()).unwrap();
+    let child = master.ckd_priv(ChildNumber::Hardened(ChildIndex::ZERO)).unwrap();
     for key in [master, child] {
         assert_hides(&key, &[&key.chain_code.to_bytes(), key.private_key.as_bytes()]);
         assert!(format!("{key:?}").contains("child_number"));

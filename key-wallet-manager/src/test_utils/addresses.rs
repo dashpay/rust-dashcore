@@ -3,6 +3,7 @@ use dashcore::Address;
 use key_wallet::account::{AccountType, ManagedAccountTrait};
 use key_wallet::managed_account::address_pool::{AddressPool, AddressPoolType, KeySource};
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::ChildIndex;
 
 /// Returns the first `count` External addresses of the wallet's `account_type` account.
 /// They come from a standalone pool over the account xpub, so they can lie beyond
@@ -51,7 +52,7 @@ pub fn coinjoin_external_addresses(
         manager,
         wallet_id,
         AccountType::CoinJoin {
-            index: 0,
+            index: ChildIndex::ZERO,
         },
         count,
     )

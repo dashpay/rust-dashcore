@@ -10,6 +10,7 @@ mod tests {
     use crate::account::{AccountType, StandardAccountType};
     use crate::mnemonic::Mnemonic;
     use crate::wallet::Wallet;
+    use crate::ChildIndex;
     use crate::Network;
 
     // Test vectors from DashSync
@@ -52,8 +53,8 @@ mod tests {
         .unwrap();
 
         // Verify both wallets have the same account structure
-        let account1 = wallet1.get_bip44_account(0).unwrap();
-        let account2 = wallet2.get_bip44_account(0).unwrap();
+        let account1 = wallet1.get_bip44_account(ChildIndex::ZERO).unwrap();
+        let account2 = wallet2.get_bip44_account(ChildIndex::ZERO).unwrap();
 
         // Should have same extended public keys
         assert_eq!(account1.extended_public_key(), account2.extended_public_key());
@@ -87,7 +88,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: StandardAccountType::BIP44Account,
                 },
                 None,
@@ -96,25 +97,25 @@ mod tests {
         wallet
             .add_account(
                 AccountType::CoinJoin {
-                    index: 2,
+                    index: ChildIndex::new_const(2),
                 },
                 None,
             )
             .unwrap();
 
         // Verify accounts exist
-        assert!(wallet.get_bip44_account(0).is_some());
-        assert!(wallet.get_bip44_account(1).is_some());
-        assert!(wallet.get_coinjoin_account(2).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::ZERO).is_some());
+        assert!(wallet.get_bip44_account(ChildIndex::new_const(1)).is_some());
+        assert!(wallet.get_coinjoin_account(ChildIndex::new_const(2)).is_some());
 
         // Verify account types
-        let account0 = wallet.get_bip44_account(0).unwrap();
+        let account0 = wallet.get_bip44_account(ChildIndex::ZERO).unwrap();
         assert!(matches!(account0.account_type, AccountType::Standard { .. }));
 
-        let account1 = wallet.get_bip44_account(1).unwrap();
+        let account1 = wallet.get_bip44_account(ChildIndex::new_const(1)).unwrap();
         assert!(matches!(account1.account_type, AccountType::Standard { .. }));
 
-        let account2 = wallet.get_coinjoin_account(2).unwrap();
+        let account2 = wallet.get_coinjoin_account(ChildIndex::new_const(2)).unwrap();
         assert!(matches!(account2.account_type, AccountType::CoinJoin { .. }));
     }
 

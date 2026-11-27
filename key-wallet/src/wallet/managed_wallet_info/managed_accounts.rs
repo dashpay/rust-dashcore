@@ -298,6 +298,7 @@ impl ManagedAccountOperations for ManagedWalletInfo {
 mod tests {
     use super::*;
     use crate::wallet::Wallet;
+    use crate::ChildIndex;
     use crate::Network;
 
     #[test]
@@ -313,7 +314,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 0,
+                    index: ChildIndex::ZERO,
                     standard_account_type: crate::account::StandardAccountType::BIP44Account,
                 },
                 None,
@@ -328,7 +329,7 @@ mod tests {
 
         // Now add the account from the wallet to the managed info
         let account_type = AccountType::Standard {
-            index: 0,
+            index: ChildIndex::ZERO,
             standard_account_type: crate::account::StandardAccountType::BIP44Account,
         };
 
@@ -337,7 +338,7 @@ mod tests {
         assert!(result.is_ok(), "Failed to add managed account: {:?}", result);
 
         // Verify it was added - direct access to accounts collection
-        assert!(managed_info.accounts.standard_bip44_accounts.contains_key(&0));
+        assert!(managed_info.accounts.standard_bip44_accounts.contains_key(&ChildIndex::ZERO));
 
         // Try to add the same account again - should fail
         let result = managed_info.add_managed_account(&wallet, account_type);
@@ -347,7 +348,7 @@ mod tests {
         wallet
             .add_account(
                 AccountType::Standard {
-                    index: 1,
+                    index: ChildIndex::new_const(1),
                     standard_account_type: crate::account::StandardAccountType::BIP44Account,
                 },
                 None,
@@ -355,7 +356,7 @@ mod tests {
             .unwrap();
 
         let account_type_2 = AccountType::Standard {
-            index: 1,
+            index: ChildIndex::new_const(1),
             standard_account_type: crate::account::StandardAccountType::BIP44Account,
         };
 
@@ -363,7 +364,10 @@ mod tests {
         assert!(result.is_ok(), "Failed to add second managed account: {:?}", result);
 
         // Verify both accounts exist
-        assert!(managed_info.accounts.standard_bip44_accounts.contains_key(&0));
-        assert!(managed_info.accounts.standard_bip44_accounts.contains_key(&1));
+        assert!(managed_info.accounts.standard_bip44_accounts.contains_key(&ChildIndex::ZERO));
+        assert!(managed_info
+            .accounts
+            .standard_bip44_accounts
+            .contains_key(&ChildIndex::new_const(1)));
     }
 }

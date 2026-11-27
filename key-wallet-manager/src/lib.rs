@@ -37,6 +37,7 @@ use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePr
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
 use key_wallet::wallet::managed_wallet_info::AbandonOutcome;
 use key_wallet::wallet::managed_wallet_info::ManagedWalletInfo;
+use key_wallet::ChildIndex;
 use key_wallet::{AccountType, Address, ExtendedPrivKey, Mnemonic, Network, Wallet};
 use key_wallet::{ExtendedPubKey, WalletCoreBalance};
 use std::collections::{BTreeMap, BTreeSet};
@@ -732,7 +733,7 @@ impl WalletManager<ManagedWalletInfo> {
     pub fn next_receive_address(
         &mut self,
         wallet_id: &WalletId,
-        account_index: u32,
+        account_index: ChildIndex,
         account_type_pref: AccountTypePreference,
         mark_as_used: bool,
     ) -> Option<Address> {
@@ -746,7 +747,7 @@ impl WalletManager<ManagedWalletInfo> {
     pub fn next_change_address(
         &mut self,
         wallet_id: &WalletId,
-        account_index: u32,
+        account_index: ChildIndex,
         account_type_pref: AccountTypePreference,
         mark_as_used: bool,
     ) -> Option<Address> {
@@ -760,7 +761,7 @@ impl WalletManager<ManagedWalletInfo> {
         &mut self,
         wallet_id: &WalletId,
         sources: &[AccountTypePreference],
-        source_index: u32,
+        source_index: ChildIndex,
         outputs: Vec<(Address<NetworkUnchecked>, u64)>,
         fee_rate: FeeRate,
         strategy: SelectionStrategy,
