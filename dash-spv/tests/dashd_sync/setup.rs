@@ -94,8 +94,19 @@ impl TestContext {
     /// Each call creates a fresh wallet (same mnemonic) and a separate storage directory.
     /// The caller must hold the returned `TempDir` alive for the duration of the test.
     pub(super) async fn spawn_client(&self, strategy: MempoolStrategy) -> (ClientHandle, TempDir) {
+        self.spawn_client_with(strategy, false).await
+    }
+
+    /// Like [`Self::spawn_client`], with mempool relay turned on during sync when
+    /// `mempool_during_sync` is set.
+    pub(super) async fn spawn_client_with(
+        &self,
+        strategy: MempoolStrategy,
+        mempool_during_sync: bool,
+    ) -> (ClientHandle, TempDir) {
         let storage = TempDir::new().expect("Failed to create client temp dir");
-        let mut config = create_test_config(storage.path().to_path_buf(), self.dashd.addr);
+        let mut config = create_test_config(storage.path().to_path_buf(), self.dashd.addr)
+            .with_mempool_during_sync(mempool_during_sync);
         config.mempool_strategy = strategy;
         let (wallet, _) = create_test_wallet(&self.dashd.wallet.mnemonic, Network::Regtest);
         let handle = create_and_start_client(&config, wallet).await;

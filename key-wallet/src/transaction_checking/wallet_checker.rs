@@ -350,6 +350,18 @@ impl WalletTransactionChecker for ManagedWalletInfo {
                 .await;
         }
 
+        // A transaction dropped as dead (a swept loser, an abandoned one), or a
+        // spend of one, brings nothing back unconfirmed and unlocked.
+        let txid = tx.txid();
+        if !context.confirmed() && !context.is_instant_send() {
+            if self.dismiss_if_dead(tx, txid) {
+                tracing::debug!(%txid, "Ignored a transaction the wallet dropped as dead");
+                return TransactionCheckResult::default();
+            }
+        } else {
+            self.dismissed.settled(&txid);
+        }
+
         let collateral = masternode_collateral(tx);
         let held_before = collateral.is_some_and(|collateral| self.holds_coin(&collateral));
         let confirmed = context.confirmed();
@@ -373,7 +385,6 @@ impl WalletTransactionChecker for ManagedWalletInfo {
         // The balance refresh inside the check ran before the lock, and block
         // processing passes `update_balance = false`: set the lock flags of
         // the coins `tx` pays this wallet and of the collateral here.
-        let txid = tx.txid();
         let outputs = (0..tx.output.len() as u32).map(|vout| OutPoint::new(txid, vout));
         let flags_changed = self.refresh_lock_flags(outputs.chain(locked));
 
@@ -2678,6 +2689,146 @@ mod tests {
         );
     }
 
+    /// A payment a locked winner swept is credited neither when delivered again unconfirmed
+    /// nor through a spend of it. The mempool still holds it, so peers can deliver it again.
+    #[tokio::test]
+    async fn a_loser_a_locked_winner_swept_is_not_credited_when_delivered_again() {
+        let mut ctx = TestWalletContext::new_random();
+        let external = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+        let input = TxIn {
+            previous_output: OutPoint::new(Txid::from_byte_array([0x5a; 32]), 0),
+            script_sig: ScriptBuf::new(),
+            sequence: 0xffffffff,
+            witness: dashcore::Witness::new(),
+        };
+        let payment = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![input.clone()],
+            output: vec![TxOut {
+                value: 500_000,
+                script_pubkey: ctx.receive_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        assert!(ctx.check_transaction(&payment, TransactionContext::Mempool).await.is_relevant);
+        assert_eq!(ctx.managed_wallet.balance.total(), 500_000);
+
+        let winner = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![input],
+            output: vec![TxOut {
+                value: 499_000,
+                script_pubkey: external.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        let lock = InstantLock {
+            txid: winner.txid(),
+            ..InstantLock::default()
+        };
+        let result = ctx.check_transaction(&winner, TransactionContext::InstantSend(lock)).await;
+        assert_eq!(result.swept_transactions, vec![payment.txid()], "the precondition");
+        assert_eq!(ctx.managed_wallet.balance.total(), 0);
+
+        let again = ctx.check_transaction(&payment, TransactionContext::Mempool).await;
+        assert!(!again.is_relevant);
+        assert!(!ctx.bip44_account().transactions().contains_key(&payment.txid()));
+        assert_eq!(ctx.managed_wallet.balance.total(), 0, "the beaten payment counts once: never");
+
+        let child = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint::new(payment.txid(), 0),
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: 499_000,
+                script_pubkey: ctx.receive_address.script_pubkey(),
+            }],
+            special_transaction_payload: None,
+        };
+        assert!(!ctx.check_transaction(&child, TransactionContext::Mempool).await.is_relevant);
+        assert_eq!(ctx.managed_wallet.balance.total(), 0);
+    }
+
+    /// An abandoned transaction delivered again unconfirmed stays abandoned, and counts once
+    /// mined. Abandoning leaves the coin it spent to the caller's replay.
+    #[tokio::test]
+    async fn an_abandoned_transaction_delivered_again_counts_only_once_mined() {
+        let mut ctx = TestWalletContext::new_random();
+        let external = Address::p2pkh(
+            &dashcore::PublicKey::from_slice(&[0x02; 33]).expect("pubkey"),
+            Network::Testnet,
+        );
+        let funding = Transaction::dummy(&ctx.receive_address, 0..1, &[1_000_000]);
+        ctx.check_transaction(
+            &funding,
+            TransactionContext::InBlock(BlockInfo::new(
+                100,
+                BlockHash::from_slice(&[3u8; 32]).expect("hash"),
+                1_700_000_000,
+            )),
+        )
+        .await;
+        let change = ctx
+            .managed_wallet
+            .first_bip44_managed_account_mut()
+            .expect("account")
+            .next_change_address(Some(&ctx.xpub))
+            .expect("change address");
+        let spend = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: vec![TxIn {
+                previous_output: OutPoint::new(funding.txid(), 0),
+                script_sig: ScriptBuf::new(),
+                sequence: 0xffffffff,
+                witness: dashcore::Witness::new(),
+            }],
+            output: vec![
+                TxOut {
+                    value: 600_000,
+                    script_pubkey: external.script_pubkey(),
+                },
+                TxOut {
+                    value: 399_000,
+                    script_pubkey: change.script_pubkey(),
+                },
+            ],
+            special_transaction_payload: None,
+        };
+        assert!(ctx.check_transaction(&spend, TransactionContext::Mempool).await.is_relevant);
+        ctx.managed_wallet.abandon_transaction(spend.txid());
+        ctx.managed_wallet.update_balance();
+        assert!(!ctx.bip44_account().transactions().contains_key(&spend.txid()));
+        let abandoned = ctx.managed_wallet.balance.total();
+
+        let again = ctx.check_transaction(&spend, TransactionContext::Mempool).await;
+        assert!(!again.is_relevant);
+        assert!(!ctx.bip44_account().transactions().contains_key(&spend.txid()));
+        assert_eq!(ctx.managed_wallet.balance.total(), abandoned);
+
+        ctx.check_transaction(
+            &spend,
+            TransactionContext::InBlock(BlockInfo::new(
+                101,
+                BlockHash::from_slice(&[4u8; 32]).expect("hash"),
+                1_700_000_100,
+            )),
+        )
+        .await;
+        assert!(ctx.bip44_account().transactions().contains_key(&spend.txid()));
+        assert_eq!(ctx.managed_wallet.balance.total(), abandoned + 399_000);
+    }
+
     /// Pooled funding puts a loser's change in an account the winner never
     /// touches. Sweeping only the winner's matched accounts leaves it behind.
     #[tokio::test]
@@ -3096,14 +3247,13 @@ mod tests {
     }
 
     /// A loser can spend inputs the winner does not. Sweeping it frees those
-    /// coins from the spent set, but their `Utxo` values were discarded when
-    /// the loser was recorded — so the sweep alone cannot put them back, and
-    /// the coins must be recoverable by the rescan the release enables.
+    /// coins and credits them again, as they were when the loser took them;
+    /// a rescan re-delivering their funding does not count them twice.
     ///
     /// The loser is an asset lock, so the identity account it pays records it
     /// too: a record left there would keep claiming B and withhold its release.
     #[tokio::test]
-    async fn test_a_swept_losers_extra_input_is_recoverable_by_rescan() {
+    async fn test_a_swept_losers_extra_input_is_credited_again() {
         use dashcore::blockdata::transaction::special_transaction::asset_lock::AssetLockPayload;
         use dashcore::blockdata::transaction::special_transaction::TransactionPayload;
 
@@ -3214,9 +3364,8 @@ mod tests {
             )
             .await;
 
-        // The loser is gone from every account that recorded it, and B is not
-        // credited — its `Utxo` was discarded when the loser was recorded and
-        // cannot be invented.
+        // The loser is gone from every account that recorded it, and B, which
+        // only the loser spent, is credited again as it was.
         assert!(
             !ctx.managed_wallet
                 .accounts
@@ -3225,7 +3374,10 @@ mod tests {
                 .any(|account| account.has_transaction(&loser.txid())),
             "a swept loser must not stay recorded in any account"
         );
-        assert!(!ctx.bip44_account().utxos.contains_key(&coin_b));
+        let restored = ctx.bip44_account().utxos.get(&coin_b).expect("B is unspent");
+        assert!(restored.is_confirmed);
+        assert_eq!(restored.txout.value, 400_000);
+        assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000, "B plus the winner's change");
 
         // The event carries exactly what was released: B, and not A — A is
         // the winner's own input, still spent on chain by `winner` itself.
@@ -3235,14 +3387,9 @@ mod tests {
             "the sweep must name B as released and must not name A"
         );
 
-        // But B was freed from the spent set, so re-delivering the funding
-        // block restores it. That is what makes the loss recoverable rather
-        // than permanent.
+        // Re-delivering the funding block keeps B once.
         ctx.check_transaction(&funding_tx, funding_context).await;
-        assert!(
-            ctx.bip44_account().utxos.contains_key(&coin_b),
-            "a rescan must be able to rediscover the loser's extra input"
-        );
+        assert!(ctx.bip44_account().utxos.contains_key(&coin_b));
         assert_eq!(ctx.managed_wallet.balance.confirmed(), 499_000, "B plus the winner's change");
     }
 

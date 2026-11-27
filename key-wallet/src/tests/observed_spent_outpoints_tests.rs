@@ -513,7 +513,7 @@ async fn losing_a_conflict_drops_the_held_output() {
     ));
 
     let account = ctx.managed_wallet.first_bip44_managed_account_mut().expect("BIP44 account");
-    let sweep = account.drop_conflicted_transactions(&winner, &winner_ctx);
+    let sweep = account.drop_conflicted_transactions(&winner, &winner_ctx, &Default::default());
     assert!(sweep.txids.contains(&funding.txid()), "the funding transaction is the loser here");
     assert!(
         account.spent_before_funded.is_empty(),
