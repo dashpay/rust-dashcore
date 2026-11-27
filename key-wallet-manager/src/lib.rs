@@ -134,6 +134,8 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
     wallet_infos: BTreeMap<WalletId, T>,
+    /// Bumped whenever a wallet is added or removed, including one removed and added again.
+    wallet_set_revision: u64,
     /// Event sender for wallet events.
     ///
     /// This is a *bounded, lossy* fan-out (capacity
@@ -202,6 +204,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
             network,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
+            wallet_set_revision: 0,
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
             // Persistence delivery is opt-in; the channel is created lazily when
             // a consumer calls `take_persistence_receiver`. See that field's docs.
@@ -290,6 +293,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet_mut);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -372,6 +376,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, final_wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
 
         Ok((serialized_bytes, wallet_id))
     }
@@ -404,6 +409,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -444,6 +450,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -491,6 +498,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -538,6 +546,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 

@@ -67,6 +67,14 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         let mut relevant_positions: BTreeMap<WalletId, BTreeSet<usize>> = BTreeMap::new();
         let mut listed_txids: HashSet<Txid> = HashSet::new();
 
+        // A mined transaction is not dead for any wallet, matched or not.
+        for tx in &block.txdata {
+            let txid = tx.txid();
+            for info in self.wallet_infos.values_mut() {
+                info.undismiss(&txid);
+            }
+        }
+
         // A transaction can pay an address that a later transaction of this
         // block derives. So every wallet that derived addresses checks the
         // whole block again, until none derives more.
@@ -203,6 +211,27 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
         tx: &Transaction,
         instant_lock: Option<InstantLock>,
     ) -> MempoolTransactionResult {
+        // Unlocked, a dismissed transaction reaches no wallet. A spend of one is held back in the
+        // wallets that dismissed what it spends, and reaches the others only if each dismissed
+        // parent is held by some wallet.
+        if instant_lock.is_none() {
+            if self.is_dismissed(&tx.txid()) {
+                return MempoolTransactionResult::default();
+            }
+            let mut spends_dismissed = false;
+            for info in self.wallet_infos.values_mut() {
+                spends_dismissed |= info.dismiss_spend(tx);
+            }
+            let dismissed_parents_held = tx
+                .input
+                .iter()
+                .map(|input| input.previous_output.txid)
+                .filter(|parent| self.is_dismissed(parent))
+                .all(|parent| self.holds_transaction(&parent));
+            if spends_dismissed && !dismissed_parents_held {
+                return MempoolTransactionResult::default();
+            }
+        }
         let context = match instant_lock.as_ref() {
             Some(lock) => {
                 debug_assert_eq!(lock.txid, tx.txid(), "InstantLock txid must match transaction");
@@ -395,6 +424,39 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
     fn monitored_addresses(&self) -> Vec<Address> {
         self.monitored_addresses()
+    }
+
+    fn holds_transaction(&self, txid: &Txid) -> bool {
+        self.wallet_infos.values().any(|info| {
+            info.accounts()
+                .all_accounts()
+                .iter()
+                .any(|account| account.transactions().contains_key(txid))
+        })
+    }
+
+    fn is_dismissed(&self, txid: &Txid) -> bool {
+        self.wallet_infos.values().any(|info| info.is_dismissed(txid))
+    }
+
+    fn refetch_on_lock(&self, txid: &Txid) -> bool {
+        self.wallet_infos.values().any(|info| info.refetch_on_lock(txid))
+    }
+
+    fn spends_dismissed_elsewhere(&self, tx: &Transaction) -> bool {
+        let txid = tx.txid();
+        self.wallet_infos.values().any(|info| {
+            tx.input.iter().any(|input| info.refetch_on_lock(&input.previous_output.txid))
+                && !info
+                    .accounts()
+                    .all_accounts()
+                    .iter()
+                    .any(|account| account.has_transaction(&txid))
+        })
+    }
+
+    fn wallet_set_revision(&self) -> u64 {
+        self.wallet_set_revision
     }
 
     fn monitored_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
@@ -1523,5 +1585,20 @@ mod tests {
 
         manager.remove_wallet(&wallet_id).unwrap();
         assert_eq!(manager.monitor_hash(), empty, "after remove_wallet");
+    }
+
+    #[test]
+    fn test_wallet_set_revision_changes_when_a_wallet_is_restored() {
+        let mut manager: WalletManager<ManagedWalletInfo> = WalletManager::new(Network::Testnet);
+        let wallet_id = manager
+            .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
+            .unwrap();
+        let registered = manager.wallet_set_revision();
+        manager.remove_wallet(&wallet_id).unwrap();
+        let restored = manager
+            .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
+            .unwrap();
+        assert_eq!(restored, wallet_id);
+        assert_ne!(manager.wallet_set_revision(), registered);
     }
 }
