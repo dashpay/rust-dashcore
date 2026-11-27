@@ -240,6 +240,23 @@ class BoxTests(unittest.TestCase):
         self.assertEqual((len(sleeps), self.gh.reruns), (WAIT_SECONDS // (2 * POLL_SECONDS), []))
         self.assertEqual(self.gh.body.count("gate has not finished yet"), 3)
 
+    def test_a_request_the_pr_moved_past_starts_nothing(self):
+        for change, note in (({"head": {"sha": OTHER_SHA}}, "moved on to bbbbbbbb, so CI for aaaaaaaa was not started"),
+                             ({"draft": False}, "marked ready for review")):
+            with self.subTest(note=note):
+                gh = FakeGitHub()
+                gh.open_draft()
+                gh.push(workflows=("Continuous integration",), running=True)
+
+                def sleep(seconds, gh=gh, change=change):
+                    gh.finish_runs(seconds)
+                    gh.pr.update(change)
+
+                gh.comments[-1]["body"] = gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
+                boxes(gh, 1, 1, BODY, sleep=sleep)
+                self.assertEqual(gh.reruns, [])
+                self.assertIn(note, gh.body)
+
     def test_gated_lists_every_workflow_that_calls_the_gate(self):
         callers = {f".github/workflows/{path.name}" for path in WORKFLOWS.glob("*.yml") if "/draft-gate.yml" in path.read_text()}
         self.assertEqual(callers, GATED)

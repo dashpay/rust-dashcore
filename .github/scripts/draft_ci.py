@@ -117,7 +117,17 @@ def newest_runs(gh, sha: str) -> list:
     return sorted(newest.values(), key=lambda run: run["name"])
 
 
-def start_runs(gh, sha: str, again: bool, sleep=time.sleep, clock=time.monotonic) -> str:
+def moved_on(gh, number: int, sha: str) -> str | None:
+    """Returns why a request for `sha` no longer applies, or `None` while the PR is still a draft at `sha`."""
+    pr = gh.request("GET", f"pulls/{number}")
+    if not pr["draft"]:
+        return "The PR was marked ready for review, so CI runs on every push."
+    if pr["head"]["sha"] != sha:
+        return f"The PR moved on to {pr['head']['sha'][:8]}, so CI for {sha[:8]} was not started."
+    return None
+
+
+def start_runs(gh, number: int, sha: str, again: bool, sleep=time.sleep, clock=time.monotonic) -> str:
     """Restarts the commit's gated runs and returns what happened.
 
     Leaves a run whose CI is in progress alone, and with `again` unset also one whose CI finished.
@@ -139,6 +149,9 @@ def start_runs(gh, sha: str, again: bool, sleep=time.sleep, clock=time.monotonic
         if run["status"] != "completed":
             failed.append(f"{run['name']}: its gate has not finished yet, tick a box again later")
             continue
+        # A restart joins the concurrency group of the PR's newer runs and would cancel them.
+        if reason := moved_on(gh, number, sha):
+            return f"CI started for {sha[:8]}: {', '.join(started)}. {reason}" if started else reason
         try:
             gh.request("POST", f"actions/runs/{run['id']}/rerun")
             started.append(run["name"])
@@ -186,7 +199,7 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep, clo
         note = "This PR is not a draft, so CI runs on every push."
     elif once or enabled:
         try:
-            note = start_runs(gh, pr["head"]["sha"], again=once, sleep=sleep, clock=clock)
+            note = start_runs(gh, number, pr["head"]["sha"], again=once, sleep=sleep, clock=clock)
         except GitHubError as error:
             # The box is already unticked, so without a note the tick would seem to do nothing.
             print(f"::error::{error}")
