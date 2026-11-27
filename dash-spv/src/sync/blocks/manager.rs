@@ -104,7 +104,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 confirmed_txids,
             });
 
-            events.extend(self.reapply_blocks(result.reapply_heights).await);
+            events.extend(self.reapply_blocks(result.reapply_heights).await?);
         }
 
         // Check if pipeline is empty
@@ -169,23 +169,16 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
     async fn reapply_blocks(
         &mut self,
         reapply: BTreeMap<WalletId, BTreeSet<u32>>,
-    ) -> Vec<SyncEvent> {
+    ) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
         let mut queue: BTreeSet<(u32, WalletId)> = reapply
             .into_iter()
             .flat_map(|(wallet_id, heights)| heights.into_iter().map(move |h| (h, wallet_id)))
             .collect();
         while let Some((height, wallet_id)) = queue.pop_first() {
-            let block = match self.block_storage.read().await.load_block(height).await {
-                Ok(Some(block)) => block,
-                Ok(None) => {
-                    tracing::warn!("Cannot re-apply block at height {}: not in storage", height);
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!("Cannot re-apply block at height {}: {}", height, e);
-                    continue;
-                }
+            let Some(block) = self.block_storage.read().await.load_block(height).await? else {
+                tracing::warn!("Cannot re-apply block at height {}: not in storage", height);
+                continue;
             };
             let wallets = BTreeSet::from([wallet_id]);
             let result = self.apply_block(&block, height, &wallets).await;
@@ -203,7 +196,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> BlocksManager<H
                 confirmed_txids,
             });
         }
-        events
+        Ok(events)
     }
 }
 
@@ -221,6 +214,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface> std::fmt::Debug
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{StorageError, SyncError};
     use crate::network::MessageType;
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentBlockStorage, StorageManager,
@@ -244,6 +238,79 @@ mod tests {
         let storage = DiskStorageManager::with_temp_dir().await.unwrap();
         let wallet = Arc::new(RwLock::new(MockWallet::new()));
         BlocksManager::new(wallet, storage.block_headers(), storage.blocks()).await
+    }
+
+    /// A storage corruption met while re-applying a stored block is reported.
+    #[tokio::test]
+    async fn test_corrupted_block_storage_on_reapply_is_reported() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut wallet = MockWallet::new();
+        wallet.set_reapply_heights(2_100, BTreeSet::from([200]));
+        let mut manager: TestBlocksManager = BlocksManager::new(
+            Arc::new(RwLock::new(wallet)),
+            storage.block_headers(),
+            storage.blocks(),
+        )
+        .await;
+        let block = HashedBlock::dummy(2_100, vec![]);
+        {
+            let blocks = storage.blocks();
+            let mut blocks = blocks.write().await;
+            blocks.store_block(200, HashedBlock::dummy(200, vec![])).await.unwrap();
+            blocks.store_block(1_100, HashedBlock::dummy(1_100, vec![])).await.unwrap();
+            blocks.store_block(2_100, block.clone()).await.unwrap();
+        }
+        storage.corrupt_first_block_segment();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+
+        let result = manager
+            .handle_sync_event(
+                &SyncEvent::BlocksNeeded {
+                    blocks: BTreeMap::from([(
+                        FilterMatchKey::new(2_100, *block.hash()),
+                        BTreeSet::from([MOCK_WALLET_ID]),
+                    )]),
+                },
+                &network,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::Storage(StorageError::Corruption(_)))));
+    }
+
+    /// A storage corruption met while looking for a needed block in storage is reported.
+    #[tokio::test]
+    async fn test_corrupted_block_storage_on_needed_block_is_reported() {
+        let storage = DiskStorageManager::with_temp_dir().await.unwrap();
+        let mut manager: TestBlocksManager = BlocksManager::new(
+            Arc::new(RwLock::new(MockWallet::new())),
+            storage.block_headers(),
+            storage.blocks(),
+        )
+        .await;
+        {
+            let blocks = storage.blocks();
+            let mut blocks = blocks.write().await;
+            for height in [200, 1_100, 2_100] {
+                blocks.store_block(height, HashedBlock::dummy(height, vec![])).await.unwrap();
+            }
+        }
+        storage.corrupt_first_block_segment();
+        let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+
+        let result = manager
+            .handle_sync_event(
+                &SyncEvent::BlocksNeeded {
+                    blocks: BTreeMap::from([(
+                        FilterMatchKey::new(200, *HashedBlock::dummy(200, vec![]).hash()),
+                        BTreeSet::from([MOCK_WALLET_ID]),
+                    )]),
+                },
+                &network,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::Storage(StorageError::Corruption(_)))));
     }
 
     #[tokio::test]

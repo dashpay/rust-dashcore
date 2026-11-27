@@ -135,7 +135,7 @@ impl<H: BlockHeaderStorage, B: BlockStorage, W: WalletInterface + 'static> SyncM
             let block_storage = self.block_storage.read().await;
             for (key, wallets) in blocks {
                 // Check if block is already stored (from previous sync)
-                if let Ok(Some(hashed_block)) = block_storage.load_block(key.height()).await {
+                if let Some(hashed_block) = block_storage.load_block(key.height()).await? {
                     if hashed_block.hash() != key.hash() {
                         tracing::warn!(
                             "Stored block hash mismatch at height {}. expected: {}, got: {} ",
