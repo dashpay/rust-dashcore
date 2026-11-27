@@ -203,6 +203,38 @@ pub trait WalletInterface: Send + Sync + 'static {
         hasher.finish()
     }
 
+    /// Whether any wallet still holds a record of `txid`. The mempool manager replays only
+    /// transactions a wallet still holds, so one a wallet swept or abandoned stays gone.
+    /// The default (`true`) replays every held transaction.
+    fn holds_transaction(&self, _txid: &Txid) -> bool {
+        true
+    }
+
+    /// Whether a managed wallet dropped `txid` as dead (a conflict loser to a final transaction,
+    /// or abandoned), or holds it back as an unlocked spend of one. The default opts out.
+    fn is_dismissed(&self, _txid: &Txid) -> bool {
+        false
+    }
+
+    /// Whether the mempool manager should fetch `txid` again when its verified lock arrives: a
+    /// wallet dismissed it, or held it back as a spend of a dismissed transaction.
+    fn refetch_on_lock(&self, txid: &Txid) -> bool {
+        self.is_dismissed(txid)
+    }
+
+    /// Whether `tx` spends a transaction a wallet dismissed, or a spend it remembers with one,
+    /// while that wallet has not recorded `tx`. The default opts out.
+    fn spends_dismissed_elsewhere(&self, _tx: &Transaction) -> bool {
+        false
+    }
+
+    /// Returns a revision of the set of wallets, which changes whenever a wallet is added or
+    /// removed, so the mempool manager looks at the mempool again for it. The default
+    /// (constant `0`) opts out.
+    fn wallet_set_revision(&self) -> u64 {
+        0
+    }
+
     /// Reclaim expired receive-address reservations across every managed
     /// wallet, returning the total number reclaimed.
     ///

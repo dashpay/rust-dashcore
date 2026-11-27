@@ -45,6 +45,11 @@ pub struct MockWallet {
     reapply_heights: BTreeMap<u32, BTreeSet<u32>>,
     /// Addresses the wallet derives the first time it processes each height.
     derived_addresses: BTreeMap<u32, Vec<Address>>,
+    /// Value returned by `wallet_set_revision`.
+    wallet_set_revision: u64,
+    /// When true, each `process_mempool_transaction` changes the wallet-set hash, as a
+    /// wallet registered meanwhile would.
+    registers_wallet_on_mempool: bool,
 }
 
 impl Default for MockWallet {
@@ -73,7 +78,19 @@ impl MockWallet {
             processed_instant_locks: Arc::new(Mutex::new(Vec::new())),
             reapply_heights: BTreeMap::new(),
             derived_addresses: BTreeMap::new(),
+            wallet_set_revision: 0,
+            registers_wallet_on_mempool: false,
         }
+    }
+
+    /// Set the value returned by `wallet_set_revision`, as registering a wallet would.
+    pub fn set_wallet_set_revision(&mut self, revision: u64) {
+        self.wallet_set_revision = revision;
+    }
+
+    /// Make each mempool transaction change the wallet-set hash.
+    pub fn set_registers_wallet_on_mempool(&mut self, registers: bool) {
+        self.registers_wallet_on_mempool = registers;
     }
 
     pub fn set_reapply_heights(&mut self, height: u32, heights: BTreeSet<u32>) {
@@ -185,6 +202,10 @@ impl WalletInterface for MockWallet {
     ) -> MempoolTransactionResult {
         let mut processed = self.processed_transactions.lock().await;
         processed.push(tx.txid());
+        drop(processed);
+        if self.registers_wallet_on_mempool {
+            self.wallet_set_revision += 1;
+        }
 
         let mut locks = self.processed_instant_locks.lock().await;
         locks.push((tx.txid(), instant_lock));
@@ -266,6 +287,10 @@ impl WalletInterface for MockWallet {
         if wallet_id == &self.wallet_id && height > self.last_processed_height {
             self.last_processed_height = height;
         }
+    }
+
+    fn wallet_set_revision(&self) -> u64 {
+        self.wallet_set_revision
     }
 
     fn subscribe_events(&self) -> broadcast::Receiver<WalletEvent> {

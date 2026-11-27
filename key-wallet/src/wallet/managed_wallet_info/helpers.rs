@@ -10,6 +10,7 @@ use crate::managed_account::managed_platform_account::ManagedPlatformAccount;
 use crate::managed_account::ManagedCoreKeysAccount;
 use crate::transaction_checking::TransactionContext;
 use crate::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
+use crate::Utxo;
 use dashcore::{OutPoint, Transaction, Txid};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -188,11 +189,13 @@ impl ManagedWalletInfo {
                 }
             }
         }
+        let mut taken = Vec::new();
         for account in self.accounts.all_accounts_mut() {
             if let ManagedAccountRefMut::Funds(funds) = account {
                 let swept = funds.drop_conflicted_transactions(tx, context);
                 result.txids.extend(swept.txids);
                 result.released_outpoints.extend(swept.released_outpoints);
+                taken.push(swept.taken);
             }
         }
         if !result.txids.is_empty() {
@@ -212,6 +215,9 @@ impl ManagedWalletInfo {
             // per-account results overlap.
             result.txids.sort_unstable();
             result.txids.dedup();
+            for txid in &result.txids {
+                self.dismissed.sweep(*txid);
+            }
             let removed = result.txids.iter().copied().collect();
             result.released_outpoints.extend(self.release_spent_claims(&removed));
             result.released_outpoints.sort_unstable();
@@ -224,9 +230,85 @@ impl ManagedWalletInfo {
             result.released_outpoints.retain(|outpoint| {
                 !self.spent_claims.contains_key(outpoint)
                     && !funds.iter().any(|account| account.is_outpoint_spent(outpoint))
+                    && result.txids.binary_search(&outpoint.txid).is_err()
             });
+            self.give_back(taken, &result.released_outpoints);
         }
         result
+    }
+
+    /// Credits again each coin in `taken`, one list per funds account in order, that `released`
+    /// names, while an account still holds the transaction that made it. Its confirmation and
+    /// lock come from that transaction as it is now.
+    fn give_back(&mut self, taken: Vec<Vec<Utxo>>, released: &[OutPoint]) {
+        let mut funding: BTreeMap<Txid, Option<(bool, Option<u32>)>> = BTreeMap::new();
+        for txid in taken.iter().flatten().map(|utxo| utxo.outpoint.txid) {
+            funding.entry(txid).or_insert_with(|| self.funding_state(&txid));
+        }
+        let mut credited = false;
+        let funds: Vec<_> = self
+            .accounts
+            .all_accounts_mut()
+            .into_iter()
+            .filter_map(|account| match account {
+                ManagedAccountRefMut::Funds(funds) => Some(funds),
+                ManagedAccountRefMut::Keys(_) => None,
+            })
+            .collect();
+        debug_assert_eq!(funds.len(), taken.len());
+        for (funds, taken) in funds.into_iter().zip(taken) {
+            for mut utxo in taken {
+                if released.binary_search(&utxo.outpoint).is_err() {
+                    continue;
+                }
+                let Some(Some((confirmed, height))) = funding.get(&utxo.outpoint.txid) else {
+                    continue;
+                };
+                utxo.is_confirmed = *confirmed;
+                if let Some(height) = height {
+                    utxo.height = *height;
+                }
+                utxo.is_instantlocked |= self.instant_send_locks.contains(&utxo.outpoint.txid);
+                credited |= funds.take_in_output(
+                    utxo,
+                    Vec::new(),
+                    &self.observed_spent_outpoints,
+                    Some(&self.spent_claims),
+                    |_| {},
+                );
+            }
+        }
+        if credited {
+            self.update_balance();
+        }
+    }
+
+    /// Returns whether `txid` is confirmed and its height, if an account holds it as a record or
+    /// finalized.
+    fn funding_state(&self, txid: &Txid) -> Option<(bool, Option<u32>)> {
+        let accounts = self.accounts.all_accounts();
+        if let Some(record) = accounts.iter().find_map(|account| account.transactions().get(txid)) {
+            return Some((record.is_confirmed(), record.height()));
+        }
+        accounts.into_iter().any(|account| account.has_transaction(txid)).then_some((true, None))
+    }
+
+    /// Whether `tx`, arriving unconfirmed and unlocked, is a transaction the
+    /// wallet dropped as dead or spends an output of one. Such a spend is
+    /// held back with it.
+    pub(crate) fn dismiss_if_dead(&mut self, tx: &Transaction, txid: Txid) -> bool {
+        self.dismissed.contains(&txid) || self.hold_spend_of_dismissed(tx, txid)
+    }
+
+    /// Holds `tx` back if it spends an output of a transaction the wallet
+    /// dropped as dead, until that transaction is locked or mined. Returns
+    /// whether it does.
+    pub(crate) fn hold_spend_of_dismissed(&mut self, tx: &Transaction, txid: Txid) -> bool {
+        if self.accounts.all_accounts().into_iter().any(|account| account.has_transaction(&txid)) {
+            return false;
+        }
+        let parents = tx.input.iter().map(|input| input.previous_output.txid);
+        self.dismissed.hold_spend(txid, parents)
     }
 
     /// Release every spent-output claim whose claimant is in `removed`, with
@@ -403,6 +485,9 @@ impl ManagedWalletInfo {
         }
 
         self.release_spent_claims(&abandoned);
+        for txid in &abandoned {
+            self.dismissed.abandon(*txid);
+        }
 
         AbandonOutcome {
             abandoned,
