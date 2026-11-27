@@ -14,7 +14,7 @@ pub trait FilterStorage: Send + Sync + 'static {
 
     /// Load a contiguous range of filters by height.
     ///
-    /// Returns `StorageError::InvalidArgument` when the range extends into a
+    /// Returns `StorageError::ReadFailed` when the range extends into a
     /// segment queued for deletion by a prior `truncate_above` (before the next
     /// `persist`). Callers must clamp the range to at most `filter_tip_height`.
     async fn load_filters(&self, range: Range<u32>) -> StorageResult<Vec<Vec<u8>>>;

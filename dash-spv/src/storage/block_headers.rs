@@ -52,7 +52,7 @@ pub trait BlockHeaderStorage: Send + Sync + 'static {
 
     /// Load a contiguous range of headers by height.
     ///
-    /// Returns `StorageError::InvalidArgument` when the range extends into a
+    /// Returns `StorageError::ReadFailed` when the range extends into a
     /// segment queued for deletion by a prior `truncate_above` (before the next
     /// `persist`). Callers must clamp the range to at most `get_tip_height`.
     async fn load_headers(&self, range: Range<u32>) -> StorageResult<Vec<HashedBlockHeader>>;

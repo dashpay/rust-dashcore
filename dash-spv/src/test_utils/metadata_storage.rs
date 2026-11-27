@@ -25,7 +25,7 @@ impl MetadataStorage for FailingMetadataStorage {
         Err(StorageError::WriteFailed("disk full".to_string()))
     }
 
-    async fn load_last_target_height(&self) -> StorageResult<CoreBlockHeight> {
-        Err(StorageError::NotFound("nothing stored".to_string()))
+    async fn load_last_target_height(&self) -> StorageResult<Option<CoreBlockHeight>> {
+        Ok(None)
     }
 }
