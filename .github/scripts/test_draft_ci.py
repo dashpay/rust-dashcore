@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from draft_ci import (BODY, BOT, CALL_SECONDS, GATED, MARKER, WAIT_SECONDS, GitHub, GitHubError, boxes, gate, is_ticked,
+from draft_ci import (BODY, BOT, CALL_SECONDS, GATED, MARKER, GitHub, GitHubError, boxes, gate, is_ticked,
                       notice, set_output)
 
 SHA = "a" * 40
@@ -29,8 +29,8 @@ class FakeGitHub:
         self.fail_run_list = False
         self.fail_comments = False
         self.fail_jobs = set()
-        self.now = 0
-        self.call_seconds = 0
+        # Runs while a request reads the jobs of a run, to change the PR or the comment meanwhile.
+        self.during = None
 
     def push(self, sha=SHA, workflows=("Continuous integration", "Sanitizer"), running=False, listed=True):
         self.pr["head"]["sha"] = sha
@@ -45,6 +45,8 @@ class FakeGitHub:
         return self.runs[-len(workflows)]
 
     def jobs(self, run):
+        if self.during:
+            self.during()
         if run["name"] in self.fail_jobs:
             raise GitHubError("HTTP 502")
         if run["conclusion"] == "action_required" or not run["listed"]:
@@ -55,7 +57,7 @@ class FakeGitHub:
         conclusion = None if run["status"] != "completed" else ("success" if run["ci"] or not run["gated"] else "skipped")
         return gate + [{"name": "Test", "conclusion": conclusion}]
 
-    def finish_runs(self, _seconds):
+    def finish_runs(self):
         for run in self.runs:
             run.update(status="completed", listed=True)
 
@@ -66,7 +68,7 @@ class FakeGitHub:
         for name in untick:
             body = body.replace(f"- [x] <!-- draft-ci:{name} -->", f"- [ ] <!-- draft-ci:{name} -->")
         self.comments[-1]["body"] = body
-        boxes(self, 1, self.comments[-1]["id"], previous, sleep=self.finish_runs)
+        boxes(self, 1, self.comments[-1]["id"], previous)
 
     def open_draft(self):
         run = self.push()
@@ -77,7 +79,6 @@ class FakeGitHub:
         return self.comments[-1]["body"]
 
     def get_list(self, path, key=None):
-        self.now += self.call_seconds
         if match := re.match(r"actions/runs/(\d+)/jobs", path):
             return self.jobs(self.runs[int(match.group(1)) - 1])
         if path.startswith("actions/runs?"):
@@ -93,7 +94,6 @@ class FakeGitHub:
         raise AssertionError(path)
 
     def request(self, method, path, fields=None):
-        self.now += self.call_seconds
         if match := re.fullmatch(r"issues/comments/(\d+)", path):
             comment = self.comments[int(match.group(1)) - 1]
             if method == "PATCH":
@@ -212,16 +212,24 @@ class BoxTests(unittest.TestCase):
         self.gh.tick("once")
         self.assertEqual(len(self.gh.reruns), 2)
         self.assertIn("already ran or is running", self.gh.body)
-        self.gh.finish_runs(0)
+        self.gh.finish_runs()
         self.gh.tick("auto")
         self.assertEqual(len(self.gh.reruns), 2)
         self.gh.tick("once")
         self.assertEqual(len(self.gh.reruns), 4)
 
-    def test_waits_for_a_running_gate(self):
-        self.gh.push(OTHER_SHA, running=True)
-        self.gh.tick("once")
-        self.assertEqual(len(self.gh.reruns), 2)
+    def test_a_run_whose_gate_still_runs_asks_for_a_later_tick(self):
+        for listed in (True, False):
+            with self.subTest(listed=listed):
+                gh = FakeGitHub()
+                gh.open_draft()
+                gh.push(OTHER_SHA, running=True, listed=listed)
+                gh.tick("once")
+                self.assertEqual(gh.reruns, [])
+                self.assertEqual(gh.body.count("still deciding whether CI runs"), 2)
+                gh.finish_runs()
+                gh.tick("once")
+                self.assertEqual(gh.reruns, ["Continuous integration", "Sanitizer"])
 
     def test_restarts_only_the_newest_gated_runs_of_the_current_commit(self):
         self.gh.push(OTHER_SHA, workflows=("Changelog Guard",))
@@ -234,54 +242,15 @@ class BoxTests(unittest.TestCase):
         self.assertEqual(self.gh.reruns, ["Continuous integration"])
         self.assertEqual((first["attempt"], second["attempt"]), (1, 2))
 
-    def test_waits_for_a_run_that_lists_no_jobs_yet(self):
-        self.gh.push(OTHER_SHA, running=True, listed=False)
-        self.gh.tick("once")
-        self.assertEqual(self.gh.reruns, ["Continuous integration", "Sanitizer"])
-
-    def test_a_request_reports_within_the_job_timeout_when_every_call_is_slow(self):
-        self.gh.push(OTHER_SHA, workflows=("Continuous integration", "Pre-commit Checks", "Sanitizer"), running=True)
-        self.gh.call_seconds = CALL_SECONDS
-        self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
-
-        def sleep(seconds):
-            self.gh.now += seconds
-
-        boxes(self.gh, 1, 1, BODY, sleep=sleep, clock=lambda: self.gh.now)
-        self.assertEqual(self.gh.reruns, [])
-        self.assertEqual(self.gh.body.count("has not finished yet"), 3)
-        # The wait counts from the start, so only the calls after it run past the ten minutes.
-        self.assertLessEqual(self.gh.now, WAIT_SECONDS + 4 * 60)
-
-    def test_a_run_that_finished_during_the_wait_for_another_is_restarted(self):
-        sleeps = []
-        self.gh.push(OTHER_SHA, workflows=("Continuous integration", "Pre-commit Checks", "Sanitizer"), running=True)
-
-        def sleep(seconds):
-            sleeps.append(seconds)
-            for run in self.gh.runs:
-                if run["name"] != "Continuous integration":
-                    run.update(status="completed", listed=True)
-
-        self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
-        boxes(self.gh, 1, 1, BODY, sleep=sleep, clock=lambda: sum(sleeps))
-        self.assertEqual(self.gh.reruns, ["Pre-commit Checks", "Sanitizer"])
-        self.assertIn("The gate of Continuous integration has not finished yet", self.gh.body)
-
     def test_a_request_the_pr_moved_past_starts_nothing(self):
         for change, note in (({"head": {"sha": OTHER_SHA}}, "CI did not start for aaaaaaaa. The PR moved on to bbbbbbbb."),
                              ({"draft": False}, "not a draft"), ({"state": "closed"}, "closed")):
             with self.subTest(note=note):
                 gh = FakeGitHub()
                 gh.open_draft()
-                gh.push(workflows=("Continuous integration",), running=True)
-
-                def sleep(seconds, gh=gh, change=change):
-                    gh.finish_runs(seconds)
-                    gh.pr.update(change)
-
-                gh.comments[-1]["body"] = gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
-                boxes(gh, 1, 1, BODY, sleep=sleep)
+                gh.push(workflows=("Continuous integration",))
+                gh.during = lambda gh=gh, change=change: gh.pr.update(change)
+                gh.tick("once")
                 self.assertEqual(gh.reruns, [])
                 self.assertIn(note, gh.body)
 
@@ -310,14 +279,9 @@ class BoxTests(unittest.TestCase):
         self.assertIn("CI started for aaaaaaaa: Sanitizer. Continuous integration could not be started.", self.gh.body)
         self.gh.fail_jobs = set()
         self.gh.push(OTHER_SHA, workflows=("Continuous integration",))["conclusion"] = "action_required"
-        self.gh.push(OTHER_SHA, workflows=("Sanitizer",), running=True)
-
-        def sleep(seconds):
-            self.gh.finish_runs(seconds)
-            self.gh.pr["head"]["sha"] = "c" * 40
-
-        self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
-        boxes(self.gh, 1, 1, BODY, sleep=sleep)
+        self.gh.push(OTHER_SHA, workflows=("Sanitizer",))
+        self.gh.during = lambda: self.gh.pr.update(head={"sha": "c" * 40})
+        self.gh.tick("once")
         self.assertIn("approve the run. The PR moved on to cccccccc.", self.gh.body)
 
     def test_failures_are_reported(self):
@@ -340,15 +304,12 @@ class BoxTests(unittest.TestCase):
                 self.assertIn(note, gh.body)
 
     def test_a_box_ticked_while_runs_start_is_kept(self):
-        tick = self.gh.finish_runs
-
-        def sleep(seconds):
-            tick(seconds)
+        def tick_auto():
             self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:auto", "- [x] <!-- draft-ci:auto")
 
-        self.gh.push(OTHER_SHA, running=True)
-        self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
-        boxes(self.gh, 1, 1, BODY, sleep=sleep)
+        self.gh.during = tick_auto
+        self.gh.tick("once")
+        self.assertEqual(len(self.gh.reruns), 2)
         self.assertTrue(is_ticked(self.gh.body, "auto"))
 
 

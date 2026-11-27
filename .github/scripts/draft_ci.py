@@ -13,7 +13,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 
 MARKER = "<!-- draft-ci -->"
 BOT = "github-actions[bot]"
@@ -22,10 +21,6 @@ ONCE = "once"
 AUTO = "auto"
 # The workflows whose jobs wait for `Draft Gate`.
 GATED = {".github/workflows/rust.yml", ".github/workflows/pre-commit.yml", ".github/workflows/sanitizer.yml"}
-POLL_SECONDS = 10
-# Shared by all runs of one request and counted in real time. With every call at `CALL_SECONDS`, the
-# calls after the wait still fit in the job's 20 minute timeout, so the request reports what happened.
-WAIT_SECONDS = 600
 CALL_SECONDS = 30
 NOTE = re.compile(r"\n*<!-- draft-ci:note -->.*", re.DOTALL)
 
@@ -129,7 +124,7 @@ def moved_on(pr: dict, sha: str) -> str | None:
     return None
 
 
-def start_runs(gh, number: int, sha: str, again: bool, deadline: float, sleep=time.sleep, clock=time.monotonic) -> str:
+def start_runs(gh, number: int, sha: str, again: bool) -> str:
     """Restarts the commit's gated runs and returns what happened.
 
     Leaves a run whose CI is in progress alone, and with `again` unset also one whose CI finished.
@@ -142,19 +137,12 @@ def start_runs(gh, number: int, sha: str, again: bool, deadline: float, sleep=ti
             failed.append(f"{name} waits for a maintainer to approve the run")
             continue
         try:
-            # The listing can be minutes old once an earlier run used up the wait.
-            if run["status"] != "completed":
-                run = gh.request("GET", f"actions/runs/{run['id']}")
             jobs = jobs_of(gh, run["id"])
-            # GitHub refuses to restart a run before it completes.
-            while run["status"] != "completed" and not ran_ci(jobs) and clock() < deadline:
-                sleep(POLL_SECONDS)
-                run = gh.request("GET", f"actions/runs/{run['id']}")
-                jobs = jobs_of(gh, run["id"])
             if ran_ci(jobs) and (run["status"] != "completed" or not again):
                 continue
+            # GitHub refuses to restart a run before it completes, which takes its gate seconds.
             if run["status"] != "completed":
-                failed.append(f"The gate of {name} has not finished yet, tick a box again later")
+                failed.append(f"{name} is still deciding whether CI runs, tick a box again in a minute")
                 continue
             # A restart joins the concurrency group of the PR's newer runs and would cancel them.
             if stop := moved_on(gh.request("GET", f"pulls/{number}"), sha):
@@ -183,14 +171,12 @@ def notice(gh, run_id: int, sha: str) -> None:
             gh.request("POST", f"issues/{pr['number']}/comments", {"body": BODY})
 
 
-def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep, clock=time.monotonic) -> None:
+def boxes(gh, number: int, comment_id: int, previous: str) -> None:
     """Applies the live boxes, so ticks that arrive while this runs are not lost.
 
     `previous` is the body before the edit. `draft-gate.yml` reads the "Run CI on every push" box
     on each push, so a change of it only starts the current commit or reports itself.
     """
-    # The wait counts from here, so the whole request ends within the job's timeout.
-    deadline = clock() + WAIT_SECONDS
     path = f"issues/comments/{comment_id}"
     body = gh.request("GET", path)["body"]
     pr = gh.request("GET", f"pulls/{number}")
@@ -206,7 +192,7 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep, clo
         note = reason
     elif once or enabled:
         try:
-            note = start_runs(gh, number, pr["head"]["sha"], once, deadline, sleep=sleep, clock=clock)
+            note = start_runs(gh, number, pr["head"]["sha"], once)
         except GitHubError as error:
             # The box is already unticked, so without a note the tick would seem to do nothing.
             print(f"::error::{error}")
