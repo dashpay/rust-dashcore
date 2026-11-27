@@ -123,7 +123,7 @@ def moved_on(gh, number: int, sha: str) -> str | None:
     if not pr["draft"]:
         return "The PR was marked ready for review, so CI runs on every push."
     if pr["head"]["sha"] != sha:
-        return f"The PR moved on to {pr['head']['sha'][:8]}, so CI for {sha[:8]} was not started."
+        return f"The PR moved on to {pr['head']['sha'][:8]}."
     return None
 
 
@@ -133,35 +133,35 @@ def start_runs(gh, number: int, sha: str, again: bool, sleep=time.sleep, clock=t
     Leaves a run whose CI is in progress alone, and with `again` unset also one whose CI finished.
     """
     runs = newest_runs(gh, sha)
-    started, failed, deadline = [], [], clock() + WAIT_SECONDS
+    started, failed, stop, deadline = [], [], None, clock() + WAIT_SECONDS
     for run in runs:
+        name = run["name"]
         if run["conclusion"] == "action_required":
-            failed.append(f"{run['name']}: waits for a maintainer to approve the run")
+            failed.append(f"{name} waits for a maintainer to approve the run")
             continue
-        jobs = jobs_of(gh, run["id"])
-        # GitHub refuses to restart a run before it completes.
-        while run["status"] != "completed" and not ran_ci(jobs) and clock() < deadline:
-            sleep(POLL_SECONDS)
-            run = gh.request("GET", f"actions/runs/{run['id']}")
-            jobs = jobs_of(gh, run["id"])
-        if ran_ci(jobs) and (run["status"] != "completed" or not again):
-            continue
-        if run["status"] != "completed":
-            failed.append(f"{run['name']}: its gate has not finished yet, tick a box again later")
-            continue
-        # A restart joins the concurrency group of the PR's newer runs and would cancel them.
-        if reason := moved_on(gh, number, sha):
-            return f"CI started for {sha[:8]}: {', '.join(started)}. {reason}" if started else reason
         try:
+            jobs = jobs_of(gh, run["id"])
+            # GitHub refuses to restart a run before it completes.
+            while run["status"] != "completed" and not ran_ci(jobs) and clock() < deadline:
+                sleep(POLL_SECONDS)
+                run = gh.request("GET", f"actions/runs/{run['id']}")
+                jobs = jobs_of(gh, run["id"])
+            if ran_ci(jobs) and (run["status"] != "completed" or not again):
+                continue
+            if run["status"] != "completed":
+                failed.append(f"The gate of {name} has not finished yet, tick a box again later")
+                continue
+            # A restart joins the concurrency group of the PR's newer runs and would cancel them.
+            if stop := moved_on(gh, number, sha):
+                break
             gh.request("POST", f"actions/runs/{run['id']}/rerun")
-            started.append(run["name"])
+            started.append(name)
         except GitHubError as error:
             print(f"::error::{error}")
-            failed.append(f"{run['name']}: could not be restarted")
-    if failed:
-        return f"CI did not start fully for {sha[:8]}. {'. '.join(failed)}."
-    if started:
-        return f"CI started for {sha[:8]}: {', '.join(started)}."
+            failed.append(f"{name} could not be started")
+    if started or failed or stop:
+        notes = [f"CI started for {sha[:8]}: {', '.join(started)}." if started else f"CI did not start for {sha[:8]}."]
+        return " ".join(notes + [f"{entry}." for entry in failed] + ([stop] if stop else []))
     if runs:
         return f"CI already ran or is running for {sha[:8]}."
     return f"There is no CI run to start for {sha[:8]}. Resolve any merge conflict and push again."
@@ -199,7 +199,7 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep, clo
         note = "This PR is not a draft, so CI runs on every push."
     elif once or enabled:
         try:
-            note = start_runs(gh, number, pr["head"]["sha"], again=once, sleep=sleep, clock=clock)
+            note = start_runs(gh, number, pr["head"]["sha"], once, sleep=sleep, clock=clock)
         except GitHubError as error:
             # The box is already unticked, so without a note the tick would seem to do nothing.
             print(f"::error::{error}")

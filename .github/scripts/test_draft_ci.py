@@ -28,6 +28,7 @@ class FakeGitHub:
         self.fail_reruns = False
         self.fail_run_list = False
         self.fail_comments = False
+        self.fail_jobs = set()
 
     def push(self, sha=SHA, workflows=("Continuous integration", "Sanitizer"), running=False, listed=True):
         self.pr["head"]["sha"] = sha
@@ -42,6 +43,8 @@ class FakeGitHub:
         return self.runs[-len(workflows)]
 
     def jobs(self, run):
+        if run["name"] in self.fail_jobs:
+            raise GitHubError("HTTP 502")
         if run["conclusion"] == "action_required" or not run["listed"]:
             return []
         gate = [GATE] if run["gated"] else []
@@ -238,10 +241,10 @@ class BoxTests(unittest.TestCase):
         self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
         boxes(self.gh, 1, 1, BODY, sleep=sleeps.append, clock=lambda: 2 * sum(sleeps))
         self.assertEqual((len(sleeps), self.gh.reruns), (WAIT_SECONDS // (2 * POLL_SECONDS), []))
-        self.assertEqual(self.gh.body.count("gate has not finished yet"), 3)
+        self.assertEqual(self.gh.body.count("has not finished yet"), 3)
 
     def test_a_request_the_pr_moved_past_starts_nothing(self):
-        for change, note in (({"head": {"sha": OTHER_SHA}}, "moved on to bbbbbbbb, so CI for aaaaaaaa was not started"),
+        for change, note in (({"head": {"sha": OTHER_SHA}}, "CI did not start for aaaaaaaa. The PR moved on to bbbbbbbb."),
                              ({"draft": False}, "marked ready for review")):
             with self.subTest(note=note):
                 gh = FakeGitHub()
@@ -272,13 +275,30 @@ class BoxTests(unittest.TestCase):
             run["conclusion"] = "action_required"
         self.gh.tick("once")
         self.assertEqual(self.gh.reruns, [])
-        self.assertIn("Continuous integration: waits for a maintainer to approve the run.", self.gh.body)
+        self.assertIn("Continuous integration waits for a maintainer to approve the run.", self.gh.body)
         self.assertNotIn("Changelog Guard", self.gh.body)
+
+    def test_a_failed_read_leaves_the_other_runs_and_keeps_earlier_results(self):
+        self.gh.fail_jobs = {"Continuous integration"}
+        self.gh.tick("once")
+        self.assertEqual(self.gh.reruns, ["Sanitizer"])
+        self.assertIn("CI started for aaaaaaaa: Sanitizer. Continuous integration could not be started.", self.gh.body)
+        self.gh.fail_jobs = set()
+        self.gh.push(OTHER_SHA, workflows=("Continuous integration",))["conclusion"] = "action_required"
+        self.gh.push(OTHER_SHA, workflows=("Sanitizer",), running=True)
+
+        def sleep(seconds):
+            self.gh.finish_runs(seconds)
+            self.gh.pr["head"]["sha"] = "c" * 40
+
+        self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
+        boxes(self.gh, 1, 1, BODY, sleep=sleep)
+        self.assertIn("approve the run. The PR moved on to cccccccc.", self.gh.body)
 
     def test_failures_are_reported(self):
         self.gh.fail_reruns = True
         self.gh.tick("once")
-        self.assertIn("could not be restarted", self.gh.body)
+        self.assertIn("Continuous integration could not be started. Sanitizer could not be started.", self.gh.body)
         self.gh.fail_run_list = True
         self.gh.tick("once")
         self.assertIn("could not be started", self.gh.body)
