@@ -123,11 +123,30 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let mut rx = manager.subscribe_events();
     let tx = create_tx_paying_to(&addr, 0xbb);
+    let lock = dummy_instant_lock(tx.txid());
 
-    manager.process_mempool_transaction(&tx, Some(dummy_instant_lock(tx.txid()))).await;
+    manager.process_mempool_transaction(&tx, Some(lock.clone())).await;
 
     let events = drain_events(&mut rx);
-    assert_eq!(events.len(), 1, "one event expected for first-seen IS-locked tx, got {:?}", events);
+    assert_eq!(
+        events.len(),
+        2,
+        "detection and lock expected for first-seen IS-locked tx, got {:?}",
+        events
+    );
+    match &events[1] {
+        WalletEvent::TransactionInstantLocked {
+            wallet_id: wid,
+            txid,
+            instant_lock,
+            ..
+        } => {
+            assert_eq!(*wid, wallet_id);
+            assert_eq!(*txid, tx.txid());
+            assert_eq!(*instant_lock, lock);
+        }
+        other => panic!("expected TransactionInstantLocked after the detection, got {:?}", other),
+    }
     match &events[0] {
         WalletEvent::TransactionDetected {
             wallet_id: wid,
@@ -155,6 +174,9 @@ async fn test_mempool_tx_with_instant_lock_emits_detected_event_with_locked_bala
         }
         other => panic!("expected TransactionDetected with IS context, got {:?}", other),
     }
+
+    manager.process_mempool_instant_send_lock(&tx, lock).await;
+    assert_no_events(&mut rx);
 }
 
 #[tokio::test]
@@ -194,8 +216,10 @@ async fn test_irrelevant_mempool_tx_emits_no_events() {
 // InstantSend path
 // ---------------------------------------------------------------------------
 
+#[test_case(false ; "lock alone")]
+#[test_case(true ; "lock with its transaction")]
 #[tokio::test]
-async fn test_instant_send_lock_on_known_mempool_tx_emits_instant_locked_event() {
+async fn test_instant_send_lock_on_known_mempool_tx_emits_instant_locked_event(with_tx: bool) {
     let (mut manager, wallet_id, addr) = setup_manager_with_wallet();
     let tx = create_tx_paying_to(&addr, 0xe1);
 
@@ -212,7 +236,11 @@ async fn test_instant_send_lock_on_known_mempool_tx_emits_instant_locked_event()
         signature: BLSSignature::from([0xcd; 96]),
         ..InstantLock::default()
     };
-    manager.process_instant_send_lock(lock.clone());
+    if with_tx {
+        manager.process_mempool_instant_send_lock(&tx, lock.clone()).await;
+    } else {
+        manager.process_instant_send_lock(lock.clone());
+    }
 
     let events = drain_events(&mut rx);
     assert_eq!(events.len(), 1, "exactly one event expected, got {:?}", events);
