@@ -229,6 +229,7 @@ class BoxTests(unittest.TestCase):
         self.assertIn("no CI run to start", self.gh.body)
         first = self.gh.push(OTHER_SHA, workflows=("Continuous integration",))
         second = self.gh.push(OTHER_SHA, workflows=("Continuous integration",))
+        second["path"] += "@dev"
         self.gh.tick("once")
         self.assertEqual(self.gh.reruns, ["Continuous integration"])
         self.assertEqual((first["attempt"], second["attempt"]), (1, 2))

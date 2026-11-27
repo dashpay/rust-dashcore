@@ -109,7 +109,8 @@ def newest_runs(gh, sha: str) -> list:
     """Returns the newest pull request run of each gated workflow on the commit."""
     newest = {}
     for run in gh.get_list(f"actions/runs?head_sha={sha}&event=pull_request&per_page=100", "workflow_runs"):
-        if run["path"] not in GATED:
+        # GitHub documents a path with a ref, such as `.github/workflows/rust.yml@dev`.
+        if run["path"].split("@", 1)[0] not in GATED:
             continue
         known = newest.get(run["workflow_id"])
         if known is None or run["run_number"] > known["run_number"]:
