@@ -1021,10 +1021,26 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
     let mut rx = manager.subscribe_events();
 
     let winner = spend(vec![coin_a], 400_000);
-    let winner_block = make_block(vec![winner.clone()], 0x5b, 1100);
-    manager
-        .process_block_for_wallets(&winner_block, winner_block.block_hash(), 101, &wallets)
-        .await;
+    let unrelated = Transaction {
+        version: 2,
+        lock_time: 0,
+        input: vec![TxIn {
+            previous_output: OutPoint {
+                txid: Txid::from_byte_array([0x5c; 32]),
+                vout: 0,
+            },
+            script_sig: ScriptBuf::new(),
+            sequence: u32::MAX,
+            witness: Witness::default(),
+        }],
+        output: vec![TxOut {
+            value: 1_000,
+            script_pubkey: ScriptBuf::new(),
+        }],
+        special_transaction_payload: None,
+    };
+    let mined_block = make_block(vec![unrelated, winner.clone()], 0x5b, 1100);
+    manager.process_block_for_wallets(&mined_block, mined_block.block_hash(), 101, &wallets).await;
 
     let events = drain_events(&mut rx);
     let swept = events
@@ -1034,10 +1050,10 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
                 wallet_id: wid,
                 txids,
                 superseded_by,
-                winner_mined_height,
+                winner_block,
                 released_outpoints,
                 ..
-            } => Some((wid, txids, superseded_by, winner_mined_height, released_outpoints)),
+            } => Some((wid, txids, superseded_by, winner_block, released_outpoints)),
             _ => None,
         })
         .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
@@ -1045,18 +1061,19 @@ async fn test_block_winner_emits_swept_event_naming_the_released_outpoints() {
     assert_eq!(swept.0, &wallet_id);
     assert_eq!(swept.1, &vec![loser.txid()], "the beaten transaction is named");
     assert_eq!(swept.2, &winner.txid(), "attributed to the transaction that beat it");
+    let block = swept.3.expect("a block-context sweep must carry the winner's block");
+    assert_eq!(block.height(), 101, "the height of the block that triggered the sweep");
     assert_eq!(
-        swept.3,
-        &Some(101),
-        "a block-context sweep must carry the winner's mined height — the height of \
-         the block whose processing triggered the sweep, not None and not any other \
-         height the manager has seen"
+        block.block_hash(),
+        mined_block.block_hash(),
+        "the height alone cannot tell the branch that mined the winner from one that replaced it"
     );
+    assert_eq!(block.position(), Some(1), "the winner's index in that block");
     assert_eq!(swept.4, &vec![coin_b], "only the coin the winner did not take is released");
 }
 
 /// The mempool emission site's counterpart to the block test above, pinning
-/// the other half of `winner_mined_height`'s contract: a sweep triggered by
+/// the other half of `winner_block`'s contract: a sweep triggered by
 /// an InstantSend-locked winner that has not been mined carries `None`. This
 /// is the distinction the field exists to make — a consumer retiring durable
 /// records of the swept spends can anchor a block-context sweep to the
@@ -1144,10 +1161,10 @@ async fn test_is_locked_mempool_winner_sweeps_with_no_mined_height() {
                 wallet_id: wid,
                 txids,
                 superseded_by,
-                winner_mined_height,
+                winner_block,
                 released_outpoints,
                 ..
-            } => Some((wid, txids, superseded_by, winner_mined_height, released_outpoints)),
+            } => Some((wid, txids, superseded_by, winner_block, released_outpoints)),
             _ => None,
         })
         .unwrap_or_else(|| panic!("a sweep must be emitted, got {:?}", events));
