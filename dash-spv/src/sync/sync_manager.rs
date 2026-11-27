@@ -1,5 +1,5 @@
 use crate::error::{StorageError, SyncResult};
-use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager};
+use crate::network::{InboundMessage, MessageType, NetworkEvent, NetworkManager, PeerInfo};
 use crate::sync::{
     BlockHeadersProgress, BlocksProgress, ChainLockProgress, FilterHeadersProgress,
     FiltersProgress, InstantSendProgress, ManagerIdentifier, MasternodesProgress, MempoolProgress,
@@ -69,12 +69,9 @@ impl SyncManagerTaskContext {
 impl std::fmt::Display for NetworkEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NetworkEvent::PeersUpdated {
-                addresses,
-                ..
-            } => write!(f, "PeersUpdated({} peers)", addresses.len()),
-            NetworkEvent::PeerConnected(addr) => write!(f, "PeerConnected({addr})"),
-            NetworkEvent::PeerDisconnected(addr) => write!(f, "PeerDisconnected({addr})"),
+            NetworkEvent::PeersUpdated(peers) => write!(f, "PeersUpdated({} peers)", peers.len()),
+            NetworkEvent::PeerConnected(peer) => write!(f, "PeerConnected({})", peer.addr),
+            NetworkEvent::PeerDisconnected(peer) => write!(f, "PeerDisconnected({})", peer.addr),
         }
     }
 }
@@ -87,23 +84,24 @@ pub(super) async fn default_handle_network_event<M: SyncManager + ?Sized>(
 ) -> SyncResult<Vec<SyncEvent>> {
     // `PeersUpdated` kicks off the initial requests: the network manager connects in
     // `start`, after every manager has subscribed, so it is the first thing we hear.
-    if let NetworkEvent::PeersUpdated {
-        addresses,
-        ..
-    } = event
-    {
-        if addresses.is_empty() {
+    if let NetworkEvent::PeersUpdated(peers) = event {
+        if peers.is_empty() {
             tracing::info!("{} - no peers available, stopping sync", manager.identifier());
             manager.stop_sync();
             return Ok(vec![]);
         }
-        manager.update_target_height(network.tip());
         if manager.state() == SyncState::WaitingForConnections {
             tracing::info!("{} - peers available, starting sync", manager.identifier());
+            manager.update_target_height(best_start_height(peers));
             return manager.start_sync(network).await;
         }
     }
     Ok(vec![])
+}
+
+/// Returns the best tip height the `peers` advertised in their handshake.
+pub(super) fn best_start_height(peers: &[PeerInfo]) -> u32 {
+    peers.iter().map(|p| p.start_height).max().unwrap_or(0)
 }
 
 /// Guard that verifies a manager has not already been started.

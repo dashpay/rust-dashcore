@@ -19,7 +19,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 pub use broker::RequestKey;
 pub use manager::NetworkEvent;
-pub use manager::{Inbound, InboundMessage, MessageType, PeerNetworkManager};
+pub use manager::{Inbound, InboundMessage, MessageType, PeerInfo, PeerNetworkManager};
 pub(crate) use peer::MAX_USER_AGENT_LEN;
 pub use transport::TransportPreference;
 // Used by the mock network manager to enforce the same de-duplication contract.
@@ -125,9 +125,6 @@ pub trait NetworkManager: Send + Sync + 'static {
     async fn subscribe(&self, kinds: &[MessageType]) -> UnboundedReceiver<Inbound>;
 
     fn events(&self) -> broadcast::Receiver<NetworkEvent>;
-
-    /// Best tip height advertised across connected peers.
-    fn tip(&self) -> u32;
 
     async fn connected_count(&self) -> u32;
 

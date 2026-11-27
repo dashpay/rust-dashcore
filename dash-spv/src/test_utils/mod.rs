@@ -4,8 +4,8 @@ mod checkpoint;
 mod event_handler;
 mod filter;
 mod header_storage;
-mod metadata_storage;
 mod network;
+mod peer_info;
 mod types;
 mod wallet;
 
@@ -20,7 +20,6 @@ pub use dashcore_rpc::test_utils::{
 };
 pub use event_handler::TestEventHandler;
 pub use header_storage::MockHeaderStorage;
-pub use metadata_storage::FailingMetadataStorage;
 pub use network::{test_socket_address, MockNetworkManager};
 pub use wallet::{
     create_test_wallet, default_test_account_options, init_test_logging,

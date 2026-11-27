@@ -3,13 +3,12 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use tokio::sync::{broadcast, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 
 use crate::network::bans::Bans;
-use crate::network::manager::NetworkEvent;
+use crate::network::manager::{NetworkEvent, PeerInfo};
 use crate::network::peer::{ConnectedPeer, PeerId};
 
 /// The connected peers. Every change is announced while the set's lock is held, so
@@ -18,8 +17,6 @@ use crate::network::peer::{ConnectedPeer, PeerId};
 pub(crate) struct PeerSet {
     peers: Mutex<Vec<ConnectedPeer>>,
     events: broadcast::Sender<NetworkEvent>,
-    /// Best tip height advertised by any peer that completed a handshake.
-    best_tip: AtomicU32,
 }
 
 /// What [`PeerSet::admit`] did with a handshaken peer.
@@ -51,20 +48,11 @@ impl PeerSet {
         PeerSet {
             peers: Mutex::new(Vec::with_capacity(capacity)),
             events: broadcast::channel(4096).0,
-            best_tip: AtomicU32::new(0),
         }
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<NetworkEvent> {
         self.events.subscribe()
-    }
-
-    pub(crate) fn best_tip(&self) -> u32 {
-        self.best_tip.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn raise_best_tip(&self, height: u32) {
-        self.best_tip.fetch_max(height, Ordering::Relaxed);
     }
 
     pub(crate) async fn read(&self) -> Peers<'_> {
@@ -95,7 +83,7 @@ impl PeerSet {
         if bans.is_banned(peer.addr()).await {
             return Admission::Banned(peer);
         }
-        let arrived = peer.addr();
+        let arrived = peer.info();
         if peers.len() < capacity {
             peers.push(peer);
             self.announce(&peers, None, Some(arrived));
@@ -107,7 +95,7 @@ impl PeerSet {
         };
         let old = peers.swap_remove(pos);
         peers.push(peer);
-        self.announce(&peers, Some(old.addr()), Some(arrived));
+        self.announce(&peers, Some(old.info()), Some(arrived));
         Admission::Swapped(old)
     }
 
@@ -116,16 +104,16 @@ impl PeerSet {
     pub(crate) async fn remove(&self, ids: &HashSet<PeerId>) -> (Vec<ConnectedPeer>, usize) {
         let mut peers = self.peers.lock().await;
         let removed: Vec<_> = peers.extract_if(.., |p| ids.contains(&p.id())).collect();
-        self.announce(&peers, removed.iter().map(|p| p.addr()), None);
+        self.announce(&peers, removed.iter().map(ConnectedPeer::info), None);
         (removed, peers.len())
     }
 
     /// Removes every peer and returns their addresses.
     pub(crate) async fn clear(&self) -> Vec<SocketAddr> {
         let mut peers = self.peers.lock().await;
-        let removed: Vec<_> = peers.drain(..).map(|p| p.addr()).collect();
+        let removed: Vec<_> = peers.drain(..).map(|p| p.info()).collect();
         self.announce(&peers, removed.iter().copied(), None);
-        removed
+        removed.into_iter().map(|p| p.addr).collect()
     }
 
     /// Announces the peers at `departed` and `arrived` against the `remaining` set,
@@ -133,27 +121,26 @@ impl PeerSet {
     fn announce(
         &self,
         remaining: &[ConnectedPeer],
-        departed: impl IntoIterator<Item = SocketAddr>,
-        arrived: Option<SocketAddr>,
+        departed: impl IntoIterator<Item = PeerInfo>,
+        arrived: Option<PeerInfo>,
     ) {
         let mut changed = false;
-        for addr in departed {
+        for info in departed {
             changed = true;
             // Subscribers know peers by address only, so a live connection to the
             // same address keeps it.
-            if !remaining.iter().any(|p| p.addr() == addr) {
-                let _ = self.events.send(NetworkEvent::PeerDisconnected(addr));
+            if !remaining.iter().any(|p| p.addr() == info.addr) {
+                let _ = self.events.send(NetworkEvent::PeerDisconnected(info));
             }
         }
-        if let Some(addr) = arrived {
+        if let Some(info) = arrived {
             changed = true;
-            let _ = self.events.send(NetworkEvent::PeerConnected(addr));
+            let _ = self.events.send(NetworkEvent::PeerConnected(info));
         }
         if changed {
-            let _ = self.events.send(NetworkEvent::PeersUpdated {
-                addresses: remaining.iter().map(|p| p.addr()).collect(),
-                best_height: self.best_tip(),
-            });
+            let _ = self.events.send(NetworkEvent::PeersUpdated(
+                remaining.iter().map(ConnectedPeer::info).collect(),
+            ));
         }
     }
 }
@@ -215,12 +202,12 @@ mod tests {
         assert_eq!(
             queued(&mut events),
             [
-                NetworkEvent::PeerDisconnected(conn(1).addr()),
-                NetworkEvent::PeerConnected(conn(3).addr()),
-                NetworkEvent::PeersUpdated {
-                    addresses: vec![conn(2).addr(), conn(3).addr()],
-                    best_height: 0,
-                },
+                NetworkEvent::PeerDisconnected(PeerInfo::dummy(conn(1).addr())),
+                NetworkEvent::PeerConnected(PeerInfo::dummy(conn(3).addr())),
+                NetworkEvent::PeersUpdated(vec![
+                    PeerInfo::dummy(conn(2).addr()),
+                    PeerInfo::dummy(conn(3).addr())
+                ]),
             ]
         );
 

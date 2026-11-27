@@ -35,7 +35,6 @@ pub struct MockNetworkManager {
     in_play: Mutex<HashSet<RequestKey>>,
     subscribers: Mutex<Vec<Subscriber>>,
     events_tx: RwLock<broadcast::Sender<NetworkEvent>>,
-    tip: AtomicU32,
     connected: AtomicU32,
 }
 
@@ -57,7 +56,6 @@ impl MockNetworkManager {
             in_play: Mutex::new(HashSet::new()),
             subscribers: Mutex::new(Vec::new()),
             events_tx: RwLock::new(events_tx),
-            tip: AtomicU32::new(0),
             connected: AtomicU32::new(1),
         }
     }
@@ -104,10 +102,6 @@ impl MockNetworkManager {
 
     pub async fn requests_in_play(&self) -> usize {
         self.in_play.lock().await.len()
-    }
-
-    pub fn set_tip(&self, tip: u32) {
-        self.tip.store(tip, Ordering::SeqCst);
     }
 
     pub fn set_connected(&self, n: u32) {
@@ -189,10 +183,6 @@ impl NetworkManager for MockNetworkManager {
     fn events(&self) -> broadcast::Receiver<NetworkEvent> {
         // Only `close_network_events` writes, and never while a client subscribes.
         self.events_tx.try_read().expect("event bus is being replaced").subscribe()
-    }
-
-    fn tip(&self) -> u32 {
-        self.tip.load(Ordering::SeqCst)
     }
 
     async fn connected_count(&self) -> u32 {

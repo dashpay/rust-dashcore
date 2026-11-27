@@ -81,14 +81,9 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
             .await
             .ok_or_else(|| SyncError::MissingDependency("No tip in storage".to_string()))?;
 
-        // Restore persisted target height, fall back to tip height
-        let target_height =
-            metadata_storage.read().await.load_last_target_height().await.unwrap_or(tip.height());
-
         let mut initial_progress = BlockHeadersProgress::default();
         initial_progress.set_state(SyncState::WaitingForConnections);
         initial_progress.update_tip_height(tip.height());
-        initial_progress.update_target_height(target_height);
 
         tracing::info!("BlockHeadersManager initialized at height {}", tip.height());
 
@@ -531,14 +526,14 @@ impl<H: BlockHeaderStorage, M: MetadataStorage> BlockHeadersManager<H, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{MessageType, NetworkEvent};
+    use crate::network::{MessageType, NetworkEvent, PeerInfo};
     use crate::storage::{
         DiskStorageManager, PersistentBlockHeaderStorage, PersistentMetadataStorage, StorageManager,
     };
     use crate::sync::block_headers::pipeline::ACTIVE_SEGMENT_WINDOW;
     use crate::sync::block_headers::segment_state::SegmentState;
     use crate::sync::{ManagerIdentifier, ProgressPercentage, SyncManager, SyncManagerProgress};
-    use crate::test_utils::{test_socket_address, FailingMetadataStorage, MockNetworkManager};
+    use crate::test_utils::{test_socket_address, MockNetworkManager};
     use dashcore::network::message::NetworkMessage;
     use test_case::test_case;
 
@@ -550,12 +545,6 @@ mod tests {
     }
 
     async fn create_test_manager() -> TestBlockHeadersManager {
-        create_test_manager_with_metadata(DiskStorageManager::metadata).await
-    }
-
-    async fn create_test_manager_with_metadata<M: MetadataStorage>(
-        metadata: impl FnOnce(&DiskStorageManager) -> Arc<RwLock<M>>,
-    ) -> BlockHeadersManager<PersistentBlockHeaderStorage, M> {
         let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
         // Store a genesis header so the manager can initialize
         let genesis = Header::dummy_batch(0..1);
@@ -565,11 +554,10 @@ mod tests {
             )
             .await
             .unwrap();
-        let checkpoint_manager = create_test_checkpoint_manager();
         BlockHeadersManager::new(
             storage.block_headers(),
-            metadata(&storage),
-            checkpoint_manager,
+            storage.metadata(),
+            CheckpointManager::for_network(Network::Regtest),
             Network::Regtest,
         )
         .await
@@ -674,7 +662,7 @@ mod tests {
         )
         .await
         .unwrap();
-        manager.pipeline.init(4, *chain[4].hash(), 4);
+        manager.pipeline.init(4, *chain[4].hash());
         manager.progress.set_state(SyncState::Synced);
 
         let parent_hash = *chain[parent].hash();
@@ -717,7 +705,7 @@ mod tests {
     async fn create_synced_manager() -> TestBlockHeadersManager {
         let mut manager = create_test_manager().await;
         let tip = manager.tip().await.unwrap();
-        manager.pipeline.init(tip.height(), *tip.hash(), tip.height());
+        manager.pipeline.init(tip.height(), *tip.hash());
         manager.progress.set_state(SyncState::Synced);
         manager
     }
@@ -740,7 +728,7 @@ mod tests {
         let tip = manager.tip().await.unwrap();
         let start_height = tip.height();
 
-        manager.pipeline.init(start_height, *tip.hash(), start_height + 2);
+        manager.pipeline.init(start_height, *tip.hash());
         manager.progress.set_state(SyncState::Syncing);
 
         let mock = Arc::new(MockNetworkManager::new());
@@ -818,7 +806,7 @@ mod tests {
         .await
         .unwrap();
         let tip = manager.tip().await.unwrap();
-        manager.pipeline.init(tip.height(), *tip.hash(), tip.height() + 2);
+        manager.pipeline.init(tip.height(), *tip.hash());
 
         // Headers below that join neither the anchor nor the stored ones.
         let below: Vec<HashedBlockHeader> = Header::dummy_chain(1, BlockHash::dummy(2))
@@ -866,7 +854,7 @@ mod tests {
         )
         .await
         .unwrap();
-        manager.pipeline.init(129, *chain[129].hash(), 129);
+        manager.pipeline.init(129, *chain[129].hash());
         manager.floor = Some(30);
 
         manager.extend_down().await.unwrap();
@@ -916,8 +904,7 @@ mod tests {
         }
     }
 
-    /// A target restored from storage or reported by peers can lag the stored tip,
-    /// since peers report their height only when they connect.
+    /// A peer's handshake height can lag the stored tip.
     #[tokio::test]
     async fn test_target_height_never_below_tip() {
         let mut storage = DiskStorageManager::with_temp_dir().await.unwrap();
@@ -926,7 +913,6 @@ mod tests {
             .store_headers(&stored.iter().map(HashedBlockHeader::from).collect::<Vec<_>>())
             .await
             .unwrap();
-        storage.store_last_target_height(5).await.unwrap();
         let mut manager = BlockHeadersManager::new(
             storage.block_headers(),
             storage.metadata(),
@@ -938,13 +924,12 @@ mod tests {
         assert_eq!(manager.progress.target_height(), 9);
 
         let network: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
-        let lagging = NetworkEvent::PeersUpdated {
-            addresses: vec![],
-            best_height: 3,
-        };
+        let lagging = NetworkEvent::PeersUpdated(vec![PeerInfo {
+            addr: test_socket_address(1),
+            start_height: 3,
+        }]);
         manager.handle_network_event(&lagging, &network).await.unwrap();
         assert_eq!(manager.progress.target_height(), 9);
-        assert_eq!(storage.load_last_target_height().await.unwrap(), 9);
     }
 
     #[tokio::test]
@@ -961,7 +946,7 @@ mod tests {
         let tip_hash = *tip.hash();
 
         // Simulate completed sync: pipeline initialized with tip segment marked complete
-        manager.pipeline.init(0, tip_hash, 0);
+        manager.pipeline.init(0, tip_hash);
         manager.pipeline.mark_tip_complete();
         manager.progress.set_state(SyncState::Synced);
 
@@ -1062,7 +1047,7 @@ mod tests {
         let network: Arc<dyn NetworkManager> = mock.clone();
 
         let addr = test_socket_address(1);
-        let connect = NetworkEvent::PeerConnected(addr);
+        let connect = NetworkEvent::PeerConnected(PeerInfo::dummy(addr));
 
         // Connect sends a peer-targeted GetHeaders
         let events = manager.handle_network_event(&connect, &network).await.unwrap();
@@ -1078,7 +1063,7 @@ mod tests {
         assert_eq!(mock.sent_to_messages().await.len(), 1);
 
         // Disconnect removes from announced set
-        let disconnect = NetworkEvent::PeerDisconnected(addr);
+        let disconnect = NetworkEvent::PeerDisconnected(PeerInfo::dummy(addr));
         manager.handle_network_event(&disconnect, &network).await.unwrap();
         assert!(!manager.announced_peers.contains(&addr));
 
@@ -1095,7 +1080,7 @@ mod tests {
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
         let addr = test_socket_address(1);
-        let connect = NetworkEvent::PeerConnected(addr);
+        let connect = NetworkEvent::PeerConnected(PeerInfo::dummy(addr));
 
         manager.handle_network_event(&connect, &network).await.unwrap();
         assert!(!manager.announced_peers.contains(&addr));
@@ -1114,35 +1099,14 @@ mod tests {
         assert!(mock.sent_to_messages().await.is_empty());
     }
 
-    #[test_case(false; "working metadata storage")]
-    #[test_case(true; "failing metadata storage")]
     #[tokio::test]
-    async fn test_disconnect_preserves_pipeline_and_resumes_from_advanced_tip(
-        failing_metadata: bool,
-    ) {
-        if failing_metadata {
-            let failing = |_: &DiskStorageManager| Arc::new(RwLock::new(FailingMetadataStorage));
-            disconnect_preserves_pipeline_and_resumes(
-                create_test_manager_with_metadata(failing).await,
-            )
-            .await;
-        } else {
-            disconnect_preserves_pipeline_and_resumes(create_test_manager().await).await;
-        }
-    }
-
-    async fn disconnect_preserves_pipeline_and_resumes<M: MetadataStorage>(
-        mut manager: BlockHeadersManager<PersistentBlockHeaderStorage, M>,
-    ) {
+    async fn test_disconnect_preserves_pipeline_and_resumes_from_advanced_tip() {
+        let mut manager = create_test_manager().await;
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
 
-        // Use a target below the first testnet checkpoint (50000) so the
-        // pipeline produces a single open-ended tip segment.
-        let initial_event = NetworkEvent::PeersUpdated {
-            addresses: vec![test_socket_address(1)],
-            best_height: 40_000,
-        };
+        let initial_event =
+            NetworkEvent::PeersUpdated(vec![PeerInfo::dummy(test_socket_address(1))]);
         let events = manager.handle_network_event(&initial_event, &network).await.unwrap();
         assert!(matches!(events.as_slice(), [SyncEvent::SyncStart { .. }]), "{events:?}");
         assert_eq!(manager.state(), SyncState::Syncing);
@@ -1178,10 +1142,7 @@ mod tests {
         }
         mock.clear_sent().await;
 
-        let disconnect_event = NetworkEvent::PeersUpdated {
-            addresses: vec![],
-            best_height: 40_000,
-        };
+        let disconnect_event = NetworkEvent::PeersUpdated(vec![]);
         let events = manager.handle_network_event(&disconnect_event, &network).await.unwrap();
         assert!(events.is_empty(), "{events:?}");
         // The broker re-queues in-flight requests on disconnect, so the resumed request can go out.
@@ -1223,21 +1184,15 @@ mod tests {
         let mock = Arc::new(MockNetworkManager::new());
         let network: Arc<dyn NetworkManager> = mock.clone();
 
-        let disconnect_event = NetworkEvent::PeersUpdated {
-            addresses: vec![],
-            best_height: tip.height(),
-        };
+        let disconnect_event = NetworkEvent::PeersUpdated(vec![]);
         manager.handle_network_event(&disconnect_event, &network).await.unwrap();
         // The broker re-queues in-flight requests on disconnect, so the resumed request can go out.
         mock.release_requests_in_play().await;
         assert_eq!(manager.state(), SyncState::WaitingForConnections);
         assert!(manager.pipeline.is_initialized());
 
-        // Reconnect with a higher peer best_height (a new block was mined).
-        let reconnect_event = NetworkEvent::PeersUpdated {
-            addresses: vec![test_socket_address(1)],
-            best_height: tip.height() + 1,
-        };
+        let reconnect_event =
+            NetworkEvent::PeersUpdated(vec![PeerInfo::dummy(test_socket_address(1))]);
         manager.handle_network_event(&reconnect_event, &network).await.unwrap();
         assert_eq!(manager.state(), SyncState::Syncing);
 
@@ -1259,7 +1214,7 @@ mod tests {
 
         // Announce tip to a new peer
         let addr = test_socket_address(1);
-        let connect = NetworkEvent::PeerConnected(addr);
+        let connect = NetworkEvent::PeerConnected(PeerInfo::dummy(addr));
         manager.handle_network_event(&connect, &network).await.unwrap();
         assert_eq!(mock.sent_to_messages().await.len(), 1); // the GetHeaders announcement
         mock.clear_sent().await;

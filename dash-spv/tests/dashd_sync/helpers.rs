@@ -238,17 +238,14 @@ impl PeerTracker {
     pub(super) fn update(&mut self, receiver: &mut broadcast::Receiver<NetworkEvent>) {
         loop {
             match receiver.try_recv() {
-                Ok(NetworkEvent::PeerConnected(addr)) => {
-                    self.peers.insert(addr);
+                Ok(NetworkEvent::PeerConnected(peer)) => {
+                    self.peers.insert(peer.addr);
                 }
-                Ok(NetworkEvent::PeerDisconnected(addr)) => {
-                    self.peers.remove(&addr);
+                Ok(NetworkEvent::PeerDisconnected(peer)) => {
+                    self.peers.remove(&peer.addr);
                 }
-                Ok(NetworkEvent::PeersUpdated {
-                    addresses,
-                    ..
-                }) => {
-                    let listed: HashSet<_> = addresses.into_iter().collect();
+                Ok(NetworkEvent::PeersUpdated(peers)) => {
+                    let listed: HashSet<_> = peers.into_iter().map(|p| p.addr).collect();
                     assert_eq!(listed, self.peers, "the list disagrees with the peer events");
                     self.emptied |= listed.is_empty();
                     self.listed = Some(listed);
