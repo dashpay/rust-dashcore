@@ -5,6 +5,7 @@ on:
       - main
       - dev
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 name: Continuous integration
 
@@ -16,8 +17,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  draft-gate:
+    name: Draft Gate
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: $/.github/workflows/draft-gate.yml
+
   security:
     name: Security Audit
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -25,6 +35,8 @@ jobs:
 
   msrv:
     name: MSRV Check
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -39,6 +51,8 @@ jobs:
 
   docs:
     name: Documentation
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -53,6 +67,8 @@ jobs:
 
   verify-groups:
     name: Verify Test Groups
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -63,19 +79,23 @@ jobs:
       - name: Verify group config and hardcoded matrix
         run: just gha::verify-groups
 
-  test-release:
-    name: Test Release Script
+  test-scripts:
+    name: Test Workflow Scripts
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: taiki-e/install-action@v2.90.5
         with:
           tool: just
-      - name: Test the release script
-        run: just gha::test-release
+      - name: Test the workflow scripts
+        run: just gha::test-scripts
 
   verify-actions-lock:
     name: Verify Action Lockfile
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -91,6 +111,8 @@ jobs:
 
   test-ubuntu:
     name: Ubuntu
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     uses: $/.github/workflows/build-and-test.yml
     with:
       os: ubuntu-latest
@@ -99,18 +121,24 @@ jobs:
 
   test-ubuntu-arm:
     name: Ubuntu ARM
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     uses: $/.github/workflows/build-and-test.yml
     with:
       os: ubuntu-22.04-arm
 
   test-macos:
     name: macOS
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     uses: $/.github/workflows/build-and-test.yml
     with:
       os: macos-latest
 
   test-windows:
     name: Windows
+    needs: draft-gate
+    if: needs.draft-gate.outputs.run == 'true'
     uses: $/.github/workflows/build-and-test.yml
     with:
       os: windows-latest

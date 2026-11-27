@@ -103,4 +103,4 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 - One concern per PR. Split an unrelated fix or refactor into its own PR.
 - The PR title becomes the changelog entry, so it must describe the change for a reader of the release notes.
 - The PR body (the `--body` of `gh pr create`) is a few plain sentences: what was wrong or missing, and what the PR changes. Link the issue it closes. Leave out review transcripts, tables of local runs, lists of commands you ran and the history of the session.
-- Open a draft PR while work is unfinished.
+- Open a draft PR while work is unfinished. CI skips a draft: someone with write access starts it from the boxes in the PR's CI comment, once for the current commit or on every push, and marking the PR ready starts it. `rust.yml`, `pre-commit.yml` and `sanitizer.yml` run `Draft Gate` first, so a new job in one of them needs `needs: draft-gate` and its `if`.

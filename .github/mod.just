@@ -23,6 +23,6 @@ verify:
 verify-groups:
     {{ python }} .github/scripts/ci_config.py verify-groups
 
-# Test the release script
-test-release:
+# Test the workflow scripts
+test-scripts:
     {{ python }} -m unittest discover -s .github/scripts -p 'test_*.py'

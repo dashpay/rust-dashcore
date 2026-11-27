@@ -1,0 +1,57 @@
+name: Draft CI
+
+# Posts the comment with the CI boxes on a draft PR and acts on their ticks. Both events run the
+# default branch with a write token, for fork PRs too.
+
+on:
+  workflow_run:
+    workflows: ["Continuous integration"]
+    types: [completed]
+  issue_comment:
+    types: [edited]
+
+permissions: {}
+
+jobs:
+  draft-ci:
+    # Editing the bot's comment takes write access, so a tick needs no further check.
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      github.event.comment.user.login == 'github-actions[bot]' &&
+      contains(github.event.comment.body, '<!-- draft-ci -->'))
+    # On the job, so the edits the `if` drops never take the pending slot of a request.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event.issue.number || format('{0}:{1}', github.event.workflow_run.head_repository.full_name, github.event.workflow_run.head_branch) }}
+      cancel-in-progress: false
+    # A fresh hosted machine, since PR workflows can run their own commands on the light runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Post the comment
+        if: github.event_name == 'workflow_run'
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python3 .github/scripts/draft_ci.py notice "$RUN_ID" "$HEAD_SHA"
+      - name: Apply the boxes
+        if: github.event_name == 'issue_comment'
+        env:
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          PREVIOUS_BODY: ${{ github.event.changes.body.from }}
+        run: python3 .github/scripts/draft_ci.py boxes "$PR_NUMBER" "$COMMENT_ID"

@@ -11,6 +11,10 @@ permissions:
 jobs:
   pre-commit:
     name: Nightly
+    # A called workflow cannot ask for more than its caller grants, and its `Draft Gate` reads PRs.
+    permissions:
+      contents: read
+      pull-requests: read
     uses: $/.github/workflows/pre-commit.yml
     with:
       os: '["macos-latest", "windows-latest"]'

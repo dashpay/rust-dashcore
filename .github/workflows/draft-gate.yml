@@ -1,0 +1,47 @@
+name: Draft Gate
+
+# Decides whether CI runs. A draft PR runs it only when its run is restarted, which is how
+# `draft-ci.yml` starts it, or when the "Run CI on every push" box of its CI comment is ticked.
+# Every other event runs it.
+
+on:
+  workflow_call:
+    outputs:
+      run:
+        description: Whether the calling workflow runs its jobs
+        value: ${{ jobs.check.outputs.run }}
+
+permissions: {}
+
+jobs:
+  check:
+    name: check
+    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    env:
+      # A restarted run keeps its first event payload, so the attempt is the only sign of a request.
+      ASK: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && github.run_attempt == '1' }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        if: env.ASK == 'true'
+        continue-on-error: true
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - name: Decide whether CI runs
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$ASK" != true ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif ! python3 .github/scripts/draft_ci.py gate "$PR_NUMBER"; then
+            # A gate that cannot decide must not hide CI, so a failed checkout or script runs it.
+            echo "::warning::Draft Gate could not decide, so CI runs."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
