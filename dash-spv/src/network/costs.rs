@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::Duration;
 
 use dashcore::consensus::encode;
 use dashcore::hash_types::{ChainLockHash, InstantSendLockHash};
@@ -10,6 +10,7 @@ use dashcore::network::message_blockdata::Inventory;
 use dashcore::{BlockHash, Txid};
 use dashcore_hashes::sha256d;
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 
 const HEADERS_RESP_BYTES: u64 = 2000 * 81;
 /// Dash Core sends up to 8000 compressed headers of about 43 bytes each.
@@ -158,6 +159,7 @@ struct Awaited {
 pub struct Ledger {
     costs: Arc<ResponseCosts>,
     awaited: Mutex<Vec<Awaited>>,
+    last_answer: Mutex<Instant>,
     in_flight_bytes: AtomicU64,
     latency_ns: AtomicU64,
     latency_count: AtomicU64,
@@ -169,6 +171,7 @@ impl Ledger {
         Self {
             costs,
             awaited: Mutex::new(Vec::new()),
+            last_answer: Mutex::new(Instant::now()),
             in_flight_bytes: AtomicU64::new(0),
             latency_ns: AtomicU64::new(0),
             latency_count: AtomicU64::new(0),
@@ -178,6 +181,15 @@ impl Ledger {
 
     pub fn in_flight_bytes(&self) -> u64 {
         self.in_flight_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Returns how long the peer has owed a reply without answering anything, zero while it
+    /// owes none.
+    pub(super) async fn silent_for(&self) -> Duration {
+        let Some(oldest) = self.awaited.lock().await.first().map(|a| a.sent) else {
+            return Duration::ZERO;
+        };
+        oldest.max(*self.last_answer.lock().await).elapsed()
     }
 
     pub fn latency_stats(&self) -> (u64, f64, f64) {
@@ -206,6 +218,7 @@ impl Ledger {
             NetworkMessage::NotFound(inv) => {
                 for reply in inv.iter().filter_map(Reply::of_item) {
                     if let Some(i) = awaited.iter().position(|a| a.reply == reply) {
+                        *self.last_answer.lock().await = Instant::now();
                         self.release(awaited.remove(i).cost);
                     }
                 }
@@ -216,6 +229,7 @@ impl Ledger {
                 else {
                     return;
                 };
+                *self.last_answer.lock().await = Instant::now();
                 awaited[i].bytes += size;
                 if awaited[i].reply != Reply::CFilters(filter.block_hash) {
                     return;
@@ -229,6 +243,7 @@ impl Ledger {
                 let Some(i) = awaited.iter().position(|a| a.reply == reply) else {
                     return;
                 };
+                *self.last_answer.lock().await = Instant::now();
                 awaited[i].bytes += size;
                 i
             }
@@ -253,8 +268,10 @@ impl Ledger {
 mod tests {
     use super::*;
     use dashcore::network::message_blockdata::GetHeadersMessage;
+    use dashcore::network::message_filter::{CFilter, GetCFilters};
     use dashcore::network::message_headers2::Headers2Message;
     use test_case::test_case;
+    use tokio::time;
 
     fn locator() -> GetHeadersMessage {
         GetHeadersMessage::new(vec![BlockHash::dummy(1)], BlockHash::dummy(0))
@@ -300,5 +317,38 @@ mod tests {
 
         ledger.settle(&reply, charged).await;
         assert_eq!(ledger.in_flight_bytes(), in_flight);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_is_silent_while_it_owes_a_reply_and_answers_nothing() {
+        let ledger = Ledger::new(Arc::new(ResponseCosts::new()));
+        let second = Duration::from_secs(1);
+        let cfilter = |n: u32| {
+            NetworkMessage::CFilter(CFilter {
+                filter_type: 0,
+                block_hash: BlockHash::dummy(n),
+                filter: Vec::new(),
+            })
+        };
+        time::advance(second).await;
+        assert_eq!(ledger.silent_for().await, Duration::ZERO, "it owes nothing");
+
+        let request = NetworkMessage::GetCFilters(GetCFilters {
+            filter_type: 0,
+            start_height: 1,
+            stop_hash: BlockHash::dummy(2),
+        });
+        ledger.charge(&request).await;
+        time::advance(second).await;
+        assert_eq!(ledger.silent_for().await, second);
+
+        ledger.settle(&cfilter(1), 10).await;
+        assert_eq!(ledger.silent_for().await, Duration::ZERO, "part of a reply is an answer");
+        time::advance(second).await;
+        assert_eq!(ledger.silent_for().await, second);
+
+        ledger.settle(&cfilter(2), 10).await;
+        time::advance(second).await;
+        assert_eq!(ledger.silent_for().await, Duration::ZERO, "it owes nothing anymore");
     }
 }
