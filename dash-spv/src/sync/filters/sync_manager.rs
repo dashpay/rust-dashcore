@@ -226,14 +226,9 @@ impl<
             let behind = wallet_read.wallets_behind(committed);
             let stale_min_synced =
                 behind.iter().map(|id| wallet_read.wallet_synced_height(id)).min();
-            let birth_height = wallet_read.earliest_required_height().await;
             drop(wallet_read);
             if let Some(stale_min_synced) = stale_min_synced {
-                // Where a restart would actually resume: `start_download` floors the
-                // scan at the wallets' birth heights and at the stored headers' start.
-                let scan_floor = birth_height
-                    .max(self.header_storage.read().await.get_start_height().await.unwrap_or(0));
-                let restart_at = stale_min_synced.saturating_add(1).max(scan_floor);
+                let restart_at = stale_min_synced.saturating_add(1).max(self.scan_floor().await);
                 // Restart only if that reaches below the committed frontier. Comparing
                 // the raw `synced_height` instead would fire on every tick for a wallet
                 // that reports 0 yet needs nothing below the floor, wiping the in-flight

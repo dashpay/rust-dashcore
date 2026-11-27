@@ -673,13 +673,20 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
         Ok(events)
     }
 
+    /// Returns the lowest height a scan starts at: the wallets' earliest birth height, raised
+    /// to the first stored header. `start_download` starts every scan here, so no batch can
+    /// cover the heights below it.
+    pub(super) async fn scan_floor(&self) -> u32 {
+        let birth_height = self.wallet.read().await.earliest_required_height().await;
+        birth_height.max(self.header_storage.read().await.get_start_height().await.unwrap_or(0))
+    }
+
     /// Commit completed batches in order (lowest batch_start first).
     async fn try_commit_batches(&mut self) -> SyncResult<Vec<SyncEvent>> {
         let mut events = Vec::new();
 
-        // Lowest height any scan can ever reach. Read once, before the wallet
-        // write lock below, so header storage is never locked underneath it.
-        let scan_floor = self.header_storage.read().await.get_start_height().await.unwrap_or(0);
+        // Read once, before the wallet write lock below, so neither lock is taken under it.
+        let scan_floor = self.scan_floor().await;
 
         while let Some((&batch_start, batch)) = self.active_batches.first_key_value() {
             // Check if batch was scanned - can't commit until scanned
@@ -732,9 +739,9 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
                         // rescanned, not silently certified.
                         //
                         // Heights below `scan_floor` are the one exception: no
-                        // batch can ever reach them, because the chain is
-                        // anchored at a checkpoint and no headers exist below
-                        // it. Treating that range as a gap leaves a wallet
+                        // batch can ever reach them, because every scan starts
+                        // at the wallets' birth height or the first stored
+                        // header. Treating that range as a gap leaves a wallet
                         // whose `synced_height` sits under the anchor
                         // permanently uncertifiable, which also starves the
                         // account-add rescan that clears
@@ -1349,6 +1356,7 @@ mod coinjoin_gap_discovery_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain::checkpoints::CHECKPOINT_HEADERS;
     use crate::network::MessageType;
     use crate::storage::{
         BlockHeaderStorage, BlockStorage, DiskStorageManager, PersistentBlockHeaderStorage,
@@ -4321,6 +4329,32 @@ mod tests {
             "the already-synced wallet never regresses"
         );
         assert!(manager.active_batches.is_empty());
+    }
+
+    /// A checkpoint stores the headers below its height, so the stored chain starts under
+    /// a wallet born at that checkpoint. A wallet rewound below its birth height, as a
+    /// full rescan does, must still be certified by the batches that start at its birth.
+    #[tokio::test]
+    async fn rescan_below_birth_converges_when_headers_start_under_the_birth_height() {
+        let wallet_id: WalletId = [0xA1; 32];
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        multi.write().await.insert_wallet(wallet_id, MockWalletState::default());
+        multi.write().await.set_birth_height(wallet_id, 200_000);
+
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.sync_floor = 200_000;
+        seed_anchored_storage(&manager, 200_000 - (CHECKPOINT_HEADERS as u32 - 1), 34).await;
+
+        let requests: Arc<dyn NetworkManager> = Arc::new(MockNetworkManager::new());
+        manager.handle_new_filter_headers(200_010, &requests).await.unwrap();
+        for _ in 0..3 {
+            manager.tick(&requests).await.unwrap();
+        }
+
+        assert_eq!(multi.read().await.wallet_synced_height(&wallet_id), 200_010);
+        assert_eq!(manager.progress.committed_height(), 200_010);
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(manager.state(), SyncState::Synced);
     }
 
     /// `committed_height = 0` on a fresh manager must not falsely trip the
