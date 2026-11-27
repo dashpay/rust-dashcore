@@ -35,7 +35,7 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 
 ### dashd integration tests
 
-`dash-spv` has integration tests against a real regtest `dashd`. They catch restart, resync and disconnect bugs that unit tests miss, so run them for every `dash-spv` change. Never set `SKIP_DASHD_TESTS=1`.
+`dash-spv` has integration tests against a real regtest `dashd`. They catch restart, resync and disconnect bugs that unit tests miss, so run them for a change that can affect sync, networking, storage or wallet behavior. Never set `SKIP_DASHD_TESTS=1`.
 
 - `just dash-spv::test [args]` downloads `dashd` and the regtest chains (cached in `~/.rust-dashcore-test/`) and runs the `dash-spv` tests against them.
 - To call cargo directly, load the environment first: `eval $(python3 contrib/setup-dashd.py)`.
@@ -53,7 +53,7 @@ This library is not consensus code. It cannot replicate Dash Core's consensus be
 ## Rust code style
 
 - Put every `use` at the top of its module. Only `mod` starts a new scope, so inside `#[cfg(test)] mod tests` the imports go at the top of `tests`. Never write a `use` inside a function, closure or block.
-- Don't write a fully qualified path to avoid an import. Write `use std::ptr;` and `ptr::null()`, not `std::ptr::null()`. Calling a method on an imported type (`Foo::new()`) is fine.
+- Don't write a fully qualified path to avoid an import. Write `use std::ptr;` and `ptr::null()`, not `std::ptr::null()`. A single qualifier is fine: a module or crate name (`ptr::null()`, `hex_conservative::decode_to_vec()`) or an imported type (`Foo::new()`).
 - Delete dead code instead of adding `#[allow(dead_code)]`. Git history keeps it. When a lint must be silenced, use `#[expect(lint, reason = "...")]` over `#[allow]`.
 - Give new items the most restrictive visibility that compiles: private, then `pub(super)` or `pub(crate)`, `pub` only when the item is public API.
 - Write numeric literals without type suffixes (`[2; 20]`, not `[2u8; 20]`) unless the compiler needs one.
