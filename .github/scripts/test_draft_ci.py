@@ -1,8 +1,11 @@
+import os
 import re
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from draft_ci import BODY, BOT, GATED, MARKER, POLLS, GitHubError, boxes, gate, is_ticked, notice
+from draft_ci import BODY, BOT, GATED, MARKER, POLLS, GitHubError, boxes, gate, is_ticked, notice, set_output
 
 SHA = "a" * 40
 OTHER_SHA = "b" * 40
@@ -278,6 +281,17 @@ class BoxTests(unittest.TestCase):
         self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
         boxes(self.gh, 1, 1, BODY, sleep=sleep)
         self.assertTrue(is_ticked(self.gh.body, "auto"))
+
+
+class OutputTests(unittest.TestCase):
+    def test_set_output_writes_only_inside_actions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "output")
+            with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(path)}):
+                set_output("run", "true")
+            self.assertEqual(path.read_text(), "run=true\n")
+        with mock.patch.dict(os.environ, clear=True):
+            set_output("run", "true")
 
 
 if __name__ == "__main__":

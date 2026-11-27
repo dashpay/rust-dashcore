@@ -192,6 +192,13 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep) -> 
     gh.request("PATCH", path, {"body": set_note(body, note)})
 
 
+def set_output(name: str, value: str) -> None:
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a") as output:
+            output.write(f"{name}={value}\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -209,8 +216,7 @@ def main() -> int:
     try:
         if args.command == "gate":
             run = gate(gh, args.pr)
-            with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-                output.write(f"run={str(run).lower()}\n")
+            set_output("run", str(run).lower())
             if not run:
                 print("::notice::CI is off for draft PRs. Tick a box in the CI comment on the PR to start it.")
         elif args.command == "notice":
