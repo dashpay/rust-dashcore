@@ -151,7 +151,12 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
                     _ = loop_shutdown.cancelled() => {
                         break None
                     }
-                    Ok(SyncEvent::ForkDetected { fork_height }) = fork_rx.recv() => {
+                    // The event branches take every event, since a refused one disables the
+                    // branch until the next tick.
+                    result @ (Ok(_) | Err(RecvError::Lagged(_))) = fork_rx.recv() => {
+                        let Ok(SyncEvent::ForkDetected { fork_height }) = result else {
+                            continue;
+                        };
                         // Recovering stops this task, so it runs in a task of its own,
                         // which only acts on this loop.
                         loop_shutdown.cancel();
@@ -165,7 +170,6 @@ impl<W: WalletInterface, N: NetworkManager> DashSpvClient<W, N> {
 
                         break None
                     }
-                    // Takes every event, since a refused one disables the branch until the next tick.
                     result @ (Ok(_) | Err(RecvError::Lagged(_))) = corruption_rx.recv() => {
                         let Ok(SyncEvent::StorageCorrupted { error }) = result else {
                             continue;
