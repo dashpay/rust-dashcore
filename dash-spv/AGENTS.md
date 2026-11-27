@@ -27,5 +27,6 @@ The wallet is not in this crate. The client drives any `key_wallet_manager::Wall
 
 ## Tests
 
-- Unit tests that set a manager's state by hand can pass on a path production never takes. A change to sync, restart or disconnect handling needs a dashd test in `tests/dashd_sync/` or `tests/dashd_masternode/`. See "dashd integration tests" in the root `AGENTS.md` for setup.
+- Unit tests that set a manager's state by hand can pass on a path production never takes. Drive a change to sync, restart or disconnect handling through the real handlers, so that reverting the change fails a test.
+- Add or extend a dashd test when that change alters what a client sees against a real node, such as whether a sync, restart or reconnect completes, and no existing test covers it. Skip it when the test would also pass without the change, or would need new fault injection or a proxy. See "dashd integration tests" in the root `AGENTS.md` for setup.
 - The CLI binary helps with manual runs: `cargo run -p dash-spv --features cli --bin dash-spv -- --network testnet --data-dir <dir>`.

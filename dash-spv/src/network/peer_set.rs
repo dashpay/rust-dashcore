@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::{broadcast, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
 
+use crate::network::bans::Bans;
 use crate::network::manager::NetworkEvent;
 use crate::network::peer::{ConnectedPeer, PeerId};
 
@@ -30,6 +31,8 @@ pub(crate) enum Admission {
     Full(ConnectedPeer),
     /// The session stopped, so this peer is handed back for the caller to close.
     Stopped(ConnectedPeer),
+    /// The peer's address is banned, so it is handed back for the caller to close.
+    Banned(ConnectedPeer),
 }
 
 /// Read access to the peers while holding the set's lock.
@@ -73,18 +76,24 @@ impl PeerSet {
     }
 
     /// Adds `peer` if the set holds fewer than `capacity` peers, otherwise in place of
-    /// the peer at `slow`. Refuses it once `session` is cancelled. `stop` cancels the
-    /// session before it clears the set, so every peer admitted is announced as gone.
+    /// the peer at `slow`. Refuses it once `session` is cancelled or while `bans` holds its
+    /// address. `stop` cancels the session before it clears the set, so every peer admitted
+    /// is announced as gone. The ban is read under the set's lock, so a ban recorded after
+    /// the read finds the peer in the set and can close it.
     pub(crate) async fn admit(
         &self,
         peer: ConnectedPeer,
         session: &CancellationToken,
+        bans: &Bans,
         capacity: usize,
         slow: Option<SocketAddr>,
     ) -> Admission {
         let mut peers = self.peers.lock().await;
         if session.is_cancelled() {
             return Admission::Stopped(peer);
+        }
+        if bans.is_banned(peer.addr()).await {
+            return Admission::Banned(peer);
         }
         let arrived = peer.addr();
         if peers.len() < capacity {
@@ -152,7 +161,10 @@ impl PeerSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network::bans::Ban;
     use crate::test_utils::test_socket_address;
+    use futures::poll;
+    use tokio::pin;
 
     fn conn(addr: u8) -> PeerId {
         PeerId::for_test(test_socket_address(addr), 0)
@@ -167,24 +179,36 @@ mod tests {
     }
 
     /// A swap announces the old peer out and the new one in exactly once, and a peer
-    /// that is not in the full set is no reason to make room.
+    /// that is not in the full set is no reason to make room. A peer banned while its
+    /// admission waits for the set is handed back unannounced.
     #[tokio::test]
     async fn a_swap_announces_old_out_and_new_in_once() {
         let set = PeerSet::new(2);
         let session = CancellationToken::new();
+        let bans = Bans::new([]);
         for n in [1, 2] {
             let peer = ConnectedPeer::for_test(conn(n)).await;
-            assert!(matches!(set.admit(peer, &session, 2, None).await, Admission::Joined));
+            assert!(matches!(set.admit(peer, &session, &bans, 2, None).await, Admission::Joined));
         }
         let mut events = set.subscribe();
 
+        let held = set.read().await;
+        let peer = ConnectedPeer::for_test(conn(4)).await;
+        let slow = Some(conn(1).addr());
+        let admission = set.admit(peer, &session, &bans, 2, slow);
+        pin!(admission);
+        assert!(poll!(&mut admission).is_pending(), "the admission did not wait for the set");
+        bans.ban(conn(4).addr(), Ban::Misbehaved).await;
+        drop(held);
+        assert!(matches!(admission.await, Admission::Banned(_)));
+
         let peer = ConnectedPeer::for_test(conn(3)).await;
         let absent = Some(test_socket_address(9));
-        assert!(matches!(set.admit(peer, &session, 2, absent).await, Admission::Full(_)));
+        assert!(matches!(set.admit(peer, &session, &bans, 2, absent).await, Admission::Full(_)));
 
         let peer = ConnectedPeer::for_test(conn(3)).await;
         let slow = Some(conn(1).addr());
-        let Admission::Swapped(old) = set.admit(peer, &session, 2, slow).await else {
+        let Admission::Swapped(old) = set.admit(peer, &session, &bans, 2, slow).await else {
             panic!("the slow peer is in the full set");
         };
         assert_eq!(old.id(), conn(1));

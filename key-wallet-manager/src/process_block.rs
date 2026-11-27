@@ -252,6 +252,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
 
         let new_addresses: Vec<Address> =
             per_wallet_derived.values().flatten().map(|d| d.info.address.clone()).collect();
+        let mut lock_announced = BTreeSet::new();
 
         for (wallet_id, records) in per_wallet_new_records {
             let Some(info) = self.wallet_infos.get(&wallet_id) else {
@@ -268,6 +269,9 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             // record so persisters scoping by `record.account_type` get
             // the correct rows.
             let mut derived_for_wallet = per_wallet_derived.remove(&wallet_id).unwrap_or_default();
+            let lock_for_record = instant_lock
+                .as_ref()
+                .filter(|lock| records.iter().any(|record| record.txid == lock.txid));
             for record in records {
                 let record_account = record.account_type;
                 let (for_record, rest): (Vec<_>, Vec<_>) =
@@ -283,6 +287,18 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
                     locked_outpoints: per_wallet_locked.remove(&wallet_id).unwrap_or_default(),
                 };
                 self.emit_event(event);
+            }
+            // Announce the lock with the new record, so a consumer storing locks
+            // from this event keeps it.
+            if let Some(lock) = lock_for_record {
+                lock_announced.insert(wallet_id);
+                self.emit_event(WalletEvent::TransactionInstantLocked {
+                    wallet_id,
+                    txid: lock.txid,
+                    instant_lock: lock.clone(),
+                    balance,
+                    account_balances: account_balances.clone(),
+                });
             }
             // If any derivations were left unattributed (records vector
             // didn't cover every account that derived), log so the
@@ -339,7 +355,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletInterface for WalletM
             let balance = info.balance();
             let account_balances =
                 per_wallet_account_diff.get(&wallet_id).cloned().unwrap_or_default();
-            let mut lock_emitted = false;
+            let mut lock_emitted = lock_announced.contains(&wallet_id);
             for record in records {
                 let txid = record.txid;
                 // The arriving tx only changes lock status; other txids carry late-input corrections.
