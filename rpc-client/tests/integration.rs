@@ -27,9 +27,7 @@ use dashcore_rpc::{
 
 use dashcore_rpc::dashcore::address::NetworkUnchecked;
 use dashcore_rpc::dashcore::{BlockHash, ProTxHash, QuorumHash, ScriptBuf};
-use dashcore_rpc::dashcore_rpc_json::{
-    GetBlockTemplateModes, ProTxInfo, ProTxRevokeReason, ScanTxOutRequest,
-};
+use dashcore_rpc::dashcore_rpc_json::{GetBlockTemplateModes, ProTxRevokeReason, ScanTxOutRequest};
 use dashcore_rpc::json::ProTxListType;
 use dashcore_rpc::json::QuorumType::LlmqTest;
 use dashcore_rpc::test_utils::{DashCoreNode, DashdTestContext, MasternodeTestContext, TestChain};
@@ -253,8 +251,7 @@ fn test_evo_node_endpoints(evo_client: &Client, wallet_client: &Client, pro_tx_h
     test_get_bls_generate(evo_client);
 
     // SKIP test_get_protx_diff(evo_client);
-    // TODO: fix - needs real hash
-    // test_get_protx_info(evo_client);
+    test_get_protx_info(evo_client, pro_tx_hash);
 
     // SKIP test_get_protx_list(evo_client);
     // TODO: fix - needs real hash
@@ -1404,16 +1401,9 @@ fn test_get_protx_diff(cl: &Client) {
     let _protx_diff = cl.get_protx_diff(1000, 1000).unwrap();
 }
 
-#[allow(dead_code)]
-fn test_get_protx_info(cl: &Client) {
-    let pro_tx_hash =
-        ProTxHash::from_str("000000000c9eddd5d2a707281b7e30d5aac974dac600ff10f01937e1ca36066f")
-            .unwrap();
+fn test_get_protx_info(cl: &Client, pro_tx_hash: ProTxHash) {
     let protx_info = cl.get_protx_info(&pro_tx_hash, None).unwrap();
-
-    let ProTxInfo {
-        ..
-    } = protx_info;
+    assert_eq!(protx_info.pro_tx_hash, pro_tx_hash);
 }
 
 #[expect(dead_code, reason = "skipped until it passes")]
