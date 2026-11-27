@@ -10,7 +10,9 @@ on:
 
 jobs:
   conflict-check:
-    runs-on: ${{ vars.DASH_LIGHT_RUNNER || 'ubuntu-latest' }}
+    # Holds a write token, so it runs on a fresh hosted machine. A PR's workflows can run its own
+    # commands on the light runner.
+    runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
