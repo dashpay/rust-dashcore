@@ -83,26 +83,30 @@ const DENOMINATION: u64 = 100_001;
 /// turned the cross-commit repro into a trivially-green test).
 const G: usize = DEFAULT_COINJOIN_GAP_LIMIT as usize;
 
-type CjFiltersManager = FiltersManager<
+type TestFiltersManager<W> = FiltersManager<
     PersistentBlockHeaderStorage,
     PersistentFilterHeaderStorage,
     PersistentFilterStorage,
-    WalletManager<ManagedWalletInfo>,
+    W,
 >;
 
+type CjFiltersManager = TestFiltersManager<WalletManager<ManagedWalletInfo>>;
+
 /// Real wallet manager with one seed wallet (Default accounts incl. CoinJoin
-/// account 0, external pool pre-generated to `DEFAULT_COINJOIN_GAP_LIMIT`),
-/// wired into a `FiltersManager` over temp-dir storage.
-async fn setup() -> (CjFiltersManager, Arc<RwLock<WalletManager<ManagedWalletInfo>>>, WalletId) {
+/// account 0, external pool pre-generated to `DEFAULT_COINJOIN_GAP_LIMIT`).
+fn seeded_wallet_manager() -> (WalletManager<ManagedWalletInfo>, WalletId) {
     let mut wm = WalletManager::<ManagedWalletInfo>::new(Network::Regtest);
     let wallet_id = wm
         .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
         .expect("create deterministic test wallet");
-    let wallet = Arc::new(RwLock::new(wm));
+    (wm, wallet_id)
+}
 
+/// A syncing `FiltersManager` for `wallet` over temp-dir storage.
+async fn syncing_manager<W: WalletInterface>(wallet: &Arc<RwLock<W>>) -> TestFiltersManager<W> {
     let storage = DiskStorageManager::with_temp_dir().await.unwrap();
     let mut manager = FiltersManager::new(
-        Arc::clone(&wallet),
+        Arc::clone(wallet),
         storage.block_headers(),
         storage.filter_headers(),
         storage.filters(),
@@ -110,6 +114,14 @@ async fn setup() -> (CjFiltersManager, Arc<RwLock<WalletManager<ManagedWalletInf
     )
     .await;
     manager.set_state(SyncState::Syncing);
+    manager
+}
+
+/// The seed wallet wired into a syncing `FiltersManager`.
+async fn setup() -> (CjFiltersManager, Arc<RwLock<WalletManager<ManagedWalletInfo>>>, WalletId) {
+    let (wm, wallet_id) = seeded_wallet_manager();
+    let wallet = Arc::new(RwLock::new(wm));
+    let manager = syncing_manager(&wallet).await;
     (manager, wallet, wallet_id)
 }
 
@@ -625,12 +637,7 @@ impl WalletInterface for WideningWallet {
     }
 }
 
-type WideningFiltersManager = FiltersManager<
-    PersistentBlockHeaderStorage,
-    PersistentFilterHeaderStorage,
-    PersistentFilterStorage,
-    WideningWallet,
->;
+type WideningFiltersManager = TestFiltersManager<WideningWallet>;
 
 /// Returns a fresh wallet, its BIP44 External address at `index` past the
 /// initial gap, and a manager whose batch 0..=99, scanned with the narrow pool,
@@ -638,10 +645,7 @@ type WideningFiltersManager = FiltersManager<
 async fn widening_setup(
     index: u32,
 ) -> (WideningFiltersManager, Arc<RwLock<WideningWallet>>, WalletId, Block, Address) {
-    let mut wm = WalletManager::<ManagedWalletInfo>::new(Network::Regtest);
-    let wallet_id = wm
-        .create_wallet_from_mnemonic(TEST_MNEMONIC, 0, WalletAccountCreationOptions::Default)
-        .expect("create deterministic test wallet");
+    let (wm, wallet_id) = seeded_wallet_manager();
     let address = external_addresses(&wm, &wallet_id, BIP44, index + 1).remove(index as usize);
     assert!(
         !wm.monitored_script_pubkeys_for(&wallet_id).contains(&address.script_pubkey()),
@@ -652,16 +656,7 @@ async fn widening_setup(
         widen_to: AtomicU32::new(0),
     }));
 
-    let storage = DiskStorageManager::with_temp_dir().await.unwrap();
-    let mut manager = FiltersManager::new(
-        Arc::clone(&wallet),
-        storage.block_headers(),
-        storage.filter_headers(),
-        storage.filters(),
-        0,
-    )
-    .await;
-    manager.set_state(SyncState::Syncing);
+    let mut manager = syncing_manager(&wallet).await;
 
     let (block, filter, key) = block_paying(40, std::slice::from_ref(&address));
     let mut batch = FiltersBatch::new(0, 99, HashMap::from([(key, filter)]));

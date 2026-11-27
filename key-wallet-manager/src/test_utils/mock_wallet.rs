@@ -476,8 +476,8 @@ impl MultiMockWallet {
         self.scan_addresses.insert(wallet_id, addresses);
     }
 
-    /// Makes the wallet's scan query `addresses` from the `reads`-th read of
-    /// `scan_script_pubkeys_for` on, counting every wallet's reads.
+    /// Makes the wallet's scan query `addresses` once `scan_script_pubkeys_for`
+    /// has been read `reads` times, counting every wallet's reads.
     pub fn grow_scan_after_reads(
         &mut self,
         wallet_id: WalletId,
@@ -487,8 +487,9 @@ impl MultiMockWallet {
         self.grown_scan.insert(wallet_id, (reads, addresses));
     }
 
-    /// Makes the wallet's filter elements `elements` from the `reads`-th read of
-    /// `monitored_filter_elements_for` on, counting every wallet's reads.
+    /// Makes the wallet's filter elements `elements` once
+    /// `monitored_filter_elements_for` has been read `reads` times, counting
+    /// every wallet's reads.
     pub fn grow_elements_after_reads(
         &mut self,
         wallet_id: WalletId,
