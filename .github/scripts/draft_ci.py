@@ -23,8 +23,8 @@ AUTO = "auto"
 # The workflows whose jobs wait for `Draft Gate`.
 GATED = {".github/workflows/rust.yml", ".github/workflows/pre-commit.yml", ".github/workflows/sanitizer.yml"}
 POLL_SECONDS = 10
-# Shared by all runs of one request and counted in real time, so a request ends within the job's
-# 15 minute timeout and still reports what happened.
+# Shared by all runs of one request and counted in real time. With every call at `CALL_SECONDS`, a
+# request still reports what happened within the job's 15 minute timeout.
 WAIT_SECONDS = 600
 CALL_SECONDS = 30
 NOTE = re.compile(r"\n*<!-- draft-ci:note -->.*", re.DOTALL)
@@ -127,13 +127,13 @@ def moved_on(gh, number: int, sha: str) -> str | None:
     return None
 
 
-def start_runs(gh, number: int, sha: str, again: bool, sleep=time.sleep, clock=time.monotonic) -> str:
+def start_runs(gh, number: int, sha: str, again: bool, deadline: float, sleep=time.sleep, clock=time.monotonic) -> str:
     """Restarts the commit's gated runs and returns what happened.
 
     Leaves a run whose CI is in progress alone, and with `again` unset also one whose CI finished.
     """
     runs = newest_runs(gh, sha)
-    started, failed, stop, deadline = [], [], None, clock() + WAIT_SECONDS
+    started, failed, stop = [], [], None
     for run in runs:
         name = run["name"]
         if run["conclusion"] == "action_required":
@@ -184,6 +184,8 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep, clo
     `previous` is the body before the edit. `draft-gate.yml` reads the "Run CI on every push" box
     on each push, so a change of it only starts the current commit or reports itself.
     """
+    # The wait counts from here, so the whole request ends within the job's timeout.
+    deadline = clock() + WAIT_SECONDS
     path = f"issues/comments/{comment_id}"
     body = gh.request("GET", path)["body"]
     pr = gh.request("GET", f"pulls/{number}")
@@ -199,7 +201,7 @@ def boxes(gh, number: int, comment_id: int, previous: str, sleep=time.sleep, clo
         note = "This PR is not a draft, so CI runs on every push."
     elif once or enabled:
         try:
-            note = start_runs(gh, number, pr["head"]["sha"], once, sleep=sleep, clock=clock)
+            note = start_runs(gh, number, pr["head"]["sha"], once, deadline, sleep=sleep, clock=clock)
         except GitHubError as error:
             # The box is already unticked, so without a note the tick would seem to do nothing.
             print(f"::error::{error}")

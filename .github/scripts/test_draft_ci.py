@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from draft_ci import (BODY, BOT, CALL_SECONDS, GATED, MARKER, POLL_SECONDS, WAIT_SECONDS, GitHub, GitHubError, boxes, gate, is_ticked,
+from draft_ci import (BODY, BOT, CALL_SECONDS, GATED, MARKER, GitHub, GitHubError, boxes, gate, is_ticked,
                       notice, set_output)
 
 SHA = "a" * 40
@@ -29,6 +29,8 @@ class FakeGitHub:
         self.fail_run_list = False
         self.fail_comments = False
         self.fail_jobs = set()
+        self.now = 0
+        self.call_seconds = 0
 
     def push(self, sha=SHA, workflows=("Continuous integration", "Sanitizer"), running=False, listed=True):
         self.pr["head"]["sha"] = sha
@@ -75,6 +77,7 @@ class FakeGitHub:
         return self.comments[-1]["body"]
 
     def get_list(self, path, key=None):
+        self.now += self.call_seconds
         if match := re.match(r"actions/runs/(\d+)/jobs", path):
             return self.jobs(self.runs[int(match.group(1)) - 1])
         if path.startswith("actions/runs?"):
@@ -90,6 +93,7 @@ class FakeGitHub:
         raise AssertionError(path)
 
     def request(self, method, path, fields=None):
+        self.now += self.call_seconds
         if match := re.fullmatch(r"issues/comments/(\d+)", path):
             comment = self.comments[int(match.group(1)) - 1]
             if method == "PATCH":
@@ -234,14 +238,19 @@ class BoxTests(unittest.TestCase):
         self.gh.tick("once")
         self.assertEqual(self.gh.reruns, ["Continuous integration", "Sanitizer"])
 
-    def test_all_runs_share_one_wait_in_real_time(self):
-        # Each poll also spends time on its API calls, which the deadline counts too.
-        sleeps = []
+    def test_a_request_reports_within_the_job_timeout_when_every_call_is_slow(self):
         self.gh.push(OTHER_SHA, workflows=("Continuous integration", "Pre-commit Checks", "Sanitizer"), running=True)
+        self.gh.call_seconds = CALL_SECONDS
         self.gh.comments[-1]["body"] = self.gh.body.replace("- [ ] <!-- draft-ci:once", "- [x] <!-- draft-ci:once")
-        boxes(self.gh, 1, 1, BODY, sleep=sleeps.append, clock=lambda: 2 * sum(sleeps))
-        self.assertEqual((len(sleeps), self.gh.reruns), (WAIT_SECONDS // (2 * POLL_SECONDS), []))
+
+        def sleep(seconds):
+            self.gh.now += seconds
+
+        boxes(self.gh, 1, 1, BODY, sleep=sleep, clock=lambda: self.gh.now)
+        self.assertEqual(self.gh.reruns, [])
         self.assertEqual(self.gh.body.count("has not finished yet"), 3)
+        # Two minutes of the 15 minute job timeout stay for checkout and Python setup.
+        self.assertLessEqual(self.gh.now, 13 * 60)
 
     def test_a_request_the_pr_moved_past_starts_nothing(self):
         for change, note in (({"head": {"sha": OTHER_SHA}}, "CI did not start for aaaaaaaa. The PR moved on to bbbbbbbb."),
