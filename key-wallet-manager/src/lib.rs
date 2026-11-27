@@ -31,7 +31,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::Txid;
 use key_wallet::account::AccountCollection;
 use key_wallet::managed_account::transaction_record::TransactionRecord;
-use key_wallet::transaction_checking::{DerivedAddressInfo, TransactionContext};
+use key_wallet::transaction_checking::{BlockInfo, DerivedAddressInfo, TransactionContext};
 use key_wallet::wallet::managed_wallet_info::coin_selection::SelectionStrategy;
 use key_wallet::wallet::managed_wallet_info::transaction_building::AccountTypePreference;
 use key_wallet::wallet::managed_wallet_info::wallet_info_interface::WalletInfoInterface;
@@ -122,6 +122,38 @@ pub struct CheckTransactionsResult {
     pub per_wallet_locked_outpoints: BTreeMap<WalletId, Vec<OutPoint>>,
 }
 
+/// The most block transactions [`WalletManager`] keeps waiting for a
+/// ChainLock, should ChainLocks stall.
+pub const MAX_AWAITING_CHAIN_LOCK: usize = 1_000;
+
+/// How many transactions a ChainLocked conflict overturned are remembered,
+/// so that they are refused if they arrive again.
+pub const MAX_BEATEN_BY_CHAIN_LOCK: usize = 1_000;
+
+/// Returns the txids, lowest height first, that take `entries` past `max`.
+fn lowest_past(
+    entries: impl ExactSizeIterator<Item = (Txid, CoreBlockHeight)>,
+    max: usize,
+) -> Vec<Txid> {
+    let excess = entries.len().saturating_sub(max);
+    if excess == 0 {
+        return Vec::new();
+    }
+    let mut by_height: Vec<(CoreBlockHeight, Txid)> =
+        entries.map(|(txid, height)| (height, txid)).collect();
+    by_height.sort_unstable();
+    by_height.into_iter().take(excess).map(|(_, txid)| txid).collect()
+}
+
+/// A block transaction kept until a ChainLock covers its block.
+#[derive(Debug)]
+pub(crate) struct AwaitingChainLock {
+    pub(crate) tx: Transaction,
+    pub(crate) block: BlockInfo,
+    /// Unconfirmed transactions it conflicts with, dead once the ChainLock lands.
+    pub(crate) beaten: BTreeSet<Txid>,
+}
+
 /// High-level wallet manager that manages multiple wallets
 ///
 /// Each wallet can contain multiple accounts following BIP44 standard.
@@ -134,6 +166,16 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
     wallets: BTreeMap<WalletId, Wallet>,
     /// Mutable wallet info indexed by wallet ID
     wallet_infos: BTreeMap<WalletId, T>,
+    /// Bumped whenever a wallet is added or removed, including one removed and added again.
+    wallet_set_revision: u64,
+    /// Block transactions no ChainLock covers yet that conflict with another transaction's
+    /// unconfirmed record, with their blocks. Once a ChainLock covers one, every wallet sweeps with
+    /// it; a reorg below its block drops it. At most [`MAX_AWAITING_CHAIN_LOCK`], lowest block first.
+    awaiting_chain_lock: BTreeMap<Txid, AwaitingChainLock>,
+    /// Transactions a conflict in a ChainLocked block overturned, with that block's height. They
+    /// can never confirm, so each is refused in every wallet when it arrives again. In memory for
+    /// this session; at most [`MAX_BEATEN_BY_CHAIN_LOCK`], the one beaten lowest going first.
+    beaten_by_chain_lock: BTreeMap<Txid, CoreBlockHeight>,
     /// Event sender for wallet events.
     ///
     /// This is a *bounded, lossy* fan-out (capacity
@@ -196,12 +238,72 @@ pub struct WalletManager<T: WalletInfoInterface + Send + Sync + 'static = Manage
 }
 
 impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
+    /// Keeps `tx`, in the block `block` no ChainLock covers yet, with the transactions it beats,
+    /// until one does. Past [`MAX_AWAITING_CHAIN_LOCK`], the one in the lowest block goes.
+    pub(crate) fn await_chain_lock(
+        &mut self,
+        tx: &Transaction,
+        block: BlockInfo,
+        beaten: BTreeSet<Txid>,
+    ) {
+        self.awaiting_chain_lock
+            .entry(tx.txid())
+            .or_insert_with(|| AwaitingChainLock {
+                tx: tx.clone(),
+                block,
+                beaten: BTreeSet::new(),
+            })
+            .beaten
+            .extend(beaten);
+        let lowest = lowest_past(
+            self.awaiting_chain_lock.iter().map(|(txid, kept)| (*txid, kept.block.height())),
+            MAX_AWAITING_CHAIN_LOCK,
+        );
+        for txid in lowest {
+            self.awaiting_chain_lock.remove(&txid);
+        }
+    }
+
+    /// How many block transactions are kept until a ChainLock covers their
+    /// block.
+    pub fn awaiting_chain_lock_len(&self) -> usize {
+        self.awaiting_chain_lock.len()
+    }
+
+    /// Forgets every block transaction kept for a ChainLock, as when the chain data is deleted
+    /// and the blocks are fetched again.
+    pub fn clear_awaiting_chain_lock(&mut self) {
+        self.awaiting_chain_lock.clear();
+    }
+
+    /// Remembers `txids`, which a conflict in a ChainLocked block at `height` overturned. Past
+    /// [`MAX_BEATEN_BY_CHAIN_LOCK`], the one beaten lowest goes.
+    pub(crate) fn remember_beaten_by_chain_lock(
+        &mut self,
+        txids: &[Txid],
+        height: CoreBlockHeight,
+    ) {
+        for txid in txids {
+            self.beaten_by_chain_lock.insert(*txid, height);
+        }
+        let lowest = lowest_past(
+            self.beaten_by_chain_lock.iter().map(|(txid, height)| (*txid, *height)),
+            MAX_BEATEN_BY_CHAIN_LOCK,
+        );
+        for txid in lowest {
+            self.beaten_by_chain_lock.remove(&txid);
+        }
+    }
+
     /// Create a new wallet manager
     pub fn new(network: Network) -> Self {
         Self {
             network,
             wallets: BTreeMap::new(),
             wallet_infos: BTreeMap::new(),
+            wallet_set_revision: 0,
+            awaiting_chain_lock: BTreeMap::new(),
+            beaten_by_chain_lock: BTreeMap::new(),
             event_sender: broadcast::Sender::new(DEFAULT_WALLET_EVENT_CAPACITY),
             // Persistence delivery is opt-in; the channel is created lazily when
             // a consumer calls `take_persistence_receiver`. See that field's docs.
@@ -221,7 +323,31 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// guard is held, whereas a bounded blocking send there would deadlock the
     /// persistence consumer (which needs a `read()` lock to drain). See the
     /// `persistence_sender` field docs for the full rationale.
-    fn emit_event(&self, event: WalletEvent) {
+    ///
+    /// The wallet's dismissal changes not yet sent go first, as one
+    /// [`WalletEvent::DismissalsChanged`] right ahead of `event`. While one
+    /// waits for its sweep, nothing is taken until a
+    /// [`WalletEvent::TransactionsSwept`], which keeps the changes in order.
+    fn emit_event(&mut self, event: WalletEvent) {
+        let wallet_id = event.wallet_id();
+        let sweep = matches!(event, WalletEvent::TransactionsSwept { .. });
+        let changes = self
+            .wallet_infos
+            .get_mut(&wallet_id)
+            .filter(|info| sweep || !info.dismissal_pending())
+            .map(|info| info.take_dismissal_changes())
+            .unwrap_or_default();
+        if !changes.is_empty() {
+            self.send_event(WalletEvent::DismissalsChanged {
+                wallet_id,
+                changes,
+            });
+        }
+        self.send_event(event);
+    }
+
+    /// Sends `event` on both channels.
+    fn send_event(&self, event: WalletEvent) {
         self.events_emitted.store(true, std::sync::atomic::Ordering::Relaxed);
         // Lossless path: the persistence consumer must never miss a row-bearing
         // or watermark event, or its durable sync height freezes. Only enqueue
@@ -290,6 +416,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet_mut);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -372,6 +499,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, final_wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
 
         Ok((serialized_bytes, wallet_id))
     }
@@ -404,6 +532,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -444,6 +573,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -491,6 +621,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -538,6 +669,7 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
 
         self.wallets.insert(wallet_id, wallet);
         self.wallet_infos.insert(wallet_id, managed_info);
+        self.wallet_set_revision += 1;
         Ok(wallet_id)
     }
 
@@ -546,7 +678,8 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
     /// Collects — but does not emit — the per-wallet records affected by the
     /// check. Callers are responsible for emitting the appropriate
     /// `WalletEvent` *after* refreshing wallet balances so events never
-    /// carry a stale balance.
+    /// carry a stale balance. The dismissals of what it sweeps are not
+    /// reported.
     pub async fn check_transaction_in_all_wallets(
         &mut self,
         tx: &Transaction,
@@ -555,14 +688,20 @@ impl<T: WalletInfoInterface + Send + Sync + 'static> WalletManager<T> {
         update_balance: bool,
     ) -> CheckTransactionsResult {
         let wallet_ids: BTreeSet<WalletId> = self.wallets.keys().cloned().collect();
-        self.check_transaction_in_wallets(
-            tx,
-            context,
-            &wallet_ids,
-            update_state_if_found,
-            update_balance,
-        )
-        .await
+        let result = self
+            .check_transaction_in_wallets(
+                tx,
+                context,
+                &wallet_ids,
+                update_state_if_found,
+                update_balance,
+            )
+            .await;
+        // No event reports a sweep this check made, so its dismissals would wait forever.
+        for info in self.wallet_infos.values_mut() {
+            info.drop_unreported_dismissals();
+        }
+        result
     }
 
     /// Check a transaction against the given subset of wallets and update their states if relevant.
@@ -706,6 +845,8 @@ impl WalletManager<ManagedWalletInfo> {
     /// are refused, but the judgement otherwise belongs to the caller that
     /// owns broadcast policy.
     ///
+    /// Sends the abandon's [`WalletEvent::DismissalsChanged`] before it returns.
+    ///
     /// Returns `None` when the wallet is unknown.
     pub fn abandon_transaction(
         &mut self,
@@ -715,15 +856,28 @@ impl WalletManager<ManagedWalletInfo> {
     ) -> Option<AbandonOutcome> {
         let info = self.get_wallet_info_mut(wallet_id)?;
         let outcome = info.abandon_transaction_with_spends(root, external_spends);
-        if !outcome.is_empty() {
-            info.update_balance();
-            tracing::info!(
-                %root,
-                abandoned = outcome.abandoned.len(),
-                records_removed = outcome.records_removed,
-                utxos_removed = outcome.utxos_removed,
-                "Abandoned a dead transaction and everything built on it"
-            );
+        if outcome.is_empty() {
+            return Some(outcome);
+        }
+        info.update_balance();
+        tracing::info!(
+            %root,
+            abandoned = outcome.abandoned.len(),
+            records_removed = outcome.records_removed,
+            utxos_removed = outcome.utxos_removed,
+            "Abandoned a dead transaction and everything built on it"
+        );
+        // No other event reports an abandon, so its changes go now unless a sweep's wait first.
+        let changes = if info.dismissal_pending() {
+            Vec::new()
+        } else {
+            info.take_dismissal_changes()
+        };
+        if !changes.is_empty() {
+            self.send_event(WalletEvent::DismissalsChanged {
+                wallet_id: *wallet_id,
+                changes,
+            });
         }
         Some(outcome)
     }
@@ -789,3 +943,17 @@ mod test_helpers;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    #[test]
+    fn past_the_cap_the_lowest_go_first_ties_by_txid() {
+        let txid = |n: u8| Txid::from_byte_array([n; 32]);
+        let entries = [(txid(4), 9), (txid(3), 7), (txid(2), 9), (txid(1), 8)];
+        assert!(lowest_past(entries.into_iter(), 4).is_empty());
+        assert_eq!(lowest_past(entries.into_iter(), 3), vec![txid(3)]);
+        assert_eq!(lowest_past(entries.into_iter(), 1), vec![txid(3), txid(1), txid(2)]);
+    }
+}

@@ -3,6 +3,8 @@ mod filter;
 mod manager;
 mod progress;
 mod sync_manager;
+#[cfg(test)]
+mod wallet_view_tests;
 
 pub use broadcast::{BroadcastConfig, BroadcastHoldout, BroadcastResult};
 pub(crate) use manager::MempoolManager;

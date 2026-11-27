@@ -15,6 +15,7 @@ use key_wallet::account::AccountType;
 use key_wallet::managed_account::address_pool::{AddressPoolType, PublicKeyType};
 use key_wallet::managed_account::transaction_record::TransactionRecord;
 use key_wallet::transaction_checking::DerivedAddressInfo;
+use key_wallet::wallet::managed_wallet_info::DismissalChange;
 use key_wallet::WalletCoreBalance;
 
 use crate::WalletId;
@@ -226,6 +227,15 @@ pub enum WalletEvent {
         /// changed as a result of this event. Each value is the account's
         /// full balance after the change — not a delta.
         account_balances: BTreeMap<AccountType, WalletCoreBalance>,
+    },
+    /// The transactions the wallet dropped as dead changed. Sent ahead of the wallet's next
+    /// event, a sweep's change with its `TransactionsSwept`, or alone after an abandon. Store it
+    /// with that event; `restore_dismissed` takes it back on the next load.
+    DismissalsChanged {
+        /// ID of the affected wallet.
+        wallet_id: WalletId,
+        /// The changes, in order.
+        changes: Vec<DismissalChange>,
     },
     /// Transactions were removed from the wallet: each was a recorded spend
     /// that a later, final transaction provably beat to one of its inputs, so
@@ -452,6 +462,10 @@ impl WalletEvent {
                 wallet_id,
                 ..
             }
+            | WalletEvent::DismissalsChanged {
+                wallet_id,
+                ..
+            }
             | WalletEvent::TransactionsSwept {
                 wallet_id,
                 ..
@@ -483,6 +497,10 @@ impl WalletEvent {
 impl fmt::Display for WalletEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            WalletEvent::DismissalsChanged {
+                changes,
+                ..
+            } => write!(f, "DismissalsChanged(changes={})", changes.len()),
             WalletEvent::TransactionDetected {
                 record,
                 balance,

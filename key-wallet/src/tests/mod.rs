@@ -20,6 +20,8 @@ mod integration_tests;
 
 mod keep_finalized_transactions_tests;
 
+mod loser_sweep_credit_tests;
+
 mod locked_outpoints_tests;
 
 mod managed_account_collection_tests;

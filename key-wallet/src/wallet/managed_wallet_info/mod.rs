@@ -5,6 +5,8 @@
 
 pub mod asset_lock_builder;
 pub mod coin_selection;
+mod dismissed;
+pub use dismissed::DismissalChange;
 pub mod fee;
 pub mod helpers;
 pub use helpers::AbandonOutcome;
@@ -150,6 +152,10 @@ pub struct ManagedWalletInfo {
     pub(crate) account_generation: u64,
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) noted_chain_lock_height: Option<CoreBlockHeight>,
+    /// Unconfirmed transactions dropped as dead (swept losers, abandoned
+    /// transactions) and unlocked spends of them; in memory only.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) dismissed: dismissed::DismissedTxids,
     /// Outpoints the wallet will not spend; see [`Self::locked_outpoints`].
     /// `serde(default)` loads a snapshot written before the field existed
     /// with no locks, in self-describing formats only.
@@ -262,6 +268,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            dismissed: Default::default(),
             locked_outpoints: BTreeSet::new(),
         }
     }
@@ -281,6 +288,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            dismissed: Default::default(),
             locked_outpoints: BTreeSet::new(),
         }
     }
@@ -310,6 +318,7 @@ impl ManagedWalletInfo {
             spent_claims: BTreeMap::new(),
             account_generation: 0,
             noted_chain_lock_height: None,
+            dismissed: Default::default(),
             locked_outpoints: BTreeSet::new(),
         }
     }
@@ -340,6 +349,18 @@ impl ManagedWalletInfo {
     /// inside this crate.
     pub fn instant_send_locks(&self) -> &HashSet<Txid> {
         &self.instant_send_locks
+    }
+
+    /// Dismisses again the transactions a persister kept from earlier sessions: `abandoned` those
+    /// it holds as abandoned, `swept` those it holds as swept, a txid possibly in both, each in the
+    /// order it joined. Call it while loading, before any transaction is processed, and leave out a
+    /// txid the store holds as locked or mined. The same caps as for live dismissals apply.
+    pub fn restore_dismissed(
+        &mut self,
+        abandoned: impl IntoIterator<Item = Txid>,
+        swept: impl IntoIterator<Item = Txid>,
+    ) {
+        self.dismissed.restore(abandoned, swept);
     }
 
     /// Read-only access to the wallet-level observed-spent outpoint set
