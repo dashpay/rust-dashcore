@@ -8,6 +8,7 @@ use dashcore::prelude::CoreBlockHeight;
 use dashcore::{Address, Block, OutPoint, ScriptBuf, Transaction, Txid};
 use key_wallet::transaction_checking::TransactionContext;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
@@ -430,6 +431,14 @@ pub struct MultiMockWallet {
     /// hand the filter scan a query that does not cover everything the wallet
     /// watches.
     scan_addresses: std::collections::BTreeMap<WalletId, Vec<Address>>,
+    /// Per-wallet scan query that replaces `scan_addresses` after that many
+    /// reads of `scan_script_pubkeys_for`, like a pool growing mid-scan.
+    grown_scan: BTreeMap<WalletId, (usize, Vec<Address>)>,
+    scan_reads: AtomicUsize,
+    /// Per-wallet filter elements returned after that many reads of
+    /// `monitored_filter_elements_for`; none before.
+    grown_elements: BTreeMap<WalletId, (usize, Vec<Vec<u8>>)>,
+    element_reads: AtomicUsize,
     event_sender: broadcast::Sender<WalletEvent>,
     /// Track every block processed for assertions.
     processed: Arc<Mutex<Vec<(WalletId, dashcore::BlockHash, u32)>>>,
@@ -447,6 +456,10 @@ impl MultiMockWallet {
         Self {
             wallets: std::collections::BTreeMap::new(),
             scan_addresses: std::collections::BTreeMap::new(),
+            grown_scan: BTreeMap::new(),
+            scan_reads: AtomicUsize::new(0),
+            grown_elements: BTreeMap::new(),
+            element_reads: AtomicUsize::new(0),
             event_sender,
             processed: Arc::new(Mutex::new(Vec::new())),
         }
@@ -461,6 +474,29 @@ impl MultiMockWallet {
     /// returns these addresses' scripts instead of the monitored set.
     pub fn set_scan_addresses(&mut self, wallet_id: WalletId, addresses: Vec<Address>) {
         self.scan_addresses.insert(wallet_id, addresses);
+    }
+
+    /// Makes the wallet's scan query `addresses` once `scan_script_pubkeys_for`
+    /// has been read `reads` times, counting every wallet's reads.
+    pub fn grow_scan_after_reads(
+        &mut self,
+        wallet_id: WalletId,
+        reads: usize,
+        addresses: Vec<Address>,
+    ) {
+        self.grown_scan.insert(wallet_id, (reads, addresses));
+    }
+
+    /// Makes the wallet's filter elements `elements` once
+    /// `monitored_filter_elements_for` has been read `reads` times, counting
+    /// every wallet's reads.
+    pub fn grow_elements_after_reads(
+        &mut self,
+        wallet_id: WalletId,
+        reads: usize,
+        elements: Vec<Vec<u8>>,
+    ) {
+        self.grown_elements.insert(wallet_id, (reads, elements));
     }
 
     /// Mutable access to a wallet's state, panicking if absent.
@@ -515,9 +551,23 @@ impl WalletInterface for MultiMockWallet {
     }
 
     fn scan_script_pubkeys_for(&self, wallet_id: &WalletId) -> Vec<ScriptBuf> {
+        let read = self.scan_reads.fetch_add(1, Ordering::SeqCst);
+        if let Some((after, addresses)) = self.grown_scan.get(wallet_id) {
+            if read >= *after {
+                return addresses.iter().map(|a| a.script_pubkey()).collect();
+            }
+        }
         match self.scan_addresses.get(wallet_id) {
             Some(addresses) => addresses.iter().map(|a| a.script_pubkey()).collect(),
             None => self.monitored_script_pubkeys_for(wallet_id),
+        }
+    }
+
+    fn monitored_filter_elements_for(&self, wallet_id: &WalletId) -> Vec<Vec<u8>> {
+        let read = self.element_reads.fetch_add(1, Ordering::SeqCst);
+        match self.grown_elements.get(wallet_id) {
+            Some((after, elements)) if read >= *after => elements.clone(),
+            _ => Vec::new(),
         }
     }
 

@@ -706,13 +706,47 @@ impl<H: BlockHeaderStorage, FH: FilterHeaderStorage, F: FilterStorage, W: Wallet
             // Commit this batch. Advance per-wallet `synced_height` only for
             // wallets that were behind for this batch at scan time. Already-synced
             // wallets are never touched.
-            let batch = self.active_batches.remove(&batch_start).unwrap();
+            let Some(batch) = self.active_batches.get(&batch_start) else {
+                break;
+            };
             let end = batch.end_height();
+            let scanned_wallets = batch.scanned_wallets().clone();
+            let mut wallet = None;
+            if end > self.progress.committed_height() && !scanned_wallets.is_empty() {
+                let guard = self.wallet.write().await;
+                // Coverage check: a script the wallet started watching after the
+                // reconcile, such as one a mempool receipt derived, was never matched
+                // against this batch. The batch stays active for the next pass to match.
+                let uncovered = scanned_wallets.iter().find(|(wallet_id, generation_at_scan)| {
+                    guard.wallet_account_generation(wallet_id) == **generation_at_scan
+                        && (batch
+                            .untested(wallet_id, &guard.scan_script_pubkeys_for(wallet_id))
+                            .next()
+                            .is_some()
+                            || batch
+                                .untested(
+                                    wallet_id,
+                                    &guard.monitored_filter_elements_for(wallet_id),
+                                )
+                                .next()
+                                .is_some())
+                });
+                if let Some((wallet_id, _)) = uncovered {
+                    tracing::debug!(
+                        "Holding filter batch {} for wallet {}: it gained untested scripts or filter elements",
+                        batch_start,
+                        wallet_id[..4].as_hex()
+                    );
+                    break;
+                }
+                wallet = Some(guard);
+            }
+            let Some(batch) = self.active_batches.remove(&batch_start) else {
+                break;
+            };
             if end > self.progress.committed_height() {
                 self.progress.update_committed_height(end);
-                let scanned_wallets = batch.scanned_wallets().clone();
-                if !scanned_wallets.is_empty() {
-                    let mut wallet = self.wallet.write().await;
+                if let Some(wallet) = wallet.as_mut() {
                     for (wallet_id, generation_at_scan) in &scanned_wallets {
                         // Generation guard: an account added after this batch
                         // was scanned means the scan never tested the new
@@ -1366,6 +1400,7 @@ mod tests {
         MockWallet, MockWalletState, MultiMockWallet, MOCK_WALLET_ID,
     };
     use std::net::SocketAddr;
+    use test_case::test_case;
 
     type TestFiltersManager = FiltersManager<
         PersistentBlockHeaderStorage,
@@ -2041,6 +2076,60 @@ mod tests {
             multi.read().await.wallets_behind(9999).contains(&wallet_a),
             "the wallet remains behind and is picked up by the tick rescan"
         );
+    }
+
+    /// A pool grown after the reconcile, with no account added and so no new
+    /// generation, leaves scripts the batch never matched against. The batch waits
+    /// for the next pass to match them instead of certifying the wallet.
+    #[test_case(false ; "scan script")]
+    #[test_case(true ; "filter element")]
+    #[tokio::test]
+    async fn a_pool_grown_after_the_reconcile_holds_the_batch_for_another_pass(element: bool) {
+        let wallet_a: WalletId = [0xAB; 32];
+        let watched = Address::dummy(Network::Regtest, 1);
+        let grown = Address::dummy(Network::Regtest, 2);
+        let multi = Arc::new(RwLock::new(MultiMockWallet::new()));
+        {
+            let mut w = multi.write().await;
+            w.insert_wallet(
+                wallet_a,
+                MockWalletState {
+                    addresses: vec![watched.clone()],
+                    synced_height: 999,
+                    ..MockWalletState::default()
+                },
+            );
+            if element {
+                w.grow_elements_after_reads(wallet_a, 1, vec![vec![0x42; 20]]);
+            } else {
+                w.grow_scan_after_reads(wallet_a, 1, vec![watched, grown]);
+            }
+        }
+        let mut manager = create_multi_test_manager(multi.clone()).await;
+        manager.set_state(SyncState::Syncing);
+
+        let mut batch = FiltersBatch::new(1000, 5999, HashMap::new());
+        batch.set_pending_blocks(0);
+        batch.mark_scanned();
+        batch.set_scanned_wallets(BTreeMap::from([(wallet_a, 0)]));
+        manager.active_batches.insert(1000, batch);
+        let committed = manager.progress.committed_height();
+
+        manager.try_commit_batches().await.unwrap();
+
+        assert!(manager.active_batches.contains_key(&1000), "the batch stays active");
+        assert_eq!(manager.progress.committed_height(), committed);
+        assert_eq!(
+            multi.read().await.wallet_synced_height(&wallet_a),
+            999,
+            "the grown script was never matched against 1000..=5999"
+        );
+
+        manager.try_commit_batches().await.unwrap();
+
+        assert!(manager.active_batches.is_empty());
+        assert_eq!(manager.progress.committed_height(), 5999);
+        assert_eq!(multi.read().await.wallet_synced_height(&wallet_a), 5999);
     }
 
     /// Generation guard, height-invisible account add: the wallet still sits
