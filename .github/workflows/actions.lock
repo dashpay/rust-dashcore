@@ -40,6 +40,7 @@ workflows:
         - 'peter-evans/create-pull-request@v8.1.3'
     '.github/workflows/rust.yml':
         - 'actions/checkout@v7.0.1'
+        - 'dorny/paths-filter@v4.0.3'
         - 'embarkstudios/cargo-deny-action@v2.1.2'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.90.5'
@@ -99,6 +100,11 @@ dependencies:
         repo_id: 200299178
         uses:
             - 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd'
+    'dorny/paths-filter@v4.0.3':
+        ref: 'v4.0.3'
+        commit: 'sha1-ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d'
+        owner_id: 1588572
+        repo_id: 265601040
     'embarkstudios/cargo-deny-action@v2.1.2':
         ref: 'v2.1.2'
         commit: 'sha1-70f81531115945ba6eb6b941ec9d39d063438eb9'

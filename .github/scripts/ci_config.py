@@ -1,48 +1,26 @@
 #!/usr/bin/env python3
-"""CI configuration management script.
-
-Used by GitHub Actions workflows for test management.
-
-Subcommands:
-    verify-groups    Check all workspace crates are assigned to test groups
-    run-group        Run tests for all crates in some groups, or in every group
-"""
 
 import argparse
 import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
 
-# Groups whose tests run against a regtest dashd
-DASHD_GROUPS = {"rpc", "spv"}
 ROOT = Path(__file__).resolve().parents[2]
 # Absolute, as cargo runs each crate's tests from that crate's directory
 DASHD_TEST_RETAIN_DIR = ROOT / "target" / "dashd-test-logs"
-
-
-def get_workspace_metadata():
-    """Get workspace metadata from cargo."""
-    result = subprocess.run(
-        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return json.loads(result.stdout)
+DASHD_CRATES = {"dash-spv", "dashcore-rpc"}
+WORKFLOW_FILE = ROOT / ".github" / "workflows" / "rust.yml"
 
 
 def load_yaml(path: Path):
-    """Load YAML file with error handling."""
     try:
         with open(path) as f:
-            content = yaml.safe_load(f)
-            return content if content is not None else {}
+            return yaml.safe_load(f) or {}
     except FileNotFoundError:
         github_error(f"Configuration file not found: {path}")
         sys.exit(1)
@@ -52,93 +30,47 @@ def load_yaml(path: Path):
 
 
 def github_error(msg: str):
-    """Print GitHub Actions error annotation."""
     print(f"::error::{msg}")
 
 
-def github_notice(msg: str):
-    """Print GitHub Actions notice annotation."""
-    print(f"::notice::{msg}")
-
-
-def github_group_start(name: str):
-    """Start a GitHub Actions log group."""
-    print(f"::group::{name}", flush=True)
-
-
-def github_group_end():
-    """End a GitHub Actions log group."""
-    print("::endgroup::", flush=True)
-
-
 def github_output(name: str, value: str):
-    """Write a GitHub Actions output variable."""
     output_file = os.environ.get("GITHUB_OUTPUT")
     if output_file:
         with open(output_file, "a") as f:
             f.write(f"{name}={value}\n")
 
 
+def tested_crates(groups_file: Path):
+    metadata = subprocess.run(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    crates = {pkg["name"] for pkg in json.loads(metadata.stdout)["packages"]}
+    excluded = set(load_yaml(groups_file).get("excluded") or [])
+    return sorted(crates - excluded)
+
+
 def verify_groups(args):
-    """Verify all workspace crates are assigned to test groups."""
-    metadata = get_workspace_metadata()
-    workspace_crates = {pkg["name"] for pkg in metadata["packages"]}
-
-    config = load_yaml(args.groups_file)
-    groups = config.get("groups", {})
-
-    assigned = set()
-    for group_crates in groups.values():
-        if group_crates:
-            assigned.update(group_crates)
-    assigned.update(config.get("excluded", []) or [])
-
-    unassigned = workspace_crates - assigned
-    if unassigned:
-        github_error(
-            f"Crates not assigned to any test group: {', '.join(sorted(unassigned))}"
-        )
-        print("\nPlease add them to a group or 'excluded' section in ci-groups.yml")
-        return 1
-
-    print(f"All {len(workspace_crates)} workspace crates are assigned to test groups")
-
-    # Verify the hardcoded matrix in build-and-test.yml matches ci-groups.yml
-    workflow_file = Path(".github/workflows/build-and-test.yml")
-    expected = sorted(groups.keys())
-
-    try:
-        with open(workflow_file) as f:
-            content = f.read()
-    except FileNotFoundError:
-        github_error(f"Workflow file not found: {workflow_file}")
-        return 1
-
-    match = re.search(r'group:\s*\[([^\]]+)\]', content)
-    if not match:
-        github_error(f"No hardcoded group matrix found in {workflow_file}")
-        return 1
-
-    entries = [entry.strip().strip('"').strip("'") for entry in match.group(1).split(",")]
-    if not all(entry.strip() for entry in entries):
-        github_error(f"Empty group entry in the hardcoded matrix of {workflow_file}")
-        return 1
-
-    actual = sorted(group for entry in entries for group in entry.split())
+    """Verify every tested crate has a path filter in rust.yml, and no filter is unknown."""
+    expected = tested_crates(args.groups_file)
+    steps = load_yaml(WORKFLOW_FILE)["jobs"]["changes"]["steps"]
+    filters = next(step["with"]["filters"] for step in steps if step.get("id") == "crates")
+    actual = sorted(yaml.safe_load(filters))
 
     if actual != expected:
         github_error(
-            f"Hardcoded matrix {actual} does not match ci-groups.yml {expected}. "
-            f"Update the group list in {workflow_file}."
+            f"Crate filters {actual} in {WORKFLOW_FILE} do not match tested crates {expected}. "
+            f"Add a filter for each crate, or exclude it in {args.groups_file}."
         )
         return 1
 
-    print(f"Hardcoded matrix matches ci-groups.yml: {expected}")
+    print(f"Every tested crate has a path filter: {expected}")
     return 0
 
 
 def dashd_env():
-    """Return dashd's env vars, fetching it and the test data if missing."""
     path = ROOT / "contrib" / "setup-dashd.py"
     spec = importlib.util.spec_from_file_location("setup_dashd", path)
     module = importlib.util.module_from_spec(spec)
@@ -146,19 +78,12 @@ def dashd_env():
     return module.setup()
 
 
-def run_group_tests(args):
-    """Run tests for all crates in the given groups, or in every group."""
-    config = load_yaml(args.groups_file)
-    groups = config.get("groups", {})
-
-    selected = args.groups or list(groups)
-    unknown = [group for group in selected if group not in groups]
-    if unknown:
-        github_error(f"Unknown group: {', '.join(unknown)}")
-        return 1
+def run_tests(args):
+    """Run tests for the given crates, or for every tested crate."""
+    selected = args.crates or tested_crates(args.groups_file)
 
     env = os.environ.copy()
-    if DASHD_GROUPS.intersection(selected):
+    if DASHD_CRATES.intersection(selected):
         env.update(dashd_env())
         if not env.get("DASHD_TEST_RETAIN_DIR"):
             env["DASHD_TEST_RETAIN_DIR"] = str(DASHD_TEST_RETAIN_DIR)
@@ -168,33 +93,27 @@ def run_group_tests(args):
         github_output("crate_flags", ",".join(selected))
 
     failed = []
-    for group in selected:
-        for crate in groups[group] or []:
-            github_group_start(f"Testing {crate}")
+    for crate in selected:
+        print(f"::group::Testing {crate}", flush=True)
+        try:
+            if coverage:
+                cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
+            else:
+                cmd = ["cargo", "test", "-p", crate, "--all-features"]
+            result = subprocess.run(cmd, env=env)
 
-            try:
-                if coverage:
-                    cmd = ["cargo", "llvm-cov", "--no-report", "-p", crate, "--all-features"]
-                else:
-                    cmd = ["cargo", "test", "-p", crate, "--all-features"]
-                result = subprocess.run(cmd, env=env)
+            if result.returncode == 0 and not coverage and crate == "key-wallet-manager":
+                result = subprocess.run(["cargo", "test", "-p", crate], env=env)
 
-                if (
-                    result.returncode == 0
-                    and not coverage
-                    and crate == "key-wallet-manager"
-                ):
-                    result = subprocess.run(["cargo", "test", "-p", crate], env=env)
-
-                if result.returncode != 0:
-                    failed.append(crate)
-                    github_error(f"Test failed for {crate} on {args.os}")
-            finally:
-                github_group_end()
+            if result.returncode != 0:
+                failed.append(crate)
+                github_error(f"Test failed for {crate} on {args.os}")
+        finally:
+            print("::endgroup::", flush=True)
 
     if failed:
         print("\n" + "=" * 40)
-        print(f"FAILED TESTS ({', '.join(selected)} on {args.os}):")
+        print(f"FAILED TESTS on {args.os}:")
         for f in failed:
             print(f"  - {f}")
         print("=" * 40)
@@ -214,16 +133,14 @@ def main():
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("verify-groups", help="Verify all crates assigned to groups")
+    subparsers.add_parser("verify-groups", help="Verify every tested crate has a path filter")
 
-    run_group_parser = subparsers.add_parser(
-        "run-group", help="Run tests for some groups, or for every group"
-    )
-    run_group_parser.add_argument("groups", nargs="*", help="Group names (default: all)")
-    run_group_parser.add_argument(
+    test_parser = subparsers.add_parser("test", help="Run tests for some crates, or for all")
+    test_parser.add_argument("crates", nargs="*", help="Crate names (default: all)")
+    test_parser.add_argument(
         "--os", default=os.environ.get("CI_OS", "local"), help="OS name for error messages"
     )
-    run_group_parser.add_argument(
+    test_parser.add_argument(
         "--coverage",
         action="store_true",
         help="Use cargo-llvm-cov for coverage collection",
@@ -233,7 +150,7 @@ def main():
 
     commands = {
         "verify-groups": verify_groups,
-        "run-group": run_group_tests,
+        "test": run_tests,
     }
 
     return commands[args.command](args)
